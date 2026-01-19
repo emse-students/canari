@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+<body>
+    <h2>Chat Test</h2>
+    <div id="messages" style="border: 1px solid #ccc; height: 300px; overflow-y: scroll; margin-bottom: 10px; padding: 10px;"></div>
+    <input type="text" id="username" placeholder="Username" value="Alice" />
+    <input type="text" id="input" placeholder="Message" onkeypress="handleKeyPress(event)" />
+    <button onclick="send()">Send</button>
+
+    <script>
+        const ws = new WebSocket("ws://localhost:3000/ws");
+        
+        // Fetch history on load
+        fetch('http://localhost:3001/messages')
+            .then(res => res.json())
+            .then(messages => {
+                // Messages come newest first, reverse them to display oldest first
+                messages.reverse().forEach(msg => {
+                   const display = (msg.username && msg.content) 
+                        ? `${msg.username}: ${msg.content}` 
+                        : `Unknown: ${msg.content || '...'}`;
+                   addMessage(display);
+                });
+                addMessage("System: --- History Loaded ---");
+            })
+            .catch(err => console.error("Failed to load history", err));
+
+        ws.onopen = () => {
+
+            console.log("Connected");
+            addMessage("System: Connected to Chat Gateway");
+        };
+
+        ws.onmessage = (event) => {
+            console.log("Received:", event.data);
+            try {
+                const msg = JSON.parse(event.data);
+                if (msg.username && msg.content) {
+                    addMessage(`${msg.username}: ${msg.content}`);
+                } else {
+                    addMessage("Received (Raw): " + event.data);
+                }
+            } catch (e) {
+                addMessage("Received (Raw): " + event.data);
+            }
+        };
+
+        ws.onclose = () => {
+            console.log("Disconnected");
+            addMessage("System: Disconnected");
+        };
+
+        function send() {
+            const input = document.getElementById("input");
+            const username = document.getElementById("username");
+            if (input.value && username.value) {
+                const payload = {
+                    username: username.value,
+                    content: input.value
+                };
+                ws.send(JSON.stringify(payload));
+                // We rely on echo
+            }
+            input.value = "";
+        }
+
+
+        function handleKeyPress(e) {
+            if (e.key === 'Enter') {
+                send();
+            }
+        }
+
+        function addMessage(text) {
+            const div = document.createElement("div");
+            div.textContent = text;
+            const messages = document.getElementById("messages");
+            messages.appendChild(div);
+            messages.scrollTop = messages.scrollHeight;
+        }
+    </script>
+</body>
+</html>
