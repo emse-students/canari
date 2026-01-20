@@ -14,6 +14,12 @@ export class Message {
   @Prop()
   senderId: string;
 
+  @Prop({ unique: true })
+  uuid: string;
+
+  @Prop({ type: [String], default: [] })
+  readBy: string[];
+
   @Prop({ default: Date.now })
   createdAt: Date;
 }

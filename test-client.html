@@ -3,9 +3,22 @@
 <body>
     <h2>Chat Test</h2>
     <div id="messages" style="border: 1px solid #ccc; height: 300px; overflow-y: scroll; margin-bottom: 10px; padding: 10px;"></div>
-    <input type="text" id="username" placeholder="Username" value="Alice" />
-    <input type="text" id="input" placeholder="Message" onkeypress="handleKeyPress(event)" />
-    <button onclick="send()">Send</button>
+    
+    <div style="margin-bottom: 10px;">
+        <input type="text" id="username" placeholder="Username" value="Alice" />
+        <input type="text" id="userId" placeholder="User ID (simulated)" value="user-123" />
+    </div>
+
+    <div style="margin-bottom: 10px;">
+        <input type="text" id="input" placeholder="Message" onkeypress="handleKeyPress(event)" />
+        <button onclick="send()">Send Message</button>
+    </div>
+
+    <div style="border-top: 1px solid #eee; padding-top: 10px;">
+        <h3>Event Simulation</h3>
+        <input type="text" id="messageId" placeholder="Message ID to Ack" style="width: 300px;" />
+        <button onclick="sendRead()">Mark Read</button>
+    </div>
 
     <script>
         const ws = new WebSocket("ws://localhost:3000/ws");
@@ -16,52 +29,115 @@
             .then(messages => {
                 // Messages come newest first, reverse them to display oldest first
                 messages.reverse().forEach(msg => {
-                   const display = (msg.username && msg.content) 
-                        ? `${msg.username}: ${msg.content}` 
-                        : `Unknown: ${msg.content || '...'}`;
-                   addMessage(display);
+                   displayMessage(msg);
                 });
-                addMessage("System: --- History Loaded ---");
+                addSystemMessage("--- History Loaded ---");
             })
             .catch(err => console.error("Failed to load history", err));
 
         ws.onopen = () => {
-
             console.log("Connected");
-            addMessage("System: Connected to Chat Gateway");
+            addSystemMessage("Connected to Chat Gateway");
         };
 
         ws.onmessage = (event) => {
             console.log("Received:", event.data);
             try {
                 const msg = JSON.parse(event.data);
+                // Handle different keys if necessary, but MessageSentEvent has username/content
                 if (msg.username && msg.content) {
-                    addMessage(`${msg.username}: ${msg.content}`);
+                    
+                    // Optimistic UI: Check if this is an echo of a pending message
+                    const myUsername = document.getElementById("username").value;
+                    let matched = false;
+                    
+                    if (msg.username === myUsername) {
+                        // Find first pending message with matching content (FIFO)
+                        const pendingEls = document.querySelectorAll('.message-pending');
+                        for (let el of pendingEls) {
+                            if (el.dataset.content === msg.content) {
+                                // Found match, update it to "Sent" state
+                                el.classList.remove('message-pending');
+                                el.style.color = "black";
+                                el.id = "msg-" + msg.id; // Set ID for future updates
+                                el.innerHTML = `<strong>${msg.username}</strong>: ${msg.content} <span style="font-size:0.8em; color:#888;">[${msg.id}]</span> <span class="read-by" style="font-size:0.8em; color:green; margin-left:10px;"></span>`;
+                                matched = true;
+                                break; 
+                            }
+                        }
+                    }
+
+                    if (!matched) {
+                        displayMessage(msg);
+                    }
+
+                    // Valid message received, autofill the ID for ack
+                    if (msg.id) {
+                        document.getElementById('messageId').value = msg.id;
+                    }
+                } else if (msg.messageId && msg.userId) {
+                    // MessageReadEvent
+                    const el = document.getElementById("msg-" + msg.messageId);
+                    if (el) {
+                         const span = el.querySelector(".read-by");
+                         if (span) {
+                             const current = span.textContent;
+                             const user = msg.userId;
+                             if (!current) {
+                                span.textContent = "Read by: " + user;
+                             } else if (!current.includes(user)) {
+                                span.textContent += ", " + user;
+                             }
+                         }
+                    }
+                     addSystemMessage(`Event: Message ${msg.messageId} read by ${msg.userId}`);
                 } else {
-                    addMessage("Received (Raw): " + event.data);
+                    addSystemMessage("Raw: " + event.data);
                 }
             } catch (e) {
-                addMessage("Received (Raw): " + event.data);
+                addSystemMessage("Raw: " + event.data);
             }
         };
 
         ws.onclose = () => {
             console.log("Disconnected");
-            addMessage("System: Disconnected");
+            addSystemMessage("Disconnected");
         };
 
         function send() {
             const input = document.getElementById("input");
             const username = document.getElementById("username");
             if (input.value && username.value) {
+                // Optimistic Display
+                const tempMsg = {
+                    username: username.value,
+                    content: input.value,
+                    _pending: true
+                };
+                displayMessage(tempMsg);
+
                 const payload = {
+                    type: 'send',
                     username: username.value,
                     content: input.value
                 };
                 ws.send(JSON.stringify(payload));
-                // We rely on echo
             }
             input.value = "";
+        }
+
+        function sendRead() {
+            const messageId = document.getElementById("messageId").value;
+            const userId = document.getElementById("userId").value;
+            if (messageId && userId) {
+                const payload = {
+                    type: 'read',
+                    message_id: messageId,
+                    user_id: userId
+                };
+                ws.send(JSON.stringify(payload));
+                addSystemMessage(`Sent Read ack for ${messageId}`);
+            }
         }
 
 
@@ -71,11 +147,40 @@
             }
         }
 
-        function addMessage(text) {
+        function displayMessage(msg) {
+             const div = document.createElement("div");
+             div.style.marginBottom = "5px";
+             
+             // Prioritize uuid (from DB) or id (from real-time event)
+             const id = msg.uuid || msg.id;
+             if (id) {
+                 div.id = "msg-" + id;
+             }
+
+             if (msg._pending) {
+                 div.style.color = "gray";
+                 div.classList.add("message-pending");
+                 div.dataset.content = msg.content;
+                 div.innerHTML = `<strong>${msg.username}</strong>: ${msg.content} <span style="font-size:0.8em; color:#888;">[Sending...]</span>`;
+             } else {
+                 const readByText = (msg.readBy && msg.readBy.length > 0) ? "Read by: " + msg.readBy.join(", ") : "";
+                 div.innerHTML = `<strong>${msg.username}</strong>: ${msg.content} <span style="font-size:0.8em; color:#888;">[${id}]</span> <span class="read-by" style="font-size:0.8em; color:green; margin-left:10px;">${readByText}</span>`;
+             }
+
+             appendElement(div);
+        }
+
+        function addSystemMessage(text) {
             const div = document.createElement("div");
-            div.textContent = text;
+            div.style.color = "#666";
+            div.style.fontStyle = "italic";
+            div.textContent = `System: ${text}`;
+            appendElement(div);
+        }
+
+        function appendElement(element) {
             const messages = document.getElementById("messages");
-            messages.appendChild(div);
+            messages.appendChild(element);
             messages.scrollTop = messages.scrollHeight;
         }
     </script>

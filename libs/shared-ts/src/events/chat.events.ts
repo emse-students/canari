@@ -1,24 +1,11 @@
 // Event Topics
 export const KAFKA_TOPICS = {
     CHAT_MESSAGES: 'chat_messages',
+    MESSAGE_READ: 'message_read',
     POST_CREATED: 'post_created',
 };
 
 // Payload Definitions
-export interface MessageSentEvent {
-    id: string;
-    senderId: string;
-    username: string;
-    content: string;
-    timestamp: string; // ISO 8601
-    conversationId?: string;
-}
-
-
-export interface PostCreatedEvent {
-    id: string;
-    authorId: string;
-    content: string;
-    mediaUrls: string[];
-    timestamp: string;
-}
+export { MessageSentEvent } from '../types/MessageSentEvent';
+export { MessageReadEvent } from '../types/MessageReadEvent';
+export { PostCreatedEvent } from '../types/PostCreatedEvent';

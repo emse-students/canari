@@ -11,7 +11,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use rdkafka::producer::{FutureProducer, FutureRecord};
 use rdkafka::ClientConfig;
 use redis::AsyncCommands;
-use shared_rust::MessageSentEvent;
+use shared_rust::{MessageSentEvent, MessageReadEvent, TOPIC_CHAT_MESSAGES, TOPIC_MESSAGE_READ};
 use chrono::Utc;
 use uuid::Uuid;
 use serde::Deserialize;
@@ -23,9 +23,10 @@ struct AppState {
 }
 
 #[derive(Deserialize)]
-struct IncomingMessage {
-    username: String,
-    content: String,
+#[serde(tag = "type", rename_all = "camelCase")]
+enum WebSocketMessage {
+    Send { username: String, content: String },
+    Read { message_id: Uuid, user_id: String },
 }
 
 #[tokio::main]
@@ -111,32 +112,59 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
         tokio::spawn(async move {
             while let Some(Ok(Message::Text(text))) = receiver.next().await {
                 // Parse incoming JSON
-                let incoming: Result<IncomingMessage, _> = serde_json::from_str(&text);
+                let incoming: Result<WebSocketMessage, _> = serde_json::from_str(&text);
                 
-                if let Ok(msg) = incoming {
-                    // Create enriched event
-                    let event = MessageSentEvent {
-                        id: Uuid::new_v4(),
-                        sender_id: Uuid::new_v4().to_string(), // Placeholder for real Auth ID
-                        username: msg.username,
-                        content: msg.content,
-                        timestamp: Utc::now(),
-                        conversation_id: None,
-                    };
+                match incoming {
+                    Ok(WebSocketMessage::Send { username, content }) => {
+                        // Create enriched event
+                        let event = MessageSentEvent {
+                            id: Uuid::new_v4(),
+                            sender_id: Uuid::new_v4().to_string(), // Placeholder for real Auth ID
+                            username,
+                            content,
+                            timestamp: Utc::now(),
+                            conversation_id: None,
+                        };
 
-                    // Serialize to JSON
-                    if let Ok(serialized) = serde_json::to_string(&event) {
-                        // 1. Publish to Redis (fan-out) key = "chat_events"
-                        if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await {
-                             let _: Result<(), _> = con.publish("chat_events", &serialized).await;
+                        // Serialize to JSON
+                        if let Ok(serialized) = serde_json::to_string(&event) {
+                            // 1. Publish to Redis (fan-out)
+                            if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await {
+                                    let _: Result<(), _> = con.publish("chat_events", &serialized).await;
+                            }
+
+                            // 2. Publish to Kafka (persistence)
+                            let record = FutureRecord::to(TOPIC_CHAT_MESSAGES)
+                                .payload(&serialized)
+                                .key(&event.sender_id);
+                            
+                            let _ = state.kafka_producer.send(record, std::time::Duration::from_secs(0)).await;
                         }
+                    },
+                    Ok(WebSocketMessage::Read { message_id, user_id }) => {
+                        let event = MessageReadEvent {
+                            message_id,
+                            user_id: user_id.clone(),
+                            timestamp: Utc::now(),
+                            conversation_id: None
+                        };
 
-                        // 2. Publish to Kafka (persistence)
-                        let record = FutureRecord::to("chat_messages")
-                            .payload(&serialized)
-                            .key(&event.sender_id); 
-                        
-                        let _ = state.kafka_producer.send(record, std::time::Duration::from_secs(0)).await;
+                         if let Ok(serialized) = serde_json::to_string(&event) {
+                            // 1. Publish to Redis (fan-out)
+                            if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await {
+                                let _: Result<(), _> = con.publish("chat_events", &serialized).await;
+                            }
+
+                            // 2. Publish to Kafka
+                            let record = FutureRecord::to(TOPIC_MESSAGE_READ)
+                                .payload(&serialized)
+                                .key(&event.user_id);
+                            
+                            let _ = state.kafka_producer.send(record, std::time::Duration::from_secs(0)).await;
+                        }
+                    },
+                    Err(e) => {
+                        tracing::warn!("Failed to parse message: {:?}", e);
                     }
                 }
             }
