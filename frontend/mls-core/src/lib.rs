@@ -3,6 +3,7 @@ use security::{decrypt_blob, derive_key_from_pin, encrypt_blob};
 
 use ciborium::{de::from_reader, ser::into_writer};
 use openmls::prelude::*;
+use openmls::treesync::RatchetTreeIn;
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
 use openmls_traits::OpenMlsProvider; // Ensure StorageProvider trait is visible
@@ -163,7 +164,7 @@ impl MlsManager {
         &mut self,
         group_id: &str,
         key_package_bytes: &[u8],
-    ) -> Result<Vec<u8>, MlsError> {
+    ) -> Result<(Vec<u8>, Option<Vec<u8>>), MlsError> {
         let group = self
             .groups
             .get_mut(group_id)
@@ -180,16 +181,39 @@ impl MlsManager {
         ).map_err(|e| MlsError::OpenMls(format!("KeyPackage invalid: {:?}", e)))?;
 
         // 1. Proposer l'ajout
-        let _proposal = group
+        let (proposal, _) = group
             .propose_add_member(
                 &self.provider,
                 &self.keypair, // <--- SIGNER
                 &key_package,
             )
             .map_err(|e| MlsError::OpenMls(format!("{:?}", e)))?;
+        
+        let proposal_bytes = proposal.tls_serialize_detached()
+             .map_err(|e| MlsError::Serialization(e.to_string()))?;
+        
+        let proposal_in = MlsMessageIn::tls_deserialize(&mut &proposal_bytes[..])
+             .map_err(|_| MlsError::InvalidData)?;
+
+        let protocol_message: ProtocolMessage = match proposal_in.extract() {
+             MlsMessageBodyIn::PublicMessage(m) => m.into(),
+             MlsMessageBodyIn::PrivateMessage(m) => m.into(),
+             _ => return Err(MlsError::InvalidData),
+        };
+        
+        let processed_message = group.process_message(&self.provider, protocol_message)
+             .map_err(|e| MlsError::OpenMls(format!("Failed to process own proposal: {:?}", e)))?;
+
+        match processed_message.into_content() {
+            ProcessedMessageContent::ProposalMessage(proposal) => {
+                group.store_pending_proposal(self.provider.storage(), *proposal)
+                    .map_err(|e| MlsError::OpenMls(format!("Failed to store own proposal: {:?}", e)))?;
+            }
+            _ => return Err(MlsError::OpenMls("Expected Proposal message".into())),
+        }
 
         // 2. Commit
-        let (commit, _welcome, _) = group
+        let (commit, welcome, _) = group
             .commit_to_pending_proposals(
                 &self.provider,
                 &self.keypair, // <--- SIGNER
@@ -201,10 +225,117 @@ impl MlsManager {
             .merge_pending_commit(&self.provider)
             .map_err(|e| MlsError::OpenMls(format!("{:?}", e)))?;
 
-        Ok(commit.tls_serialize_detached().unwrap())
+        let commit_bytes = commit.tls_serialize_detached().unwrap();
+        
+        // Serialize Welcome message if it exists
+        let welcome_bytes = if let Some(w) = welcome {
+            Some(w.tls_serialize_detached()
+                .map_err(|e| MlsError::OpenMls(format!("Welcome serialization: {:?}", e)))?)
+        } else {
+            None
+        };
+
+        Ok((commit_bytes, welcome_bytes))
     }
 
-    // --- D. SAUVEGARDE (Sérialisation CBOR) ---
+    // --- C2. REJOINDRE UN GROUPE (Traitement Welcome) ---
+
+    pub fn process_welcome(
+        &mut self,
+        welcome_bytes: &[u8],
+        ratchet_tree_bytes: Option<&[u8]>,
+    ) -> Result<String, MlsError> {
+        let welcome = Welcome::tls_deserialize(&mut &welcome_bytes[..])
+            .map_err(|_| MlsError::InvalidData)?;
+
+        let group_config = MlsGroupJoinConfig::default();
+        
+        // If ratchet tree is provided externally (e.g. via specific server endpoint), deserialize it 
+        // Otherwise pass None (OpenMLS can often reconstruct or it might be in the Welcome extension)
+        let ratchet_tree = if let Some(rt_bytes) = ratchet_tree_bytes {
+             // Deserialize the ratchet tree nodes
+             Some(RatchetTreeIn::tls_deserialize(&mut &rt_bytes[..])
+                 .map_err(|_| MlsError::InvalidData)?)
+        } else {
+            None
+        };
+
+        // Important: new_from_welcome consumes the welcome message and initializes the group
+        let staged_welcome = StagedWelcome::new_from_welcome(
+            &self.provider,
+            &group_config,
+            welcome,
+            ratchet_tree,
+        ).map_err(|e| MlsError::OpenMls(format!("Join error (staged): {:?}", e)))?;
+
+        let group = staged_welcome.into_group(&self.provider)
+            .map_err(|e| MlsError::OpenMls(format!("Join error (into_group): {:?}", e)))?;
+
+        let group_id = String::from_utf8_lossy(group.group_id().as_slice()).to_string();
+        
+        // Save to our map
+        self.groups.insert(group_id.clone(), group);
+
+        // Save to storage immediately to persist the join
+        // (Optional: usually explicit save is better, but safe for now)
+        
+        Ok(group_id)
+    }
+
+    // --- D. MESSAGERIE ---
+    
+    pub fn send_message(&mut self, group_id: &str, message: &[u8]) -> Result<Vec<u8>, MlsError> {
+        let group = self.groups.get_mut(group_id).ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
+
+        let msg_out = group.create_message(
+            &self.provider,
+            &self.keypair,
+            message
+        ).map_err(|e| MlsError::OpenMls(format!("Encrypt error: {:?}", e)))?;
+
+        msg_out.tls_serialize_detached()
+            .map_err(|e| MlsError::Serialization(e.to_string()))
+    }
+
+    /// Process an incoming MLS message (Handshake or Application)
+    /// Returns decoded data if it was an application message
+    pub fn process_incoming_message(&mut self, group_id: &str, message_bytes: &[u8]) -> Result<Option<Vec<u8>>, MlsError> {
+        let group = self.groups.get_mut(group_id).ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
+
+        let msg_in = MlsMessageIn::tls_deserialize(&mut &message_bytes[..])
+            .map_err(|_| MlsError::InvalidData)?;
+
+        let protocol_message: ProtocolMessage = match msg_in.extract() {
+            MlsMessageBodyIn::PublicMessage(m) => m.into(),
+            MlsMessageBodyIn::PrivateMessage(m) => m.into(),
+            _ => return Err(MlsError::InvalidData),
+        };
+
+        let processed_message = group.process_message(
+            &self.provider,
+            protocol_message
+        ).map_err(|e| MlsError::OpenMls(format!("Process error: {:?}", e)))?;
+
+        match processed_message.into_content() {
+            ProcessedMessageContent::ApplicationMessage(app_msg) => {
+                // Return validity and data
+                Ok(Some(app_msg.into_bytes()))
+            }
+            ProcessedMessageContent::ProposalMessage(proposal) => {
+                group.store_pending_proposal(self.provider.storage(), *proposal)
+                    .map_err(|e| MlsError::OpenMls(format!("Store proposal error: {:?}", e)))?;
+                Ok(None)
+            }
+            ProcessedMessageContent::StagedCommitMessage(staged_commit) => {
+                group.merge_staged_commit(&self.provider, *staged_commit)
+                    .map_err(|e| MlsError::OpenMls(format!("Merge commit error: {:?}", e)))?;
+                Ok(None)
+            }
+            _ => Ok(None),
+        }
+    }
+
+    // --- E. SAUVEGARDE (Sérialisation CBOR) ---
 
     pub fn save_state(&self) -> Result<Vec<u8>, MlsError> {
         // 1. Sérialiser l'identité (using Ref wrapper to avoid cloning keypair)

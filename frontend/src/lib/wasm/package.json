@@ -1,0 +1,15 @@
+{
+  "name": "mls-wasm",
+  "type": "module",
+  "version": "0.1.0",
+  "files": [
+    "mls_wasm_bg.wasm",
+    "mls_wasm.js",
+    "mls_wasm.d.ts"
+  ],
+  "main": "mls_wasm.js",
+  "types": "mls_wasm.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
