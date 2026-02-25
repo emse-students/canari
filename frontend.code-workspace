@@ -1,0 +1,16 @@
+{
+	"folders": [
+		{
+			"path": "frontend/mls-core"
+		},
+		{
+			"path": "frontend/mls-wasm"
+		},
+		{
+			"path": "frontend/src-tauri"
+		},
+		{
+			"path": "frontend"
+		}
+	]
+}

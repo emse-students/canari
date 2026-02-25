@@ -1,0 +1,42 @@
+@startuml
+actor "Alice (Expéditeur)" as UserA
+participant "Client A (MLS)" as ClientA
+participant "Chat Gateway (DS)" as Gateway
+participant "Redis (Pub/Sub)" as Redis
+participant "Kafka (Topic: chat-messages)" as Kafka
+participant "Client B (MLS)" as ClientB
+participant "Chat History Service" as History
+participant "MongoDB" as MongoDB
+
+UserA -> ClientA: Tape "Bonjour"
+
+note right of ClientA
+  MLS Application Message
+  1. Récupération État Groupe
+  2. Protect(plain_text) -> MLS Ciphertext
+end note
+
+ClientA -> Gateway: WebSocket Send {type: "mls_message", payload: "..."}
+
+note right of Gateway: Gateway agit comme\nDelivery Service (DS)
+
+Gateway -> Gateway: Validate Payload Size/Type
+
+par Distribution Temps Réel (Fan-out)
+    Gateway -> Redis: PUBLISH "chat_events" (MLS Blob)
+    Redis -> Gateway: OnMessage (Gateway Instance B)
+    Gateway -> ClientB: WebSocket Message {type: "mls_message", payload: "..."}
+else Persistance Asynchrone
+    Gateway -> Kafka: Produce Record
+    Kafka --> History: Consommation Event
+    History -> MongoDB: Sauvegarde Blob MLS (Opaque)
+end
+
+ClientB -> ClientB: MLS Process(Ciphertext)
+note right of ClientB
+  Déchiffrement & 
+  Mise à jour État Groupe (Ratchet)
+end note
+
+ClientB --> UserA: (Optionnel) Delivery Receipt
+@enduml

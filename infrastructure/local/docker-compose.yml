@@ -1,3 +1,6 @@
+include:
+  - authentik/docker-compose.authentik.yml
+
 services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
@@ -38,3 +41,12 @@ services:
       - "27017:27017"
     environment:
       MONGO_INITDB_DATABASE: social_db
+
+  postgres:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: auth_db

@@ -1,11 +1,12 @@
 use axum::{
-    extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State},
-    response::{IntoResponse},
-    routing::get,
+    extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State, Query, Path},
+    response::{IntoResponse, Response, Json},
+    routing::{get, post},
+    http::StatusCode,
     Router,
 };
 use futures::{sink::SinkExt, stream::StreamExt};
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, sync::Arc, collections::HashMap};
 use tokio::sync::broadcast;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use rdkafka::producer::{FutureProducer, FutureRecord};
@@ -14,22 +15,64 @@ use redis::AsyncCommands;
 use shared_rust::{MessageSentEvent, MessageReadEvent, TOPIC_CHAT_MESSAGES, TOPIC_MESSAGE_READ};
 use chrono::Utc;
 use uuid::Uuid;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use jsonwebtoken::{decode, DecodingKey, Validation, Algorithm};
 
 struct AppState {
     redis_client: redis::Client,
     kafka_producer: FutureProducer,
     tx: broadcast::Sender<String>,
+    jwt_secret: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Claims {
+    sub: String, // User ID
+    exp: usize,
+}
+
+#[derive(Serialize, Deserialize)]
+struct EncryptedPayload {
+    ciphertext: String,
+    iv: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    keys: Option<HashMap<String, String>>,
+    version: u8,
 }
 
 #[derive(Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
-enum WebSocketMessage {
-    Send { username: String, content: String },
-    Read { message_id: Uuid, user_id: String },
+struct AuthParams {
+    token: String,
 }
 
-#[tokio::main]
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum WebSocketMessage {
+    #[serde(rename_all = "camelCase")]
+    MlsMessage {
+        payload: String, // Opaque MLS content (Base64)
+    },
+    #[serde(rename_all = "camelCase")]
+    KeyPackagePublish {
+        payload: String, // Opaque KeyPackage
+    },
+    #[serde(rename_all = "camelCase")]
+    Read { message_id: Uuid },
+}
+
+// Logic extracted for testing
+fn process_incoming(text: &str) -> Result<WebSocketMessage, serde_json::Error> {
+    serde_json::from_str(text) // Can be replaced by protobuf or other serialization if needed
+}
+
+// REST Payload for Ratchet Tree storage
+#[derive(Serialize, Deserialize)]
+struct RatchetTreePayload {
+    data: String, // Base64 encoded Tree
+    version: u64,
+}
+
+#[tokio::main] // use tokio to run the async main function
 async fn main() {
 
     tracing_subscriber::registry()
@@ -41,6 +84,9 @@ async fn main() {
 
     // Redis connection
     let redis_client = redis::Client::open("redis://127.0.0.1/").expect("Invalid Redis URL");
+    
+    // JWT Secret
+    let jwt_secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| "9a2f8c4e6b0d71f3e8b925b1234567890abcdef1234567890abcdef12345678".to_string());
 
     // Kafka Producer
     let kafka_producer: FutureProducer = ClientConfig::new()
@@ -49,13 +95,14 @@ async fn main() {
         .create()
         .expect("Producer creation error");
 
-    // Broadcast channel for internal distribution from Redis to Websockets
+    // Broadcast channel for internal distribution from Redis to Websocket clients
     let (tx, _rx) = broadcast::channel(100);
 
     let app_state = Arc::new(AppState {
         redis_client: redis_client.clone(),
         kafka_producer,
         tx: tx.clone(),
+        jwt_secret,
     });
 
     // Spawn Redis Subscriber Task
@@ -69,6 +116,7 @@ async fn main() {
             
             while let Some(msg) = stream.next().await {
                 if let Ok(payload) = msg.get_payload::<String>() {
+                    // Broadcast to all WebSocket clients
                     let _ = tx.send(payload);
                 }
             }
@@ -77,6 +125,9 @@ async fn main() {
 
     let app = Router::new()
         .route("/ws", get(ws_handler))
+        // MLS Specific Routes
+        .route("/keys/:user_id", get(get_key_package))
+        .route("/groups/:group_id/tree", get(get_ratchet_tree).post(post_ratchet_tree))
         .with_state(app_state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
@@ -85,19 +136,85 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-async fn ws_handler(
-    ws: WebSocketUpgrade,
+// --- REST Handlers for MLS ---
+
+async fn get_key_package(
+    Path(user_id): Path<String>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(|socket| handle_socket(socket, state))
+    let mut con = match state.redis_client.get_multiplexed_async_connection().await {
+        Ok(con) => con,
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "Redis error").into_response(),
+    };
+
+    let key: String = format!("key_package:{}", user_id);
+    let result: Result<String, _> = con.get(key).await;
+
+    match result {
+        Ok(pkg) => (StatusCode::OK, pkg).into_response(),
+        Err(_) => (StatusCode::NOT_FOUND, "Key Package not found").into_response(),
+    }
 }
 
-async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
+async fn get_ratchet_tree(
+    Path(group_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let mut con = match state.redis_client.get_multiplexed_async_connection().await {
+        Ok(con) => con,
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "Redis error").into_response(),
+    };
+
+    let key = format!("group:{}:tree", group_id);
+    let result: Result<String, _> = con.get(key).await;
+
+    match result {
+        Ok(tree) => (StatusCode::OK, tree).into_response(),
+        Err(_) => (StatusCode::NOT_FOUND, "Tree not found").into_response(),
+    }
+}
+
+async fn post_ratchet_tree(
+    Path(group_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<RatchetTreePayload>,
+) -> impl IntoResponse {
+    let mut con = match state.redis_client.get_multiplexed_async_connection().await {
+        Ok(con) => con,
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "Redis error").into_response(),
+    };
+
+    let key = format!("group:{}:tree", group_id);
+    // In a real app, verify 'payload.version' > current version to avoid race conditions
+    let _: Result<(), _> = con.set(key, payload.data).await;
+
+    StatusCode::OK.into_response()
+}
+
+async fn ws_handler(
+    ws: WebSocketUpgrade,
+    Query(params): Query<AuthParams>,
+    State(state): State<Arc<AppState>>,
+) -> Response {
+    let validation = Validation::new(Algorithm::HS256);
+    let key = DecodingKey::from_secret(state.jwt_secret.as_bytes());
+
+    match decode::<Claims>(&params.token, &key, &validation) {
+        Ok(token_data) => {
+             ws.on_upgrade(move |socket| handle_socket(socket, state, token_data.claims.sub))
+        },
+        Err(_) => {
+            (StatusCode::UNAUTHORIZED, "Invalid parameters").into_response()
+        }
+    }
+}
+
+async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String) {
     let (mut sender, mut receiver) = socket.split();
 
     let mut rx = state.tx.subscribe();
 
-    // Task to receive global messages and send to this client
+    // Task to receive all messages and send them to this client
     let mut send_task = tokio::spawn(async move {
         while let Ok(msg) = rx.recv().await {
             if sender.send(Message::Text(msg.into())).await.is_err() {
@@ -109,19 +226,24 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     // Task to receive messages from this client
     let mut recv_task = {
         let state = state.clone();
+        let user_id = user_id.clone();
         tokio::spawn(async move {
             while let Some(Ok(Message::Text(text))) = receiver.next().await {
-                // Parse incoming JSON
-                let incoming: Result<WebSocketMessage, _> = serde_json::from_str(&text);
+                // Parse incoming data
+                let incoming = process_incoming(&text);
                 
                 match incoming {
-                    Ok(WebSocketMessage::Send { username, content }) => {
+                    Ok(WebSocketMessage::MlsMessage { payload }) => {
+                        
+                        // Gateway acts as passive Delivery Service
+                        // We do not parse inner content, just route it.
+
                         // Create enriched event
                         let event = MessageSentEvent {
                             id: Uuid::new_v4(),
-                            sender_id: Uuid::new_v4().to_string(), // Placeholder for real Auth ID
-                            username,
-                            content,
+                            sender_id: user_id.clone(),
+                            username: "Anonymous".to_string(), 
+                            content: payload, // Store Opaque MLS blob
                             timestamp: Utc::now(),
                             conversation_id: None,
                         };
@@ -141,7 +263,15 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                             let _ = state.kafka_producer.send(record, std::time::Duration::from_secs(0)).await;
                         }
                     },
-                    Ok(WebSocketMessage::Read { message_id, user_id }) => {
+                    Ok(WebSocketMessage::KeyPackagePublish { payload }) => {
+                         // TODO: Store KeyPackage in Redis for other users to fetch
+                         // Key: "key_package:{user_id}"
+                         tracing::info!("Received KeyPackage from user {}", user_id);
+                         if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await {
+                            let _: Result<(), _> = con.set(format!("key_package:{}", user_id), payload).await;
+                         }
+                    },
+                    Ok(WebSocketMessage::Read { message_id }) => {
                         let event = MessageReadEvent {
                             message_id,
                             user_id: user_id.clone(),
@@ -176,5 +306,48 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
         _ = (&mut send_task) => recv_task.abort(),
         _ = (&mut recv_task) => send_task.abort(),
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_process_incoming_send() {
+        let json = r#"{"type": "mlsMessage", "payload": "BASE64_BLOB"}"#;
+        let result = process_incoming(json).unwrap();
+        match result {
+            WebSocketMessage::MlsMessage { payload } => {
+                assert_eq!(payload, "BASE64_BLOB"
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_process_incoming_read() {
+        let id = Uuid::new_v4();
+        let json = format!(r#"{"type": "read", "messageId": "{}"}"#, id);
+        let result = process_incoming(&json).unwrap();
+         match result {
+            WebSocketMessage::Read { message_id } => {
+                assert_eq!(message_id, id);
+            },
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_process_incoming_invalid() {
+        let json = r#"{"type": "unknown", "foo": "bar"}"#;
+        let result = process_incoming(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_process_incoming_malformed() {
+        let json = r#"{"type": "send", "username": "Alice"}"#; // Missing content
+        let result = process_incoming(json);
+        assert!(result.is_err());
+    }
 }
 

@@ -132,8 +132,8 @@
             if (messageId && userId) {
                 const payload = {
                     type: 'read',
-                    message_id: messageId,
-                    user_id: userId
+                    messageId: messageId,
+                    userId: userId
                 };
                 ws.send(JSON.stringify(payload));
                 addSystemMessage(`Sent Read ack for ${messageId}`);

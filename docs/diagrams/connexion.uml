@@ -1,0 +1,42 @@
+@startuml
+actor Utilisateur as User
+participant "Client App (Front)" as Client
+participant "Auth Service (Java)" as Auth
+participant "User DB (PostgreSQL)" as DB
+participant "Chat Gateway (Rust)" as Gateway
+
+== Phase 1 : Authentification HTTP ==
+
+alt Authentification par Mot de passe
+    User -> Client: Saisie Email + Mot de passe
+    Client -> Auth: POST /auth/login (email, password)
+    Auth -> DB: Vérification Hash Mot de passe
+    DB --> Auth: OK + PrivateKey (Chiffrée par Hash Pwd)
+else Authentification par Code de Récupération
+    User -> Client: Saisie Email + Code
+    Client -> Auth: POST /auth/recover (email, code)
+    Auth -> DB: Vérification Code
+    DB --> Auth: OK + PrivateKey (Chiffrée par Code)
+end
+
+Auth -> DB: Récupération Infos Profil (Nom, Avatar...)
+DB --> Auth: Profil Utilisateur
+
+Auth --> Client: Réponse 200 OK
+note right of Client
+  Contient:
+  1. Access Token (JWT)
+  2. Private Key Chiffrée
+  3. Infos Profil
+end note
+
+Client -> Client: Déchiffrement Clé Privée (Localement)
+
+== Phase 2 : Connexion WebSocket ==
+
+Client -> Gateway: Connexion WS /ws?token=JWT
+Gateway -> Gateway: Validation JWT (Signature & Expiration)
+Gateway --> Client: Upgrade Connection (101 Switching Protocols)
+
+note right of Gateway: La session est active
+@enduml

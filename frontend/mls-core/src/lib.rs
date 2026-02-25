@@ -1,0 +1,330 @@
+pub mod security;
+use security::{decrypt_blob, derive_key_from_pin, encrypt_blob};
+
+use ciborium::{de::from_reader, ser::into_writer};
+use openmls::prelude::*;
+use openmls_basic_credential::SignatureKeyPair;
+use openmls_rust_crypto::OpenMlsRustCrypto;
+use openmls_traits::OpenMlsProvider; // Ensure StorageProvider trait is visible
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use thiserror::Error;
+use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
+
+// --- GESTION DES ERREURS PROPRE ---
+
+#[derive(Error, Debug)]
+pub enum MlsError {
+    #[error("Erreur Crypto/OpenMLS: {0}")]
+    OpenMls(String),
+    #[error("Erreur de Sérialisation CBOR: {0}")]
+    Serialization(String),
+    #[error("Groupe introuvable: {0}")]
+    GroupNotFound(String),
+    #[error("Données invalides")]
+    InvalidData,
+}
+
+// --- 1. LE MODÈLE DE PERSISTANCE (DISQUE) ---
+
+#[derive(Serialize, Deserialize)]
+pub struct PersistedState {
+    pub identity_bundle: Vec<u8>,
+    pub storage_values: HashMap<Vec<u8>, Vec<u8>>,
+    pub group_ids: Vec<Vec<u8>>,
+}
+
+// Struct request wrapper for serialization
+#[derive(Serialize)]
+struct IdentityBundleRef<'a> {
+    keypair: &'a [u8],     // Serialized bytes
+    credential: &'a [u8],  // Serialized bytes
+}
+
+#[derive(Serialize, Deserialize)]
+struct IdentityBundle {
+    keypair: Vec<u8>,
+    credential: Vec<u8>,
+}
+
+// --- 2. LE GESTIONNAIRE (MÉMOIRE VIVE) ---
+
+pub struct MlsManager {
+    // OpenMlsRustCrypto owns the MemoryStorage internally and implements OpenMlsProvider
+    provider: OpenMlsRustCrypto,
+
+    keypair: SignatureKeyPair,
+    credential: BasicCredential,
+
+    groups: HashMap<String, MlsGroup>,
+}
+
+impl MlsManager {
+    // --- A. INITIALISATION (Chargement ou Création) ---
+
+    pub fn load_or_create(
+        user_id: &str,
+        decrypted_state: Option<Vec<u8>>,
+    ) -> Result<Self, MlsError> {
+        let provider = OpenMlsRustCrypto::default();
+
+        if let Some(state_bytes) = decrypted_state {
+            // CAS 1 : Restauration
+            let state: PersistedState = from_reader(state_bytes.as_slice())
+                .map_err(|e| MlsError::Serialization(e.to_string()))?;
+
+            let bundle: IdentityBundle = from_reader(state.identity_bundle.as_slice())
+                .map_err(|e| MlsError::Serialization(e.to_string()))?;
+
+            // Deserialize keypair & credential from bytes
+            let keypair = SignatureKeyPair::tls_deserialize(&mut bundle.keypair.as_slice())
+                 .map_err(|_| MlsError::Serialization("Failed to deserialize keypair".into()))?;
+            
+            let credential_enum = Credential::tls_deserialize(&mut bundle.credential.as_slice())
+                 .map_err(|_| MlsError::Serialization("Failed to deserialize credential".into()))?;
+            
+            let credential = BasicCredential::try_from(credential_enum)
+                 .map_err(|_| MlsError::InvalidData)?;
+
+            // 2. Restaurer le stockage mémoire
+            {
+                let storage = provider.storage(); 
+                let mut lock = storage.values.write().unwrap();
+                *lock = state.storage_values;
+            }
+
+            // 3. Restaurer les groupes
+            let mut groups = HashMap::new();
+            for gid_bytes in state.group_ids {
+                let group_id = GroupId::from_slice(&gid_bytes);
+                
+                // Load using the provider
+                if let Some(group) = MlsGroup::load(provider.storage(), &group_id)
+                    .map_err(|e| MlsError::OpenMls(format!("{:?}", e)))? 
+                {
+                    let group_id_str = String::from_utf8_lossy(&gid_bytes).to_string(); 
+                    groups.insert(group_id_str, group);
+                }
+            }
+
+            Ok(Self {
+                provider,
+                keypair,
+                credential,
+                groups,
+            })
+        } else {
+            // CAS 2 : Première création
+            let ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
+            let keypair = SignatureKeyPair::new(
+                ciphersuite.signature_algorithm(),
+            ).map_err(|e| MlsError::OpenMls(format!("{:?}", e)))?;
+
+            let credential = BasicCredential::new(user_id.as_bytes().to_vec());
+
+            Ok(Self {
+                provider,
+                keypair,
+                credential,
+                groups: HashMap::new(),
+            })
+        }
+    }
+
+    // --- B. CRÉATION DE GROUPE ---
+
+    pub fn create_group(&mut self, group_id_str: String) -> Result<(), MlsError> {
+        let group_id = GroupId::from_slice(group_id_str.as_bytes());
+
+        let group_config = MlsGroupCreateConfig::default();
+        
+        let credential_with_key = CredentialWithKey {
+            credential: self.credential.clone().into(),
+            signature_key: self.keypair.public().into(),
+        };
+
+        // Create the group using the provider and forcing the GROUP ID
+        let group = MlsGroup::new_with_group_id(
+            &self.provider,
+            &self.keypair, // <--- SIGNER
+            &group_config,
+            group_id,
+            credential_with_key,
+        )
+        .map_err(|e| MlsError::OpenMls(format!("Creation error: {:?}", e)))?;
+
+        self.groups.insert(group_id_str, group);
+        Ok(())
+    }
+
+    // --- C. AJOUT DE MEMBRE ---
+
+    pub fn add_member(
+        &mut self,
+        group_id: &str,
+        key_package_bytes: &[u8],
+    ) -> Result<Vec<u8>, MlsError> {
+        let group = self
+            .groups
+            .get_mut(group_id)
+            .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
+
+        // Deserialize and Validate KeyPackage
+        let key_package_in = KeyPackageIn::tls_deserialize(&mut &key_package_bytes[..])
+            .map_err(|_| MlsError::InvalidData)?;
+            
+        // Use provider.crypto() for validation if needed, assuming OpenMlsProvider exposes it
+        let key_package = key_package_in.validate(
+            self.provider.crypto(), // Access crypto component
+            ProtocolVersion::Mls10,
+        ).map_err(|e| MlsError::OpenMls(format!("KeyPackage invalid: {:?}", e)))?;
+
+        // 1. Proposer l'ajout
+        let _proposal = group
+            .propose_add_member(
+                &self.provider,
+                &self.keypair, // <--- SIGNER
+                &key_package,
+            )
+            .map_err(|e| MlsError::OpenMls(format!("{:?}", e)))?;
+
+        // 2. Commit
+        let (commit, _welcome, _) = group
+            .commit_to_pending_proposals(
+                &self.provider,
+                &self.keypair, // <--- SIGNER
+            )
+            .map_err(|e| MlsError::OpenMls(format!("{:?}", e)))?;
+
+        // 3. Appliquer le changement
+        group
+            .merge_pending_commit(&self.provider)
+            .map_err(|e| MlsError::OpenMls(format!("{:?}", e)))?;
+
+        Ok(commit.tls_serialize_detached().unwrap())
+    }
+
+    // --- D. SAUVEGARDE (Sérialisation CBOR) ---
+
+    pub fn save_state(&self) -> Result<Vec<u8>, MlsError> {
+        // 1. Sérialiser l'identité (using Ref wrapper to avoid cloning keypair)
+        let keypair_bytes = self.keypair.tls_serialize_detached()
+             .map_err(|e| MlsError::OpenMls(format!("Keypair serialization: {:?}", e)))?;
+        
+        // Credential is an enum, we convert BasicCredential to Credential for serialization
+        let cred_enum: Credential = self.credential.clone().into();
+        let credential_bytes = cred_enum.tls_serialize_detached()
+             .map_err(|e| MlsError::OpenMls(format!("Credential serialization: {:?}", e)))?;
+
+        let bundle = IdentityBundleRef {
+            keypair: &keypair_bytes,
+            credential: &credential_bytes,
+        };
+
+        let mut bundle_bytes = Vec::new();
+        into_writer(&bundle, &mut bundle_bytes)
+            .map_err(|e| MlsError::Serialization(e.to_string()))?;
+
+        // 2. Extraire le stockage brut de MemoryStorage du provider
+        let storage = self.provider.storage();
+        let storage_lock = storage.values.read().unwrap();
+        let storage_values = storage_lock.clone();
+
+        // 3. Collecter les IDs des groupes actifs
+        let mut group_ids = Vec::new();
+        for (gid_str, _) in &self.groups {
+            group_ids.push(gid_str.as_bytes().to_vec());
+        }
+
+        // 4. Créer l'état global
+        let persisted = PersistedState {
+            identity_bundle: bundle_bytes,
+            storage_values,
+            group_ids,
+        };
+
+        let mut final_bytes = Vec::new();
+        into_writer(&persisted, &mut final_bytes)
+            .map_err(|e| MlsError::Serialization(e.to_string()))?;
+
+        Ok(final_bytes)
+    }
+
+    // --- E. GÉNÉRER MON KEY PACKAGE ---
+
+    pub fn generate_key_package(&self) -> Result<Vec<u8>, MlsError> {
+        let ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
+
+        let credential_with_key = CredentialWithKey {
+            credential: self.credential.clone().into(),
+            signature_key: self.keypair.public().into(),
+        };
+
+        let key_package_bundle = KeyPackage::builder()
+            .build(
+                ciphersuite,
+                &self.provider,
+                &self.keypair,
+                credential_with_key,
+            )
+            .map_err(|e| MlsError::OpenMls(format!("KeyPackage creation error: {:?}", e)))?;
+
+        key_package_bundle
+            .key_package()
+            .tls_serialize_detached()
+            .map_err(|e| MlsError::OpenMls(format!("Serialization error: {:?}", e)))
+    }
+
+    // --- F. CHIFFREMENT / DÉCHIFFREMENT (Helper) ---
+
+    pub fn save_encrypted(&self, pin: &str) -> Result<Vec<u8>, MlsError> {
+        let plain_state = self.save_state()?;
+        
+        // Generate a random salt for Argon2
+        let salt = self.provider
+            .rand()
+            .random_array::<16>() // Use const generic N=16
+            .map_err(|e| MlsError::OpenMls(format!("Rng error: {:?}", e)))?;
+
+        // Derive key
+        let key = derive_key_from_pin(pin, &salt)
+            .map_err(|s| MlsError::OpenMls(format!("Key derivation: {}", s)))?;
+
+        // Encrypt (encrypt_blob handles the nonce)
+        let ciphertext = encrypt_blob(&key, &plain_state)
+            .map_err(|s| MlsError::OpenMls(format!("Encryption: {}", s)))?;
+
+        // Prepend salt to the result: [salt (16) || nonce (12, inside ciphertext) || ciphertext]
+        let mut result = Vec::with_capacity(salt.len() + ciphertext.len());
+        result.extend_from_slice(&salt);
+        result.extend_from_slice(&ciphertext);
+        
+        Ok(result)
+    }
+
+    pub fn load_encrypted(
+        user_id: &str,
+        encrypted_blob: Option<Vec<u8>>,
+        pin: &str,
+    ) -> Result<Self, MlsError> {
+        let decrypted_state = if let Some(blob) = encrypted_blob {
+            if blob.len() < 16 {
+                return Err(MlsError::InvalidData);
+            }
+            
+            let (salt, rest) = blob.split_at(16);
+            
+            let key = derive_key_from_pin(pin, salt)
+                 .map_err(|s| MlsError::OpenMls(format!("Key derivation: {}", s)))?;
+
+            let plain = decrypt_blob(&key, rest)
+                 .map_err(|s| MlsError::OpenMls(format!("Decryption: {}", s)))?;
+            
+            Some(plain)
+        } else {
+            None
+        };
+
+        Self::load_or_create(user_id, decrypted_state)
+    }
+}

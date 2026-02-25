@@ -39,3 +39,59 @@ pub struct PostCreatedEvent {
     pub media_urls: Vec<String>,
     pub timestamp: DateTime<Utc>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_message_sent_event_creation() {
+        let id = Uuid::new_v4();
+        let timestamp = Utc::now();
+        let event = MessageSentEvent {
+            id,
+            sender_id: "sender".to_string(),
+            username: "user".to_string(),
+            content: "content".to_string(),
+            timestamp,
+            conversation_id: None,
+        };
+
+        assert_eq!(event.username, "user");
+        assert_eq!(event.content, "content");
+        assert_eq!(event.sender_id, "sender");
+    }
+
+    #[test]
+    fn test_message_read_event_creation() {
+        let id = Uuid::new_v4();
+        let timestamp = Utc::now();
+        let event = MessageReadEvent {
+            message_id: id,
+            user_id: "reader".to_string(),
+            timestamp,
+            conversation_id: Some("conv_1".to_string()),
+        };
+
+        assert_eq!(event.user_id, "reader");
+        assert_eq!(event.message_id, id);
+        assert_eq!(event.conversation_id, Some("conv_1".to_string()));
+    }
+
+    #[test]
+    fn test_post_created_event_creation() {
+         let id = Uuid::new_v4();
+        let timestamp = Utc::now();
+        let event = PostCreatedEvent {
+            id,
+            author_id: "author".to_string(),
+            content: "post content".to_string(),
+            media_urls: vec!["http://example.com/img.jpg".to_string()],
+            timestamp,
+        };
+
+        assert_eq!(event.author_id, "author");
+        assert_eq!(event.content, "post content");
+        assert_eq!(event.media_urls.len(), 1);
+    }
+}

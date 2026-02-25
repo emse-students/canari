@@ -7,10 +7,10 @@ Le système combine des APIs REST classiques (CRUD) et des WebSockets (Temps ré
 
 ### Principes Clés
 
-* **Monorepo :** Tout le code réside dans un seul dépôt.
-* **Polyglot Persistence :** Chaque service utilise la base de données la plus adaptée à son besoin.
-* **Best Tool for the Job :** Rust pour la perf, Java pour la sécu, Node pour l'I/O.
-* **Async First :** Les services communiquent principalement via Kafka pour le découplage.
+- **Monorepo :** Tout le code réside dans un seul dépôt.
+- **Polyglot Persistence :** Chaque service utilise la base de données la plus adaptée à son besoin.
+- **Best Tool for the Job :** Rust pour la perf, Java pour la sécu, Node pour l'I/O.
+- **Async First :** Les services communiquent principalement via Kafka pour le découplage.
 
 ---
 
@@ -20,6 +20,9 @@ Le système combine des APIs REST classiques (CRUD) et des WebSockets (Temps ré
 /
 ├── apps/                          # Services déployables
 │   ├── auth-service/              # [Java/Spring] Gestion Identité & JWT
+│   ├── user-service/              # [Java/Spring] Gestion Profils Utilisateurs
+│   ├── api-gateway/               # [Kong/Nginx] Point d'entrée unique (REST + WebSocket)
+│   ├── notification-service/      # [Node/NestJS] Envoi Notifications Push
 │   ├── chat-gateway/              # [Rust/Axum] Serveur WebSocket (Stateless)
 │   ├── chat-history-service/      # [Node/NestJS] Consumer Kafka -> Sauvegarde messages (Mongo)
 │   ├── feed-worker/               # [Rust] Worker d'arrière-plan (Fan-out)
@@ -43,21 +46,24 @@ Le système combine des APIs REST classiques (CRUD) et des WebSockets (Temps ré
 
 ## 3. Matrice Technologique
 
-| Service | Langage / Framework | Base de Données | Rôle Principal |
-| --- | --- | --- | --- |
-| **Auth Service** | **Java** (Spring Boot 3) | **PostgreSQL** | Inscription, Login, OAuth2, Sécurité. |
-| **Chat Gateway** | **Rust** (Axum + Tokio) | **Redis** (Pub/Sub) | Gestion massive des connexions WebSockets (Pas de stockage). |
+| Service          | Langage / Framework      | Base de Données     | Rôle Principal                                                                           |
+| ---------------- | ------------------------ | ------------------- | ---------------------------------------------------------------------------------------- |
+| **Auth Service** | **Java** (Spring Boot 4) | **PostgreSQL**      | Inscription, Login, OAuth2, Sécurité.                                                    |
+| **User Service** | **Java** (Spring Boot 4) | **PostgreSQL**      | Gestion des profils utilisateurs.                                                        |
+| **Chat Gateway** | **Rust** (Axum + Tokio)  | **Redis** (Pub/Sub) | Gestion massive des connexions WebSockets (Pas de stockage) et chiffrement bout en bout. |
+
 | **Chat History** | **Node.js** (NestJS) | **MongoDB** | Consomme Kafka et archive les conversations. |
-| **Feed Worker** | **Rust** | **Redis** (Cache) | Consomme Kafka et construit les Timelines. |
+| **Feed Worker** | **Rust** | **Redis** (Cache) | Consomme Kafka et construit les Timelines (une timeline suivis et une timeline générale). |
 | **Post Service** | **Node.js** (NestJS) | **MongoDB** | Stockage flexible des posts/commentaires. |
 | **Graph Service** | **Node.js** (NestJS) | **Neo4j** | Gestion du graphe social (Amis, Follow). |
 | **Media Service** | **Node.js** (NestJS) | **S3 / MinIO** | Orchestration uploads (Pre-signed URLs). |
-
+| **API Service** | **Kong / Nginx** | N/A | Point d'entrée unique (Rate Limiting, Auth). |
+| **Notification Service** | **Node.js** (NestJS) | N/A | Envoi de notifications push (Firebase, APNs). |
 **Infrastructure Commune :**
 
-* **Event Bus :** Apache Kafka (Zookeeper pour coordination).
-* **Cache & PubSub :** Redis.
-* **Gateway :** API Gateway (ex: Kong ou Nginx) en front.
+- **Event Bus :** Apache Kafka (Zookeeper pour coordination).
+- **Cache & PubSub :** Redis.
+- **Gateway :** API Gateway (ex: Kong ou Nginx) en front.
 
 ---
 
@@ -68,10 +74,10 @@ Le système combine des APIs REST classiques (CRUD) et des WebSockets (Temps ré
 1. **Client** -> POST /posts -> **Post Service** (Sauvegarde MongoDB).
 2. **Post Service** -> Produit event `POST_CREATED` -> **Kafka**.
 3. **Feed Worker** (Consumer) :
-* Lit `POST_CREATED`.
-* Appelle **Graph Service** (gRPC/HTTP) -> Récupère liste Amis.
-* Ecrit l'ID du post dans les Timelines **Redis** des amis (Fan-out).
 
+- Lit `POST_CREATED`.
+- Appelle **Graph Service** (gRPC/HTTP) -> Récupère liste Amis.
+- Ecrit l'ID du post dans les Timelines **Redis** des amis (Fan-out).
 
 4. **Notification Service** (Consumer) -> Envoie Push Notif.
 
@@ -95,15 +101,12 @@ Le système combine des APIs REST classiques (CRUD) et des WebSockets (Temps ré
 
 **ADR-001 : Stockage de l'Historique de Chat**
 
-* **Contexte :** Le stockage de chat nécessite une écriture rapide (Write-heavy). La solution idéale est Cassandra/ScyllaDB.
-* **Décision Phase 1 :** Utilisation de **MongoDB**.
-* *Justification :* Réduit la complexité opérationnelle en local (pas de cluster lourd). Suffisant pour les premiers millions de messages. Réutilisation de l'infra du Post Service.
+- **Contexte :** Le stockage de chat nécessite une écriture rapide (Write-heavy). La solution idéale est Cassandra/ScyllaDB.
+- **Décision Phase 1 :** Utilisation de **MongoDB**.
+- _Justification :_ Réduit la complexité opérationnelle en local (pas de cluster lourd). Suffisant pour les premiers millions de messages. Réutilisation de l'infra du Post Service.
 
-
-* **Stratégie Long Terme :** Migration vers **ScyllaDB**.
-* *Déclencheur :* Problèmes de performance en écriture ou besoin de sharding géographique complexe.
-
-
+- **Stratégie Long Terme :** Migration vers **ScyllaDB**.
+- _Déclencheur :_ Problèmes de performance en écriture ou besoin de sharding géographique complexe.
 
 ---
 
@@ -111,11 +114,11 @@ Le système combine des APIs REST classiques (CRUD) et des WebSockets (Temps ré
 
 Le fichier `infrastructure/local/docker-compose.yml` doit provisionner :
 
-* **Zookeeper & Kafka** (Port 9092)
-* **Redis** (Port 6379)
-* **PostgreSQL** (Port 5432 - DB: `auth_db`)
-* **MongoDB** (Port 27017 - DB: `social_db` & `chat_db`)
-* **MinIO** (S3 Local - Port 9000)
+- **Zookeeper & Kafka** (Port 9092)
+- **Redis** (Port 6379)
+- **PostgreSQL** (Port 5432 - DB: `auth_db`)
+- **MongoDB** (Port 27017 - DB: `social_db` & `chat_db`)
+- **MinIO** (S3 Local - Port 9000)
 
 ---
 
@@ -125,7 +128,7 @@ Le fichier `infrastructure/local/docker-compose.yml` doit provisionner :
 graph TD
     Client[📱 Client App]
     GW[🚪 API Gateway]
-    
+
     subgraph "Infrastructure"
         Kafka{🔥 Kafka}
         Redis((⚡ Redis))
