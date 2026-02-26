@@ -116,16 +116,19 @@ export class WasmMlsClient {
         }
     }
     /**
+     * @param {string | null} [pin]
      * @returns {Uint8Array}
      */
-    save_state() {
-        const ret = wasm.wasmmlsclient_save_state(this.__wbg_ptr);
+    save_state(pin) {
+        var ptr0 = isLikeNone(pin) ? 0 : passStringToWasm0(pin, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmmlsclient_save_state(this.__wbg_ptr, ptr0, len0);
         if (ret[3]) {
             throw takeFromExternrefTable0(ret[2]);
         }
-        var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
         wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-        return v1;
+        return v2;
     }
     /**
      * @param {string} group_id

@@ -37,6 +37,28 @@
     statusLog = [...statusLog, `[${new Date().toLocaleTimeString()}] ${msg}`];
   }
 
+  async function generateDevToken(uid: string) {
+    // Secret from chat-gateway/src/main.rs (dev only)
+    const secret = "9a2f8c4e6b0d71f3e8b925b1234567890abcdef1234567890abcdef12345678";
+    const header = JSON.stringify({ alg: "HS256", typ: "JWT" });
+    const payload = JSON.stringify({ sub: uid, exp: Math.floor(Date.now() / 1000) + 3600 * 24 });
+    
+    // Base64Url encode
+    const b64url = (str: string) => btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    
+    const unsignedToken = `${b64url(header)}.${b64url(payload)}`;
+    
+    // Sign
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      "raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+    );
+    const signature = await crypto.subtle.sign("HMAC", key, enc.encode(unsignedToken));
+    const sigB64 = b64url(String.fromCharCode(...new Uint8Array(signature)));
+    
+    return `${unsignedToken}.${sigB64}`;
+  }
+
   // --- Auth ---
   async function handleLogin() {
     console.log("handleLogin called");
@@ -46,12 +68,69 @@
         return;
       }
       log("Initializing...");
-      await mls.init(userId, pin);
+
+      // Attempt to load from localStorage (autosave) or standard save
+      let stateBytes: Uint8Array | undefined;
+      const saved = localStorage.getItem('mls_autosave');
+      if (saved) {
+        // Convert hex to bytes
+        const len = saved.length;
+        const bytes = new Uint8Array(len / 2);
+        for (let i = 0; i < len; i += 2) {
+          bytes[i / 2] = parseInt(saved.substring(i, i + 2), 16);
+        }
+        stateBytes = bytes;
+        log("Loaded autosaved state.");
+      }
+
+      await mls.init(userId, pin, stateBytes);
       isLoggedIn = true;
       log(`Logged in as ${userId}`);
+      
+      // Connect to Gateway
+      const token = await generateDevToken(userId);
+      await mls.connect(token);
+      
+      // Setup listener
+      mls.onMessage(async (sender, content) => {
+          log(`Received message from ${sender} (${content.length} bytes)`);
+          // Try to process as incoming MLS message
+          try {
+              // Note: Ideally we should differentiate between Welcome, Commit, Application, etc.
+              // But processIncomingMessage might handle Application/Handshake.
+              // However, typically Welcome messages are handled separately via processWelcome...
+              // If the content starts with specific bytes, maybe we can guess?
+              // Or we try processIncomingMessage first.
+              const decrypted = await mls.processIncomingMessage(groupId, content);
+              if (decrypted) {
+                  log(`DECRYPTED: ${decrypted}`);
+              } else {
+                  // It was a handshake message (likely Commit/Proposal) processed successfully
+                  log(`Processed handshake message.`);
+              }
+          } catch (e) {
+              // If it fails, maybe it's a Welcome message?
+              // The backend treats all messages as "MlsMessage".
+              // If we are invited, the message usually comes differently or via the same channel?
+              // For a new member, they are not in the group yet, so they wouldn't receive group messages easily 
+              // unless they are delivered directly.
+              // Here we assume broadcast.
+              log(`Process error: ${e}`);
+              
+              // Try as Welcome?
+              try {
+                  const joinedGroupId = await mls.processWelcome(content);
+                  log(`Processed WELCOME! Joined group: ${joinedGroupId}`);
+                  groupId = joinedGroupId; // Update UI
+              } catch (e2) {
+                  // Ignore
+              }
+          }
+      });
+      
     } catch (e: any) {
       console.error(e);
-      log(`Login error: ${e}`);
+      log(`Login error: ${e.message || e}`); // Improved logging
     }
   }
 
@@ -67,7 +146,7 @@
 
   async function generateKeyPackage() {
     try {
-      const bytes = await mls.generateKeyPackage();
+      const bytes = await mls.generateKeyPackage(pin);
       lastKeyPackage = toHex(bytes);
       log(`Key Package generated (${bytes.length} bytes). Copy this to another client.`);
     } catch (e: any) {

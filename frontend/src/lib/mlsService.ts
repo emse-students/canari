@@ -2,21 +2,98 @@ export interface IMlsService {
     init(userId: string, pin: string, state?: Uint8Array): Promise<void>;
     createGroup(groupId: string): Promise<void>;
     saveState(pin: string): Promise<Uint8Array>;
-    generateKeyPackage(): Promise<Uint8Array>;
-    // Returns the Welcome message bytes if successful (or Commit if you prefer, but for joining we need Welcome)
-    // Let's return an object or tuple to be precise, but for this Mock Interface lets return the Welcome bytes if present,
-    // otherwise the Commit bytes.
-    // Ideally: { commit: Uint8Array, welcome?: Uint8Array }
-    // For now, let's change signature to return any or specific object.
+    generateKeyPackage(pin: string): Promise<Uint8Array>;
     addMember(groupId: string, keyPackageBytes: Uint8Array): Promise<{ commit: Uint8Array, welcome?: Uint8Array }>;
     processWelcome(welcomeBytes: Uint8Array): Promise<string>;
     sendMessage(groupId: string, message: string): Promise<Uint8Array>;
     processIncomingMessage(groupId: string, messageBytes: Uint8Array): Promise<string | null>;
+    
+    // Networking
+    connect(token: string): Promise<void>;
+    fetchKeyPackage(userId: string): Promise<Uint8Array | null>;
+    publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void>;
+    // Callback registration
+    onMessage(callback: (senderId: string, content: Uint8Array) => void): void;
 }
 
 // Implémentation pour le Site Web (WASM)
 export class WebMlsService implements IMlsService {
     private client: any;
+    private ws: WebSocket | null = null;
+    private messageCallback: ((senderId: string, content: Uint8Array) => void) | null = null;
+    private baseUrl = "http://localhost:3000"; // Chat Gateway URL
+
+    async connect(token: string): Promise<void> {
+        return new Promise((resolve, reject) => {
+            this.ws = new WebSocket(`ws://localhost:3000/ws?token=${token}`);
+            this.ws.onopen = () => {
+                console.log("Connected to Chat Gateway");
+                resolve();
+            };
+            this.ws.onerror = (e) => {
+                console.error("WebSocket Error:", e);
+                reject(e);
+            };
+            this.ws.onmessage = async (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    // The gateway sends us `MessageSentEvent` JSON
+                    // which contains `content` (base64 encoded MLS blob)
+                    if (data.content && this.messageCallback) {
+                        // Decode base64 to Uint8Array
+                        const binaryParams = atob(data.content);
+                        const bytes = new Uint8Array(binaryParams.length);
+                        for (let i = 0; i < binaryParams.length; i++) {
+                            bytes[i] = binaryParams.charCodeAt(i);
+                        }
+                        this.messageCallback(data.senderId || data.sender_id, bytes);
+                    }
+                } catch (e) {
+                    console.error("Failed to process WebSocket message:", e);
+                }
+            };
+        });
+    }
+
+    onMessage(callback: (senderId: string, content: Uint8Array) => void) {
+        this.messageCallback = callback;
+    }
+
+    async fetchKeyPackage(userId: string): Promise<Uint8Array | null> {
+        try {
+            const res = await fetch(`${this.baseUrl}/keys/${userId}`);
+            if (!res.ok) return null;
+            const base64 = await res.text();
+            
+            // Decode Base64
+            const binaryString = atob(base64);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            return bytes;
+        } catch (e) {
+            console.error("Fetch Key Package Error:", e);
+            return null;
+        }
+    }
+
+    async publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void> {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+            console.warn("WebSocket not connected, cannot publish KeyPackage");
+            return;
+        }
+        
+        // Encode to Base64
+        const base64 = btoa(String.fromCharCode(...keyPackageBytes));
+        
+        const msg = {
+            type: "keyPackagePublish",
+            payload: base64
+        };
+        this.ws.send(JSON.stringify(msg));
+    }
 
     async init(userId: string, pin: string, state?: Uint8Array) {
         // Import dynamique du WASM généré
@@ -38,12 +115,37 @@ export class WebMlsService implements IMlsService {
 
     // Updated to accept PIN
     async saveState(pin: string) {
-        // TODO: Update WASM to support encrypted save with PIN
-        return this.client.save_state();
+        // Pass PIN to save encrypted
+        // Wasm binding updated to accept optional PIN
+        return this.client.save_state(pin);
     }
 
-    async generateKeyPackage() {
-        return this.client.generate_key_package();
+    async generateKeyPackage(pin: string) {
+        const kp = this.client.generate_key_package();
+        // WASM side persistence for web:
+        // Attempt to save state.
+        try {
+            const stateBytes = this.client.save_state(pin); // Returns Encrypted Uint8Array
+            
+            const hex = Array.from(stateBytes as Uint8Array).map(b => b.toString(16).padStart(2, '0')).join('');
+            localStorage.setItem('mls_autosave', hex);
+        } catch(e) {
+            console.warn("Auto-save failed in WASM mode", e);
+        }
+        
+        // Publish via WebSocket if connected
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            // Encode to Base64
+            const base64 = btoa(String.fromCharCode(...(kp as Uint8Array)));
+            
+            const msg = {
+                type: "keyPackagePublish",
+                payload: base64
+            };
+            this.ws.send(JSON.stringify(msg));
+        }
+
+        return kp;
     }
 
     async addMember(groupId: string, keyPackageBytes: Uint8Array) {
@@ -69,7 +171,19 @@ export class WebMlsService implements IMlsService {
     }
 
     async sendMessage(groupId: string, message: string) {
-        return this.client.send_message(groupId, message);
+        const encryptedBytes = this.client.send_message(groupId, message);
+        
+        // Send via WebSocket if connected
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            const base64 = btoa(String.fromCharCode(...encryptedBytes));
+            const payload = {
+                type: "mlsMessage",
+                payload: base64
+            };
+            this.ws.send(JSON.stringify(payload));
+        }
+
+        return encryptedBytes;
     }
 
     async processIncomingMessage(groupId: string, messageBytes: Uint8Array) {
@@ -82,6 +196,64 @@ export class WebMlsService implements IMlsService {
 import { invoke } from '@tauri-apps/api/core';
 
 export class TauriMlsService implements IMlsService {
+    private ws: WebSocket | null = null;
+    private messageCallback: ((senderId: string, content: Uint8Array) => void) | null = null;
+    private baseUrl = "http://localhost:3000";
+
+    async connect(token: string): Promise<void> {
+        // Reuse direct WebSocket logic for now (Tauri allows localhost by default)
+        return new Promise((resolve, reject) => {
+            this.ws = new WebSocket(`ws://localhost:3000/ws?token=${token}`);
+            this.ws.onopen = () => {
+                console.log("Connected to Chat Gateway (Tauri)");
+                resolve();
+            };
+            this.ws.onerror = (e) => reject(e);
+            this.ws.onmessage = async (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.content && this.messageCallback) {
+                        const binaryParams = atob(data.content);
+                        const bytes = new Uint8Array(binaryParams.length);
+                        for (let i = 0; i < binaryParams.length; i++) {
+                            bytes[i] = binaryParams.charCodeAt(i);
+                        }
+                        this.messageCallback(data.senderId || data.sender_id, bytes);
+                    }
+                } catch (e) {
+                    console.error("Failed to process WebSocket message:", e);
+                }
+            };
+        });
+    }
+
+    onMessage(callback: (senderId: string, content: Uint8Array) => void) {
+        this.messageCallback = callback;
+    }
+
+    async fetchKeyPackage(userId: string): Promise<Uint8Array | null> {
+        // Using fetch API directly in Tauri (webview)
+        try {
+            const res = await fetch(`${this.baseUrl}/keys/${userId}`);
+            if (!res.ok) return null;
+            const base64 = await res.text();
+             const binaryString = atob(base64);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
+            return bytes;
+        } catch (e) {
+            console.error("Fetch Key Package Error:", e);
+            return null;
+        }
+    }
+
+    async publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void> {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        const base64 = btoa(String.fromCharCode(...keyPackageBytes));
+        this.ws.send(JSON.stringify({ type: "keyPackagePublish", payload: base64 }));
+    }
+
     async init(userId: string, pin: string, state?: Uint8Array) {
         const encrypted_state = state ? Array.from(state) : null;
         await invoke('initialiser_mls', { user_id: userId, pin, encrypted_state });
@@ -96,8 +268,17 @@ export class TauriMlsService implements IMlsService {
         return await invoke<Uint8Array>('sauvegarder_mls', { pin });
     }
 
-    async generateKeyPackage() {
-        return await invoke<Uint8Array>('generer_key_package');
+    async generateKeyPackage(pin: string) {
+        // Generate the KP
+        const kp = await invoke<number[]>('generer_key_package');
+        // Force save state
+        await this.saveState(pin);
+
+        // Publish via WS
+        const kpBytes = Uint8Array.from(kp);
+        await this.publishKeyPackage(kpBytes);
+
+        return kpBytes;
     }
 
     async addMember(groupId: string, keyPackageBytes: Uint8Array) {
@@ -115,7 +296,15 @@ export class TauriMlsService implements IMlsService {
 
     async sendMessage(groupId: string, message: string) {
         const res = await invoke<number[]>('envoyer_message', { groupId, message });
-        return Uint8Array.from(res);
+        const encryptedBytes = Uint8Array.from(res);
+        
+        // Send via WebSocket if connected
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            const base64 = btoa(String.fromCharCode(...encryptedBytes));
+            this.ws.send(JSON.stringify({ type: "mlsMessage", payload: base64 }));
+        }
+
+        return encryptedBytes;
     }
 
     async processIncomingMessage(groupId: string, messageBytes: Uint8Array) {

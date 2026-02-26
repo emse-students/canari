@@ -10,7 +10,7 @@ export class WasmMlsClient {
     constructor(user_id: string, state_bytes?: Uint8Array | null, pin?: string | null);
     process_incoming_message(group_id: string, message_bytes: Uint8Array): string | undefined;
     process_welcome(welcome_bytes: Uint8Array): string;
-    save_state(): Uint8Array;
+    save_state(pin?: string | null): Uint8Array;
     send_message(group_id: string, message: string): Uint8Array;
 }
 
@@ -25,7 +25,7 @@ export interface InitOutput {
     readonly wasmmlsclient_new: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly wasmmlsclient_process_incoming_message: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly wasmmlsclient_process_welcome: (a: number, b: number, c: number) => [number, number, number, number];
-    readonly wasmmlsclient_save_state: (a: number) => [number, number, number, number];
+    readonly wasmmlsclient_save_state: (a: number, b: number, c: number) => [number, number, number, number];
     readonly wasmmlsclient_send_message: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly __wbindgen_exn_store: (a: number) => void;
     readonly __externref_table_alloc: () => number;

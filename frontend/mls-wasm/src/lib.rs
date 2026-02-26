@@ -36,9 +36,15 @@ impl WasmMlsClient {
 
     // Sauvegarder l'état (renvoie un Uint8Array en JS)
     #[wasm_bindgen]
-    pub fn save_state(&self) -> Result<Vec<u8>, JsValue> {
-        self.manager.save_state()
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+    pub fn save_state(&self, pin: Option<String>) -> Result<Vec<u8>, JsValue> {
+        // If PIN is provided, encrypt. Otherwise save plain (legacy/dev).
+        if let Some(p) = pin {
+            self.manager.save_encrypted(&p)
+                .map_err(|e| JsValue::from_str(&e.to_string()))
+        } else {
+             self.manager.save_state()
+                .map_err(|e| JsValue::from_str(&e.to_string()))
+        }
     }
 
     #[wasm_bindgen]
