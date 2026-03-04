@@ -22,6 +22,12 @@
   let mls: IMlsService; // Using interface
 
   onMount(() => {
+    // --- WASM LOG BINDING ---
+    // Expose log function to window for Rust WASM to call
+    (window as any).wasm_bindings_log = (level: string, msg: string) => {
+       log(`[RUST::${level}] ${msg}`);
+    };
+
     // Check if running in Tauri context or browser
     if (window.__TAURI_INTERNALS__) {
       mls = new TauriMlsService();
@@ -71,7 +77,7 @@
 
       // Attempt to load from localStorage (autosave) or standard save
       let stateBytes: Uint8Array | undefined;
-      const saved = localStorage.getItem('mls_autosave');
+      const saved = localStorage.getItem('mls_autosave_' + userId);
       if (saved) {
         // Convert hex to bytes
         const len = saved.length;
@@ -229,7 +235,8 @@
   }
   
   function fromHex(hex: string): Uint8Array {
-      const match = hex.match(/.{1,2}/g);
+      const clean = hex.replace(/\s+/g, '').replace(/[^0-9a-fA-F]/g, '');
+      const match = clean.match(/.{1,2}/g);
       if (!match) return new Uint8Array();
       return new Uint8Array(match.map((byte) => parseInt(byte, 16)));
   }

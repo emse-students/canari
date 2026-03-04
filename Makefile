@@ -45,3 +45,27 @@ test-gateway:
 test-history:
 	@echo "\n${BLUE}🧪 Testing Chat History Service...${RESET}"
 	@cd apps/chat-history-service && npm test -- --coverage
+
+build:
+	@echo "\n${BLUE}🔨 Building all components...${RESET}"
+	@cd libs/shared-rust && cargo build --release
+	@cd apps/chat-gateway && cargo build --release
+	@echo "${GREEN}✅ Build completed successfully!${RESET}"
+
+build-frontend:
+	@echo "\n${BLUE}🔨 Building frontend...${RESET}"
+	@cd frontend/mls-core && cargo build --release
+	@cd frontend/mls-wasm && wasm-pack build --release --target web --out-dir frontend/src/lib/wasm/
+	@cd frontend && bun run build
+	@echo "${GREEN}✅ Frontend build completed successfully!${RESET}"
+
+run:
+	@echo "\n${BLUE}🚀 Running all services...${RESET}"
+	@cd apps/chat-gateway && cargo run &
+	@cd apps/chat-history-service && npm start &
+	@echo "${GREEN}✅ All services are running!${RESET}"
+
+run-frontend:
+	@echo "\n${BLUE}🚀 Running frontend...${RESET}"
+	@cd frontend && bun run dev
+	@echo "${GREEN}✅ Frontend is running!${RESET}"

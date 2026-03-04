@@ -2,7 +2,7 @@ pub mod security;
 use security::{decrypt_blob, derive_key_from_pin, encrypt_blob};
 
 use ciborium::{de::from_reader, ser::into_writer};
-use openmls::prelude::*;
+use openmls::prelude::{hash_ref::HashReference, *};
 use openmls::treesync::RatchetTreeIn;
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
@@ -140,6 +140,7 @@ impl MlsManager {
         // Align Ciphersuite with generate_key_package
         let group_config = MlsGroupCreateConfig::builder()
             .ciphersuite(Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519)
+            .use_ratchet_tree_extension(true)
             .build();
 
         let credential_with_key = CredentialWithKey {
@@ -181,31 +182,50 @@ impl MlsManager {
             .validate(self.provider.crypto(), ProtocolVersion::Mls10)
             .map_err(|e| MlsError::OpenMls(format!("KeyPackage invalid: {:?}", e)))?;
 
-        // 2. PROPOSER l'ajout
-        // Cette méthode ajoute déjà la proposition dans la file d'attente interne du groupe
-        let (msg_out, _) = group
-            .propose_add_member(&self.provider, &self.keypair, &key_package)
-            .map_err(|e| MlsError::OpenMls(format!("Propose error: {:?}", e)))?;
+        // 2. UTILISER add_members (High-Level API)
+        let (commit_msg_out, welcome_msg_out, _group_info) = group
+            .add_members(&self.provider, &self.keypair, &[key_package.clone()])
+            .map_err(|e| MlsError::OpenMls(format!("AddMembers high-level error: {:?}", e)))?;
 
-        // On garde les octets pour les envoyer au réseau
-        let proposal_bytes = msg_out
-            .tls_serialize_detached()
-            .map_err(|e| MlsError::Serialization(e.to_string()))?;
+        // CHECK WELCOME
+        // MlsMessageOut in openmls 0.5 is usually just `pub type MlsMessageOut = MlsMessage;` or an enum.
+        // It provides .into_welcome() or just access to body if it's plaintext.
+        // Let's assume MlsMessageOut has a body that is a Welcome.
+        // We can inspect it if we know the structure.
+        
+        // Wait, MlsMessageOut is NOT an enum with Welcome in some versions, it wraps MlsMessage.
+        // MlsMessage body is Welcome.
+        
+        let welcome = match welcome_msg_out.body() {
+             MlsMessageBodyOut::Welcome(w) => w,
+             _ => return Err(MlsError::OpenMls("AddMembers returned something that is not a Welcome message!".to_string())),
+        };
 
-        // 3. COMMITTE les propositions en attente (inclut la nôtre)
-        let (commit_msg_out, welcome_option, _group_info) = group
-            .commit_to_pending_proposals(&self.provider, &self.keypair)
-            .map_err(|e| MlsError::OpenMls(format!("Commit error: {:?}", e)))?;
+        if welcome.secrets().is_empty() {
+             return Err(MlsError::OpenMls(format!("GENERATED EMPTY WELCOME! The KeyPackage provided was {:?}. Group count: {}", key_package.hash_ref(self.provider.crypto()), group.members().count())));
+        }
 
-        // 4. APPLIQUER le commit localement
+        // Display debug info about the welcome secrets and the key package hash ref
+        let welcome_secrets_info: Vec<String> = welcome.secrets().iter().map(|s| {
+            let new_member = s.new_member(); // This returns KeyPackageRef (which is HashReference)
+            let bytes = new_member.as_slice();
+            let hex = bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+            format!("Welcome Secret Ref: {}", hex)
+        }).collect();
+
+        log::info!("DEBUG: Welcome secrets refs: {:?}, KeyPackage hash ref: {:?}", welcome_secrets_info, key_package.hash_ref(self.provider.crypto()));
+
+        // 3. APPLIQUER le commit localement
+        // Note: add_members returns the commit but DOES NOT auto-merge it in some versions (it returns StagedCommit equivalently). 
+        // We must merge the pending commit.
         group
             .merge_pending_commit(&self.provider)
             .map_err(|e| MlsError::OpenMls(format!("Merge error: {:?}", e)))?;
-
+        
         let commit_bytes = commit_msg_out.tls_serialize_detached().unwrap();
-        let welcome_bytes = welcome_option.map(|w| w.tls_serialize_detached().unwrap());
+        let welcome_bytes = welcome_msg_out.tls_serialize_detached().unwrap();
 
-        Ok((commit_bytes, welcome_bytes))
+        Ok((commit_bytes, Some(welcome_bytes)))
     }
 
     // --- C2. REJOINDRE UN GROUPE (Traitement Welcome) ---
@@ -215,8 +235,18 @@ impl MlsManager {
         welcome_bytes: &[u8],
         ratchet_tree_bytes: Option<&[u8]>,
     ) -> Result<String, MlsError> {
-        let welcome =
-            Welcome::tls_deserialize(&mut &welcome_bytes[..]).map_err(|_| MlsError::InvalidData)?;
+        // Attempt to deserialize as MlsMessageIn first (standard), then fallback to raw Welcome
+        let welcome = match MlsMessageIn::tls_deserialize(&mut &welcome_bytes[..]) {
+            Ok(msg_in) => match msg_in.extract() {
+                MlsMessageBodyIn::Welcome(w) => w,
+                // If successfully parsed as MlsMessage but not Welcome, it's invalid for this context
+                _ => return Err(MlsError::InvalidData),
+            },
+            Err(_) => {
+                // Fallback: Try raw Welcome
+                Welcome::tls_deserialize(&mut &welcome_bytes[..]).map_err(|_| MlsError::InvalidData)?
+            }
+        };
 
         let group_config = MlsGroupJoinConfig::default();
 
@@ -234,8 +264,33 @@ impl MlsManager {
 
         // Important: new_from_welcome consumes the welcome message and initializes the group
         let staged_welcome =
-            StagedWelcome::new_from_welcome(&self.provider, &group_config, welcome, ratchet_tree)
-                .map_err(|e| MlsError::OpenMls(format!("Join error (staged): {:?}", e)))?;
+            StagedWelcome::new_from_welcome(&self.provider, &group_config, welcome.clone(), ratchet_tree)
+                .map_err(|e| {
+                     // DEBUG: Check storage for keys
+                    let storage = self.provider.storage();
+                    let lock = storage.values.read().unwrap();
+                    let keys: Vec<String> = lock.keys()
+                        .map(|k| {
+                            let hex_str = k.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+                             if let Ok(s) = String::from_utf8(k.clone()) {
+                                 format!("(utf8){} [hex:{}]", s, hex_str)
+                             } else {
+                                 format!("(hex){}", hex_str)
+                             }
+                        })
+                        .collect();
+                    
+                    // Try to inspect secrets from welcome
+                    let requested_refs: Vec<String> = welcome.secrets().iter().map(|s| {
+                        // Just debug format the struct, we don't know the fields easily without docs
+                        let new_member = s.new_member(); // This returns KeyPackageRef (which is HashReference)
+                        let bytes = new_member.as_slice();
+                        let hex = bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+                        format!("Ref: {}", hex) 
+                    }).collect();
+
+                    MlsError::OpenMls(format!("Join error (staged): {:?}. \nWanted Refs (len={}): {:?}. \nStorage keys (len={}): {:?}", e, welcome.secrets().len(), requested_refs, keys.len(), keys))
+                })?;
 
         let group = staged_welcome
             .into_group(&self.provider)
@@ -298,12 +353,6 @@ impl MlsManager {
             ProcessedMessageContent::ApplicationMessage(app_msg) => {
                 // Return validity and data
                 Ok(Some(app_msg.into_bytes()))
-            }
-            ProcessedMessageContent::ProposalMessage(proposal) => {
-                group
-                    .store_pending_proposal(self.provider.storage(), *proposal)
-                    .map_err(|e| MlsError::OpenMls(format!("Store proposal error: {:?}", e)))?;
-                Ok(None)
             }
             ProcessedMessageContent::StagedCommitMessage(staged_commit) => {
                 group
@@ -384,12 +433,14 @@ impl MlsManager {
             .map_err(|e| MlsError::OpenMls(format!("KeyPackage creation error: {:?}", e)))?;
 
         // 2. IMPORTANT: Persister le bundle (clé privée) dans le stockage du provider
-        // Le provider (OpenMlsRustCrypto/MemoryStorage) garde ça en ram, et ce
-        // sera inclus dans `save_state` via `storage_values`.
         let key_package = key_package_bundle.key_package();
         let hash_ref = key_package
             .hash_ref(self.provider.crypto())
             .map_err(|e| MlsError::OpenMls(format!("HashRef error: {:?}", e)))?;
+
+        let hash_ref_bytes = hash_ref.as_slice();
+        // Console log via error or panic? No, we can't easily console log from here without bindings.
+        // We will rely on return verification.
 
         self.provider
             .storage()

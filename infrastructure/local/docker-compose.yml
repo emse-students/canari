@@ -1,5 +1,7 @@
 include:
-  - authentik/docker-compose.authentik.yml
+  - path: authentik/docker-compose.authentik.yml
+    env_file: authentik/.env
+    project_directory: authentik
 
 services:
   zookeeper:

@@ -14,11 +14,14 @@ export class WasmMlsClient {
     send_message(group_id: string, message: string): Uint8Array;
 }
 
+export function init_logger(): void;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_wasmmlsclient_free: (a: number, b: number) => void;
+    readonly init_logger: () => void;
     readonly wasmmlsclient_add_member: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
     readonly wasmmlsclient_create_group: (a: number, b: number, c: number) => [number, number];
     readonly wasmmlsclient_generate_key_package: (a: number) => [number, number, number, number];

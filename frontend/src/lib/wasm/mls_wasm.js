@@ -151,6 +151,10 @@ export class WasmMlsClient {
 }
 if (Symbol.dispose) WasmMlsClient.prototype[Symbol.dispose] = WasmMlsClient.prototype.free;
 
+export function init_logger() {
+    wasm.init_logger();
+}
+
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
@@ -276,6 +280,9 @@ function __wbg_get_imports() {
         __wbg_versions_276b2795b1c6a219: function(arg0) {
             const ret = arg0.versions;
             return ret;
+        },
+        __wbg_wasm_bindings_log_6f7530ce66479727: function(arg0, arg1, arg2, arg3) {
+            window.wasm_bindings_log(getStringFromWasm0(arg0, arg1), getStringFromWasm0(arg2, arg3));
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
             // Cast intrinsic for `Ref(Slice(U8)) -> NamedExternref("Uint8Array")`.

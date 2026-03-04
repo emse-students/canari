@@ -126,8 +126,8 @@ async fn main() {
     let app = Router::new()
         .route("/ws", get(ws_handler))
         // MLS Specific Routes
-        .route("/keys/:user_id", get(get_key_package))
-        .route("/groups/:group_id/tree", get(get_ratchet_tree).post(post_ratchet_tree))
+        .route("/keys/{user_id}", get(get_key_package))
+        .route("/groups/{group_id}/tree", get(get_ratchet_tree).post(post_ratchet_tree))
         .with_state(app_state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
@@ -318,7 +318,8 @@ mod tests {
         let result = process_incoming(json).unwrap();
         match result {
             WebSocketMessage::MlsMessage { payload } => {
-                assert_eq!(payload, "BASE64_BLOB"
+                assert_eq!(payload, "BASE64_BLOB");
+            }
             _ => panic!("Wrong variant"),
         }
     }

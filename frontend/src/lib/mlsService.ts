@@ -22,6 +22,7 @@ export class WebMlsService implements IMlsService {
     private ws: WebSocket | null = null;
     private messageCallback: ((senderId: string, content: Uint8Array) => void) | null = null;
     private baseUrl = "http://localhost:3000"; // Chat Gateway URL
+    private userId: string = "unknown";
 
     async connect(token: string): Promise<void> {
         return new Promise((resolve, reject) => {
@@ -96,12 +97,19 @@ export class WebMlsService implements IMlsService {
     }
 
     async init(userId: string, pin: string, state?: Uint8Array) {
+        this.userId = userId;
         // Import dynamique du WASM généré
         try {
             // Import from local lib to ensure Vite handles it correctly
             const initWasm = await import('$lib/wasm/mls_wasm.js'); 
             
             await initWasm.default(); 
+
+            // Initialize logger if available
+            if (initWasm.init_logger) {
+                initWasm.init_logger();
+            }
+
             this.client = new initWasm.WasmMlsClient(userId, state, pin);
         } catch (e) {
             console.error("WASM Init Failed:", e);
@@ -128,7 +136,7 @@ export class WebMlsService implements IMlsService {
             const stateBytes = this.client.save_state(pin); // Returns Encrypted Uint8Array
             
             const hex = Array.from(stateBytes as Uint8Array).map(b => b.toString(16).padStart(2, '0')).join('');
-            localStorage.setItem('mls_autosave', hex);
+            localStorage.setItem('mls_autosave_' + this.userId, hex);
         } catch(e) {
             console.warn("Auto-save failed in WASM mode", e);
         }
