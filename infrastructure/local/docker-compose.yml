@@ -1,8 +1,3 @@
-include:
-  - path: authentik/docker-compose.authentik.yml
-    env_file: authentik/.env
-    project_directory: authentik
-
 services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
