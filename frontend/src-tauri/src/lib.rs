@@ -7,11 +7,6 @@ struct AppState {
     mls_manager: Mutex<Option<MlsManager>>,
 }
 
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
-
 // --- COMMANDS ---
 
 #[tauri::command]
@@ -127,7 +122,6 @@ pub fn run() {
             mls_manager: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
-            greet,
             initialiser_mls,
             sauvegarder_mls,
             creer_groupe,
