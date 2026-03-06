@@ -12,8 +12,13 @@ export interface IMlsService {
     connect(token: string): Promise<void>;
     fetchKeyPackage(userId: string): Promise<Uint8Array | null>;
     publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void>;
-    // Callback registration
+    sendWelcome(welcomeBytes: Uint8Array, targetUserId: string): Promise<void>;
+    requestConversation(targetUserId: string): Promise<void>;
+    fetchHistory(groupId: string): Promise<{ sender_id: string, content: string, timestamp: string }[]>;
+    
+    // Callbacks
     onMessage(callback: (senderId: string, content: Uint8Array) => void): void;
+    onConversationRequest(callback: (requesterId: string) => void): void;
 }
 
 // Implémentation pour le Site Web (WASM)
@@ -21,6 +26,7 @@ export class WebMlsService implements IMlsService {
     private client: any;
     private ws: WebSocket | null = null;
     private messageCallback: ((senderId: string, content: Uint8Array) => void) | null = null;
+    private conversationRequestCallback: ((requesterId: string) => void) | null = null;
     private baseUrl = "http://localhost:3000"; // Chat Gateway URL
     private userId: string = "unknown";
 
@@ -38,16 +44,38 @@ export class WebMlsService implements IMlsService {
             this.ws.onmessage = async (event) => {
                 try {
                     const data = JSON.parse(event.data);
-                    // The gateway sends us `MessageSentEvent` JSON
-                    // which contains `content` (base64 encoded MLS blob)
-                    if (data.content && this.messageCallback) {
-                        // Decode base64 to Uint8Array
-                        const binaryParams = atob(data.content);
-                        const bytes = new Uint8Array(binaryParams.length);
-                        for (let i = 0; i < binaryParams.length; i++) {
-                            bytes[i] = binaryParams.charCodeAt(i);
+                    let base64Content: string | null = null;
+                    const senderId: string = data.senderId || data.sender_id || "unknown";
+
+                    // Handle conversation requests
+                    if (data.type === "conversationRequest" && this.conversationRequestCallback) {
+                        const requesterId = data.sender_id; // sender_id = who initiated the request
+                        this.conversationRequestCallback(requesterId);
+                        return;
+                    }
+
+                    // Filter out own messages (avoid echo from server broadcast)
+                    // Always drop messages where WE are the sender — no type check needed
+                    if (senderId === this.userId) {
+                        console.debug(`Filtering out own message echo`);
+                        return;
+                    }
+
+                    if (data.type === "mlsWelcome" && data.content) {
+                        // Welcome message pour rejoindre un groupe
+                        base64Content = data.content;
+                    } else if (data.content) {
+                        // Message MLS chiffré standard
+                        base64Content = data.content;
+                    }
+
+                    if (base64Content && this.messageCallback) {
+                        const binaryString = atob(base64Content);
+                        const bytes = new Uint8Array(binaryString.length);
+                        for (let i = 0; i < binaryString.length; i++) {
+                            bytes[i] = binaryString.charCodeAt(i);
                         }
-                        this.messageCallback(data.senderId || data.sender_id, bytes);
+                        this.messageCallback(senderId, bytes);
                     }
                 } catch (e) {
                     console.error("Failed to process WebSocket message:", e);
@@ -58,6 +86,10 @@ export class WebMlsService implements IMlsService {
 
     onMessage(callback: (senderId: string, content: Uint8Array) => void) {
         this.messageCallback = callback;
+    }
+
+    onConversationRequest(callback: (requesterId: string) => void) {
+        this.conversationRequestCallback = callback;
     }
 
     async fetchKeyPackage(userId: string): Promise<Uint8Array | null> {
@@ -85,15 +117,21 @@ export class WebMlsService implements IMlsService {
             console.warn("WebSocket not connected, cannot publish KeyPackage");
             return;
         }
-        
-        // Encode to Base64
         const base64 = btoa(String.fromCharCode(...keyPackageBytes));
-        
-        const msg = {
-            type: "keyPackagePublish",
-            payload: base64
-        };
-        this.ws.send(JSON.stringify(msg));
+        this.ws.send(JSON.stringify({ type: "keyPackagePublish", payload: base64 }));
+    }
+
+    async sendWelcome(welcomeBytes: Uint8Array, targetUserId: string): Promise<void> {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+            console.warn("WebSocket not connected, cannot send Welcome");
+            return;
+        }
+        const base64 = btoa(String.fromCharCode(...welcomeBytes));
+        this.ws.send(JSON.stringify({ 
+            type: "mlsWelcome", 
+            payload: base64, 
+            targetUserId: targetUserId 
+        }));
     }
 
     async init(userId: string, pin: string, state?: Uint8Array) {
@@ -186,7 +224,8 @@ export class WebMlsService implements IMlsService {
             const base64 = btoa(String.fromCharCode(...encryptedBytes));
             const payload = {
                 type: "mlsMessage",
-                payload: base64
+                payload: base64,
+                groupId: groupId
             };
             this.ws.send(JSON.stringify(payload));
         }
@@ -197,6 +236,29 @@ export class WebMlsService implements IMlsService {
     async processIncomingMessage(groupId: string, messageBytes: Uint8Array) {
         return this.client.process_incoming_message(groupId, messageBytes);
     }
+
+    async fetchHistory(groupId: string): Promise<{ sender_id: string, content: string, timestamp: string }[]> {
+        try {
+            const res = await fetch(`${this.baseUrl}/history/${groupId}`);
+            if (!res.ok) return [];
+            const messages = await res.json();
+            return messages;
+        } catch (e) {
+            console.error("Fetch History Error:", e);
+            return [];
+        }
+    }
+
+    async requestConversation(targetUserId: string): Promise<void> {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+            console.warn("WebSocket not connected, cannot request conversation");
+            return;
+        }
+        this.ws.send(JSON.stringify({ 
+            type: "conversationRequest", 
+            targetUserId: targetUserId 
+        }));
+    }
 }
 
 // Implémentation pour Tauri (App Mobile/Desktop)
@@ -206,7 +268,9 @@ import { invoke } from '@tauri-apps/api/core';
 export class TauriMlsService implements IMlsService {
     private ws: WebSocket | null = null;
     private messageCallback: ((senderId: string, content: Uint8Array) => void) | null = null;
+    private conversationRequestCallback: ((requesterId: string) => void) | null = null;
     private baseUrl = "http://localhost:3000";
+    private userId: string = "unknown";
 
     async connect(token: string): Promise<void> {
         // Reuse direct WebSocket logic for now (Tauri allows localhost by default)
@@ -220,13 +284,36 @@ export class TauriMlsService implements IMlsService {
             this.ws.onmessage = async (event) => {
                 try {
                     const data = JSON.parse(event.data);
-                    if (data.content && this.messageCallback) {
-                        const binaryParams = atob(data.content);
-                        const bytes = new Uint8Array(binaryParams.length);
-                        for (let i = 0; i < binaryParams.length; i++) {
-                            bytes[i] = binaryParams.charCodeAt(i);
+                    let base64Content: string | null = null;
+                    const senderId: string = data.senderId || data.sender_id || "unknown";
+
+                    // Handle conversation requests
+                    if (data.type === "conversationRequest" && this.conversationRequestCallback) {
+                        const requesterId = data.sender_id; // sender_id = who initiated the request
+                        this.conversationRequestCallback(requesterId);
+                        return;
+                    }
+
+                    // Filter out own messages (avoid echo from server broadcast)
+                    // Always drop messages where WE are the sender — no type check needed
+                    if (senderId === this.userId) {
+                        console.debug(`Filtering out own message echo`);
+                        return;
+                    }
+
+                    if (data.type === "mlsWelcome" && data.content) {
+                        base64Content = data.content;
+                    } else if (data.content) {
+                        base64Content = data.content;
+                    }
+
+                    if (base64Content && this.messageCallback) {
+                        const binaryString = atob(base64Content);
+                        const bytes = new Uint8Array(binaryString.length);
+                        for (let i = 0; i < binaryString.length; i++) {
+                            bytes[i] = binaryString.charCodeAt(i);
                         }
-                        this.messageCallback(data.senderId || data.sender_id, bytes);
+                        this.messageCallback(senderId, bytes);
                     }
                 } catch (e) {
                     console.error("Failed to process WebSocket message:", e);
@@ -237,6 +324,10 @@ export class TauriMlsService implements IMlsService {
 
     onMessage(callback: (senderId: string, content: Uint8Array) => void) {
         this.messageCallback = callback;
+    }
+
+    onConversationRequest(callback: (requesterId: string) => void) {
+        this.conversationRequestCallback = callback;
     }
 
     async fetchKeyPackage(userId: string): Promise<Uint8Array | null> {
@@ -262,9 +353,20 @@ export class TauriMlsService implements IMlsService {
         this.ws.send(JSON.stringify({ type: "keyPackagePublish", payload: base64 }));
     }
 
+    async sendWelcome(welcomeBytes: Uint8Array, targetUserId: string): Promise<void> {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        const base64 = btoa(String.fromCharCode(...welcomeBytes));
+        this.ws.send(JSON.stringify({ 
+            type: "mlsWelcome", 
+            payload: base64, 
+            targetUserId: targetUserId 
+        }));
+    }
+
     async init(userId: string, pin: string, state?: Uint8Array) {
-        const encrypted_state = state ? Array.from(state) : null;
-        await invoke('initialiser_mls', { user_id: userId, pin, encrypted_state });
+        this.userId = userId;
+        const encryptedState = state ? Array.from(state) : null;
+        await invoke('initialiser_mls', { userId, pin, encryptedState });
     }
 
     async createGroup(groupId: string) {
@@ -309,7 +411,7 @@ export class TauriMlsService implements IMlsService {
         // Send via WebSocket if connected
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
             const base64 = btoa(String.fromCharCode(...encryptedBytes));
-            this.ws.send(JSON.stringify({ type: "mlsMessage", payload: base64 }));
+            this.ws.send(JSON.stringify({ type: "mlsMessage", payload: base64, groupId: groupId }));
         }
 
         return encryptedBytes;
@@ -317,5 +419,28 @@ export class TauriMlsService implements IMlsService {
 
     async processIncomingMessage(groupId: string, messageBytes: Uint8Array) {
         return await invoke<string | null>('recevoir_message', { groupId, messageBytes: Array.from(messageBytes) });
+    }
+
+    async fetchHistory(groupId: string): Promise<{ sender_id: string, content: string, timestamp: string }[]> {
+        try {
+            const res = await fetch(`http://localhost:3000/history/${groupId}`);
+            if (!res.ok) return [];
+            const messages = await res.json();
+            return messages;
+        } catch (e) {
+            console.error("Fetch History Error:", e);
+            return [];
+        }
+    }
+
+    async requestConversation(targetUserId: string): Promise<void> {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+            console.warn("WebSocket not connected, cannot request conversation");
+            return;
+        }
+        this.ws.send(JSON.stringify({ 
+            type: "conversationRequest", 
+            targetUserId: targetUserId 
+        }));
     }
 }

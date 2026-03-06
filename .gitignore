@@ -24,3 +24,16 @@ pnpm-debug.log*
 # Rust
 target/
 **/*.rs.bk
+
+# Svelte
+.svelte-kit/
+*.backup
+
+# Java/Gradle
+.gradle/
+!gradle/wrapper/gradle-wrapper.jar
+out/
+
+# Figma
+Figma/
+
