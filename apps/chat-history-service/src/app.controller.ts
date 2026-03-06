@@ -1,57 +1,217 @@
-import { Controller, Get } from '@nestjs/common';
-import { EventPattern, Payload } from '@nestjs/microservices';
+import { Controller, Get, Post, Body, Param, Put, Delete, Inject } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { Message } from './message.schema';
-import {
-  MessageSentEvent,
-  MessageReadEvent,
-  KAFKA_TOPICS,
-} from '@mines-app/shared-ts';
+import { QueuedMessage } from './queued-message.schema';
+import { KeyPackage } from './key-package.schema';
+import { WelcomeMessage } from './welcome-message.schema';
+import { GroupMember } from './group-member.schema';
+import { UserState } from './user-state.schema';
+import Redis from 'ioredis';
+import * as crypto from 'crypto';
+
+// Server-Side Encryption Key (In production, use strict ENV vars or KMS)
+const ENCRYPTION_KEY = Buffer.from('b340600b2f803ee7fab5e4bd8a69c142ef06c682002c85e9f230ab8dd1df0b7e', 'hex');
+const IV_LENGTH = 16;
+
+function encryptServerSide(text: string): string {
+    const iv = crypto.randomBytes(IV_LENGTH);
+    const cipher = crypto.createCipheriv('aes-256-gcm', ENCRYPTION_KEY, iv);
+    let encrypted = cipher.update(text, 'utf8', 'hex');
+    encrypted += cipher.final('hex');
+    const authTag = cipher.getAuthTag().toString('hex');
+    // Store as IV:AuthTag:Encrypted
+    return `${iv.toString('hex')}:${authTag}:${encrypted}`;
+}
+
+function decryptServerSide(text: string): string {
+    const parts = text.split(':');
+    if (parts.length < 3) return text; // Fallback for unencrypted legacy data
+    
+    const iv = Buffer.from(parts[0], 'hex');
+    const authTag = Buffer.from(parts[1], 'hex');
+    const encryptedText = parts[2];
+    
+    const decipher = crypto.createDecipheriv('aes-256-gcm', ENCRYPTION_KEY, iv);
+    decipher.setAuthTag(authTag);
+    let decrypted = decipher.update(encryptedText, 'hex', 'utf8');
+    decrypted += decipher.final('utf8');
+    return decrypted;
+}
 
 @Controller()
 export class AppController {
   constructor(
-    @InjectModel(Message.name) private messageModel: Model<Message>,
+    @InjectModel(QueuedMessage.name) private queuedMessageModel: Model<QueuedMessage>,
+    @InjectModel(KeyPackage.name) private keyPackageModel: Model<KeyPackage>,
+    @InjectModel(WelcomeMessage.name) private welcomeMessageModel: Model<WelcomeMessage>,
+    @InjectModel(GroupMember.name) private groupMemberModel: Model<GroupMember>,
+    @InjectModel(UserState.name) private userStateModel: Model<UserState>,
+    @Inject('REDIS_CLIENT') private readonly redis: Redis
   ) {}
 
-  @Get('messages')
-  async getMessages() {
-    return this.messageModel.find().sort({ createdAt: -1 }).limit(10).exec();
+  @Post('mls/state')
+  async uploadUserState(@Body() body: { userId: string, encryptedState: string }) {
+    // Double Encryption: Encrypt the already client-encrypted blob with Server Key
+    const serverEncrypted = encryptServerSide(body.encryptedState);
+    
+    await this.userStateModel.updateOne(
+        { userId: body.userId },
+        { $set: { encryptedState: serverEncrypted, updatedAt: new Date() } },
+        { upsert: true }
+    );
+    return { status: 'success' };
   }
 
-  @EventPattern(KAFKA_TOPICS.CHAT_MESSAGES)
-  async handleChatMessage(@Payload() message: MessageSentEvent | { value: MessageSentEvent }) {
-    console.log('Received message from Kafka:', message);
-
-    // Support both wrapped NestJS Kafka messages and raw payloads
-    const eventData = 
-      message && 'value' in message ? (message as { value: MessageSentEvent }).value : (message as MessageSentEvent);
-
-    const createdMessage = new this.messageModel({
-      uuid: eventData.id,
-      content: eventData.content,
-      username: eventData.username,
-      senderId: eventData.senderId,
-      createdAt: new Date(eventData.timestamp),
-      readBy: [],
-    });
-
-    await createdMessage.save();
-    console.log('Message saved to MongoDB');
+  @Get('mls/state/:userId')
+  async getUserState(@Param('userId') userId: string) {
+    const doc = await this.userStateModel.findOne({ userId }).exec();
+    if (!doc) return null;
+    
+    // Decrypt before sending back to client
+    try {
+        const originalBlob = decryptServerSide(doc.encryptedState);
+        return { ...doc.toObject(), encryptedState: originalBlob };
+    } catch (e) {
+        console.error("Decryption failed for user", userId, e);
+        return null;
+    }
   }
 
-  @EventPattern(KAFKA_TOPICS.MESSAGE_READ)
-  async handleMessageRead(@Payload() message: MessageReadEvent | { value: MessageReadEvent }) {
-    const eventData = 
-      message && 'value' in message ? (message as { value: MessageReadEvent }).value : (message as MessageReadEvent);
-    console.log(
-      `Message ${eventData.messageId} read by ${eventData.userId} at ${eventData.timestamp}`,
-    );
 
-    await this.messageModel.updateOne(
-      { uuid: eventData.messageId },
-      { $addToSet: { readBy: eventData.userId } },
+  @Post('mls-api/groups/:groupId/members')
+  async addGroupMember(@Param('groupId') groupId: string, @Body() body: { userId: string, deviceId: string }) {
+      await this.groupMemberModel.updateOne(
+          { groupId, userId: body.userId, deviceId: body.deviceId },
+          { $set: { joinedAt: new Date() } },
+          { upsert: true }
+      );
+      // Sync to Redis for Gateway access
+      await this.redis.sadd(`group:members:${groupId}`, `${body.userId}:${body.deviceId}`);
+      return { status: 'added' };
+  }
+
+  @Get('mls-api/groups/:groupId/members')
+  async getGroupMembers(@Param('groupId') groupId: string) {
+      return this.groupMemberModel.find({ groupId }).exec();
+  }
+
+  @Post('mls-api/register-device')
+  async registerDevice(@Body() body: { userId: string, deviceId: string, keyPackage: string }) {
+    await this.keyPackageModel.updateOne(
+        { userId: body.userId, deviceId: body.deviceId },
+        { 
+            $set: { 
+                keyPackage: body.keyPackage,
+                createdAt: new Date() 
+            }
+        },
+        { upsert: true }
     );
+    return { status: 'registered' };
+  }
+
+  @Get('mls-api/devices/:userId')
+  async getUserDevices(@Param('userId') userId: string) {
+      // Returns all active devices for a user
+      return this.keyPackageModel.find({ userId }).sort({ createdAt: -1 }).exec();
+  }
+
+  @Post('mls-api/send')
+  async sendMessage(@Body() body: { 
+      senderId: string,
+      senderDeviceId?: string, 
+      recipients?: { userId: string, deviceId: string }[], 
+      content: string, 
+      groupId: string
+  }) {
+      const { senderId, senderDeviceId, content, groupId } = body;
+      let recipients = body.recipients;
+
+      // If recipients not provided, fetch from DB
+      if (!recipients || recipients.length === 0) {
+          const members = await this.groupMemberModel.find({ groupId }).lean().exec();
+          recipients = members
+            .filter(m => {
+                // If senderDeviceId is known, exclude only that device
+                if (senderDeviceId) return !(m.userId === senderId && m.deviceId === senderDeviceId);
+                // Otherwise exclude all devices of sender (fallback)
+                return m.userId !== senderId;
+            }) 
+            .map(m => ({ userId: m.userId, deviceId: m.deviceId }));
+      }
+      
+      const ops = [];
+      let sentCount = 0;
+
+      for (const r of recipients) {
+          // Check if specific device is connected to Gateway
+          const isOnline = await this.redis.get(`user:online:${r.userId}:${r.deviceId}`);
+          
+          if (isOnline) {
+              // Push directly to Gateway via Redis PubSub
+              await this.redis.publish('chat:messages', JSON.stringify({
+                  recipientId: r.userId,
+                  deviceId: r.deviceId,
+                  senderId,
+                  groupId,
+                  content
+              }));
+              sentCount++;
+          } else {
+              // Queue for polling (Store)
+              ops.push({
+                  insertOne: {
+                      document: {
+                          recipientId: r.userId,
+                          deviceId: r.deviceId,
+                          senderId,
+                          groupId,
+                          content,
+                          createdAt: new Date()
+                      }
+                  }
+              });
+          }
+      }
+
+      if (ops.length > 0) {
+          await this.queuedMessageModel.bulkWrite(ops);
+      }
+      
+      return { status: 'processed', queued: ops.length, sent: sentCount };
+  }
+
+  @Get('history/:groupId')
+  async getHistory(@Param('groupId') groupId: string) {
+      const streamKey = `history:${groupId}`;
+      try {
+          // ioredis xrange returns [id, [key, value, key, value...]]
+          const entries = await this.redis.xrange(streamKey, '-', '+');
+          return entries.map(([id, fields]) => {
+              const msg: any = { id };
+              for (let i = 0; i < fields.length; i += 2) {
+                  msg[fields[i]] = fields[i+1];
+              }
+              return msg;
+          });
+      } catch (e) {
+          console.error("History fetch error:", e);
+          return [];
+      }
+  }
+
+  @Get('mls-api/messages/:userId/:deviceId')
+  async fetchMessages(@Param('userId') userId: string, @Param('deviceId') deviceId: string) {
+      const messages = await this.queuedMessageModel.find({ 
+          recipientId: userId, 
+          deviceId: deviceId 
+      }).sort({ createdAt: 1 }).lean().exec();
+
+      if (messages.length > 0) {
+          const ids = messages.map(m => m._id);
+          await this.queuedMessageModel.deleteMany({ _id: { $in: ids } });
+      }
+
+      return messages;
   }
 }

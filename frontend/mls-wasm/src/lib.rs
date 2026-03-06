@@ -81,6 +81,16 @@ impl WasmMlsClient {
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
+    #[wasm_bindgen]
+    pub fn get_groups(&self) -> js_sys::Array {
+        let groups = self.manager.get_known_groups();
+        let arr = js_sys::Array::new();
+        for g in groups {
+            arr.push(&JsValue::from_str(&g));
+        }
+        arr
+    }
+
     // Sauvegarder l'état (renvoie un Uint8Array en JS)
     #[wasm_bindgen]
     pub fn save_state(&self, pin: Option<String>) -> Result<Vec<u8>, JsValue> {
@@ -173,4 +183,42 @@ impl WasmMlsClient {
             None => Ok(None),
         }
     }
+}
+
+// Security Utilities (Encryption at Rest)
+// Uses the same logic as MLS Core (Argon2 + ChaCha20Poly1305)
+
+#[wasm_bindgen]
+pub fn encrypt_with_pin(pin: &str, data: &[u8]) -> Result<Vec<u8>, JsValue> {
+    let mut salt = [0u8; 16];
+    getrandom::getrandom(&mut salt)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    
+    let key = mls_core::security::derive_key_from_pin(pin, &salt)
+        .map_err(|e| JsValue::from_str(&e))?;
+        
+    let nonce_ciphertext = mls_core::security::encrypt_blob(&key, data)
+        .map_err(|e| JsValue::from_str(&e))?;
+        
+    let mut result = Vec::new();
+    result.extend_from_slice(&salt);
+    result.extend_from_slice(&nonce_ciphertext);
+    Ok(result)
+}
+
+#[wasm_bindgen]
+pub fn decrypt_with_pin(pin: &str, encrypted_data: &[u8]) -> Result<Vec<u8>, JsValue> {
+    if encrypted_data.len() < 16 + 12 {
+        return Err(JsValue::from_str("Invalid encrypted data length"));
+    }
+    
+    let (salt, rest) = encrypted_data.split_at(16);
+    
+    let key = mls_core::security::derive_key_from_pin(pin, &salt)
+        .map_err(|e| JsValue::from_str(&e))?;
+        
+    let plaintext = mls_core::security::decrypt_blob(&key, rest)
+        .map_err(|e| JsValue::from_str(&e))?;
+        
+    Ok(plaintext)
 }

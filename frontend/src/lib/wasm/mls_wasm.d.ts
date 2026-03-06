@@ -7,12 +7,17 @@ export class WasmMlsClient {
     add_member(group_id: string, key_package_bytes: Uint8Array): Array<any>;
     create_group(group_id: string): void;
     generate_key_package(): Uint8Array;
+    get_groups(): Array<any>;
     constructor(user_id: string, state_bytes?: Uint8Array | null, pin?: string | null);
     process_incoming_message(group_id: string, message_bytes: Uint8Array): string | undefined;
     process_welcome(welcome_bytes: Uint8Array): string;
     save_state(pin?: string | null): Uint8Array;
     send_message(group_id: string, message: string): Uint8Array;
 }
+
+export function decrypt_with_pin(pin: string, encrypted_data: Uint8Array): Uint8Array;
+
+export function encrypt_with_pin(pin: string, data: Uint8Array): Uint8Array;
 
 export function init_logger(): void;
 
@@ -21,10 +26,13 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_wasmmlsclient_free: (a: number, b: number) => void;
+    readonly decrypt_with_pin: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly encrypt_with_pin: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly init_logger: () => void;
     readonly wasmmlsclient_add_member: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
     readonly wasmmlsclient_create_group: (a: number, b: number, c: number) => [number, number];
     readonly wasmmlsclient_generate_key_package: (a: number) => [number, number, number, number];
+    readonly wasmmlsclient_get_groups: (a: number) => any;
     readonly wasmmlsclient_new: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly wasmmlsclient_process_incoming_message: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly wasmmlsclient_process_welcome: (a: number, b: number, c: number) => [number, number, number, number];

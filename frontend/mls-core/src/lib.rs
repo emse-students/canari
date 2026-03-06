@@ -162,6 +162,10 @@ impl MlsManager {
         Ok(())
     }
 
+    pub fn get_known_groups(&self) -> Vec<String> {
+        self.groups.keys().cloned().collect()
+    }
+
     // --- C. AJOUT DE MEMBRE ---
 
     pub fn add_member(

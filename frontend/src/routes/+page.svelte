@@ -527,7 +527,7 @@
           }
 
           // Send Welcome with targetUserId so server can store it if offline
-          await mls.sendWelcome(result.welcome!, contact);
+          await mls.sendWelcome(result.welcome!, contact, groupId);
 
           const convo = conversations.get(contact);
           if (convo) {

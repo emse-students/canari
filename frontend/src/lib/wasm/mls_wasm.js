@@ -51,6 +51,13 @@ export class WasmMlsClient {
         return v1;
     }
     /**
+     * @returns {Array<any>}
+     */
+    get_groups() {
+        const ret = wasm.wasmmlsclient_get_groups(this.__wbg_ptr);
+        return ret;
+    }
+    /**
      * @param {string} user_id
      * @param {Uint8Array | null} [state_bytes]
      * @param {string | null} [pin]
@@ -150,6 +157,44 @@ export class WasmMlsClient {
     }
 }
 if (Symbol.dispose) WasmMlsClient.prototype[Symbol.dispose] = WasmMlsClient.prototype.free;
+
+/**
+ * @param {string} pin
+ * @param {Uint8Array} encrypted_data
+ * @returns {Uint8Array}
+ */
+export function decrypt_with_pin(pin, encrypted_data) {
+    const ptr0 = passStringToWasm0(pin, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(encrypted_data, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.decrypt_with_pin(ptr0, len0, ptr1, len1);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v3;
+}
+
+/**
+ * @param {string} pin
+ * @param {Uint8Array} data
+ * @returns {Uint8Array}
+ */
+export function encrypt_with_pin(pin, data) {
+    const ptr0 = passStringToWasm0(pin, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.encrypt_with_pin(ptr0, len0, ptr1, len1);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v3;
+}
 
 export function init_logger() {
     wasm.init_logger();
