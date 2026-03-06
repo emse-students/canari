@@ -68,7 +68,19 @@ Set-Location "apps/chat-history-service"
 npm install
 Set-Location ../../
 
-# 3.3 Frontend
+# 3.3 Auth Service
+Write-Host "   👉 apps/auth-service"
+Set-Location "apps/auth-service"
+npm install
+Set-Location ../../
+
+# 3.4 User Service
+Write-Host "   👉 apps/user-service"
+Set-Location "apps/user-service"
+npm install
+Set-Location ../../
+
+# 3.5 Frontend
 Write-Host "   👉 frontend"
 Set-Location "frontend"
 npm install

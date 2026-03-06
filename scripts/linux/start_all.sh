@@ -42,8 +42,8 @@ launch_terminal() {
 
 launch_terminal "Chat Gateway (Rust)" "apps/chat-gateway" "cargo run"
 launch_terminal "Chat History Service (Node)" "apps/chat-history-service" "npm install && npm run start:dev"
-launch_terminal "Auth Service (Java)" "apps/auth-service" "./gradlew bootRun"
-launch_terminal "User Service (Java)" "apps/user-service" "./gradlew bootRun"
+launch_terminal "Auth Service (Node)" "apps/auth-service" "npm install && npm run start:dev"
+launch_terminal "User Service (Node)" "apps/user-service" "npm install && npm run start:dev"
 
 # 4. Lancement du frontend (Tauri)
 echo -e "\n\e[33m[4/4] Lancement du Frontend (Application Desktop Tauri)...\e[0m"

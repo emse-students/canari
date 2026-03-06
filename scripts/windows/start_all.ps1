@@ -59,13 +59,13 @@ else {
 Write-Host "  -> Lancement de Chat History Service" -ForegroundColor DarkGray
 Start-Process pwsh -ArgumentList "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", "`$host.UI.RawUI.WindowTitle='Chat History Service (Node)'; Set-Location apps/chat-history-service; npm install; npm run start:dev"
 
-# Auth Service (Java/Spring)
+# Auth Service (NestJS)
 Write-Host "  -> Lancement de Auth Service" -ForegroundColor DarkGray
-Start-Process pwsh -ArgumentList "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", "`$host.UI.RawUI.WindowTitle='Auth Service (Java)'; Set-Location apps/auth-service; ./gradlew bootRun"
+Start-Process pwsh -ArgumentList "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", "`$host.UI.RawUI.WindowTitle='Auth Service (Node)'; Set-Location apps/auth-service; npm install; npm run start:dev"
 
-# User Service (Java/Spring)
+# User Service (NestJS)
 Write-Host "  -> Lancement de User Service" -ForegroundColor DarkGray
-Start-Process pwsh -ArgumentList "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", "`$host.UI.RawUI.WindowTitle='User Service (Java)'; Set-Location apps/user-service; ./gradlew bootRun"
+Start-Process pwsh -ArgumentList "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", "`$host.UI.RawUI.WindowTitle='User Service (Node)'; Set-Location apps/user-service; npm install; npm run start:dev"
 
 # 4. Lancement du frontend (Tauri)
 Write-Host "`n[4/4] Lancement du Frontend (Application Desktop Tauri)..." -ForegroundColor Yellow

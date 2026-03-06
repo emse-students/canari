@@ -21,7 +21,7 @@ foreach ($proc in @('chat-gateway', 'cargo', 'node', 'mines-app')) {
     }
 }
 
-# Tuer les processus Java (auth-service, user-service)
+# Tuer les processus Java (anciens) si existants
 Get-Process -Name "java" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
 # Libérer les ports clés
@@ -43,8 +43,8 @@ Write-Host "`n[3/3] Fermeture des terminaux ouverts par start_all..." -Foregroun
 $titles = @(
     "Chat Gateway (Rust)",
     "Chat History Service (Node)",
-    "Auth Service (Java)",
-    "User Service (Java)",
+    "Auth Service (Node)",
+    "User Service (Node)",
     "Frontend (Tauri)"
 )
 foreach ($title in $titles) {
