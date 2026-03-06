@@ -1,7 +1,7 @@
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
-use uuid::Uuid;
+use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+use uuid::Uuid;
 
 pub const TOPIC_CHAT_MESSAGES: &str = "chat_messages";
 pub const TOPIC_MESSAGE_READ: &str = "message_read";
@@ -80,7 +80,7 @@ mod tests {
 
     #[test]
     fn test_post_created_event_creation() {
-         let id = Uuid::new_v4();
+        let id = Uuid::new_v4();
         let timestamp = Utc::now();
         let event = PostCreatedEvent {
             id,

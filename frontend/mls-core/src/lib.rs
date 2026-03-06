@@ -2,12 +2,12 @@ pub mod security;
 use security::{decrypt_blob, derive_key_from_pin, encrypt_blob};
 
 use ciborium::{de::from_reader, ser::into_writer};
-use openmls::prelude::{hash_ref::HashReference, *};
+use openmls::prelude::*;
 use openmls::treesync::RatchetTreeIn;
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
+use openmls_traits::OpenMlsProvider;
 use openmls_traits::storage::StorageProvider; // Explicit import for write_key_package
-use openmls_traits::OpenMlsProvider; 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
@@ -184,7 +184,11 @@ impl MlsManager {
 
         // 2. UTILISER add_members (High-Level API)
         let (commit_msg_out, welcome_msg_out, _group_info) = group
-            .add_members(&self.provider, &self.keypair, &[key_package.clone()])
+            .add_members(
+                &self.provider,
+                &self.keypair,
+                std::slice::from_ref(&key_package),
+            )
             .map_err(|e| MlsError::OpenMls(format!("AddMembers high-level error: {:?}", e)))?;
 
         // CHECK WELCOME
@@ -192,36 +196,55 @@ impl MlsManager {
         // It provides .into_welcome() or just access to body if it's plaintext.
         // Let's assume MlsMessageOut has a body that is a Welcome.
         // We can inspect it if we know the structure.
-        
+
         // Wait, MlsMessageOut is NOT an enum with Welcome in some versions, it wraps MlsMessage.
         // MlsMessage body is Welcome.
-        
+
         let welcome = match welcome_msg_out.body() {
-             MlsMessageBodyOut::Welcome(w) => w,
-             _ => return Err(MlsError::OpenMls("AddMembers returned something that is not a Welcome message!".to_string())),
+            MlsMessageBodyOut::Welcome(w) => w,
+            _ => {
+                return Err(MlsError::OpenMls(
+                    "AddMembers returned something that is not a Welcome message!".to_string(),
+                ));
+            }
         };
 
         if welcome.secrets().is_empty() {
-             return Err(MlsError::OpenMls(format!("GENERATED EMPTY WELCOME! The KeyPackage provided was {:?}. Group count: {}", key_package.hash_ref(self.provider.crypto()), group.members().count())));
+            return Err(MlsError::OpenMls(format!(
+                "GENERATED EMPTY WELCOME! The KeyPackage provided was {:?}. Group count: {}",
+                key_package.hash_ref(self.provider.crypto()),
+                group.members().count()
+            )));
         }
 
         // Display debug info about the welcome secrets and the key package hash ref
-        let welcome_secrets_info: Vec<String> = welcome.secrets().iter().map(|s| {
-            let new_member = s.new_member(); // This returns KeyPackageRef (which is HashReference)
-            let bytes = new_member.as_slice();
-            let hex = bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>();
-            format!("Welcome Secret Ref: {}", hex)
-        }).collect();
+        let welcome_secrets_info: Vec<String> = welcome
+            .secrets()
+            .iter()
+            .map(|s| {
+                let new_member = s.new_member(); // This returns KeyPackageRef (which is HashReference)
+                let bytes = new_member.as_slice();
+                let hex = bytes
+                    .iter()
+                    .map(|b| format!("{:02x}", b))
+                    .collect::<String>();
+                format!("Welcome Secret Ref: {}", hex)
+            })
+            .collect();
 
-        log::info!("DEBUG: Welcome secrets refs: {:?}, KeyPackage hash ref: {:?}", welcome_secrets_info, key_package.hash_ref(self.provider.crypto()));
+        log::info!(
+            "DEBUG: Welcome secrets refs: {:?}, KeyPackage hash ref: {:?}",
+            welcome_secrets_info,
+            key_package.hash_ref(self.provider.crypto())
+        );
 
         // 3. APPLIQUER le commit localement
-        // Note: add_members returns the commit but DOES NOT auto-merge it in some versions (it returns StagedCommit equivalently). 
+        // Note: add_members returns the commit but DOES NOT auto-merge it in some versions (it returns StagedCommit equivalently).
         // We must merge the pending commit.
         group
             .merge_pending_commit(&self.provider)
             .map_err(|e| MlsError::OpenMls(format!("Merge error: {:?}", e)))?;
-        
+
         let commit_bytes = commit_msg_out.tls_serialize_detached().unwrap();
         let welcome_bytes = welcome_msg_out.tls_serialize_detached().unwrap();
 
@@ -244,7 +267,8 @@ impl MlsManager {
             },
             Err(_) => {
                 // Fallback: Try raw Welcome
-                Welcome::tls_deserialize(&mut &welcome_bytes[..]).map_err(|_| MlsError::InvalidData)?
+                Welcome::tls_deserialize(&mut &welcome_bytes[..])
+                    .map_err(|_| MlsError::InvalidData)?
             }
         };
 
@@ -279,14 +303,14 @@ impl MlsManager {
                              }
                         })
                         .collect();
-                    
+
                     // Try to inspect secrets from welcome
                     let requested_refs: Vec<String> = welcome.secrets().iter().map(|s| {
                         // Just debug format the struct, we don't know the fields easily without docs
                         let new_member = s.new_member(); // This returns KeyPackageRef (which is HashReference)
                         let bytes = new_member.as_slice();
                         let hex = bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>();
-                        format!("Ref: {}", hex) 
+                        format!("Ref: {}", hex)
                     }).collect();
 
                     MlsError::OpenMls(format!("Join error (staged): {:?}. \nWanted Refs (len={}): {:?}. \nStorage keys (len={}): {:?}", e, welcome.secrets().len(), requested_refs, keys.len(), keys))
@@ -395,7 +419,7 @@ impl MlsManager {
 
         // 3. Collecter les IDs des groupes actifs
         let mut group_ids = Vec::new();
-        for (gid_str, _) in &self.groups {
+        for gid_str in self.groups.keys() {
             group_ids.push(gid_str.as_bytes().to_vec());
         }
 
@@ -438,7 +462,7 @@ impl MlsManager {
             .hash_ref(self.provider.crypto())
             .map_err(|e| MlsError::OpenMls(format!("HashRef error: {:?}", e)))?;
 
-        let hash_ref_bytes = hash_ref.as_slice();
+        let _hash_ref_bytes = hash_ref.as_slice();
         // Console log via error or panic? No, we can't easily console log from here without bindings.
         // We will rely on return verification.
 

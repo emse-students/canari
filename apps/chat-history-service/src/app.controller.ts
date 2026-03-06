@@ -3,11 +3,17 @@ import { EventPattern, Payload } from '@nestjs/microservices';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Message } from './message.schema';
-import { MessageSentEvent, MessageReadEvent, KAFKA_TOPICS } from '@mines-app/shared-ts';
+import {
+  MessageSentEvent,
+  MessageReadEvent,
+  KAFKA_TOPICS,
+} from '@mines-app/shared-ts';
 
 @Controller()
 export class AppController {
-  constructor(@InjectModel(Message.name) private messageModel: Model<Message>) {}
+  constructor(
+    @InjectModel(Message.name) private messageModel: Model<Message>,
+  ) {}
 
   @Get('messages')
   async getMessages() {
@@ -15,12 +21,12 @@ export class AppController {
   }
 
   @EventPattern(KAFKA_TOPICS.CHAT_MESSAGES)
-  async handleChatMessage(@Payload() message: MessageSentEvent) {
+  async handleChatMessage(@Payload() message: MessageSentEvent | { value: MessageSentEvent }) {
     console.log('Received message from Kafka:', message);
-    
+
     // Support both wrapped NestJS Kafka messages and raw payloads
-    // @ts-ignore
-    const eventData: MessageSentEvent = (message && message.value) ? message.value : message;
+    const eventData = 
+      message && 'value' in message ? (message as { value: MessageSentEvent }).value : (message as MessageSentEvent);
 
     const createdMessage = new this.messageModel({
       uuid: eventData.id,
@@ -28,23 +34,24 @@ export class AppController {
       username: eventData.username,
       senderId: eventData.senderId,
       createdAt: new Date(eventData.timestamp),
-      readBy: []
+      readBy: [],
     });
-    
+
     await createdMessage.save();
     console.log('Message saved to MongoDB');
   }
 
   @EventPattern(KAFKA_TOPICS.MESSAGE_READ)
-  async handleMessageRead(@Payload() message: MessageReadEvent) {
-    // @ts-ignore
-    const eventData: MessageReadEvent = (message && message.value) ? message.value : message;
-    console.log(`Message ${eventData.messageId} read by ${eventData.userId} at ${eventData.timestamp}`);
-    
+  async handleMessageRead(@Payload() message: MessageReadEvent | { value: MessageReadEvent }) {
+    const eventData = 
+      message && 'value' in message ? (message as { value: MessageReadEvent }).value : (message as MessageReadEvent);
+    console.log(
+      `Message ${eventData.messageId} read by ${eventData.userId} at ${eventData.timestamp}`,
+    );
+
     await this.messageModel.updateOne(
-        { uuid: eventData.messageId },
-        { $addToSet: { readBy: eventData.userId } }
+      { uuid: eventData.messageId },
+      { $addToSet: { readBy: eventData.userId } },
     );
   }
 }
-

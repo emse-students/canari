@@ -19,8 +19,8 @@ Le système combine des APIs REST classiques (CRUD) et des WebSockets (Temps ré
 ```text
 /
 ├── apps/                          # Services déployables
-│   ├── auth-service/              # [Java/Spring] Gestion Identité & JWT
-│   ├── user-service/              # [Java/Spring] Gestion Profils Utilisateurs
+│   ├── auth-service/              # [Node/NestJS] Gestion Identité & JWT
+│   ├── user-service/              # [Node/NestJS] Gestion Profils Utilisateurs
 │   ├── api-gateway/               # [Kong/Nginx] Point d'entrée unique (REST + WebSocket)
 │   ├── notification-service/      # [Node/NestJS] Envoi Notifications Push
 │   ├── chat-gateway/              # [Rust/Axum] Serveur WebSocket (Stateless)
@@ -46,11 +46,11 @@ Le système combine des APIs REST classiques (CRUD) et des WebSockets (Temps ré
 
 ## 3. Matrice Technologique
 
-| Service          | Langage / Framework      | Base de Données     | Rôle Principal                                                                           |
-| ---------------- | ------------------------ | ------------------- | ---------------------------------------------------------------------------------------- |
-| **Auth Service** | **Java** (Spring Boot 4) | **PostgreSQL**      | Inscription, Login, OAuth2, Sécurité.                                                    |
-| **User Service** | **Java** (Spring Boot 4) | **PostgreSQL**      | Gestion des profils utilisateurs.                                                        |
-| **Chat Gateway** | **Rust** (Axum + Tokio)  | **Redis** (Pub/Sub) | Gestion massive des connexions WebSockets (Pas de stockage) et chiffrement bout en bout. |
+| Service          | Langage / Framework     | Base de Données     | Rôle Principal                                                                           |
+| ---------------- | ----------------------- | ------------------- | ---------------------------------------------------------------------------------------- |
+| **Auth Service** | **Node.js** (NestJS)    | **PostgreSQL**      | Inscription, Login, OAuth2, Sécurité.                                                    |
+| **User Service** | **Node.js** (NestJS)    | **PostgreSQL**      | Gestion des profils utilisateurs.                                                        |
+| **Chat Gateway** | **Rust** (Axum + Tokio) | **Redis** (Pub/Sub) | Gestion massive des connexions WebSockets (Pas de stockage) et chiffrement bout en bout. |
 
 | **Chat History** | **Node.js** (NestJS) | **MongoDB** | Consomme Kafka et archive les conversations. |
 | **Feed Worker** | **Rust** | **Redis** (Cache) | Consomme Kafka et construit les Timelines (une timeline suivis et une timeline générale). |

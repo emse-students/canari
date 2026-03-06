@@ -24,5 +24,4 @@ export class Message {
   createdAt: Date;
 }
 
-
 export const MessageSchema = SchemaFactory.createForClass(Message);

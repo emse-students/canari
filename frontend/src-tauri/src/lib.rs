@@ -1,6 +1,6 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-use std::sync::Mutex;
-use mls_core::MlsManager; // Ensure mls_core is in dependencies
+use mls_core::MlsManager;
+use std::sync::Mutex; // Ensure mls_core is in dependencies
 
 // State wrapper
 struct AppState {
@@ -16,42 +16,46 @@ fn initialiser_mls(
     encrypted_state: Option<Vec<u8>>,
     state: tauri::State<AppState>,
 ) -> Result<String, String> {
-    let manager = MlsManager::load_encrypted(&user_id, encrypted_state, &pin)
-        .map_err(|e| e.to_string())?;
+    let manager =
+        MlsManager::load_encrypted(&user_id, encrypted_state, &pin).map_err(|e| e.to_string())?;
 
-    let mut lock = state.mls_manager.lock().map_err(|_| "Failed to lock state")?;
+    let mut lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
     *lock = Some(manager);
-    
+
     Ok("MLS Initialized".into())
 }
 
 #[tauri::command]
-fn sauvegarder_mls(
-    pin: String,
-    state: tauri::State<AppState>,
-) -> Result<Vec<u8>, String> {
-    let lock = state.mls_manager.lock().map_err(|_| "Failed to lock state")?;
+fn sauvegarder_mls(pin: String, state: tauri::State<AppState>) -> Result<Vec<u8>, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
     let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
 
     manager.save_encrypted(&pin).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn creer_groupe(
-    group_id: String,
-    state: tauri::State<AppState>,
-) -> Result<(), String> {
-    let mut lock = state.mls_manager.lock().map_err(|_| "Failed to lock state")?;
+fn creer_groupe(group_id: String, state: tauri::State<AppState>) -> Result<(), String> {
+    let mut lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
     let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
 
     manager.create_group(group_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn generer_key_package(
-    state: tauri::State<AppState>,
-) -> Result<Vec<u8>, String> {
-    let lock = state.mls_manager.lock().map_err(|_| "Failed to lock state")?;
+fn generer_key_package(state: tauri::State<AppState>) -> Result<Vec<u8>, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
     let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
 
     manager.generate_key_package().map_err(|e| e.to_string())
@@ -63,10 +67,14 @@ fn ajouter_membre(
     key_package_bytes: Vec<u8>,
     state: tauri::State<AppState>,
 ) -> Result<(Vec<u8>, Option<Vec<u8>>), String> {
-    let mut lock = state.mls_manager.lock().map_err(|_| "Failed to lock state")?;
+    let mut lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
     let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
 
-    manager.add_member(&group_id, &key_package_bytes)
+    manager
+        .add_member(&group_id, &key_package_bytes)
         .map_err(|e| e.to_string())
 }
 
@@ -75,10 +83,14 @@ fn trailer_welcome(
     welcome_bytes: Vec<u8>,
     state: tauri::State<AppState>,
 ) -> Result<String, String> {
-    let mut lock = state.mls_manager.lock().map_err(|_| "Failed to lock state")?;
+    let mut lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
     let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
 
-    manager.process_welcome(&welcome_bytes, None)
+    manager
+        .process_welcome(&welcome_bytes, None)
         .map_err(|e| e.to_string())
 }
 
@@ -88,10 +100,14 @@ fn envoyer_message(
     message: String, // Assume string for simplicity
     state: tauri::State<AppState>,
 ) -> Result<Vec<u8>, String> {
-    let mut lock = state.mls_manager.lock().map_err(|_| "Failed to lock state")?;
+    let mut lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
     let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
 
-    manager.send_message(&group_id, message.as_bytes())
+    manager
+        .send_message(&group_id, message.as_bytes())
         .map_err(|e| e.to_string())
 }
 
@@ -101,18 +117,21 @@ fn recevoir_message(
     message_bytes: Vec<u8>,
     state: tauri::State<AppState>,
 ) -> Result<Option<String>, String> {
-    let mut lock = state.mls_manager.lock().map_err(|_| "Failed to lock state")?;
+    let mut lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
     let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
 
-    let res = manager.process_incoming_message(&group_id, &message_bytes)
+    let res = manager
+        .process_incoming_message(&group_id, &message_bytes)
         .map_err(|e| e.to_string())?;
 
     match res {
         Some(bytes) => Ok(Some(String::from_utf8_lossy(&bytes).to_string())),
-        None => Ok(None)
+        None => Ok(None),
     }
 }
-
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

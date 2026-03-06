@@ -1,6 +1,11 @@
-
-use argon2::{Argon2, password_hash::rand_core::{OsRng, RngCore}};
-use chacha20poly1305::{aead::{Aead, KeyInit}, Nonce, ChaCha20Poly1305};
+use argon2::{
+    Argon2,
+    password_hash::rand_core::{OsRng, RngCore},
+};
+use chacha20poly1305::{
+    ChaCha20Poly1305, Nonce,
+    aead::{Aead, KeyInit},
+};
 
 pub fn derive_key_from_pin(pin: &str, salt: &[u8]) -> Result<[u8; 32], String> {
     let mut output_key = [0u8; 32];
@@ -16,8 +21,7 @@ pub fn encrypt_blob(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, String> {
     let mut nonce_bytes = [0u8; 12];
     OsRng.fill_bytes(&mut nonce_bytes);
     let nonce = Nonce::from_slice(&nonce_bytes);
-    let ciphertext = cipher.encrypt(nonce, data)
-        .map_err(|e| e.to_string())?;
+    let ciphertext = cipher.encrypt(nonce, data).map_err(|e| e.to_string())?;
 
     let mut result = Vec::new();
     result.extend_from_slice(nonce);
@@ -32,6 +36,5 @@ pub fn decrypt_blob(key: &[u8; 32], encrypted_data: &[u8]) -> Result<Vec<u8>, St
     let cipher = ChaCha20Poly1305::new(key.into());
     let (nonce_bytes, ciphertext) = encrypted_data.split_at(12);
     let nonce = Nonce::from_slice(nonce_bytes);
-    cipher.decrypt(nonce, ciphertext)
-        .map_err(|e| e.to_string())
+    cipher.decrypt(nonce, ciphertext).map_err(|e| e.to_string())
 }
