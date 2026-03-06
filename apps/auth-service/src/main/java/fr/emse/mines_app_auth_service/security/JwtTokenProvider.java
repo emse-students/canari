@@ -1,12 +1,10 @@
 package fr.emse.mines_app_auth_service.security;
 
 import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.SignatureAlgorithm;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.stereotype.Component;
 
 import java.security.Key;
@@ -23,16 +21,14 @@ public class JwtTokenProvider {
     private long jwtExpirationMs;
 
     public String createToken(Authentication authentication, UUID userId) {
-        OAuth2User userPrincipal = (OAuth2User) authentication.getPrincipal();
-
         Date now = new Date();
         Date expiryDate = new Date(now.getTime() + jwtExpirationMs);
 
         return Jwts.builder()
-                .setSubject(userId.toString())
-                .setIssuedAt(new Date())
-                .setExpiration(expiryDate)
-                .signWith(key(), SignatureAlgorithm.HS256)
+                .subject(userId.toString())
+                .issuedAt(new Date())
+                .expiration(expiryDate)
+                .signWith(key())
                 .compact();
     }
 

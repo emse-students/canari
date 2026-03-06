@@ -756,7 +756,7 @@
     <!-- TOP BAR -->
     <header class="topbar">
       <div class="topbar-left">
-        <span class="app-name">💬 Canari Secure</span>
+        <span class="app-name">Canari</span>
       </div>
       <div class="topbar-center">
         <span class="conn-dot {isWsConnected ? 'dot-on' : 'dot-off'}"></span>
@@ -821,7 +821,7 @@
                     {#if convo.messages.length > 0}
                       {convo.messages[
                         convo.messages.length - 1
-                      ].content.substring(0, 30)}...
+                      ].content.substring(0, 30)}
                     {:else}
                       Chiffrement actif 🔒
                     {/if}
@@ -1059,14 +1059,14 @@
     align-items: center;
     justify-content: center;
     min-height: 100vh;
-    background: linear-gradient(135deg, #111827 0%, #374151 100%);
+    background: #f0f2f5;
   }
   .login-card {
     background: white;
-    border-radius: 16px;
+    border-radius: 12px;
     padding: 40px;
     width: 380px;
-    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
   }
   .login-header {
     text-align: center;
@@ -1111,9 +1111,9 @@
     background: #f9fafb;
   }
   .login-form input:focus {
-    border-color: #3b82f6;
+    border-color: #facc15;
     background: white;
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    box-shadow: 0 0 0 3px rgba(250, 204, 21, 0.15);
   }
   .login-logs {
     margin-top: 20px;
@@ -1140,28 +1140,26 @@
 
   /* ===== BUTTONS ===== */
   .btn-primary {
-    background: linear-gradient(135deg, #3b82f6, #2563eb);
-    color: white;
+    background: #facc15;
+    color: #111827;
     border: none;
-    border-radius: 10px;
+    border-radius: 8px;
     padding: 14px;
     font-size: 1.05em;
-    font-weight: 600;
+    font-weight: 700;
     cursor: pointer;
     transition: all 0.2s;
-    box-shadow: 0 4px 6px -1px rgba(59, 130, 246, 0.3);
   }
   .btn-primary:hover:not(:disabled) {
-    transform: translateY(-1px);
-    box-shadow: 0 6px 8px -1px rgba(59, 130, 246, 0.4);
+    background: #eab308;
   }
   .btn-primary:active:not(:disabled) {
-    transform: translateY(0);
+    transform: translateY(1px);
   }
   .btn-primary:disabled {
-    opacity: 0.6;
+    background: #fef08a;
+    color: #9ca3af;
     cursor: not-allowed;
-    transform: none;
   }
   .btn-full {
     width: 100%;
@@ -1384,22 +1382,21 @@
     background: #f3f4f6;
   }
   .contact-selected {
-    background: #eff6ff !important;
-    border-color: #bfdbfe;
+    background: #fef9c3 !important;
+    border-color: #facc15;
   }
   .contact-avatar {
     width: 46px;
     height: 46px;
-    border-radius: 14px;
-    background: linear-gradient(135deg, #3b82f6, #2563eb);
-    color: white;
+    border-radius: 12px;
+    background: #facc15;
+    color: #111827;
     font-weight: 700;
     display: flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
     font-size: 1.2em;
-    box-shadow: 0 2px 4px rgba(59, 130, 246, 0.2);
   }
   .contact-info {
     flex: 1;
@@ -1464,18 +1461,18 @@
     transition: all 0.2s;
   }
   .add-contact-row input:focus {
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+    border-color: #facc15;
+    box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.2);
   }
   .btn-add {
     width: 42px;
     height: 42px;
-    background: #3b82f6;
-    color: white;
+    background: #facc15;
+    color: #111827;
     border: none;
     border-radius: 10px;
     font-size: 1.4em;
-    font-weight: 300;
+    font-weight: 500;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -1484,11 +1481,12 @@
     transition: all 0.2s;
   }
   .btn-add:hover:not(:disabled) {
-    background: #2563eb;
+    background: #eab308;
     transform: translateY(-1px);
   }
   .btn-add:disabled {
-    opacity: 0.5;
+    background: #fef08a;
+    color: #9ca3af;
     cursor: not-allowed;
     transform: none;
   }
@@ -1540,15 +1538,14 @@
   .chat-header-avatar {
     width: 48px;
     height: 48px;
-    border-radius: 14px;
-    background: linear-gradient(135deg, #10b981, #059669);
-    color: white;
+    border-radius: 12px;
+    background: #facc15;
+    color: #111827;
     font-weight: 700;
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 1.3em;
-    box-shadow: 0 2px 4px rgba(16, 185, 129, 0.2);
   }
   .chat-header-name {
     font-weight: 800;
@@ -1655,10 +1652,12 @@
     position: relative;
   }
   .bubble-own {
-    background: linear-gradient(135deg, #3b82f6, #2563eb);
-    color: white;
+    background: #facc15;
+    color: #111827;
     border-bottom-right-radius: 4px;
-    box-shadow: 0 1px 2px rgba(59, 130, 246, 0.2);
+  }
+  .bubble-own .msg-time {
+    color: rgba(17, 24, 39, 0.7);
   }
   .bubble-other {
     background: white;
@@ -1718,14 +1717,14 @@
   }
   .msg-input:focus {
     background: white;
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    border-color: #facc15;
+    box-shadow: 0 0 0 3px rgba(250, 204, 21, 0.15);
   }
   .btn-send {
     width: 50px;
     height: 50px;
-    background: #3b82f6;
-    color: white;
+    background: #facc15;
+    color: #111827;
     border: none;
     border-radius: 50%;
     cursor: pointer;
@@ -1734,7 +1733,6 @@
     justify-content: center;
     flex-shrink: 0;
     transition: all 0.2s;
-    box-shadow: 0 2px 4px rgba(59, 130, 246, 0.3);
   }
   .btn-send svg {
     width: 22px;
@@ -1742,16 +1740,16 @@
     margin-left: 2px;
   }
   .btn-send:hover:not(:disabled) {
-    background: #2563eb;
-    transform: scale(1.05);
+    background: #eab308;
+    transform: scale(1.02);
   }
   .btn-send:active:not(:disabled) {
-    transform: scale(0.95);
+    transform: scale(0.98);
   }
   .btn-send:disabled {
-    opacity: 0.4;
+    background: #fef08a;
+    color: #9ca3af;
     cursor: not-allowed;
-    box-shadow: none;
   }
 
   /* ===== LOGS PANEL ===== */
@@ -1820,6 +1818,6 @@
     outline: none;
   }
   .dev-tools textarea:focus {
-    border-color: #3b82f6;
+    border-color: #facc15;
   }
 </style>
