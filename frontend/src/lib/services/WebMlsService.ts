@@ -5,8 +5,8 @@ export class WebMlsService implements IMlsService {
     private client: any;
     private ws: WebSocket | null = null;
     private messageCallback: ((senderId: string, content: Uint8Array, groupId?: string) => Promise<boolean>) | null = null;
-    private baseUrl = import.meta.env.VITE_GATEWAY_URL ?? "http://localhost:3000"; // Chat Gateway URL
-    private historyUrl = import.meta.env.VITE_HISTORY_URL ?? "http://localhost:3001"; // Chat History Service URL
+    private baseUrl: string;   // Chat Gateway URL
+    private historyUrl: string; // Chat Delivery Service URL
     private userId: string = "unknown";
     private deviceId: string;
 
@@ -14,6 +14,19 @@ export class WebMlsService implements IMlsService {
         // Device ID is initialized per-user in init() to avoid collisions when multiple
         // users share the same browser (e.g. two tabs in the same browser window).
         this.deviceId = "pending";
+
+        // Prefer explicit env vars; fall back to same-origin (works behind a reverse proxy
+        // like Nginx that routes /ws and /mls-api/ on the same domain).
+        // An empty string is treated as "not configured" to match .env.example production convention.
+        const envGateway = import.meta.env.VITE_GATEWAY_URL;
+        this.baseUrl = (envGateway && envGateway.trim())
+            ? envGateway
+            : (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000');
+
+        const envHistory = import.meta.env.VITE_HISTORY_URL;
+        this.historyUrl = (envHistory && envHistory.trim())
+            ? envHistory
+            : (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3001');
     }
 
     async connect(token: string): Promise<void> {

@@ -63,6 +63,13 @@
   // Service
   let mls: IMlsService;
 
+  // URL du service de livraison : variable d'env explicite, sinon même origine (derrière Nginx)
+  const historyBaseUrl = (() => {
+    const env = import.meta.env.VITE_HISTORY_URL;
+    if (env && env.trim()) return env;
+    return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3001';
+  })();
+
   onMount(() => {
     (window as any).wasm_bindings_log = (level: string, msg: string) => {
       log(`[RUST::${level}] ${msg}`);
@@ -201,7 +208,7 @@
           // Fetch the real group name from the server
           let groupName = extractedContact;
           try {
-            const gRes = await fetch(`${import.meta.env.VITE_HISTORY_URL ?? 'http://localhost:3001'}/mls-api/groups/${lookupGroupId}`);
+            const gRes = await fetch(`${historyBaseUrl}/mls-api/groups/${lookupGroupId}`);
             if (gRes.ok) {
               const gData = await gRes.json();
               if (gData?.name) groupName = gData.name;
@@ -555,7 +562,7 @@
                 localStorage.setItem("mls_autosave_" + userId, hex);
                 
                 if (result.welcome) {
-                    const wRes = await fetch(`${import.meta.env.VITE_HISTORY_URL ?? 'http://localhost:3001'}/mls-api/welcome`, {
+                    const wRes = await fetch(`${historyBaseUrl}/mls-api/welcome`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
