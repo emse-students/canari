@@ -426,6 +426,20 @@
     try {
         await mls.createGroup(groupId);
         await mls.registerMember(groupId, userId, mls.getDeviceId());
+
+        // Add own other devices so they can receive messages on this group too
+        const ownDevices = (await mls.fetchUserDevices(userId)).filter(d => d.deviceId !== mls.getDeviceId());
+        for (const device of ownDevices) {
+            try {
+                const result = await mls.addMember(groupId, device.keyPackage);
+                await mls.registerMember(groupId, userId, device.deviceId);
+                if (result.welcome) {
+                    await mls.sendWelcome(result.welcome!, userId, groupId, device.deviceId);
+                }
+            } catch (e) {
+                log(`Avertissement: impossible d'ajouter l'appareil ${device.deviceId}: ${e}`);
+            }
+        }
         
         const stateBytes = await mls.saveState(pin);
         const hex = toHex(stateBytes);
@@ -470,6 +484,8 @@
 
           for (const device of devices) {
               const result = await mls.addMember(groupId, device.keyPackage);
+              log(`Appareil ${device.deviceId} de ${targetUser} ajouté au groupe.`);
+              log(`Info: Welcome=${!!result.welcome}, Commit=${!!result.commit}`);
               await mls.registerMember(groupId, targetUser, device.deviceId);
 
               const stateBytes = await mls.saveState(pin);
@@ -527,8 +543,22 @@
       log(`Initialisation locale du groupe ${groupId}...`);
       await mls.createGroup(groupId);
 
-      // Register self as a member so the gateway can route messages from the other party back to us.
+      // Register self (current device)
       await mls.registerMember(groupId, userId, mls.getDeviceId());
+
+      // Add own other devices so they sync this group too
+      const ownDevices = (await mls.fetchUserDevices(userId)).filter(d => d.deviceId !== mls.getDeviceId());
+      for (const device of ownDevices) {
+          try {
+              const result = await mls.addMember(groupId, device.keyPackage);
+              await mls.registerMember(groupId, userId, device.deviceId);
+              if (result.welcome) {
+                  await mls.sendWelcome(result.welcome!, userId, groupId, device.deviceId);
+              }
+          } catch (e) {
+              log(`Avertissement: impossible d'ajouter l'appareil ${device.deviceId}: ${e}`);
+          }
+      }
       
       // Persist state after group creation
       try {
