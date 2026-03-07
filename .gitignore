@@ -9,7 +9,7 @@
 *.swp
 *.swo
 
-# Node.js
+# Node.js / Bun
 node_modules/
 dist/
 build/
@@ -20,6 +20,11 @@ yarn-error.log*
 pnpm-debug.log*
 .npm/
 *.tsbuildinfo
+
+# Lock files (using Bun)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
 
 # Rust
 target/
