@@ -18,6 +18,9 @@ export class QueuedMessage {
   @Prop()
   groupId: string; // Optional context
 
+  @Prop()
+  type: string;
+
   @Prop({ required: true })
   content: string; // Base64 content (MlsMessage)
 

@@ -36,7 +36,7 @@ pub enum WebSocketMessage {
 #[derive(Deserialize, Debug, PartialEq, Serialize, Clone)]
 pub struct Recipient {
     pub userId: String,
-    pub deviceId: String,
+    pub deviceId: Option<String>,
 }
 
 // REST Payload for Ratchet Tree storage

@@ -1,9 +1,0 @@
-[workspace]
-members = [
-    "apps/chat-gateway",
-    "frontend/mls-core",
-    "frontend/mls-wasm",
-    "frontend/src-tauri",
-    "libs/shared-rust"
-]
-resolver = "2"

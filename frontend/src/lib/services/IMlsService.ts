@@ -1,6 +1,7 @@
 export interface IMlsService {
     init(userId: string, pin: string, state?: Uint8Array): Promise<void>;
     createGroup(groupId: string): Promise<void>;
+    createRemoteGroup(name: string): Promise<string>;
     saveState(pin: string): Promise<Uint8Array>;
     generateKeyPackage(pin: string): Promise<Uint8Array>;
     addMember(groupId: string, keyPackageBytes: Uint8Array): Promise<{ commit: Uint8Array, welcome?: Uint8Array }>;
@@ -10,13 +11,13 @@ export interface IMlsService {
     
     // Networking
     connect(token: string): Promise<void>;
-    fetchKeyPackage(userId: string): Promise<Uint8Array | null>;
+    fetchKeyPackage(userId: string): Promise<{ keyPackage: Uint8Array, deviceId: string } | null>;
     publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void>;
     sendWelcome(welcomeBytes: Uint8Array, targetUserId: string, groupId: string): Promise<void>;
-    requestConversation(targetUserId: string): Promise<void>;
+    registerMember(groupId: string, userId: string, deviceId: string): Promise<void>;
     fetchHistory(groupId: string): Promise<{ sender_id: string, content: string, timestamp: string }[]>;
+    getDeviceId(): string;
     
     // Callbacks
-    onMessage(callback: (senderId: string, content: Uint8Array) => void): void;
-    onConversationRequest(callback: (requesterId: string) => void): void;
+    onMessage(callback: (senderId: string, content: Uint8Array, groupId?: string) => void): void;
 }

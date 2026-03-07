@@ -70,7 +70,7 @@ pub async fn ws_handler(
     }
 }
 
-async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>, user_id: String, device_id: String) {
+async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String, device_id: String) {
     tracing::info!("New WebSocket connection: User={}, Device={}", user_id, device_id);
 
     let (mut sender, mut receiver) = socket.split();
@@ -123,208 +123,226 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>, user_id: Str
         let device_id = device_id.clone();
         
         tokio::spawn(async move {
-            while let Some(Ok(Message::Text(text))) = receiver.next().await {
-                tracing::info!("Received WS message from {}: {}", user_id, text);
-                let incoming = process_incoming(&text);
+            while let Some(msg) = receiver.next().await {
+                // Refresh presence on ANY activity
+                let redis_key = format!("user:online:{}:{}", user_id, device_id);
+                if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await {
+                    let _: Result<(), _> = con.set_ex(&redis_key, "true", 3600).await;
+                }
 
-                match incoming {
-                    Ok(WebSocketMessage::MlsMessage { payload, group_id, recipients }) => {
-                        tracing::info!("Processing MLS Message. GroupID: {:?}, Explicit Recipients: {:?}", group_id, recipients);
-                        
-                        // 1. Log generic event to Kafka (for history/audit)
-                        // ...
+                match msg {
+                    Ok(Message::Text(text)) => {
+                        tracing::info!("Received WS message from {}: {}", user_id, text);
+                        let incoming = process_incoming(&text);
 
-                        if let Ok(serialized) = serde_json::to_string(&MessageSentEvent {
-                            id: Uuid::new_v4(),
-                            sender_id: user_id.clone(),
-                            username: "Anonymous".to_string(), 
-                            content: payload.clone(), 
-                            timestamp: Utc::now(),
-                            conversation_id: group_id.clone(),
-                        }) {
-                             let record = FutureRecord::to(TOPIC_CHAT_MESSAGES)
-                                 .payload(&serialized)
-                                 .key(&user_id);
-                             let _ = state.kafka_producer.send(record, std::time::Duration::from_secs(0)).await;
+                        match incoming {
+                            Ok(WebSocketMessage::MlsMessage { payload, group_id, recipients }) => {
+                                tracing::info!("Processing MLS Message. GroupID: {:?}, Explicit Recipients: {:?}", group_id, recipients);
+                                
+                                // 1. Log generic event to Kafka (for history/audit)
+                                // ...
 
-                             // 1b. Add to Redis Stream History (Upstream Feature)
-                             if let Some(ref gid) = group_id {
-                                if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await {
-                                    let stream_key = format!("history:{}", gid);
-                                    let _: Result<String, _> = redis::cmd("XADD")
-                                        .arg(&stream_key)
-                                        .arg("*")
-                                        .arg("sender_id").arg(user_id.clone())
-                                        .arg("content").arg(payload.clone())
-                                        .arg("timestamp").arg(Utc::now().to_rfc3339())
-                                        .query_async(&mut con)
-                                        .await;
+                                if let Ok(serialized) = serde_json::to_string(&MessageSentEvent {
+                                    id: Uuid::new_v4(),
+                                    sender_id: user_id.clone(),
+                                    username: "Anonymous".to_string(), 
+                                    content: payload.clone(), 
+                                    timestamp: Utc::now(),
+                                    conversation_id: group_id.clone(),
+                                }) {
+                                    let record = FutureRecord::to(TOPIC_CHAT_MESSAGES)
+                                        .payload(&serialized)
+                                        .key(&user_id);
+                                    let _ = state.kafka_producer.send(record, std::time::Duration::from_secs(0)).await;
+
+                                    // 1b. Add to Redis Stream History (Upstream Feature)
+                                    if let Some(ref gid) = group_id {
+                                        if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await {
+                                            let stream_key = format!("history:{}", gid);
+                                            let _: Result<String, _> = redis::cmd("XADD")
+                                                .arg(&stream_key)
+                                                .arg("*")
+                                                .arg("sender_id").arg(user_id.clone())
+                                                .arg("content").arg(payload.clone())
+                                                .arg("timestamp").arg(Utc::now().to_rfc3339())
+                                                .query_async(&mut con)
+                                                .await;
+                                        }
+                                    }
                                 }
-                             }
-                        }
 
-                        // 2. Route Message (Online vs Offline)
-                        let mut target_recipients: Vec<Recipient> = recipients.clone().unwrap_or_default();
+                                // 2. Route Message (Online vs Offline)
+                                let mut target_recipients: Vec<Recipient> = recipients.clone().unwrap_or_default();
 
-                        // If explicit recipients missing, fetch from Group Members (Redis)
-                        if target_recipients.is_empty() {
-                             if let Some(gid) = &group_id {
-                                  if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await {
-                                      let key = format!("group:members:{}", gid);
-                                      // Get members from Redis Set
-                                      if let Ok(members) = con.smembers::<_, Vec<String>>(&key).await {
-                                           tracing::info!("Found {} members in Group {:?}", members.len(), gid);
-                                           for m in members {
-                                               let parts: Vec<&str> = m.split(':').collect();
-                                               if parts.len() == 2 {
-                                                   let r_uid = parts[0].to_string();
-                                                   let r_did = parts[1].to_string();
-                                                   
-                                                   // Exclude sender's current device (allow others for sync)
-                                                   if !(r_uid == user_id && r_did == device_id) { 
-                                                       target_recipients.push(Recipient { userId: r_uid, deviceId: r_did });
-                                                   }
-                                               }
-                                           }
-                                      } else {
-                                           tracing::warn!("Failed to fetch members for Group {:?}", gid);
-                                      }
-                                  }
-                             }
-                        }
+                                // If explicit recipients missing, fetch from Group Members (Redis)
+                                if target_recipients.is_empty() {
+                                    if let Some(gid) = &group_id {
+                                        if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await {
+                                            let key = format!("group:members:{}", gid);
+                                            // Get members from Redis Set
+                                            if let Ok(members) = con.smembers::<_, Vec<String>>(&key).await {
+                                                tracing::info!("Found {} members in Group {:?}", members.len(), gid);
+                                                for m in members {
+                                                    let parts: Vec<&str> = m.split(':').collect();
+                                                    if parts.len() == 2 {
+                                                        let r_uid = parts[0].to_string();
+                                                        let r_did = parts[1].to_string();
+                                                        
+                                                        // Exclude sender's current device (allow others for sync)
+                                                        if !(r_uid == user_id && r_did == device_id) { 
+                                                            target_recipients.push(Recipient { userId: r_uid, deviceId: Some(r_did) });
+                                                        }
+                                                    }
+                                                }
+                                            } else {
+                                                tracing::warn!("Failed to fetch members for Group {:?}", gid);
+                                            }
+                                        }
+                                    }
+                                }
 
-                        tracing::info!("Target Recipients count: {}", target_recipients.len());
+                                tracing::info!("Target Recipients count: {}", target_recipients.len());
 
-                        if !target_recipients.is_empty() {
-                            let mut offline_list = Vec::new();
+                                if !target_recipients.is_empty() {
+                                    let mut offline_list = Vec::new();
 
-                            for recipient in target_recipients {
-                                let target_key = format!("{}:{}", recipient.userId, recipient.deviceId);
-                                let redis_presence_key = format!("user:online:{}", target_key);
-                                let mut is_online = false;
+                                    for recipient in target_recipients {
+                                        let mut device_ids = Vec::new();
 
-                                // Check Redis Presence
-                                 if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await {
-                                     // Check if key exists
-                                     if let Ok(exists) = con.exists::<_, bool>(&redis_presence_key).await {
-                                         if exists {
-                                             is_online = true;
-                                             tracing::info!("Recipient {} is ONLINE. Publishing to Redis.", target_key);
-                                             // Publish to Redis PubSub (which reaches this node OR other nodes)
-                                             let packet = serde_json::json!({
-                                                 "recipientId": recipient.userId,
-                                                 "deviceId": recipient.deviceId,
-                                                 "content": payload,
-                                                 "senderId": user_id,
-                                                 "groupId": group_id
-                                             });
-                                             let _: Result<(), _> = con.publish("chat:messages", packet.to_string()).await;
-                                         }
-                                     }
-                                 }
+                                        // If deviceId is provided, target only that device
+                                        if let Some(ref d_id) = recipient.deviceId {
+                                            device_ids.push(d_id.clone());
+                                        } else {
+                                            tracing::info!("Recipient {} has no deviceId. Delegating to Delivery Service.", recipient.userId);
+                                            offline_list.push(recipient);
+                                            continue;
+                                        }
 
-                                 if !is_online {
-                                     tracing::info!("Recipient {} is OFFLINE. Adding to offline list.", target_key);
-                                     offline_list.push(recipient);
-                                 }
-                            }
+                                        for d_id in device_ids {
+                                            let target_key = format!("{}:{}", recipient.userId, d_id);
+                                            let redis_presence_key = format!("user:online:{}", target_key);
+                                            let mut is_online = false;
 
-                            // 3. Batch send offline messages to Storage Service
-                            if !offline_list.is_empty() {
-                                 tracing::info!("Sending {} messages to Offline Storage.", offline_list.len());
-                                 let body = serde_json::json!({
-                                    "senderId": user_id,
-                                    "recipients": offline_list,
-                                    "content": payload,
-                                    "groupId": group_id
-                                 });
+                                            if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await {
+                                                if let Ok(exists) = con.exists::<_, bool>(&redis_presence_key).await {
+                                                    if exists {
+                                                        is_online = true;
+                                                        tracing::info!("Recipient {} is ONLINE. Publishing to Redis.", target_key);
+                                                        let packet = serde_json::json!({
+                                                            "recipientId": recipient.userId,
+                                                            "deviceId": d_id,
+                                                            "content": payload,
+                                                            "senderId": user_id,
+                                                            "groupId": group_id
+                                                        });
+                                                        let _: Result<(), _> = con.publish("chat:messages", packet.to_string()).await;
+                                                    }
+                                                }
+                                            }
 
-                                 let res = state.http_client.post("http://localhost:3001/mls-api/send")
-                                    .json(&body)
-                                    .send()
-                                    .await;
-                                 
-                                 if let Err(e) = res {
-                                     tracing::error!("Failed to send offline messages: {}", e);
-                                 } else {
-                                     tracing::info!("Offline messages sent successfully.");
-                                 }
+                                            if !is_online {
+                                                tracing::info!("Recipient {} is OFFLINE. Adding to offline list.", target_key);
+                                                // Push original recipient structure (with the specific deviceId we found/used)
+                                                offline_list.push(Recipient { userId: recipient.userId.clone(), deviceId: Some(d_id) }); 
+                                            }
+                                        }
+                                    }
+
+                                    // 3. Batch send offline messages to Storage Service
+                                    if !offline_list.is_empty() {
+                                        tracing::info!("Sending {} messages to Offline Storage.", offline_list.len());
+                                        let body = serde_json::json!({
+                                            "senderId": user_id,
+                                            "recipients": offline_list,
+                                            "content": payload,
+                                            "groupId": group_id
+                                        });
+
+                                        let res = state.http_client.post("http://localhost:3001/mls-api/send")
+                                            .json(&body)
+                                            .send()
+                                            .await;
+                                        
+                                        if let Err(e) = res {
+                                            tracing::error!("Failed to send offline messages: {}", e);
+                                        } else {
+                                            tracing::info!("Offline messages sent successfully.");
+                                        }
+                                    }
+                                }
+                            },
+                            Ok(WebSocketMessage::WelcomeMessage { payload, group_id, recipients }) => {
+                                // Explicit Welcome Message routing (Direct to specific user/device usually)
+                                tracing::info!("Processing Welcome Message for Group {:?}", group_id);
+                                
+                                // Forward to recipients via Redis PubSub if online, else HTTP
+                                for recipient in recipients {
+                                    if let Some(d_id) = recipient.deviceId {
+                                        let target_key = format!("{}:{}", recipient.userId, d_id);
+                                        let redis_presence_key = format!("user:online:{}", target_key);
+                                        
+                                        let mut sent = false;
+                                        if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await {
+                                            if let Ok(true) = con.exists::<_, bool>(&redis_presence_key).await {
+                                                let packet = serde_json::json!({
+                                                    "recipientId": recipient.userId,
+                                                    "deviceId": d_id,
+                                                    "content": payload, // Base64 Welcome
+                                                    "type": "mlsWelcome", // Tag it so client knows
+                                                    "senderId": user_id,
+                                                    "groupId": group_id
+                                                });
+                                                let _: Result<(),_> = con.publish("chat:messages", packet.to_string()).await;
+                                                sent = true;
+                                            }
+                                        }
+
+                                        if !sent {
+                                            // Offline fallback
+                                            let body = serde_json::json!({
+                                                "senderId": user_id,
+                                                "recipients": [ { "userId": recipient.userId, "deviceId": d_id } ],
+                                                "content": payload,
+                                                "groupId": group_id
+                                            });
+                                            let _ = state.http_client.post("http://localhost:3001/mls-api/send").json(&body).send().await;
+                                        }
+
+                                    } else {
+                                        // Fan-out to all devices via Delivery Service logic
+                                        tracing::info!("Welcome message without target DeviceID for user {} -> Delegating fan-out.", recipient.userId);
+                                        // Send immediately via HTTP to Delivery Service to handle fan-out
+                                        let body = serde_json::json!({
+                                            "senderId": user_id,
+                                            "recipients": [ { "userId": recipient.userId, "deviceId": null } ],
+                                            "content": payload,
+                                            "groupId": group_id,
+                                            "type": "mlsWelcome" 
+                                        });
+                                        let _ = state.http_client.post("http://localhost:3001/mls-api/send")
+                                            .json(&body)
+                                            .send()
+                                            .await;
+                                    }
+                                }
+                            },
+                            Ok(WebSocketMessage::Read { message_id }) => {
+                                tracing::info!("Read receipt: {}", message_id);
+                            },
+                            Err(e) => {
+                                tracing::error!("Failed to parse message: {}", e);
                             }
                         }
                     },
-                    Ok(WebSocketMessage::WelcomeMessage { payload, group_id, recipients }) => {
-                        tracing::info!("Processing WELCOME Message from {}. Group: {}, Recipients: {:?}", user_id, group_id, recipients);
-
-                        if !recipients.is_empty() {
-                            let mut offline_list = Vec::new();
-
-                            for recipient in recipients {
-                                let target_key = format!("{}:{}", recipient.userId, recipient.deviceId);
-                                let redis_presence_key = format!("user:online:{}", target_key);
-                                let mut is_online = false;
-
-                                // Check Redis Presence
-                                 if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await {
-                                     // Check if key exists
-                                     if let Ok(exists) = con.exists::<_, bool>(&redis_presence_key).await {
-                                         if exists {
-                                             is_online = true;
-                                             tracing::info!("(WELCOME) Recipient {} is ONLINE. Publishing to Redis.", target_key);
-                                             
-                                             // Tag as Welcome Message so client can handle it?
-                                             // Currently Protocol is just payload. But we know it's a welcome message.
-                                             // For now, keep format consistent but log it clearly.
-                                             // TODO: Consider wrapping with type="welcome" in PubSub if client needs it.
-                                             
-                                             let packet = serde_json::json!({
-                                                 "recipientId": recipient.userId,
-                                                 "deviceId": recipient.deviceId,
-                                                 "content": payload,
-                                                 "senderId": user_id,
-                                                 "groupId": group_id,
-                                                 "type": "welcome" // Added type field
-                                             });
-                                             let _: Result<(), _> = con.publish("chat:messages", packet.to_string()).await;
-                                         }
-                                     }
-                                 }
-
-                                 if !is_online {
-                                     tracing::info!("(WELCOME) Recipient {} is OFFLINE. Adding to offline list.", target_key);
-                                     offline_list.push(recipient);
-                                 }
-                            }
-
-                            // 2. Batch send offline messages to Storage Service
-                            if !offline_list.is_empty() {
-                                 tracing::info!("Sending {} welcome messages to Offline Storage.", offline_list.len());
-                                 let body = serde_json::json!({
-                                    "senderId": user_id,
-                                    "recipients": offline_list,
-                                    "content": payload,
-                                    "groupId": group_id,
-                                    "type": "welcome"
-                                 });
-
-                                 let res = state.http_client.post("http://localhost:3001/mls-api/send")
-                                    .json(&body)
-                                    .send()
-                                    .await;
-                                 
-                                 if let Err(e) = res {
-                                     tracing::error!("Failed to send offline welcome messages: {}", e);
-                                 } else {
-                                     tracing::info!("Offline welcome messages sent successfully.");
-                                 }
-                            }
-                        }
-                    }
-                    Ok(WebSocketMessage::Read { message_id: _ }) => {
-                         // ... (Read receipts logic kept simple for now)
+                    Ok(Message::Close(c)) => {
+                        tracing::info!("Client closed connection: {:?}", c);
+                        break;
                     },
                     Err(e) => {
-                        tracing::warn!("Failed to parse message: {:?}", e);
-                    }
+                        tracing::error!("WebSocket Error from {}: {}", user_id, e);
+                        break;
+                    },
+                    _ => {} // Binary or other ignored
                 }
             }
         })

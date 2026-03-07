@@ -5,6 +5,7 @@ import { QueuedMessage } from './queued-message.schema';
 import { KeyPackage } from './key-package.schema';
 import { WelcomeMessage } from './welcome-message.schema';
 import { GroupMember } from './group-member.schema';
+import { Group } from './group.schema';
 import { UserState } from './user-state.schema';
 import Redis from 'ioredis';
 import * as crypto from 'crypto';
@@ -38,6 +39,8 @@ function decryptServerSide(text: string): string {
     return decrypted;
 }
 
+import { v4 as uuidv4 } from 'uuid';
+
 @Controller()
 export class AppController {
   constructor(
@@ -45,6 +48,7 @@ export class AppController {
     @InjectModel(KeyPackage.name) private keyPackageModel: Model<KeyPackage>,
     @InjectModel(WelcomeMessage.name) private welcomeMessageModel: Model<WelcomeMessage>,
     @InjectModel(GroupMember.name) private groupMemberModel: Model<GroupMember>,
+    @InjectModel(Group.name) private groupModel: Model<Group>,
     @InjectModel(UserState.name) private userStateModel: Model<UserState>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis
   ) {}
@@ -77,6 +81,23 @@ export class AppController {
     }
   }
 
+
+  @Post('mls-api/groups')
+  async createGroup(@Body() body: { name: string, createdBy: string }) {
+      const groupId = uuidv4();
+      await this.groupModel.create({
+          groupId,
+          name: body.name,
+          createdBy: body.createdBy,
+          createdAt: new Date()
+      });
+      return { groupId, name: body.name };
+  }
+
+  @Get('mls-api/groups/:groupId')
+  async getGroup(@Param('groupId') groupId: string) {
+      return this.groupModel.findOne({ groupId }).exec();
+  }
 
   @Post('mls-api/groups/:groupId/members')
   async addGroupMember(@Param('groupId') groupId: string, @Body() body: { userId: string, deviceId: string }) {
@@ -120,32 +141,52 @@ export class AppController {
   async sendMessage(@Body() body: { 
       senderId: string,
       senderDeviceId?: string, 
-      recipients?: { userId: string, deviceId: string }[], 
+      recipients?: { userId: string, deviceId?: string }[], 
       content: string, 
-      groupId: string
+      groupId: string,
+      type?: string
   }) {
-      const { senderId, senderDeviceId, content, groupId } = body;
-      let recipients = body.recipients;
+      const { senderId, senderDeviceId, content, groupId, type } = body;
+      
+      let targetList: { userId: string, deviceId: string }[] = [];
 
-      // If recipients not provided, fetch from DB
-      if (!recipients || recipients.length === 0) {
+      // If recipients not provided, fetch from Group Members in DB
+      if (!body.recipients || body.recipients.length === 0) {
           const members = await this.groupMemberModel.find({ groupId }).lean().exec();
-          recipients = members
+          targetList = members
             .filter(m => {
-                // If senderDeviceId is known, exclude only that device
                 if (senderDeviceId) return !(m.userId === senderId && m.deviceId === senderDeviceId);
-                // Otherwise exclude all devices of sender (fallback)
                 return m.userId !== senderId;
             }) 
             .map(m => ({ userId: m.userId, deviceId: m.deviceId }));
+      } else {
+          // Process provided recipients (handle fan-out)
+          for (const r of body.recipients) {
+              if (r.deviceId) {
+                  targetList.push({ userId: r.userId, deviceId: r.deviceId });
+              } else {
+                  // Fan-out: Fetch all devices for this user from Registry
+                  const devices = await this.keyPackageModel.find({ userId: r.userId }).lean().exec();
+                  if (devices.length > 0) {
+                      for (const d of devices) {
+                          // Don't send back to sender's own device if matched
+                          if (r.userId === senderId && d.deviceId === senderDeviceId) continue;
+                          targetList.push({ userId: r.userId, deviceId: d.deviceId });
+                      }
+                  } else {
+                      console.log(`No devices found for user ${r.userId} during fan-out.`);
+                  }
+              }
+          }
       }
       
       const ops = [];
       let sentCount = 0;
 
-      for (const r of recipients) {
+      for (const r of targetList) {
           // Check if specific device is connected to Gateway
-          const isOnline = await this.redis.get(`user:online:${r.userId}:${r.deviceId}`);
+          // Note: Gateway uses "user:online:userId:deviceId"
+          const isOnline = await this.redis.exists(`user:online:${r.userId}:${r.deviceId}`);
           
           if (isOnline) {
               // Push directly to Gateway via Redis PubSub
@@ -154,11 +195,14 @@ export class AppController {
                   deviceId: r.deviceId,
                   senderId,
                   groupId,
-                  content
+                  content,
+                  type
               }));
               sentCount++;
           } else {
               // Queue for polling (Store)
+              // Only store if we haven't already queued for this exact target?
+              // MongoDB bulkWrite is just operations.
               ops.push({
                   insertOne: {
                       document: {
@@ -167,6 +211,7 @@ export class AppController {
                           senderId,
                           groupId,
                           content,
+                          type,
                           createdAt: new Date()
                       }
                   }

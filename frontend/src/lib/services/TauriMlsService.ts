@@ -6,18 +6,30 @@ import type { IMlsService } from './IMlsService';
 
 export class TauriMlsService implements IMlsService {
     private ws: WebSocket | null = null;
-    private messageCallback: ((senderId: string, content: Uint8Array) => void) | null = null;
-    private conversationRequestCallback: ((requesterId: string) => void) | null = null;
+    private messageCallback: ((senderId: string, content: Uint8Array, groupId?: string) => void) | null = null;
     private baseUrl = "http://localhost:3000";
     private historyUrl = "http://localhost:3001";
     private userId: string = "unknown";
+    private deviceId: string;
+
+    constructor() {
+        // Ensure stable Device ID across sessions
+        const stored = localStorage.getItem("mls_device_id");
+        if (stored) {
+            this.deviceId = stored;
+        } else {
+            this.deviceId = "tauri-" + Date.now() + "-" + Math.floor(Math.random() * 1000);
+            localStorage.setItem("mls_device_id", this.deviceId);
+        }
+    }
 
     async connect(token: string): Promise<void> {
         // Reuse direct WebSocket logic for now (Tauri allows localhost by default)
         return new Promise((resolve, reject) => {
-            this.ws = new WebSocket(`${this.baseUrl.replace('http', 'ws')}/ws?token=${token}`);
-            this.ws.onopen = () => {
-                console.log("Connected to Chat Gateway (Tauri)");
+            this.ws = new WebSocket(`${this.baseUrl.replace('http', 'ws')}/ws?token=${token}&device_id=${this.deviceId}`);
+            this.ws.onopen = async () => {
+                console.log("Connected to Chat Gateway (Tauri) with DeviceID:", this.deviceId);
+                await this.fetchPendingMessages();
                 resolve();
             };
             this.ws.onerror = (e) => reject(e);
@@ -26,15 +38,6 @@ export class TauriMlsService implements IMlsService {
                     const data = JSON.parse(event.data);
                     let base64Content: string | null = null;
                     const senderId: string = data.senderId || data.sender_id || "unknown";
-
-                    // Handle conversation requests
-                    if (data.type === "conversationRequest" && this.conversationRequestCallback) {
-                        const requesterId = data.sender_id; // sender_id = who initiated the request
-                        if (this.conversationRequestCallback) {
-                             this.conversationRequestCallback(requesterId);
-                        }
-                        return;
-                    }
 
                     // Filter out own messages (avoid echo from server broadcast)
                     // Always drop messages where WE are the sender — no type check needed
@@ -55,7 +58,8 @@ export class TauriMlsService implements IMlsService {
                         for (let i = 0; i < binaryString.length; i++) {
                             bytes[i] = binaryString.charCodeAt(i);
                         }
-                        this.messageCallback(senderId, bytes);
+                        const groupId = data.groupId || data.session_id;
+                        this.messageCallback(senderId, bytes, groupId);
                     }
                 } catch (e) {
                     console.error("Failed to process WebSocket message:", e);
@@ -64,15 +68,57 @@ export class TauriMlsService implements IMlsService {
         });
     }
 
-    onMessage(callback: (senderId: string, content: Uint8Array) => void) {
+    async fetchPendingMessages() {
+        if (this.userId === "unknown") return;
+        try {
+            const res = await fetch(`${this.historyUrl}/mls-api/messages/${this.userId}/${this.deviceId}`);
+            if (res.ok) {
+                const messages = await res.json();
+                if (Array.isArray(messages) && messages.length > 0) {
+                    console.log(`Fetched ${messages.length} pending messages`);
+                    // Simulate receiving via WebSocket for consistent processing
+                    for (const msg of messages) {
+                        this.simulateMessageReceive(msg);
+                    }
+                }
+            }
+        } catch (e) {
+            console.error("Failed to fetch pending messages", e);
+        }
+    }
+
+    private simulateMessageReceive(data: any) {
+        if (this.messageCallback) {
+             let base64Content: string | null = null;
+             // Handle same logic as onmessage
+             if (data.type === "mlsWelcome" && data.content) {
+                 base64Content = data.content;
+             } else if (data.content) {
+                 base64Content = data.content;
+             }
+             
+             if (base64Content) {
+                 const binaryString = atob(base64Content);
+                 const bytes = new Uint8Array(binaryString.length);
+                 for (let i = 0; i < binaryString.length; i++) {
+                     bytes[i] = binaryString.charCodeAt(i);
+                 }
+                 const senderId = data.senderId || "unknown";
+                 const groupId = data.groupId || data.session_id;
+                 this.messageCallback(senderId, bytes, groupId);
+             }
+        }
+    }
+
+    onMessage(callback: (senderId: string, content: Uint8Array, groupId?: string) => void) {
         this.messageCallback = callback;
     }
 
-    onConversationRequest(callback: (requesterId: string) => void) {
-        this.conversationRequestCallback = callback;
+    getDeviceId(): string {
+        return this.deviceId;
     }
 
-    async fetchKeyPackage(userId: string): Promise<Uint8Array | null> {
+    async fetchKeyPackage(userId: string): Promise<{ keyPackage: Uint8Array, deviceId: string } | null> {
         // Using fetch API directly in Tauri (webview)
         try {
             const res = await fetch(`${this.historyUrl}/mls-api/devices/${userId}`);
@@ -83,45 +129,54 @@ export class TauriMlsService implements IMlsService {
             // Just take the latest device key package
             const latest = devices[0]; 
             const base64 = latest.keyPackage;
+            const deviceId = latest.deviceId;
 
              const binaryString = atob(base64);
             const len = binaryString.length;
             const bytes = new Uint8Array(len);
             for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
-            return bytes;
+            return { keyPackage: bytes, deviceId };
         } catch (e) {
             console.error("Fetch Key Package Error:", e);
             return null;
         }
     }
 
+    async registerMember(groupId: string, userId: string, deviceId: string): Promise<void> {
+        try {
+            await fetch(`${this.historyUrl}/mls-api/groups/${groupId}/members`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ userId, deviceId })
+            });
+        } catch(e) {
+            console.error("Failed to register member", e);
+        }
+    }
+
     async publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void> {
-        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
         const base64 = btoa(String.fromCharCode(...keyPackageBytes));
-        this.ws.send(JSON.stringify({ type: "keyPackagePublish", payload: base64 }));
+        try {
+            await fetch(`${this.historyUrl}/mls-api/register-device`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    userId: this.userId,
+                    deviceId: this.deviceId,
+                    keyPackage: base64
+                })
+            });
+        } catch (e) {
+            console.error("Failed to publish KeyPackage", e);
+        }
     }
 
     async sendWelcome(welcomeBytes: Uint8Array, targetUserId: string, groupId: string): Promise<void> {
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
         const base64 = btoa(String.fromCharCode(...welcomeBytes));
         
-        // Fetch devices for target user to build recipients list
-        let recipients = [];
-        try {
-            const res = await fetch(`${this.historyUrl}/mls-api/devices/${targetUserId}`);
-            if (res.ok) {
-                 const devices = await res.json();
-                 if (devices && devices.length > 0) {
-                     recipients = devices.map((d: any) => ({ userId: targetUserId, deviceId: d.deviceId }));
-                 }
-            }
-        } catch (e) {
-            console.warn("Failed to fetch devices for welcome message", e);
-        }
-        
-        if (recipients.length === 0) {
-            recipients.push({ userId: targetUserId, deviceId: "unknown" });
-        }
+        // Let Delivery Service handle fan-out/routing
+        const recipients = [{ userId: targetUserId, deviceId: null }];
 
         this.ws.send(JSON.stringify({ 
             type: "welcomeMessage", 
@@ -139,6 +194,22 @@ export class TauriMlsService implements IMlsService {
 
     async createGroup(groupId: string) {
         await invoke('creer_groupe', { groupId });
+    }
+
+    async createRemoteGroup(name: string): Promise<string> {
+        try {
+            const res = await fetch(`${this.historyUrl}/mls-api/groups`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name, createdBy: this.userId })
+            });
+            if (!res.ok) throw new Error("Failed to create remote group");
+            const data = await res.json();
+            return data.groupId;
+        } catch (e) {
+            console.error("Failed to create remote group", e);
+            throw e;
+        }
     }
 
     async saveState(pin: string) {
@@ -175,11 +246,31 @@ export class TauriMlsService implements IMlsService {
     async sendMessage(groupId: string, message: string) {
         const res = await invoke<number[]>('envoyer_message', { groupId, message });
         const encryptedBytes = Uint8Array.from(res);
+        const base64 = btoa(String.fromCharCode(...encryptedBytes));
         
         // Send via WebSocket if connected
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            const base64 = btoa(String.fromCharCode(...encryptedBytes));
             this.ws.send(JSON.stringify({ type: "mlsMessage", payload: base64, groupId: groupId }));
+        } else {
+            console.warn("WebSocket not open, using HTTP fallback");
+            try {
+                const response = await fetch(`${this.historyUrl}/mls-api/send`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        senderId: this.userId,
+                        senderDeviceId: this.deviceId,
+                        content: base64,
+                        groupId: groupId
+                    })
+                });
+                if (!response.ok) {
+                    throw new Error(`HTTP fallback failed: ${response.statusText}`);
+                }
+            } catch (e) {
+                console.error("Failed to send message via HTTP fallback", e);
+                throw e;
+            }
         }
 
         return encryptedBytes;
@@ -201,14 +292,4 @@ export class TauriMlsService implements IMlsService {
         }
     }
 
-    async requestConversation(targetUserId: string): Promise<void> {
-        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-            console.warn("WebSocket not connected, cannot request conversation");
-            return;
-        }
-        this.ws.send(JSON.stringify({ 
-            type: "conversationRequest", 
-            targetUserId: targetUserId 
-        }));
-    }
 }

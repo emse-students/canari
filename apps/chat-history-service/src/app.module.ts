@@ -6,6 +6,7 @@ import { KeyPackage, KeyPackageSchema } from './key-package.schema';
 import { WelcomeMessage, WelcomeMessageSchema } from './welcome-message.schema';
 import { UserState, UserStateSchema } from './user-state.schema';
 import { GroupMember, GroupMemberSchema } from './group-member.schema';
+import { Group, GroupSchema } from './group.schema';
 import Redis from 'ioredis';
 
 const RedisProvider: Provider = {
@@ -27,6 +28,7 @@ const RedisProvider: Provider = {
         { name: WelcomeMessage.name, schema: WelcomeMessageSchema },
         { name: UserState.name, schema: UserStateSchema },
         { name: GroupMember.name, schema: GroupMemberSchema },
+        { name: Group.name, schema: GroupSchema },
     ]),
   ],
   controllers: [AppController],

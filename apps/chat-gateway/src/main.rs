@@ -64,10 +64,9 @@ async fn main() {
                      // Expect format: { recipientId, deviceId, content, ... }
                      if let Ok(json) = serde_json::from_str::<serde_json::Value>(&payload_str) {
                          // Extract routing info
-                         if let (Some(recipient_id), Some(device_id), Some(content)) = (
+                         if let (Some(recipient_id), Some(device_id)) = (
                              json.get("recipientId").and_then(|v| v.as_str()),
-                             json.get("deviceId").and_then(|v| v.as_str()),
-                             json.get("content").and_then(|v| v.as_str())
+                             json.get("deviceId").and_then(|v| v.as_str())
                          ) {
                              let key = format!("{}:{}", recipient_id, device_id);
                              
@@ -78,8 +77,8 @@ async fn main() {
                              };
  
                              if let Some(tx) = tx {
-                                 // Send content directly
-                                 let _ = tx.send(content.to_string());
+                                 // Forward the FULL JSON packet so client has metadata (type, senderId, etc.)
+                                 let _ = tx.send(payload_str.clone());
                              }
                          }
                      }

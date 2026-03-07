@@ -14,7 +14,8 @@
   }
 
   interface Conversation {
-    contactName: string;
+    contactName: string; // Used for display or member list
+    name: string; // Group Name
     groupId: string;
     messages: ChatMessage[];
     isReady: boolean;
@@ -33,6 +34,8 @@
   let conversations = $state<Map<string, Conversation>>(new Map());
   let selectedContact = $state<string | null>(null);
   let newContactInput = $state("");
+  let newGroupInput = $state("");
+  let inviteMemberInput = $state("");
   let isAddingContact = $state(false);
   let messageText = $state("");
   let chatContainer = $state<HTMLElement>();
@@ -43,24 +46,6 @@
   interface ServiceStatus {
     name: string;
     ok: boolean | null;
-  }
-  let services = $state<ServiceStatus[]>([
-    { name: "Gateway", ok: null },
-    { name: "Redis", ok: null },
-  ]);
-
-  async function checkServices() {
-    // Gateway: simple HTTP ping on /history/ping (tolerates 404, just checks TCP)
-    try {
-      const r = await fetch("http://localhost:3000/history/__ping__", {
-        signal: AbortSignal.timeout(2000),
-      });
-      services[0].ok = r.status !== 0;
-    } catch {
-      services[0].ok = false;
-    }
-    // Redis is proxied through Gateway, so indirect — flag as 'n/a' if gateway is down
-    services[1].ok = services[0].ok;
   }
 
   // Derived values for reactive rendering
@@ -83,9 +68,6 @@
       log(`[RUST::${level}] ${msg}`);
     };
 
-    checkServices();
-    const healthInterval = setInterval(checkServices, 10000);
-
     if (window.__TAURI_INTERNALS__) {
       mls = new TauriMlsService();
       log("Initialized in TAURI mode");
@@ -93,8 +75,6 @@
       mls = new WebMlsService();
       log("Initialized in WEB (WASM) mode");
     }
-
-    return () => clearInterval(healthInterval);
   });
 
   function log(msg: string) {
@@ -162,23 +142,11 @@
       await mls.init(userId, pin, stateBytes);
       log(`Identité MLS initialisée pour ${userId}`);
 
-      log("Connexion au Chat Gateway...");
-      try {
-        const token = await generateDevToken(userId);
-        await mls.connect(token);
-        isWsConnected = true;
-        services[0].ok = true;
-        services[1].ok = true;
-        log("Connecté au Gateway Chat !");
-      } catch (wsErr: any) {
-        log(`Attention: Gateway inaccessible (${wsErr.message || wsErr}).`);
-      }
-
       isLoggedIn = true;
       loadExistingConversations();
       log("Conversations chargées !");
 
-      // Listen for incoming messages
+      // listener setup before connection to catch pending messages
       mls.onMessage(async (sender, content) => {
         log(`Message reçu de ${sender} (${content.length} octets)`);
         try {
@@ -214,16 +182,19 @@
           // Try as Welcome message
           try {
             const joinedGroupId = await mls.processWelcome(content);
-            const extractedContact = extractContactFromGroupId(
-              joinedGroupId,
-              userId,
-            );
+            // Since GroupID is now opaque (UUID), we can't extract contact from it.
+            // But the Welcome message comes from the inviter (sender).
+            // So the contact is effectively the sender.
+            const extractedContact = sender.toLowerCase();
 
             // Create conversation if it doesn't exist
             if (!conversations.has(extractedContact)) {
               log(`✨ Nouvelle conversation initiée par ${extractedContact}`);
+              // Note: We don't have the group Name here unless we fetch it.
+              // For now, default to contact name.
               conversations.set(extractedContact, {
                 contactName: extractedContact,
+                name: extractedContact, // Placeholder name
                 groupId: joinedGroupId,
                 messages: [],
                 isReady: true,
@@ -233,7 +204,11 @@
 
             if (conversations.has(extractedContact)) {
               const c = conversations.get(extractedContact)!;
-              const updatedC = { ...c, isReady: true };
+              // Ensure groupId matches if re-joining logic overlaps
+              if (c.groupId !== joinedGroupId) {
+                  log(`Warning: Mismatch group ID for contact ${extractedContact}. Updating...`);
+              }
+              const updatedC = { ...c, isReady: true, groupId: joinedGroupId };
               conversations.set(extractedContact, updatedC);
               saveConversation(extractedContact);
 
@@ -266,55 +241,23 @@
         }
       });
 
-      // Auto-publish KeyPackage on login so others can start conversations asynchronously
+      log("Connexion au Chat Gateway...");
+      try {
+        const token = await generateDevToken(userId);
+        await mls.connect(token);
+        isWsConnected = true;
+        log("Connecté au Gateway Chat !");
+      } catch (wsErr: any) {
+        log(`Attention: Gateway inaccessible (${wsErr.message || wsErr}).`);
+      }
+
+      // Auto-publish KeyPackage on login
       try {
         await mls.generateKeyPackage(pin);
         log("KeyPackage public publié (prêt pour recevoir des invitations).");
       } catch (e) {
         log(`Erreur publication KeyPackage: ${e}`);
       }
-
-      // Listen for conversation requests
-      mls.onConversationRequest(async (requesterId) => {
-        const normalizedId = requesterId.toLowerCase();
-        log(`Demande de conversation reçue de ${normalizedId}...`);
-
-        if (!conversations.has(normalizedId)) {
-          const groupId = generateGroupId(userId, normalizedId);
-          conversations.set(normalizedId, {
-            contactName: normalizedId,
-            groupId,
-            messages: [],
-            isReady: false,
-            mlsStateHex: null,
-          });
-          log(`✅ Conversation créée avec ${normalizedId}`);
-
-          if (userId < normalizedId) {
-            log(
-              `Je suis le créateur cryptographique, j'initialise l'échange pour ${normalizedId}`,
-            );
-            startNewConversation(normalizedId);
-          } else {
-            try {
-              await mls.generateKeyPackage(pin);
-              log(
-                `KeyPackage auto-généré pour ${normalizedId}, en attente de son invitation.`,
-              );
-            } catch (e) {
-              log(`Erreur génération KeyPackage: ${e}`);
-            }
-          }
-          saveConversation(normalizedId);
-          conversations = new Map(conversations); // trigger reactivity
-        } else if (
-          userId < normalizedId &&
-          !conversations.get(normalizedId)?.isReady
-        ) {
-          log(`Relance de l'initialisation pour ${normalizedId}`);
-          startNewConversation(normalizedId);
-        }
-      });
     } catch (e: any) {
       console.error(e);
       const msg = e.message || String(e);
@@ -328,16 +271,6 @@
   // --- Utils ---
   function generateGroupId(user1: string, user2: string): string {
     return [user1.toLowerCase(), user2.toLowerCase()].sort().join("-");
-  }
-
-  function extractContactFromGroupId(
-    groupId: string,
-    myUserId: string,
-  ): string {
-    const parts = groupId.split("-");
-    const me = myUserId.toLowerCase();
-    const other = parts.find((p) => p !== me) ?? parts[1];
-    return other.toLowerCase();
   }
 
   function toHex(buffer: Uint8Array): string {
@@ -361,6 +294,8 @@
     localStorage.setItem(
       key,
       JSON.stringify({
+        groupId: convo.groupId, // Store group ID
+        name: convo.name,       // Store group Name
         messages: convo.messages.map((m) => ({
           ...m,
           timestamp: m.timestamp.toISOString(),
@@ -425,38 +360,119 @@
   function loadExistingConversations() {
     const prefix = `conversation:${userId}:`;
     for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && key.startsWith(prefix)) {
-        const contactName = key.substring(prefix.length).toLowerCase();
-        const saved = localStorage.getItem(key);
-        if (saved) {
-          const convoData = JSON.parse(saved);
-          const groupId = generateGroupId(userId, contactName);
-          const messages: ChatMessage[] = (convoData.messages || []).map(
-            (m: any) => ({
-              ...m,
-              timestamp: new Date(m.timestamp),
-            }),
-          );
-          conversations.set(contactName, {
-            contactName,
-            groupId,
-            messages,
-            isReady: convoData.isReady || false,
-            mlsStateHex: null,
-          });
-          log(`Conversation chargée avec ${contactName}`);
-          loadHistoryForConversation(contactName, groupId);
+        const key = localStorage.key(i);
+        if (key && key.startsWith(prefix)) {
+            const contactName = key.substring(prefix.length).toLowerCase();
+            const saved = localStorage.getItem(key);
+            if (saved) {
+                const convoData = JSON.parse(saved);
+                // Use stored groupId if available, else derive (legacy support)
+                const groupId = convoData.groupId || generateGroupId(userId, contactName);
+                const name = convoData.name || contactName; // Default name
+
+                const messages: ChatMessage[] = (convoData.messages || []).map(
+                    (m: any) => ({
+                    ...m,
+                    timestamp: new Date(m.timestamp),
+                    }),
+                );
+                
+                conversations.set(contactName, {
+                    contactName,
+                    name,
+                    groupId,
+                    messages,
+                    isReady: convoData.isReady || false,
+                    mlsStateHex: null,
+                });
+                
+                log(`Conversation chargée avec ${contactName} (${groupId})`);
+                loadHistoryForConversation(contactName, groupId);
+            }
         }
-      }
-    }
-    conversations = new Map(conversations);
-    if (conversations.size === 0) {
-      log("Aucune conversation existante. Créez un nouveau contact !");
     }
   }
 
   // --- Conversations ---
+  async function createNewGroup(nameRaw: string) {
+    if (!nameRaw.trim()) return;
+    const name = nameRaw.trim();
+
+    if (conversations.has(name)) {
+        log(`Un groupe ou contact nommé "${name}" existe déjà.`);
+        return;
+    }
+
+    log(`Création du groupe distant "${name}"...`);
+    let groupId: string;
+    try {
+        groupId = await mls.createRemoteGroup(name);
+        log(`Groupe ID: ${groupId}`);
+    } catch (e) {
+        log(`Erreur création groupe distant: ${e}`);
+        return;
+    }
+
+    try {
+        await mls.createGroup(groupId);
+        await mls.registerMember(groupId, userId, mls.getDeviceId());
+        
+        const stateBytes = await mls.saveState(pin);
+        const hex = toHex(stateBytes);
+        localStorage.setItem("mls_autosave_" + userId, hex);
+
+        conversations.set(name, {
+            contactName: name, 
+            name: name,
+            groupId,
+            messages: [],
+            isReady: true, 
+            mlsStateHex: null,
+        });
+        conversations = new Map(conversations);
+        selectedContact = name;
+        saveConversation(name);
+        
+        log(`Groupe "${name}" prêt!`);
+    } catch (e) {
+        log(`Erreur init groupe local: ${e}`);
+    }
+  }
+
+  async function inviteMemberToCurrentGroup(memberId: string) {
+      if (!selectedContact || !memberId.trim()) return;
+      const targetUser = memberId.trim().toLowerCase();
+      
+      const convo = conversations.get(selectedContact);
+      if (!convo) return;
+      const groupId = convo.groupId;
+
+      log(`Invitation de ${targetUser}...`);
+      try {
+          const target = await mls.fetchKeyPackage(targetUser);
+          if (!target) {
+              log(`Impossible de trouver ${targetUser}.`);
+              return;
+          }
+
+          const result = await mls.addMember(groupId, target.keyPackage);
+          await mls.registerMember(groupId, targetUser, target.deviceId);
+
+          const stateBytes = await mls.saveState(pin);
+          const hex = toHex(stateBytes);
+          localStorage.setItem("mls_autosave_" + userId, hex);
+          
+          if (result.welcome) {
+              await mls.sendWelcome(result.welcome!, targetUser, groupId);
+              log(`Welcome envoyé à ${targetUser}.`);
+          }
+
+          log(`${targetUser} ajouté avec succès.`);
+      } catch(e) {
+          log(`Erreur invitation: ${e}`);
+      }
+  }
+
   async function startNewConversation(contactNameRaw: string) {
     const contact = contactNameRaw.trim().toLowerCase();
     if (!contact || contact === userId) {
@@ -469,11 +485,21 @@
     }
 
     log(`Démarrage d'une conversation avec ${contact}...`);
-    const groupId = generateGroupId(userId, contact);
-    const isCreator = userId < contact;
+    // Create remote group via backend
+    const groupName = `${userId} & ${contact}`;
+    let groupId: string;
+    try {
+        log(`Demande de création de groupe au serveur (nom: ${groupName})...`);
+        groupId = await mls.createRemoteGroup(groupName);
+        log(`Groupe créé: ${groupId}`);
+    } catch (e) {
+        log(`Erreur création groupe distant: ${e}`);
+        return;
+    }
 
     conversations.set(contact, {
       contactName: contact,
+      name: groupName,
       groupId,
       messages: [],
       isReady: false,
@@ -483,72 +509,60 @@
     selectedContact = contact;
 
     try {
-      if (isCreator) {
-        log(`Création du groupe ${groupId}...`);
-        await mls.createGroup(groupId);
-        // Persist state after group creation
+      log(`Initialisation locale du groupe ${groupId}...`);
+      await mls.createGroup(groupId);
+      
+      // Persist state after group creation
+      try {
+        const stateBytes = await mls.saveState(pin);
+        const hex = toHex(stateBytes);
+        localStorage.setItem("mls_autosave_" + userId, hex);
+      } catch (e) {
+        log(`Erreur sauvegarde état: ${e}`);
+      }
+
+      // Try to fetch existing KeyPackage first (asynchronous mode)
+      log(`Recherche du KeyPackage pour ${contact}...`);
+      const target = await mls.fetchKeyPackage(contact);
+
+      if (target) {
+        log(`KeyPackage trouvé pour ${contact} ! Ajout au groupe...`);
+        const result = await mls.addMember(groupId, target.keyPackage);
+        
+        // Register members to backend so gateway can route future messages
+        await mls.registerMember(groupId, contact, target.deviceId);
+        
+        log(`Membre ${contact} (Device: ${target.deviceId}) enregistré sur le backend.`);
+
+        // Save state immediately after adding member (critical for crypto sync)
         try {
           const stateBytes = await mls.saveState(pin);
           const hex = toHex(stateBytes);
           localStorage.setItem("mls_autosave_" + userId, hex);
         } catch (e) {
-          log(`Erreur sauvegarde état: ${e}`);
+          log(`Avertissement: sauvegarde état échouée: ${e}`);
         }
 
-        // Try to fetch existing KeyPackage first (asynchronous mode)
-        log(`Recherche d'un KeyPackage existant pour ${contact}...`);
-        let targetKp: Uint8Array | null = await mls.fetchKeyPackage(contact);
-
-        if (targetKp) {
-          log(`KeyPackage trouvé pour ${contact} !`);
-        } else {
-          // Interactive mode fallback
-          log(`KeyPackage non trouvé. Tentative de contact direct...`);
-          await mls.requestConversation(contact); // Signal Bob to wake up and publish keys
-          log(`Invitation envoyée à ${contact}...`);
-
-          log(`En attente du KeyPackage de ${contact}...`);
-          // Poll for response
-          for (let i = 0; i < 30 && !targetKp; i++) {
-            targetKp = await mls.fetchKeyPackage(contact);
-            if (!targetKp) await new Promise((r) => setTimeout(r, 2000));
-          }
-        }
-
-        if (targetKp) {
-          const result = await mls.addMember(groupId, targetKp);
-          // Save state immediately after adding member (critical for crypto sync)
-          try {
-            const stateBytes = await mls.saveState(pin);
-            const hex = toHex(stateBytes);
-            localStorage.setItem("mls_autosave_" + userId, hex);
-          } catch (e) {
-            log(`Avertissement: sauvegarde état échouée: ${e}`);
-          }
-
+        if (result.welcome) {
           // Send Welcome with targetUserId so server can store it if offline
           await mls.sendWelcome(result.welcome!, contact, groupId);
+        }
 
-          const convo = conversations.get(contact);
-          if (convo) {
-            const updatedConvo = { ...convo, isReady: true };
-            conversations.set(contact, updatedConvo);
-            conversations = new Map(conversations);
-            saveConversation(contact);
-            log(`✅ Chiffrement E2E actif avec ${contact}`);
-            loadHistoryForConversation(contact, groupId);
-          }
-        } else {
-          log(`❌ Timeout: ${contact} n'a pas répondu. Réessayez plus tard.`);
+        const convo = conversations.get(contact);
+        if (convo) {
+          const updatedConvo = { ...convo, isReady: true };
+          conversations.set(contact, updatedConvo);
+          conversations = new Map(conversations);
+          saveConversation(contact);
+          log(`✅ Chiffrement E2E actif avec ${contact}`);
+          loadHistoryForConversation(contact, groupId);
         }
       } else {
-        await mls.requestConversation(contact);
-        log(
-          `Invitation envoyée à ${contact}. En attente du message de bienvenue...`,
-        );
+        log(`❌ Impossible de trouver le KeyPackage de ${contact}. L'utilisateur doit s'être connecté au moins une fois.`);
+        // Remove conversation if we failed to establish it
+        conversations.delete(contact);
+        conversations = new Map(conversations);
       }
-
-      saveConversation(contact);
     } catch (e: any) {
       log(`Erreur: ${e.message}`);
       conversations.delete(contact);
@@ -763,24 +777,6 @@
         <span class="username"
           >Connecté en tant que <strong>{userId}</strong></span
         >
-        <span class="services-status">
-          {#each services as svc}
-            <span
-              class="svc-badge svc-{svc.ok === null
-                ? 'unknown'
-                : svc.ok
-                  ? 'ok'
-                  : 'err'}"
-              title="{svc.name}: {svc.ok === null
-                ? 'vérification...'
-                : svc.ok
-                  ? 'En ligne'
-                  : 'Hors ligne'}"
-            >
-              {svc.name}
-            </span>
-          {/each}
-        </span>
       </div>
       <div class="topbar-right">
         <button
@@ -876,6 +872,36 @@
             </button>
           </div>
         </div>
+
+        <!-- Add Group form -->
+        <div class="add-contact-box">
+            <div class="add-contact-label">Nouveau Groupe</div>
+            <div class="add-contact-row">
+                <input
+                    type="text"
+                    bind:value={newGroupInput}
+                    placeholder="Nom du groupe"
+                    onkeydown={(e) => {
+                        if (e.key === "Enter" && newGroupInput.trim()) {
+                            createNewGroup(newGroupInput);
+                            newGroupInput = "";
+                        }
+                    }}
+                />
+                <button
+                    class="btn-add"
+                    onclick={() => {
+                        if (newGroupInput.trim()) {
+                            createNewGroup(newGroupInput);
+                            newGroupInput = "";
+                        }
+                    }}
+                    title="Créer"
+                >
+                    +
+                </button>
+            </div>
+        </div>
       </aside>
 
       <!-- CHAT AREA -->
@@ -890,20 +916,47 @@
         {:else}
           <!-- Chat header -->
           <div class="chat-header">
-            <div class="chat-header-avatar">
-              {selectedContact[0].toUpperCase()}
+            <div class="chat-header-left">
+                <div class="chat-header-avatar">
+                {selectedContact[0].toUpperCase()}
+                </div>
+                <div class="chat-header-info">
+                <div class="chat-header-name">{currentConvo?.name || selectedContact}</div>
+                {#if currentConvo?.isReady}
+                    <div class="chat-header-status status-ready">
+                    🔒 Chiffrement E2E actif et vérifié
+                    </div>
+                {:else}
+                    <div class="chat-header-status status-pending">
+                    ⏳ En attente de {selectedContact}...
+                    </div>
+                {/if}
+                </div>
             </div>
-            <div class="chat-header-info">
-              <div class="chat-header-name">{selectedContact}</div>
-              {#if currentConvo?.isReady}
-                <div class="chat-header-status status-ready">
-                  🔒 Chiffrement E2E actif et vérifié
-                </div>
-              {:else}
-                <div class="chat-header-status status-pending">
-                  ⏳ En attente de {selectedContact}...
-                </div>
-              {/if}
+
+            <div class="chat-header-right">
+                 <input 
+                    type="text" 
+                    class="invite-input"
+                    bind:value={inviteMemberInput} 
+                    placeholder="Inviter..." 
+                    onkeydown={(e) => {
+                        if (e.key === "Enter" && inviteMemberInput.trim()) {
+                            inviteMemberToCurrentGroup(inviteMemberInput);
+                            inviteMemberInput = "";
+                        }
+                    }}
+                />
+                 <button 
+                    class="btn-invite" 
+                    onclick={() => {
+                        if (inviteMemberInput.trim()) {
+                            inviteMemberToCurrentGroup(inviteMemberInput);
+                            inviteMemberInput = "";
+                        }
+                    }}>
+                    + Inviter
+                </button>
             </div>
           </div>
 
@@ -1197,6 +1250,46 @@
   .btn-sm:hover {
     background: #4b5563;
   }
+  
+  /* New Styles */
+  .chat-header-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .chat-header-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .invite-input {
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 0.85em;
+    width: 140px;
+    outline: none;
+    transition: all 0.2s;
+  }
+  .invite-input:focus {
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+  }
+  .btn-invite {
+    background: #10b981;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 0.85em;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn-invite:hover {
+    background: #059669;
+  }
+
   .spinner {
     display: inline-block;
     width: 16px;
