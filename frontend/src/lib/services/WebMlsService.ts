@@ -5,8 +5,8 @@ export class WebMlsService implements IMlsService {
     private client: any;
     private ws: WebSocket | null = null;
     private messageCallback: ((senderId: string, content: Uint8Array, groupId?: string) => Promise<boolean>) | null = null;
-    private baseUrl = import.meta.env.VITE_GATEWAY_URL ?? "http://localhost:3000"; // Chat Gateway URL
-    private historyUrl = import.meta.env.VITE_HISTORY_URL ?? "http://localhost:3001"; // Chat History Service URL
+    private baseUrl = import.meta.env.VITE_GATEWAY_URL ?? "https://localhost:3000"; // Chat Gateway URL
+    private historyUrl = import.meta.env.VITE_HISTORY_URL ?? "https://localhost:3001"; // Chat History Service URL
     private userId: string = "unknown";
     private deviceId: string;
 
