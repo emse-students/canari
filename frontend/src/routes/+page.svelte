@@ -210,7 +210,6 @@
             isReady: true,
             mlsStateHex: null,
           });
-          conversations = new SvelteMap(conversations);
           saveConversation(senderNorm);
 
           try {
@@ -394,8 +393,6 @@
         isReady: true,
         mlsStateHex: null,
       });
-      conversations = new SvelteMap(conversations);
-
       selectConversation(name);
       saveConversation(name);
       log(`✅ Groupe "${name}" créé!`);
@@ -478,7 +475,6 @@
         isReady: false,
         mlsStateHex: null,
       });
-      conversations = new SvelteMap(conversations);
       selectConversation(contact);
 
       await mlsService.createGroup(groupId);
@@ -539,13 +535,11 @@
 
         const convo = conversations.get(contact)!;
         conversations.set(contact, { ...convo, isReady: true });
-        conversations = new SvelteMap(conversations);
         saveConversation(contact);
         log(`✅ Canal sécurisé avec ${contact}.`);
       } else {
         log(`❌ Appareils introuvables pour ${contact}.`);
         conversations.delete(contact);
-        conversations = new SvelteMap(conversations);
       }
     } catch (_e: unknown) {
       const msg = _e instanceof Error ? _e.message : String(_e);
@@ -554,11 +548,7 @@
   }
 
   // --- Messages & UI ---
-  function addMessageToChat(
-    senderId: string,
-    content: string,
-    contactName: string
-  ) {
+  function addMessageToChat(senderId: string, content: string, contactName: string) {
     const normalized = contactName.toLowerCase();
     const convo = conversations.get(normalized);
     if (!convo) return;
@@ -577,7 +567,6 @@
       ...convo,
       messages: [...convo.messages, newMsg],
     });
-    conversations = new SvelteMap(conversations);
     saveConversation(normalized);
 
     tick().then(() => {
@@ -624,7 +613,7 @@
   function logout() {
     isLoggedIn = false;
     isWsConnected = false;
-    conversations = new SvelteMap();
+    conversations.clear();
     selectedContact = null;
     statusLog = [];
   }

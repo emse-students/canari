@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { User, Users, Hand } from "lucide-svelte";
-  import ConversationTile from "./ConversationTile.svelte";
+  import { User, Users, Hand } from 'lucide-svelte';
+  import ConversationTile from './ConversationTile.svelte';
 
   interface Conversation {
     contactName: string;
@@ -38,22 +38,20 @@
   }: Props = $props();
 
   function handleContactKeydown(e: KeyboardEvent) {
-    if (e.key === "Enter" && newContactInput.trim()) {
+    if (e.key === 'Enter' && newContactInput.trim()) {
       onAddContact();
     }
   }
 
   function handleGroupKeydown(e: KeyboardEvent) {
-    if (e.key === "Enter" && newGroupInput.trim()) {
+    if (e.key === 'Enter' && newGroupInput.trim()) {
       onCreateGroup();
     }
   }
 </script>
 
 <aside
-  class="w-80 bg-white border-r border-cn-border flex flex-col {isHidden
-    ? 'hidden md:flex'
-    : ''}"
+  class="w-80 bg-white border-r border-cn-border flex flex-col {isHidden ? 'hidden md:flex' : ''}"
 >
   <!-- Header -->
   <div class="p-4 border-b border-cn-bg space-y-3">
@@ -116,9 +114,7 @@
         <div class="mb-4 opacity-50 flex justify-center items-center">
           <Hand size={48} />
         </div>
-        <p class="text-sm">
-          Votre messagerie est vide. Cherchez un pseudo pour commencer.
-        </p>
+        <p class="text-sm">Votre messagerie est vide. Cherchez un pseudo pour commencer.</p>
       </div>
     {/if}
   </div>
