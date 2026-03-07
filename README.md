@@ -66,14 +66,14 @@ Canari est une application de **messagerie instantanée sécurisée** avec chiff
 
 ### 📦 Stack Technique
 
-| Couche | Technologies |
-|--------|--------------|
+| Couche       | Technologies                                       |
+| ------------ | -------------------------------------------------- |
 | **Frontend** | SvelteKit 2.9 • Svelte 5 • TailwindCSS 4 • Tauri 2 |
-| **Gateway** | Rust 1.87 (Axum) • Tokio • Tonic • Rdkafka |
-| **Services** | NestJS • Spring Boot • Node.js 20 |
-| **Data** | PostgreSQL • MongoDB • Redis • Kafka |
-| **DevOps** | Docker • Docker Compose • GitHub Actions • Nginx |
-| **Quality** | ESLint • Prettier • Clippy • Husky • Pre-commit |
+| **Gateway**  | Rust 1.87 (Axum) • Tokio • Tonic • Rdkafka         |
+| **Services** | NestJS • Spring Boot • Node.js 20                  |
+| **Data**     | PostgreSQL • MongoDB • Redis • Kafka               |
+| **DevOps**   | Docker • Docker Compose • GitHub Actions • Nginx   |
+| **Quality**  | ESLint • Prettier • Clippy • Husky • Pre-commit    |
 
 ---
 
@@ -131,6 +131,7 @@ docker compose up -d
 ```
 
 Services disponibles :
+
 - **Frontend** : http://localhost:5173
 - **Chat Gateway** : ws://localhost:8000
 - **PostgreSQL** : localhost:5432
@@ -230,6 +231,7 @@ git commit --no-verify
 ```
 
 Vérifications incluses :
+
 - ✅ ESLint (TypeScript/JavaScript)
 - ✅ Prettier (Formatage)
 - ✅ Trailing whitespace
@@ -250,6 +252,7 @@ pre-commit run --all-files
 ```
 
 Vérifications :
+
 - ✅ Trailing whitespace
 - ✅ YAML/JSON/Markdown validation
 - ✅ Détection clés privées
@@ -304,7 +307,7 @@ Chaque `push` sur `main` déclenche automatiquement :
      - `frontend` (Nginx + SvelteKit)
    - Push sur **GitHub Container Registry**
 
-4. **SSH Deployment** 🚀 *(optionnel)*
+4. **SSH Deployment** 🚀 _(optionnel)_
    - SSH vers serveur production
    - Pull des images
    - Redémarrage services Docker Compose
@@ -477,4 +480,4 @@ Avez-vous des questions ? Besoin d'aide ?
 
 **Fait avec ❤️ par les étudiants de l'EMSE**
 
-*Dernière mise à jour : Mars 2026*
+_Dernière mise à jour : Mars 2026_
