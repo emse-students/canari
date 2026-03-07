@@ -23,8 +23,8 @@
     onAddMember,
     onProcessWelcome,
     lastKeyPackage = "",
-    lastCommit = "",
-    lastWelcome = "",
+    lastCommit: _lastCommit = "",
+    lastWelcome: _lastWelcome = "",
     incomingBytesHex = "",
     onIncomingBytesChange,
   }: Props = $props();

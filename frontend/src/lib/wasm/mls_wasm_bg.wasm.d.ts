@@ -1,5 +1,4 @@
-/* tslint:disable */
-/* eslint-disable */
+
 export const memory: WebAssembly.Memory;
 export const __wbg_wasmmlsclient_free: (a: number, b: number) => void;
 export const decrypt_with_pin: (a: number, b: number, c: number, d: number) => [number, number, number, number];

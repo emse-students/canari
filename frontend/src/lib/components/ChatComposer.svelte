@@ -1,6 +1,5 @@
 <script lang="ts">
   import { Send } from "lucide-svelte";
-  import { tick } from "svelte";
 
   interface Props {
     messageText: string;

@@ -76,7 +76,7 @@ export class IndexedDbStorage implements IMessageStorage {
                             pin
                         );
                         decryptedMessages.push(content);
-                    } catch (e) {
+                    } catch {
                          console.warn("Failed to decrypt message", entry.id);
                     }
                 }
@@ -91,7 +91,7 @@ export class IndexedDbStorage implements IMessageStorage {
 
     async clear(): Promise<void> {
         if (!this.db) await this.init();
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve, _reject) => {
             const transaction = this.db!.transaction([this.storeName], "readwrite");
             transaction.objectStore(this.storeName).clear();
             transaction.oncomplete = () => resolve();

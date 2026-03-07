@@ -2,7 +2,6 @@
   import { TauriMlsService, WebMlsService } from "$lib/mlsService";
   import type { IMlsService } from "$lib/mlsService";
   import { onMount, tick } from "svelte";
-  import { format } from "date-fns";
   import { fade } from "svelte/transition";
   import {
     LoginForm,
@@ -46,7 +45,7 @@
   let newContactInput = $state("");
   let newGroupInput = $state("");
   let inviteMemberInput = $state("");
-  let isAddingContact = $state(false);
+  let _isAddingContact = $state(false);
   let messageText = $state("");
   let chatContainer = $state<HTMLElement>();
 
@@ -63,7 +62,7 @@
   let currentConvo = $derived(
     selectedContact ? (conversations.get(selectedContact) ?? null) : null,
   );
-  let currentMessages = $derived(currentConvo?.messages ?? []);
+  let _currentMessages = $derived(currentConvo?.messages ?? []);
 
   // Service MLS
   let mls: IMlsService | null = $state(null);
@@ -83,11 +82,13 @@
   })();
 
   onMount(() => {
-    (window as any).wasm_bindings_log = (level: string, msg: string) => {
+    const w = window as Window & { wasm_bindings_log?: (level: string, msg: string) => void };
+    w.wasm_bindings_log = (level: string, msg: string) => {
       log(`[RUST::${level}] ${msg}`);
     };
 
-    if (window.__TAURI_INTERNALS__) {
+    const w2 = window as Window & { __TAURI_INTERNALS__?: unknown };
+    if (w2.__TAURI_INTERNALS__) {
       mls = new TauriMlsService();
       log("Initialisé en mode TAURI");
     } else {
@@ -189,15 +190,15 @@
             try {
               const stBytes = await mlsService.saveState(pin);
               localStorage.setItem("mls_autosave_" + userId, toHex(stBytes));
-            } catch (e) {
+            } catch {
               // Silent fallback if autosave fails
             }
 
             if (decrypted)
               addMessageToChat(senderNorm, decrypted, false, convoKey);
             return true;
-          } catch (e) {
-            log(`Erreur message (groupe connu): ${e}`);
+          } catch (_e) {
+            log(`Erreur message (groupe connu): ${_e}`);
             return false;
           }
         }
@@ -215,7 +216,7 @@
               const gData = await gRes.json();
               if (gData?.name) groupName = gData.name;
             }
-          } catch (e) {
+          } catch {
             // Silent fallback if group metadata fetch fails
           }
 
@@ -233,16 +234,16 @@
           try {
             const stBytes = await mlsService.saveState(pin);
             localStorage.setItem("mls_autosave_" + userId, toHex(stBytes));
-          } catch (e) {
+          } catch {
             // Silent fallback if autosave fails
           }
 
           log(`✅ Handshake complété avec ${senderNorm}`);
           loadHistoryForConversation(senderNorm, joinedGroupId);
           return true;
-        } catch (e2) {
+        } catch {
           log(
-            `Ignoré: pas un message pour un groupe existant ni un welcome. ${e2}`,
+            `Ignoré: pas un message pour un groupe existant ni un welcome.`,
           );
           return false;
         }
@@ -254,18 +255,20 @@
         await mlsService.connect(token);
         isWsConnected = true;
         log("Connecté au réseau !");
-      } catch (wsErr: any) {
-        log(`Gateway inaccessible: ${wsErr.message || wsErr}`);
+      } catch (_wsErr: unknown) {
+        const msg = _wsErr instanceof Error ? _wsErr.message : String(_wsErr);
+        log(`Gateway inaccessible: ${msg}`);
       }
 
       try {
         await mlsService.generateKeyPackage(pin);
         log("KeyPackage publié.");
-      } catch (e) {
+      } catch {
         // Silent fallback if key package generation fails
       }
-    } catch (e: any) {
-      loginError = e.message || String(e);
+    } catch (_e: unknown) {
+      const msg = _e instanceof Error ? _e.message : String(_e);
+      loginError = msg;
       log(`Erreur: ${loginError}`);
     } finally {
       isLoggingIn = false;
@@ -329,7 +332,7 @@
               addedMsg++;
               mlsUpdated = true;
             }
-          } catch (err) {
+          } catch {
             // Silently ignore errors in processing individual messages
           }
         }
@@ -339,7 +342,7 @@
           log(`✅ ${addedMsg} msg rattrapés pour ${contactName}.`);
         }
       }
-    } catch (e: any) {
+    } catch {
       // Silently ignore errors in loading history
     }
   }
@@ -357,10 +360,13 @@
             contactName,
             name: data.name || contactName,
             groupId: data.groupId,
-            messages: (data.messages || []).map((m: any) => ({
-              ...m,
-              timestamp: new Date(m.timestamp),
-            })),
+            messages: (data.messages || []).map((_m: unknown) => {
+              const m = _m as ChatMessage;
+              return {
+                ...m,
+                timestamp: new Date(m.timestamp),
+              };
+            }),
             isReady: data.isReady || false,
             mlsStateHex: null,
           });
@@ -526,7 +532,7 @@
               device.deviceId,
             );
           if (result.commit) await mlsService.sendCommit(result.commit, groupId);
-        } catch (e) {
+        } catch {
           // Silently ignore errors in device sync
         }
       }
@@ -578,8 +584,9 @@
         conversations.delete(contact);
         conversations = new Map(conversations);
       }
-    } catch (e: any) {
-      log(`Erreur création: ${e.message}`);
+    } catch (_e: unknown) {
+      const msg = _e instanceof Error ? _e.message : String(_e);
+      log(`Erreur création: ${msg}`);
     }
   }
 
@@ -627,15 +634,16 @@
       const stateBytes = await mlsService.saveState(pin);
       localStorage.setItem("mls_autosave_" + userId, toHex(stateBytes));
       addMessageToChat(userId, text, true, selectedContact);
-    } catch (e: any) {
-      log(`Erreur envoi: ${e}`);
+    } catch (_e: unknown) {
+      const msg = _e instanceof Error ? _e.message : String(_e);
+      log(`Erreur envoi: ${msg}`);
       messageText = text;
     }
   }
 
-  function handleKeydown(e: KeyboardEvent) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
+  function _handleKeydown(_e: KeyboardEvent) {
+    if (_e.key === "Enter" && !_e.shiftKey) {
+      _e.preventDefault();
       handleSendChat();
     }
   }
@@ -668,8 +676,9 @@
       const mlsService = ensureMls();
       const bytes = await mlsService.generateKeyPackage(pin);
       lastKeyPackage = toHex(bytes);
-    } catch (e: any) {
-      log(`Err GenKeyPackage: ${e}`);
+    } catch (_e: unknown) {
+      const msg = _e instanceof Error ? _e.message : String(_e);
+      log(`Err GenKeyPackage: ${msg}`);
     }
   }
   async function devAddMember() {
@@ -685,8 +694,9 @@
       lastCommit = toHex(result.commit);
       if (result.welcome) lastWelcome = toHex(result.welcome);
       incomingBytesHex = "";
-    } catch (e: any) {
-      log(`Err AddMember: ${e}`);
+    } catch (_e: unknown) {
+      const msg = _e instanceof Error ? _e.message : String(_e);
+      log(`Err AddMember: ${msg}`);
     }
   }
   async function devProcessWelcome() {
@@ -695,8 +705,9 @@
       const mlsService = ensureMls();
       await mlsService.processWelcome(fromHex(incomingBytesHex));
       incomingBytesHex = "";
-    } catch (e: any) {
-      log(`Err ProcessWelcome: ${e}`);
+    } catch (_e: unknown) {
+      const msg = _e instanceof Error ? _e.message : String(_e);
+      log(`Err ProcessWelcome: ${msg}`);
     }
   }
 </script>

@@ -39,7 +39,7 @@ export async function decryptData(cipherText: Uint8Array, iv: Uint8Array, salt: 
         
         const dec = new TextDecoder();
         return JSON.parse(dec.decode(decrypted));
-    } catch (e) {
+    } catch {
         throw new Error("Decryption failed. Wrong PIN?");
     }
 }

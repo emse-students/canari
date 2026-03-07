@@ -9,7 +9,7 @@
     isOwn: boolean;
   }
 
-  let { senderId, content, timestamp, isOwn }: Props = $props();
+  let { senderId: _senderId, content, timestamp, isOwn }: Props = $props();
 </script>
 
 <div class="flex w-full {isOwn ? 'justify-end' : 'justify-start'}">
