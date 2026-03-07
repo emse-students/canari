@@ -1,0 +1,30 @@
+# ── Build stage : SvelteKit static (WASM déjà compilé dans le repo) ──────────
+FROM node:20-alpine AS frontend-builder
+
+WORKDIR /app/frontend
+
+COPY frontend/package*.json ./
+RUN npm install
+
+COPY frontend ./
+# Le WASM pré-compilé est déjà dans frontend/src/lib/wasm/ (versionné dans le repo)
+# Si vous voulez forcer la recompilation WASM, lancez d'abord : make wasm (cf. Makefile)
+
+RUN npm run build
+
+# ── Runtime: Nginx servant le build statique ─────────────────────────────────
+FROM nginx:stable-alpine
+
+COPY --from=frontend-builder /app/frontend/build /usr/share/nginx/html
+
+# SPA fallback : toutes les routes non-statiques → index.html
+RUN printf 'server {\n\
+    listen 80;\n\
+    root /usr/share/nginx/html;\n\
+    index index.html;\n\
+    location / {\n\
+        try_files $uri $uri/ /index.html;\n\
+    }\n\
+}\n' > /etc/nginx/conf.d/default.conf
+
+EXPOSE 80

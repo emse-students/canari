@@ -13,15 +13,15 @@ const RedisProvider: Provider = {
   provide: 'REDIS_CLIENT',
   useFactory: () => {
     return new Redis({
-      host: 'localhost',
-      port: 6379,
+      host: process.env.REDIS_HOST || 'localhost',
+      port: parseInt(process.env.REDIS_PORT || '6379', 10),
     });
   },
 };
 
 @Module({
   imports: [
-    MongooseModule.forRoot('mongodb://localhost:27017/chat_db'),
+    MongooseModule.forRoot(process.env.MONGO_URI || 'mongodb://localhost:27017/chat_db'),
     MongooseModule.forFeature([
         { name: QueuedMessage.name, schema: QueuedMessageSchema },
         { name: KeyPackage.name, schema: KeyPackageSchema },

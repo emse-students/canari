@@ -26,7 +26,8 @@ async fn main() {
         .init();
 
     // Redis connection
-    let redis_client = redis::Client::open("redis://127.0.0.1/").expect("Invalid Redis URL");
+    let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1/".to_string());
+    let redis_client = redis::Client::open(redis_url).expect("Invalid Redis URL");
 
     // JWT Secret
     let jwt_secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| {
@@ -34,19 +35,23 @@ async fn main() {
     });
 
     // Kafka Producer
+    let kafka_brokers = std::env::var("KAFKA_BROKERS").unwrap_or_else(|_| "localhost:9092".to_string());
     let kafka_producer: FutureProducer = ClientConfig::new()
-        .set("bootstrap.servers", "localhost:9092")
+        .set("bootstrap.servers", &kafka_brokers)
         .set("message.timeout.ms", "5000")
         .create()
         .expect("Producer creation error");
 
     let http_client = HttpClient::new();
+    let delivery_service_url = std::env::var("DELIVERY_SERVICE_URL")
+        .unwrap_or_else(|_| "http://localhost:3001".to_string());
 
     let app_state = Arc::new(AppState::new(
         redis_client.clone(),
         kafka_producer,
         jwt_secret,
         http_client,
+        delivery_service_url,
     ));
 
     // Spawn Redis Subscriber Task (Direct Routing)

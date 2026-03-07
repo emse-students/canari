@@ -1,0 +1,37 @@
+# ── Build stage ──────────────────────────────────────────────────────────────
+FROM rust:1.87-slim AS builder
+
+# System deps for rdkafka (cmake build feature)
+RUN apt-get update && apt-get install -y cmake pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+
+# Reproduce the path layout expected by the path dependency:
+#   apps/chat-gateway/Cargo.toml → shared-rust = { path = "../../libs/shared-rust" }
+#   resolves to /build/libs/shared-rust
+WORKDIR /build
+
+# Copy path dependency
+COPY libs/shared-rust ./libs/shared-rust
+
+# Copy Cargo manifests first for dependency caching
+COPY apps/chat-gateway/Cargo.toml apps/chat-gateway/Cargo.lock ./apps/chat-gateway/
+
+# Dummy main to let Cargo pre-fetch & compile all dependencies
+RUN mkdir -p apps/chat-gateway/src \
+    && echo 'fn main(){}' > apps/chat-gateway/src/main.rs \
+    && cd apps/chat-gateway && cargo build --release \
+    && rm src/main.rs
+
+# Copy real source and build
+COPY apps/chat-gateway/src ./apps/chat-gateway/src
+RUN cd apps/chat-gateway && cargo build --release
+
+# ── Runtime stage ─────────────────────────────────────────────────────────────
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y ca-certificates libssl3 && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /build/apps/chat-gateway/target/release/chat-gateway /usr/local/bin/chat-gateway
+
+EXPOSE 3000
+
+CMD ["chat-gateway"]

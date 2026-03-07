@@ -258,7 +258,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String,
                                             "groupId": group_id
                                         });
 
-                                        let res = state.http_client.post("http://localhost:3001/mls-api/send")
+                                        let res = state.http_client.post(format!("{}/mls-api/send", state.delivery_service_url))
                                             .json(&body)
                                             .send()
                                             .await;
@@ -305,7 +305,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String,
                                                 "content": payload,
                                                 "groupId": group_id
                                             });
-                                            let _ = state.http_client.post("http://localhost:3001/mls-api/send").json(&body).send().await;
+                                            let _ = state.http_client.post(format!("{}/mls-api/send", state.delivery_service_url)).json(&body).send().await;
                                         }
 
                                     } else {
@@ -319,7 +319,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String,
                                             "groupId": group_id,
                                             "type": "mlsWelcome" 
                                         });
-                                        let _ = state.http_client.post("http://localhost:3001/mls-api/send")
+                                        let _ = state.http_client.post(format!("{}/mls-api/send", state.delivery_service_url))
                                             .json(&body)
                                             .send()
                                             .await;

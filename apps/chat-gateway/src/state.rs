@@ -12,6 +12,7 @@ pub struct AppState {
     pub connected_users: Arc<Mutex<HashMap<String, mpsc::UnboundedSender<String>>>>,
     pub jwt_secret: String,
     pub http_client: HttpClient,
+    pub delivery_service_url: String,
 }
 
 impl AppState {
@@ -20,6 +21,7 @@ impl AppState {
         kafka_producer: FutureProducer,
         jwt_secret: String,
         http_client: HttpClient,
+        delivery_service_url: String,
     ) -> Self {
         AppState {
             redis_client,
@@ -27,6 +29,7 @@ impl AppState {
             connected_users: Arc::new(Mutex::new(HashMap::new())),
             jwt_secret,
             http_client,
+            delivery_service_url,
         }
     }
 }

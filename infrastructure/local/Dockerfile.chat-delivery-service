@@ -1,0 +1,28 @@
+# ── Build stage ──────────────────────────────────────────────────────────────
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# shared-ts lib first (dependency of delivery-service)
+COPY libs/shared-ts ./libs/shared-ts
+RUN cd libs/shared-ts && npm install && npm run build
+
+# Delivery service
+COPY apps/chat-delivery-service/package*.json ./apps/chat-delivery-service/
+RUN cd apps/chat-delivery-service && npm install
+
+COPY apps/chat-delivery-service ./apps/chat-delivery-service
+RUN cd apps/chat-delivery-service && npx tsc -p tsconfig.json
+
+# ── Runtime stage ─────────────────────────────────────────────────────────────
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY --from=builder /app/apps/chat-delivery-service/dist ./dist
+COPY --from=builder /app/apps/chat-delivery-service/node_modules ./node_modules
+COPY --from=builder /app/apps/chat-delivery-service/package.json ./
+
+EXPOSE 3001
+
+CMD ["node", "dist/main.js"]

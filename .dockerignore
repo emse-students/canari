@@ -1,0 +1,17 @@
+# Dépendances et artefacts de build — exclus du contexte Docker
+**/node_modules
+**/target
+**/.git
+**/.svelte-kit
+**/dist
+**/coverage
+**/*.log
+
+# Artefacts frontend
+frontend/build
+frontend/pkg
+frontend/mls-wasm/pkg
+
+# Fichiers locaux
+.env*
+*.local
