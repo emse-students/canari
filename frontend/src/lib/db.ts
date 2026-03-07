@@ -108,7 +108,7 @@ export class SqliteStorage implements IMessageStorage {
     async init(): Promise<void> {
         try {
             // Dynamic import to avoid build errors if plugin not installed
-             // @ts-ignore
+             // @ts-expect-error - tauri plugin may not be installed
              const Database = (await import('@tauri-apps/plugin-sql')).default;
              this.db = await Database.load(this.dbPath);
              
@@ -177,7 +177,7 @@ export class SqliteStorage implements IMessageStorage {
 // Factory
 export async function getStorage(): Promise<IMessageStorage> {
     // Check if running in Tauri environment
-    // @ts-ignore
+    // @ts-expect-error - window may not have __TAURI_INTERNALS__
     if (window.__TAURI_INTERNALS__) {
         console.log("Tauri detected. Attempting to load SQLite plugin...");
         try {

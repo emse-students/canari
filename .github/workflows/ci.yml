@@ -43,7 +43,7 @@ jobs:
       - name: Install dependencies (Linux)
         run: |
           sudo apt-get update
-          sudo apt-get install -y libssl-dev cmake
+          sudo apt-get install -y libssl-dev cmake libcurl4-openssl-dev pkg-config
 
       - name: Check Formatting - Shared Rust
         working-directory: libs/shared-rust

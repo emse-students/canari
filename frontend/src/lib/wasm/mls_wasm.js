@@ -258,7 +258,7 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbg_new_cbee8c0d5c479eac: function() {
-            const ret = new Array();
+            const ret = [];
             return ret;
         },
         __wbg_new_from_slice_d7e202fdbee3c396: function(arg0, arg1) {

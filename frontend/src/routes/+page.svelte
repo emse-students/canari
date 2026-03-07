@@ -183,7 +183,9 @@
             try {
               const stBytes = await mls.saveState(pin);
               localStorage.setItem("mls_autosave_" + userId, toHex(stBytes));
-            } catch (e) {}
+            } catch (e) {
+              // Silent fallback if autosave fails
+            }
 
             if (decrypted)
               addMessageToChat(senderNorm, decrypted, false, convoKey);
@@ -206,10 +208,9 @@
             if (gRes.ok) {
               const gData = await gRes.json();
               if (gData?.name) groupName = gData.name;
+            } catch (e) {
+              // Silent fallback if group metadata fetch fails
             }
-          } catch (e) {}
-
-          conversations.set(senderNorm, {
             contactName: senderNorm,
             name: groupName,
             groupId: joinedGroupId,
@@ -223,9 +224,9 @@
           try {
             const stBytes = await mls.saveState(pin);
             localStorage.setItem("mls_autosave_" + userId, toHex(stBytes));
-          } catch (e) {}
-
-          log(`✅ Handshake complété avec ${senderNorm}`);
+          } catch (e) {
+            // Silent fallback if autosave fails
+          }
           loadHistoryForConversation(senderNorm, joinedGroupId);
           return true;
         } catch (e2) {
@@ -249,8 +250,9 @@
       try {
         await mls.generateKeyPackage(pin);
         log("KeyPackage publié.");
-      } catch (e) {}
-    } catch (e: any) {
+      } catch (e) {
+        // Silent fallback if key package generation fails
+      }
       loginError = e.message || String(e);
       log(`Erreur: ${loginError}`);
     } finally {
