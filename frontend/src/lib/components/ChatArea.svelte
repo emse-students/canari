@@ -94,7 +94,7 @@
     <EmptyState
       icon={ShieldCheck}
       title="Aucun échange sélectionné"
-      description="Le réseau Canari protège vos communications avec le protocole MLS."
+      description="Canari protège vos communications avec le protocole MLS."
     />
   {/if}
 </section>

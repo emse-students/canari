@@ -15,6 +15,6 @@
         ? 'bg-green-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]'
         : 'bg-gray-400'}"
     ></span>
-    {isConnected ? "Réseau Connecté" : "Hors-ligne"}
+    {isConnected ? 'Connecté' : 'Hors-ligne'}
   </div>
 </div>
