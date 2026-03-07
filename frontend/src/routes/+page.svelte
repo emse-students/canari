@@ -162,7 +162,7 @@
       loadExistingConversations();
 
       // Listener de messages
-      mls.onMessage(async (sender, content, groupId): Promise<boolean> => {
+      mlsService.onMessage(async (sender, content, groupId): Promise<boolean> => {
         log(
           `Message de ${sender} (${content.length} octets) - Grp: ${groupId}`,
         );
@@ -182,12 +182,12 @@
         if (convoKey) {
           const convo = conversations.get(convoKey)!;
           try {
-            const decrypted = await mls.processIncomingMessage(
+            const decrypted = await mlsService.processIncomingMessage(
               convo.groupId,
               content,
             );
             try {
-              const stBytes = await mls.saveState(pin);
+              const stBytes = await mlsService.saveState(pin);
               localStorage.setItem("mls_autosave_" + userId, toHex(stBytes));
             } catch (e) {
               // Silent fallback if autosave fails
@@ -204,7 +204,7 @@
 
         // Si groupe inconnu -> Traitement Welcome
         try {
-          const joinedGroupId = await mls.processWelcome(content);
+          const joinedGroupId = await mlsService.processWelcome(content);
           let groupName = senderNorm;
 
           try {
@@ -231,7 +231,7 @@
           saveConversation(senderNorm);
 
           try {
-            const stBytes = await mls.saveState(pin);
+            const stBytes = await mlsService.saveState(pin);
             localStorage.setItem("mls_autosave_" + userId, toHex(stBytes));
           } catch (e) {
             // Silent fallback if autosave fails
@@ -251,7 +251,7 @@
       log("Connexion Gateway...");
       try {
         const token = await generateDevToken(userId);
-        await mls.connect(token);
+        await mlsService.connect(token);
         isWsConnected = true;
         log("Connecté au réseau !");
       } catch (wsErr: any) {
@@ -259,7 +259,7 @@
       }
 
       try {
-        await mls.generateKeyPackage(pin);
+        await mlsService.generateKeyPackage(pin);
         log("KeyPackage publié.");
       } catch (e) {
         // Silent fallback if key package generation fails
@@ -308,8 +308,9 @@
     contactName: string,
     groupId: string,
   ) {
+    const mlsService = ensureMls();
     try {
-      const history = await mls.fetchHistory(groupId);
+      const history = await mlsService.fetchHistory(groupId);
       if (history.length > 0) {
         let addedMsg = 0;
         let mlsUpdated = false;
@@ -322,21 +323,25 @@
             for (let i = 0; i < bytesStr.length; i++)
               bytes[i] = bytesStr.charCodeAt(i);
 
-            const decrypted = await mls.processIncomingMessage(groupId, bytes);
+            const decrypted = await mlsService.processIncomingMessage(groupId, bytes);
             if (decrypted) {
               addMessageToChat(msg.sender_id, decrypted, false, contactName);
               addedMsg++;
               mlsUpdated = true;
             }
-          } catch (err) {}
+          } catch (err) {
+            // Silently ignore errors in processing individual messages
+          }
         }
         if (mlsUpdated) {
-          const stateBytes = await mls.saveState(pin);
+          const stateBytes = await mlsService.saveState(pin);
           localStorage.setItem("mls_autosave_" + userId, toHex(stateBytes));
           log(`✅ ${addedMsg} msg rattrapés pour ${contactName}.`);
         }
       }
-    } catch (e: any) {}
+    } catch (e: any) {
+      // Silently ignore errors in loading history
+    }
   }
 
   function loadExistingConversations() {
@@ -367,25 +372,26 @@
 
   // --- Gestion Groupes & Membres ---
   async function createNewGroup(nameRaw: string) {
+    const mlsService = ensureMls();
     if (!nameRaw.trim()) return;
     const name = nameRaw.trim();
     if (conversations.has(name)) return log(`Groupe "${name}" existe déjà.`);
 
     try {
-      const groupId = await mls.createRemoteGroup(name);
-      await mls.createGroup(groupId);
-      await mls.registerMember(groupId, userId, mls.getDeviceId());
+      const groupId = await mlsService.createRemoteGroup(name);
+      await mlsService.createGroup(groupId);
+      await mlsService.registerMember(groupId, userId, mlsService.getDeviceId());
 
       // Ajout de ses propres autres appareils (CORRIGÉ)
-      const ownDevices = (await mls.fetchUserDevices(userId)).filter(
-        (d) => d.deviceId !== mls.getDeviceId(),
+      const ownDevices = (await mlsService.fetchUserDevices(userId)).filter(
+        (d) => d.deviceId !== mlsService.getDeviceId(),
       );
       for (const device of ownDevices) {
         try {
-          const result = await mls.addMember(groupId, device.keyPackage);
-          await mls.registerMember(groupId, userId, device.deviceId);
+          const result = await mlsService.addMember(groupId, device.keyPackage);
+          await mlsService.registerMember(groupId, userId, device.deviceId);
           if (result.welcome) {
-            await mls.sendWelcome(
+            await mlsService.sendWelcome(
               result.welcome,
               userId,
               groupId,
@@ -393,14 +399,14 @@
             );
           }
           if (result.commit) {
-            await mls.sendCommit(result.commit, groupId);
+            await mlsService.sendCommit(result.commit, groupId);
           }
         } catch (e) {
           log(`Erreur synchro propre appareil ${device.deviceId}: ${e}`);
         }
       }
 
-      const stateBytes = await mls.saveState(pin);
+      const stateBytes = await mlsService.saveState(pin);
       localStorage.setItem("mls_autosave_" + userId, toHex(stateBytes));
 
       conversations.set(name, {
@@ -423,25 +429,26 @@
 
   async function inviteMemberToCurrentGroup(memberId: string) {
     if (!selectedContact || !memberId.trim()) return;
+    const mlsService = ensureMls();
     const targetUser = memberId.trim().toLowerCase();
     const convo = conversations.get(selectedContact);
     if (!convo) return;
 
     log(`Invitation de ${targetUser}...`);
     try {
-      await mls.registerMember(convo.groupId, userId, mls.getDeviceId());
-      const devices = await mls.fetchUserDevices(targetUser);
+      await mlsService.registerMember(convo.groupId, userId, mlsService.getDeviceId());
+      const devices = await mlsService.fetchUserDevices(targetUser);
       if (devices.length === 0)
         return log(`❌ Aucun appareil trouvé pour ${targetUser}.`);
 
       // Utilisation stricte de l'ajout par lot (CORRIGÉ)
-      const bulk = await mls.addMembersBulk(convo.groupId, devices);
+      const bulk = await mlsService.addMembersBulk(convo.groupId, devices);
 
       for (const did of bulk.addedDeviceIds) {
-        await mls.registerMember(convo.groupId, targetUser, did);
+        await mlsService.registerMember(convo.groupId, targetUser, did);
       }
 
-      const stateBytes = await mls.saveState(pin);
+      const stateBytes = await mlsService.saveState(pin);
       localStorage.setItem("mls_autosave_" + userId, toHex(stateBytes));
 
       if (bulk.welcome) {
@@ -465,7 +472,7 @@
         }
       }
 
-      if (bulk.commit) await mls.sendCommit(bulk.commit, convo.groupId);
+      if (bulk.commit) await mlsService.sendCommit(bulk.commit, convo.groupId);
 
       log(
         `✅ ${targetUser} invité (${bulk.addedDeviceIds.length}/${devices.length} appareils).`,
@@ -477,6 +484,7 @@
 
   async function startNewConversation(contactNameRaw: string) {
     const contact = contactNameRaw.trim().toLowerCase();
+    const mlsService = ensureMls();
     if (!contact || contact === userId) return;
 
     if (conversations.has(contact)) {
@@ -486,7 +494,7 @@
 
     const groupName = `${userId} & ${contact}`;
     try {
-      const groupId = await mls.createRemoteGroup(groupName);
+      const groupId = await mlsService.createRemoteGroup(groupName);
 
       conversations.set(contact, {
         contactName: contact,
@@ -499,41 +507,43 @@
       conversations = new Map(conversations);
       selectConversation(contact);
 
-      await mls.createGroup(groupId);
-      await mls.registerMember(groupId, userId, mls.getDeviceId());
+      await mlsService.createGroup(groupId);
+      await mlsService.registerMember(groupId, userId, mlsService.getDeviceId());
 
       // Synchro de ses autres appareils (CORRIGÉ)
-      const ownDevices = (await mls.fetchUserDevices(userId)).filter(
-        (d) => d.deviceId !== mls.getDeviceId(),
+      const ownDevices = (await mlsService.fetchUserDevices(userId)).filter(
+        (d) => d.deviceId !== mlsService.getDeviceId(),
       );
       for (const device of ownDevices) {
         try {
-          const result = await mls.addMember(groupId, device.keyPackage);
-          await mls.registerMember(groupId, userId, device.deviceId);
+          const result = await mlsService.addMember(groupId, device.keyPackage);
+          await mlsService.registerMember(groupId, userId, device.deviceId);
           if (result.welcome)
-            await mls.sendWelcome(
+            await mlsService.sendWelcome(
               result.welcome,
               userId,
               groupId,
               device.deviceId,
             );
-          if (result.commit) await mls.sendCommit(result.commit, groupId);
-        } catch (e) {}
+          if (result.commit) await mlsService.sendCommit(result.commit, groupId);
+        } catch (e) {
+          // Silently ignore errors in device sync
+        }
       }
 
-      const stBytes = await mls.saveState(pin);
+      const stBytes = await mlsService.saveState(pin);
       localStorage.setItem("mls_autosave_" + userId, toHex(stBytes));
 
       // Ajout des appareils du contact cible (CORRIGÉ)
-      const devices = await mls.fetchUserDevices(contact);
+      const devices = await mlsService.fetchUserDevices(contact);
       if (devices.length > 0) {
-        const bulk = await mls.addMembersBulk(groupId, devices);
+        const bulk = await mlsService.addMembersBulk(groupId, devices);
 
         for (const did of bulk.addedDeviceIds) {
-          await mls.registerMember(groupId, contact, did);
+          await mlsService.registerMember(groupId, contact, did);
         }
 
-        const st2Bytes = await mls.saveState(pin);
+        const st2Bytes = await mlsService.saveState(pin);
         localStorage.setItem("mls_autosave_" + userId, toHex(st2Bytes));
 
         if (bulk.welcome) {
@@ -556,7 +566,7 @@
             });
           }
         }
-        if (bulk.commit) await mls.sendCommit(bulk.commit, groupId);
+        if (bulk.commit) await mlsService.sendCommit(bulk.commit, groupId);
 
         const convo = conversations.get(contact)!;
         conversations.set(contact, { ...convo, isReady: true });
@@ -612,8 +622,9 @@
 
     messageText = "";
     try {
-      await mls.sendMessage(convo.groupId, text);
-      const stateBytes = await mls.saveState(pin);
+      const mlsService = ensureMls();
+      await mlsService.sendMessage(convo.groupId, text);
+      const stateBytes = await mlsService.saveState(pin);
       localStorage.setItem("mls_autosave_" + userId, toHex(stateBytes));
       addMessageToChat(userId, text, true, selectedContact);
     } catch (e: any) {
@@ -654,7 +665,8 @@
   // --- Outils Dev ---
   async function devGenerateKeyPackage() {
     try {
-      const bytes = await mls.generateKeyPackage(pin);
+      const mlsService = ensureMls();
+      const bytes = await mlsService.generateKeyPackage(pin);
       lastKeyPackage = toHex(bytes);
     } catch (e: any) {
       log(`Err GenKeyPackage: ${e}`);
@@ -665,7 +677,8 @@
     const convo = conversations.get(selectedContact);
     if (!convo) return;
     try {
-      const result = await mls.addMember(
+      const mlsService = ensureMls();
+      const result = await mlsService.addMember(
         convo.groupId,
         fromHex(incomingBytesHex),
       );
@@ -679,7 +692,8 @@
   async function devProcessWelcome() {
     if (!incomingBytesHex) return;
     try {
-      await mls.processWelcome(fromHex(incomingBytesHex));
+      const mlsService = ensureMls();
+      await mlsService.processWelcome(fromHex(incomingBytesHex));
       incomingBytesHex = "";
     } catch (e: any) {
       log(`Err ProcessWelcome: ${e}`);
