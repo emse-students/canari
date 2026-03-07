@@ -1,6 +1,10 @@
-# Mines App
+# Canari - Messagerie Sécurisée E2E
 
-Application de messagerie sécurisée (MLS) avec une architecture microservices.
+[![CI](https://github.com/YOUR-ORG/canari/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR-ORG/canari/actions/workflows/ci.yml)
+[![CD](https://github.com/YOUR-ORG/canari/actions/workflows/cd.yml/badge.svg)](https://github.com/YOUR-ORG/canari/actions/workflows/cd.yml)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+Application de messagerie sécurisée avec chiffrement de bout en bout (protocole MLS) et architecture microservices moderne.
 
 ## Architecture
 
@@ -26,26 +30,50 @@ L'environnement de développement a été configuré avec :
 
 ## Démarrage Rapide
 
-1.  **Redémarrer votre terminal** (Important pour `cargo` et `make`).
+### Développement Local
 
-2.  **Lancer l'infrastructure** :
+1. **Installer les dépendances** :
+   ```bash
+   make install
+   ```
 
-    ```bash
-    cd infrastructure/local
-    docker compose up -d
-    ```
+2. **Lancer l'infrastructure** :
+   ```bash
+   cd infrastructure/local
+   docker compose up -d
+   ```
 
-3.  **Lancer les services** (dans des terminaux séparés) :
-    - **Auth Service** : `cd apps/auth-service && ./gradlew bootRun`
-    - **User Service** : `cd apps/user-service && ./gradlew bootRun`
-    - **Chat Delivery** : `cd apps/chat-delivery-service && npm run start:dev`
-    - **Gateway** : `cd apps/chat-gateway && cargo run`
+3. **Lancer le frontend** :
+   ```bash
+   cd frontend && bun run dev
+   ```
 
-4.  **Lancer le Frontend** :
-    - Web : `cd frontend && npm run dev`
-    - Desktop : `cd frontend && npm run tauri dev`
+### Déploiement
+
+#### Déploiement automatique (CI/CD)
+Chaque push sur `main` déclenche automatiquement :
+- ✅ Tests CI
+- 🏗️ Build du frontend et des services
+- 🐳 Push des images Docker
+- 🚀 Déploiement sur le serveur de production
+
+#### Déploiement manuel
+```bash
+# Déploiement local
+./scripts/deploy.sh local
+
+# Déploiement production (nécessite configuration)
+./scripts/deploy.sh production
+```
+
+📖 **Documentation complète** : [docs/CI_CD.md](docs/CI_CD.md)
 
 ## Commandes Utiles
 
-- `make test` : Lance tous les tests du projet.
+- `make` ou `make all` : Installation et déploiement complets
+- `make install` : Installer toutes les dépendances
+- `make test` : Lancer tous les tests du projet
+- `make build-frontend` : Builder le frontend (WASM + Svelte)
+- `make nginx-install` : Configurer Nginx
+- `make reload-services` : Redémarrer les services Docker
 - `make build` : Compile tous les composants.

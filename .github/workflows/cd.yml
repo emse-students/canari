@@ -1,0 +1,239 @@
+name: CD - Deploy to Production
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:  # Permet déclenchement manuel
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }}
+
+jobs:
+  build-frontend:
+    name: Build Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            frontend/node_modules
+            ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('frontend/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: |
+          bun install
+          bunx svelte-kit sync
+
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack
+
+      - name: Build WASM
+        working-directory: frontend/mls-wasm
+        run: wasm-pack build --target web --out-dir ../src/lib/wasm
+
+      - name: Build frontend
+        working-directory: frontend
+        run: bun run build
+
+      - name: Upload frontend build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build
+          path: frontend/build/
+          retention-days: 7
+
+  build-docker-images:
+    name: Build & Push Docker Images
+    runs-on: ubuntu-latest
+    needs: build-frontend
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        service:
+          - name: chat-gateway
+            context: apps/chat-gateway
+            dockerfile: infrastructure/local/Dockerfile.chat-gateway
+          - name: chat-delivery-service
+            context: apps/chat-delivery-service
+            dockerfile: infrastructure/local/Dockerfile.chat-delivery-service
+          - name: frontend
+            context: frontend
+            dockerfile: infrastructure/local/Dockerfile.frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download frontend build artifact
+        if: matrix.service.name == 'frontend'
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-build
+          path: frontend/build/
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service.name }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.service.context }}
+          file: ${{ matrix.service.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-to-server:
+    name: Deploy to Production Server
+    runs-on: ubuntu-latest
+    needs: build-docker-images
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: production
+      url: https://${{ vars.DOMAIN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy via SSH
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_PREFIX: ${{ env.IMAGE_PREFIX }}
+          TAG: ${{ github.sha }}
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }} << ENDSSH
+            set -e
+            
+            # Navigation vers le répertoire du projet
+            cd ${{ secrets.DEPLOY_PATH }}
+            
+            # Pull du code si nécessaire (pour docker-compose.prod.yml)
+            echo "📥 Updating repository..."
+            git pull origin main
+            
+            # Export des variables d'environnement
+            export REGISTRY="${REGISTRY}"
+            export IMAGE_PREFIX="${IMAGE_PREFIX}"
+            export TAG="${TAG}"
+            
+            # Charger les variables d'environnement
+            if [ -f infrastructure/.env ]; then
+              export \$(cat infrastructure/.env | grep -v '^#' | xargs)
+            fi
+            
+            # Pull des dernières images
+            echo "🔄 Pulling latest Docker images..."
+            docker compose -f infrastructure/docker-compose.prod.yml pull
+            
+            # Redémarrage des services avec zero-downtime
+            echo "🚀 Deploying services..."
+            docker compose -f infrastructure/docker-compose.prod.yml up -d --remove-orphans
+            
+            # Attendre que les services soient prêts
+            echo "⏳ Waiting for services to be healthy..."
+            timeout 120 bash -c 'until docker compose -f infrastructure/docker-compose.prod.yml ps | grep -q "healthy"; do sleep 5; done' || echo "⚠️ Timeout waiting for health checks"
+            
+            # Nettoyage des anciennes images et conteneurs
+            echo "🧹 Cleaning up old images..."
+            docker image prune -af --filter "until=24h"
+            docker container prune -f
+            
+            echo "✅ Deployment completed successfully!"
+          ENDSSH
+
+      - name: Health Check
+        run: |
+          echo "🔍 Performing health checks..."
+          sleep 10
+          
+          # Check gateway
+          curl -f https://${{ vars.DOMAIN }}/health || echo "⚠️ Gateway health check failed"
+          
+          # Check delivery service
+          curl -f https://${{ vars.DOMAIN }}/api/health || echo "⚠️ Delivery service health check failed"
+          
+          echo "✅ Health checks completed"
+
+      - name: Notify deployment
+        if: always()
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ Deployment to production succeeded"
+          else
+            echo "❌ Deployment to production failed"
+          fi
+
+  notify-on-failure:
+    name: Notify on Failure
+    runs-on: ubuntu-latest
+    needs: [build-frontend, build-docker-images, deploy-to-server]
+    if: failure()
+    steps:
+      - name: Create issue on failure
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `🚨 Deployment Failed - ${context.sha.substring(0, 7)}`;
+            const body = `
+            ## Deployment Failure Report
+            
+            **Commit**: ${context.sha}
+            **Branch**: ${context.ref}
+            **Workflow Run**: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}
+            
+            The deployment pipeline failed. Please check the workflow logs for details.
+            
+            cc: @${context.actor}
+            `;
+            
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: ['deployment', 'bug', 'ci/cd']
+            });
