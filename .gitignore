@@ -1,13 +1,39 @@
 # General
 .DS_Store
 .env
+.env.local
+.env.*.local
 *.log
+*.pid
+*.seed
+*.pid.lock
+
+# OS
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
 
 # Editors / IDEs
 .vscode/
+!.vscode/extensions.json
+!.vscode/settings.json
 .idea/
 *.swp
 *.swo
+*~
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
 
 # Node.js / Bun
 node_modules/
@@ -29,10 +55,16 @@ pnpm-lock.yaml
 # Rust
 target/
 **/*.rs.bk
+Cargo.lock
+# Keep Cargo.lock for binaries, remove for libraries
+!apps/*/Cargo.lock
+!frontend/src-tauri/Cargo.lock
 
-# Svelte
+# Svelte / SvelteKit
 .svelte-kit/
 *.backup
+/package
+vite.config.*.timestamp-*
 
 # Java/Gradle
 .gradle/
@@ -43,4 +75,15 @@ out/
 Figma/
 
 
+# Application specific
 apps/user-service/bin/
+
+# Test coverage
+*.lcov
+lcov-report/
+.nyc_output/
+
+# Temporary files
+*.tmp
+*.temp
+*.cache
