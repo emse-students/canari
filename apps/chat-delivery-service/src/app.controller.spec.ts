@@ -56,9 +56,9 @@ describe('AppController', () => {
     };
 
     const mockRedis = {
-        exists: jest.fn().mockResolvedValue(0),
-        get: jest.fn().mockResolvedValue(null),
-        publish: jest.fn().mockResolvedValue(1),
+      exists: jest.fn().mockResolvedValue(0),
+      get: jest.fn().mockResolvedValue(null),
+      publish: jest.fn().mockResolvedValue(1),
     };
 
     const app: TestingModule = await Test.createTestingModule({
@@ -89,9 +89,9 @@ describe('AppController', () => {
           useValue: mockGroupModel,
         },
         {
-            provide: 'REDIS_CLIENT',
-            useValue: mockRedis,
-        }
+          provide: 'REDIS_CLIENT',
+          useValue: mockRedis,
+        },
       ],
     }).compile();
 
@@ -135,21 +135,19 @@ describe('AppController', () => {
       mockQueuedMessageModel.exec.mockResolvedValueOnce([]);
       const dto = {
         senderId: 'alice',
-        recipients: [
-          { userId: 'bob', deviceId: 'dev1' },
-        ],
+        recipients: [{ userId: 'bob', deviceId: 'dev1' }],
         content: 'encrypted_content',
         groupId: 'group1',
       };
 
       // Mock offline
-      ( appController as any).redis.exists.mockResolvedValue(0);
+      (appController as any).redis.exists.mockResolvedValue(0);
 
       await appController.sendMessage(dto);
 
       expect(mockQueuedMessageModel.bulkWrite).toHaveBeenCalledTimes(1);
       const callArg = mockQueuedMessageModel.bulkWrite.mock.calls[0][0];
-      expect(callArg).toHaveLength(1); 
+      expect(callArg).toHaveLength(1);
       expect(callArg[0].insertOne.document).toEqual(
         expect.objectContaining({
           recipientId: 'bob',
@@ -161,32 +159,32 @@ describe('AppController', () => {
     });
 
     it('should push directly when online', async () => {
-        const dto = {
-            senderId: 'alice',
-            recipients: [{ userId: 'charlie', deviceId: 'dev_online' }],
-            content: 'secret',
-            groupId: 'g1'
-        };
+      const dto = {
+        senderId: 'alice',
+        recipients: [{ userId: 'charlie', deviceId: 'dev_online' }],
+        content: 'secret',
+        groupId: 'g1',
+      };
 
-        // Mock online
-        (appController as any).redis.exists.mockResolvedValue(1);
+      // Mock online
+      (appController as any).redis.exists.mockResolvedValue(1);
 
-        await appController.sendMessage(dto);
+      await appController.sendMessage(dto);
 
-        // Should Publish
-        expect((appController as any).redis.publish).toHaveBeenCalledWith(
-            'chat:messages',
-            JSON.stringify({
-                recipientId: 'charlie',
-                deviceId: 'dev_online',
-                senderId: 'alice',
-                groupId: 'g1',
-                content: 'secret'
-            })
-        );
+      // Should Publish
+      expect((appController as any).redis.publish).toHaveBeenCalledWith(
+        'chat:messages',
+        JSON.stringify({
+          recipientId: 'charlie',
+          deviceId: 'dev_online',
+          senderId: 'alice',
+          groupId: 'g1',
+          content: 'secret',
+        }),
+      );
 
-        // Should NOT Queue
-        expect(mockQueuedMessageModel.bulkWrite).not.toHaveBeenCalled();
+      // Should NOT Queue
+      expect(mockQueuedMessageModel.bulkWrite).not.toHaveBeenCalled();
     });
 
     it('should fetch messages for a device', async () => {

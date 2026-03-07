@@ -24,4 +24,5 @@ export class WelcomeMessage {
   createdAt: Date;
 }
 
-export const WelcomeMessageSchema = SchemaFactory.createForClass(WelcomeMessage);
+export const WelcomeMessageSchema =
+  SchemaFactory.createForClass(WelcomeMessage);

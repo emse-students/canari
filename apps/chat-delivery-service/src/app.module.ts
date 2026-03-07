@@ -21,14 +21,16 @@ const RedisProvider: Provider = {
 
 @Module({
   imports: [
-    MongooseModule.forRoot(process.env.MONGO_URI || 'mongodb://localhost:27017/chat_db'),
+    MongooseModule.forRoot(
+      process.env.MONGO_URI || 'mongodb://localhost:27017/chat_db',
+    ),
     MongooseModule.forFeature([
-        { name: QueuedMessage.name, schema: QueuedMessageSchema },
-        { name: KeyPackage.name, schema: KeyPackageSchema },
-        { name: WelcomeMessage.name, schema: WelcomeMessageSchema },
-        { name: UserState.name, schema: UserStateSchema },
-        { name: GroupMember.name, schema: GroupMemberSchema },
-        { name: Group.name, schema: GroupSchema },
+      { name: QueuedMessage.name, schema: QueuedMessageSchema },
+      { name: KeyPackage.name, schema: KeyPackageSchema },
+      { name: WelcomeMessage.name, schema: WelcomeMessageSchema },
+      { name: UserState.name, schema: UserStateSchema },
+      { name: GroupMember.name, schema: GroupMemberSchema },
+      { name: Group.name, schema: GroupSchema },
     ]),
   ],
   controllers: [AppController],

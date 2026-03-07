@@ -19,4 +19,7 @@ export class GroupMember {
 }
 
 export const GroupMemberSchema = SchemaFactory.createForClass(GroupMember);
-GroupMemberSchema.index({ groupId: 1, userId: 1, deviceId: 1 }, { unique: true });
+GroupMemberSchema.index(
+  { groupId: 1, userId: 1, deviceId: 1 },
+  { unique: true },
+);
