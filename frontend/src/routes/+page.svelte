@@ -3,6 +3,7 @@
   import type { IMlsService } from "$lib/mlsService";
   import { onMount, tick } from "svelte";
   import { format } from "date-fns";
+  import { fade, fly, slide } from "svelte/transition";
 
   // --- Types ---
   interface ChatMessage {
@@ -14,8 +15,8 @@
   }
 
   interface Conversation {
-    contactName: string; // Used for display or member list
-    name: string; // Group Name
+    contactName: string;
+    name: string;
     groupId: string;
     messages: ChatMessage[];
     isReady: boolean;
@@ -23,8 +24,8 @@
   }
 
   // --- State (Runes) ---
-  let userId = $state("alice");
-  let pin = $state("1234");
+  let userId = $state("");
+  let pin = $state("");
   let isLoggedIn = $state(false);
   let isLoggingIn = $state(false);
   let loginError = $state("");
@@ -33,6 +34,8 @@
 
   let conversations = $state<Map<string, Conversation>>(new Map());
   let selectedContact = $state<string | null>(null);
+  let mobileView = $state<"list" | "chat">("list"); // Gestion responsive
+
   let newContactInput = $state("");
   let newGroupInput = $state("");
   let inviteMemberInput = $state("");
@@ -43,28 +46,21 @@
   let isWsConnected = $state(false);
   let myDeviceId = $state("");
 
-  // Service health status
-  interface ServiceStatus {
-    name: string;
-    ok: boolean | null;
-  }
-
-  // Derived values for reactive rendering
-  let currentConvo = $derived(
-    selectedContact ? (conversations.get(selectedContact) ?? null) : null,
-  );
-  let currentMessages = $derived(currentConvo?.messages ?? []);
-
-  // Debug state (hidden by default)
+  // Variables de débogage
   let lastKeyPackage = $state("");
   let incomingBytesHex = $state("");
   let lastCommit = $state("");
   let lastWelcome = $state("");
 
-  // Service
+  // Valeurs dérivées pour rendu réactif
+  let currentConvo = $derived(
+    selectedContact ? (conversations.get(selectedContact) ?? null) : null,
+  );
+  let currentMessages = $derived(currentConvo?.messages ?? []);
+
+  // Service MLS
   let mls: IMlsService;
 
-  // URL du service de livraison : variable d'env explicite, sinon même origine (derrière Nginx)
   const historyBaseUrl = (() => {
     const env = import.meta.env.VITE_HISTORY_URL;
     if (env && env.trim()) return env;
@@ -80,26 +76,24 @@
 
     if (window.__TAURI_INTERNALS__) {
       mls = new TauriMlsService();
-      log("Initialized in TAURI mode");
+      log("Initialisé en mode TAURI");
     } else {
       mls = new WebMlsService();
-      log("Initialized in WEB (WASM) mode");
+      log("Initialisé en mode WEB (WASM)");
     }
   });
 
   function log(msg: string) {
     statusLog = [...statusLog, `[${new Date().toLocaleTimeString()}] ${msg}`];
-    // Auto-scroll logs
     tick().then(() => {
       const logEl = document.getElementById("logContainer");
       if (logEl) logEl.scrollTop = logEl.scrollHeight;
     });
   }
 
-  // --- Token generation ---
+  // --- Auth & Initialisation ---
   async function generateDevToken(uid: string) {
-    const secret =
-      "9a2f8c4e6b0d71f3e8b925b1234567890abcdef1234567890abcdef12345678";
+    const secret = "9a2f8c4e6b0d71f3e8b925b1234567890abcdef1234567890abcdef12345678";
     const header = JSON.stringify({ alg: "HS256", typ: "JWT" });
     const payload = JSON.stringify({
       sub: uid,
@@ -109,264 +103,171 @@
       btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     const unsignedToken = `${b64url(header)}.${b64url(payload)}`;
     const enc = new TextEncoder();
-    const key = await crypto.subtle.importKey(
-      "raw",
-      enc.encode(secret),
-      { name: "HMAC", hash: "SHA-256" },
-      false,
-      ["sign"],
-    );
-    const signature = await crypto.subtle.sign(
-      "HMAC",
-      key,
-      enc.encode(unsignedToken),
-    );
+    const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const signature = await crypto.subtle.sign("HMAC", key, enc.encode(unsignedToken));
     const sigB64 = b64url(String.fromCharCode(...new Uint8Array(signature)));
     return `${unsignedToken}.${sigB64}`;
   }
 
-  // --- Auth ---
   async function handleLogin() {
+    if (!userId.trim() || !pin.trim()) {
+      loginError = "Veuillez remplir tous les champs.";
+      return;
+    }
+
     loginError = "";
     isLoggingIn = true;
-
-    // Normalize userId to lowercase to avoid alice/Alice duplicates
     userId = userId.trim().toLowerCase();
 
     try {
-      if (!mls)
-        throw new Error("MLS Service non initialisé. Rechargez la page.");
+      if (!mls) throw new Error("Service non initialisé.");
 
       log("Initialisation MLS...");
       let stateBytes: Uint8Array | undefined;
       const saved = localStorage.getItem("mls_autosave_" + userId);
       if (saved) {
-        const bytes = new Uint8Array(saved.length / 2);
-        for (let i = 0; i < saved.length; i += 2) {
-          bytes[i / 2] = parseInt(saved.substring(i, i + 2), 16);
-        }
-        stateBytes = bytes;
-        log("État chiffré chargé depuis le stockage local.");
+        stateBytes = fromHex(saved);
+        log("État chargé depuis le stockage local.");
       }
 
       await mls.init(userId, pin, stateBytes);
       myDeviceId = mls.getDeviceId();
-      log(`Identité MLS initialisée pour ${userId} (device: ${myDeviceId})`);
+      log(`Identité MLS initialisée (device: ${myDeviceId})`);
 
       isLoggedIn = true;
       loadExistingConversations();
-      log("Conversations chargées !");
 
-      // listener setup before connection to catch pending messages
+      // Listener de messages
       mls.onMessage(async (sender, content, groupId) => {
-        log(
-          `Message reçu de ${sender} (${content.length} octets) groupe=${groupId}`,
-        );
+        log(`Message de ${sender} (${content.length} octets) - Grp: ${groupId}`);
         const senderNorm = sender.toLowerCase();
 
-        // ── Step 1: find the conversation by groupId (reliable) or by sender (1-to-1 fallback) ──
         let convoKey: string | undefined;
         if (groupId) {
           for (const [k, c] of conversations.entries()) {
-            if (c.groupId === groupId) {
-              convoKey = k;
-              break;
-            }
+            if (c.groupId === groupId) { convoKey = k; break; }
           }
         }
-        if (!convoKey && conversations.has(senderNorm)) {
-          convoKey = senderNorm;
-        }
+        if (!convoKey && conversations.has(senderNorm)) convoKey = senderNorm;
 
-        // ── Step 2a: known conversation → process as MLS message, never fall through to welcome ──
         if (convoKey) {
           const convo = conversations.get(convoKey)!;
           try {
-            const decrypted = await mls.processIncomingMessage(
-              convo.groupId,
-              content,
-            );
-
+            const decrypted = await mls.processIncomingMessage(convo.groupId, content);
             try {
-              const stateBytes = await mls.saveState(pin);
-              localStorage.setItem("mls_autosave_" + userId, toHex(stateBytes));
-            } catch (saveErr) {
-              log(`Avertissement: sauvegarde état échouée: ${saveErr}`);
-            }
+              const stBytes = await mls.saveState(pin);
+              localStorage.setItem("mls_autosave_" + userId, toHex(stBytes));
+            } catch (e) {}
 
-            if (decrypted) {
-              addMessageToChat(senderNorm, decrypted, false, convoKey);
-            } else {
-              log(
-                `Message de protocole (commit/proposal) traité pour "${convoKey}".`,
-              );
-            }
+            if (decrypted) addMessageToChat(senderNorm, decrypted, false, convoKey);
             return true;
           } catch (e) {
-            // processIncomingMessage threw — log and stop. Do NOT try processWelcome on known-group bytes.
-            log(
-              `Erreur traitement message dans groupe connu "${convoKey}": ${e}`,
-            );
+            log(`Erreur message (groupe connu): ${e}`);
             return false;
           }
         }
 
-        // ── Step 2b: unknown conversation → must be a Welcome message ──
+        // Si groupe inconnu -> Traitement Welcome
         try {
           const joinedGroupId = await mls.processWelcome(content);
-          const extractedContact = senderNorm;
-
-          // groupId from the message metadata (sent explicitly by the inviter) is the
-          // canonical key in the delivery service DB. Prefer it over what processWelcome
-          // returns (same UUID, but avoid any encoding mismatch).
-          const lookupGroupId = groupId || joinedGroupId;
-
-          // Fetch the real group name from the server
-          let groupName = extractedContact;
+          let groupName = senderNorm;
+          
           try {
-            const gRes = await fetch(
-              `${historyBaseUrl}/mls-api/groups/${lookupGroupId}`,
-            );
+            const gRes = await fetch(`${historyBaseUrl}/mls-api/groups/${groupId || joinedGroupId}`);
             if (gRes.ok) {
               const gData = await gRes.json();
               if (gData?.name) groupName = gData.name;
-              else log(`⚠️ Groupe ${lookupGroupId} trouvé mais sans nom`);
-            } else {
-              log(
-                `⚠️ Groupe ${lookupGroupId} introuvable sur le serveur (${gRes.status})`,
-              );
             }
-          } catch (e) {
-            log(`⚠️ Impossible de récupérer le nom du groupe: ${e}`);
-          }
+          } catch (e) {}
 
-          if (!conversations.has(extractedContact)) {
-            log(
-              `✨ Nouvelle conversation avec ${extractedContact} (groupe: ${groupName})`,
-            );
-            conversations.set(extractedContact, {
-              contactName: extractedContact,
-              name: groupName,
-              groupId: joinedGroupId,
-              messages: [],
-              isReady: true,
-              mlsStateHex: null,
-            });
-          }
-
-          const c = conversations.get(extractedContact)!;
-          conversations.set(extractedContact, {
-            ...c,
-            isReady: true,
-            groupId: joinedGroupId,
+          conversations.set(senderNorm, {
+            contactName: senderNorm,
             name: groupName,
+            groupId: joinedGroupId,
+            messages: [],
+            isReady: true,
+            mlsStateHex: null,
           });
-          saveConversation(extractedContact);
+          conversations = new Map(conversations);
+          saveConversation(senderNorm);
 
           try {
-            const stateBytes = await mls.saveState(pin);
-            localStorage.setItem("mls_autosave_" + userId, toHex(stateBytes));
-          } catch (_) {}
+            const stBytes = await mls.saveState(pin);
+            localStorage.setItem("mls_autosave_" + userId, toHex(stBytes));
+          } catch (e) {}
 
-          log(
-            `✅ Handshake complété avec ${extractedContact} (groupe: ${groupName})`,
-          );
-          loadHistoryForConversation(extractedContact, joinedGroupId);
-          conversations = new Map(conversations);
+          log(`✅ Handshake complété avec ${senderNorm}`);
+          loadHistoryForConversation(senderNorm, joinedGroupId);
           return true;
         } catch (e2) {
-          log(
-            `Message ignoré de ${sender} (groupe inconnu, pas un welcome valide: ${e2})`,
-          );
+          log(`Ignoré: pas un message pour un groupe existant ni un welcome. ${e2}`);
           return false;
         }
       });
 
-      log("Connexion au Chat Gateway...");
+      log("Connexion Gateway...");
       try {
         const token = await generateDevToken(userId);
         await mls.connect(token);
         isWsConnected = true;
-        log("Connecté au Gateway Chat !");
+        log("Connecté au réseau !");
       } catch (wsErr: any) {
-        log(`Attention: Gateway inaccessible (${wsErr.message || wsErr}).`);
+        log(`Gateway inaccessible: ${wsErr.message || wsErr}`);
       }
 
-      // Auto-publish KeyPackage on login
       try {
         await mls.generateKeyPackage(pin);
-        log("KeyPackage public publié (prêt pour recevoir des invitations).");
-      } catch (e) {
-        log(`Erreur publication KeyPackage: ${e}`);
-      }
+        log("KeyPackage publié.");
+      } catch (e) {}
+
     } catch (e: any) {
-      console.error(e);
-      const msg = e.message || String(e);
-      log(`Erreur login: ${msg}`);
-      loginError = msg;
+      loginError = e.message || String(e);
+      log(`Erreur: ${loginError}`);
     } finally {
       isLoggingIn = false;
     }
   }
 
   // --- Utils ---
-  function generateGroupId(user1: string, user2: string): string {
-    return [user1.toLowerCase(), user2.toLowerCase()].sort().join("-");
-  }
-
   function toHex(buffer: Uint8Array): string {
-    return Array.from(buffer)
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
+    return Array.from(buffer).map((b) => b.toString(16).padStart(2, "0")).join("");
   }
+  
   function fromHex(hex: string): Uint8Array {
-    const clean = hex.replace(/\s+/g, "").replace(/[^0-9a-fA-F]/g, "");
-    const match = clean.match(/.{1,2}/g);
+    const match = hex.match(/.{1,2}/g);
     if (!match) return new Uint8Array();
     return new Uint8Array(match.map((byte) => parseInt(byte, 16)));
   }
 
-  // --- Persistence ---
+  // --- Persistance ---
   function saveConversation(contactName: string) {
     const normalized = contactName.toLowerCase();
     const convo = conversations.get(normalized);
     if (!convo) return;
-    const key = `conversation:${userId}:${normalized}`;
     localStorage.setItem(
-      key,
+      `conversation:${userId}:${normalized}`,
       JSON.stringify({
-        groupId: convo.groupId, // Store group ID
-        name: convo.name, // Store group Name
-        messages: convo.messages.map((m) => ({
-          ...m,
-          timestamp: m.timestamp.toISOString(),
-        })),
+        groupId: convo.groupId,
+        name: convo.name,
+        messages: convo.messages.map((m) => ({ ...m, timestamp: m.timestamp.toISOString() })),
         isReady: convo.isReady,
-      }),
+      })
     );
   }
 
-  async function loadHistoryForConversation(
-    contactName: string,
-    groupId: string,
-  ) {
-    const normalized = contactName.toLowerCase();
+  async function loadHistoryForConversation(contactName: string, groupId: string) {
     try {
       const history = await mls.fetchHistory(groupId);
       if (history.length > 0) {
-        log(`Synchronisation historique serveur (${history.length} msg)...`);
-
         let addedMsg = 0;
         let mlsUpdated = false;
 
         for (const msg of history) {
           if (msg.sender_id === userId) continue;
-
           try {
             const bytesStr = atob(msg.content);
             const bytes = new Uint8Array(bytesStr.length);
-            for (let i = 0; i < bytesStr.length; i++)
-              bytes[i] = bytesStr.charCodeAt(i);
+            for (let i = 0; i < bytesStr.length; i++) bytes[i] = bytesStr.charCodeAt(i);
 
             const decrypted = await mls.processIncomingMessage(groupId, bytes);
             if (decrypted) {
@@ -374,391 +275,234 @@
               addedMsg++;
               mlsUpdated = true;
             }
-          } catch (err) {
-            // Silently ignore errors - usually means message was already decrypted in a previous session
-            // or is from an outdated epoch. OpenMLS prevents reusing secrets anyway.
-          }
+          } catch (err) {}
         }
-
         if (mlsUpdated) {
-          try {
-            const stateBytes = await mls.saveState(pin);
-            const hex = toHex(stateBytes);
-            localStorage.setItem("mls_autosave_" + userId, hex);
-          } catch (e) {}
-          if (addedMsg > 0) {
-            log(
-              `✅ ${addedMsg} message(s) manquant(s) récupéré(s) depuis l'historique.`,
-            );
-          }
+          const stateBytes = await mls.saveState(pin);
+          localStorage.setItem("mls_autosave_" + userId, toHex(stateBytes));
+          log(`✅ ${addedMsg} msg rattrapés pour ${contactName}.`);
         }
       }
-    } catch (e: any) {
-      log(`Erreur chargement historique: ${e}`);
-    }
+    } catch (e: any) {}
   }
 
   function loadExistingConversations() {
     const prefix = `conversation:${userId}:`;
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (key && key.startsWith(prefix)) {
+      if (key?.startsWith(prefix)) {
         const contactName = key.substring(prefix.length).toLowerCase();
         const saved = localStorage.getItem(key);
         if (saved) {
-          const convoData = JSON.parse(saved);
-          // Use stored groupId if available, else derive (legacy support)
-          const groupId =
-            convoData.groupId || generateGroupId(userId, contactName);
-          const name = convoData.name || contactName; // Default name
-
-          const messages: ChatMessage[] = (convoData.messages || []).map(
-            (m: any) => ({
-              ...m,
-              timestamp: new Date(m.timestamp),
-            }),
-          );
-
+          const data = JSON.parse(saved);
           conversations.set(contactName, {
             contactName,
-            name,
-            groupId,
-            messages,
-            isReady: convoData.isReady || false,
+            name: data.name || contactName,
+            groupId: data.groupId,
+            messages: (data.messages || []).map((m: any) => ({ ...m, timestamp: new Date(m.timestamp) })),
+            isReady: data.isReady || false,
             mlsStateHex: null,
           });
-
-          log(`Conversation chargée avec ${contactName} (${groupId})`);
-          loadHistoryForConversation(contactName, groupId);
+          loadHistoryForConversation(contactName, data.groupId);
         }
       }
     }
   }
 
-  // --- Conversations ---
+  // --- Gestion Groupes & Membres ---
   async function createNewGroup(nameRaw: string) {
     if (!nameRaw.trim()) return;
     const name = nameRaw.trim();
-
-    if (conversations.has(name)) {
-      log(`Un groupe ou contact nommé "${name}" existe déjà.`);
-      return;
-    }
-
-    log(`Création du groupe distant "${name}"...`);
-    let groupId: string;
-    try {
-      groupId = await mls.createRemoteGroup(name);
-      log(`Groupe ID: ${groupId}`);
-    } catch (e) {
-      log(`Erreur création groupe distant: ${e}`);
-      return;
-    }
+    if (conversations.has(name)) return log(`Groupe "${name}" existe déjà.`);
 
     try {
+      const groupId = await mls.createRemoteGroup(name);
       await mls.createGroup(groupId);
       await mls.registerMember(groupId, userId, mls.getDeviceId());
 
-      // Add own other devices so they can receive messages on this group too (single epoch)
-      const ownDevices = (await mls.fetchUserDevices(userId)).filter(
-        (d) => d.deviceId !== mls.getDeviceId(),
-      );
-      if (ownDevices.length > 0) {
+      // Ajout de ses propres autres appareils (CORRIGÉ)
+      const ownDevices = (await mls.fetchUserDevices(userId)).filter((d) => d.deviceId !== mls.getDeviceId());
+      for (const device of ownDevices) {
         try {
-          const bulk = await mls.addMembersBulk(groupId, ownDevices);
-          for (const did of bulk.addedDeviceIds) {
-            await mls.registerMember(groupId, userId, did);
+          const result = await mls.addMember(groupId, device.keyPackage);
+          await mls.registerMember(groupId, userId, device.deviceId);
+          if (result.welcome) {
+            await mls.sendWelcome(result.welcome, userId, groupId, device.deviceId);
           }
-          if (bulk.welcome) {
-            // Single welcome covers all own devices — send one per device but same bytes
-            for (const did of bulk.addedDeviceIds) {
-              await mls.sendWelcome(bulk.welcome, userId, groupId, did);
-            }
+          if (result.commit) {
+            await mls.sendCommit(result.commit, groupId);
           }
         } catch (e) {
-          log(`Avertissement: ajout de ses propres appareils échoué: ${e}`);
+          log(`Erreur synchro propre appareil ${device.deviceId}: ${e}`);
         }
       }
 
       const stateBytes = await mls.saveState(pin);
-      const hex = toHex(stateBytes);
-      localStorage.setItem("mls_autosave_" + userId, hex);
+      localStorage.setItem("mls_autosave_" + userId, toHex(stateBytes));
 
       conversations.set(name, {
-        contactName: name,
-        name: name,
-        groupId,
-        messages: [],
-        isReady: true,
-        mlsStateHex: null,
+        contactName: name, name, groupId, messages: [], isReady: true, mlsStateHex: null
       });
       conversations = new Map(conversations);
-      selectedContact = name;
+      
+      selectConversation(name);
       saveConversation(name);
-
-      log(`Groupe "${name}" prêt!`);
-    } catch (e) {
-      log(`Erreur init groupe local: ${e}`);
-    }
+      log(`✅ Groupe "${name}" créé!`);
+    } catch (e) { log(`Erreur création groupe: ${e}`); }
   }
 
   async function inviteMemberToCurrentGroup(memberId: string) {
     if (!selectedContact || !memberId.trim()) return;
     const targetUser = memberId.trim().toLowerCase();
-
     const convo = conversations.get(selectedContact);
     if (!convo) return;
-    const groupId = convo.groupId;
-
+    
     log(`Invitation de ${targetUser}...`);
     try {
-      // Ensure the inviter (ourselves) is also registered so messages route back to us.
-      await mls.registerMember(groupId, userId, mls.getDeviceId());
-
+      await mls.registerMember(convo.groupId, userId, mls.getDeviceId());
       const devices = await mls.fetchUserDevices(targetUser);
-      if (devices.length === 0) {
-        log(`Impossible de trouver ${targetUser}.`);
-        return;
+      if (devices.length === 0) return log(`❌ Aucun appareil trouvé pour ${targetUser}.`);
+
+      // Utilisation stricte de l'ajout par lot (CORRIGÉ)
+      const bulk = await mls.addMembersBulk(convo.groupId, devices);
+      
+      for (const did of bulk.addedDeviceIds) {
+        await mls.registerMember(convo.groupId, targetUser, did);
       }
 
-      let added = 0;
-      try {
-        const bulk = await mls.addMembersBulk(groupId, devices);
-        added = bulk.addedDeviceIds.length;
+      const stateBytes = await mls.saveState(pin);
+      localStorage.setItem("mls_autosave_" + userId, toHex(stateBytes));
+
+      if (bulk.welcome) {
+        const welcomeB64 = btoa(Array.from(bulk.welcome).map(b => String.fromCharCode(b)).join(''));
         for (const did of bulk.addedDeviceIds) {
-          await mls.registerMember(groupId, targetUser, did);
+          await fetch(`${historyBaseUrl}/mls-api/welcome`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ targetDeviceId: did, targetUserId: targetUser, senderUserId: userId, welcomePayload: welcomeB64, groupId: convo.groupId }),
+          });
         }
-
-        const stateBytes = await mls.saveState(pin);
-        const hex = toHex(stateBytes);
-        localStorage.setItem("mls_autosave_" + userId, hex);
-
-        if (bulk.welcome) {
-          for (const did of bulk.addedDeviceIds) {
-            await mls.sendWelcome(bulk.welcome, targetUser, groupId, did);
-            log(`Welcome envoyé à ${targetUser} (device: ${did}).`);
-          }
-        }
-      } catch (e) {
-        log(`Erreur lors de l'ajout des appareils: ${e}`);
       }
 
-      log(`${targetUser} ajouté avec succès (${added}/${devices.length} appareil(s)).`);
-    } catch (e) {
-      log(`Erreur invitation: ${e}`);
-    }
+      if (bulk.commit) await mls.sendCommit(bulk.commit, convo.groupId);
+      
+      log(`✅ ${targetUser} invité (${bulk.addedDeviceIds.length}/${devices.length} appareils).`);
+    } catch (e) { log(`Erreur invitation: ${e}`); }
   }
 
   async function startNewConversation(contactNameRaw: string) {
     const contact = contactNameRaw.trim().toLowerCase();
-    if (!contact || contact === userId) {
-      log("⚠️ Nom de contact invalide ou c'est le vôtre !");
-      return;
-    }
+    if (!contact || contact === userId) return;
+    
     if (conversations.has(contact)) {
-      selectedContact = contact;
+      selectConversation(contact);
       return;
     }
 
-    log(`Démarrage d'une conversation avec ${contact}...`);
-    // Create remote group via backend
     const groupName = `${userId} & ${contact}`;
-    let groupId: string;
     try {
-      log(`Demande de création de groupe au serveur (nom: ${groupName})...`);
-      groupId = await mls.createRemoteGroup(groupName);
-      log(`Groupe créé: ${groupId}`);
-    } catch (e) {
-      log(`Erreur création groupe distant: ${e}`);
-      return;
-    }
+      const groupId = await mls.createRemoteGroup(groupName);
+      
+      conversations.set(contact, {
+        contactName: contact, name: groupName, groupId, messages: [], isReady: false, mlsStateHex: null,
+      });
+      conversations = new Map(conversations);
+      selectConversation(contact);
 
-    conversations.set(contact, {
-      contactName: contact,
-      name: groupName,
-      groupId,
-      messages: [],
-      isReady: false,
-      mlsStateHex: null,
-    });
-    conversations = new Map(conversations);
-    selectedContact = contact;
-
-    try {
-      log(`Initialisation locale du groupe ${groupId}...`);
       await mls.createGroup(groupId);
-
-      // Register self (current device)
       await mls.registerMember(groupId, userId, mls.getDeviceId());
 
-      // Add own other devices so they sync this group too (single epoch)
-      const ownDevices = (await mls.fetchUserDevices(userId)).filter(
-        (d) => d.deviceId !== mls.getDeviceId(),
-      );
-      if (ownDevices.length > 0) {
+      // Synchro de ses autres appareils (CORRIGÉ)
+      const ownDevices = (await mls.fetchUserDevices(userId)).filter((d) => d.deviceId !== mls.getDeviceId());
+      for (const device of ownDevices) {
         try {
-          const bulk = await mls.addMembersBulk(groupId, ownDevices);
-          for (const did of bulk.addedDeviceIds) {
-            await mls.registerMember(groupId, userId, did);
-          }
-          if (bulk.welcome) {
-            for (const did of bulk.addedDeviceIds) {
-              await mls.sendWelcome(bulk.welcome, userId, groupId, did);
-            }
-          }
-        } catch (e) {
-          log(`Avertissement: ajout de ses propres appareils échoué: ${e}`);
-        }
+          const result = await mls.addMember(groupId, device.keyPackage);
+          await mls.registerMember(groupId, userId, device.deviceId);
+          if (result.welcome) await mls.sendWelcome(result.welcome, userId, groupId, device.deviceId);
+          if (result.commit) await mls.sendCommit(result.commit, groupId);
+        } catch (e) {}
       }
 
-      // Persist state after group creation
-      try {
-        const stateBytes = await mls.saveState(pin);
-        const hex = toHex(stateBytes);
-        localStorage.setItem("mls_autosave_" + userId, hex);
-      } catch (e) {
-        log(`Erreur sauvegarde état: ${e}`);
-      }
+      const stBytes = await mls.saveState(pin);
+      localStorage.setItem("mls_autosave_" + userId, toHex(stBytes));
 
-      // Try to fetch existing KeyPackages for ALL devices
-      log(`Recherche des appareils pour ${contact}...`);
+      // Ajout des appareils du contact cible (CORRIGÉ)
       const devices = await mls.fetchUserDevices(contact);
-
       if (devices.length > 0) {
-        log(
-          `${devices.length} appareil(s) trouvé(s) pour ${contact}. Ajout au groupe...`,
-        );
+        const bulk = await mls.addMembersBulk(groupId, devices);
+        
+        for (const did of bulk.addedDeviceIds) {
+          await mls.registerMember(groupId, contact, did);
+        }
 
-        try {
-          const bulk = await mls.addMembersBulk(groupId, devices);
+        const st2Bytes = await mls.saveState(pin);
+        localStorage.setItem("mls_autosave_" + userId, toHex(st2Bytes));
 
+        if (bulk.welcome) {
+          const welcomeB64 = btoa(Array.from(bulk.welcome).map(b => String.fromCharCode(b)).join(''));
           for (const did of bulk.addedDeviceIds) {
-            await mls.registerMember(groupId, contact, did);
+            await fetch(`${historyBaseUrl}/mls-api/welcome`, {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ targetDeviceId: did, targetUserId: contact, senderUserId: userId, welcomePayload: welcomeB64, groupId }),
+            });
           }
-
-          const stateBytes = await mls.saveState(pin);
-          const hex = toHex(stateBytes);
-          localStorage.setItem("mls_autosave_" + userId, hex);
-
-          if (bulk.welcome) {
-            const welcomeB64 = btoa(String.fromCharCode(...bulk.welcome));
-            for (const did of bulk.addedDeviceIds) {
-              const wRes = await fetch(`${historyBaseUrl}/mls-api/welcome`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  targetDeviceId: did,
-                  targetUserId: contact,
-                  senderUserId: userId,
-                  welcomePayload: welcomeB64,
-                  groupId: groupId,
-                }),
-              });
-              if (!wRes.ok) {
-                log(`⚠️ Erreur envoi welcome (${wRes.status}): ${await wRes.text()}`);
-              } else {
-                log(`Welcome envoyé à ${contact} (device: ${did})`);
-              }
-            }
-          }
-
-          if (bulk.commit) {
-            await mls.sendCommit(bulk.commit, groupId);
-          }
-        } catch (e) {
-          log(`Erreur lors de l'ajout des appareils de ${contact}: ${e}`);
         }
+        if (bulk.commit) await mls.sendCommit(bulk.commit, groupId);
 
-        const convo = conversations.get(contact);
-        if (convo) {
-          const updatedConvo = { ...convo, isReady: true };
-          conversations.set(contact, updatedConvo);
-          conversations = new Map(conversations);
-          saveConversation(contact);
-          log(`✅ Chiffrement E2E actif avec ${contact} (tous les appareils)`);
-          loadHistoryForConversation(contact, groupId);
-        }
+        const convo = conversations.get(contact)!;
+        conversations.set(contact, { ...convo, isReady: true });
+        conversations = new Map(conversations);
+        saveConversation(contact);
+        log(`✅ Canal sécurisé avec ${contact}.`);
       } else {
-        log(`❌ Impossible de trouver des KeyPackages pour ${contact}.`);
+        log(`❌ Appareils introuvables pour ${contact}.`);
         conversations.delete(contact);
         conversations = new Map(conversations);
       }
-    } catch (e: any) {
-      log(`Erreur: ${e.message}`);
-      conversations.delete(contact);
-      conversations = new Map(conversations);
-    }
+    } catch (e: any) { log(`Erreur création: ${e.message}`); }
   }
 
-  // --- Messages ---
-  function addMessageToChat(
-    senderId: string,
-    content: string,
-    isOwn: boolean,
-    contactName: string,
-  ) {
+  // --- Messages & UI ---
+  function addMessageToChat(senderId: string, content: string, isOwn: boolean, contactName: string) {
     const normalized = contactName.toLowerCase();
     const convo = conversations.get(normalized);
     if (!convo) return;
 
     const newMsg: ChatMessage = {
-      id: crypto.randomUUID(),
-      senderId: senderId.toLowerCase(),
-      content,
-      timestamp: new Date(),
-      isOwn,
+      id: crypto.randomUUID(), senderId: senderId.toLowerCase(), content, timestamp: new Date(), isOwn,
     };
-    // Create new object references to ensure Svelte 5 reactivity detects changes deeply
-    const updatedConvo = { ...convo, messages: [...convo.messages, newMsg] };
-
-    // Explicitly re-set and re-assign the Map to ensure $derived re-evaluates in Svelte 5
-    conversations.set(normalized, updatedConvo);
-    conversations = new Map(conversations); // CRITICAL: Trigger reactivity
-
+    
+    conversations.set(normalized, { ...convo, messages: [...convo.messages, newMsg] });
+    conversations = new Map(conversations); 
     saveConversation(normalized);
-    tick().then(() => {
-      if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
-    });
+    
+    tick().then(() => { if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight; });
   }
 
   async function handleSendChat() {
     const text = messageText.trim();
     if (!text || !selectedContact) return;
     const convo = conversations.get(selectedContact);
-    if (!convo?.isReady) {
-      log("⚠️ La conversation n'est pas encore chiffrée.");
-      return;
-    }
+    if (!convo?.isReady) return;
 
-    // Clear input immediately to prevent double sends
     messageText = "";
-
     try {
-      const encryptedBytes = await mls.sendMessage(convo.groupId, text);
-
-      // Save state immediately after sending message to update sender ratchet!
-      try {
-        const stateBytes = await mls.saveState(pin);
-        const hex = toHex(stateBytes);
-        localStorage.setItem("mls_autosave_" + userId, hex);
-      } catch (saveErr) {
-        log(`Avertissement: sauvegarde état échouée: ${saveErr}`);
-      }
-
+      await mls.sendMessage(convo.groupId, text);
+      const stateBytes = await mls.saveState(pin);
+      localStorage.setItem("mls_autosave_" + userId, toHex(stateBytes));
       addMessageToChat(userId, text, true, selectedContact);
-      log(`↗️ Message chiffré envoyé (${encryptedBytes.length} bytes)`);
     } catch (e: any) {
       log(`Erreur envoi: ${e}`);
-      // Restore message on failure
       messageText = text;
     }
   }
 
-  function handleKeydown(e: KeyboardEvent) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSendChat();
-    }
+  function selectConversation(name: string) {
+    selectedContact = name;
+    mobileView = "chat";
+  }
+
+  function goBackToMenu() {
+    mobileView = "list";
   }
 
   function logout() {
@@ -772,1263 +516,439 @@
   function resetAll() {
     localStorage.clear();
     logout();
-    log("⚡ État réinitialisé.");
   }
 
-  // Dev tools
+  // --- Outils Dev ---
   async function devGenerateKeyPackage() {
     try {
       const bytes = await mls.generateKeyPackage(pin);
       lastKeyPackage = toHex(bytes);
-      log(`KeyPackage généré (${bytes.length} bytes).`);
-    } catch (e: any) {
-      log(`Erreur GenKeyPackage: ${e}`);
-    }
+    } catch (e: any) { log(`Err GenKeyPackage: ${e}`); }
   }
-
   async function devAddMember() {
     if (!selectedContact || !incomingBytesHex) return;
     const convo = conversations.get(selectedContact);
     if (!convo) return;
     try {
-      const kpBytes = fromHex(incomingBytesHex);
-      const result = await mls.addMember(convo.groupId, kpBytes);
+      const result = await mls.addMember(convo.groupId, fromHex(incomingBytesHex));
       lastCommit = toHex(result.commit);
       if (result.welcome) lastWelcome = toHex(result.welcome);
       incomingBytesHex = "";
-      log("Membre ajouté.");
-    } catch (e: any) {
-      log(`Erreur AddMember: ${e}`);
-    }
+    } catch (e: any) { log(`Err AddMember: ${e}`); }
   }
-
   async function devProcessWelcome() {
     if (!incomingBytesHex) return;
     try {
-      const welcomeBytes = fromHex(incomingBytesHex);
-      const gid = await mls.processWelcome(welcomeBytes);
-      log(`Groupe rejoint: ${gid}`);
+      await mls.processWelcome(fromHex(incomingBytesHex));
       incomingBytesHex = "";
-    } catch (e: any) {
-      log(`Erreur ProcessWelcome: ${e}`);
-    }
+    } catch (e: any) { log(`Err ProcessWelcome: ${e}`); }
   }
-
-  $effect(() => {
-    if (selectedContact && chatContainer) {
-      tick().then(() => {
-        if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
-      });
-    }
-  });
 </script>
 
-<!-- ==================== TEMPLATE ==================== -->
+<!-- ==================== UI ==================== -->
 
 {#if !isLoggedIn}
-  <!-- ========== LOGIN SCREEN ========== -->
-  <div class="login-screen">
+  <div class="login-wrapper" in:fade>
     <div class="login-card">
-      <div class="login-header">
-        <div class="app-icon">💬</div>
-        <h1>Messagerie Sécurisée</h1>
-        <p class="subtitle">Chiffrement de bout en bout via MLS</p>
+      <div class="logo-area">
+        <div class="canari-box">
+          <img src="/favicon.png" alt="Canari Logo" style="width: 60%; height: 60%; object-fit: contain;" />
+        </div>
+        <h1>Canari</h1>
+        <p>Le réseau d'échanges impénétrable.</p>
       </div>
 
       <div class="login-form">
-        <label for="userId">Votre pseudonyme</label>
-        <input
-          id="userId"
-          type="text"
-          bind:value={userId}
-          placeholder="Ex: alice"
-          onkeydown={(e) => e.key === "Enter" && !isLoggingIn && handleLogin()}
-        />
+        <div class="input-group">
+          <label for="uid">Nom d'utilisateur</label>
+          <input id="uid" type="text" bind:value={userId} placeholder="ex: jolan" onkeydown={(e) => e.key === "Enter" && !isLoggingIn && handleLogin()} />
+        </div>
+        <div class="input-group">
+          <label for="pin">PIN Cryptographique</label>
+          <input id="pin" type="password" bind:value={pin} placeholder="••••" onkeydown={(e) => e.key === "Enter" && !isLoggingIn && handleLogin()} />
+        </div>
 
-        <label for="pin">PIN de chiffrement</label>
-        <input
-          id="pin"
-          type="password"
-          bind:value={pin}
-          placeholder="1234"
-          onkeydown={(e) => e.key === "Enter" && !isLoggingIn && handleLogin()}
-        />
-
-        <button
-          class="btn-primary btn-full"
-          onclick={handleLogin}
-          disabled={isLoggingIn}
-        >
+        <button class="btn-login" onclick={handleLogin} disabled={isLoggingIn}>
           {#if isLoggingIn}
-            <span class="spinner"></span> Initialisation...
+            <span class="loader"></span> Démarrage...
           {:else}
             Se connecter
           {/if}
         </button>
 
         {#if loginError}
-          <div class="error-msg">{loginError}</div>
+          <div class="error-banner" transition:slide>{loginError}</div>
         {/if}
-
-        <button class="btn-danger btn-small" onclick={resetAll}>
-          🗑️ Effacer les données locales
-        </button>
+        
+        <button class="btn-text-danger" onclick={resetAll}>Réinitialiser l'appareil</button>
       </div>
-
-      {#if statusLog.length > 0}
-        <div class="login-logs" id="logContainer">
-          {#each statusLog as entry}
-            <div class="log-line">{entry}</div>
-          {/each}
-        </div>
-      {/if}
     </div>
   </div>
 {:else}
-  <!-- ========== CHAT APP ========== -->
-  <div class="app">
-    <!-- TOP BAR -->
-    <header class="topbar">
-      <div class="topbar-left">
-        <span class="app-name">Canari</span>
+  <div class="app-layout" in:fade>
+    <!-- TOP NAVBAR -->
+    <header class="navbar">
+      <div class="nav-brand">
+        <div class="mini-logo">
+          <img src="/favicon.png" alt="Canari" style="width: 70%; height: 70%; object-fit: contain;" />
+        </div>
+        <span class="brand-text">Canari</span>
       </div>
-      <div class="topbar-center">
-        <span class="conn-dot {isWsConnected ? 'dot-on' : 'dot-off'}"></span>
-        <span class="username"
-          >Connecté en tant que <strong>{userId}</strong></span
-        >
-        {#if myDeviceId}
-          <span class="device-id" title="Device ID complet : {myDeviceId}"
-            >🔑 <code>{myDeviceId}</code></span
-          >
-        {/if}
+      
+      <div class="nav-status">
+        <div class="status-pill {isWsConnected ? 'status-on' : 'status-off'}">
+          <span class="dot"></span>
+          {isWsConnected ? 'Réseau Connecté' : 'Hors-ligne'}
+        </div>
       </div>
-      <div class="topbar-right">
-        <button
-          class="btn-icon"
-          onclick={() => (showLogs = !showLogs)}
-          title="Logs techniques"
-        >
-          📋 Logs
+
+      <div class="nav-actions">
+        <button class="btn-icon" onclick={() => showLogs = !showLogs} title="Console de logs">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 17l6-6-6-6M12 19h8"/></svg>
         </button>
-        <button
-          class="btn-icon btn-danger-icon"
-          onclick={logout}
-          title="Déconnexion"
-        >
-          🚪 Déconnexion
+        <button class="btn-icon btn-logout" onclick={logout} title="Fermer la session">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg>
         </button>
       </div>
     </header>
 
-    <div class="main-area">
-      <!-- SIDEBAR: Contact list -->
-      <aside class="sidebar">
-        <div class="sidebar-title">Discussions</div>
-
-        <div class="contacts-list">
+    <!-- CONTENT -->
+    <main class="main-content">
+      <!-- SIDEBAR -->
+      <aside class="sidebar {mobileView === 'chat' ? 'hidden-mobile' : ''}">
+        <div class="sidebar-header">
+          <div class="action-row">
+            <input type="text" class="search-input" placeholder="Nouveau contact..." bind:value={newContactInput} onkeydown={(e) => { if (e.key === "Enter" && newContactInput.trim()) { startNewConversation(newContactInput); newContactInput = ""; } }} />
+            <button class="btn-plus" title="Ajouter un contact" onclick={() => { if (newContactInput.trim()) { startNewConversation(newContactInput); newContactInput = ""; } }}>👤</button>
+          </div>
+          <div class="action-row">
+            <input type="text" class="search-input" placeholder="Nouveau groupe..." bind:value={newGroupInput} onkeydown={(e) => { if (e.key === "Enter" && newGroupInput.trim()) { createNewGroup(newGroupInput); newGroupInput = ""; } }} />
+            <button class="btn-plus" title="Créer un groupe" onclick={() => { if (newGroupInput.trim()) { createNewGroup(newGroupInput); newGroupInput = ""; } }}>👥</button>
+          </div>
+        </div>
+        
+        <div class="convo-list">
           {#each Array.from(conversations.entries()) as [name, convo]}
-            <button
-              class="contact-item {selectedContact === name
-                ? 'contact-selected'
-                : ''}"
-              onclick={() => (selectedContact = name)}
-            >
-              <div class="contact-avatar">
-                {(convo.name || name)[0].toUpperCase()}
-              </div>
-              <div class="contact-info">
-                <div class="contact-name">{convo.name || name}</div>
-                <div class="contact-preview">
-                  {#if convo.isReady}
-                    {#if convo.messages.length > 0}
-                      {convo.messages[
-                        convo.messages.length - 1
-                      ].content.substring(0, 30)}
-                    {:else}
-                      Chiffrement actif 🔒
-                    {/if}
+            <button class="convo-tile {selectedContact === name ? 'active' : ''}" onclick={() => selectConversation(name)}>
+              <div class="tile-avatar">{name[0].toUpperCase()}</div>
+              <div class="tile-info">
+                <div class="tile-header">
+                  <span class="tile-name">{convo.name}</span>
+                  {#if !convo.isReady}<span class="badge-sync">sync</span>{/if}
+                </div>
+                <div class="tile-preview">
+                  {#if convo.messages.length > 0}
+                    {convo.messages[convo.messages.length - 1].content}
                   {:else}
-                    En attente d'échange de clés... ⏳
+                    Canal E2E établi.
                   {/if}
                 </div>
               </div>
-              {#if !convo.isReady}
-                <span class="pending-dot"></span>
-              {/if}
             </button>
           {/each}
 
           {#if conversations.size === 0}
-            <div class="empty-hint">
-              <span style="font-size: 2em; display:block; margin-bottom: 10px;"
-                >👋</span
-              >
-              Aucune discussion.<br />Commencez par ajouter un contact.
+            <div class="empty-list">
+              <span class="empty-icon">👋</span>
+              <p>Votre messagerie est vide. Cherchez un pseudo pour commencer.</p>
             </div>
           {/if}
         </div>
-
-        <!-- Add contact form -->
-        <div class="add-contact-box">
-          <div class="add-contact-label">Nouveau contact</div>
-          <div class="add-contact-row">
-            <input
-              type="text"
-              bind:value={newContactInput}
-              placeholder="Ex: jolan"
-              onkeydown={(e) => {
-                if (e.key === "Enter" && newContactInput.trim()) {
-                  startNewConversation(newContactInput);
-                  newContactInput = "";
-                }
-              }}
-            />
-            <button
-              class="btn-add"
-              onclick={() => {
-                if (newContactInput.trim()) {
-                  startNewConversation(newContactInput);
-                  newContactInput = "";
-                }
-              }}
-              disabled={isAddingContact}
-              title="Démarrer la conversation"
-            >
-              +
-            </button>
-          </div>
-        </div>
-
-        <!-- Add Group form -->
-        <div class="add-contact-box">
-          <div class="add-contact-label">Nouveau Groupe</div>
-          <div class="add-contact-row">
-            <input
-              type="text"
-              bind:value={newGroupInput}
-              placeholder="Nom du groupe"
-              onkeydown={(e) => {
-                if (e.key === "Enter" && newGroupInput.trim()) {
-                  createNewGroup(newGroupInput);
-                  newGroupInput = "";
-                }
-              }}
-            />
-            <button
-              class="btn-add"
-              onclick={() => {
-                if (newGroupInput.trim()) {
-                  createNewGroup(newGroupInput);
-                  newGroupInput = "";
-                }
-              }}
-              title="Créer"
-            >
-              +
-            </button>
-          </div>
-        </div>
       </aside>
 
-      <!-- CHAT AREA -->
-      <main class="chat-area">
-        {#if !selectedContact}
-          <!-- No conversation selected -->
-          <div class="chat-empty">
-            <div class="chat-empty-icon">🔐</div>
-            <h2>Sélectionnez une discussion</h2>
-            <p>Vos messages sont chiffrés de bout en bout (MLS).</p>
-          </div>
-        {:else}
-          <!-- Chat header -->
-          <div class="chat-header">
-            <div class="chat-header-left">
-              <div class="chat-header-avatar">
-                {selectedContact[0].toUpperCase()}
-              </div>
-              <div class="chat-header-info">
-                <div class="chat-header-name">
-                  {currentConvo?.name || selectedContact}
-                </div>
-                {#if currentConvo?.isReady}
-                  <div class="chat-header-status status-ready">
-                    🔒 Chiffrement E2E actif et vérifié
-                  </div>
-                {:else}
-                  <div class="chat-header-status status-pending">
-                    ⏳ En attente de {selectedContact}...
-                  </div>
-                {/if}
-              </div>
+      <!-- CHAT VIEW -->
+      <section class="chat-area {mobileView === 'list' ? 'hidden-mobile' : ''}">
+        {#if selectedContact}
+          <!-- Chat Header -->
+          <header class="chat-header">
+            <button class="btn-back mobile-only" onclick={goBackToMenu}>
+              <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+            </button>
+            <div class="chat-avatar">{selectedContact[0].toUpperCase()}</div>
+            <div class="chat-meta">
+              <h2>{currentConvo?.name}</h2>
+              <span class="security-status {currentConvo?.isReady ? 'secure' : 'pending'}">
+                {currentConvo?.isReady ? '🔒 Bout-en-bout vérifié' : '⏳ Négociation cryptographique...'}
+              </span>
             </div>
-
-            <div class="chat-header-right">
-              <input
-                type="text"
-                class="invite-input"
-                bind:value={inviteMemberInput}
-                placeholder="Inviter..."
-                onkeydown={(e) => {
-                  if (e.key === "Enter" && inviteMemberInput.trim()) {
-                    inviteMemberToCurrentGroup(inviteMemberInput);
-                    inviteMemberInput = "";
-                  }
-                }}
-              />
-              <button
-                class="btn-invite"
-                onclick={() => {
-                  if (inviteMemberInput.trim()) {
-                    inviteMemberToCurrentGroup(inviteMemberInput);
-                    inviteMemberInput = "";
-                  }
-                }}
-              >
-                + Inviter
-              </button>
+            <div class="chat-tools">
+               <input type="text" class="invite-field" placeholder="Ajouter au groupe..." bind:value={inviteMemberInput} onkeydown={(e) => { if (e.key === "Enter" && inviteMemberInput.trim()) { inviteMemberToCurrentGroup(inviteMemberInput); inviteMemberInput = ""; } }} />
+               <button class="btn-tool" onclick={() => { if (inviteMemberInput.trim()) { inviteMemberToCurrentGroup(inviteMemberInput); inviteMemberInput = ""; } }}>Inviter</button>
             </div>
-          </div>
+          </header>
 
           <!-- Messages -->
-          <div class="messages" bind:this={chatContainer}>
-            {#if !currentMessages.length && !currentConvo?.isReady}
-              <div class="waiting-message">
-                <div class="waiting-card">
-                  <div style="font-size:2.5em;margin-bottom:12px">⏳</div>
-                  <strong>Préparation de la connexion sécurisée...</strong>
-                  <p>
-                    L'application établit le protocole MLS avec <strong
-                      >{selectedContact}</strong
-                    >.
-                  </p>
-                  <p style="font-size: 0.85em; color: #666; margin-top: 15px;">
-                    Assurez-vous que {selectedContact} est connecté et a ouvert la
-                    conversation avec vous.
-                  </p>
-                </div>
-              </div>
-            {:else if !currentMessages.length}
-              <div class="no-messages">
-                <span style="font-size: 2em; display:block; margin-bottom: 8px;"
-                  >✨</span
-                >
-                La connexion est sécurisée.<br />Vous pouvez commencer à
-                discuter !
-              </div>
-            {/if}
-
+          <div class="messages-container" bind:this={chatContainer}>
             {#each currentMessages as msg (msg.id)}
-              <div class="msg-wrapper {msg.isOwn ? 'msg-own' : 'msg-other'}">
-                {#if !msg.isOwn}
-                  <div class="msg-avatar" title={msg.senderId}>
-                    {msg.senderId[0].toUpperCase()}
-                  </div>
-                {/if}
-                <div
-                  class="msg-bubble {msg.isOwn ? 'bubble-own' : 'bubble-other'}"
-                >
-                  <div class="msg-text">{msg.content}</div>
-                  <div class="msg-time">{format(msg.timestamp, "HH:mm")}</div>
+              <div class="msg-row {msg.isOwn ? 'own' : 'other'}">
+                <div class="msg-bubble" in:fly={{ y: 5, duration: 200 }}>
+                  <p>{msg.content}</p>
+                  <span class="msg-time">{format(msg.timestamp, "HH:mm")}</span>
                 </div>
               </div>
             {/each}
           </div>
 
-          <!-- Input area -->
-          <div class="input-area">
-            {#if !currentConvo?.isReady}
-              <div class="input-waiting">
-                ⏳ Clés de chiffrement en cours de génération... Veuillez
-                patienter.
-              </div>
-            {:else}
-              <textarea
-                class="msg-input"
-                bind:value={messageText}
-                placeholder="Écrivez un message sécurisé... (Entrée pour envoyer)"
-                rows="1"
-                onkeydown={handleKeydown}
-              ></textarea>
-              <button
-                class="btn-send"
-                onclick={handleSendChat}
-                disabled={!messageText.trim()}
-                title="Envoyer le message"
-                aria-label="Envoyer le message"
-              >
-                <svg
-                  width="20"
-                  height="20"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  xmlns="http://www.w3.org/2000/svg"
-                >
-                  <path
-                    d="M2.01 21L23 12L2.01 3L2 10L17 12L2 14L2.01 21Z"
-                    fill="currentColor"
-                  />
-                </svg>
+          <!-- Composer -->
+          <footer class="chat-composer">
+            <div class="composer-box">
+              <textarea bind:value={messageText} placeholder="Message sécurisé..." rows="1" onkeydown={handleKeydown}></textarea>
+              <button class="btn-send" disabled={!messageText.trim()} onclick={handleSendChat}>
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M2 21L23 12L2 3V10L17 12L2 14V21Z"/></svg>
               </button>
-            {/if}
+            </div>
+          </footer>
+        {:else}
+          <div class="empty-chat">
+            <div class="big-icon">🔐</div>
+            <h2>Aucun échange sélectionné</h2>
+            <p>Le réseau Canari protège vos communications avec le protocole MLS.</p>
           </div>
         {/if}
-      </main>
+      </section>
 
-      <!-- LOGS PANEL (toggleable) -->
+      <!-- LOGS PANEL -->
       {#if showLogs}
-        <aside class="logs-panel">
-          <div class="logs-title">
-            <span>🛠️ Logs & Débogage</span>
-            <button class="btn-icon" onclick={() => (showLogs = false)}
-              >✕</button
-            >
+        <aside class="logs-panel" transition:slide={{ axis: 'x' }}>
+          <div class="logs-header">
+            <h4>Terminal Système</h4>
+            <button class="btn-close" onclick={() => showLogs = false}>×</button>
           </div>
-          <div class="logs-content" id="logContainer">
+          <div class="logs-body" id="logContainer">
             {#each statusLog as entry}
-              <div class="log-line">{entry}</div>
+              <div class="log-entry">{entry}</div>
             {/each}
           </div>
-          <details class="dev-tools">
-            <summary>Actions manuelles MLS</summary>
-            <div
-              style="padding:12px;display:flex;flex-direction:column;gap:8px;"
-            >
-              <button onclick={devGenerateKeyPackage} class="btn-sm"
-                >Générer KeyPackage</button
-              >
-              {#if lastKeyPackage}
-                <textarea
-                  rows="2"
-                  readonly
-                  value={lastKeyPackage}
-                  onclick={(e) => e.currentTarget.select()}
-                ></textarea>
-              {/if}
-              <textarea
-                rows="2"
-                bind:value={incomingBytesHex}
-                placeholder="Coller Hex (KeyPackage ou Welcome)"
-              ></textarea>
-              <button onclick={devAddMember} class="btn-sm"
-                >Ajouter Membre</button
-              >
-              <button onclick={devProcessWelcome} class="btn-sm"
-                >Rejoindre (Welcome)</button
-              >
+          <details class="logs-dev">
+            <summary>Outils Développeur</summary>
+            <div class="dev-actions">
+              <button onclick={devGenerateKeyPackage}>Générer KeyPackage</button>
+              {#if lastKeyPackage}<input type="text" readonly value={lastKeyPackage} />{/if}
+              <input type="text" bind:value={incomingBytesHex} placeholder="Payload Hex..." />
+              <button onclick={devAddMember}>Ajouter Membre</button>
+              <button onclick={devProcessWelcome}>Traiter Welcome</button>
             </div>
           </details>
         </aside>
       {/if}
-    </div>
+    </main>
   </div>
 {/if}
 
-<!-- ==================== STYLES ==================== -->
 <style>
+  /* --- PALETTE CANARI --- */
+  :global(:root) {
+    --cn-dark: #111827;      /* Bleu nuit sombre */
+    --cn-yellow: #FACC15;    /* Jaune vif */
+    --cn-yellow-hover: #EAB308;
+    --cn-bg: #F9FAFB;        /* Gris très clair */
+    --cn-border: #E5E7EB;
+    --text-main: #111827;
+    --text-muted: #6B7280;
+    --green-ok: #10B981;
+    --red-err: #EF4444;
+  }
+
   :global(body) {
     margin: 0;
-    padding: 0;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-      Helvetica, Arial, sans-serif;
-    background: #f0f2f5;
-    height: 100vh;
-    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--cn-bg);
+    color: var(--text-main);
   }
 
-  /* ===== LOGIN ===== */
-  .login-screen {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 100vh;
-    background: #f0f2f5;
+  /* ========== ÉCRAN CONNEXION ========== */
+  .login-wrapper {
+    height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--cn-bg);
   }
   .login-card {
-    background: white;
-    border-radius: 12px;
-    padding: 40px;
-    width: 380px;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    background: white; width: 100%; max-width: 380px; padding: 3rem 2.5rem;
+    border-radius: 1.5rem; box-shadow: 0 10px 25px rgba(0,0,0,0.05); text-align: center;
   }
-  .login-header {
-    text-align: center;
-    margin-bottom: 30px;
+  .logo-area { margin-bottom: 2.5rem; }
+  .canari-box {
+    width: 80px; height: 80px; background: var(--cn-dark); color: var(--cn-yellow);
+    border-radius: 1.5rem; display: flex; align-items: center; justify-content: center;
+    margin: 0 auto 1.5rem;
   }
-  .app-icon {
-    font-size: 3.5em;
-    margin-bottom: 12px;
+  .logo-area h1 { margin: 0; font-size: 2.2rem; font-weight: 900; color: var(--cn-dark); letter-spacing: -0.5px; }
+  .logo-area p { color: var(--text-muted); font-size: 0.95rem; margin-top: 0.5rem; }
+
+  .login-form .input-group { text-align: left; margin-bottom: 1.25rem; }
+  .input-group label { display: block; font-size: 0.85rem; font-weight: 700; color: var(--cn-dark); margin-bottom: 0.5rem; }
+  .input-group input {
+    width: 100%; padding: 0.9rem 1rem; border: 1.5px solid var(--cn-border); border-radius: 1rem;
+    font-size: 1rem; box-sizing: border-box; outline: none; transition: all 0.2s; background: var(--cn-bg);
   }
-  .login-header h1 {
-    margin: 0;
-    font-size: 1.6em;
-    color: #111827;
-    font-weight: 800;
+  .input-group input:focus { border-color: var(--cn-yellow); background: white; box-shadow: 0 0 0 4px rgba(250,204,21,0.15); }
+
+  .btn-login {
+    width: 100%; padding: 1rem; background: var(--cn-yellow); color: var(--cn-dark);
+    border: none; border-radius: 1rem; font-weight: 800; font-size: 1.05rem;
+    cursor: pointer; transition: transform 0.1s, background 0.2s; margin-top: 0.5rem;
   }
-  .subtitle {
-    color: #6b7280;
-    font-size: 0.9em;
-    margin: 8px 0 0 0;
+  .btn-login:hover:not(:disabled) { background: var(--cn-yellow-hover); transform: translateY(-2px); }
+  .btn-login:active { transform: translateY(0); }
+  .btn-login:disabled { opacity: 0.7; cursor: wait; }
+
+  .btn-text-danger {
+    background: none; border: none; color: var(--text-muted); font-size: 0.8rem;
+    margin-top: 1.5rem; cursor: pointer; text-decoration: underline;
   }
-  .login-form {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-  .login-form label {
-    font-weight: 600;
-    font-size: 0.85em;
-    color: #374151;
-    margin-top: 4px;
-    margin-bottom: -4px;
-  }
-  .login-form input {
-    padding: 12px 16px;
-    border: 1.5px solid #d1d5db;
-    border-radius: 10px;
-    font-size: 1em;
-    transition: all 0.2s;
-    outline: none;
-    width: 100%;
-    box-sizing: border-box;
-    background: #f9fafb;
-  }
-  .login-form input:focus {
-    border-color: #facc15;
-    background: white;
-    box-shadow: 0 0 0 3px rgba(250, 204, 21, 0.15);
-  }
-  .login-logs {
-    margin-top: 20px;
-    background: #111827;
-    border-radius: 10px;
-    padding: 12px;
-    max-height: 140px;
-    overflow-y: auto;
-    font-size: 0.75em;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-      monospace;
-    color: #10b981;
-    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5);
-  }
-  .error-msg {
-    background: #fef2f2;
-    border: 1px solid #fecaca;
-    color: #b91c1c;
-    border-radius: 10px;
-    padding: 10px 14px;
-    font-size: 0.85em;
-    text-align: center;
+  .btn-text-danger:hover { color: var(--red-err); }
+
+  .error-banner {
+    background: #FEF2F2; color: var(--red-err); padding: 0.8rem; border-radius: 0.8rem;
+    font-size: 0.9rem; font-weight: 500; margin-top: 1.5rem; border: 1px solid #FECACA;
   }
 
-  /* ===== BUTTONS ===== */
-  .btn-primary {
-    background: #facc15;
-    color: #111827;
-    border: none;
-    border-radius: 8px;
-    padding: 14px;
-    font-size: 1.05em;
-    font-weight: 700;
-    cursor: pointer;
-    transition: all 0.2s;
+  .loader {
+    display: inline-block; width: 16px; height: 16px; border: 2px solid rgba(17,24,39,0.2);
+    border-top-color: var(--cn-dark); border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 8px;
   }
-  .btn-primary:hover:not(:disabled) {
-    background: #eab308;
-  }
-  .btn-primary:active:not(:disabled) {
-    transform: translateY(1px);
-  }
-  .btn-primary:disabled {
-    background: #fef08a;
-    color: #9ca3af;
-    cursor: not-allowed;
-  }
-  .btn-full {
-    width: 100%;
-    margin-top: 12px;
-  }
-  .btn-danger {
-    background: transparent;
-    color: #ef4444;
-    border: 1px solid #fca5a5;
-    border-radius: 8px;
-    padding: 8px 12px;
-    font-size: 0.8em;
-    font-weight: 500;
-    cursor: pointer;
-    margin-top: 12px;
-    transition: all 0.2s;
-  }
-  .btn-danger:hover {
-    background: #fef2f2;
-  }
-  .btn-small {
-    padding: 8px 12px;
-    font-size: 0.85em;
-  }
-  .btn-sm {
-    padding: 8px 12px;
-    font-size: 0.85em;
-    border: 1px solid #4b5563;
-    border-radius: 6px;
-    cursor: pointer;
-    background: #374151;
-    color: white;
-    font-weight: 500;
-  }
-  .btn-sm:hover {
-    background: #4b5563;
-  }
+  @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* New Styles */
-  .chat-header-left {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-  .chat-header-right {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .invite-input {
-    border: 1px solid #d1d5db;
-    border-radius: 8px;
-    padding: 6px 10px;
-    font-size: 0.85em;
-    width: 140px;
-    outline: none;
-    transition: all 0.2s;
-  }
-  .invite-input:focus {
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
-  }
-  .btn-invite {
-    background: #10b981;
-    color: white;
-    border: none;
-    border-radius: 8px;
-    padding: 6px 12px;
-    font-size: 0.85em;
-    font-weight: 600;
-    cursor: pointer;
-    white-space: nowrap;
-  }
-  .btn-invite:hover {
-    background: #059669;
-  }
+  /* ========== APP LAYOUT ========== */
+  .app-layout { height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
 
-  .spinner {
-    display: inline-block;
-    width: 16px;
-    height: 16px;
-    border: 2px solid rgba(255, 255, 255, 0.3);
-    border-top-color: white;
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-    vertical-align: middle;
-    margin-right: 8px;
+  /* --- NAVBAR --- */
+  .navbar {
+    height: 64px; background: white; border-bottom: 1px solid var(--cn-border);
+    display: flex; align-items: center; justify-content: space-between; padding: 0 1.5rem; z-index: 20;
   }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
+  .nav-brand { display: flex; align-items: center; gap: 0.75rem; }
+  .mini-logo {
+    width: 32px; height: 32px; background: var(--cn-dark); color: var(--cn-yellow);
+    border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 1.1rem;
   }
+  .brand-text { font-weight: 900; font-size: 1.25rem; color: var(--cn-dark); }
 
-  /* ===== APP LAYOUT ===== */
-  .app {
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
-    overflow: hidden;
+  .nav-status { display: flex; align-items: center; }
+  .status-pill {
+    display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.8rem;
+    background: var(--cn-bg); border-radius: 2rem; font-size: 0.75rem; font-weight: 700; color: var(--text-main);
   }
+  .status-pill .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .status-on .dot { background: var(--green-ok); box-shadow: 0 0 8px rgba(16,185,129,0.5); }
+  .status-off .dot { background: var(--text-muted); }
 
-  /* ===== TOPBAR ===== */
-  .topbar {
-    background: #111827;
-    color: white;
-    padding: 0 24px;
-    height: 60px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-shrink: 0;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-    z-index: 10;
-  }
-  .topbar-left {
-    display: flex;
-    align-items: center;
-  }
-  .app-name {
-    font-size: 1.25em;
-    font-weight: 800;
-    letter-spacing: 0.5px;
-  }
-  .topbar-center {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: 0.9em;
-    color: #9ca3af;
-    background: #1f2937;
-    padding: 6px 16px;
-    border-radius: 20px;
-  }
-  .topbar-right {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .conn-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-  .dot-on {
-    background: #10b981;
-    box-shadow: 0 0 8px rgba(16, 185, 129, 0.5);
-  }
-  .dot-off {
-    background: #ef4444;
-    box-shadow: 0 0 8px rgba(239, 68, 68, 0.5);
-  }
-  .username strong {
-    color: white;
-    font-weight: 600;
-  }
-  .device-id {
-    font-size: 0.8em;
-    color: #6b7280;
-    border-left: 1px solid #374151;
-    padding-left: 10px;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-  }
-  .device-id code {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-      monospace;
-    color: #facc15;
-    letter-spacing: 0.3px;
-  }
-  .btn-icon {
-    background: transparent;
-    border: 1px solid transparent;
-    color: #d1d5db;
-    font-size: 0.9em;
-    font-weight: 500;
-    cursor: pointer;
-    padding: 6px 12px;
-    border-radius: 8px;
-    transition: all 0.2s;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .btn-icon:hover {
-    background: #374151;
-    color: white;
-    border-color: #4b5563;
-  }
-  .btn-danger-icon:hover {
-    background: #7f1d1d;
-    color: #fecaca;
-    border-color: #991b1b;
-  }
+  .nav-actions { display: flex; gap: 0.5rem; }
+  .btn-icon { background: none; border: none; padding: 0.5rem; border-radius: 0.5rem; color: var(--text-muted); cursor: pointer; transition: 0.2s; }
+  .btn-icon:hover { background: var(--cn-bg); color: var(--cn-dark); }
+  .btn-logout:hover { color: var(--red-err); background: #FEF2F2; }
 
-  /* ===== MAIN AREA ===== */
-  .main-area {
-    display: flex;
-    flex: 1;
-    overflow: hidden;
-  }
+  /* --- MAIN CONTENT --- */
+  .main-content { display: flex; flex: 1; overflow: hidden; }
 
-  /* ===== SIDEBAR ===== */
-  .sidebar {
-    width: 320px;
-    flex-shrink: 0;
-    background: white;
-    border-right: 1px solid #e5e7eb;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
+  /* --- SIDEBAR --- */
+  .sidebar { width: 340px; background: white; border-right: 1px solid var(--cn-border); display: flex; flex-direction: column; }
+  .sidebar-header { padding: 1rem; border-bottom: 1px solid var(--cn-bg); display: flex; flex-direction: column; gap: 0.8rem; }
+  .action-row { display: flex; gap: 0.5rem; }
+  .search-input {
+    flex: 1; padding: 0.7rem 1rem; border: none; background: var(--cn-bg);
+    border-radius: 1rem; outline: none; font-size: 0.95rem;
   }
-  .sidebar-title {
-    padding: 20px 24px 12px;
-    font-weight: 700;
-    font-size: 0.85em;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    color: #6b7280;
-    background: #f9fafb;
-    border-bottom: 1px solid #f3f4f6;
+  .search-input:focus { box-shadow: inset 0 0 0 2px var(--cn-yellow); }
+  .btn-plus {
+    width: 42px; height: 42px; background: var(--cn-dark); color: var(--cn-yellow);
+    border: none; border-radius: 1rem; font-size: 1.2rem; cursor: pointer; display: flex; align-items: center; justify-content: center;
   }
-  .contacts-list {
-    flex: 1;
-    overflow-y: auto;
-    padding: 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-  .contact-item {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 14px;
-    border-radius: 12px;
-    cursor: pointer;
-    width: 100%;
-    border: 1px solid transparent;
-    background: transparent;
-    text-align: left;
-    transition: all 0.2s;
-    position: relative;
-  }
-  .contact-item:hover {
-    background: #f3f4f6;
-  }
-  .contact-selected {
-    background: #fef9c3 !important;
-    border-color: #facc15;
-  }
-  .contact-avatar {
-    width: 46px;
-    height: 46px;
-    border-radius: 12px;
-    background: #facc15;
-    color: #111827;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    font-size: 1.2em;
-  }
-  .contact-info {
-    flex: 1;
-    min-width: 0;
-  }
-  .contact-name {
-    font-weight: 600;
-    font-size: 1.05em;
-    color: #111827;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    margin-bottom: 2px;
-  }
-  .contact-preview {
-    font-size: 0.85em;
-    color: #6b7280;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .pending-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: #f59e0b;
-    flex-shrink: 0;
-    box-shadow: 0 0 0 2px white;
-  }
-  .empty-hint {
-    text-align: center;
-    color: #9ca3af;
-    font-size: 0.9em;
-    padding: 30px 20px;
-    line-height: 1.6;
-    margin: 0;
-  }
-  .add-contact-box {
-    padding: 16px;
-    border-top: 1px solid #e5e7eb;
-    background: #f9fafb;
-  }
-  .add-contact-label {
-    font-size: 0.8em;
-    font-weight: 700;
-    color: #4b5563;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-bottom: 10px;
-  }
-  .add-contact-row {
-    display: flex;
-    gap: 10px;
-  }
-  .add-contact-row input {
-    flex: 1;
-    padding: 10px 14px;
-    border: 1px solid #d1d5db;
-    border-radius: 10px;
-    font-size: 0.95em;
-    outline: none;
-    transition: all 0.2s;
-  }
-  .add-contact-row input:focus {
-    border-color: #facc15;
-    box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.2);
-  }
-  .btn-add {
-    width: 42px;
-    height: 42px;
-    background: #facc15;
-    color: #111827;
-    border: none;
-    border-radius: 10px;
-    font-size: 1.4em;
-    font-weight: 500;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    transition: all 0.2s;
-  }
-  .btn-add:hover:not(:disabled) {
-    background: #eab308;
-    transform: translateY(-1px);
-  }
-  .btn-add:disabled {
-    background: #fef08a;
-    color: #9ca3af;
-    cursor: not-allowed;
-    transform: none;
-  }
+  .btn-plus:hover { background: #1F2937; }
 
-  /* ===== CHAT AREA ===== */
-  .chat-area {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    background: #f8fafc;
-    position: relative;
+  .convo-list { flex: 1; overflow-y: auto; padding: 0.5rem; }
+  .convo-tile {
+    width: 100%; padding: 0.8rem; display: flex; align-items: center; gap: 1rem;
+    border: none; background: none; text-align: left; cursor: pointer; border-radius: 1rem; transition: background 0.1s;
   }
-  .chat-empty {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    color: #6b7280;
-    gap: 12px;
-  }
-  .chat-empty-icon {
-    font-size: 5em;
-    opacity: 0.8;
-  }
-  .chat-empty h2 {
-    margin: 0;
-    font-size: 1.4em;
-    color: #111827;
-    font-weight: 700;
-  }
-  .chat-empty p {
-    margin: 0;
-    font-size: 1em;
-  }
+  .convo-tile:hover { background: var(--cn-bg); }
+  .convo-tile.active { background: #FEFCE8; }
 
+  .tile-avatar {
+    width: 48px; height: 48px; background: var(--cn-yellow); color: var(--cn-dark);
+    border-radius: 1.2rem; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 1.2rem; flex-shrink: 0;
+  }
+  .tile-info { flex: 1; min-width: 0; }
+  .tile-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.2rem; }
+  .tile-name { font-weight: 700; color: var(--cn-dark); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .badge-sync { background: #FEF08A; color: #854D0E; font-size: 0.6rem; padding: 0.1rem 0.4rem; border-radius: 1rem; font-weight: 800; text-transform: uppercase; }
+  .tile-preview { font-size: 0.85rem; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  
+  .empty-list { text-align: center; padding: 2rem 1rem; color: var(--text-muted); }
+  .empty-icon { font-size: 2.5rem; display: block; margin-bottom: 1rem; opacity: 0.5; }
+
+  /* --- CHAT AREA --- */
+  .chat-area { flex: 1; display: flex; flex-direction: column; background: var(--cn-bg); }
+  
   .chat-header {
-    background: white;
-    padding: 16px 24px;
-    border-bottom: 1px solid #e5e7eb;
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    flex-shrink: 0;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
-    z-index: 5;
+    background: white; padding: 0.8rem 1.5rem; border-bottom: 1px solid var(--cn-border);
+    display: flex; align-items: center; gap: 1rem;
   }
-  .chat-header-avatar {
-    width: 48px;
-    height: 48px;
-    border-radius: 12px;
-    background: #facc15;
-    color: #111827;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 1.3em;
+  .chat-avatar {
+    width: 42px; height: 42px; background: var(--cn-dark); color: var(--cn-yellow);
+    border-radius: 1rem; display: flex; align-items: center; justify-content: center; font-weight: 800; flex-shrink: 0;
   }
-  .chat-header-name {
-    font-weight: 800;
-    font-size: 1.2em;
-    color: #111827;
-    margin-bottom: 2px;
-  }
-  .chat-header-status {
-    font-size: 0.85em;
-    font-weight: 500;
-  }
-  .status-ready {
-    color: #059669;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-  }
-  .status-pending {
-    color: #d97706;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-  }
+  .chat-meta { flex: 1; min-width: 0; }
+  .chat-meta h2 { margin: 0 0 0.2rem 0; font-size: 1.1rem; color: var(--cn-dark); }
+  .security-status { font-size: 0.75rem; font-weight: 600; }
+  .security-status.secure { color: var(--green-ok); }
+  .security-status.pending { color: #D97706; }
 
-  .messages {
-    flex: 1;
-    padding: 24px;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-  .waiting-message {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .waiting-card {
-    background: white;
-    border-radius: 16px;
-    padding: 32px 40px;
-    text-align: center;
-    box-shadow:
-      0 4px 6px -1px rgba(0, 0, 0, 0.05),
-      0 2px 4px -1px rgba(0, 0, 0, 0.03);
-    max-width: 400px;
-    border: 1px solid #f3f4f6;
-    color: #4b5563;
-    font-size: 1em;
-    line-height: 1.6;
-  }
-  .waiting-card strong {
-    color: #111827;
-    font-size: 1.1em;
-    display: block;
-    margin-bottom: 8px;
-  }
-  .no-messages {
-    text-align: center;
-    color: #6b7280;
-    font-size: 1em;
-    margin-top: 60px;
-    background: white;
-    padding: 24px;
-    border-radius: 16px;
-    max-width: 300px;
-    margin-left: auto;
-    margin-right: auto;
-    border: 1px dashed #e5e7eb;
-  }
+  .chat-tools { display: flex; gap: 0.5rem; }
+  .invite-field { padding: 0.5rem; border: 1px solid var(--cn-border); border-radius: 0.5rem; font-size: 0.85rem; width: 130px; outline:none; }
+  .invite-field:focus { border-color: var(--cn-yellow); }
+  .btn-tool { background: var(--cn-dark); color: white; border: none; padding: 0.5rem 0.8rem; border-radius: 0.5rem; font-size: 0.85rem; cursor: pointer; font-weight: 600;}
+  .btn-tool:hover { background: #1F2937; }
 
-  .msg-wrapper {
-    display: flex;
-    align-items: flex-end;
-    gap: 10px;
-    margin-bottom: 4px;
-  }
-  .msg-own {
-    flex-direction: row-reverse;
-  }
-  .msg-other {
-    flex-direction: row;
-  }
-  .msg-avatar {
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    background: #e5e7eb;
-    color: #4b5563;
-    font-size: 0.85em;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-  }
-  .msg-bubble {
-    max-width: 65%;
-    padding: 12px 16px;
-    border-radius: 18px;
-    word-break: break-word;
-    position: relative;
-  }
-  .bubble-own {
-    background: #facc15;
-    color: #111827;
-    border-bottom-right-radius: 4px;
-  }
-  .bubble-own .msg-time {
-    color: rgba(17, 24, 39, 0.7);
-  }
-  .bubble-other {
-    background: white;
-    color: #111827;
-    border-bottom-left-radius: 4px;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-    border: 1px solid #f3f4f6;
-  }
-  .msg-text {
-    font-size: 1em;
-    line-height: 1.5;
-  }
-  .msg-time {
-    font-size: 0.75em;
-    margin-top: 6px;
-    text-align: right;
-    opacity: 0.8;
-  }
-  .bubble-other .msg-time {
-    color: #9ca3af;
-  }
+  .messages-container { flex: 1; overflow-y: auto; padding: 1.5rem; display: flex; flex-direction: column; gap: 0.5rem; }
+  
+  .msg-row { display: flex; width: 100%; }
+  .msg-row.own { justify-content: flex-end; }
+  .msg-bubble { max-width: 75%; padding: 0.75rem 1.25rem; border-radius: 1.25rem; line-height: 1.4; position: relative; }
+  .msg-bubble p { margin: 0; font-size: 0.95rem; word-wrap: break-word; }
+  .msg-time { display: block; font-size: 0.65rem; margin-top: 0.4rem; text-align: right; opacity: 0.7; }
+  
+  .own .msg-bubble { background: var(--cn-yellow); color: var(--cn-dark); border-bottom-right-radius: 0.2rem; }
+  .other .msg-bubble { background: white; color: var(--cn-dark); border: 1px solid var(--cn-border); border-bottom-left-radius: 0.2rem; }
 
-  .input-area {
-    padding: 16px 24px;
-    background: white;
-    border-top: 1px solid #e5e7eb;
-    display: flex;
-    align-items: flex-end;
-    gap: 12px;
-    z-index: 5;
-  }
-  .input-waiting {
-    flex: 1;
-    text-align: center;
-    color: #b45309;
-    background: #fef3c7;
-    border: 1px solid #fde68a;
-    border-radius: 12px;
-    padding: 14px;
-    font-size: 0.95em;
-    font-weight: 500;
-  }
-  .msg-input {
-    flex: 1;
-    padding: 14px 18px;
-    background: #f3f4f6;
-    border: 1px solid transparent;
-    border-radius: 20px;
-    font-size: 1em;
-    resize: none;
-    outline: none;
-    max-height: 120px;
-    overflow-y: auto;
-    font-family: inherit;
-    transition: all 0.2s;
-    line-height: 1.5;
-  }
-  .msg-input:focus {
-    background: white;
-    border-color: #facc15;
-    box-shadow: 0 0 0 3px rgba(250, 204, 21, 0.15);
+  .chat-composer { padding: 1rem 1.5rem; background: white; border-top: 1px solid var(--cn-border); }
+  .composer-box { display: flex; align-items: flex-end; gap: 0.8rem; background: var(--cn-bg); padding: 0.6rem 0.8rem; border-radius: 1.5rem; }
+  .composer-box textarea {
+    flex: 1; background: transparent; border: none; resize: none; outline: none; font-family: inherit; font-size: 1rem; padding: 0.4rem; max-height: 120px;
   }
   .btn-send {
-    width: 50px;
-    height: 50px;
-    background: #facc15;
-    color: #111827;
-    border: none;
-    border-radius: 50%;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    transition: all 0.2s;
+    width: 42px; height: 42px; background: var(--cn-dark); color: var(--cn-yellow);
+    border: none; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; transition: 0.2s;
   }
-  .btn-send svg {
-    width: 22px;
-    height: 22px;
-    margin-left: 2px;
-  }
-  .btn-send:hover:not(:disabled) {
-    background: #eab308;
-    transform: scale(1.02);
-  }
-  .btn-send:active:not(:disabled) {
-    transform: scale(0.98);
-  }
-  .btn-send:disabled {
-    background: #fef08a;
-    color: #9ca3af;
-    cursor: not-allowed;
-  }
+  .btn-send:hover:not(:disabled) { transform: scale(1.05); }
+  .btn-send:disabled { opacity: 0.4; cursor: not-allowed; }
 
-  /* ===== LOGS PANEL ===== */
-  .logs-panel {
-    width: 360px;
-    flex-shrink: 0;
-    background: #111827;
-    border-left: 1px solid #374151;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-  .logs-title {
-    padding: 16px 20px;
-    background: #1f2937;
-    color: #e5e7eb;
-    font-size: 0.85em;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-shrink: 0;
-    border-bottom: 1px solid #374151;
-  }
-  .logs-content {
-    flex: 1;
-    overflow-y: auto;
-    padding: 12px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-      monospace;
-    font-size: 0.75em;
-    color: #10b981;
-    line-height: 1.6;
-  }
-  .log-line {
-    padding: 4px 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-    word-break: break-all;
-  }
-  .log-line:last-child {
-    border-bottom: none;
-  }
-  .dev-tools {
-    border-top: 1px solid #374151;
-    font-size: 0.85em;
-    color: #d1d5db;
-    background: #1f2937;
-  }
-  .dev-tools summary {
-    padding: 14px 20px;
-    cursor: pointer;
-    font-weight: 600;
-  }
-  .dev-tools textarea {
-    background: #111827;
-    color: #e5e7eb;
-    border: 1px solid #4b5563;
-    border-radius: 6px;
-    padding: 8px 10px;
-    font-size: 0.9em;
-    width: 100%;
-    box-sizing: border-box;
-    font-family: monospace;
-    outline: none;
-  }
-  .dev-tools textarea:focus {
-    border-color: #facc15;
+  .empty-chat { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--text-muted); text-align: center; padding: 2rem; }
+  .big-icon { font-size: 4rem; margin-bottom: 1rem; opacity: 0.2; }
+  .empty-chat h2 { color: var(--cn-dark); margin: 0 0 0.5rem 0; }
+
+  /* --- LOGS PANEL --- */
+  .logs-panel { width: 320px; background: #0F172A; color: #10B981; display: flex; flex-direction: column; z-index: 50; border-left: 1px solid #1E293B; }
+  .logs-header { padding: 1rem; background: #1E293B; display: flex; justify-content: space-between; align-items: center; color: white; }
+  .logs-header h4 { margin: 0; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.5px; }
+  .btn-close { background: none; border: none; color: #9CA3AF; font-size: 1.2rem; cursor: pointer; }
+  .logs-body { flex: 1; overflow-y: auto; padding: 1rem; font-family: ui-monospace, monospace; font-size: 0.75rem; }
+  .log-entry { border-bottom: 1px solid rgba(255,255,255,0.05); padding: 0.4rem 0; word-break: break-all; }
+  .logs-dev { background: #1E293B; border-top: 1px solid #334155; color: white; font-size: 0.8rem; }
+  .logs-dev summary { padding: 1rem; cursor: pointer; font-weight: bold; }
+  .dev-actions { padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem; }
+  .dev-actions button { background: #334155; color: white; border: none; padding: 0.5rem; border-radius: 0.4rem; cursor: pointer; }
+  .dev-actions button:hover { background: #475569; }
+  .dev-actions input { background: #0F172A; color: white; border: 1px solid #475569; padding: 0.5rem; border-radius: 0.4rem; outline: none; font-family: monospace; }
+
+  .mobile-only { display: none; }
+
+  /* --- RESPONSIVE --- */
+  @media (max-width: 768px) {
+    .hidden-mobile { display: none !important; }
+    .sidebar, .chat-area { width: 100%; flex: 1; }
+    .mobile-only { display: block; }
+    .chat-tools { display: none; } /* Simplification sur mobile */
+    .chat-header { padding: 0.6rem 1rem; }
+    .btn-back { margin-right: 0.5rem; color: var(--cn-dark); background: none; border: none; padding: 0.2rem; cursor: pointer; }
+    .logs-panel { position: absolute; right: 0; top: 0; bottom: 0; box-shadow: -5px 0 15px rgba(0,0,0,0.2); }
   }
 </style>
