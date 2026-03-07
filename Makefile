@@ -120,11 +120,11 @@ build-frontend:
 
 run-services:
 	@echo "${BLUE}🚀 Starting services...${RESET}"
-	@docker compose -f infrastructure/docker/docker-compose.yml up -d --build
+	@docker compose -f infrastructure/local/docker-compose.yml up -d --build
 	@echo "${GREEN}✅ Services démarrés${RESET}"
 
 reload-services:
 	@echo "${BLUE}🔄 Reloading services...${RESET}"
-	@docker compose -f infrastructure/docker/docker-compose.yml down -v && \
-		docker compose -f infrastructure/docker/docker-compose.yml up -d --build
+	@docker compose -f infrastructure/local/docker-compose.yml down -v && \
+		docker compose -f infrastructure/local/docker-compose.yml up -d --build
 	@echo "${GREEN}✅ Services rechargés${RESET}"
