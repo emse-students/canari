@@ -182,9 +182,7 @@ jobs:
         continue-on-error: true
 
       - name: Check Cargo dependencies
-        uses: rustsec/audit-check-action@v1
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+        run: cargo install cargo-audit && cargo audit
         continue-on-error: true
 
   rust-analysis:

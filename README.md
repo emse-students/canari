@@ -1,8 +1,8 @@
 # Canari - Messagerie Sécurisée E2E
 
-[![CI](https://github.com/YOUR-ORG/canari/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR-ORG/canari/actions/workflows/ci.yml)
-[![CD](https://github.com/YOUR-ORG/canari/actions/workflows/cd.yml/badge.svg)](https://github.com/YOUR-ORG/canari/actions/workflows/cd.yml)
-[![Code Analysis](https://github.com/YOUR-ORG/canari/actions/workflows/code-analysis.yml/badge.svg)](https://github.com/YOUR-ORG/canari/actions/workflows/code-analysis.yml)
+[![CI](https://github.com/emse-students/canari/actions/workflows/ci.yml/badge.svg)](https://github.com/emse-students/canari/actions/workflows/ci.yml)
+[![CD](https://github.com/emse-students/canari/actions/workflows/cd.yml/badge.svg)](https://github.com/emse-students/canari/actions/workflows/cd.yml)
+[![Code Analysis](https://github.com/emse-students/canari/actions/workflows/code-analysis.yml/badge.svg)](https://github.com/emse-students/canari/actions/workflows/code-analysis.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Application de messagerie sécurisée avec chiffrement de bout en bout (protocole MLS) et architecture microservices moderne.
@@ -89,8 +89,6 @@ Le projet est configuré avec Dependabot pour maintenir les dépendances à jour
 - **Cargo (Rust)** : Mise à jour hebdomadaire
 
 Les pull requests de Dependabot sont automatiquement testées via CI/CD.
-
-
 
 ## Démarrage Rapide
 

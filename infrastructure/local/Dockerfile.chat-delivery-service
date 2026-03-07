@@ -5,11 +5,11 @@ WORKDIR /app
 
 # shared-ts lib first (dependency of delivery-service)
 COPY libs/shared-ts ./libs/shared-ts
-RUN cd libs/shared-ts && npm install && npm run build
+RUN cd libs/shared-ts && npm install --legacy-peer-deps && npm run build
 
 # Delivery service
 COPY apps/chat-delivery-service/package*.json ./apps/chat-delivery-service/
-RUN cd apps/chat-delivery-service && npm install
+RUN cd apps/chat-delivery-service && npm install --legacy-peer-deps
 
 COPY apps/chat-delivery-service ./apps/chat-delivery-service
 RUN cd apps/chat-delivery-service && npx tsc -p tsconfig.json
