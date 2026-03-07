@@ -169,6 +169,21 @@ jobs:
             exit 1
           fi
 
+      - name: Stop host Nginx if running
+        run: |
+          echo "🔍 Checking for host nginx on port 80..."
+          if sudo systemctl is-active --quiet nginx 2>/dev/null; then
+            echo "⚠️ Host nginx is running. Stopping to free port 80 for Docker edge..."
+            sudo systemctl stop nginx && echo "✅ Nginx stopped" || echo "⚠️ Nginx stop failed"
+          elif sudo ss -ltnp 2>/dev/null | grep -q ':80.*nginx'; then
+            echo "⚠️ Nginx process found on port 80. Stopping..."
+            sudo pkill -f nginx || echo "⚠️ pkill failed"
+            sleep 2
+            echo "✅ Nginx forcefully stopped"
+          else
+            echo "✅ No nginx conflict detected on port 80"
+          fi
+
       - name: Authenticate to GHCR
         env:
           REGISTRY: ${{ env.REGISTRY }}
