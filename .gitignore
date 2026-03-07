@@ -34,6 +34,7 @@ $RECYCLE.BIN/
 *.launch
 .settings/
 *.sublime-workspace
+.eslintcache
 
 # Node.js / Bun
 node_modules/
