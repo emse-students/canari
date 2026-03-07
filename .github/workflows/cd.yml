@@ -72,14 +72,14 @@ jobs:
       matrix:
         service:
           - name: chat-gateway
-            context: apps/chat-gateway
-            dockerfile: infrastructure/local/Dockerfile.chat-gateway
+            context: .
+            dockerfile: ./infrastructure/local/Dockerfile.chat-gateway
           - name: chat-delivery-service
-            context: apps/chat-delivery-service
-            dockerfile: infrastructure/local/Dockerfile.chat-delivery-service
+            context: .
+            dockerfile: ./infrastructure/local/Dockerfile.chat-delivery-service
           - name: frontend
-            context: frontend
-            dockerfile: infrastructure/local/Dockerfile.frontend
+            context: .
+            dockerfile: ./infrastructure/local/Dockerfile.frontend
     steps:
       - uses: actions/checkout@v4
 

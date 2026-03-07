@@ -1,9 +1,9 @@
 use rdkafka::producer::FutureProducer;
+use redis::Client as RedisClient;
 use reqwest::Client as HttpClient;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
-use redis::Client as RedisClient;
 
 pub struct AppState {
     pub redis_client: RedisClient,

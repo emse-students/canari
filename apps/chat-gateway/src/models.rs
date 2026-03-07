@@ -21,13 +21,13 @@ pub enum WebSocketMessage {
         payload: String, // Opaque MLS content (Base64)
         group_id: Option<String>,
         // List of recipients for fan-out
-        recipients: Option<Vec<Recipient>>, 
+        recipients: Option<Vec<Recipient>>,
     },
     #[serde(rename_all = "camelCase")]
     WelcomeMessage {
-        payload: String, 
+        payload: String,
         group_id: String,
-        recipients: Vec<Recipient>, 
+        recipients: Vec<Recipient>,
     },
     #[serde(rename_all = "camelCase")]
     Read { message_id: Uuid },
@@ -48,5 +48,5 @@ pub struct RatchetTreePayload {
 }
 
 pub fn process_incoming(text: &str) -> Result<WebSocketMessage, serde_json::Error> {
-    serde_json::from_str(text) 
+    serde_json::from_str(text)
 }
