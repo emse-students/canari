@@ -12,12 +12,14 @@ export interface IMlsService {
     // Networking
     connect(token: string): Promise<void>;
     fetchKeyPackage(userId: string): Promise<{ keyPackage: Uint8Array, deviceId: string } | null>;
+    fetchUserDevices(userId: string): Promise<Array<{ keyPackage: Uint8Array, deviceId: string }>>;
     publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void>;
-    sendWelcome(welcomeBytes: Uint8Array, targetUserId: string, groupId: string): Promise<void>;
+    sendWelcome(welcomeBytes: Uint8Array, targetUserId: string, groupId: string, targetDeviceId?: string): Promise<void>;
+    sendCommit(commitBytes: Uint8Array, groupId: string): Promise<void>; // New Method for WS priority
     registerMember(groupId: string, userId: string, deviceId: string): Promise<void>;
     fetchHistory(groupId: string): Promise<{ sender_id: string, content: string, timestamp: string }[]>;
     getDeviceId(): string;
     
     // Callbacks
-    onMessage(callback: (senderId: string, content: Uint8Array, groupId?: string) => void): void;
+    onMessage(callback: (senderId: string, content: Uint8Array, groupId?: string) => Promise<boolean>): void;
 }

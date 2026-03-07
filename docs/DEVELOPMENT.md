@@ -28,7 +28,7 @@ Un script PowerShell `setup_environment.ps1` est fourni à la racine pour instal
   - Lancer: `./gradlew bootRun`
 - **Backend User (Java)**: `apps/user-service`
   - Lancer: `./gradlew bootRun`
-- **Backend Chat History (NestJS)**: `apps/chat-history-service`
+- **Backend Chat Delivery (NestJS)**: `apps/chat-delivery-service`
   - Dépend de `libs/shared-ts`
   - Lancer: `npm run start:dev`
 - **Backend Chat Gateway (Rust)**: `apps/chat-gateway`
@@ -55,9 +55,9 @@ Si vous ne souhaitez pas utiliser le script, respectez cet ordre :
     npm install
     npm run build
     ```
-3.  **Installer les dépendances Frontend & History** :
+3.  **Installer les dépendances Frontend & Delivery** :
     ```bash
-    cd apps/chat-history-service && npm install
+    cd apps/chat-delivery-service && npm install
     cd frontend && npm install
     ```
 4.  **Compiler le module WASM (si nécessaire)** :

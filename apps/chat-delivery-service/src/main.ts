@@ -12,7 +12,7 @@ async function bootstrap() {
         brokers: ['localhost:9092'],
       },
       consumer: {
-        groupId: 'chat-history-consumer',
+        groupId: 'chat-delivery-consumer',
       },
     },
   });

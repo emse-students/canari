@@ -137,6 +137,65 @@ export class AppController {
       return this.keyPackageModel.find({ userId }).sort({ createdAt: -1 }).exec();
   }
 
+  @Post('mls-api/welcome')
+  async sendWelcome(@Body() body: { 
+      targetDeviceId: string,
+      targetUserId?: string,   // used to disambiguate when multiple users share a device ID
+      senderUserId?: string,   // the user who is inviting (their identity shown to the recipient)
+      welcomePayload: string,
+      groupId: string 
+  }) {
+      // Look up recipient device — include userId in the query when provided so the lookup
+      // is unambiguous even if two users happen to share the same raw device ID string
+      // (common in same-browser multi-tab testing).
+      const query: Record<string, string> = { deviceId: body.targetDeviceId };
+      if (body.targetUserId) {
+          query.userId = body.targetUserId;
+      }
+      const deviceInfo = await this.keyPackageModel.findOne(query).exec();
+
+      if (!deviceInfo) {
+          throw new Error(`Device ${body.targetDeviceId} (user: ${body.targetUserId ?? 'unknown'}) not found. Cannot deliver Welcome message.`);
+      }
+
+      const senderUserId = body.senderUserId || 'system';
+
+      await this.welcomeMessageModel.create({
+          deviceId: body.targetDeviceId,
+          userId: deviceInfo.userId,
+          senderUserId,
+          groupId: body.groupId,
+          message: body.welcomePayload,
+          createdAt: new Date()
+      });
+      
+      // Real-time push via Gateway when the target device is currently online.
+      const isOnline = await this.redis.exists(`user:online:${deviceInfo.userId}:${body.targetDeviceId}`);
+      if (isOnline) {
+          await this.redis.publish('chat:messages', JSON.stringify({
+              recipientId: deviceInfo.userId,
+              deviceId: body.targetDeviceId,
+              senderId: senderUserId,
+              groupId: body.groupId,
+              content: body.welcomePayload,
+              type: 'mlsWelcome'
+          }));
+      }
+
+      return { status: 'queued' };
+  }
+
+  @Get('mls-api/welcome/:deviceId')
+  async getWelcomeMessages(@Param('deviceId') deviceId: string) {
+      const messages = await this.welcomeMessageModel.find({ deviceId }).exec();
+      // Delete immediately after reading: MLS init keys are ephemeral and can only be
+      // consumed once. Re-processing the same welcome on reconnect would always fail.
+      if (messages.length > 0) {
+          await this.welcomeMessageModel.deleteMany({ deviceId });
+      }
+      return messages;
+  }
+
   @Post('mls-api/send')
   async sendMessage(@Body() body: { 
       senderId: string,
@@ -160,22 +219,12 @@ export class AppController {
             }) 
             .map(m => ({ userId: m.userId, deviceId: m.deviceId }));
       } else {
-          // Process provided recipients (handle fan-out)
+          // Process provided recipients (NO FAN_OUT - Strict Device Targeting)
           for (const r of body.recipients) {
               if (r.deviceId) {
                   targetList.push({ userId: r.userId, deviceId: r.deviceId });
               } else {
-                  // Fan-out: Fetch all devices for this user from Registry
-                  const devices = await this.keyPackageModel.find({ userId: r.userId }).lean().exec();
-                  if (devices.length > 0) {
-                      for (const d of devices) {
-                          // Don't send back to sender's own device if matched
-                          if (r.userId === senderId && d.deviceId === senderDeviceId) continue;
-                          targetList.push({ userId: r.userId, deviceId: d.deviceId });
-                      }
-                  } else {
-                      console.log(`No devices found for user ${r.userId} during fan-out.`);
-                  }
+                  console.warn(`Skipping recipient ${r.userId} without deviceId. Fan-out is disabled for MLS security.`);
               }
           }
       }
@@ -247,16 +296,27 @@ export class AppController {
 
   @Get('mls-api/messages/:userId/:deviceId')
   async fetchMessages(@Param('userId') userId: string, @Param('deviceId') deviceId: string) {
-      const messages = await this.queuedMessageModel.find({ 
+      // On renvoie juste la liste
+      return this.queuedMessageModel.find({ 
           recipientId: userId, 
           deviceId: deviceId 
       }).sort({ createdAt: 1 }).lean().exec();
+  }
 
-      if (messages.length > 0) {
-          const ids = messages.map(m => m._id);
-          await this.queuedMessageModel.deleteMany({ _id: { $in: ids } });
+  // 2. Nouvelle route d'Acquittement (ACK)
+  @Post('mls-api/messages/ack')
+  async acknowledgeMessages(@Body() body: { userId: string, deviceId: string, messageIds: string[] }) {
+      if (!body.messageIds || body.messageIds.length === 0) {
+          return { status: 'ignored' };
       }
 
-      return messages;
+      // On supprime uniquement les messages que le client a confirmés
+      const result = await this.queuedMessageModel.deleteMany({ 
+          _id: { $in: body.messageIds },
+          recipientId: body.userId,
+          deviceId: body.deviceId // Sécurité pour éviter qu'un device supprime les messages d'un autre
+      });
+
+      return { status: 'deleted', count: result.deletedCount };
   }
 }

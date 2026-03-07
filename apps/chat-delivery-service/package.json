@@ -1,5 +1,5 @@
 {
-  "name": "chat-history-service",
+  "name": "chat-delivery-service",
   "version": "0.0.1",
   "scripts": {
     "start": "ts-node src/main.ts",

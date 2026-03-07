@@ -55,9 +55,9 @@ else {
     Start-Process pwsh -ArgumentList "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", "`$host.UI.RawUI.WindowTitle='Chat Gateway (Rust)'; Set-Location apps/chat-gateway; cargo run --release"
 }
 
-# Chat History Service (NestJS)
-Write-Host "  -> Lancement de Chat History Service" -ForegroundColor DarkGray
-Start-Process pwsh -ArgumentList "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", "`$host.UI.RawUI.WindowTitle='Chat History Service (Node)'; Set-Location apps/chat-history-service; npm install; npm run start:dev"
+# Chat Delivery Service (NestJS)
+Write-Host "  -> Lancement de Chat Delivery Service" -ForegroundColor DarkGray
+Start-Process pwsh -ArgumentList "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", "`$host.UI.RawUI.WindowTitle='Chat Delivery Service (Node)'; Set-Location apps/chat-delivery-service; npm install; npm run start:dev"
 
 # Auth Service (NestJS)
 Write-Host "  -> Lancement de Auth Service" -ForegroundColor DarkGray

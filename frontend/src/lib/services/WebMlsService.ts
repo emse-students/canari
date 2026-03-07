@@ -4,21 +4,16 @@ import type { IMlsService } from './IMlsService';
 export class WebMlsService implements IMlsService {
     private client: any;
     private ws: WebSocket | null = null;
-    private messageCallback: ((senderId: string, content: Uint8Array, groupId?: string) => void) | null = null;
+    private messageCallback: ((senderId: string, content: Uint8Array, groupId?: string) => Promise<boolean>) | null = null;
     private baseUrl = "http://localhost:3000"; // Chat Gateway URL
     private historyUrl = "http://localhost:3001"; // Chat History Service URL
     private userId: string = "unknown";
     private deviceId: string;
 
     constructor() {
-        // Ensure stable Device ID across sessions
-        const stored = localStorage.getItem("mls_device_id");
-        if (stored) {
-            this.deviceId = stored;
-        } else {
-            this.deviceId = "web-" + Date.now() + "-" + Math.floor(Math.random() * 1000);
-            localStorage.setItem("mls_device_id", this.deviceId);
-        }
+        // Device ID is initialized per-user in init() to avoid collisions when multiple
+        // users share the same browser (e.g. two tabs in the same browser window).
+        this.deviceId = "pending";
     }
 
     async connect(token: string): Promise<void> {
@@ -70,20 +65,61 @@ export class WebMlsService implements IMlsService {
         });
     }
 
-    onMessage(callback: (senderId: string, content: Uint8Array, groupId?: string) => void) {
+    onMessage(callback: (senderId: string, content: Uint8Array, groupId?: string) => Promise<boolean>) {
         this.messageCallback = callback;
     }
     async fetchPendingMessages() {
         if (this.userId === "unknown") return;
+
+        // Fetch pending welcome messages (group invitations stored while offline)
+        try {
+            const wRes = await fetch(`${this.historyUrl}/mls-api/welcome/${this.deviceId}`);
+            if (wRes.ok) {
+                const welcomes = await wRes.json();
+                if (Array.isArray(welcomes) && welcomes.length > 0) {
+                    console.log(`Fetched ${welcomes.length} pending welcome message(s)`);
+                    for (const w of welcomes) {
+                        // Normalise the stored welcome into the same shape simulateMessageReceive expects
+                        await this.simulateMessageReceive({
+                            type: 'mlsWelcome',
+                            content: w.message,
+                            senderId: w.senderUserId ?? 'system', // senderUserId = the inviter, NOT the recipient
+                            groupId: w.groupId
+                        });
+                    }
+                }
+            }
+        } catch (e) {
+            console.error("Failed to fetch pending welcome messages", e);
+        }
+
         try {
             const res = await fetch(`${this.historyUrl}/mls-api/messages/${this.userId}/${this.deviceId}`);
             if (res.ok) {
                 const messages = await res.json();
                 if (Array.isArray(messages) && messages.length > 0) {
                     console.log(`Fetched ${messages.length} pending messages`);
-                    // Simulate receiving via WebSocket for consistent processing
+                    
+                    const successfullyProcessedIds: string[] = [];
+
                     for (const msg of messages) {
-                        this.simulateMessageReceive(msg);
+                        const success = await this.simulateMessageReceive(msg);
+                        if (success && msg._id) {
+                            successfullyProcessedIds.push(msg._id);
+                        }
+                    }
+
+                    if (successfullyProcessedIds.length > 0) {
+                        await fetch(`${this.historyUrl}/mls-api/messages/ack`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                userId: this.userId,
+                                deviceId: this.deviceId,
+                                messageIds: successfullyProcessedIds
+                            })
+                        });
+                        console.log(`Acknowledged ${successfullyProcessedIds.length} messages`);
                     }
                 }
             }
@@ -92,7 +128,7 @@ export class WebMlsService implements IMlsService {
         }
     }
 
-    private simulateMessageReceive(data: any) {
+    private async simulateMessageReceive(data: any): Promise<boolean> {
         if (this.messageCallback) {
              let base64Content: string | null = null;
              // Handle same logic as onmessage
@@ -110,37 +146,43 @@ export class WebMlsService implements IMlsService {
                  }
                  const senderId = data.senderId || "unknown";
                  const groupId = data.groupId || data.session_id;
-                 this.messageCallback(senderId, bytes, groupId);
+                 try {
+                     return await this.messageCallback(senderId, bytes, groupId);
+                 } catch (e) {
+                     console.error("Message processing failed", e);
+                     return false;
+                 }
              }
         }
+        return false;
     }
 
     async fetchKeyPackage(userId: string): Promise<{ keyPackage: Uint8Array, deviceId: string } | null> {
+        const devices = await this.fetchUserDevices(userId);
+        if (devices.length === 0) return null;
+        return devices[0];
+    }
+
+    async fetchUserDevices(userId: string): Promise<Array<{ keyPackage: Uint8Array, deviceId: string }>> {
         try {
-            // Fetch from Chat History Service (delivery service)
             const res = await fetch(`${this.historyUrl}/mls-api/devices/${userId}`);
-            if (!res.ok) return null;
+            if (!res.ok) return [];
             const devices = await res.json();
-            if (!devices || devices.length === 0) return null;
             
-            // Just take the latest device key package
-            const latest = devices[0]; 
-            const base64 = latest.keyPackage;
-            const deviceId = latest.deviceId;
-            
-            // Decode Base64
-            const binaryString = atob(base64);
-            const len = binaryString.length;
-            const bytes = new Uint8Array(len);
-            for (let i = 0; i < len; i++) {
-                bytes[i] = binaryString.charCodeAt(i);
-            }
-            return { keyPackage: bytes, deviceId };
+            return devices.map((d: any) => {
+                const binaryString = atob(d.keyPackage);
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                }
+                return { keyPackage: bytes, deviceId: d.deviceId };
+            });
         } catch (e) {
-            console.error("Fetch Key Package Error:", e);
-            return null;
+            console.error("Fetch User Devices Error:", e);
+            return [];
         }
     }
+
 
     async registerMember(groupId: string, userId: string, deviceId: string): Promise<void> {
         try {
@@ -172,26 +214,86 @@ export class WebMlsService implements IMlsService {
         }
     }
 
-    async sendWelcome(welcomeBytes: Uint8Array, targetUserId: string, groupId: string): Promise<void> {
-        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-            console.warn("WebSocket not connected, cannot send Welcome");
-            return;
-        }
+    async sendWelcome(welcomeBytes: Uint8Array, targetUserId: string, groupId: string, targetDeviceId?: string): Promise<void> {
         const base64 = btoa(String.fromCharCode(...welcomeBytes));
-        
-        // Let Delivery Service handle fan-out/routing
-        const recipients = [{ userId: targetUserId, deviceId: null }];
 
-        this.ws.send(JSON.stringify({ 
-            type: "welcomeMessage", 
-            payload: base64,
-            groupId: groupId,
-            recipients: recipients
-        }));
+        if (targetDeviceId) {
+            // Dedicated welcome endpoint: persists to MongoDB (offline inbox) and pushes
+            // via Redis pubsub if the target device is currently online.
+            await fetch(`${this.historyUrl}/mls-api/welcome`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    targetDeviceId,
+                    targetUserId,    // required to disambiguate when device IDs collide
+                    senderUserId: this.userId,
+                    welcomePayload: base64,
+                    groupId
+                })
+            });
+        } else if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            this.ws.send(JSON.stringify({
+                type: "welcomeMessage",
+                payload: base64,
+                recipients: [{ userId: targetUserId, deviceId: null }],
+                groupId
+            }));
+        } else {
+            await fetch(`${this.historyUrl}/mls-api/send`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    senderId: this.userId,
+                    recipients: [{ userId: targetUserId }],
+                    content: base64,
+                    groupId,
+                    type: 'mlsWelcome'
+                })
+            });
+        }
+    }
+
+    async sendCommit(commitBytes: Uint8Array, groupId: string): Promise<void> {
+        const base64 = btoa(String.fromCharCode(...commitBytes));
+
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            // Send via WebSocket for instant delivery to online group members
+            const payload = {
+                type: "mlsMessage", // Treated as a regular MLS message (Application or Handshake, opaque to server)
+                payload: base64,
+                groupId: groupId
+            };
+            this.ws.send(JSON.stringify(payload));
+        } else {
+             // Fallback HTTP
+             await fetch(`${this.historyUrl}/mls-api/send`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    senderId: this.userId,
+                    groupId: groupId,
+                    content: base64,
+                    type: 'handshake'
+                })
+            });
+        }
     }
 
     async init(userId: string, pin: string, state?: Uint8Array) {
         this.userId = userId;
+
+        // Per-user device ID — prevents two users in the same browser from sharing a
+        // device ID, which would cause the delivery service to route the welcome message
+        // to the wrong user.
+        const deviceKey = `mls_device_id_${userId}`;
+        const storedDevice = localStorage.getItem(deviceKey);
+        if (storedDevice) {
+            this.deviceId = storedDevice;
+        } else {
+            this.deviceId = "web-" + userId + "-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6);
+            localStorage.setItem(deviceKey, this.deviceId);
+        }
+
         // Import dynamique du WASM généré
         try {
             // Import from local lib to ensure Vite handles it correctly

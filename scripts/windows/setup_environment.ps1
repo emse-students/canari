@@ -62,9 +62,9 @@ else {
 }
 Set-Location ../../
 
-# 3.2 Chat History Service
-Write-Host "   👉 apps/chat-history-service"
-Set-Location "apps/chat-history-service"
+# 3.2 Chat Delivery Service
+Write-Host "   👉 apps/chat-delivery-service"
+Set-Location "apps/chat-delivery-service"
 npm install
 Set-Location ../../
 

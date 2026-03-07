@@ -38,7 +38,7 @@ L'environnement de développement a été configuré avec :
 3.  **Lancer les services** (dans des terminaux séparés) :
     - **Auth Service** : `cd apps/auth-service && ./gradlew bootRun`
     - **User Service** : `cd apps/user-service && ./gradlew bootRun`
-    - **Chat History** : `cd apps/chat-history-service && npm run start:dev`
+    - **Chat Delivery** : `cd apps/chat-delivery-service && npm run start:dev`
     - **Gateway** : `cd apps/chat-gateway && cargo run`
 
 4.  **Lancer le Frontend** :

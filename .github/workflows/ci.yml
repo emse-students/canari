@@ -73,7 +73,7 @@ jobs:
           cache-dependency-path: '**/package-lock.json'
 
       - name: Test Chat History Service
-        working-directory: apps/chat-history-service
+        working-directory: apps/chat-delivery-service
         run: |
           npm ci
           npm run lint

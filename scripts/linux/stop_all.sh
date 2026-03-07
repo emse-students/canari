@@ -16,7 +16,7 @@ echo -e "\n\e[33m[2/2] Fermeture des processus de la suite Canari...\e[0m"
 
 # Tuer les processus backend connus
 pkill -f "cargo run"
-pkill -f "chat-history-service"
+pkill -f "chat-delivery-service"
 pkill -f "auth-service"
 pkill -f "user-service"
 

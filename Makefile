@@ -54,8 +54,8 @@ test-gateway:
 
 # Tests Service Historique
 test-history:
-	@echo "${BLUE}🧪 Testing Chat History Service...${RESET}"
-	@cd apps/chat-history-service && npm test -- --coverage
+	@echo "${BLUE}🧪 Testing Chat Delivery Service...${RESET}"
+	@cd apps/chat-delivery-service && npm test -- --coverage
 
 build:
 	@echo "${BLUE}🔨 Building all components...${RESET}"
@@ -73,7 +73,7 @@ build-frontend:
 run:
 	@echo "\n${BLUE}🚀 Running all services...${RESET}"
 	@cd apps/chat-gateway && cargo run &
-	@cd apps/chat-history-service && npm start &
+	@cd apps/chat-delivery-service && npm start &
 	@echo "${GREEN}✅ All services are running!${RESET}"
 
 run-frontend:

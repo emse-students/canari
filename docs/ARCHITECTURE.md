@@ -24,7 +24,7 @@ Le système combine des APIs REST classiques (CRUD) et des WebSockets (Temps ré
 │   ├── api-gateway/               # [Kong/Nginx] Point d'entrée unique (REST + WebSocket)
 │   ├── notification-service/      # [Node/NestJS] Envoi Notifications Push
 │   ├── chat-gateway/              # [Rust/Axum] Serveur WebSocket (Stateless)
-│   ├── chat-history-service/      # [Node/NestJS] Consumer Kafka -> Sauvegarde messages (Mongo)
+│   ├── chat-delivery-service/      # [Node/NestJS] Consumer Kafka -> Sauvegarde messages (Mongo)
 │   ├── feed-worker/               # [Rust] Worker d'arrière-plan (Fan-out)
 │   ├── post-service/              # [Node/NestJS] Gestion Contenu & CRUD
 │   ├── graph-service/             # [Node/NestJS] Gestion Relations (Neo4j)

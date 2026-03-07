@@ -41,7 +41,7 @@ launch_terminal() {
 }
 
 launch_terminal "Chat Gateway (Rust)" "apps/chat-gateway" "cargo run"
-launch_terminal "Chat History Service (Node)" "apps/chat-history-service" "npm install && npm run start:dev"
+launch_terminal "Chat Delivery Service (Node)" "apps/chat-delivery-service" "npm install && npm run start:dev"
 launch_terminal "Auth Service (Node)" "apps/auth-service" "npm install && npm run start:dev"
 launch_terminal "User Service (Node)" "apps/user-service" "npm install && npm run start:dev"
 

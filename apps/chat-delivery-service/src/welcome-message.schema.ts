@@ -9,6 +9,12 @@ export class WelcomeMessage {
   userId: string; // Recipient
 
   @Prop({ required: true })
+  deviceId: string; // Recipient Device
+
+  @Prop()
+  senderUserId: string; // The user who created the welcome (the inviter)
+
+  @Prop({ required: true })
   groupId: string;
 
   @Prop({ required: true })

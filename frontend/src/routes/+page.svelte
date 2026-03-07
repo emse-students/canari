@@ -147,7 +147,8 @@
       log("Conversations chargées !");
 
       // listener setup before connection to catch pending messages
-      mls.onMessage(async (sender, content) => {
+      // listener setup before connection to catch pending messages
+      mls.onMessage(async (sender, content, groupId) => {
         log(`Message reçu de ${sender} (${content.length} octets)`);
         try {
           // Normalize the sender ID since usernames are lowercase internally
@@ -174,6 +175,7 @@
             } else {
               log(`Message de protocole traité pour ${senderNorm}.`);
             }
+            return true;
           } else {
             // Treat as potential welcome message if contact unknown
             throw new Error("Potential Welcome");
@@ -226,10 +228,12 @@
               log(`✅ Handshake complété avec ${extractedContact}`);
               loadHistoryForConversation(extractedContact, joinedGroupId);
               conversations = new Map(conversations); // Reactivity
+              return true;
             } else {
               log(
                 `⚠️ Welcome reçu pour groupe inconnu: ${joinedGroupId} (contact: ${extractedContact})`,
               );
+              return false;
             }
           } catch (e2) {
             if (conversations.has(sender.toLowerCase())) {
@@ -237,6 +241,7 @@
             } else {
               log(`Message ignoré de ${sender} (inconnu)`);
             }
+            return false;
           }
         }
       });
@@ -463,8 +468,8 @@
           localStorage.setItem("mls_autosave_" + userId, hex);
           
           if (result.welcome) {
-              await mls.sendWelcome(result.welcome!, targetUser, groupId);
-              log(`Welcome envoyé à ${targetUser}.`);
+              await mls.sendWelcome(result.welcome!, targetUser, groupId, target.deviceId);
+              log(`Welcome envoyé à ${targetUser} (device: ${target.deviceId}).`);
           }
 
           log(`${targetUser} ajouté avec succès.`);
@@ -525,27 +530,58 @@
       log(`Recherche du KeyPackage pour ${contact}...`);
       const target = await mls.fetchKeyPackage(contact);
 
-      if (target) {
-        log(`KeyPackage trouvé pour ${contact} ! Ajout au groupe...`);
-        const result = await mls.addMember(groupId, target.keyPackage);
-        
-        // Register members to backend so gateway can route future messages
-        await mls.registerMember(groupId, contact, target.deviceId);
-        
-        log(`Membre ${contact} (Device: ${target.deviceId}) enregistré sur le backend.`);
+      // Try to fetch existing KeyPackages for ALL devices
+      log(`Recherche des appareils pour ${contact}...`);
+      const devices = await mls.fetchUserDevices(contact);
 
-        // Save state immediately after adding member (critical for crypto sync)
-        try {
-          const stateBytes = await mls.saveState(pin);
-          const hex = toHex(stateBytes);
-          localStorage.setItem("mls_autosave_" + userId, hex);
-        } catch (e) {
-          log(`Avertissement: sauvegarde état échouée: ${e}`);
-        }
+      if (devices.length > 0) {
+        log(`${devices.length} appareil(s) trouvé(s) pour ${contact}. Ajout au groupe...`);
+        
+        for (const device of devices) {
+            try {
+                log(`Ajout de l'appareil ${device.deviceId}...`);
+                const result = await mls.addMember(groupId, device.keyPackage);
+                
+                // Register members to backend so gateway can route future messages
+                await mls.registerMember(groupId, contact, device.deviceId);
 
-        if (result.welcome) {
-          // Send Welcome with targetUserId so server can store it if offline
-          await mls.sendWelcome(result.welcome!, contact, groupId);
+                // Save state immediately after adding member 
+                const stateBytes = await mls.saveState(pin);
+                const hex = toHex(stateBytes);
+                localStorage.setItem("mls_autosave_" + userId, hex);
+                
+                if (result.welcome) {
+                    const wRes = await fetch('http://localhost:3001/mls-api/welcome', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            targetDeviceId: device.deviceId,
+                            targetUserId: contact,
+                            senderUserId: userId,
+                            welcomePayload: btoa(String.fromCharCode(...result.welcome!)),
+                            groupId: groupId
+                        })
+                    });
+                    if (!wRes.ok) {
+                        log(`⚠️ Erreur envoi welcome (${wRes.status}): ${await wRes.text()}`);
+                    } else {
+                        log(`Welcome envoyé à ${contact} (device: ${device.deviceId})`);
+                    }
+                }
+                
+                // Broadcast COMMIT to existing members (if any other than me)
+                // In a new group, it's just me and the new member(s). 
+                // But for group consistency, we must broadcast the commit if there were other members.
+                // The gateway will route it.
+                if (result.commit) {
+                     // Prefer WebSocket for COMMIT messages to be instant
+                     log(`Diffusion du Commit via WebSocket pour ${device.deviceId}`);
+                     await mls.sendCommit(result.commit, groupId);
+                }
+
+            } catch(e) {
+                log(`Erreur lors de l'ajout du device ${device.deviceId}: ${e}`);
+            }
         }
 
         const convo = conversations.get(contact);
@@ -554,12 +590,11 @@
           conversations.set(contact, updatedConvo);
           conversations = new Map(conversations);
           saveConversation(contact);
-          log(`✅ Chiffrement E2E actif avec ${contact}`);
+          log(`✅ Chiffrement E2E actif avec ${contact} (tous les appareils)`);
           loadHistoryForConversation(contact, groupId);
         }
       } else {
-        log(`❌ Impossible de trouver le KeyPackage de ${contact}. L'utilisateur doit s'être connecté au moins une fois.`);
-        // Remove conversation if we failed to establish it
+        log(`❌ Impossible de trouver des KeyPackages pour ${contact}.`);
         conversations.delete(contact);
         conversations = new Map(conversations);
       }
@@ -1369,33 +1404,6 @@
   .username strong {
     color: white;
     font-weight: 600;
-  }
-  .services-status {
-    display: flex;
-    gap: 6px;
-    margin-left: 12px;
-  }
-  .svc-badge {
-    font-size: 0.72em;
-    font-weight: 600;
-    padding: 2px 7px;
-    border-radius: 10px;
-    letter-spacing: 0.03em;
-  }
-  .svc-ok {
-    background: rgba(16, 185, 129, 0.2);
-    color: #6ee7b7;
-    border: 1px solid rgba(16, 185, 129, 0.4);
-  }
-  .svc-err {
-    background: rgba(239, 68, 68, 0.2);
-    color: #fca5a5;
-    border: 1px solid rgba(239, 68, 68, 0.4);
-  }
-  .svc-unknown {
-    background: rgba(156, 163, 175, 0.2);
-    color: #9ca3af;
-    border: 1px solid rgba(156, 163, 175, 0.3);
   }
   .btn-icon {
     background: transparent;
