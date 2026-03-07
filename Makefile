@@ -4,8 +4,9 @@
 DOMAIN             ?= canari-emse.fr
 GATEWAY_PORT       ?= 3000
 DELIVERY_PORT      ?= 3001
-FRONTEND_BUILD_PATH ?= $(shell pwd)/frontend/build
 NGINX_CONF_NAME    ?= canari
+WWW_DIR            := /var/www/$(NGINX_CONF_NAME)
+FRONTEND_BUILD_PATH := $(WWW_DIR)
 NGINX_SITES_AVAIL  := /etc/nginx/sites-available
 NGINX_SITES_ENABLED:= /etc/nginx/sites-enabled
 
@@ -68,11 +69,15 @@ test-history:
 
 # ── Nginx ─────────────────────────────────────────────────────────────────────
 nginx-install:
+	@echo "${BLUE}🔧 Deploying frontend build to $(WWW_DIR)...${RESET}"
+	@sudo mkdir -p $(WWW_DIR)
+	@sudo rsync -a --delete frontend/build/ $(WWW_DIR)/
+	@sudo chown -R www-data:www-data $(WWW_DIR)
 	@echo "${BLUE}🔧 Generating Nginx config for domain: ${BOLD}$(DOMAIN)${RESET}"
 	@DOMAIN="$(DOMAIN)" \
 	 GATEWAY_PORT="$(GATEWAY_PORT)" \
 	 DELIVERY_PORT="$(DELIVERY_PORT)" \
-	 FRONTEND_BUILD_PATH="$(FRONTEND_BUILD_PATH)" \
+	 FRONTEND_BUILD_PATH="$(WWW_DIR)" \
 	 envsubst '$$DOMAIN $$GATEWAY_PORT $$DELIVERY_PORT $$FRONTEND_BUILD_PATH' \
 	 < infrastructure/nginx/canari.conf.template \
 	 > /tmp/$(NGINX_CONF_NAME).conf
