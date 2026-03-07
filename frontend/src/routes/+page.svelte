@@ -41,6 +41,7 @@
   let chatContainer = $state<HTMLElement>();
 
   let isWsConnected = $state(false);
+  let myDeviceId = $state("");
 
   // Service health status
   interface ServiceStatus {
@@ -67,7 +68,9 @@
   const historyBaseUrl = (() => {
     const env = import.meta.env.VITE_HISTORY_URL;
     if (env && env.trim()) return env;
-    return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3001';
+    return typeof window !== "undefined"
+      ? window.location.origin
+      : "http://localhost:3001";
   })();
 
   onMount(() => {
@@ -147,7 +150,8 @@
       }
 
       await mls.init(userId, pin, stateBytes);
-      log(`Identité MLS initialisée pour ${userId}`);
+      myDeviceId = mls.getDeviceId();
+      log(`Identité MLS initialisée pour ${userId} (device: ${myDeviceId})`);
 
       isLoggedIn = true;
       loadExistingConversations();
@@ -155,14 +159,19 @@
 
       // listener setup before connection to catch pending messages
       mls.onMessage(async (sender, content, groupId) => {
-        log(`Message reçu de ${sender} (${content.length} octets) groupe=${groupId}`);
+        log(
+          `Message reçu de ${sender} (${content.length} octets) groupe=${groupId}`,
+        );
         const senderNorm = sender.toLowerCase();
 
         // ── Step 1: find the conversation by groupId (reliable) or by sender (1-to-1 fallback) ──
         let convoKey: string | undefined;
         if (groupId) {
           for (const [k, c] of conversations.entries()) {
-            if (c.groupId === groupId) { convoKey = k; break; }
+            if (c.groupId === groupId) {
+              convoKey = k;
+              break;
+            }
           }
         }
         if (!convoKey && conversations.has(senderNorm)) {
@@ -173,7 +182,10 @@
         if (convoKey) {
           const convo = conversations.get(convoKey)!;
           try {
-            const decrypted = await mls.processIncomingMessage(convo.groupId, content);
+            const decrypted = await mls.processIncomingMessage(
+              convo.groupId,
+              content,
+            );
 
             try {
               const stateBytes = await mls.saveState(pin);
@@ -185,12 +197,16 @@
             if (decrypted) {
               addMessageToChat(senderNorm, decrypted, false, convoKey);
             } else {
-              log(`Message de protocole (commit/proposal) traité pour "${convoKey}".`);
+              log(
+                `Message de protocole (commit/proposal) traité pour "${convoKey}".`,
+              );
             }
             return true;
           } catch (e) {
             // processIncomingMessage threw — log and stop. Do NOT try processWelcome on known-group bytes.
-            log(`Erreur traitement message dans groupe connu "${convoKey}": ${e}`);
+            log(
+              `Erreur traitement message dans groupe connu "${convoKey}": ${e}`,
+            );
             return false;
           }
         }
@@ -208,20 +224,26 @@
           // Fetch the real group name from the server
           let groupName = extractedContact;
           try {
-            const gRes = await fetch(`${historyBaseUrl}/mls-api/groups/${lookupGroupId}`);
+            const gRes = await fetch(
+              `${historyBaseUrl}/mls-api/groups/${lookupGroupId}`,
+            );
             if (gRes.ok) {
               const gData = await gRes.json();
               if (gData?.name) groupName = gData.name;
               else log(`⚠️ Groupe ${lookupGroupId} trouvé mais sans nom`);
             } else {
-              log(`⚠️ Groupe ${lookupGroupId} introuvable sur le serveur (${gRes.status})`);
+              log(
+                `⚠️ Groupe ${lookupGroupId} introuvable sur le serveur (${gRes.status})`,
+              );
             }
           } catch (e) {
             log(`⚠️ Impossible de récupérer le nom du groupe: ${e}`);
           }
 
           if (!conversations.has(extractedContact)) {
-            log(`✨ Nouvelle conversation avec ${extractedContact} (groupe: ${groupName})`);
+            log(
+              `✨ Nouvelle conversation avec ${extractedContact} (groupe: ${groupName})`,
+            );
             conversations.set(extractedContact, {
               contactName: extractedContact,
               name: groupName,
@@ -233,7 +255,12 @@
           }
 
           const c = conversations.get(extractedContact)!;
-          conversations.set(extractedContact, { ...c, isReady: true, groupId: joinedGroupId, name: groupName });
+          conversations.set(extractedContact, {
+            ...c,
+            isReady: true,
+            groupId: joinedGroupId,
+            name: groupName,
+          });
           saveConversation(extractedContact);
 
           try {
@@ -241,12 +268,16 @@
             localStorage.setItem("mls_autosave_" + userId, toHex(stateBytes));
           } catch (_) {}
 
-          log(`✅ Handshake complété avec ${extractedContact} (groupe: ${groupName})`);
+          log(
+            `✅ Handshake complété avec ${extractedContact} (groupe: ${groupName})`,
+          );
           loadHistoryForConversation(extractedContact, joinedGroupId);
           conversations = new Map(conversations);
           return true;
         } catch (e2) {
-          log(`Message ignoré de ${sender} (groupe inconnu, pas un welcome valide: ${e2})`);
+          log(
+            `Message ignoré de ${sender} (groupe inconnu, pas un welcome valide: ${e2})`,
+          );
           return false;
         }
       });
@@ -305,7 +336,7 @@
       key,
       JSON.stringify({
         groupId: convo.groupId, // Store group ID
-        name: convo.name,       // Store group Name
+        name: convo.name, // Store group Name
         messages: convo.messages.map((m) => ({
           ...m,
           timestamp: m.timestamp.toISOString(),
@@ -370,36 +401,37 @@
   function loadExistingConversations() {
     const prefix = `conversation:${userId}:`;
     for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && key.startsWith(prefix)) {
-            const contactName = key.substring(prefix.length).toLowerCase();
-            const saved = localStorage.getItem(key);
-            if (saved) {
-                const convoData = JSON.parse(saved);
-                // Use stored groupId if available, else derive (legacy support)
-                const groupId = convoData.groupId || generateGroupId(userId, contactName);
-                const name = convoData.name || contactName; // Default name
+      const key = localStorage.key(i);
+      if (key && key.startsWith(prefix)) {
+        const contactName = key.substring(prefix.length).toLowerCase();
+        const saved = localStorage.getItem(key);
+        if (saved) {
+          const convoData = JSON.parse(saved);
+          // Use stored groupId if available, else derive (legacy support)
+          const groupId =
+            convoData.groupId || generateGroupId(userId, contactName);
+          const name = convoData.name || contactName; // Default name
 
-                const messages: ChatMessage[] = (convoData.messages || []).map(
-                    (m: any) => ({
-                    ...m,
-                    timestamp: new Date(m.timestamp),
-                    }),
-                );
-                
-                conversations.set(contactName, {
-                    contactName,
-                    name,
-                    groupId,
-                    messages,
-                    isReady: convoData.isReady || false,
-                    mlsStateHex: null,
-                });
-                
-                log(`Conversation chargée avec ${contactName} (${groupId})`);
-                loadHistoryForConversation(contactName, groupId);
-            }
+          const messages: ChatMessage[] = (convoData.messages || []).map(
+            (m: any) => ({
+              ...m,
+              timestamp: new Date(m.timestamp),
+            }),
+          );
+
+          conversations.set(contactName, {
+            contactName,
+            name,
+            groupId,
+            messages,
+            isReady: convoData.isReady || false,
+            mlsStateHex: null,
+          });
+
+          log(`Conversation chargée avec ${contactName} (${groupId})`);
+          loadHistoryForConversation(contactName, groupId);
         }
+      }
     }
   }
 
@@ -409,99 +441,106 @@
     const name = nameRaw.trim();
 
     if (conversations.has(name)) {
-        log(`Un groupe ou contact nommé "${name}" existe déjà.`);
-        return;
+      log(`Un groupe ou contact nommé "${name}" existe déjà.`);
+      return;
     }
 
     log(`Création du groupe distant "${name}"...`);
     let groupId: string;
     try {
-        groupId = await mls.createRemoteGroup(name);
-        log(`Groupe ID: ${groupId}`);
+      groupId = await mls.createRemoteGroup(name);
+      log(`Groupe ID: ${groupId}`);
     } catch (e) {
-        log(`Erreur création groupe distant: ${e}`);
-        return;
+      log(`Erreur création groupe distant: ${e}`);
+      return;
     }
 
     try {
-        await mls.createGroup(groupId);
-        await mls.registerMember(groupId, userId, mls.getDeviceId());
+      await mls.createGroup(groupId);
+      await mls.registerMember(groupId, userId, mls.getDeviceId());
 
-        // Add own other devices so they can receive messages on this group too
-        const ownDevices = (await mls.fetchUserDevices(userId)).filter(d => d.deviceId !== mls.getDeviceId());
-        for (const device of ownDevices) {
-            try {
-                const result = await mls.addMember(groupId, device.keyPackage);
-                await mls.registerMember(groupId, userId, device.deviceId);
-                if (result.welcome) {
-                    await mls.sendWelcome(result.welcome!, userId, groupId, device.deviceId);
-                }
-            } catch (e) {
-                log(`Avertissement: impossible d'ajouter l'appareil ${device.deviceId}: ${e}`);
-            }
+      // Add own other devices so they can receive messages on this group too
+      const ownDevices = (await mls.fetchUserDevices(userId)).filter(
+        (d) => d.deviceId !== mls.getDeviceId(),
+      );
+      for (const device of ownDevices) {
+        try {
+          const result = await mls.addMember(groupId, device.keyPackage);
+          await mls.registerMember(groupId, userId, device.deviceId);
+          if (result.welcome) {
+            await mls.sendWelcome(result.welcome!, userId, groupId, device.deviceId);
+          }
+        } catch (e) {
+          log(`Avertissement: impossible d'ajouter l'appareil ${device.deviceId}: ${e}`);
         }
-        
-        const stateBytes = await mls.saveState(pin);
-        const hex = toHex(stateBytes);
-        localStorage.setItem("mls_autosave_" + userId, hex);
+      }
 
-        conversations.set(name, {
-            contactName: name, 
-            name: name,
-            groupId,
-            messages: [],
-            isReady: true, 
-            mlsStateHex: null,
-        });
-        conversations = new Map(conversations);
-        selectedContact = name;
-        saveConversation(name);
-        
-        log(`Groupe "${name}" prêt!`);
+      const stateBytes = await mls.saveState(pin);
+      const hex = toHex(stateBytes);
+      localStorage.setItem("mls_autosave_" + userId, hex);
+
+      conversations.set(name, {
+        contactName: name,
+        name: name,
+        groupId,
+        messages: [],
+        isReady: true,
+        mlsStateHex: null,
+      });
+      conversations = new Map(conversations);
+      selectedContact = name;
+      saveConversation(name);
+
+      log(`Groupe "${name}" prêt!`);
     } catch (e) {
-        log(`Erreur init groupe local: ${e}`);
+      log(`Erreur init groupe local: ${e}`);
     }
   }
 
   async function inviteMemberToCurrentGroup(memberId: string) {
-      if (!selectedContact || !memberId.trim()) return;
-      const targetUser = memberId.trim().toLowerCase();
-      
-      const convo = conversations.get(selectedContact);
-      if (!convo) return;
-      const groupId = convo.groupId;
+    if (!selectedContact || !memberId.trim()) return;
+    const targetUser = memberId.trim().toLowerCase();
 
-      log(`Invitation de ${targetUser}...`);
-      try {
-          // Ensure the inviter (ourselves) is also registered so messages route back to us.
-          await mls.registerMember(groupId, userId, mls.getDeviceId());
+    const convo = conversations.get(selectedContact);
+    if (!convo) return;
+    const groupId = convo.groupId;
 
-          const devices = await mls.fetchUserDevices(targetUser);
-          if (devices.length === 0) {
-              log(`Impossible de trouver ${targetUser}.`);
-              return;
-          }
+    log(`Invitation de ${targetUser}...`);
+    try {
+      // Ensure the inviter (ourselves) is also registered so messages route back to us.
+      await mls.registerMember(groupId, userId, mls.getDeviceId());
 
-          for (const device of devices) {
-              const result = await mls.addMember(groupId, device.keyPackage);
-              log(`Appareil ${device.deviceId} de ${targetUser} ajouté au groupe.`);
-              log(`Info: Welcome=${!!result.welcome}, Commit=${!!result.commit}`);
-              await mls.registerMember(groupId, targetUser, device.deviceId);
-
-              const stateBytes = await mls.saveState(pin);
-              const hex = toHex(stateBytes);
-              localStorage.setItem("mls_autosave_" + userId, hex);
-
-              if (result.welcome) {
-                  await mls.sendWelcome(result.welcome!, targetUser, groupId, device.deviceId);
-                  log(`Welcome envoyé à ${targetUser} (device: ${device.deviceId}).`);
-              }
-          }
-
-          log(`${targetUser} ajouté avec succès (${devices.length} appareil(s)).`);
-      } catch(e) {
-          log(`Erreur invitation: ${e}`);
+      const devices = await mls.fetchUserDevices(targetUser);
+      if (devices.length === 0) {
+        log(`Impossible de trouver ${targetUser}.`);
+        return;
       }
+
+      for (const device of devices) {
+        const result = await mls.addMember(groupId, device.keyPackage);
+      log(`Appareil ${device.deviceId} de ${targetUser} ajouté au groupe.`);
+      log(`Info: Welcome=${!!result.welcome}, Commit=${!!result.commit}`);
+        await mls.registerMember(groupId, targetUser, device.deviceId);
+
+        const stateBytes = await mls.saveState(pin);
+        const hex = toHex(stateBytes);
+        localStorage.setItem("mls_autosave_" + userId, hex);
+
+        if (result.welcome) {
+          await mls.sendWelcome(
+            result.welcome!,
+            targetUser,
+            groupId,
+            device.deviceId,
+          );
+          log(`Welcome envoyé à ${targetUser} (device: ${device.deviceId}).`);
+        }
+      }
+
+      log(`${targetUser} ajouté avec succès (${devices.length} appareil(s)).`);
+    } catch (e) {
+      log(`Erreur invitation: ${e}`);
+    }
   }
 
   async function startNewConversation(contactNameRaw: string) {
@@ -520,12 +559,12 @@
     const groupName = `${userId} & ${contact}`;
     let groupId: string;
     try {
-        log(`Demande de création de groupe au serveur (nom: ${groupName})...`);
-        groupId = await mls.createRemoteGroup(groupName);
-        log(`Groupe créé: ${groupId}`);
+      log(`Demande de création de groupe au serveur (nom: ${groupName})...`);
+      groupId = await mls.createRemoteGroup(groupName);
+      log(`Groupe créé: ${groupId}`);
     } catch (e) {
-        log(`Erreur création groupe distant: ${e}`);
-        return;
+      log(`Erreur création groupe distant: ${e}`);
+      return;
     }
 
     conversations.set(contact, {
@@ -547,19 +586,21 @@
       await mls.registerMember(groupId, userId, mls.getDeviceId());
 
       // Add own other devices so they sync this group too
-      const ownDevices = (await mls.fetchUserDevices(userId)).filter(d => d.deviceId !== mls.getDeviceId());
+      const ownDevices = (await mls.fetchUserDevices(userId)).filter(
+        (d) => d.deviceId !== mls.getDeviceId(),
+      );
       for (const device of ownDevices) {
-          try {
-              const result = await mls.addMember(groupId, device.keyPackage);
-              await mls.registerMember(groupId, userId, device.deviceId);
-              if (result.welcome) {
-                  await mls.sendWelcome(result.welcome!, userId, groupId, device.deviceId);
-              }
-          } catch (e) {
-              log(`Avertissement: impossible d'ajouter l'appareil ${device.deviceId}: ${e}`);
+        try {
+          const result = await mls.addMember(groupId, device.keyPackage);
+          await mls.registerMember(groupId, userId, device.deviceId);
+          if (result.welcome) {
+            await mls.sendWelcome(result.welcome!, userId, groupId, device.deviceId);
           }
+        } catch (e) {
+          log(`Avertissement: impossible d'ajouter l'appareil ${device.deviceId}: ${e}`);
+        }
       }
-      
+
       // Persist state after group creation
       try {
         const stateBytes = await mls.saveState(pin);
@@ -574,53 +615,56 @@
       const devices = await mls.fetchUserDevices(contact);
 
       if (devices.length > 0) {
-        log(`${devices.length} appareil(s) trouvé(s) pour ${contact}. Ajout au groupe...`);
-        
+        log(
+          `${devices.length} appareil(s) trouvé(s) pour ${contact}. Ajout au groupe...`,
+        );
+
         for (const device of devices) {
-            try {
-                log(`Ajout de l'appareil ${device.deviceId}...`);
-                const result = await mls.addMember(groupId, device.keyPackage);
-                
-                // Register members to backend so gateway can route future messages
-                await mls.registerMember(groupId, contact, device.deviceId);
+          try {
+            log(`Ajout de l'appareil ${device.deviceId}...`);
+            const result = await mls.addMember(groupId, device.keyPackage);
 
-                // Save state immediately after adding member 
-                const stateBytes = await mls.saveState(pin);
-                const hex = toHex(stateBytes);
-                localStorage.setItem("mls_autosave_" + userId, hex);
-                
-                if (result.welcome) {
-                    const wRes = await fetch(`${historyBaseUrl}/mls-api/welcome`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            targetDeviceId: device.deviceId,
-                            targetUserId: contact,
-                            senderUserId: userId,
-                            welcomePayload: btoa(String.fromCharCode(...result.welcome!)),
-                            groupId: groupId
-                        })
-                    });
-                    if (!wRes.ok) {
-                        log(`⚠️ Erreur envoi welcome (${wRes.status}): ${await wRes.text()}`);
-                    } else {
-                        log(`Welcome envoyé à ${contact} (device: ${device.deviceId})`);
-                    }
-                }
-                
-                // Broadcast COMMIT to existing members (if any other than me)
-                // In a new group, it's just me and the new member(s). 
-                // But for group consistency, we must broadcast the commit if there were other members.
-                // The gateway will route it.
-                if (result.commit) {
-                     // Prefer WebSocket for COMMIT messages to be instant
-                     log(`Diffusion du Commit via WebSocket pour ${device.deviceId}`);
-                     await mls.sendCommit(result.commit, groupId);
-                }
+            // Register members to backend so gateway can route future messages
+            await mls.registerMember(groupId, contact, device.deviceId);
 
-            } catch(e) {
-                log(`Erreur lors de l'ajout du device ${device.deviceId}: ${e}`);
+            // Save state immediately after adding member
+            const stateBytes = await mls.saveState(pin);
+            const hex = toHex(stateBytes);
+            localStorage.setItem("mls_autosave_" + userId, hex);
+
+            if (result.welcome) {
+              const wRes = await fetch(`${historyBaseUrl}/mls-api/welcome`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  targetDeviceId: device.deviceId,
+                  targetUserId: contact,
+                  senderUserId: userId,
+                  welcomePayload: btoa(String.fromCharCode(...result.welcome!)),
+                  groupId: groupId,
+                }),
+              });
+              if (!wRes.ok) {
+                log(
+                  `⚠️ Erreur envoi welcome (${wRes.status}): ${await wRes.text()}`,
+                );
+              } else {
+                log(`Welcome envoyé à ${contact} (device: ${device.deviceId})`);
+              }
             }
+
+            // Broadcast COMMIT to existing members (if any other than me)
+            // In a new group, it's just me and the new member(s).
+            // But for group consistency, we must broadcast the commit if there were other members.
+            // The gateway will route it.
+            if (result.commit) {
+              // Prefer WebSocket for COMMIT messages to be instant
+              log(`Diffusion du Commit via WebSocket pour ${device.deviceId}`);
+              await mls.sendCommit(result.commit, groupId);
+            }
+          } catch (e) {
+            log(`Erreur lors de l'ajout du device ${device.deviceId}: ${e}`);
+          }
         }
 
         const convo = conversations.get(contact);
@@ -851,6 +895,11 @@
         <span class="username"
           >Connecté en tant que <strong>{userId}</strong></span
         >
+        {#if myDeviceId}
+          <span class="device-id" title="Device ID complet : {myDeviceId}"
+            >🔑 <code>{myDeviceId}</code></span
+          >
+        {/if}
       </div>
       <div class="topbar-right">
         <button
@@ -883,7 +932,9 @@
                 : ''}"
               onclick={() => (selectedContact = name)}
             >
-              <div class="contact-avatar">{(convo.name || name)[0].toUpperCase()}</div>
+              <div class="contact-avatar">
+                {(convo.name || name)[0].toUpperCase()}
+              </div>
               <div class="contact-info">
                 <div class="contact-name">{convo.name || name}</div>
                 <div class="contact-preview">
@@ -949,32 +1000,32 @@
 
         <!-- Add Group form -->
         <div class="add-contact-box">
-            <div class="add-contact-label">Nouveau Groupe</div>
-            <div class="add-contact-row">
-                <input
-                    type="text"
-                    bind:value={newGroupInput}
-                    placeholder="Nom du groupe"
-                    onkeydown={(e) => {
-                        if (e.key === "Enter" && newGroupInput.trim()) {
-                            createNewGroup(newGroupInput);
-                            newGroupInput = "";
-                        }
-                    }}
-                />
-                <button
-                    class="btn-add"
-                    onclick={() => {
-                        if (newGroupInput.trim()) {
-                            createNewGroup(newGroupInput);
-                            newGroupInput = "";
-                        }
-                    }}
-                    title="Créer"
-                >
-                    +
-                </button>
-            </div>
+          <div class="add-contact-label">Nouveau Groupe</div>
+          <div class="add-contact-row">
+            <input
+              type="text"
+              bind:value={newGroupInput}
+              placeholder="Nom du groupe"
+              onkeydown={(e) => {
+                if (e.key === "Enter" && newGroupInput.trim()) {
+                  createNewGroup(newGroupInput);
+                  newGroupInput = "";
+                }
+              }}
+            />
+            <button
+              class="btn-add"
+              onclick={() => {
+                if (newGroupInput.trim()) {
+                  createNewGroup(newGroupInput);
+                  newGroupInput = "";
+                }
+              }}
+              title="Créer"
+            >
+              +
+            </button>
+          </div>
         </div>
       </aside>
 
@@ -991,46 +1042,49 @@
           <!-- Chat header -->
           <div class="chat-header">
             <div class="chat-header-left">
-                <div class="chat-header-avatar">
+              <div class="chat-header-avatar">
                 {selectedContact[0].toUpperCase()}
+              </div>
+              <div class="chat-header-info">
+                <div class="chat-header-name">
+                  {currentConvo?.name || selectedContact}
                 </div>
-                <div class="chat-header-info">
-                <div class="chat-header-name">{currentConvo?.name || selectedContact}</div>
                 {#if currentConvo?.isReady}
-                    <div class="chat-header-status status-ready">
+                  <div class="chat-header-status status-ready">
                     🔒 Chiffrement E2E actif et vérifié
-                    </div>
+                  </div>
                 {:else}
-                    <div class="chat-header-status status-pending">
+                  <div class="chat-header-status status-pending">
                     ⏳ En attente de {selectedContact}...
-                    </div>
+                  </div>
                 {/if}
-                </div>
+              </div>
             </div>
 
             <div class="chat-header-right">
-                 <input 
-                    type="text" 
-                    class="invite-input"
-                    bind:value={inviteMemberInput} 
-                    placeholder="Inviter..." 
-                    onkeydown={(e) => {
-                        if (e.key === "Enter" && inviteMemberInput.trim()) {
-                            inviteMemberToCurrentGroup(inviteMemberInput);
-                            inviteMemberInput = "";
-                        }
-                    }}
-                />
-                 <button 
-                    class="btn-invite" 
-                    onclick={() => {
-                        if (inviteMemberInput.trim()) {
-                            inviteMemberToCurrentGroup(inviteMemberInput);
-                            inviteMemberInput = "";
-                        }
-                    }}>
-                    + Inviter
-                </button>
+              <input
+                type="text"
+                class="invite-input"
+                bind:value={inviteMemberInput}
+                placeholder="Inviter..."
+                onkeydown={(e) => {
+                  if (e.key === "Enter" && inviteMemberInput.trim()) {
+                    inviteMemberToCurrentGroup(inviteMemberInput);
+                    inviteMemberInput = "";
+                  }
+                }}
+              />
+              <button
+                class="btn-invite"
+                onclick={() => {
+                  if (inviteMemberInput.trim()) {
+                    inviteMemberToCurrentGroup(inviteMemberInput);
+                    inviteMemberInput = "";
+                  }
+                }}
+              >
+                + Inviter
+              </button>
             </div>
           </div>
 
@@ -1324,7 +1378,7 @@
   .btn-sm:hover {
     background: #4b5563;
   }
-  
+
   /* New Styles */
   .chat-header-left {
     display: flex;
@@ -1443,6 +1497,21 @@
   .username strong {
     color: white;
     font-weight: 600;
+  }
+  .device-id {
+    font-size: 0.8em;
+    color: #6b7280;
+    border-left: 1px solid #374151;
+    padding-left: 10px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .device-id code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      monospace;
+    color: #facc15;
+    letter-spacing: 0.3px;
   }
   .btn-icon {
     background: transparent;
