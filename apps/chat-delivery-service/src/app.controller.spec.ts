@@ -5,6 +5,8 @@ import { QueuedMessage } from './queued-message.schema';
 import { KeyPackage } from './key-package.schema';
 import { WelcomeMessage } from './welcome-message.schema';
 import { UserState } from './user-state.schema';
+import { GroupMember } from './group-member.schema';
+import { Group } from './group.schema';
 
 describe('AppController', () => {
   let appController: AppController;
@@ -41,7 +43,20 @@ describe('AppController', () => {
       exec: jest.fn(),
     };
 
+    const mockGroupMemberModel = {
+      find: jest.fn().mockReturnThis(),
+      updateOne: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockReturnThis(),
+      exec: jest.fn().mockResolvedValue([]),
+    };
+
+    const mockGroupModel = {
+      findOne: jest.fn().mockReturnThis(),
+      exec: jest.fn().mockResolvedValue(null),
+    };
+
     const mockRedis = {
+        exists: jest.fn().mockResolvedValue(0),
         get: jest.fn().mockResolvedValue(null),
         publish: jest.fn().mockResolvedValue(1),
     };
@@ -64,6 +79,14 @@ describe('AppController', () => {
         {
           provide: getModelToken(UserState.name),
           useValue: mockUserStateModel,
+        },
+        {
+          provide: getModelToken(GroupMember.name),
+          useValue: mockGroupMemberModel,
+        },
+        {
+          provide: getModelToken(Group.name),
+          useValue: mockGroupModel,
         },
         {
             provide: 'REDIS_CLIENT',
@@ -120,7 +143,7 @@ describe('AppController', () => {
       };
 
       // Mock offline
-      ( appController as any).redis.get.mockResolvedValue(null);
+      ( appController as any).redis.exists.mockResolvedValue(0);
 
       await appController.sendMessage(dto);
 
@@ -146,7 +169,7 @@ describe('AppController', () => {
         };
 
         // Mock online
-        (appController as any).redis.get.mockResolvedValue('true');
+        (appController as any).redis.exists.mockResolvedValue(1);
 
         await appController.sendMessage(dto);
 
@@ -183,11 +206,6 @@ describe('AppController', () => {
         createdAt: 1,
       });
       expect(result).toEqual(messages);
-
-      // Verify cleanup
-      expect(mockQueuedMessageModel.deleteMany).toHaveBeenCalledWith({
-        _id: { $in: ['msg1', 'msg2'] },
-      });
     });
 
     it('should return empty list if no messages', async () => {

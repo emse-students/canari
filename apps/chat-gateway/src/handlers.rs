@@ -190,7 +190,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String,
                                                         
                                                         // Exclude sender's current device (allow others for sync)
                                                         if !(r_uid == user_id && r_did == device_id) { 
-                                                            target_recipients.push(Recipient { userId: r_uid, deviceId: Some(r_did) });
+                                                            target_recipients.push(Recipient { user_id: r_uid, device_id: Some(r_did) });
                                                         }
                                                     }
                                                 }
@@ -209,17 +209,17 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String,
                                     for recipient in target_recipients {
                                         let mut device_ids = Vec::new();
 
-                                        // If deviceId is provided, target only that device
-                                        if let Some(ref d_id) = recipient.deviceId {
+                                        // If device_id is provided, target only that device
+                                        if let Some(ref d_id) = recipient.device_id {
                                             device_ids.push(d_id.clone());
                                         } else {
-                                            tracing::info!("Recipient {} has no deviceId. Delegating to Delivery Service.", recipient.userId);
+                                            tracing::info!("Recipient {} has no device_id. Delegating to Delivery Service.", recipient.user_id);
                                             offline_list.push(recipient);
                                             continue;
                                         }
 
                                         for d_id in device_ids {
-                                            let target_key = format!("{}:{}", recipient.userId, d_id);
+                                            let target_key = format!("{}:{}", recipient.user_id, d_id);
                                             let redis_presence_key = format!("user:online:{}", target_key);
                                             let mut is_online = false;
 
@@ -229,7 +229,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String,
                                                         is_online = true;
                                                         tracing::info!("Recipient {} is ONLINE. Publishing to Redis.", target_key);
                                                         let packet = serde_json::json!({
-                                                            "recipientId": recipient.userId,
+                                                            "recipientId": recipient.user_id,
                                                             "deviceId": d_id,
                                                             "content": payload,
                                                             "senderId": user_id,
@@ -243,7 +243,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String,
                                             if !is_online {
                                                 tracing::info!("Recipient {} is OFFLINE. Adding to offline list.", target_key);
                                                 // Push original recipient structure (with the specific deviceId we found/used)
-                                                offline_list.push(Recipient { userId: recipient.userId.clone(), deviceId: Some(d_id) }); 
+                                                offline_list.push(Recipient { user_id: recipient.user_id.clone(), device_id: Some(d_id) }); 
                                             }
                                         }
                                     }
@@ -277,15 +277,15 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String,
                                 
                                 // Forward to recipients via Redis PubSub if online, else HTTP
                                 for recipient in recipients {
-                                    if let Some(d_id) = recipient.deviceId {
-                                        let target_key = format!("{}:{}", recipient.userId, d_id);
+                                    if let Some(d_id) = recipient.device_id {
+                                        let target_key = format!("{}:{}", recipient.user_id, d_id);
                                         let redis_presence_key = format!("user:online:{}", target_key);
                                         
                                         let mut sent = false;
                                         if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await {
                                             if let Ok(true) = con.exists::<_, bool>(&redis_presence_key).await {
                                                 let packet = serde_json::json!({
-                                                    "recipientId": recipient.userId,
+                                                    "recipientId": recipient.user_id,
                                                     "deviceId": d_id,
                                                     "content": payload, // Base64 Welcome
                                                     "type": "mlsWelcome", // Tag it so client knows
@@ -301,7 +301,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String,
                                             // Offline fallback
                                             let body = serde_json::json!({
                                                 "senderId": user_id,
-                                                "recipients": [ { "userId": recipient.userId, "deviceId": d_id } ],
+                                                "recipients": [ { "userId": recipient.user_id, "deviceId": d_id } ],
                                                 "content": payload,
                                                 "groupId": group_id
                                             });
@@ -310,11 +310,11 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String,
 
                                     } else {
                                         // Fan-out to all devices via Delivery Service logic
-                                        tracing::info!("Welcome message without target DeviceID for user {} -> Delegating fan-out.", recipient.userId);
+                                        tracing::info!("Welcome message without target DeviceID for user {} -> Delegating fan-out.", recipient.user_id);
                                         // Send immediately via HTTP to Delivery Service to handle fan-out
                                         let body = serde_json::json!({
                                             "senderId": user_id,
-                                            "recipients": [ { "userId": recipient.userId, "deviceId": null } ],
+                                            "recipients": [ { "userId": recipient.user_id, "deviceId": null } ],
                                             "content": payload,
                                             "groupId": group_id,
                                             "type": "mlsWelcome" 

@@ -34,9 +34,10 @@ pub enum WebSocketMessage {
 }
 
 #[derive(Deserialize, Debug, PartialEq, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct Recipient {
-    pub userId: String,
-    pub deviceId: Option<String>,
+    pub user_id: String,
+    pub device_id: Option<String>,
 }
 
 // REST Payload for Ratchet Tree storage
