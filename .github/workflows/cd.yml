@@ -147,6 +147,24 @@ jobs:
           echo "IMAGE_PREFIX=${{ env.IMAGE_PREFIX }}" >> $GITHUB_ENV
           echo "TAG=${{ github.sha }}" >> $GITHUB_ENV
 
+      - name: Resolve Docker access
+        run: |
+          if docker info >/dev/null 2>&1; then
+            echo "DOCKER_CLI=docker" >> $GITHUB_ENV
+            echo "DOCKER_COMPOSE=docker compose" >> $GITHUB_ENV
+            echo "✅ Docker access available via docker"
+          elif sudo -n docker info >/dev/null 2>&1; then
+            echo "DOCKER_CLI=sudo docker" >> $GITHUB_ENV
+            echo "DOCKER_COMPOSE=sudo docker compose" >> $GITHUB_ENV
+            echo "✅ Docker access available via sudo docker"
+          else
+            echo "❌ Cannot access Docker daemon as current runner user"
+            id
+            ls -l /var/run/docker.sock || true
+            echo "Runner user must be in docker group or have passwordless sudo for docker"
+            exit 1
+          fi
+
       - name: Navigate to deployment directory
         run: |
           cd ${{ env.DEPLOY_PATH }}
@@ -168,7 +186,7 @@ jobs:
           TAG: ${{ github.sha }}
         run: |
           echo "🔄 Pulling Docker images..."
-          docker compose -f infrastructure/docker-compose.prod.yml pull
+          eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml pull"
           echo "✅ Images pulled successfully"
 
       - name: Deploy services
@@ -179,27 +197,37 @@ jobs:
           TAG: ${{ github.sha }}
         run: |
           echo "🚀 Deploying services with zero-downtime..."
-          docker compose -f infrastructure/docker-compose.prod.yml up -d --remove-orphans
+          eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml up -d --remove-orphans"
           echo "✅ Services deployed"
 
       - name: Wait for services to be healthy
         working-directory: ${{ env.DEPLOY_PATH }}
         run: |
           echo "⏳ Waiting for services to be healthy..."
-          timeout 120 bash -c 'until docker compose -f infrastructure/docker-compose.prod.yml ps | grep -q "healthy"; do sleep 5; done' || echo "⚠️ Timeout waiting for health checks"
+          healthy=0
+          for _ in {1..24}; do
+            if eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml ps" | grep -q "healthy"; then
+              healthy=1
+              break
+            fi
+            sleep 5
+          done
+          if [ "$healthy" -ne 1 ]; then
+            echo "⚠️ Timeout waiting for health checks"
+          fi
 
       - name: Cleanup old resources
         run: |
           echo "🧹 Cleaning up old Docker resources..."
-          docker image prune -af --filter "until=24h"
-          docker container prune -f
+          eval "$DOCKER_CLI image prune -af --filter 'until=24h'"
+          eval "$DOCKER_CLI container prune -f"
           echo "✅ Cleanup completed"
 
       - name: Display running services
         working-directory: ${{ env.DEPLOY_PATH }}
         run: |
           echo "📊 Currently running services:"
-          docker compose -f infrastructure/docker-compose.prod.yml ps
+          eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml ps"
 
       - name: Deployment summary
         run: |
