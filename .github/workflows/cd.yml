@@ -215,7 +215,46 @@ jobs:
           TAG: ${{ github.sha }}
         run: |
           echo "🚀 Deploying services with zero-downtime..."
+          set +e
           eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml up -d --remove-orphans"
+          DEPLOY_STATUS=$?
+          set -e
+
+          if [ "$DEPLOY_STATUS" -ne 0 ]; then
+            echo "⚠️ First deploy attempt failed. Checking for port 80/443 conflicts..."
+
+            CONFLICTS_80=$(eval "$DOCKER_CLI ps --filter 'publish=80' --format '{{.ID}} {{.Image}} {{.Names}}'")
+            CONFLICTS_443=$(eval "$DOCKER_CLI ps --filter 'publish=443' --format '{{.ID}} {{.Image}} {{.Names}}'")
+            CONFLICTS=$(printf "%s\n%s\n" "$CONFLICTS_80" "$CONFLICTS_443" | sed '/^$/d' | sort -u)
+
+            NON_CANARI_CONFLICT=0
+            if [ -n "$CONFLICTS" ]; then
+              while IFS= read -r row; do
+                [ -z "$row" ] && continue
+
+                cid=$(echo "$row" | awk '{print $1}')
+                image=$(echo "$row" | awk '{print $2}')
+                name=$(echo "$row" | awk '{print $3}')
+
+                if echo "$image" | grep -q "^${REGISTRY}/${IMAGE_PREFIX}/frontend:"; then
+                  echo "🧹 Removing stale Canari frontend container using host port: $name ($cid)"
+                  eval "$DOCKER_CLI rm -f $cid"
+                else
+                  echo "❌ Port conflict with non-Canari container: $name ($image)"
+                  NON_CANARI_CONFLICT=1
+                fi
+              done <<< "$CONFLICTS"
+            fi
+
+            if [ "$NON_CANARI_CONFLICT" -ne 0 ]; then
+              echo "Resolve host port 80/443 conflicts and retry deployment."
+              exit 1
+            fi
+
+            echo "🔁 Retrying deployment after frontend cleanup..."
+            eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml up -d --remove-orphans"
+          fi
+
           echo "✅ Services deployed"
 
       - name: Wait for services to be healthy
