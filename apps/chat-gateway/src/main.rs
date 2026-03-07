@@ -5,9 +5,11 @@ mod state;
 use axum::{
     routing::get,
     Router,
+    http::Method,
 };
 use futures::stream::StreamExt;
 use std::{net::SocketAddr, sync::Arc};
+use tower_http::cors::{CorsLayer, Any};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use rdkafka::{producer::FutureProducer, ClientConfig};
 use reqwest::Client as HttpClient;
@@ -92,10 +94,25 @@ async fn main() {
         });
     }
 
+    let allow_origin = std::env::var("ALLOW_ORIGIN").unwrap_or_else(|_| "*".to_string());
+    let cors = if allow_origin == "*" {
+        CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+            .allow_headers(Any)
+    } else {
+        let origin = allow_origin.parse::<axum::http::HeaderValue>().expect("Invalid ALLOW_ORIGIN");
+        CorsLayer::new()
+            .allow_origin(origin)
+            .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+            .allow_headers(Any)
+    };
+
     let app = Router::new()
         .route("/ws", get(ws_handler))
         // MLS Specific Routes
         .route("/groups/{group_id}/tree", get(get_ratchet_tree).post(post_ratchet_tree))
+        .layer(cors)
         .with_state(app_state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));

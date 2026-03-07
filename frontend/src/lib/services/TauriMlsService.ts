@@ -7,7 +7,7 @@ import type { IMlsService } from './IMlsService';
 export class TauriMlsService implements IMlsService {
     private ws: WebSocket | null = null;
     private messageCallback: ((senderId: string, content: Uint8Array, groupId?: string) => Promise<boolean>) | null = null;
-    private baseUrl = "http://localhost:3000";
+    private baseUrl = import.meta.env.VITE_GATEWAY_URL ?? "http://localhost:3000";
     private historyUrl = "http://localhost:3001";
     private userId: string = "unknown";
     private deviceId: string;

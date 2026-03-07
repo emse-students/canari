@@ -201,7 +201,7 @@
           // Fetch the real group name from the server
           let groupName = extractedContact;
           try {
-            const gRes = await fetch(`http://localhost:3001/mls-api/groups/${lookupGroupId}`);
+            const gRes = await fetch(`${import.meta.env.VITE_HISTORY_URL ?? 'http://localhost:3001'}/mls-api/groups/${lookupGroupId}`);
             if (gRes.ok) {
               const gData = await gRes.json();
               if (gData?.name) groupName = gData.name;
@@ -555,7 +555,7 @@
                 localStorage.setItem("mls_autosave_" + userId, hex);
                 
                 if (result.welcome) {
-                    const wRes = await fetch('http://localhost:3001/mls-api/welcome', {
+                    const wRes = await fetch(`${import.meta.env.VITE_HISTORY_URL ?? 'http://localhost:3001'}/mls-api/welcome`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({

@@ -1,0 +1,40 @@
+# Généré automatiquement par : make nginx-install
+# Template source : infrastructure/nginx/canari.conf.template
+
+server {
+    listen 80;
+    server_name ${DOMAIN};
+
+    # ── Frontend SvelteKit (build statique) ──────────────────────────────────
+    root ${FRONTEND_BUILD_PATH};
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # ── Chat Gateway — WebSocket ──────────────────────────────────────────────
+    location /ws {
+        proxy_pass http://127.0.0.1:${GATEWAY_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 3600s;
+    }
+
+    # ── Chat Gateway — API REST (ratchet tree MLS) ────────────────────────────
+    location /groups/ {
+        proxy_pass http://127.0.0.1:${GATEWAY_PORT};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    # ── Chat Delivery Service — API REST ─────────────────────────────────────
+    location /mls-api/ {
+        proxy_pass http://127.0.0.1:${DELIVERY_PORT};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}

@@ -1,4 +1,13 @@
-.PHONY: test test-libs test-gateway test-history clean
+.PHONY: test test-libs test-gateway test-history clean nginx-install nginx-uninstall
+
+# ── Configuration déploiement Nginx ───────────────────────────────────────────
+DOMAIN             ?= canari-emse.fr
+GATEWAY_PORT       ?= 3000
+DELIVERY_PORT      ?= 3001
+FRONTEND_BUILD_PATH ?= $(shell pwd)/frontend/build
+NGINX_CONF_NAME    ?= canari
+NGINX_SITES_AVAIL  := /etc/nginx/sites-available
+NGINX_SITES_ENABLED:= /etc/nginx/sites-enabled
 
 # Détection de l'OS pour la compatibilité
 ifeq ($(OS),Windows_NT)
@@ -57,26 +66,22 @@ test-history:
 	@echo "${BLUE}🧪 Testing Chat Delivery Service...${RESET}"
 	@cd apps/chat-delivery-service && npm test -- --coverage
 
-build:
-	@echo "${BLUE}🔨 Building all components...${RESET}"
-	@cd libs/shared-rust && cargo build --release
-	@cd apps/chat-gateway && cargo build --release
-	@echo "${GREEN}✅ Build completed successfully!${RESET}"
+# ── Nginx ─────────────────────────────────────────────────────────────────────
+nginx-install:
+	@echo "${BLUE}🔧 Generating Nginx config for domain: ${BOLD}$(DOMAIN)${RESET}"
+	@DOMAIN="$(DOMAIN)" \
+	 GATEWAY_PORT="$(GATEWAY_PORT)" \
+	 DELIVERY_PORT="$(DELIVERY_PORT)" \
+	 FRONTEND_BUILD_PATH="$(FRONTEND_BUILD_PATH)" \
+	 envsubst '$$DOMAIN $$GATEWAY_PORT $$DELIVERY_PORT $$FRONTEND_BUILD_PATH' \
+	 < infrastructure/nginx/canari.conf.template \
+	 > /tmp/$(NGINX_CONF_NAME).conf
+	@sudo cp /tmp/$(NGINX_CONF_NAME).conf $(NGINX_SITES_AVAIL)/$(NGINX_CONF_NAME)
+	@sudo ln -sf $(NGINX_SITES_AVAIL)/$(NGINX_CONF_NAME) $(NGINX_SITES_ENABLED)/$(NGINX_CONF_NAME)
+	@sudo nginx -t && sudo systemctl reload nginx
+	@echo "${GREEN}✅ Nginx configuré et rechargé pour $(DOMAIN)${RESET}"
 
-build-frontend:
-	@echo "\n${BLUE}🔨 Building frontend...${RESET}"
-	@cd frontend/mls-core && cargo build --release
-	@cd frontend/mls-wasm && wasm-pack build --release --target web --out-dir frontend/src/lib/wasm/
-	@cd frontend && bun run build
-	@echo "${GREEN}✅ Frontend build completed successfully!${RESET}"
-
-run:
-	@echo "\n${BLUE}🚀 Running all services...${RESET}"
-	@cd apps/chat-gateway && cargo run &
-	@cd apps/chat-delivery-service && npm start &
-	@echo "${GREEN}✅ All services are running!${RESET}"
-
-run-frontend:
-	@echo "\n${BLUE}🚀 Running frontend...${RESET}"
-	@cd frontend && bun run dev
-	@echo "${GREEN}✅ Frontend is running!${RESET}"
+nginx-uninstall:
+	@sudo rm -f $(NGINX_SITES_ENABLED)/$(NGINX_CONF_NAME) $(NGINX_SITES_AVAIL)/$(NGINX_CONF_NAME)
+	@sudo nginx -t && sudo systemctl reload nginx
+	@echo "${GREEN}✅ Config Nginx supprimée${RESET}"

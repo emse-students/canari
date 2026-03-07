@@ -74,6 +74,7 @@ services:
       REDIS_URL: redis://redis:6379
       KAFKA_BROKERS: kafka:9092
       DELIVERY_SERVICE_URL: http://chat-delivery-service:3001
+      ALLOW_ORIGIN: "*"
     depends_on:
       redis:
         condition: service_healthy
@@ -101,19 +102,6 @@ services:
         condition: service_healthy
       mongo:
         condition: service_started
-
-  # ─────────────────────────────────────────────────────
-  # Frontend SvelteKit (Nginx servant le build statique) — port 8080
-  # ─────────────────────────────────────────────────────
-  frontend:
-    build:
-      context: ../../
-      dockerfile: infrastructure/local/Dockerfile.frontend
-    ports:
-      - "8080:80"
-    depends_on:
-      - chat-gateway
-      - chat-delivery-service
 
 volumes:
   mongo_data:
