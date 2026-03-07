@@ -1,4 +1,18 @@
-.PHONY: install install-frontend install-services test test-libs test-gateway test-history clean nginx-install nginx-uninstall nginx-https
+.PHONY: all install install-frontend install-services build-frontend nginx-install reload-services test test-libs test-gateway test-history clean nginx-uninstall nginx-https
+
+# Cible par défaut : installation complète et déploiement
+.DEFAULT_GOAL := all
+
+all: install build-frontend nginx-install reload-services
+	@echo ""
+	@echo "${BOLD}${GREEN}🎉 INSTALLATION COMPLÈTE TERMINÉE${RESET}"
+	@echo "---------------------------------------------------"
+	@echo "${GREEN}✅ Dépendances installées${RESET}"
+	@echo "${GREEN}✅ Frontend buildé${RESET}"
+	@echo "${GREEN}✅ Nginx configuré${RESET}"
+	@echo "${GREEN}✅ Services Docker rechargés${RESET}"
+	@echo "---------------------------------------------------"
+	@echo ""
 
 # ── Configuration déploiement Nginx ───────────────────────────────────────────
 DOMAIN             ?= canari-emse.fr
@@ -115,7 +129,7 @@ nginx-uninstall:
 build-frontend:
 	@echo "${BLUE}🚀 Building frontend...${RESET}"
 	@cd frontend/mls-wasm && wasm-pack build --target web --out-dir ../src/lib/wasm
-	@cd frontend && npm run build
+	@cd frontend && bun run build
 	@echo "${GREEN}✅ Frontend buildé${RESET}"
 
 run-services:
