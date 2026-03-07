@@ -59,7 +59,7 @@
     bind:this={logContainer}
     class="flex-1 overflow-y-auto px-4 py-4 font-mono text-xs space-y-1"
   >
-    {#each logs as entry}
+    {#each logs as entry, i (i)}
       <div class="border-b border-white/5 pb-1 break-all">{entry}</div>
     {/each}
   </div>

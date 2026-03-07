@@ -98,7 +98,7 @@
 
   <!-- Conversation List -->
   <div class="flex-1 overflow-y-auto p-2">
-    {#each Array.from(conversations.entries()) as [name, convo]}
+    {#each Array.from(conversations.entries()) as [name, convo] (name)}
       <ConversationTile
         contactName={name}
         displayName={convo.name}

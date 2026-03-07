@@ -2,6 +2,7 @@
   import { TauriMlsService, WebMlsService } from '$lib/mlsService';
   import type { IMlsService } from '$lib/mlsService';
   import { onMount, tick } from 'svelte';
+  import { SvelteMap } from 'svelte/reactivity';
   import { fade } from 'svelte/transition';
   import { LoginForm, Navbar, Sidebar, ChatArea, LogsPanel } from '$lib/components';
 
@@ -32,7 +33,7 @@
   let statusLog = $state<string[]>([]);
   let showLogs = $state(false);
 
-  let conversations = $state<Map<string, Conversation>>(new Map());
+  let conversations = new SvelteMap<string, Conversation>();
   let selectedContact = $state<string | null>(null);
   let mobileView = $state<'list' | 'chat'>('list'); // Gestion responsive
 
@@ -209,7 +210,7 @@
             isReady: true,
             mlsStateHex: null,
           });
-          conversations = new Map(conversations);
+          conversations = new SvelteMap(conversations);
           saveConversation(senderNorm);
 
           try {
@@ -393,7 +394,7 @@
         isReady: true,
         mlsStateHex: null,
       });
-      conversations = new Map(conversations);
+      conversations = new SvelteMap(conversations);
 
       selectConversation(name);
       saveConversation(name);
@@ -477,7 +478,7 @@
         isReady: false,
         mlsStateHex: null,
       });
-      conversations = new Map(conversations);
+      conversations = new SvelteMap(conversations);
       selectConversation(contact);
 
       await mlsService.createGroup(groupId);
@@ -538,13 +539,13 @@
 
         const convo = conversations.get(contact)!;
         conversations.set(contact, { ...convo, isReady: true });
-        conversations = new Map(conversations);
+        conversations = new SvelteMap(conversations);
         saveConversation(contact);
         log(`✅ Canal sécurisé avec ${contact}.`);
       } else {
         log(`❌ Appareils introuvables pour ${contact}.`);
         conversations.delete(contact);
-        conversations = new Map(conversations);
+        conversations = new SvelteMap(conversations);
       }
     } catch (_e: unknown) {
       const msg = _e instanceof Error ? _e.message : String(_e);
@@ -576,7 +577,7 @@
       ...convo,
       messages: [...convo.messages, newMsg],
     });
-    conversations = new Map(conversations);
+    conversations = new SvelteMap(conversations);
     saveConversation(normalized);
 
     tick().then(() => {
@@ -623,7 +624,7 @@
   function logout() {
     isLoggedIn = false;
     isWsConnected = false;
-    conversations = new Map();
+    conversations = new SvelteMap();
     selectedContact = null;
     statusLog = [];
   }

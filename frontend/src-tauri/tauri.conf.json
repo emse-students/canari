@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "mines-app",
+  "productName": "Canari",
   "version": "0.1.0",
-  "identifier": "com.administrateur.mines-app",
+  "identifier": "com.canari.app",
   "build": {
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "mines-app",
+        "title": "Canari",
         "width": 800,
         "height": 600
       }
