@@ -3,6 +3,7 @@ updates:
   # GitHub Actions
   - package-ecosystem: 'github-actions'
     directory: '/'
+    rebase-strategy: auto
     schedule:
       interval: 'weekly'
       day: 'monday'
@@ -17,6 +18,7 @@ updates:
   # Frontend npm dependencies
   - package-ecosystem: 'npm'
     directory: '/frontend'
+    rebase-strategy: auto
     schedule:
       interval: 'weekly'
       day: 'monday'
@@ -42,6 +44,7 @@ updates:
   # Auth Service npm dependencies
   - package-ecosystem: 'npm'
     directory: '/apps/auth-service'
+    rebase-strategy: auto
     schedule:
       interval: 'weekly'
       day: 'monday'
@@ -57,6 +60,7 @@ updates:
   # Chat Delivery Service npm dependencies
   - package-ecosystem: 'npm'
     directory: '/apps/chat-delivery-service'
+    rebase-strategy: auto
     schedule:
       interval: 'weekly'
       day: 'monday'
@@ -72,6 +76,7 @@ updates:
   # User Service npm dependencies
   - package-ecosystem: 'npm'
     directory: '/apps/user-service'
+    rebase-strategy: auto
     schedule:
       interval: 'weekly'
       day: 'monday'
@@ -87,6 +92,7 @@ updates:
   # Cargo dependencies
   - package-ecosystem: 'cargo'
     directory: '/'
+    rebase-strategy: auto
     schedule:
       interval: 'weekly'
       day: 'monday'
