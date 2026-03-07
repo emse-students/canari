@@ -16,6 +16,9 @@ export class QueuedMessage {
   senderId: string;
 
   @Prop()
+  senderDeviceId: string;
+
+  @Prop()
   groupId: string; // Optional context
 
   @Prop()

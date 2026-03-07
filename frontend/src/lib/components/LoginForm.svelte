@@ -68,7 +68,7 @@
 
       <div class="text-left">
         <label for="pin" class="block text-sm font-bold text-cn-dark mb-2"
-          >PIN Cryptographique</label
+          >PIN</label
         >
         <input
           id="pin"

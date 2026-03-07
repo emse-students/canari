@@ -1,10 +1,63 @@
 #!/bin/sh
 # Pre-commit hook for Canari project
-# Runs linting checks before commit
+# Runs CI-aligned checks only for impacted projects
 
-cd frontend && bun run lint --quiet 2>/dev/null || {
-  echo "❌ Linting failed. Use 'cd frontend && bun run lint:fix' to auto-fix issues."
-  exit 1
-}
+STAGED_FILES=$(git diff --cached --name-only)
+
+if [ -z "$STAGED_FILES" ]; then
+  exit 0
+fi
+
+echo "$STAGED_FILES" | grep -Eq '^(\.github/workflows/|\.husky/|Makefile|libs/shared-ts/|libs/shared-rust/)' && RUN_ALL=1 || RUN_ALL=0
+echo "$STAGED_FILES" | grep -Eq '^frontend/' && RUN_FRONTEND=1 || RUN_FRONTEND=0
+echo "$STAGED_FILES" | grep -Eq '^apps/chat-delivery-service/' && RUN_DELIVERY=1 || RUN_DELIVERY=0
+echo "$STAGED_FILES" | grep -Eq '^apps/chat-gateway/' && RUN_GATEWAY=1 || RUN_GATEWAY=0
+
+if [ "$RUN_ALL" -eq 1 ]; then
+  RUN_FRONTEND=1
+  RUN_DELIVERY=1
+  RUN_GATEWAY=1
+fi
+
+if [ "$RUN_FRONTEND" -eq 1 ]; then
+  (
+    cd frontend && bun run lint --quiet
+  ) || {
+    echo "❌ Frontend lint failed. Use 'cd frontend && bun run lint:fix'."
+    exit 1
+  }
+
+  (
+    cd frontend && bun run check
+  ) || {
+    echo "❌ Frontend type check failed. Use 'cd frontend && bun run check'."
+    exit 1
+  }
+fi
+
+if [ "$RUN_DELIVERY" -eq 1 ]; then
+  (
+    cd apps/chat-delivery-service && npm run lint && npx tsc -p tsconfig.json && npm test
+  ) || {
+    echo "❌ chat-delivery-service checks failed (lint/tsc/test)."
+    exit 1
+  }
+fi
+
+if [ "$RUN_GATEWAY" -eq 1 ]; then
+  (
+    cd apps/chat-gateway && cargo fmt -- --check
+  ) || {
+    echo "❌ chat-gateway formatting failed. Run 'cd apps/chat-gateway && cargo fmt'."
+    exit 1
+  }
+
+  (
+    cd apps/chat-gateway && cargo clippy --all-targets --all-features -- -D warnings
+  ) || {
+    echo "❌ chat-gateway clippy failed. Fix warnings/errors before commit."
+    exit 1
+  }
+fi
 
 exit 0

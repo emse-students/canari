@@ -98,9 +98,7 @@ async fn handle_socket(
     // Register connection — push into the list for this key (supports multiple tabs)
     {
         let mut map = state.connected_users.lock().unwrap();
-        map.entry(conn_key.clone())
-            .or_default()
-            .push(tx);
+        map.entry(conn_key.clone()).or_default().push(tx);
         tracing::info!(
             "Registered connection key: {} ({} active)",
             conn_key,
@@ -223,15 +221,12 @@ async fn handle_socket(
                                 // If explicit recipients missing, fetch from Group Members (Redis)
                                 if target_recipients.is_empty()
                                     && let Some(gid) = &group_id
-                                    && let Ok(mut con) = state
-                                        .redis_client
-                                        .get_multiplexed_async_connection()
-                                        .await
+                                    && let Ok(mut con) =
+                                        state.redis_client.get_multiplexed_async_connection().await
                                 {
                                     let key = format!("group:members:{}", gid);
                                     // Get members from Redis Set
-                                    if let Ok(members) =
-                                        con.smembers::<_, Vec<String>>(&key).await
+                                    if let Ok(members) = con.smembers::<_, Vec<String>>(&key).await
                                     {
                                         tracing::info!(
                                             "Found {} members in Group {:?}",
@@ -245,8 +240,7 @@ async fn handle_socket(
                                                 let r_did = parts[1].to_string();
 
                                                 // Exclude sender's current device (allow others for sync)
-                                                if !(r_uid == user_id && r_did == device_id)
-                                                {
+                                                if !(r_uid == user_id && r_did == device_id) {
                                                     target_recipients.push(Recipient {
                                                         user_id: r_uid,
                                                         device_id: Some(r_did),
@@ -314,10 +308,7 @@ async fn handle_socket(
                                                     "groupId": group_id
                                                 });
                                                 let _: Result<(), _> = con
-                                                    .publish(
-                                                        "chat:messages",
-                                                        packet.to_string(),
-                                                    )
+                                                    .publish("chat:messages", packet.to_string())
                                                     .await;
                                             }
 

@@ -8,6 +8,8 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ${{ github.repository }}
+  DOMAIN: canari.local
+  DEPLOY_PATH: /opt/canari
 
 jobs:
   build-frontend:
@@ -128,7 +130,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     environment:
       name: production
-      url: https://${{ vars.DOMAIN }}
+      url: https://${{ env.DOMAIN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -137,7 +139,7 @@ jobs:
           echo "🚀 Starting deployment on self-hosted runner..."
           echo "User: $(whoami)"
           echo "Working directory: $(pwd)"
-          echo "Deploy path: ${{ vars.DEPLOY_PATH }}"
+          echo "Deploy path: ${{ env.DEPLOY_PATH }}"
 
       - name: Setup environment variables
         run: |
@@ -147,11 +149,11 @@ jobs:
 
       - name: Navigate to deployment directory
         run: |
-          cd ${{ vars.DEPLOY_PATH }}
+          cd ${{ env.DEPLOY_PATH }}
           echo "📂 Current directory: $(pwd)"
 
       - name: Pull latest code
-        working-directory: ${{ vars.DEPLOY_PATH }}
+        working-directory: ${{ env.DEPLOY_PATH }}
         run: |
           echo "📥 Updating repository..."
           git fetch origin
@@ -159,7 +161,7 @@ jobs:
           echo "✅ Code updated to $(git rev-parse --short HEAD)"
 
       - name: Pull Docker images
-        working-directory: ${{ vars.DEPLOY_PATH }}
+        working-directory: ${{ env.DEPLOY_PATH }}
         env:
           REGISTRY: ${{ env.REGISTRY }}
           IMAGE_PREFIX: ${{ env.IMAGE_PREFIX }}
@@ -170,7 +172,7 @@ jobs:
           echo "✅ Images pulled successfully"
 
       - name: Deploy services
-        working-directory: ${{ vars.DEPLOY_PATH }}
+        working-directory: ${{ env.DEPLOY_PATH }}
         env:
           REGISTRY: ${{ env.REGISTRY }}
           IMAGE_PREFIX: ${{ env.IMAGE_PREFIX }}
@@ -181,7 +183,7 @@ jobs:
           echo "✅ Services deployed"
 
       - name: Wait for services to be healthy
-        working-directory: ${{ vars.DEPLOY_PATH }}
+        working-directory: ${{ env.DEPLOY_PATH }}
         run: |
           echo "⏳ Waiting for services to be healthy..."
           timeout 120 bash -c 'until docker compose -f infrastructure/docker-compose.prod.yml ps | grep -q "healthy"; do sleep 5; done' || echo "⚠️ Timeout waiting for health checks"
@@ -194,7 +196,7 @@ jobs:
           echo "✅ Cleanup completed"
 
       - name: Display running services
-        working-directory: ${{ vars.DEPLOY_PATH }}
+        working-directory: ${{ env.DEPLOY_PATH }}
         run: |
           echo "📊 Currently running services:"
           docker compose -f infrastructure/docker-compose.prod.yml ps
@@ -202,7 +204,7 @@ jobs:
       - name: Deployment summary
         run: |
           echo "✅ Deployment completed successfully!"
-          echo "🔗 Application URL: https://${{ vars.DOMAIN }}"
+          echo "🔗 Application URL: https://${{ env.DOMAIN }}"
           echo "📦 Deployed commit: ${{ github.sha }}"
 
       - name: Health Check

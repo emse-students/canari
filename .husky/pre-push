@@ -1,0 +1,60 @@
+#!/bin/sh
+# Pre-push hook for Canari project
+# Prevent pushing dirty worktrees and run checks only for impacted projects
+
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  echo "❌ Push blocked: local changes detected (staged or unstaged)."
+  echo "   Commit or stash changes before pushing to avoid CI mismatch."
+  exit 1
+fi
+
+UPSTREAM=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null)
+if [ -n "$UPSTREAM" ]; then
+  CHANGED_FILES=$(git diff --name-only "$UPSTREAM"...HEAD)
+else
+  CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r HEAD)
+fi
+
+if [ -z "$CHANGED_FILES" ]; then
+  exit 0
+fi
+
+echo "$CHANGED_FILES" | grep -Eq '^(\.github/workflows/|\.husky/|Makefile|libs/shared-ts/|libs/shared-rust/)' && RUN_ALL=1 || RUN_ALL=0
+echo "$CHANGED_FILES" | grep -Eq '^frontend/' && RUN_FRONTEND=1 || RUN_FRONTEND=0
+echo "$CHANGED_FILES" | grep -Eq '^apps/chat-delivery-service/' && RUN_DELIVERY=1 || RUN_DELIVERY=0
+echo "$CHANGED_FILES" | grep -Eq '^apps/chat-gateway/' && RUN_GATEWAY=1 || RUN_GATEWAY=0
+
+if [ "$RUN_ALL" -eq 1 ]; then
+  RUN_FRONTEND=1
+  RUN_DELIVERY=1
+  RUN_GATEWAY=1
+fi
+
+if [ "$RUN_FRONTEND" -eq 1 ]; then
+  (
+    cd frontend && bun run lint --quiet && bun run check
+  ) || {
+    echo "❌ Frontend checks failed (lint/check)."
+    exit 1
+  }
+fi
+
+if [ "$RUN_DELIVERY" -eq 1 ]; then
+  (
+    cd apps/chat-delivery-service && npm run lint && npx tsc -p tsconfig.json && npm test
+  ) || {
+    echo "❌ chat-delivery-service checks failed (lint/tsc/test)."
+    exit 1
+  }
+fi
+
+if [ "$RUN_GATEWAY" -eq 1 ]; then
+  (
+    cd apps/chat-gateway && cargo fmt -- --check && cargo clippy --all-targets --all-features -- -D warnings
+  ) || {
+    echo "❌ chat-gateway checks failed (fmt/clippy)."
+    exit 1
+  }
+fi
+
+exit 0

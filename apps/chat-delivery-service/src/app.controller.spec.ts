@@ -122,6 +122,7 @@ describe('AppController', () => {
       const result = await appController.getUserDevices('bob');
       expect(mockKeyPackageModel.find).toHaveBeenCalledWith({
         userId: 'bob',
+        createdAt: { $gte: expect.any(Date) },
       });
       expect(mockKeyPackageModel.sort).toHaveBeenCalledWith({
         createdAt: -1,
