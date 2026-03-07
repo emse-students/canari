@@ -33,11 +33,13 @@ L'environnement de développement a été configuré avec :
 ### Développement Local
 
 1. **Installer les dépendances** :
+
    ```bash
    make install
    ```
 
 2. **Lancer l'infrastructure** :
+
    ```bash
    cd infrastructure/local
    docker compose up -d
@@ -51,13 +53,16 @@ L'environnement de développement a été configuré avec :
 ### Déploiement
 
 #### Déploiement automatique (CI/CD)
+
 Chaque push sur `main` déclenche automatiquement :
+
 - ✅ Tests CI
 - 🏗️ Build du frontend et des services
 - 🐳 Push des images Docker
 - 🚀 Déploiement sur le serveur de production
 
 #### Déploiement manuel
+
 ```bash
 # Déploiement local
 ./scripts/deploy.sh local

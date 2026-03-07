@@ -2,8 +2,8 @@ name: CD - Deploy to Production
 
 on:
   push:
-    branches: [ main ]
-  workflow_dispatch:  # Permet déclenchement manuel
+    branches: [main]
+  workflow_dispatch: # Permet déclenchement manuel
 
 env:
   REGISTRY: ghcr.io
@@ -189,13 +189,13 @@ jobs:
         run: |
           echo "🔍 Performing health checks..."
           sleep 10
-          
+
           # Check gateway
           curl -f https://${{ vars.DOMAIN }}/health || echo "⚠️ Gateway health check failed"
-          
+
           # Check delivery service
           curl -f https://${{ vars.DOMAIN }}/api/health || echo "⚠️ Delivery service health check failed"
-          
+
           echo "✅ Health checks completed"
 
       - name: Notify deployment
@@ -220,16 +220,16 @@ jobs:
             const title = `🚨 Deployment Failed - ${context.sha.substring(0, 7)}`;
             const body = `
             ## Deployment Failure Report
-            
+
             **Commit**: ${context.sha}
             **Branch**: ${context.ref}
             **Workflow Run**: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}
-            
+
             The deployment pipeline failed. Please check the workflow logs for details.
-            
+
             cc: @${context.actor}
             `;
-            
+
             github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
