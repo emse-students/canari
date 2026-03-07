@@ -11,6 +11,7 @@ services:
 
   kafka:
     image: confluentinc/cp-kafka:7.5.0
+    restart: on-failure
     depends_on:
       - zookeeper
     ports:
