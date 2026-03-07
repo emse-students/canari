@@ -258,7 +258,7 @@ pub fn decrypt_with_pin(pin: &str, encrypted_data: &[u8]) -> Result<Vec<u8>, JsV
     let (salt, rest) = encrypted_data.split_at(16);
 
     let key =
-        mls_core::security::derive_key_from_pin(pin, &salt).map_err(|e| JsValue::from_str(&e))?;
+        mls_core::security::derive_key_from_pin(pin, salt).map_err(|e| JsValue::from_str(&e))?;
 
     let plaintext =
         mls_core::security::decrypt_blob(&key, rest).map_err(|e| JsValue::from_str(&e))?;
