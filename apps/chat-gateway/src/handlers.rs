@@ -233,6 +233,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String,
                                                             "deviceId": d_id,
                                                             "content": payload,
                                                             "senderId": user_id,
+                                                            "senderDeviceId": device_id,
                                                             "groupId": group_id
                                                         });
                                                         let _: Result<(), _> = con.publish("chat:messages", packet.to_string()).await;

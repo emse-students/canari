@@ -33,11 +33,15 @@ export class TauriMlsService implements IMlsService {
                     let base64Content: string | null = null;
                     const senderId: string = data.senderId || data.sender_id || "unknown";
 
-                    // Filter out own messages (avoid echo from server broadcast)
-                    // Always drop messages where WE are the sender — no type check needed
+                    // Filter out same-device echo only.
+                    // Messages from our OTHER devices must pass through so they are
+                    // displayed and the MLS state is advanced on all devices.
                     if (senderId === this.userId) {
-                        console.debug(`Filtering out own message echo`);
-                        return;
+                        const isSameDevice = !data.senderDeviceId || data.senderDeviceId === this.deviceId;
+                        if (isSameDevice) {
+                            console.debug(`Filtering out own message echo (same device)`);
+                            return;
+                        }
                     }
 
                     if (data.type === "mlsWelcome" && data.content) {

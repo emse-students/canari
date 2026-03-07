@@ -247,6 +247,7 @@ export class AppController {
                   recipientId: r.userId,
                   deviceId: r.deviceId,
                   senderId,
+                  senderDeviceId,
                   groupId,
                   content,
                   type
@@ -262,6 +263,7 @@ export class AppController {
                           recipientId: r.userId,
                           deviceId: r.deviceId,
                           senderId,
+                          senderDeviceId,
                           groupId,
                           content,
                           type,
