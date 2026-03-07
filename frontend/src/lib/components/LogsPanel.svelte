@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { slide } from "svelte/transition";
-  import { X } from "lucide-svelte";
-  import { tick } from "svelte";
+  import { slide } from 'svelte/transition';
+  import { X } from 'lucide-svelte';
+  import { tick } from 'svelte';
 
   interface Props {
     logs: string[];
@@ -22,10 +22,10 @@
     onGenerateKeyPackage,
     onAddMember,
     onProcessWelcome,
-    lastKeyPackage = "",
-    lastCommit: _lastCommit = "",
-    lastWelcome: _lastWelcome = "",
-    incomingBytesHex = "",
+    lastKeyPackage = '',
+    lastCommit: _lastCommit = '',
+    lastWelcome: _lastWelcome = '',
+    incomingBytesHex = '',
     onIncomingBytesChange,
   }: Props = $props();
 
@@ -44,12 +44,10 @@
 
 <aside
   class="w-80 bg-slate-900 text-green-400 flex flex-col z-50 border-l border-slate-800"
-  transition:slide={{ axis: "x" }}
+  transition:slide={{ axis: 'x' }}
 >
   <!-- Header -->
-  <div
-    class="px-4 py-4 bg-slate-800 flex justify-between items-center text-white"
-  >
+  <div class="px-4 py-4 bg-slate-800 flex justify-between items-center text-white">
     <h4 class="text-sm font-bold uppercase tracking-wider">Terminal Système</h4>
     <button onclick={onClose} class="text-gray-400 hover:text-white text-xl">
       <X size={20} />
@@ -69,9 +67,7 @@
   <!-- Dev Tools -->
   {#if onGenerateKeyPackage || onAddMember || onProcessWelcome}
     <details class="bg-slate-800 border-t border-slate-700 text-white text-sm">
-      <summary class="px-4 py-4 cursor-pointer font-bold"
-        >Outils Développeur</summary
-      >
+      <summary class="px-4 py-4 cursor-pointer font-bold">Outils Développeur</summary>
       <div class="px-4 pb-4 space-y-2">
         {#if onGenerateKeyPackage}
           <button

@@ -37,6 +37,7 @@ cat ~/.ssh/canari_deploy.pub
 Vous obtiendrez quelque chose comme :
 
 **Clé privée** :
+
 ```
 -----BEGIN OPENSSH PRIVATE KEY-----
 b3BlbnNzaC1rZXktdjEAAAAABG5vbmUtbm9uZS1ub25lAAAAAAAAAEUAAAA7c3NoLXJzYS
@@ -45,6 +46,7 @@ b3BlbnNzaC1rZXktdjEAAAAABG5vbmUtbm9uZS1ub25lAAAAAAAAAEUAAAA7c3NoLXJzYS
 ```
 
 **Clé publique** :
+
 ```
 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFQ6FeU...
 ```
@@ -87,7 +89,9 @@ deploy
 ```
 prod.example.com
 ```
+
 ou
+
 ```
 192.168.1.100
 ```
@@ -117,7 +121,9 @@ Dans **Settings → Secrets and variables → Actions → Variables**, cliquez s
 ```
 api.canari.example.com
 ```
+
 ou
+
 ```
 192.168.1.100
 ```
@@ -165,6 +171,7 @@ sudo -u deploy sh -c 'echo "TOKEN_GITHUB" | docker login ghcr.io -u jolan --pass
 Après la configuration, vérifiez que tout fonctionne :
 
 1. **Poussez un commit** :
+
    ```bash
    git add .
    git commit -m "test: verify CI/CD setup"
@@ -207,6 +214,7 @@ C'est juste un avertissement VS Code. Les secrets/variables n'existent pas encor
 ### Erreur SSH : "Permission denied"
 
 Vérifiez sur le serveur :
+
 ```bash
 ls -la /home/deploy/.ssh/
 # Doit montrer: authorized_keys avec permissions 600
@@ -217,6 +225,7 @@ cat /home/deploy/.ssh/authorized_keys
 ### Erreur Docker : "authentication required"
 
 Connectez-vous à GHCR sur le serveur :
+
 ```bash
 sudo -u deploy docker login ghcr.io
 # Username: votre_username_github
@@ -224,11 +233,13 @@ sudo -u deploy docker login ghcr.io
 ```
 
 Générer un PAT : Settings → Developer settings → Personal access tokens → Tokens (classic)
+
 - Sélectionner les scopes: `read:packages`, `write:packages`
 
 ### Erreur : "Could not find deploy_path"
 
 Vérifiez que le répertoire existe :
+
 ```bash
 ssh deploy@your.server
 ls -la /opt/canari
@@ -243,7 +254,7 @@ Avant de considérer la configuration complète :
 - [ ] 4 secrets créés dans GitHub (SSH_PRIVATE_KEY, SSH_USER, SERVER_HOST, DEPLOY_PATH)
 - [ ] 1 variable créée dans GitHub (DOMAIN)
 - [ ] Clé SSH configurée sur le serveur dans `/home/deploy/.ssh/authorized_keys`
-- [ ] Utilisateur `deploy` créé et peut exécuter `docker` 
+- [ ] Utilisateur `deploy` créé et peut exécuter `docker`
 - [ ] Répertoire `/opt/canari` existe et appartient à l'utilisateur `deploy`
 - [ ] Docker login réussi sur GHCR
 - [ ] Un test push réussi dans GitHub Actions
@@ -255,7 +266,7 @@ Une fois tout OK, **push automatiquement vers production à chaque commit sur `m
 ## Support
 
 Si vous avez des problèmes :
+
 1. Consultez les logs GitHub Actions (Settings → Environments peut aussi aider)
 2. SSH au serveur et vérifiez les logs Docker
 3. Créez une issue GitHub avec les détails de l'erreur
-

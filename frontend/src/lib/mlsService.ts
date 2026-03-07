@@ -9,7 +9,6 @@ import type { IMlsService } from './services/IMlsService';
 
 export function createMlsService(): IMlsService {
     // Basic detection for Tauri environment
-    // @ts-expect-error - window may not have __TAURI_INTERNALS__
     if (typeof window !== 'undefined' && window.__TAURI_INTERNALS__) {
         console.log("Detecting Tauri environment -> Using TauriMlsService");
         return new TauriMlsService();

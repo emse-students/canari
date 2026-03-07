@@ -5,6 +5,7 @@ Ce document explique comment configurer les **secrets** et **variables** requis 
 ## Localisation
 
 Dans votre dépôt GitHub :
+
 - **Secrets** : Settings → Secrets and variables → Actions → Secrets
 - **Variables** : Settings → Secrets and variables → Actions → Variables
 
@@ -16,12 +17,12 @@ Dans votre dépôt GitHub :
 
 Ajoutez ces secrets pour permettre le déploiement automatique sur votre serveur :
 
-| Nom | Description | Exemple |
-|-----|-------------|---------|
+| Nom               | Description                         | Exemple                                  |
+| ----------------- | ----------------------------------- | ---------------------------------------- |
 | `SSH_PRIVATE_KEY` | Clé SSH privée (ED25519 recommandé) | `-----BEGIN OPENSSH PRIVATE KEY-----...` |
-| `SSH_USER` | Utilisateur SSH pour la connexion | `deploy` |
-| `SERVER_HOST` | Hostname ou IP du serveur | `prod.example.com` ou `192.168.1.100` |
-| `DEPLOY_PATH` | Chemin du projet sur le serveur | `/opt/canari` |
+| `SSH_USER`        | Utilisateur SSH pour la connexion   | `deploy`                                 |
+| `SERVER_HOST`     | Hostname ou IP du serveur           | `prod.example.com` ou `192.168.1.100`    |
+| `DEPLOY_PATH`     | Chemin du projet sur le serveur     | `/opt/canari`                            |
 
 ### Génération de la clé SSH
 
@@ -67,8 +68,8 @@ sudo visudo
 
 Ajoutez ces variables (Settings → Variables) :
 
-| Nom | Description | Exemple |
-|-----|-------------|---------|
+| Nom      | Description                         | Exemple                  |
+| -------- | ----------------------------------- | ------------------------ |
 | `DOMAIN` | Domaine/IP du serveur pour les URLs | `api.canari.example.com` |
 
 ---
@@ -132,11 +133,13 @@ Cette erreur VS Code signifie que la variable n'a pas été trouvée. C'est norm
 ### Le déploiement SSH échoue
 
 Vérifiez les logs GitHub Actions pour voir l'erreur exacte :
+
 1. Allez à Code → Actions
 2. Cliquez sur le dernier workflow
 3. Vérifiez les détails de l'étape "Deploy via SSH"
 
 Causes communes :
+
 - Clé SSH mal configurée
 - Utilisateur n'existe pas sur le serveur
 - Permissions incorrectes sur `.ssh`
@@ -147,6 +150,7 @@ Causes communes :
 ## Sécurité
 
 ⚠️ **Important** :
+
 - Ne jamais commiter vos clés SSH
 - Utilisez des clés ED25519 (meilleure sécurité)
 - Limitez l'accès SSH à votre serveur (firewall)

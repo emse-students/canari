@@ -1,15 +1,9 @@
 <script lang="ts">
-  import { TauriMlsService, WebMlsService } from "$lib/mlsService";
-  import type { IMlsService } from "$lib/mlsService";
-  import { onMount, tick } from "svelte";
-  import { fade } from "svelte/transition";
-  import {
-    LoginForm,
-    Navbar,
-    Sidebar,
-    ChatArea,
-    LogsPanel,
-  } from "$lib/components";
+  import { TauriMlsService, WebMlsService } from '$lib/mlsService';
+  import type { IMlsService } from '$lib/mlsService';
+  import { onMount, tick } from 'svelte';
+  import { fade } from 'svelte/transition';
+  import { LoginForm, Navbar, Sidebar, ChatArea, LogsPanel } from '$lib/components';
 
   // --- Types ---
   interface ChatMessage {
@@ -30,37 +24,37 @@
   }
 
   // --- State (Runes) ---
-  let userId = $state("");
-  let pin = $state("");
+  let userId = $state('');
+  let pin = $state('');
   let isLoggedIn = $state(false);
   let isLoggingIn = $state(false);
-  let loginError = $state("");
+  let loginError = $state('');
   let statusLog = $state<string[]>([]);
   let showLogs = $state(false);
 
   let conversations = $state<Map<string, Conversation>>(new Map());
   let selectedContact = $state<string | null>(null);
-  let mobileView = $state<"list" | "chat">("list"); // Gestion responsive
+  let mobileView = $state<'list' | 'chat'>('list'); // Gestion responsive
 
-  let newContactInput = $state("");
-  let newGroupInput = $state("");
-  let inviteMemberInput = $state("");
+  let newContactInput = $state('');
+  let newGroupInput = $state('');
+  let inviteMemberInput = $state('');
   let _isAddingContact = $state(false);
-  let messageText = $state("");
+  let messageText = $state('');
   let chatContainer = $state<HTMLElement>();
 
   let isWsConnected = $state(false);
-  let myDeviceId = $state("");
+  let myDeviceId = $state('');
 
   // Variables de débogage
-  let lastKeyPackage = $state("");
-  let incomingBytesHex = $state("");
-  let lastCommit = $state("");
-  let lastWelcome = $state("");
+  let lastKeyPackage = $state('');
+  let incomingBytesHex = $state('');
+  let lastCommit = $state('');
+  let lastWelcome = $state('');
 
   // Valeurs dérivées pour rendu réactif
   let currentConvo = $derived(
-    selectedContact ? (conversations.get(selectedContact) ?? null) : null,
+    selectedContact ? (conversations.get(selectedContact) ?? null) : null
   );
   let _currentMessages = $derived(currentConvo?.messages ?? []);
 
@@ -69,16 +63,14 @@
 
   // Helper to ensure MLS service exists
   function ensureMls(): IMlsService {
-    if (!mls) throw new Error("MLS Service not initialized");
+    if (!mls) throw new Error('MLS Service not initialized');
     return mls;
   }
 
   const historyBaseUrl = (() => {
     const env = import.meta.env.VITE_HISTORY_URL;
     if (env && env.trim()) return env;
-    return typeof window !== "undefined"
-      ? window.location.origin
-      : "http://localhost:3001";
+    return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3001';
   })();
 
   onMount(() => {
@@ -90,69 +82,64 @@
     const w2 = window as Window & { __TAURI_INTERNALS__?: unknown };
     if (w2.__TAURI_INTERNALS__) {
       mls = new TauriMlsService();
-      log("Initialisé en mode TAURI");
+      log('Initialisé en mode TAURI');
     } else {
       mls = new WebMlsService();
-      log("Initialisé en mode WEB (WASM)");
+      log('Initialisé en mode WEB (WASM)');
     }
   });
 
   function log(msg: string) {
     statusLog = [...statusLog, `[${new Date().toLocaleTimeString()}] ${msg}`];
     tick().then(() => {
-      const logEl = document.getElementById("logContainer");
+      const logEl = document.getElementById('logContainer');
       if (logEl) logEl.scrollTop = logEl.scrollHeight;
     });
   }
 
   // --- Auth & Initialisation ---
   async function generateDevToken(uid: string) {
-    const secret =
-      "9a2f8c4e6b0d71f3e8b925b1234567890abcdef1234567890abcdef12345678";
-    const header = JSON.stringify({ alg: "HS256", typ: "JWT" });
+    const secret = '9a2f8c4e6b0d71f3e8b925b1234567890abcdef1234567890abcdef12345678';
+    const header = JSON.stringify({ alg: 'HS256', typ: 'JWT' });
     const payload = JSON.stringify({
       sub: uid,
       exp: Math.floor(Date.now() / 1000) + 3600 * 24,
     });
     const b64url = (str: string) =>
-      btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
     const unsignedToken = `${b64url(header)}.${b64url(payload)}`;
     const enc = new TextEncoder();
     const key = await crypto.subtle.importKey(
-      "raw",
+      'raw',
       enc.encode(secret),
-      { name: "HMAC", hash: "SHA-256" },
+      { name: 'HMAC', hash: 'SHA-256' },
       false,
-      ["sign"],
+      ['sign']
     );
-    const signature = await crypto.subtle.sign(
-      "HMAC",
-      key,
-      enc.encode(unsignedToken),
-    );
+    const signature = await crypto.subtle.sign('HMAC', key, enc.encode(unsignedToken));
     const sigB64 = b64url(String.fromCharCode(...new Uint8Array(signature)));
     return `${unsignedToken}.${sigB64}`;
   }
 
   async function handleLogin() {
     if (!userId.trim() || !pin.trim()) {
-      loginError = "Veuillez remplir tous les champs.";
+      loginError = 'Veuillez remplir tous les champs.';
       return;
     }
 
-    loginError = "";
+    loginError = '';
     isLoggingIn = true;
     userId = userId.trim().toLowerCase();
 
     try {
       const mlsService = ensureMls(); // Ensure MLS is initialized
-      
-      log("Initialisation MLS...");
+
+      log('Initialisation MLS...');
       let stateBytes: Uint8Array | undefined;
-      const saved = localStorage.getItem("mls_autosave_" + userId);
+      const saved = localStorage.getItem('mls_autosave_' + userId);
       if (saved) {
         stateBytes = fromHex(saved);
-        log("État chargé depuis le stockage local.");
+        log('État chargé depuis le stockage local.');
       }
 
       await mlsService.init(userId, pin, stateBytes);
@@ -164,9 +151,7 @@
 
       // Listener de messages
       mlsService.onMessage(async (sender, content, groupId): Promise<boolean> => {
-        log(
-          `Message de ${sender} (${content.length} octets) - Grp: ${groupId}`,
-        );
+        log(`Message de ${sender} (${content.length} octets) - Grp: ${groupId}`);
         const senderNorm = sender.toLowerCase();
 
         let convoKey: string | undefined;
@@ -183,19 +168,15 @@
         if (convoKey) {
           const convo = conversations.get(convoKey)!;
           try {
-            const decrypted = await mlsService.processIncomingMessage(
-              convo.groupId,
-              content,
-            );
+            const decrypted = await mlsService.processIncomingMessage(convo.groupId, content);
             try {
               const stBytes = await mlsService.saveState(pin);
-              localStorage.setItem("mls_autosave_" + userId, toHex(stBytes));
+              localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
             } catch {
               // Silent fallback if autosave fails
             }
 
-            if (decrypted)
-              addMessageToChat(senderNorm, decrypted, false, convoKey);
+            if (decrypted) addMessageToChat(senderNorm, decrypted, false, convoKey);
             return true;
           } catch (_e) {
             log(`Erreur message (groupe connu): ${_e}`);
@@ -210,7 +191,7 @@
 
           try {
             const gRes = await fetch(
-              `${historyBaseUrl}/mls-api/groups/${groupId || joinedGroupId}`,
+              `${historyBaseUrl}/mls-api/groups/${groupId || joinedGroupId}`
             );
             if (gRes.ok) {
               const gData = await gRes.json();
@@ -233,7 +214,7 @@
 
           try {
             const stBytes = await mlsService.saveState(pin);
-            localStorage.setItem("mls_autosave_" + userId, toHex(stBytes));
+            localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
           } catch {
             // Silent fallback if autosave fails
           }
@@ -242,19 +223,17 @@
           loadHistoryForConversation(senderNorm, joinedGroupId);
           return true;
         } catch {
-          log(
-            `Ignoré: pas un message pour un groupe existant ni un welcome.`,
-          );
+          log(`Ignoré: pas un message pour un groupe existant ni un welcome.`);
           return false;
         }
       });
 
-      log("Connexion Gateway...");
+      log('Connexion Gateway...');
       try {
         const token = await generateDevToken(userId);
         await mlsService.connect(token);
         isWsConnected = true;
-        log("Connecté au réseau !");
+        log('Connecté au réseau !');
       } catch (_wsErr: unknown) {
         const msg = _wsErr instanceof Error ? _wsErr.message : String(_wsErr);
         log(`Gateway inaccessible: ${msg}`);
@@ -262,7 +241,7 @@
 
       try {
         await mlsService.generateKeyPackage(pin);
-        log("KeyPackage publié.");
+        log('KeyPackage publié.');
       } catch {
         // Silent fallback if key package generation fails
       }
@@ -278,8 +257,8 @@
   // --- Utils ---
   function toHex(buffer: Uint8Array): string {
     return Array.from(buffer)
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
   }
 
   function fromHex(hex: string): Uint8Array {
@@ -303,14 +282,11 @@
           timestamp: m.timestamp.toISOString(),
         })),
         isReady: convo.isReady,
-      }),
+      })
     );
   }
 
-  async function loadHistoryForConversation(
-    contactName: string,
-    groupId: string,
-  ) {
+  async function loadHistoryForConversation(contactName: string, groupId: string) {
     const mlsService = ensureMls();
     try {
       const history = await mlsService.fetchHistory(groupId);
@@ -323,8 +299,7 @@
           try {
             const bytesStr = atob(msg.content);
             const bytes = new Uint8Array(bytesStr.length);
-            for (let i = 0; i < bytesStr.length; i++)
-              bytes[i] = bytesStr.charCodeAt(i);
+            for (let i = 0; i < bytesStr.length; i++) bytes[i] = bytesStr.charCodeAt(i);
 
             const decrypted = await mlsService.processIncomingMessage(groupId, bytes);
             if (decrypted) {
@@ -338,7 +313,7 @@
         }
         if (mlsUpdated) {
           const stateBytes = await mlsService.saveState(pin);
-          localStorage.setItem("mls_autosave_" + userId, toHex(stateBytes));
+          localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
           log(`✅ ${addedMsg} msg rattrapés pour ${contactName}.`);
         }
       }
@@ -390,19 +365,14 @@
 
       // Ajout de ses propres autres appareils (CORRIGÉ)
       const ownDevices = (await mlsService.fetchUserDevices(userId)).filter(
-        (d) => d.deviceId !== mlsService.getDeviceId(),
+        (d) => d.deviceId !== mlsService.getDeviceId()
       );
       for (const device of ownDevices) {
         try {
           const result = await mlsService.addMember(groupId, device.keyPackage);
           await mlsService.registerMember(groupId, userId, device.deviceId);
           if (result.welcome) {
-            await mlsService.sendWelcome(
-              result.welcome,
-              userId,
-              groupId,
-              device.deviceId,
-            );
+            await mlsService.sendWelcome(result.welcome, userId, groupId, device.deviceId);
           }
           if (result.commit) {
             await mlsService.sendCommit(result.commit, groupId);
@@ -413,7 +383,7 @@
       }
 
       const stateBytes = await mlsService.saveState(pin);
-      localStorage.setItem("mls_autosave_" + userId, toHex(stateBytes));
+      localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
 
       conversations.set(name, {
         contactName: name,
@@ -444,8 +414,7 @@
     try {
       await mlsService.registerMember(convo.groupId, userId, mlsService.getDeviceId());
       const devices = await mlsService.fetchUserDevices(targetUser);
-      if (devices.length === 0)
-        return log(`❌ Aucun appareil trouvé pour ${targetUser}.`);
+      if (devices.length === 0) return log(`❌ Aucun appareil trouvé pour ${targetUser}.`);
 
       // Utilisation stricte de l'ajout par lot (CORRIGÉ)
       const bulk = await mlsService.addMembersBulk(convo.groupId, devices);
@@ -455,18 +424,18 @@
       }
 
       const stateBytes = await mlsService.saveState(pin);
-      localStorage.setItem("mls_autosave_" + userId, toHex(stateBytes));
+      localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
 
       if (bulk.welcome) {
         const welcomeB64 = btoa(
           Array.from(bulk.welcome)
             .map((b) => String.fromCharCode(b))
-            .join(""),
+            .join('')
         );
         for (const did of bulk.addedDeviceIds) {
           await fetch(`${historyBaseUrl}/mls-api/welcome`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               targetDeviceId: did,
               targetUserId: targetUser,
@@ -480,9 +449,7 @@
 
       if (bulk.commit) await mlsService.sendCommit(bulk.commit, convo.groupId);
 
-      log(
-        `✅ ${targetUser} invité (${bulk.addedDeviceIds.length}/${devices.length} appareils).`,
-      );
+      log(`✅ ${targetUser} invité (${bulk.addedDeviceIds.length}/${devices.length} appareils).`);
     } catch (e) {
       log(`Erreur invitation: ${e}`);
     }
@@ -518,19 +485,14 @@
 
       // Synchro de ses autres appareils (CORRIGÉ)
       const ownDevices = (await mlsService.fetchUserDevices(userId)).filter(
-        (d) => d.deviceId !== mlsService.getDeviceId(),
+        (d) => d.deviceId !== mlsService.getDeviceId()
       );
       for (const device of ownDevices) {
         try {
           const result = await mlsService.addMember(groupId, device.keyPackage);
           await mlsService.registerMember(groupId, userId, device.deviceId);
           if (result.welcome)
-            await mlsService.sendWelcome(
-              result.welcome,
-              userId,
-              groupId,
-              device.deviceId,
-            );
+            await mlsService.sendWelcome(result.welcome, userId, groupId, device.deviceId);
           if (result.commit) await mlsService.sendCommit(result.commit, groupId);
         } catch {
           // Silently ignore errors in device sync
@@ -538,7 +500,7 @@
       }
 
       const stBytes = await mlsService.saveState(pin);
-      localStorage.setItem("mls_autosave_" + userId, toHex(stBytes));
+      localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
 
       // Ajout des appareils du contact cible (CORRIGÉ)
       const devices = await mlsService.fetchUserDevices(contact);
@@ -550,18 +512,18 @@
         }
 
         const st2Bytes = await mlsService.saveState(pin);
-        localStorage.setItem("mls_autosave_" + userId, toHex(st2Bytes));
+        localStorage.setItem('mls_autosave_' + userId, toHex(st2Bytes));
 
         if (bulk.welcome) {
           const welcomeB64 = btoa(
             Array.from(bulk.welcome)
               .map((b) => String.fromCharCode(b))
-              .join(""),
+              .join('')
           );
           for (const did of bulk.addedDeviceIds) {
             await fetch(`${historyBaseUrl}/mls-api/welcome`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 targetDeviceId: did,
                 targetUserId: contact,
@@ -595,7 +557,7 @@
     senderId: string,
     content: string,
     isOwn: boolean,
-    contactName: string,
+    contactName: string
   ) {
     const normalized = contactName.toLowerCase();
     const convo = conversations.get(normalized);
@@ -627,12 +589,12 @@
     const convo = conversations.get(selectedContact);
     if (!convo?.isReady) return;
 
-    messageText = "";
+    messageText = '';
     try {
       const mlsService = ensureMls();
       await mlsService.sendMessage(convo.groupId, text);
       const stateBytes = await mlsService.saveState(pin);
-      localStorage.setItem("mls_autosave_" + userId, toHex(stateBytes));
+      localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
       addMessageToChat(userId, text, true, selectedContact);
     } catch (_e: unknown) {
       const msg = _e instanceof Error ? _e.message : String(_e);
@@ -642,7 +604,7 @@
   }
 
   function _handleKeydown(_e: KeyboardEvent) {
-    if (_e.key === "Enter" && !_e.shiftKey) {
+    if (_e.key === 'Enter' && !_e.shiftKey) {
       _e.preventDefault();
       handleSendChat();
     }
@@ -650,11 +612,11 @@
 
   function selectConversation(name: string) {
     selectedContact = name;
-    mobileView = "chat";
+    mobileView = 'chat';
   }
 
   function goBackToMenu() {
-    mobileView = "list";
+    mobileView = 'list';
   }
 
   function logout() {
@@ -687,13 +649,10 @@
     if (!convo) return;
     try {
       const mlsService = ensureMls();
-      const result = await mlsService.addMember(
-        convo.groupId,
-        fromHex(incomingBytesHex),
-      );
+      const result = await mlsService.addMember(convo.groupId, fromHex(incomingBytesHex));
       lastCommit = toHex(result.commit);
       if (result.welcome) lastWelcome = toHex(result.welcome);
-      incomingBytesHex = "";
+      incomingBytesHex = '';
     } catch (_e: unknown) {
       const msg = _e instanceof Error ? _e.message : String(_e);
       log(`Err AddMember: ${msg}`);
@@ -704,7 +663,7 @@
     try {
       const mlsService = ensureMls();
       await mlsService.processWelcome(fromHex(incomingBytesHex));
-      incomingBytesHex = "";
+      incomingBytesHex = '';
     } catch (_e: unknown) {
       const msg = _e instanceof Error ? _e.message : String(_e);
       log(`Err ProcessWelcome: ${msg}`);
@@ -727,11 +686,7 @@
   />
 {:else}
   <div class="app-layout" in:fade>
-    <Navbar
-      {isWsConnected}
-      onToggleLogs={() => (showLogs = !showLogs)}
-      onLogout={logout}
-    />
+    <Navbar {isWsConnected} onToggleLogs={() => (showLogs = !showLogs)} onLogout={logout} />
 
     <!-- CONTENT -->
     <main class="main-content">
@@ -745,17 +700,17 @@
         onAddContact={() => {
           if (newContactInput.trim()) {
             startNewConversation(newContactInput);
-            newContactInput = "";
+            newContactInput = '';
           }
         }}
         onCreateGroup={() => {
           if (newGroupInput.trim()) {
             createNewGroup(newGroupInput);
-            newGroupInput = "";
+            newGroupInput = '';
           }
         }}
         onSelectConversation={selectConversation}
-        isHidden={mobileView === "chat"}
+        isHidden={mobileView === 'chat'}
       />
 
       <ChatArea
@@ -768,11 +723,11 @@
         onInviteMember={() => {
           if (inviteMemberInput.trim()) {
             inviteMemberToCurrentGroup(inviteMemberInput);
-            inviteMemberInput = "";
+            inviteMemberInput = '';
           }
         }}
         onBack={goBackToMenu}
-        isHidden={mobileView === "list"}
+        isHidden={mobileView === 'list'}
       />
 
       {#if showLogs}

@@ -16,13 +16,13 @@ export class IndexedDbStorage implements IMessageStorage {
     async init(): Promise<void> {
         return new Promise((resolve, reject) => {
             const request = indexedDB.open(this.dbName, 1);
-            
+
             request.onerror = () => reject("IndexedDB error");
             request.onsuccess = () => {
                 this.db = request.result;
                 resolve();
             };
-            
+
             request.onupgradeneeded = (event) => {
                 const db = (event.target as any).result;
                 if (!db.objectStoreNames.contains(this.storeName)) {
@@ -34,21 +34,21 @@ export class IndexedDbStorage implements IMessageStorage {
 
     async saveMessage(message: any, pin: string): Promise<void> {
         if (!this.db) await this.init();
-        
+
         // Encrypt content
         const encrypted = await encryptData(message, pin);
-        
+
         return new Promise((resolve, reject) => {
             const transaction = this.db!.transaction([this.storeName], "readwrite");
             const store = transaction.objectStore(this.storeName);
-            
+
             // Store with metadata but encrypted payload
             const entry = {
                 id: message.id || Date.now().toString(),
                 timestamp: Date.now(),
                 ...encrypted // salt, iv, cipherText
             };
-            
+
             const request = store.put(entry);
             request.onsuccess = () => resolve();
             request.onerror = () => reject(request.error);
@@ -66,13 +66,13 @@ export class IndexedDbStorage implements IMessageStorage {
             request.onsuccess = async () => {
                 const results = request.result;
                 const decryptedMessages = [];
-                
+
                 for (const entry of results) {
                     try {
                         const content = await decryptData(
-                            entry.cipherText, 
-                            entry.iv, 
-                            entry.salt, 
+                            entry.cipherText,
+                            entry.iv,
+                            entry.salt,
                             pin
                         );
                         decryptedMessages.push(content);
@@ -80,7 +80,7 @@ export class IndexedDbStorage implements IMessageStorage {
                          console.warn("Failed to decrypt message", entry.id);
                     }
                 }
-                
+
                 // Sort by timestamp
                 decryptedMessages.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
                 resolve(decryptedMessages);
@@ -108,10 +108,9 @@ export class SqliteStorage implements IMessageStorage {
     async init(): Promise<void> {
         try {
             // Dynamic import to avoid build errors if plugin not installed
-             // @ts-expect-error - tauri plugin may not be installed
              const Database = (await import('@tauri-apps/plugin-sql')).default;
              this.db = await Database.load(this.dbPath);
-             
+
              await this.db.execute(`
                 CREATE TABLE IF NOT EXISTS messages (
                     id TEXT PRIMARY KEY,
@@ -129,9 +128,9 @@ export class SqliteStorage implements IMessageStorage {
 
     async saveMessage(message: any, pin: string): Promise<void> {
         if (!this.db) await this.init();
-        
+
         const encrypted = await encryptData(message, pin);
-        
+
         // SQLite blobs need Uint8Array
         await this.db.execute(
             "INSERT OR REPLACE INTO messages (id, timestamp, iv, salt, cipher_text) VALUES ($1, $2, $3, $4, $5)",
@@ -147,10 +146,10 @@ export class SqliteStorage implements IMessageStorage {
 
     async getMessages(pin: string): Promise<any[]> {
         if (!this.db) await this.init();
-        
+
         const rows: any[] = await this.db.select("SELECT * FROM messages ORDER BY timestamp ASC");
         const decryptedMessages = [];
-        
+
         for (const row of rows) {
             try {
                 // Convert back from plugin format (might be array of numbers)
@@ -158,7 +157,7 @@ export class SqliteStorage implements IMessageStorage {
                 const iv = new Uint8Array(row.iv);
                 const salt = new Uint8Array(row.salt);
                 const cipherText = new Uint8Array(row.cipher_text);
-                
+
                 const content = await decryptData(cipherText, iv, salt, pin);
                 decryptedMessages.push(content);
             } catch (e) {
@@ -177,7 +176,6 @@ export class SqliteStorage implements IMessageStorage {
 // Factory
 export async function getStorage(): Promise<IMessageStorage> {
     // Check if running in Tauri environment
-    // @ts-expect-error - window may not have __TAURI_INTERNALS__
     if (window.__TAURI_INTERNALS__) {
         console.log("Tauri detected. Attempting to load SQLite plugin...");
         try {

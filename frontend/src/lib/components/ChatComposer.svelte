@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Send } from "lucide-svelte";
+  import { Send } from 'lucide-svelte';
 
   interface Props {
     messageText: string;
@@ -11,7 +11,7 @@
   let textareaEl: HTMLTextAreaElement;
 
   function handleKeydown(e: KeyboardEvent) {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       onSend();
     }
@@ -19,8 +19,8 @@
 
   $effect(() => {
     if (textareaEl) {
-      textareaEl.style.height = "auto";
-      textareaEl.style.height = textareaEl.scrollHeight + "px";
+      textareaEl.style.height = 'auto';
+      textareaEl.style.height = textareaEl.scrollHeight + 'px';
     }
   });
 </script>

@@ -22,4 +22,7 @@ async function bootstrap() {
   await app.listen(3001);
 }
 
-bootstrap();
+void bootstrap().catch((err) => {
+  console.error('Failed to bootstrap application:', err);
+  process.exit(1);
+});

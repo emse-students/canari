@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { format } from "date-fns";
-  import { fly } from "svelte/transition";
+  import { format } from 'date-fns';
+  import { fly } from 'svelte/transition';
 
   interface Props {
     senderId: string;
@@ -21,7 +21,7 @@
   >
     <p class="text-base leading-relaxed break-words">{content}</p>
     <span class="block text-[0.65rem] mt-2 text-right opacity-70">
-      {format(timestamp, "HH:mm")}
+      {format(timestamp, 'HH:mm')}
     </span>
   </div>
 </div>

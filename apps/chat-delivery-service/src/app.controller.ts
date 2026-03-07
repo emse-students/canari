@@ -1,6 +1,6 @@
-import { Controller, Get, Post, Body, Param, Put, Delete, Inject } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Inject } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, AnyBulkWriteOperation } from 'mongoose';
 import { QueuedMessage } from './queued-message.schema';
 import { KeyPackage } from './key-package.schema';
 import { WelcomeMessage } from './welcome-message.schema';
@@ -233,7 +233,7 @@ export class AppController {
           }
       }
       
-      const ops = [];
+      const ops: AnyBulkWriteOperation<QueuedMessage>[] = [];
       let sentCount = 0;
 
       for (const r of targetList) {
@@ -321,7 +321,7 @@ export class AppController {
           _id: { $in: body.messageIds },
           recipientId: body.userId,
           deviceId: body.deviceId // Sécurité pour éviter qu'un device supprime les messages d'un autre
-      });
+      }) as unknown as { deletedCount: number };
 
       return { status: 'deleted', count: result.deletedCount };
   }

@@ -1,0 +1,101 @@
+$ eslint src --ext .ts,.tsx,.js,.jsx,.svelte --cache
+
+D:\Documents\Programmation\EMSE\Canari\frontend\src\app.d.ts
+  13:31  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+D:\Documents\Programmation\EMSE\Canari\frontend\src\lib\components\ChatComposer.svelte
+  3:12  warning  'tick' is defined but never used. Allowed unused vars must match /^_/u  @typescript-eslint/no-unused-vars
+
+D:\Documents\Programmation\EMSE\Canari\frontend\src\lib\components\LogsPanel.svelte
+  26:5  warning  'lastCommit' is assigned a value but never used. Allowed unused vars must match /^_/u   @typescript-eslint/no-unused-vars
+  27:5  warning  'lastWelcome' is assigned a value but never used. Allowed unused vars must match /^_/u  @typescript-eslint/no-unused-vars
+
+D:\Documents\Programmation\EMSE\Canari\frontend\src\lib\components\MessageBubble.svelte
+  12:9  warning  'senderId' is assigned a value but never used. Allowed unused vars must match /^_/u  @typescript-eslint/no-unused-vars
+
+D:\Documents\Programmation\EMSE\Canari\frontend\src\lib\components\Sidebar.svelte
+  9:15  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+D:\Documents\Programmation\EMSE\Canari\frontend\src\lib\db.ts
+    5:26  warning  Unexpected any. Specify a different type                                  @typescript-eslint/no-explicit-any
+    6:39  warning  Unexpected any. Specify a different type                                  @typescript-eslint/no-explicit-any
+   27:45  warning  Unexpected any. Specify a different type                                  @typescript-eslint/no-explicit-any
+   35:32  warning  Unexpected any. Specify a different type                                  @typescript-eslint/no-explicit-any
+   58:45  warning  Unexpected any. Specify a different type                                  @typescript-eslint/no-explicit-any
+   79:30  warning  'e' is defined but never used                                             @typescript-eslint/no-unused-vars
+   80:26  warning  Unexpected console statement                                              no-console
+   94:38  warning  'reject' is defined but never used. Allowed unused args must match /^_/u  @typescript-eslint/no-unused-vars
+  105:17  warning  Unexpected any. Specify a different type                                  @typescript-eslint/no-explicit-any
+  125:13  warning  Unexpected console statement                                              no-console
+  130:32  warning  Unexpected any. Specify a different type                                  @typescript-eslint/no-explicit-any
+  148:45  warning  Unexpected any. Specify a different type                                  @typescript-eslint/no-explicit-any
+  151:21  warning  Unexpected any. Specify a different type                                  @typescript-eslint/no-explicit-any
+  165:17  warning  Unexpected console statement                                              no-console
+  182:9   warning  Unexpected console statement                                              no-console
+  186:13  warning  Unexpected console statement                                              no-console
+  189:13  warning  Unexpected console statement                                              no-console
+  196:9   warning  Unexpected console statement                                              no-console
+
+D:\Documents\Programmation\EMSE\Canari\frontend\src\lib\encryption.ts
+   2:41   warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  28:115  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  42:14   warning  'e' is defined but never used             @typescript-eslint/no-unused-vars
+
+D:\Documents\Programmation\EMSE\Canari\frontend\src\lib\mlsService.ts
+  14:9  warning  Unexpected console statement  no-console
+  17:5  warning  Unexpected console statement  no-console
+
+D:\Documents\Programmation\EMSE\Canari\frontend\src\lib\services\TauriMlsService.ts
+   25:17  warning  Unexpected console statement              no-console
+   42:29  warning  Unexpected console statement              no-console
+   63:21  warning  Unexpected console statement              no-console
+   78:21  warning  Unexpected console statement              no-console
+   90:13  warning  Unexpected console statement              no-console
+   98:21  warning  Unexpected console statement              no-console
+  119:25  warning  Unexpected console statement              no-console
+  124:13  warning  Unexpected console statement              no-console
+  128:48  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  149:22  warning  Unexpected console statement              no-console
+  172:36  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  181:13  warning  Unexpected console statement              no-console
+  194:13  warning  Unexpected console statement              no-console
+  211:13  warning  Unexpected console statement              no-console
+  275:13  warning  Unexpected console statement              no-console
+  347:17  warning  Unexpected console statement              no-console
+  367:13  warning  Unexpected console statement              no-console
+  383:17  warning  Unexpected console statement              no-console
+  402:13  warning  Unexpected console statement              no-console
+
+D:\Documents\Programmation\EMSE\Canari\frontend\src\lib\services\WebMlsService.ts
+    5:21  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+   36:17  warning  Unexpected console statement              no-console
+   41:17  warning  Unexpected console statement              no-console
+   56:29  warning  Unexpected console statement              no-console
+   79:21  warning  Unexpected console statement              no-console
+   97:21  warning  Unexpected console statement              no-console
+  110:13  warning  Unexpected console statement              no-console
+  118:21  warning  Unexpected console statement              no-console
+  139:25  warning  Unexpected console statement              no-console
+  144:13  warning  Unexpected console statement              no-console
+  148:48  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  169:22  warning  Unexpected console statement              no-console
+  183:36  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  192:13  warning  Unexpected console statement              no-console
+  206:13  warning  Unexpected console statement              no-console
+  224:13  warning  Unexpected console statement              no-console
+  322:13  warning  Unexpected console statement              no-console
+  342:13  warning  Unexpected console statement              no-console
+  364:13  warning  Unexpected console statement              no-console
+  412:13  warning  Unexpected console statement              no-console
+  425:17  warning  Unexpected console statement              no-console
+  446:13  warning  Unexpected console statement              no-console
+
+D:\Documents\Programmation\EMSE\Canari\frontend\src\lib\wasm\mls_wasm.js
+  240:17  warning  Unexpected console statement                                                           no-console
+  486:5   warning  'wasmModule' is assigned a value but never used. Allowed unused vars must match /^_/u  @typescript-eslint/no-unused-vars
+  505:21  warning  Unexpected console statement                                                           no-console
+  539:13  warning  Unexpected console statement                                                           no-console
+  559:13  warning  Unexpected console statement                                                           no-console
+
+✖ 75 problems (0 errors, 75 warnings)
+
