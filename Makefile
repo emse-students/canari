@@ -1,13 +1,14 @@
-.PHONY: all install install-frontend install-services build-frontend nginx-install reload-services test test-libs test-gateway test-history clean nginx-uninstall nginx-https
+.PHONY: all install install-frontend install-services install-hooks build-frontend nginx-install reload-services test test-libs test-gateway test-history clean nginx-uninstall nginx-https
 
 # Cible par défaut : installation complète et déploiement
 .DEFAULT_GOAL := all
 
-all: install build-frontend nginx-install reload-services
+all: install install-hooks build-frontend nginx-install reload-services
 	@echo ""
 	@echo "${BOLD}${GREEN}🎉 INSTALLATION COMPLÈTE TERMINÉE${RESET}"
 	@echo "---------------------------------------------------"
 	@echo "${GREEN}✅ Dépendances installées${RESET}"
+	@echo "${GREEN}✅ Git hooks configurés${RESET}"
 	@echo "${GREEN}✅ Frontend buildé${RESET}"
 	@echo "${GREEN}✅ Nginx configuré${RESET}"
 	@echo "${GREEN}✅ Services Docker rechargés${RESET}"
@@ -75,6 +76,11 @@ install-services:
 	@echo "${BLUE}📦 Installing chat-delivery-service dependencies...${RESET}"
 	@cd apps/chat-delivery-service && npm install
 	@echo "${GREEN}✅ Services Node.js prêts${RESET}"
+
+install-hooks:
+	@echo "${BLUE}🪝 Installing Git hooks via Husky...${RESET}"
+	@cd frontend && bun install 2>/dev/null || npm install
+	@echo "${GREEN}✅ Git hooks configurés${RESET}"
 
 # Cible principale
 test: test-libs test-gateway test-history

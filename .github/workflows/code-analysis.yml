@@ -1,0 +1,233 @@
+name: Code Analysis
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    # Daily analysis at 2 AM UTC
+    - cron: '0 2 * * *'
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+jobs:
+  codeql:
+    name: CodeQL Security Analysis
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ['javascript', 'typescript']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-extended, security-and-quality
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: |
+          cd frontend
+          bun install
+        continue-on-error: true
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+        continue-on-error: true
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+  secret-scan:
+    name: Scan for Secrets
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: TruffleHog Secret Scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          extra_args: --debug --only-verified
+        continue-on-error: true
+
+  lint:
+    name: Lint and Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: '**/package-lock.json'
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          bun install
+
+      - name: Check TypeScript
+        run: |
+          cd frontend
+          bun run check
+
+      - name: Lint frontend
+        run: |
+          cd frontend
+          bun run lint
+        continue-on-error: true
+
+      - name: Format check frontend
+        run: |
+          cd frontend
+          bun run format:check
+        continue-on-error: true
+
+      - name: Install auth-service dependencies
+        run: |
+          cd apps/auth-service
+          npm ci
+
+      - name: Lint auth-service
+        run: |
+          cd apps/auth-service
+          npm run lint
+        continue-on-error: true
+
+      - name: Install chat-delivery-service dependencies
+        run: |
+          cd apps/chat-delivery-service
+          npm ci
+
+      - name: Lint chat-delivery-service
+        run: |
+          cd apps/chat-delivery-service
+          npm run lint
+        continue-on-error: true
+
+      - name: Install user-service dependencies
+        run: |
+          cd apps/user-service
+          npm ci
+
+      - name: Lint user-service
+        run: |
+          cd apps/user-service
+          npm run lint
+        continue-on-error: true
+
+  dependencies:
+    name: Check Dependencies Vulnerabilities
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Audit frontend dependencies
+        run: |
+          cd frontend
+          bun install
+          npm audit --audit-level=moderate
+        continue-on-error: true
+
+      - name: Audit auth-service dependencies
+        run: |
+          cd apps/auth-service
+          npm ci
+          npm audit --audit-level=moderate
+        continue-on-error: true
+
+      - name: Audit chat-delivery-service dependencies
+        run: |
+          cd apps/chat-delivery-service
+          npm ci
+          npm audit --audit-level=moderate
+        continue-on-error: true
+
+      - name: Audit user-service dependencies
+        run: |
+          cd apps/user-service
+          npm ci
+          npm audit --audit-level=moderate
+        continue-on-error: true
+
+      - name: Check Cargo dependencies
+        uses: rustsec/audit-check-action@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+  rust-analysis:
+    name: Rust Code Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check format - shared-rust
+        run: |
+          cd libs/shared-rust
+          cargo fmt -- --check
+
+      - name: Check format - chat-gateway
+        run: |
+          cd apps/chat-gateway
+          cargo fmt -- --check
+
+      - name: Check format - frontend/mls-core
+        run: |
+          cd frontend/mls-core
+          cargo fmt -- --check
+
+      - name: Check format - frontend/mls-wasm
+        run: |
+          cd frontend/mls-wasm
+          cargo fmt -- --check
+
+      - name: Clippy checks
+        run: |
+          cd libs/shared-rust
+          cargo clippy --all-targets --all-features -- -D warnings
+          cd ../../apps/chat-gateway
+          cargo clippy --all-targets --all-features -- -D warnings
+          cd ../../frontend/mls-core
+          cargo clippy --all-targets --all-features -- -D warnings
+        continue-on-error: true

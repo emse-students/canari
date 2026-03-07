@@ -1,0 +1,65 @@
+repos:
+  # Trailing whitespace and newline checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+        name: Trim trailing whitespace
+        description: Trim trailing whitespace
+        stages: [pre-commit]
+
+      - id: end-of-file-fixer
+        name: Fix end of files
+        description: Ensures that a file is either empty, or ends with one newline
+        stages: [pre-commit]
+
+      - id: check-yaml
+        name: Check YAML
+        description: Check YAML files
+        stages: [pre-commit]
+        args: [--unsafe]
+
+      - id: check-json
+        name: Check JSON
+        description: Check JSON files
+        stages: [pre-commit]
+
+      - id: check-merge-conflict
+        name: Check merge conflict
+        description: Check for merge conflicts in files
+        stages: [pre-commit]
+
+      - id: check-case-conflict
+        name: Check case conflict
+        description: Check for case conflicts in filenames
+        stages: [pre-commit]
+
+      - id: detect-private-key
+        name: Detect private key
+        description: Detect the presence of private keys
+        stages: [pre-commit]
+
+  # Markdown linting
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.37.0
+    hooks:
+      - id: markdownlint
+        name: Markdown Lint
+        description: Check markdown files
+        stages: [pre-commit]
+        files: \.md$
+        exclude: |
+          (?x)^(
+            README.md|
+            RELEASE_NOTES.md|
+            docs/CI_CD.md
+          )
+
+ci:
+  autofix_commit_msg: |
+    [pre-commit.ci] Auto fixes from pre-commit.com hooks
+    for more information, see https://pre-commit.ci
+  autofix_prs: true
+  autoupdate_commit_msg: '[pre-commit.ci] pre-commit autoupdate'
+  autoupdate_schedule: weekly
+  submodules: false

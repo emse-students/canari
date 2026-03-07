@@ -45,10 +45,36 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libssl-dev cmake
 
-      - name: Check Formatting (Rust)
-        run: cargo fmt --all -- --check
+      - name: Check Formatting - Shared Rust
+        working-directory: libs/shared-rust
+        run: cargo fmt -- --check
 
-      - name: Lint with Clippy (Rust)
+      - name: Check Formatting - Chat Gateway
+        working-directory: apps/chat-gateway
+        run: cargo fmt -- --check
+
+      - name: Check Formatting - Frontend MLS Core
+        working-directory: frontend/mls-core
+        run: cargo fmt -- --check
+
+      - name: Check Formatting - Frontend MLS WASM
+        working-directory: frontend/mls-wasm
+        run: cargo fmt -- --check
+
+      - name: Lint with Clippy - Shared Rust
+        working-directory: libs/shared-rust
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Lint with Clippy - Chat Gateway
+        working-directory: apps/chat-gateway
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Lint with Clippy - Frontend MLS Core
+        working-directory: frontend/mls-core
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Lint with Clippy - Frontend MLS WASM
+        working-directory: frontend/mls-wasm
         run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Test Shared Rust Lib
@@ -58,6 +84,14 @@ jobs:
       - name: Test Chat Gateway
         working-directory: apps/chat-gateway
         run: cargo test
+
+      - name: Test Frontend MLS Core
+        working-directory: frontend/mls-core
+        run: cargo test --lib
+
+      - name: Build Frontend MLS WASM
+        working-directory: frontend/mls-wasm
+        run: cargo build --target wasm32-unknown-unknown --release
 
   test-typescript:
     name: Test TypeScript Components

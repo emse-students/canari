@@ -1,0 +1,12 @@
+node_modules
+build
+dist
+.svelte-kit
+.tauri
+coverage
+target
+*.tsbuildinfo
+.env
+.env.local
+bun.lock
+package-lock.json

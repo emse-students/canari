@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/YOUR-ORG/canari/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR-ORG/canari/actions/workflows/ci.yml)
 [![CD](https://github.com/YOUR-ORG/canari/actions/workflows/cd.yml/badge.svg)](https://github.com/YOUR-ORG/canari/actions/workflows/cd.yml)
+[![Code Analysis](https://github.com/YOUR-ORG/canari/actions/workflows/code-analysis.yml/badge.svg)](https://github.com/YOUR-ORG/canari/actions/workflows/code-analysis.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Application de messagerie sécurisée avec chiffrement de bout en bout (protocole MLS) et architecture microservices moderne.
@@ -27,6 +28,69 @@ L'environnement de développement a été configuré avec :
 - Rust & Cargo
 - Make
 - Docker Desktop
+- Bun 1.3.6 (package manager)
+
+## Vérifications Automatisées
+
+Le projet utilise plusieurs outils pour garantir la qualité du code :
+
+### Husky + Pre-commit Hooks
+
+Les Git hooks sont configurés pour vérifier la qualité du code avant chaque commit :
+
+```bash
+# Installation automatique (copie du prepare script dans package.json)
+bun install
+
+# Pour passer les hooks (déconseillé) :
+git commit --no-verify
+```
+
+### Pre-commit Framework
+
+Pour une vérification complète locale avant le push :
+
+```bash
+# Installation (si pre-commit n'est pas installé)
+pip install pre-commit
+
+# Installation des hooks
+pre-commit install
+
+# Lancer manuellement
+pre-commit run --all-files
+```
+
+### Linting et Formatage
+
+```bash
+# Frontend
+cd frontend
+bun run lint          # Vérifier avec ESLint
+bun run lint:fix      # Auto-corriger ESLint
+bun run format        # Formatter avec Prettier
+bun run format:check  # Vérifier le formatage
+
+# Services (npm)
+cd apps/chat-delivery-service
+npm run lint          # Vérifier avec ESLint
+
+# Rust
+cargo fmt -- --check  # Vérifier le formatage
+cargo clippy          # Linter Rust
+```
+
+### Dependabot
+
+Le projet est configuré avec Dependabot pour maintenir les dépendances à jour :
+
+- **GitHub Actions** : Mise à jour hebdomadaire le lundi
+- **npm (Frontend & Services)** : Mise à jour hebdomadaire avec grouping des dépendances
+- **Cargo (Rust)** : Mise à jour hebdomadaire
+
+Les pull requests de Dependabot sont automatiquement testées via CI/CD.
+
+
 
 ## Démarrage Rapide
 

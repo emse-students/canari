@@ -1,0 +1,10 @@
+#!/bin/sh
+# Pre-commit hook for Canari project
+# Runs linting checks before commit
+
+bun run lint --quiet 2>/dev/null || {
+  echo "❌ Linting failed. Use 'bun run lint:fix' to auto-fix issues."
+  exit 1
+}
+
+exit 0

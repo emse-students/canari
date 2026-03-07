@@ -1,0 +1,14 @@
+{
+  "default": true,
+  "MD033": {
+    "allowed_elements": ["div", "img", "details", "summary", "strong", "br", "a"]
+  },
+  "MD013": false,
+  "MD041": false,
+  "MD036": false,
+  "MD029": {
+    "style": "ordered"
+  },
+  "MD040": false,
+  "no-hard-tabs": false
+}

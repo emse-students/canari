@@ -1,0 +1,99 @@
+version: 2
+updates:
+  # GitHub Actions
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+    commit-message:
+      prefix: 'chore(deps):'
+      include: 'scope'
+    labels:
+      - 'dependencies'
+      - 'github-actions'
+    open-pull-requests-limit: 5
+
+  # Frontend npm dependencies
+  - package-ecosystem: 'npm'
+    directory: '/frontend'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+    commit-message:
+      prefix: 'chore(deps):'
+      include: 'scope'
+    labels:
+      - 'dependencies'
+      - 'npm'
+      - 'frontend'
+    open-pull-requests-limit: 5
+    groups:
+      development-dependencies:
+        dependency-type: 'development'
+        update-types:
+          - 'minor'
+          - 'patch'
+      production-dependencies:
+        dependency-type: 'production'
+        update-types:
+          - 'patch'
+
+  # Auth Service npm dependencies
+  - package-ecosystem: 'npm'
+    directory: '/apps/auth-service'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+    commit-message:
+      prefix: 'chore(deps):'
+      include: 'scope'
+    labels:
+      - 'dependencies'
+      - 'npm'
+      - 'auth-service'
+    open-pull-requests-limit: 5
+
+  # Chat Delivery Service npm dependencies
+  - package-ecosystem: 'npm'
+    directory: '/apps/chat-delivery-service'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+    commit-message:
+      prefix: 'chore(deps):'
+      include: 'scope'
+    labels:
+      - 'dependencies'
+      - 'npm'
+      - 'chat-delivery-service'
+    open-pull-requests-limit: 5
+
+  # User Service npm dependencies
+  - package-ecosystem: 'npm'
+    directory: '/apps/user-service'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+    commit-message:
+      prefix: 'chore(deps):'
+      include: 'scope'
+    labels:
+      - 'dependencies'
+      - 'npm'
+      - 'user-service'
+    open-pull-requests-limit: 5
+
+  # Cargo dependencies
+  - package-ecosystem: 'cargo'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+    commit-message:
+      prefix: 'chore(deps):'
+      include: 'scope'
+    labels:
+      - 'dependencies'
+      - 'cargo'
+    open-pull-requests-limit: 5
