@@ -1,9 +1,21 @@
 # Généré automatiquement par : make nginx-install
 # Template source : infrastructure/nginx/canari.conf.template
 
+# Redirige HTTP → HTTPS
 server {
     listen 80;
     server_name ${DOMAIN};
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name ${DOMAIN};
+
+    ssl_certificate     /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
 
     # ── Frontend SvelteKit (build statique) ──────────────────────────────────
     root ${FRONTEND_BUILD_PATH};

@@ -1,4 +1,4 @@
-.PHONY: test test-libs test-gateway test-history clean nginx-install nginx-uninstall
+.PHONY: test test-libs test-gateway test-history clean nginx-install nginx-uninstall nginx-https
 
 # ── Configuration déploiement Nginx ───────────────────────────────────────────
 DOMAIN             ?= canari-emse.fr
@@ -90,3 +90,11 @@ nginx-uninstall:
 	@sudo rm -f $(NGINX_SITES_ENABLED)/$(NGINX_CONF_NAME) $(NGINX_SITES_AVAIL)/$(NGINX_CONF_NAME)
 	@sudo nginx -t && sudo systemctl reload nginx
 	@echo "${GREEN}✅ Config Nginx supprimée${RESET}"
+
+# Obtenir/renouveler un certificat Let's Encrypt puis réinstaller la config
+nginx-https:
+	@echo "${BLUE}🔒 Demande certificat Let's Encrypt pour $(DOMAIN)...${RESET}"
+	@sudo apt-get install -y certbot python3-certbot-nginx 2>/dev/null || true
+	@sudo certbot certonly --nginx -d $(DOMAIN) --non-interactive --agree-tos -m admin@$(DOMAIN)
+	@$(MAKE) nginx-install
+	@echo "${GREEN}✅ HTTPS activé pour $(DOMAIN)${RESET}"
