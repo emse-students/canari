@@ -147,102 +147,100 @@
       log("Conversations chargées !");
 
       // listener setup before connection to catch pending messages
-      // listener setup before connection to catch pending messages
       mls.onMessage(async (sender, content, groupId) => {
-        log(`Message reçu de ${sender} (${content.length} octets)`);
-        try {
-          // Normalize the sender ID since usernames are lowercase internally
-          const senderNorm = sender.toLowerCase();
-          const convo = conversations.get(senderNorm);
+        log(`Message reçu de ${sender} (${content.length} octets) groupe=${groupId}`);
+        const senderNorm = sender.toLowerCase();
 
-          if (convo) {
-            const decrypted = await mls.processIncomingMessage(
-              convo.groupId,
-              content,
-            );
+        // ── Step 1: find the conversation by groupId (reliable) or by sender (1-to-1 fallback) ──
+        let convoKey: string | undefined;
+        if (groupId) {
+          for (const [k, c] of conversations.entries()) {
+            if (c.groupId === groupId) { convoKey = k; break; }
+          }
+        }
+        if (!convoKey && conversations.has(senderNorm)) {
+          convoKey = senderNorm;
+        }
 
-            // Save state immediately after processing message!
+        // ── Step 2a: known conversation → process as MLS message, never fall through to welcome ──
+        if (convoKey) {
+          const convo = conversations.get(convoKey)!;
+          try {
+            const decrypted = await mls.processIncomingMessage(convo.groupId, content);
+
             try {
               const stateBytes = await mls.saveState(pin);
-              const hex = toHex(stateBytes);
-              localStorage.setItem("mls_autosave_" + userId, hex);
+              localStorage.setItem("mls_autosave_" + userId, toHex(stateBytes));
             } catch (saveErr) {
               log(`Avertissement: sauvegarde état échouée: ${saveErr}`);
             }
 
             if (decrypted) {
-              addMessageToChat(senderNorm, decrypted, false, senderNorm);
+              addMessageToChat(senderNorm, decrypted, false, convoKey);
             } else {
-              log(`Message de protocole traité pour ${senderNorm}.`);
+              log(`Message de protocole (commit/proposal) traité pour "${convoKey}".`);
             }
             return true;
-          } else {
-            // Treat as potential welcome message if contact unknown
-            throw new Error("Potential Welcome");
-          }
-        } catch (e) {
-          // Try as Welcome message
-          try {
-            const joinedGroupId = await mls.processWelcome(content);
-            // Since GroupID is now opaque (UUID), we can't extract contact from it.
-            // But the Welcome message comes from the inviter (sender).
-            // So the contact is effectively the sender.
-            const extractedContact = sender.toLowerCase();
-
-            // Create conversation if it doesn't exist
-            if (!conversations.has(extractedContact)) {
-              log(`✨ Nouvelle conversation initiée par ${extractedContact}`);
-              // Note: We don't have the group Name here unless we fetch it.
-              // For now, default to contact name.
-              conversations.set(extractedContact, {
-                contactName: extractedContact,
-                name: extractedContact, // Placeholder name
-                groupId: joinedGroupId,
-                messages: [],
-                isReady: true,
-                mlsStateHex: null,
-              });
-            }
-
-            if (conversations.has(extractedContact)) {
-              const c = conversations.get(extractedContact)!;
-              // Ensure groupId matches if re-joining logic overlaps
-              if (c.groupId !== joinedGroupId) {
-                  log(`Warning: Mismatch group ID for contact ${extractedContact}. Updating...`);
-              }
-              const updatedC = { ...c, isReady: true, groupId: joinedGroupId };
-              conversations.set(extractedContact, updatedC);
-              saveConversation(extractedContact);
-
-              // Save MLS state after processing Welcome (critical for crypto sync)
-              try {
-                const stateBytes = await mls.saveState(pin);
-                const hex = toHex(stateBytes);
-                localStorage.setItem("mls_autosave_" + userId, hex);
-              } catch (e) {
-                log(
-                  `Avertissement: sauvegarde état échouée après Welcome: ${e}`,
-                );
-              }
-
-              log(`✅ Handshake complété avec ${extractedContact}`);
-              loadHistoryForConversation(extractedContact, joinedGroupId);
-              conversations = new Map(conversations); // Reactivity
-              return true;
-            } else {
-              log(
-                `⚠️ Welcome reçu pour groupe inconnu: ${joinedGroupId} (contact: ${extractedContact})`,
-              );
-              return false;
-            }
-          } catch (e2) {
-            if (conversations.has(sender.toLowerCase())) {
-              log(`Erreur traitement message: ${e2}`);
-            } else {
-              log(`Message ignoré de ${sender} (inconnu)`);
-            }
+          } catch (e) {
+            // processIncomingMessage threw — log and stop. Do NOT try processWelcome on known-group bytes.
+            log(`Erreur traitement message dans groupe connu "${convoKey}": ${e}`);
             return false;
           }
+        }
+
+        // ── Step 2b: unknown conversation → must be a Welcome message ──
+        try {
+          const joinedGroupId = await mls.processWelcome(content);
+          const extractedContact = senderNorm;
+
+          // groupId from the message metadata (sent explicitly by the inviter) is the
+          // canonical key in the delivery service DB. Prefer it over what processWelcome
+          // returns (same UUID, but avoid any encoding mismatch).
+          const lookupGroupId = groupId || joinedGroupId;
+
+          // Fetch the real group name from the server
+          let groupName = extractedContact;
+          try {
+            const gRes = await fetch(`http://localhost:3001/mls-api/groups/${lookupGroupId}`);
+            if (gRes.ok) {
+              const gData = await gRes.json();
+              if (gData?.name) groupName = gData.name;
+              else log(`⚠️ Groupe ${lookupGroupId} trouvé mais sans nom`);
+            } else {
+              log(`⚠️ Groupe ${lookupGroupId} introuvable sur le serveur (${gRes.status})`);
+            }
+          } catch (e) {
+            log(`⚠️ Impossible de récupérer le nom du groupe: ${e}`);
+          }
+
+          if (!conversations.has(extractedContact)) {
+            log(`✨ Nouvelle conversation avec ${extractedContact} (groupe: ${groupName})`);
+            conversations.set(extractedContact, {
+              contactName: extractedContact,
+              name: groupName,
+              groupId: joinedGroupId,
+              messages: [],
+              isReady: true,
+              mlsStateHex: null,
+            });
+          }
+
+          const c = conversations.get(extractedContact)!;
+          conversations.set(extractedContact, { ...c, isReady: true, groupId: joinedGroupId, name: groupName });
+          saveConversation(extractedContact);
+
+          try {
+            const stateBytes = await mls.saveState(pin);
+            localStorage.setItem("mls_autosave_" + userId, toHex(stateBytes));
+          } catch (_) {}
+
+          log(`✅ Handshake complété avec ${extractedContact} (groupe: ${groupName})`);
+          loadHistoryForConversation(extractedContact, joinedGroupId);
+          conversations = new Map(conversations);
+          return true;
+        } catch (e2) {
+          log(`Message ignoré de ${sender} (groupe inconnu, pas un welcome valide: ${e2})`);
+          return false;
         }
       });
 
@@ -460,6 +458,9 @@
               return;
           }
 
+          // Ensure the inviter (ourselves) is also registered so messages route back to us.
+          await mls.registerMember(groupId, userId, mls.getDeviceId());
+
           const result = await mls.addMember(groupId, target.keyPackage);
           await mls.registerMember(groupId, targetUser, target.deviceId);
 
@@ -516,6 +517,9 @@
     try {
       log(`Initialisation locale du groupe ${groupId}...`);
       await mls.createGroup(groupId);
+
+      // Register self as a member so the gateway can route messages from the other party back to us.
+      await mls.registerMember(groupId, userId, mls.getDeviceId());
       
       // Persist state after group creation
       try {
@@ -844,9 +848,9 @@
                 : ''}"
               onclick={() => (selectedContact = name)}
             >
-              <div class="contact-avatar">{name[0].toUpperCase()}</div>
+              <div class="contact-avatar">{(convo.name || name)[0].toUpperCase()}</div>
               <div class="contact-info">
-                <div class="contact-name">{name}</div>
+                <div class="contact-name">{convo.name || name}</div>
                 <div class="contact-preview">
                   {#if convo.isReady}
                     {#if convo.messages.length > 0}
