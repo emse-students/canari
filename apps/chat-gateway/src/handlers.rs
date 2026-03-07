@@ -239,13 +239,11 @@ async fn handle_socket(
                                                 let r_uid = parts[0].to_string();
                                                 let r_did = parts[1].to_string();
 
-                                                // Exclude sender's current device (allow others for sync)
-                                                if !(r_uid == user_id && r_did == device_id) {
-                                                    target_recipients.push(Recipient {
-                                                        user_id: r_uid,
-                                                        device_id: Some(r_did),
-                                                    });
-                                                }
+                                                target_recipients.push(Recipient {
+                                                    user_id: r_uid,
+                                                    device_id: Some(r_did),
+                                                });
+                                                
                                             }
                                         }
                                     } else {

@@ -47,17 +47,6 @@ export class WebMlsService implements IMlsService {
                     let base64Content: string | null = null;
                     const senderId: string = data.senderId || data.sender_id || "unknown";
 
-                    // Filter out same-device echo only.
-                    // Messages from our OTHER devices must pass through so they are
-                    // displayed and the MLS state is advanced on all devices.
-                    if (senderId === this.userId) {
-                        const isSameDevice = !data.senderDeviceId || data.senderDeviceId === this.deviceId;
-                        if (isSameDevice) {
-                            console.debug(`Filtering out own message echo (same device)`);
-                            return;
-                        }
-                    }
-
                     if (data.type === "mlsWelcome" && data.content) {
                         // Welcome message pour rejoindre un groupe
                         base64Content = data.content;
@@ -282,6 +271,7 @@ export class WebMlsService implements IMlsService {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     senderId: this.userId,
+                    senderDeviceId: this.deviceId,
                     groupId: groupId,
                     content: base64,
                     type: 'handshake'

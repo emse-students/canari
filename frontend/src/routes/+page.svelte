@@ -176,7 +176,7 @@
               // Silent fallback if autosave fails
             }
 
-            if (decrypted) addMessageToChat(senderNorm, decrypted, false, convoKey);
+            if (decrypted) addMessageToChat(senderNorm, decrypted, convoKey);
             return true;
           } catch (_e) {
             log(`Erreur message (groupe connu): ${_e}`);
@@ -303,7 +303,7 @@
 
             const decrypted = await mlsService.processIncomingMessage(groupId, bytes);
             if (decrypted) {
-              addMessageToChat(msg.sender_id, decrypted, false, contactName);
+              addMessageToChat(msg.sender_id, decrypted, contactName);
               addedMsg++;
               mlsUpdated = true;
             }
@@ -556,12 +556,13 @@
   function addMessageToChat(
     senderId: string,
     content: string,
-    isOwn: boolean,
     contactName: string
   ) {
     const normalized = contactName.toLowerCase();
     const convo = conversations.get(normalized);
     if (!convo) return;
+
+    const isOwn = senderId.toLowerCase() === userId.toLowerCase();
 
     const newMsg: ChatMessage = {
       id: crypto.randomUUID(),
@@ -595,7 +596,7 @@
       await mlsService.sendMessage(convo.groupId, text);
       const stateBytes = await mlsService.saveState(pin);
       localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
-      addMessageToChat(userId, text, true, selectedContact);
+      addMessageToChat(userId, text, selectedContact);
     } catch (_e: unknown) {
       const msg = _e instanceof Error ? _e.message : String(_e);
       log(`Erreur envoi: ${msg}`);
