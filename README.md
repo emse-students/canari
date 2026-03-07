@@ -325,6 +325,8 @@ Chaque `push` sur `main` déclenche automatiquement :
 
 ### Configuration du Déploiement
 
+📖 **Guide complet avec instructions visuelles** : [GITHUB_SECRETS_SETUP.md](docs/GITHUB_SECRETS_SETUP.md)
+
 1. **GitHub Secrets** (Settings → Secrets → Actions)
 
 ```
@@ -429,6 +431,7 @@ canari/
 - **[CHIFFREMENT.md](docs/CHIFFREMENT.md)** - Protocole MLS et chiffrement E2E
 - **[MULTI_DEVICE.md](docs/MULTI_DEVICE.md)** - Synchronisation multi-device
 - **[CI_CD.md](docs/CI_CD.md)** - Configuration CI/CD et déploiement
+- **[GITHUB_SECRETS_SETUP.md](docs/GITHUB_SECRETS_SETUP.md)** - Guide complet des secrets GitHub
 
 ---
 
