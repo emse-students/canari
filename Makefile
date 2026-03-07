@@ -1,4 +1,4 @@
-.PHONY: test test-libs test-gateway test-history clean nginx-install nginx-uninstall nginx-https
+.PHONY: install install-frontend install-services test test-libs test-gateway test-history clean nginx-install nginx-uninstall nginx-https
 
 # ── Configuration déploiement Nginx ───────────────────────────────────────────
 DOMAIN             ?= canari-emse.fr
@@ -40,6 +40,27 @@ else
         cargo test; \
     fi
 endif
+
+# ── Installation des dépendances ──────────────────────────────────────────────
+install: install-frontend install-services
+
+install-frontend:
+	@echo "${BLUE}📦 Installing frontend dependencies...${RESET}"
+	@cd frontend && npm install
+	@echo "${BLUE}🔄 Running svelte-kit sync...${RESET}"
+	@cd frontend && npx svelte-kit sync
+	@echo "${GREEN}✅ Frontend prêt${RESET}"
+
+install-services:
+	@echo "${BLUE}📦 Installing shared-ts dependencies...${RESET}"
+	@cd libs/shared-ts && npm install
+	@echo "${BLUE}📦 Installing auth-service dependencies...${RESET}"
+	@cd apps/auth-service && npm install
+	@echo "${BLUE}📦 Installing user-service dependencies...${RESET}"
+	@cd apps/user-service && npm install
+	@echo "${BLUE}📦 Installing chat-delivery-service dependencies...${RESET}"
+	@cd apps/chat-delivery-service && npm install
+	@echo "${GREEN}✅ Services Node.js prêts${RESET}"
 
 # Cible principale
 test: test-libs test-gateway test-history
