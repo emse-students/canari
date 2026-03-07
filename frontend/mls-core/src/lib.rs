@@ -27,6 +27,8 @@ pub enum MlsError {
     InvalidData,
 }
 
+type AddMembersBulkResult = (Vec<u8>, Option<Vec<u8>>, usize);
+
 // --- 1. LE MODÈLE DE PERSISTANCE (DISQUE) ---
 
 #[derive(Serialize, Deserialize)]
@@ -185,7 +187,7 @@ impl MlsManager {
         &mut self,
         group_id: &str,
         key_packages_bytes: &[&[u8]],
-    ) -> Result<(Vec<u8>, Option<Vec<u8>>, usize), MlsError> {
+    ) -> Result<AddMembersBulkResult, MlsError> {
         let group = self
             .groups
             .get_mut(group_id)
