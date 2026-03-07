@@ -11,7 +11,6 @@ export interface IMlsService {
     
     // Networking
     connect(token: string): Promise<void>;
-    fetchKeyPackage(userId: string): Promise<{ keyPackage: Uint8Array, deviceId: string } | null>;
     fetchUserDevices(userId: string): Promise<Array<{ keyPackage: Uint8Array, deviceId: string }>>;
     publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void>;
     sendWelcome(welcomeBytes: Uint8Array, targetUserId: string, groupId: string, targetDeviceId?: string): Promise<void>;

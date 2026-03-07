@@ -459,28 +459,30 @@
 
       log(`Invitation de ${targetUser}...`);
       try {
-          const target = await mls.fetchKeyPackage(targetUser);
-          if (!target) {
+          // Ensure the inviter (ourselves) is also registered so messages route back to us.
+          await mls.registerMember(groupId, userId, mls.getDeviceId());
+
+          const devices = await mls.fetchUserDevices(targetUser);
+          if (devices.length === 0) {
               log(`Impossible de trouver ${targetUser}.`);
               return;
           }
 
-          // Ensure the inviter (ourselves) is also registered so messages route back to us.
-          await mls.registerMember(groupId, userId, mls.getDeviceId());
+          for (const device of devices) {
+              const result = await mls.addMember(groupId, device.keyPackage);
+              await mls.registerMember(groupId, targetUser, device.deviceId);
 
-          const result = await mls.addMember(groupId, target.keyPackage);
-          await mls.registerMember(groupId, targetUser, target.deviceId);
+              const stateBytes = await mls.saveState(pin);
+              const hex = toHex(stateBytes);
+              localStorage.setItem("mls_autosave_" + userId, hex);
 
-          const stateBytes = await mls.saveState(pin);
-          const hex = toHex(stateBytes);
-          localStorage.setItem("mls_autosave_" + userId, hex);
-          
-          if (result.welcome) {
-              await mls.sendWelcome(result.welcome!, targetUser, groupId, target.deviceId);
-              log(`Welcome envoyé à ${targetUser} (device: ${target.deviceId}).`);
+              if (result.welcome) {
+                  await mls.sendWelcome(result.welcome!, targetUser, groupId, device.deviceId);
+                  log(`Welcome envoyé à ${targetUser} (device: ${device.deviceId}).`);
+              }
           }
 
-          log(`${targetUser} ajouté avec succès.`);
+          log(`${targetUser} ajouté avec succès (${devices.length} appareil(s)).`);
       } catch(e) {
           log(`Erreur invitation: ${e}`);
       }
@@ -536,10 +538,6 @@
       } catch (e) {
         log(`Erreur sauvegarde état: ${e}`);
       }
-
-      // Try to fetch existing KeyPackage first (asynchronous mode)
-      log(`Recherche du KeyPackage pour ${contact}...`);
-      const target = await mls.fetchKeyPackage(contact);
 
       // Try to fetch existing KeyPackages for ALL devices
       log(`Recherche des appareils pour ${contact}...`);

@@ -170,12 +170,6 @@ export class WebMlsService implements IMlsService {
         return false;
     }
 
-    async fetchKeyPackage(userId: string): Promise<{ keyPackage: Uint8Array, deviceId: string } | null> {
-        const devices = await this.fetchUserDevices(userId);
-        if (devices.length === 0) return null;
-        return devices[0];
-    }
-
     async fetchUserDevices(userId: string): Promise<Array<{ keyPackage: Uint8Array, deviceId: string }>> {
         try {
             const res = await fetch(`${this.historyUrl}/mls-api/devices/${userId}`);
