@@ -128,6 +128,9 @@ jobs:
     runs-on: self-hosted
     needs: build-docker-images
     if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: read
     environment:
       name: production
       url: https://${{ env.DOMAIN }}
@@ -164,6 +167,20 @@ jobs:
             echo "Runner user must be in docker group or have passwordless sudo for docker"
             exit 1
           fi
+
+      - name: Authenticate to GHCR
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          echo "🔐 Logging into GHCR..."
+          if [ "$DOCKER_CLI" = "docker" ]; then
+            echo "$GHCR_TOKEN" | docker login "$REGISTRY" -u "$GHCR_USERNAME" --password-stdin
+          else
+            echo "$GHCR_TOKEN" | sudo docker login "$REGISTRY" -u "$GHCR_USERNAME" --password-stdin
+          fi
+          echo "✅ GHCR authentication successful"
 
       - name: Navigate to deployment directory
         run: |
