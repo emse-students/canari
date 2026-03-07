@@ -99,7 +99,7 @@ async fn handle_socket(
     {
         let mut map = state.connected_users.lock().unwrap();
         map.entry(conn_key.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(tx);
         tracing::info!(
             "Registered connection key: {} ({} active)",
@@ -195,25 +195,24 @@ async fn handle_socket(
                                         .await;
 
                                     // 1b. Add to Redis Stream History (Upstream Feature)
-                                    if let Some(ref gid) = group_id {
-                                        if let Ok(mut con) = state
+                                    if let Some(ref gid) = group_id
+                                        && let Ok(mut con) = state
                                             .redis_client
                                             .get_multiplexed_async_connection()
                                             .await
-                                        {
-                                            let stream_key = format!("history:{}", gid);
-                                            let _: Result<String, _> = redis::cmd("XADD")
-                                                .arg(&stream_key)
-                                                .arg("*")
-                                                .arg("sender_id")
-                                                .arg(user_id.clone())
-                                                .arg("content")
-                                                .arg(payload.clone())
-                                                .arg("timestamp")
-                                                .arg(Utc::now().to_rfc3339())
-                                                .query_async(&mut con)
-                                                .await;
-                                        }
+                                    {
+                                        let stream_key = format!("history:{}", gid);
+                                        let _: Result<String, _> = redis::cmd("XADD")
+                                            .arg(&stream_key)
+                                            .arg("*")
+                                            .arg("sender_id")
+                                            .arg(user_id.clone())
+                                            .arg("content")
+                                            .arg(payload.clone())
+                                            .arg("timestamp")
+                                            .arg(Utc::now().to_rfc3339())
+                                            .query_async(&mut con)
+                                            .await;
                                     }
                                 }
 
@@ -222,46 +221,44 @@ async fn handle_socket(
                                     recipients.clone().unwrap_or_default();
 
                                 // If explicit recipients missing, fetch from Group Members (Redis)
-                                if target_recipients.is_empty() {
-                                    if let Some(gid) = &group_id {
-                                        if let Ok(mut con) = state
-                                            .redis_client
-                                            .get_multiplexed_async_connection()
-                                            .await
-                                        {
-                                            let key = format!("group:members:{}", gid);
-                                            // Get members from Redis Set
-                                            if let Ok(members) =
-                                                con.smembers::<_, Vec<String>>(&key).await
-                                            {
-                                                tracing::info!(
-                                                    "Found {} members in Group {:?}",
-                                                    members.len(),
-                                                    gid
-                                                );
-                                                for m in members {
-                                                    let parts: Vec<&str> = m.split(':').collect();
-                                                    if parts.len() == 2 {
-                                                        let r_uid = parts[0].to_string();
-                                                        let r_did = parts[1].to_string();
+                                if target_recipients.is_empty()
+                                    && let Some(gid) = &group_id
+                                    && let Ok(mut con) = state
+                                        .redis_client
+                                        .get_multiplexed_async_connection()
+                                        .await
+                                {
+                                    let key = format!("group:members:{}", gid);
+                                    // Get members from Redis Set
+                                    if let Ok(members) =
+                                        con.smembers::<_, Vec<String>>(&key).await
+                                    {
+                                        tracing::info!(
+                                            "Found {} members in Group {:?}",
+                                            members.len(),
+                                            gid
+                                        );
+                                        for m in members {
+                                            let parts: Vec<&str> = m.split(':').collect();
+                                            if parts.len() == 2 {
+                                                let r_uid = parts[0].to_string();
+                                                let r_did = parts[1].to_string();
 
-                                                        // Exclude sender's current device (allow others for sync)
-                                                        if !(r_uid == user_id && r_did == device_id)
-                                                        {
-                                                            target_recipients.push(Recipient {
-                                                                user_id: r_uid,
-                                                                device_id: Some(r_did),
-                                                            });
-                                                        }
-                                                    }
+                                                // Exclude sender's current device (allow others for sync)
+                                                if !(r_uid == user_id && r_did == device_id)
+                                                {
+                                                    target_recipients.push(Recipient {
+                                                        user_id: r_uid,
+                                                        device_id: Some(r_did),
+                                                    });
                                                 }
-                                            } else {
-                                                tracing::warn!(
-                                                    "Failed to fetch members for Group {:?}",
-                                                    gid
-                                                );
                                             }
                                         }
+                                    } else {
+                                        tracing::warn!(
+                                            "Failed to fetch members for Group {:?}",
+                                            gid
+                                        );
                                     }
                                 }
 
@@ -299,32 +296,29 @@ async fn handle_socket(
                                                 .redis_client
                                                 .get_multiplexed_async_connection()
                                                 .await
-                                            {
-                                                if let Ok(exists) =
+                                                && let Ok(exists) =
                                                     con.exists::<_, bool>(&redis_presence_key).await
-                                                {
-                                                    if exists {
-                                                        is_online = true;
-                                                        tracing::info!(
-                                                            "Recipient {} is ONLINE. Publishing to Redis.",
-                                                            target_key
-                                                        );
-                                                        let packet = serde_json::json!({
-                                                            "recipientId": recipient.user_id,
-                                                            "deviceId": d_id,
-                                                            "content": payload,
-                                                            "senderId": user_id,
-                                                            "senderDeviceId": device_id,
-                                                            "groupId": group_id
-                                                        });
-                                                        let _: Result<(), _> = con
-                                                            .publish(
-                                                                "chat:messages",
-                                                                packet.to_string(),
-                                                            )
-                                                            .await;
-                                                    }
-                                                }
+                                                && exists
+                                            {
+                                                is_online = true;
+                                                tracing::info!(
+                                                    "Recipient {} is ONLINE. Publishing to Redis.",
+                                                    target_key
+                                                );
+                                                let packet = serde_json::json!({
+                                                    "recipientId": recipient.user_id,
+                                                    "deviceId": d_id,
+                                                    "content": payload,
+                                                    "senderId": user_id,
+                                                    "senderDeviceId": device_id,
+                                                    "groupId": group_id
+                                                });
+                                                let _: Result<(), _> = con
+                                                    .publish(
+                                                        "chat:messages",
+                                                        packet.to_string(),
+                                                    )
+                                                    .await;
                                             }
 
                                             if !is_online {
@@ -398,23 +392,21 @@ async fn handle_socket(
                                             .redis_client
                                             .get_multiplexed_async_connection()
                                             .await
-                                        {
-                                            if let Ok(true) =
+                                            && let Ok(true) =
                                                 con.exists::<_, bool>(&redis_presence_key).await
-                                            {
-                                                let packet = serde_json::json!({
-                                                    "recipientId": recipient.user_id,
-                                                    "deviceId": d_id,
-                                                    "content": payload, // Base64 Welcome
-                                                    "type": "mlsWelcome", // Tag it so client knows
-                                                    "senderId": user_id,
-                                                    "groupId": group_id
-                                                });
-                                                let _: Result<(), _> = con
-                                                    .publish("chat:messages", packet.to_string())
-                                                    .await;
-                                                sent = true;
-                                            }
+                                        {
+                                            let packet = serde_json::json!({
+                                                "recipientId": recipient.user_id,
+                                                "deviceId": d_id,
+                                                "content": payload, // Base64 Welcome
+                                                "type": "mlsWelcome", // Tag it so client knows
+                                                "senderId": user_id,
+                                                "groupId": group_id
+                                            });
+                                            let _: Result<(), _> = con
+                                                .publish("chat:messages", packet.to_string())
+                                                .await;
+                                            sent = true;
                                         }
 
                                         if !sent {
