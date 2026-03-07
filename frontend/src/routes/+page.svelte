@@ -66,7 +66,13 @@
   let currentMessages = $derived(currentConvo?.messages ?? []);
 
   // Service MLS
-  let mls: IMlsService;
+  let mls: IMlsService | null = $state(null);
+
+  // Helper to ensure MLS service exists
+  function ensureMls(): IMlsService {
+    if (!mls) throw new Error("MLS Service not initialized");
+    return mls;
+  }
 
   const historyBaseUrl = (() => {
     const env = import.meta.env.VITE_HISTORY_URL;
@@ -138,8 +144,8 @@
     userId = userId.trim().toLowerCase();
 
     try {
-      if (!mls) throw new Error("Service non initialisé.");
-
+      const mlsService = ensureMls(); // Ensure MLS is initialized
+      
       log("Initialisation MLS...");
       let stateBytes: Uint8Array | undefined;
       const saved = localStorage.getItem("mls_autosave_" + userId);
@@ -148,15 +154,15 @@
         log("État chargé depuis le stockage local.");
       }
 
-      await mls.init(userId, pin, stateBytes);
-      myDeviceId = mls.getDeviceId();
+      await mlsService.init(userId, pin, stateBytes);
+      myDeviceId = mlsService.getDeviceId();
       log(`Identité MLS initialisée (device: ${myDeviceId})`);
 
       isLoggedIn = true;
       loadExistingConversations();
 
       // Listener de messages
-      mls.onMessage(async (sender, content, groupId) => {
+      mls.onMessage(async (sender, content, groupId): Promise<boolean> => {
         log(
           `Message de ${sender} (${content.length} octets) - Grp: ${groupId}`,
         );
@@ -208,9 +214,12 @@
             if (gRes.ok) {
               const gData = await gRes.json();
               if (gData?.name) groupName = gData.name;
-            } catch (e) {
-              // Silent fallback if group metadata fetch fails
             }
+          } catch (e) {
+            // Silent fallback if group metadata fetch fails
+          }
+
+          conversations.set(senderNorm, {
             contactName: senderNorm,
             name: groupName,
             groupId: joinedGroupId,
@@ -227,6 +236,8 @@
           } catch (e) {
             // Silent fallback if autosave fails
           }
+
+          log(`✅ Handshake complété avec ${senderNorm}`);
           loadHistoryForConversation(senderNorm, joinedGroupId);
           return true;
         } catch (e2) {
@@ -253,6 +264,7 @@
       } catch (e) {
         // Silent fallback if key package generation fails
       }
+    } catch (e: any) {
       loginError = e.message || String(e);
       log(`Erreur: ${loginError}`);
     } finally {
@@ -283,7 +295,7 @@
       JSON.stringify({
         groupId: convo.groupId,
         name: convo.name,
-        messages: convo.messages.map((m) => ({
+        messages: convo.messages.map((m: ChatMessage) => ({
           ...m,
           timestamp: m.timestamp.toISOString(),
         })),
