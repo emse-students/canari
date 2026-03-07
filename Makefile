@@ -46,9 +46,9 @@ install: install-frontend install-services
 
 install-frontend:
 	@echo "${BLUE}📦 Installing frontend dependencies...${RESET}"
-	@cd frontend && npm install
+	@cd frontend && bun install
 	@echo "${BLUE}🔄 Running svelte-kit sync...${RESET}"
-	@cd frontend && npx svelte-kit sync
+	@cd frontend && bunx svelte-kit sync
 	@echo "${GREEN}✅ Frontend prêt${RESET}"
 
 install-services:
