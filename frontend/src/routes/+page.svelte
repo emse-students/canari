@@ -459,19 +459,24 @@
       await mls.createGroup(groupId);
       await mls.registerMember(groupId, userId, mls.getDeviceId());
 
-      // Add own other devices so they can receive messages on this group too
+      // Add own other devices so they can receive messages on this group too (single epoch)
       const ownDevices = (await mls.fetchUserDevices(userId)).filter(
         (d) => d.deviceId !== mls.getDeviceId(),
       );
-      for (const device of ownDevices) {
+      if (ownDevices.length > 0) {
         try {
-          const result = await mls.addMember(groupId, device.keyPackage);
-          await mls.registerMember(groupId, userId, device.deviceId);
-          if (result.welcome) {
-            await mls.sendWelcome(result.welcome!, userId, groupId, device.deviceId);
+          const bulk = await mls.addMembersBulk(groupId, ownDevices);
+          for (const did of bulk.addedDeviceIds) {
+            await mls.registerMember(groupId, userId, did);
+          }
+          if (bulk.welcome) {
+            // Single welcome covers all own devices — send one per device but same bytes
+            for (const did of bulk.addedDeviceIds) {
+              await mls.sendWelcome(bulk.welcome, userId, groupId, did);
+            }
           }
         } catch (e) {
-          log(`Avertissement: impossible d'ajouter l'appareil ${device.deviceId}: ${e}`);
+          log(`Avertissement: ajout de ses propres appareils échoué: ${e}`);
         }
       }
 
@@ -516,28 +521,29 @@
         return;
       }
 
-      for (const device of devices) {
-        const result = await mls.addMember(groupId, device.keyPackage);
-      log(`Appareil ${device.deviceId} de ${targetUser} ajouté au groupe.`);
-      log(`Info: Welcome=${!!result.welcome}, Commit=${!!result.commit}`);
-        await mls.registerMember(groupId, targetUser, device.deviceId);
+      let added = 0;
+      try {
+        const bulk = await mls.addMembersBulk(groupId, devices);
+        added = bulk.addedDeviceIds.length;
+        for (const did of bulk.addedDeviceIds) {
+          await mls.registerMember(groupId, targetUser, did);
+        }
 
         const stateBytes = await mls.saveState(pin);
         const hex = toHex(stateBytes);
         localStorage.setItem("mls_autosave_" + userId, hex);
 
-        if (result.welcome) {
-          await mls.sendWelcome(
-            result.welcome!,
-            targetUser,
-            groupId,
-            device.deviceId,
-          );
-          log(`Welcome envoyé à ${targetUser} (device: ${device.deviceId}).`);
+        if (bulk.welcome) {
+          for (const did of bulk.addedDeviceIds) {
+            await mls.sendWelcome(bulk.welcome, targetUser, groupId, did);
+            log(`Welcome envoyé à ${targetUser} (device: ${did}).`);
+          }
         }
+      } catch (e) {
+        log(`Erreur lors de l'ajout des appareils: ${e}`);
       }
 
-      log(`${targetUser} ajouté avec succès (${devices.length} appareil(s)).`);
+      log(`${targetUser} ajouté avec succès (${added}/${devices.length} appareil(s)).`);
     } catch (e) {
       log(`Erreur invitation: ${e}`);
     }
@@ -585,19 +591,23 @@
       // Register self (current device)
       await mls.registerMember(groupId, userId, mls.getDeviceId());
 
-      // Add own other devices so they sync this group too
+      // Add own other devices so they sync this group too (single epoch)
       const ownDevices = (await mls.fetchUserDevices(userId)).filter(
         (d) => d.deviceId !== mls.getDeviceId(),
       );
-      for (const device of ownDevices) {
+      if (ownDevices.length > 0) {
         try {
-          const result = await mls.addMember(groupId, device.keyPackage);
-          await mls.registerMember(groupId, userId, device.deviceId);
-          if (result.welcome) {
-            await mls.sendWelcome(result.welcome!, userId, groupId, device.deviceId);
+          const bulk = await mls.addMembersBulk(groupId, ownDevices);
+          for (const did of bulk.addedDeviceIds) {
+            await mls.registerMember(groupId, userId, did);
+          }
+          if (bulk.welcome) {
+            for (const did of bulk.addedDeviceIds) {
+              await mls.sendWelcome(bulk.welcome, userId, groupId, did);
+            }
           }
         } catch (e) {
-          log(`Avertissement: impossible d'ajouter l'appareil ${device.deviceId}: ${e}`);
+          log(`Avertissement: ajout de ses propres appareils échoué: ${e}`);
         }
       }
 
@@ -619,52 +629,44 @@
           `${devices.length} appareil(s) trouvé(s) pour ${contact}. Ajout au groupe...`,
         );
 
-        for (const device of devices) {
-          try {
-            log(`Ajout de l'appareil ${device.deviceId}...`);
-            const result = await mls.addMember(groupId, device.keyPackage);
+        try {
+          const bulk = await mls.addMembersBulk(groupId, devices);
 
-            // Register members to backend so gateway can route future messages
-            await mls.registerMember(groupId, contact, device.deviceId);
+          for (const did of bulk.addedDeviceIds) {
+            await mls.registerMember(groupId, contact, did);
+          }
 
-            // Save state immediately after adding member
-            const stateBytes = await mls.saveState(pin);
-            const hex = toHex(stateBytes);
-            localStorage.setItem("mls_autosave_" + userId, hex);
+          const stateBytes = await mls.saveState(pin);
+          const hex = toHex(stateBytes);
+          localStorage.setItem("mls_autosave_" + userId, hex);
 
-            if (result.welcome) {
+          if (bulk.welcome) {
+            const welcomeB64 = btoa(String.fromCharCode(...bulk.welcome));
+            for (const did of bulk.addedDeviceIds) {
               const wRes = await fetch(`${historyBaseUrl}/mls-api/welcome`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                  targetDeviceId: device.deviceId,
+                  targetDeviceId: did,
                   targetUserId: contact,
                   senderUserId: userId,
-                  welcomePayload: btoa(String.fromCharCode(...result.welcome!)),
+                  welcomePayload: welcomeB64,
                   groupId: groupId,
                 }),
               });
               if (!wRes.ok) {
-                log(
-                  `⚠️ Erreur envoi welcome (${wRes.status}): ${await wRes.text()}`,
-                );
+                log(`⚠️ Erreur envoi welcome (${wRes.status}): ${await wRes.text()}`);
               } else {
-                log(`Welcome envoyé à ${contact} (device: ${device.deviceId})`);
+                log(`Welcome envoyé à ${contact} (device: ${did})`);
               }
             }
-
-            // Broadcast COMMIT to existing members (if any other than me)
-            // In a new group, it's just me and the new member(s).
-            // But for group consistency, we must broadcast the commit if there were other members.
-            // The gateway will route it.
-            if (result.commit) {
-              // Prefer WebSocket for COMMIT messages to be instant
-              log(`Diffusion du Commit via WebSocket pour ${device.deviceId}`);
-              await mls.sendCommit(result.commit, groupId);
-            }
-          } catch (e) {
-            log(`Erreur lors de l'ajout du device ${device.deviceId}: ${e}`);
           }
+
+          if (bulk.commit) {
+            await mls.sendCommit(bulk.commit, groupId);
+          }
+        } catch (e) {
+          log(`Erreur lors de l'ajout des appareils de ${contact}: ${e}`);
         }
 
         const convo = conversations.get(contact);

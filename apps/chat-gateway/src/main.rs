@@ -77,15 +77,16 @@ async fn main() {
                          ) {
                              let key = format!("{}:{}", recipient_id, device_id);
                              
-                             // Send to specific connection
-                             let tx = {
+                             // Send to ALL active connections for this key (multi-tab support)
+                             let senders = {
                                  let map = connected_users.lock().unwrap();
                                  map.get(&key).cloned()
                              };
  
-                             if let Some(tx) = tx {
-                                 // Forward the FULL JSON packet so client has metadata (type, senderId, etc.)
-                                 let _ = tx.send(payload_str.clone());
+                             if let Some(senders) = senders {
+                                 for tx in &senders {
+                                     let _ = tx.send(payload_str.clone());
+                                 }
                              }
                          }
                      }

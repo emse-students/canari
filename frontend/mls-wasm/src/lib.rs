@@ -132,13 +132,53 @@ impl WasmMlsClient {
 
         let array = js_sys::Array::new();
         array.push(&js_sys::Uint8Array::from(&commit[..]));
-
         if let Some(w) = welcome {
             array.push(&js_sys::Uint8Array::from(&w[..]));
         } else {
             array.push(&JsValue::UNDEFINED);
         }
+        Ok(array)
+    }
 
+    /// Add multiple members in a single commit (single epoch increment).
+    /// `key_packages` is a JS Array of Uint8Array.
+    /// Returns [commit: Uint8Array, welcome: Uint8Array, added_count: number].
+    #[wasm_bindgen]
+    pub fn add_members_bulk(
+        &mut self,
+        group_id: String,
+        key_packages: js_sys::Array,
+    ) -> Result<js_sys::Array, JsValue> {
+        log::info!(
+            "add_members_bulk to group: {} ({} key packages)",
+            group_id,
+            key_packages.length()
+        );
+
+        // Convert JS Array<Uint8Array> -> Vec<Vec<u8>>
+        let kp_vecs: Vec<Vec<u8>> = key_packages
+            .iter()
+            .filter_map(|v| {
+                let arr = js_sys::Uint8Array::from(v);
+                if arr.length() == 0 { None } else { Some(arr.to_vec()) }
+            })
+            .collect();
+
+        let kp_slices: Vec<&[u8]> = kp_vecs.iter().map(|v| v.as_slice()).collect();
+
+        let (commit, welcome, added) = self
+            .manager
+            .add_members_bulk(&group_id, &kp_slices)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        let array = js_sys::Array::new();
+        array.push(&js_sys::Uint8Array::from(&commit[..]));
+        if let Some(w) = welcome {
+            array.push(&js_sys::Uint8Array::from(&w[..]));
+        } else {
+            array.push(&JsValue::UNDEFINED);
+        }
+        array.push(&JsValue::from_f64(added as f64));
         Ok(array)
     }
 

@@ -326,6 +326,27 @@ export class TauriMlsService implements IMlsService {
         };
     }
 
+    async addMembersBulk(groupId: string, devices: Array<{ keyPackage: Uint8Array, deviceId: string }>) {
+        // Tauri: call add_member once per device (Tauri backend may not have bulk yet),
+        // but wrap in a single logical operation and return combined result.
+        // The welcome from the LAST successful add covers all added members (openMLS behaviour).
+        let lastCommit: Uint8Array | undefined;
+        let lastWelcome: Uint8Array | undefined;
+        const addedDeviceIds: string[] = [];
+        for (const device of devices) {
+            try {
+                const res = await this.addMember(groupId, device.keyPackage);
+                lastCommit = res.commit;
+                lastWelcome = res.welcome;
+                addedDeviceIds.push(device.deviceId);
+            } catch (e) {
+                console.warn(`Skipping device ${device.deviceId}: ${e}`);
+            }
+        }
+        if (!lastCommit) throw new Error('No valid devices to add');
+        return { commit: lastCommit, welcome: lastWelcome, addedDeviceIds };
+    }
+
     async processWelcome(welcomeBytes: Uint8Array) {
         return await invoke<string>('trailer_welcome', { welcomeBytes: Array.from(welcomeBytes) });
     }

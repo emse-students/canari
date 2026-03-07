@@ -366,20 +366,24 @@ export class WebMlsService implements IMlsService {
     }
 
     async addMember(groupId: string, keyPackageBytes: Uint8Array) {
-        // Wasm returns tuple/array? Let's check wasm bindings.
-        // The bindings likely return [commit, welcome] or similar object.
-        // For simplicity in this fix, let's assume the WasmClient returns { commit, welcome } or [commit, welcome]
-        // Actually earlier in lib.rs it returned (Vec<u8>, Option<Vec<u8>>).
-        // JS bindings usually convert tuple to Array.
         const res = this.client.add_member(groupId, keyPackageBytes);
-        // wasm-bindgen implementation details:
-        // if lib.rs returns Result<(Vec<u8>, Option<Vec<u8>>), JsValue>
-        // JS receives array [Uint8Array, Uint8Array | undefined]
-        // But the previous generate_bindings (in my head) might have just returned bytes.
-        // Let's assume it returns header-defined [commit, welcome].
         return { 
             commit: res[0], 
             welcome: res[1] 
+        };
+    }
+
+    async addMembersBulk(groupId: string, devices: Array<{ keyPackage: Uint8Array, deviceId: string }>) {
+        // Build a JS Array of Uint8Array for the WASM call
+        const jsArray = devices.reduce((arr, d) => { arr.push(d.keyPackage); return arr; }, [] as Uint8Array[]);
+        const res = this.client.add_members_bulk(groupId, jsArray);
+        // res = [commit: Uint8Array, welcome: Uint8Array|undefined, added_count: number]
+        const addedCount = res[2] as number;
+        const addedDeviceIds = devices.slice(0, addedCount).map(d => d.deviceId);
+        return {
+            commit: res[0] as Uint8Array,
+            welcome: res[1] as Uint8Array | undefined,
+            addedDeviceIds
         };
     }
     

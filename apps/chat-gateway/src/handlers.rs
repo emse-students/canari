@@ -79,11 +79,11 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String,
     let (tx, mut rx) = mpsc::unbounded_channel();
     let conn_key = format!("{}:{}", user_id, device_id);
 
-    // Register connection
+    // Register connection — push into the list for this key (supports multiple tabs)
     {
         let mut map = state.connected_users.lock().unwrap();
-        map.insert(conn_key.clone(), tx);
-        tracing::info!("Registered connection key: {}", conn_key);
+        map.entry(conn_key.clone()).or_insert_with(Vec::new).push(tx);
+        tracing::info!("Registered connection key: {} ({} active)", conn_key, map[&conn_key].len());
     }
 
     // Register presence in Redis
@@ -353,10 +353,15 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String,
         _ = (&mut recv_task) => send_task.abort(),
     };
 
-    // Cleanup
+    // Cleanup — remove only dead senders for this key
     {
         let mut map = state.connected_users.lock().unwrap();
-        map.remove(&conn_key);
+        if let Some(senders) = map.get_mut(&conn_key) {
+            senders.retain(|s| !s.is_closed());
+            if senders.is_empty() {
+                map.remove(&conn_key);
+            }
+        }
     }
     if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await {
         let _: Result<(), _> = con.del(&redis_key).await;

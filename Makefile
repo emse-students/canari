@@ -112,10 +112,19 @@ nginx-uninstall:
 	@sudo nginx -t && sudo systemctl reload nginx
 	@echo "${GREEN}✅ Config Nginx supprimée${RESET}"
 
-# Obtenir/renouveler un certificat Let's Encrypt puis réinstaller la config
-nginx-https:
-	@echo "${BLUE}🔒 Demande certificat Let's Encrypt pour $(DOMAIN)...${RESET}"
-	@sudo apt-get install -y certbot python3-certbot-nginx 2>/dev/null || true
-	@sudo certbot certonly --nginx -d $(DOMAIN) --non-interactive --agree-tos -m admin@$(DOMAIN)
-	@$(MAKE) nginx-install
-	@echo "${GREEN}✅ HTTPS activé pour $(DOMAIN)${RESET}"
+build-frontend:
+	@echo "${BLUE}🚀 Building frontend...${RESET}"
+	@cd frontend/mls-wasm && wasm-pack build --target web --out-dir ../src/lib/wasm
+	@cd frontend && npm run build
+	@echo "${GREEN}✅ Frontend buildé${RESET}"
+
+run-services:
+	@echo "${BLUE}🚀 Starting services...${RESET}"
+	@docker-compose -f infrastructure/docker/docker-compose.yml up -d --build
+	@echo "${GREEN}✅ Services démarrés${RESET}"
+
+reload-services:
+	@echo "${BLUE}🔄 Reloading services...${RESET}"
+	@docker-compose -f infrastructure/docker/docker-compose.yml down -v && \
+		docker-compose -f infrastructure/docker/docker-compose.yml up -d --build
+	@echo "${GREEN}✅ Services rechargés${RESET}"

@@ -8,8 +8,8 @@ use redis::Client as RedisClient;
 pub struct AppState {
     pub redis_client: RedisClient,
     pub kafka_producer: FutureProducer,
-    // Map: "UserId:DeviceId" -> Sender
-    pub connected_users: Arc<Mutex<HashMap<String, mpsc::UnboundedSender<String>>>>,
+    // Map: "UserId:DeviceId" -> list of senders (multiple tabs / reconnects)
+    pub connected_users: Arc<Mutex<HashMap<String, Vec<mpsc::UnboundedSender<String>>>>>,
     pub jwt_secret: String,
     pub http_client: HttpClient,
     pub delivery_service_url: String,

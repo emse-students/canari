@@ -133,8 +133,12 @@ export class AppController {
 
   @Get('mls-api/devices/:userId')
   async getUserDevices(@Param('userId') userId: string) {
-      // Returns all active devices for a user
-      return this.keyPackageModel.find({ userId }).sort({ createdAt: -1 }).exec();
+      // Only return devices active in the last 30 days (avoids stale key packages)
+      const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      return this.keyPackageModel
+          .find({ userId, createdAt: { $gte: cutoff } })
+          .sort({ createdAt: -1 })
+          .exec();
   }
 
   @Post('mls-api/welcome')

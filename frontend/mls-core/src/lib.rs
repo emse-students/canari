@@ -166,93 +166,65 @@ impl MlsManager {
         self.groups.keys().cloned().collect()
     }
 
-    // --- C. AJOUT DE MEMBRE ---
+    // --- C. AJOUT DE MEMBRE(S) ---
 
+    /// Add a single key package (kept for backward compat, delegates to bulk).
     pub fn add_member(
         &mut self,
         group_id: &str,
         key_package_bytes: &[u8],
     ) -> Result<(Vec<u8>, Option<Vec<u8>>), MlsError> {
+        let (commit, welcome, _) = self.add_members_bulk(group_id, &[key_package_bytes])?;
+        Ok((commit, welcome))
+    }
+
+    /// Add multiple members in a single commit so all new members share the same epoch.
+    /// Returns (commit_bytes, welcome_bytes, count_added).
+    /// Silently skips key packages that fail validation.
+    pub fn add_members_bulk(
+        &mut self,
+        group_id: &str,
+        key_packages_bytes: &[&[u8]],
+    ) -> Result<(Vec<u8>, Option<Vec<u8>>, usize), MlsError> {
         let group = self
             .groups
             .get_mut(group_id)
             .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
 
-        // 1. Désérialiser et Valider le KeyPackage
-        let key_package_in = KeyPackageIn::tls_deserialize(&mut &key_package_bytes[..])
-            .map_err(|_| MlsError::InvalidData)?;
-
-        let key_package = key_package_in
-            .validate(self.provider.crypto(), ProtocolVersion::Mls10)
-            .map_err(|e| MlsError::OpenMls(format!("KeyPackage invalid: {:?}", e)))?;
-
-        // 2. UTILISER add_members (High-Level API)
-        let (commit_msg_out, welcome_msg_out, _group_info) = group
-            .add_members(
-                &self.provider,
-                &self.keypair,
-                std::slice::from_ref(&key_package),
-            )
-            .map_err(|e| MlsError::OpenMls(format!("AddMembers high-level error: {:?}", e)))?;
-
-        // CHECK WELCOME
-        // MlsMessageOut in openmls 0.5 is usually just `pub type MlsMessageOut = MlsMessage;` or an enum.
-        // It provides .into_welcome() or just access to body if it's plaintext.
-        // Let's assume MlsMessageOut has a body that is a Welcome.
-        // We can inspect it if we know the structure.
-
-        // Wait, MlsMessageOut is NOT an enum with Welcome in some versions, it wraps MlsMessage.
-        // MlsMessage body is Welcome.
-
-        let welcome = match welcome_msg_out.body() {
-            MlsMessageBodyOut::Welcome(w) => w,
-            _ => {
-                return Err(MlsError::OpenMls(
-                    "AddMembers returned something that is not a Welcome message!".to_string(),
-                ));
+        // Deserialise and validate each key package, skip invalid ones
+        let mut key_packages: Vec<KeyPackage> = Vec::new();
+        for kp_bytes in key_packages_bytes {
+            match KeyPackageIn::tls_deserialize(&mut &kp_bytes[..]) {
+                Ok(kp_in) => match kp_in.validate(self.provider.crypto(), ProtocolVersion::Mls10) {
+                    Ok(kp) => key_packages.push(kp),
+                    Err(e) => log::warn!("Skipping invalid KeyPackage: {:?}", e),
+                },
+                Err(e) => log::warn!("Skipping undeserializable KeyPackage: {:?}", e),
             }
-        };
-
-        if welcome.secrets().is_empty() {
-            return Err(MlsError::OpenMls(format!(
-                "GENERATED EMPTY WELCOME! The KeyPackage provided was {:?}. Group count: {}",
-                key_package.hash_ref(self.provider.crypto()),
-                group.members().count()
-            )));
         }
 
-        // Display debug info about the welcome secrets and the key package hash ref
-        let welcome_secrets_info: Vec<String> = welcome
-            .secrets()
-            .iter()
-            .map(|s| {
-                let new_member = s.new_member(); // This returns KeyPackageRef (which is HashReference)
-                let bytes = new_member.as_slice();
-                let hex = bytes
-                    .iter()
-                    .map(|b| format!("{:02x}", b))
-                    .collect::<String>();
-                format!("Welcome Secret Ref: {}", hex)
-            })
-            .collect();
+        if key_packages.is_empty() {
+            return Err(MlsError::OpenMls("No valid KeyPackages to add".to_string()));
+        }
 
-        log::info!(
-            "DEBUG: Welcome secrets refs: {:?}, KeyPackage hash ref: {:?}",
-            welcome_secrets_info,
-            key_package.hash_ref(self.provider.crypto())
-        );
+        let count = key_packages.len();
 
-        // 3. APPLIQUER le commit localement
-        // Note: add_members returns the commit but DOES NOT auto-merge it in some versions (it returns StagedCommit equivalently).
-        // We must merge the pending commit.
+        let (commit_msg_out, welcome_msg_out, _group_info) = group
+            .add_members(&self.provider, &self.keypair, &key_packages)
+            .map_err(|e| MlsError::OpenMls(format!("AddMembers error: {:?}", e)))?;
+
         group
             .merge_pending_commit(&self.provider)
             .map_err(|e| MlsError::OpenMls(format!("Merge error: {:?}", e)))?;
 
-        let commit_bytes = commit_msg_out.tls_serialize_detached().unwrap();
-        let welcome_bytes = welcome_msg_out.tls_serialize_detached().unwrap();
+        let commit_bytes = commit_msg_out
+            .tls_serialize_detached()
+            .map_err(|e| MlsError::OpenMls(e.to_string()))?;
+        let welcome_bytes = welcome_msg_out
+            .tls_serialize_detached()
+            .map_err(|e| MlsError::OpenMls(e.to_string()))?;
 
-        Ok((commit_bytes, Some(welcome_bytes)))
+        Ok((commit_bytes, Some(welcome_bytes), count))
     }
 
     // --- C2. REJOINDRE UN GROUPE (Traitement Welcome) ---
