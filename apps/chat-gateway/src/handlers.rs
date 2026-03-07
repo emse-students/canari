@@ -243,7 +243,6 @@ async fn handle_socket(
                                                     user_id: r_uid,
                                                     device_id: Some(r_did),
                                                 });
-                                                
                                             }
                                         }
                                     } else {
