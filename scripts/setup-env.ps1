@@ -147,6 +147,21 @@ function Backup-IfExists {
     return ""
 }
 
+function Normalize-ImagePrefix {
+    param([string]$File)
+
+    if (-not (Test-Path $File)) {
+        return
+    }
+
+    $imagePrefix = Read-EnvVar $File "IMAGE_PREFIX"
+    if ($imagePrefix -eq "your-github-org/canari") {
+        Write-Warn "Legacy IMAGE_PREFIX detected in $(Split-Path $File -Leaf), updating to emse-students/canari"
+        Write-EnvVar $File "IMAGE_PREFIX" "emse-students/canari"
+        Write-Success "IMAGE_PREFIX migrated to emse-students/canari"
+    }
+}
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Main Logic
 # ──────────────────────────────────────────────────────────────────────────────
@@ -213,6 +228,9 @@ if ((-not (Test-Path $InfraEnv)) -and -not $SyncOnly) {
 elseif (Test-Path $InfraEnv) {
     Write-Success "Infrastructure .env already exists"
 }
+
+# Migrate legacy placeholders in infrastructure env
+Normalize-ImagePrefix $InfraEnv
 
 # ──────────────────────────────────────────────────────────────────────────────
 # JWT Secret Synchronization

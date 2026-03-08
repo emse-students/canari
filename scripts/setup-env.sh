@@ -104,6 +104,23 @@ write_env_var() {
     fi
 }
 
+# Normalize IMAGE_PREFIX legacy placeholder
+normalize_image_prefix() {
+    local file="$1"
+    if [[ ! -f "$file" ]]; then
+        return 0
+    fi
+
+    local image_prefix
+    image_prefix=$(read_env_var "$file" "IMAGE_PREFIX")
+
+    if [[ "$image_prefix" == "your-github-org/canari" ]]; then
+        warn "Legacy IMAGE_PREFIX detected in $(basename "$file"), updating to emse-students/canari"
+        write_env_var "$file" "IMAGE_PREFIX" "emse-students/canari"
+        success "IMAGE_PREFIX migrated to emse-students/canari"
+    fi
+}
+
 # Backup file if it exists
 backup_if_exists() {
     local file="$1"
@@ -193,6 +210,9 @@ main() {
     elif [[ -f "$infra_env" ]]; then
         success "Infrastructure .env already exists"
     fi
+
+    # Migrate legacy placeholders in infrastructure env
+    normalize_image_prefix "$infra_env"
 
     # ──────────────────────────────────────────────────────────────────────────
     # JWT Secret Synchronization
