@@ -74,7 +74,9 @@
 </script>
 
 <aside
-  class="w-full md:w-80 bg-white border-r border-cn-border flex flex-col {isHidden ? 'hidden md:flex' : ''}"
+  class="w-full md:w-80 bg-white border-r border-cn-border flex flex-col {isHidden
+    ? 'hidden md:flex'
+    : ''}"
 >
   <!-- Header -->
   <div class="p-4 border-b border-cn-bg space-y-3">

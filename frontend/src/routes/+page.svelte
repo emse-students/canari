@@ -7,36 +7,10 @@
   import { onMount, tick } from 'svelte';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import { fade } from 'svelte/transition';
+  import { toHex, fromHex } from '$lib/utils/hex';
+  import { migrateFromLocalStorage } from '$lib/utils/migration';
   import { LoginForm, Navbar, Sidebar, ChatArea, LogsPanel } from '$lib/components';
-
-  // --- Types ---
-  interface ChatMessage {
-    id: string;
-    senderId: string;
-    content: string;
-    timestamp: Date;
-    isOwn: boolean;
-    isSystem?: boolean;
-    replyTo?: {
-      id: string;
-      senderId: string;
-      content: string;
-    };
-  }
-
-  interface MessageReaction {
-    emoji: string;
-    userId: string;
-  }
-
-  interface Conversation {
-    contactName: string;
-    name: string;
-    groupId: string;
-    messages: ChatMessage[];
-    isReady: boolean;
-    mlsStateHex: string | null;
-  }
+  import type { ChatMessage, MessageReaction, Conversation } from '$lib/types';
 
   // --- State (Runes) ---
   let userId = $state('');
@@ -393,19 +367,6 @@
     }
   }
 
-  // --- Utils ---
-  function toHex(buffer: Uint8Array): string {
-    return Array.from(buffer)
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('');
-  }
-
-  function fromHex(hex: string): Uint8Array {
-    const match = hex.match(/.{1,2}/g);
-    if (!match) return new Uint8Array();
-    return new Uint8Array(match.map((byte) => parseInt(byte, 16)));
-  }
-
   // --- Persistance (DB) ---
 
   /** Upsert conversation metadata into the persistent DB. */
@@ -424,58 +385,7 @@
   }
 
   /** Migrate legacy localStorage conversations to the DB (run once on first login). */
-  async function migrateFromLocalStorage() {
-    if (!storage) return;
-    const prefix = `conversation:${userId}:`;
-    const keysToMigrate: string[] = [];
-
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key?.startsWith(prefix)) keysToMigrate.push(key);
-    }
-    if (keysToMigrate.length === 0) return;
-
-    log(`Migration de ${keysToMigrate.length} conversation(s) depuis localStorage…`);
-    for (const key of keysToMigrate) {
-      const saved = localStorage.getItem(key);
-      if (!saved) continue;
-      const contactName = key.substring(prefix.length);
-      let data: any;
-      try {
-        data = JSON.parse(saved);
-      } catch {
-        continue;
-      }
-
-      await storage.saveConversation({
-        id: contactName,
-        groupId: data.groupId,
-        name: data.name || contactName,
-        isReady: data.isReady || false,
-        updatedAt: Date.now(),
-      });
-
-      for (const m of (data.messages || []) as any[]) {
-        try {
-          await storage.saveMessage(
-            {
-              id: m.id || crypto.randomUUID(),
-              conversationId: contactName,
-              senderId: m.senderId || '',
-              content: m.content || '',
-              timestamp: m.timestamp ? new Date(m.timestamp).getTime() : Date.now(),
-            },
-            pin
-          );
-        } catch {
-          /* skip invalid rows */
-        }
-      }
-
-      localStorage.removeItem(key);
-    }
-    log('Migration terminée ✅');
-  }
+  // --- History Sync ---
 
   async function loadHistoryForConversation(contactName: string, groupId: string) {
     const mlsService = ensureMls();
@@ -504,10 +414,16 @@
                     mlsUpdated = true;
                     continue;
                   }
-                } else if (parsed.type === 'reaction' || parsed.type === 'groupRenamed' || parsed.type === 'memberRemoved' || parsed.type === 'memberAdded' || parsed.type === 'groupDeleted') {
-                   // We skip history processing for reactions/system events to avoid duplicates
-                   mlsUpdated = true;
-                   continue;
+                } else if (
+                  parsed.type === 'reaction' ||
+                  parsed.type === 'groupRenamed' ||
+                  parsed.type === 'memberRemoved' ||
+                  parsed.type === 'memberAdded' ||
+                  parsed.type === 'groupDeleted'
+                ) {
+                  // We skip history processing for reactions/system events to avoid duplicates
+                  mlsUpdated = true;
+                  continue;
                 }
               } catch {
                 // Not JSON -> legacy plain text
@@ -519,7 +435,7 @@
           } catch (err) {
             // Silently ignore CannotDecryptOwnMessage for exporting device retrieving its own messages
             if (String(err).includes('CannotDecryptOwnMessage')) {
-               continue;
+              continue;
             }
             console.warn(`History msg error: ${err}`);
           }
@@ -539,7 +455,7 @@
     if (!storage) return;
 
     // One-time migration from the old localStorage format
-    await migrateFromLocalStorage();
+    await migrateFromLocalStorage(userId, pin, storage, log);
 
     const convMetas = await storage.getConversations();
     for (const meta of convMetas) {

@@ -2,6 +2,7 @@
   import { format } from 'date-fns';
   import { fly } from 'svelte/transition';
   import { Reply, Smile } from 'lucide-svelte';
+  import { clickOutside } from '$lib/actions/clickOutside';
   import 'emoji-picker-element';
 
   interface MessageReaction {
@@ -66,7 +67,7 @@
     return {
       destroy() {
         node.removeEventListener('emoji-click', handleEmoji);
-      }
+      },
     };
   }
 </script>
@@ -81,7 +82,10 @@
 {:else}
   <!-- Regular message bubble -->
   <div class="flex w-full {isOwn ? 'justify-end' : 'justify-start'} group">
-    <div class="flex flex-col gap-1 max-w-[75%] relative">
+    <div
+      use:clickOutside={() => (showEmojiPicker = false)}
+      class="flex flex-col gap-1 max-w-[75%] relative"
+    >
       <div
         in:fly={{ y: 5, duration: 200 }}
         class="px-5 py-3 rounded-[1.25rem] {isOwn
@@ -149,7 +153,7 @@
         <div
           class="absolute bottom-full mb-1 {isOwn
             ? 'right-0'
-            : 'left-0'} bg-white border border-cn-border rounded-lg shadow-xl z-20 overflow-hidden"
+            : 'left-0'} bg-white border border-cn-border rounded-lg shadow-xl z-[100] overflow-hidden"
         >
           <emoji-picker use:attachEmojiPicker class="light"></emoji-picker>
         </div>
