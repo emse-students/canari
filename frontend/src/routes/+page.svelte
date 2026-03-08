@@ -99,12 +99,27 @@
   }
 
   // --- Auth & Initialisation ---
+
   async function generateDevToken(uid: string) {
     // ⚠️ Secret must be configured in .env file, NOT hardcoded
     const secret = import.meta.env.VITE_JWT_SECRET;
     if (!secret) {
       throw new Error('VITE_JWT_SECRET not configured in .env');
     }
+
+    // Check if crypto.subtle is available
+    // Note: With Cloudflare Tunnel handling HTTPS, this should always be available
+    if (typeof crypto === 'undefined' || !crypto.subtle) {
+      // Log warning but provide helpful error message
+      console.error('crypto.subtle is not available - HTTPS required');
+      throw new Error(
+        'Erreur de sécurité : crypto.subtle indisponible.\n\n' +
+          "Cause probable : l'application n'est pas accédée via HTTPS.\n" +
+          'Vérifiez que Cloudflare Tunnel est actif et que vous accédez via https://canari-emse.fr\n\n' +
+          'Pour les développeurs : crypto.subtle nécessite un contexte sécurisé (HTTPS ou localhost).'
+      );
+    }
+
     const header = JSON.stringify({ alg: 'HS256', typ: 'JWT' });
     const payload = JSON.stringify({
       sub: uid,

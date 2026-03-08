@@ -54,8 +54,10 @@ jobs:
 
       - name: Create frontend .env with JWT_SECRET
         working-directory: frontend
+        env:
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
         run: |
-          echo "VITE_JWT_SECRET=${{ secrets.JWT_SECRET }}" > .env
+          echo "VITE_JWT_SECRET=${JWT_SECRET}" > .env
           echo "VITE_GATEWAY_URL=wss://${{ env.DOMAIN }}/ws" >> .env
           echo "VITE_DELIVERY_URL=https://${{ env.DOMAIN }}/mls-api" >> .env
 

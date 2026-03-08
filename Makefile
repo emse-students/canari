@@ -81,11 +81,14 @@ production-check:
 DOMAIN             ?= canari-emse.fr
 GATEWAY_PORT       ?= 3000
 DELIVERY_PORT      ?= 3001
+NGINX_PORT         ?= 8080  # Port sur lequel nginx écoute (Cloudflare forward ici)
 NGINX_CONF_NAME    ?= canari
 WWW_DIR            := /var/www/$(NGINX_CONF_NAME)
 FRONTEND_BUILD_PATH := $(WWW_DIR)
 NGINX_SITES_AVAIL  := /etc/nginx/sites-available
 NGINX_SITES_ENABLED:= /etc/nginx/sites-enabled
+
+# Note: HTTPS est géré par Cloudflare Tunnel, nginx écoute en HTTP
 
 # Détection de l'OS pour la compatibilité
 ifeq ($(OS),Windows_NT)
@@ -392,19 +395,21 @@ nginx-install:
 	@sudo rsync -a --delete frontend/build/ $(WWW_DIR)/
 	@sudo chown -R www-data:www-data $(WWW_DIR)
 	@echo "${BLUE}🔧 Generating Nginx config for domain: ${BOLD}$(DOMAIN)${RESET}"
+	@echo "${BLUE}� Nginx will listen on port: $(NGINX_PORT) (Cloudflare Tunnel)${RESET}"
 	@TMPFILE=$$(mktemp) && \
 	 DOMAIN="$(DOMAIN)" \
 	 GATEWAY_PORT="$(GATEWAY_PORT)" \
 	 DELIVERY_PORT="$(DELIVERY_PORT)" \
 	 FRONTEND_BUILD_PATH="$(WWW_DIR)" \
-	 envsubst '$$DOMAIN $$GATEWAY_PORT $$DELIVERY_PORT $$FRONTEND_BUILD_PATH' \
+	 NGINX_PORT="$(NGINX_PORT)" \
+	 envsubst '$$DOMAIN $$GATEWAY_PORT $$DELIVERY_PORT $$FRONTEND_BUILD_PATH $$NGINX_PORT' \
 	 < infrastructure/nginx/canari.conf.template \
 	 > "$$TMPFILE" && \
 	 sudo cp "$$TMPFILE" $(NGINX_SITES_AVAIL)/$(NGINX_CONF_NAME) && \
 	 rm -f "$$TMPFILE"
 	@sudo ln -sf $(NGINX_SITES_AVAIL)/$(NGINX_CONF_NAME) $(NGINX_SITES_ENABLED)/$(NGINX_CONF_NAME)
 	@sudo nginx -t && sudo systemctl reload nginx
-	@echo "${GREEN}✅ Nginx configuré et rechargé pour $(DOMAIN)${RESET}"
+	@echo "${GREEN}✅ Nginx configuré et rechargé pour $(DOMAIN) (port $(NGINX_PORT))${RESET}"
 
 nginx-uninstall:
 	@sudo rm -f $(NGINX_SITES_ENABLED)/$(NGINX_CONF_NAME) $(NGINX_SITES_AVAIL)/$(NGINX_CONF_NAME)

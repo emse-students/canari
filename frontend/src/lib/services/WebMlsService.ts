@@ -31,7 +31,14 @@ export class WebMlsService implements IMlsService {
 
     async connect(token: string): Promise<void> {
         return new Promise((resolve, reject) => {
-            this.ws = new WebSocket(`${this.baseUrl.replace('http', 'ws')}/ws?token=${token}&device_id=${this.deviceId}`);
+            // Convert HTTP(S) URL to WS(S) URL
+            // https:// -> wss://, http:// -> ws://
+            const wsUrl = this.baseUrl.replace(/^https?:/, (match) => match === 'https:' ? 'wss:' : 'ws:');
+            const fullWsUrl = `${wsUrl}/ws?token=${token}&device_id=${this.deviceId}`;
+
+            console.log(`Connecting to WebSocket: ${fullWsUrl.replace(/token=[^&]+/, 'token=***')}`);
+            this.ws = new WebSocket(fullWsUrl);
+
             this.ws.onopen = async () => {
                 console.log("Connected to Chat Gateway with DeviceID:", this.deviceId);
                 await this.fetchPendingMessages();
@@ -105,7 +112,7 @@ export class WebMlsService implements IMlsService {
                 const messages = await res.json();
                 if (Array.isArray(messages) && messages.length > 0) {
                     console.log(`Fetched ${messages.length} pending messages`);
-                    
+
                     const successfullyProcessedIds: string[] = [];
 
                     for (const msg of messages) {
@@ -143,7 +150,7 @@ export class WebMlsService implements IMlsService {
              } else if (data.content) {
                  base64Content = data.content;
              }
-             
+
              if (base64Content) {
                  const binaryString = atob(base64Content);
                  const bytes = new Uint8Array(binaryString.length);
@@ -168,7 +175,7 @@ export class WebMlsService implements IMlsService {
             const res = await fetch(`${this.historyUrl}/mls-api/devices/${userId}`);
             if (!res.ok) return [];
             const devices = await res.json();
-            
+
             return devices.map((d: any) => {
                 const binaryString = atob(d.keyPackage);
                 const bytes = new Uint8Array(binaryString.length);
@@ -298,9 +305,9 @@ export class WebMlsService implements IMlsService {
         // Import dynamique du WASM généré
         try {
             // Import from local lib to ensure Vite handles it correctly
-            const initWasm = await import('$lib/wasm/mls_wasm.js'); 
-            
-            await initWasm.default(); 
+            const initWasm = await import('$lib/wasm/mls_wasm.js');
+
+            await initWasm.default();
 
             // Initialize logger if available
             if (initWasm.init_logger) {
@@ -347,13 +354,13 @@ export class WebMlsService implements IMlsService {
         // Attempt to save state.
         try {
             const stateBytes = this.client.save_state(pin); // Returns Encrypted Uint8Array
-            
+
             const hex = Array.from(stateBytes as Uint8Array).map((b: number) => b.toString(16).padStart(2, '0')).join('');
             localStorage.setItem('mls_autosave_' + this.userId, hex);
         } catch(e) {
             console.warn("Auto-save failed in WASM mode", e);
         }
-        
+
         await this.publishKeyPackage(kp as Uint8Array);
 
         return kp;
@@ -361,9 +368,9 @@ export class WebMlsService implements IMlsService {
 
     async addMember(groupId: string, keyPackageBytes: Uint8Array) {
         const res = this.client.add_member(groupId, keyPackageBytes);
-        return { 
-            commit: res[0], 
-            welcome: res[1] 
+        return {
+            commit: res[0],
+            welcome: res[1]
         };
     }
 
@@ -380,7 +387,7 @@ export class WebMlsService implements IMlsService {
             addedDeviceIds
         };
     }
-    
+
     async processWelcome(welcomeBytes: Uint8Array) {
         return this.client.process_welcome(welcomeBytes);
     }
@@ -388,7 +395,7 @@ export class WebMlsService implements IMlsService {
     async sendMessage(groupId: string, message: string) {
         const encryptedBytes = this.client.send_message(groupId, message);
         const base64 = btoa(String.fromCharCode(...encryptedBytes));
-        
+
         // Send via WebSocket if connected
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
             const payload = {
@@ -415,7 +422,7 @@ export class WebMlsService implements IMlsService {
                 console.error("HTTP Send failed:", e);
                 // Throw error so UI knows it failed?
                 // But encryptedBytes is returned... UI might think it succeeded.
-                throw e; 
+                throw e;
             }
         }
 
