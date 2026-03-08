@@ -2,7 +2,12 @@ mod handlers;
 mod models;
 mod state;
 
-use axum::{Router, http::Method, routing::get};
+use axum::{
+    Router,
+    http::{Method, StatusCode},
+    response::IntoResponse,
+    routing::get,
+};
 use futures::stream::StreamExt;
 use rdkafka::{ClientConfig, producer::FutureProducer};
 use reqwest::Client as HttpClient;
@@ -12,6 +17,10 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::handlers::{get_ratchet_tree, post_ratchet_tree, ws_handler};
 use crate::state::AppState;
+
+async fn health_check() -> impl IntoResponse {
+    (StatusCode::OK, "OK")
+}
 
 #[tokio::main] // use tokio to run the async main function
 async fn main() {
@@ -114,6 +123,7 @@ async fn main() {
     };
 
     let app = Router::new()
+        .route("/health", get(health_check))
         .route("/ws", get(ws_handler))
         // MLS Specific Routes
         .route(
