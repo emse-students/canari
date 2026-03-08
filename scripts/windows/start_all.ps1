@@ -22,7 +22,7 @@ if (Test-Path "frontend/.env") {
 if ([string]::IsNullOrWhiteSpace($JWT_SECRET)) {
     $JWT_SECRET = -join ((1..32 | ForEach-Object { '{0:x2}' -f (Get-Random -Maximum 256) }))
     Write-Host "  ✓ JWT_SECRET généré: $JWT_SECRET" -ForegroundColor Yellow
-    
+
     # Sauvegarder dans frontend/.env si le fichier n'existe pas
     if (-not (Test-Path "frontend/.env")) {
         "VITE_JWT_SECRET=$JWT_SECRET" | Out-File -FilePath "frontend/.env" -Encoding utf8
@@ -33,7 +33,7 @@ if ([string]::IsNullOrWhiteSpace($JWT_SECRET)) {
 Write-Host "`n[0/4] Nettoyage des processus existants..." -ForegroundColor Magenta
 
 # Tuer les processus occupant les ports clés
-foreach ($port in @(3000, 8080, 8081)) {
+foreach ($port in @(3000, 3001, 3002, 8080, 8081)) {
     $pids = (netstat -ano | Select-String "LISTENING" | Select-String ":$port\s" | ForEach-Object {
             ($_.Line -split '\s+')[-1]
         } | Where-Object { $_ -match '^\d+$' } | Select-Object -Unique)
