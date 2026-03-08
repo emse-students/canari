@@ -139,15 +139,15 @@ cd frontend && bun run dev     # Frontend sur http://localhost:5173
 
 Services disponibles après `make run-services` :
 
-| Service | URL |
-|---|---|
-| Frontend dev | http://localhost:5173 |
-| Chat Gateway | ws://localhost:3000/ws |
-| Chat Delivery | http://localhost:3001 |
-| PostgreSQL | localhost:5432 |
-| MongoDB | localhost:27017 |
-| Redis | localhost:6379 |
-| Kafka | localhost:9092 |
+| Service       | URL                    |
+| ------------- | ---------------------- |
+| Frontend dev  | http://localhost:5173  |
+| Chat Gateway  | ws://localhost:3000/ws |
+| Chat Delivery | http://localhost:3001  |
+| PostgreSQL    | localhost:5432         |
+| MongoDB       | localhost:27017        |
+| Redis         | localhost:6379         |
+| Kafka         | localhost:9092         |
 
 ### Déploiement production (premier déploiement)
 
@@ -384,8 +384,8 @@ Chaque `push` sur `main` déclenche automatiquement :
 
 **GitHub Secrets** (Settings → Secrets and variables → Actions)
 
-| Secret | Description |
-|---|---|
+| Secret       | Description                                                                                                                                         |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `JWT_SECRET` | Secret JWT 64 chars hex — `openssl rand -hex 32`. **Doit correspondre** à `infrastructure/.env` sur le serveur. Injecté dans le bundle JS au build. |
 
 **Runner self-hosted** : le déploiement utilise un runner GitHub Actions hébergé sur le serveur. Pas de SSH externe nécessaire.
