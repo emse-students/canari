@@ -1,5 +1,7 @@
 <script lang="ts">
   import { Send, Paperclip, X } from 'lucide-svelte';
+  import VoiceRecorder from './VoiceRecorder.svelte';
+  import GifPicker from './GifPicker.svelte';
 
   interface ReplyTo {
     id: string;
@@ -49,6 +51,34 @@
     }
   }
 
+  function handleVoiceRecording(audioBlob: Blob) {
+    if (!onFileSelected) return;
+
+    // Convert Blob to File with explicit audio/webm type
+    const audioFile = new File([audioBlob], `vocal_${Date.now()}.webm`, {
+      type: 'audio/webm',
+    });
+
+    onFileSelected(audioFile);
+  }
+
+  async function handleGifSelected(gifUrl: string) {
+    if (!onFileSelected) return;
+
+    try {
+      // Download the GIF and convert to File
+      const res = await fetch(gifUrl);
+      const blob = await res.blob();
+      const gifFile = new File([blob], `gif_${Date.now()}.gif`, {
+        type: 'image/gif',
+      });
+
+      onFileSelected(gifFile);
+    } catch (error) {
+      console.error('Erreur téléchargement GIF:', error);
+    }
+  }
+
   $effect(() => {
     if (textareaEl) {
       textareaEl.style.height = 'auto';
@@ -91,7 +121,7 @@
       <button
         onclick={() => fileInput?.click()}
         disabled={isUploading}
-        title="Envoyer une image ou un fichier"
+        title="Envoyer une image, vidéo ou fichier"
         aria-label="Joindre un fichier"
         class="w-11 h-11 text-gray-400 rounded-full flex items-center justify-center flex-shrink-0 hover:text-cn-dark hover:bg-gray-200 transition-colors disabled:opacity-40"
       >
@@ -112,10 +142,14 @@
         {/if}
       </button>
 
+      <VoiceRecorder onRecordingComplete={handleVoiceRecording} />
+
+      <GifPicker onGifSelected={handleGifSelected} />
+
       <input
         bind:this={fileInput}
         type="file"
-        accept="image/*,video/*,application/pdf,.doc,.docx,.zip"
+        accept="image/*,video/*,audio/*,application/pdf,.doc,.docx,.zip"
         class="hidden"
         onchange={handleFileChange}
       />

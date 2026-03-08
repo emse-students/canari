@@ -1,3 +1,8 @@
+export interface MessageReaction {
+  emoji: string;
+  userId: string;
+}
+
 export interface ChatMessage {
   id: string;
   senderId: string;
@@ -10,11 +15,10 @@ export interface ChatMessage {
     senderId: string;
     content: string;
   };
-}
-
-export interface MessageReaction {
-  emoji: string;
-  userId: string;
+  reactions?: MessageReaction[];
+  readBy?: string[];
+  isEdited?: boolean;
+  isDeleted?: boolean;
 }
 
 export interface Conversation {

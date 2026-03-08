@@ -39,7 +39,9 @@ export async function replayConversationHistory(params: {
     senderId: string,
     content: string,
     contactName: string,
-    replyTo?: { id: string; senderId: string; content: string }
+    replyTo?: { id: string; senderId: string; content: string },
+    isSystem?: boolean,
+    messageId?: string
   ) => Promise<void>;
   log: (msg: string) => void;
 }) {
@@ -66,11 +68,21 @@ export async function replayConversationHistory(params: {
           if (parsed.type === 'text' || parsed.type === 'reply') {
             const content = parsed.content;
             if (content) {
-              await addMessageToChat(msg.sender_id, content, contactName, parsed.replyTo);
+              await addMessageToChat(msg.sender_id, content, contactName, parsed.replyTo, false, parsed.id);
               addedMsg++;
               mlsUpdated = true;
               continue;
             }
+          } else if (
+             parsed.type === 'image' || 
+             parsed.type === 'video' || 
+             parsed.type === 'audio' || 
+             parsed.type === 'file'
+          ) {
+            await addMessageToChat(msg.sender_id, decrypted, contactName, undefined, false, parsed.id);
+            addedMsg++;
+            mlsUpdated = true;
+            continue;
           } else if (
             parsed.type === 'reaction' ||
             parsed.type === 'groupRenamed' ||

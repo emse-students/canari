@@ -32,7 +32,7 @@
     inviteMemberToGroup,
     startNewConversation as startConversation,
   } from '$lib/utils/mainChatGroupCreation';
-  import { sendChatMessage, addReaction } from '$lib/utils/mainChatMessaging';
+  import { sendChatMessage, addReaction, editMessage, deleteMessage, sendReadReceipt } from '$lib/utils/mainChatMessaging';
   import { migrateFromLocalStorage } from '$lib/utils/migration';
   import { MediaService } from '$lib/media';
   import LoginForm from './LoginForm.svelte';
@@ -95,11 +95,23 @@
   // Reactions (messageId -> array of reactions)
   let messageReactions = new SvelteMap<string, MessageReaction[]>();
 
+  // Derived reactions object for reactive prop passing
+  // Using forEach to ensure reactivity with SvelteMap
+  let reactionsForProps = $derived.by(() => {
+    const obj: Record<string, MessageReaction[]> = {};
+    messageReactions.forEach((value, key) => {
+      obj[key] = value;
+    });
+    return obj;
+  });
+
   // Reply state
   let replyingTo = $state<ChatMessage | null>(null);
 
   // Media
   const mediaService = new MediaService();
+  const mediaMaxSizeMb = Number.parseInt(import.meta.env.VITE_MEDIA_MAX_SIZE_MB ?? '50', 10);
+  const mediaMaxSizeBytes = mediaMaxSizeMb * 1024 * 1024;
   let authToken = $state('');
   let pendingMediaFile = $state<File | null>(null);
   let isUploadingMedia = $state(false);
@@ -115,6 +127,44 @@
     if (env && env.trim()) return env;
     return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3001';
   })();
+
+  // Read Receipts logic
+  $effect(() => {
+    if (!selectedContact || !isLoggedIn) return;
+    const convo = conversations.get(selectedContact);
+    if (!convo || !convo.isReady) return;
+
+    // Find messages we haven't read
+    const unread = convo.messages.filter(m => !m.isOwn && !m.isSystem && !(m.readBy || []).includes(userId.toLowerCase()));
+    if (unread.length > 0) {
+      const ids = unread.map(m => m.id);
+      const currentContact = selectedContact;
+      try {
+        const mlsService = ensureMls();
+        sendReadReceipt(ids, {
+          mlsService,
+          userId,
+          pin,
+          conversation: convo
+        }).then(() => {
+          // Optimistically mark as read locally
+          const newMsgs = [...convo.messages];
+          let updated = false;
+          for (const m of newMsgs) {
+            if (ids.includes(m.id)) {
+              m.readBy = [...(m.readBy || []), userId.toLowerCase()];
+              updated = true;
+            }
+          }
+          if (updated && currentContact) {
+            conversations.set(currentContact, { ...convo, messages: newMsgs });
+          }
+        });
+      } catch (_e) {
+        // Wait till next chance
+      }
+    }
+  });
 
   onMount(() => {
     const w = window as Window & { wasm_bindings_log?: (level: string, msg: string) => void };
@@ -362,7 +412,8 @@
     content: string,
     contactName: string,
     replyTo?: { id: string; senderId: string; content: string },
-    isSystem = false
+    isSystem = false,
+    messageId?: string
   ) {
     const normalized = contactName.toLowerCase();
     const convo = conversations.get(normalized);
@@ -371,7 +422,7 @@
     const isOwn = senderId.toLowerCase() === userId.toLowerCase();
 
     const newMsg: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: messageId || crypto.randomUUID(),
       senderId: senderId.toLowerCase(),
       content,
       timestamp: new Date(),
@@ -443,11 +494,12 @@
           );
         }
         const mediaRef = await mediaService.encryptAndUpload(fileToSend, authToken);
-        const payload = JSON.stringify(mediaRef);
+        const messageId = crypto.randomUUID();
+        const payload = JSON.stringify({ ...mediaRef, id: messageId });
         await mlsService.sendMessage(convo.groupId, payload);
         const stateBytes = await mlsService.saveState(pin);
         localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
-        await addMessageToChat(userId, payload, selectedContact);
+        await addMessageToChat(userId, payload, selectedContact, undefined, false, messageId);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         pendingMediaFile = fileToSend;
@@ -476,8 +528,33 @@
     }
   }
 
-  function handleFileSelected(file: File) {
-    pendingMediaFile = file;
+  async function handleFileSelected(file: File) {
+    if (Number.isFinite(mediaMaxSizeBytes) && file.size > mediaMaxSizeBytes) {
+      const errorMessage = `Fichier trop volumineux (${(file.size / 1024 / 1024).toFixed(1)} Mo). Limite: ${mediaMaxSizeMb} Mo.`;
+      sendError = errorMessage;
+      log(`Erreur envoi média: ${errorMessage}`);
+      return;
+    }
+
+    // Compress images automatically
+    let processedFile = file;
+    if (file.type.startsWith('image/')) {
+      try {
+        const { compressImage } = await import('$lib/media');
+        const originalSize = file.size;
+        processedFile = await compressImage(file);
+        if (processedFile.size < originalSize) {
+          const savedPercent = ((1 - processedFile.size / originalSize) * 100).toFixed(0);
+          log(
+            `Image compressée: ${(originalSize / 1024 / 1024).toFixed(1)} Mo → ${(processedFile.size / 1024 / 1024).toFixed(1)} Mo (-${savedPercent}%)`
+          );
+        }
+      } catch (e) {
+        console.warn('Compression failed, using original:', e);
+      }
+    }
+
+    pendingMediaFile = processedFile;
     void handleSendChat();
   }
 
@@ -493,6 +570,52 @@
       pin,
       conversation: convo,
     });
+  }
+
+  async function handleDeleteMessage(messageId: string) {
+    if (!selectedContact) return;
+    const convo = conversations.get(selectedContact);
+    if (!convo) return;
+
+    const mlsService = ensureMls();
+    await deleteMessage(messageId, {
+      mlsService,
+      userId,
+      pin,
+      conversation: convo,
+    });
+
+    // Update locally
+    const newMsgs = [...convo.messages];
+    const idx = newMsgs.findIndex(m => m.id === messageId);
+    if (idx !== -1) {
+      newMsgs[idx] = { ...newMsgs[idx], isDeleted: true, content: 'Ce message a été supprimé.' };
+      conversations.set(selectedContact, { ...convo, messages: newMsgs });
+      // TODO: update in local storage if needed
+    }
+  }
+
+  async function handleEditMessage(messageId: string, text: string) {
+    if (!selectedContact) return;
+    const convo = conversations.get(selectedContact);
+    if (!convo) return;
+
+    const mlsService = ensureMls();
+    await editMessage(messageId, text, {
+      mlsService,
+      userId,
+      pin,
+      conversation: convo,
+    });
+
+    // Update locally
+    const newMsgs = [...convo.messages];
+    const idx = newMsgs.findIndex(m => m.id === messageId);
+    if (idx !== -1) {
+      newMsgs[idx] = { ...newMsgs[idx], isEdited: true, content: text };
+      conversations.set(selectedContact, { ...convo, messages: newMsgs });
+      // TODO: update in local storage if needed
+    }
   }
 
   function handleReply(message: ChatMessage) {
@@ -812,10 +935,12 @@
         onGroupRename={handleRenameGroup}
         onGroupDelete={handleDeleteGroup}
         onGroupRemoveMember={handleRemoveMember}
-        {messageReactions}
+        messageReactions={reactionsForProps}
         {replyingTo}
         onReply={handleReply}
         onReact={handleAddReaction}
+        onDelete={handleDeleteMessage}
+        onEdit={handleEditMessage}
         onCancelReply={cancelReply}
         {authToken}
         onFileSelected={handleFileSelected}

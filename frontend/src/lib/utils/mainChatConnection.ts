@@ -21,7 +21,9 @@ interface MessageHandlerDeps {
     senderId: string,
     content: string,
     contactName: string,
-    replyTo?: ChatMessage['replyTo']
+    replyTo?: ChatMessage['replyTo'],
+    isSystem?: boolean,
+    messageId?: string
   ) => Promise<void>;
   addSystemMessage: (content: string, contactName: string) => Promise<void>;
   loadHistoryForConversation: (contactName: string, groupId: string) => Promise<void>;
@@ -136,15 +138,81 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               return true;
             }
 
+            // Read Receipt
+            if (parsed.type === 'read_receipt' && Array.isArray(parsed.messageIds)) {
+              const convo = conversations.get(convoKey);
+              if (convo) {
+                let updated = false;
+                const newMsgs = [...convo.messages];
+                for (const msgId of parsed.messageIds) {
+                  const idx = newMsgs.findIndex(m => m.id === msgId);
+                  if (idx !== -1) {
+                    const msg = { ...newMsgs[idx] };
+                    const readBy = msg.readBy || [];
+                    if (!readBy.includes(senderNorm)) {
+                      msg.readBy = [...readBy, senderNorm];
+                      newMsgs[idx] = msg;
+                      updated = true;
+                    }
+                  }
+                }
+                if (updated) {
+                  conversations.set(convoKey, { ...convo, messages: newMsgs });
+                }
+              }
+              return true;
+            }
+
+            // Delete Message
+            if (parsed.type === 'delete_message' && parsed.messageId) {
+              const convo = conversations.get(convoKey);
+              if (convo) {
+                const newMsgs = [...convo.messages];
+                const MathMsg = newMsgs.findIndex(m => m.id === parsed.messageId);
+                // Ensure the person deleting is the original author
+                if (MathMsg !== -1 && newMsgs[MathMsg].senderId === senderNorm) {
+                  newMsgs[MathMsg] = { ...newMsgs[MathMsg], isDeleted: true, content: 'Ce message a été supprimé.' };
+                  conversations.set(convoKey, { ...convo, messages: newMsgs });
+                }
+              }
+              return true;
+            }
+
+            // Edit Message
+            if (parsed.type === 'edit_message' && parsed.messageId && parsed.newContent) {
+              const convo = conversations.get(convoKey);
+              if (convo) {
+                const newMsgs = [...convo.messages];
+                const MathMsg = newMsgs.findIndex(m => m.id === parsed.messageId);
+                if (MathMsg !== -1 && newMsgs[MathMsg].senderId === senderNorm) {
+                  // Only text messages should be editable simply like this
+                  newMsgs[MathMsg] = { ...newMsgs[MathMsg], isEdited: true, content: parsed.newContent };
+                  conversations.set(convoKey, { ...convo, messages: newMsgs });
+                }
+              }
+              return true;
+            }
+
             // Reply message
             if (parsed.type === 'reply' && parsed.content) {
-              await addMessageToChat(senderNorm, parsed.content, convoKey, parsed.replyTo);
+              await addMessageToChat(senderNorm, parsed.content, convoKey, parsed.replyTo, false, parsed.id);
+              return true;
+            }
+
+            // Types media
+            if (
+               parsed.type === 'image' || 
+               parsed.type === 'video' || 
+               parsed.type === 'audio' || 
+               parsed.type === 'file'
+            ) {
+              await addMessageToChat(senderNorm, decrypted, convoKey, undefined, false, parsed.id);
               return true;
             }
 
             // Standard text message
             if (parsed.type === 'text' && parsed.content) {
-              await addMessageToChat(senderNorm, parsed.content, convoKey);
+              await addMessageToChat(senderNorm, parsed.content, convoKey, undefined, false, parsed.id);
               return true;
             }
           } catch {

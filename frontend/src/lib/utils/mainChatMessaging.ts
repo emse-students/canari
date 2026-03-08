@@ -11,7 +11,9 @@ interface SendMessageDeps {
     senderId: string,
     content: string,
     contactName: string,
-    replyTo?: ChatMessage['replyTo']
+    replyTo?: ChatMessage['replyTo'],
+    isSystem?: boolean,
+    messageId?: string
   ) => Promise<void>;
   log: (msg: string) => void;
 }
@@ -36,9 +38,11 @@ export async function sendChatMessage(
     // Build payload based on reply state
     let payload: string;
     let replyToData: ChatMessage['replyTo'] = undefined;
+    const messageId = crypto.randomUUID();
 
     if (replyingTo) {
       payload = JSON.stringify({
+        id: messageId,
         type: 'reply',
         content: text,
         replyTo: {
@@ -53,13 +57,13 @@ export async function sendChatMessage(
         content: replyingTo.content.slice(0, 100),
       };
     } else {
-      payload = JSON.stringify({ type: 'text', content: text });
+      payload = JSON.stringify({ id: messageId, type: 'text', content: text });
     }
 
     await mlsService.sendMessage(conversation.groupId, payload);
     const stateBytes = await mlsService.saveState(pin);
     localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
-    await addMessageToChat(userId, text, contactName, replyToData);
+    await addMessageToChat(userId, text, contactName, replyToData, false, messageId);
 
     return { success: true };
   } catch (_e: unknown) {
@@ -110,5 +114,53 @@ export async function addReaction(
     localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
   } catch (e) {
     console.warn('Failed to send reaction:', e);
+  }
+}
+export async function editMessage(
+  messageId: string,
+  newContent: string,
+  deps: AddReactionDeps
+): Promise<void> {
+  const { mlsService, userId, pin, conversation } = deps;
+  if (!conversation.isReady) return;
+  try {
+    const payload = JSON.stringify({ type: 'edit_message', messageId, newContent });
+    await mlsService.sendMessage(conversation.groupId, payload);
+    const stateBytes = await mlsService.saveState(pin);
+    localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
+  } catch (e) {
+    console.warn('Failed to edit message:', e);
+  }
+}
+
+export async function deleteMessage(
+  messageId: string,
+  deps: AddReactionDeps
+): Promise<void> {
+  const { mlsService, userId, pin, conversation } = deps;
+  if (!conversation.isReady) return;
+  try {
+    const payload = JSON.stringify({ type: 'delete_message', messageId });
+    await mlsService.sendMessage(conversation.groupId, payload);
+    const stateBytes = await mlsService.saveState(pin);
+    localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
+  } catch (e) {
+    console.warn('Failed to delete message:', e);
+  }
+}
+
+export async function sendReadReceipt(
+  messageIds: string[],
+  deps: AddReactionDeps
+): Promise<void> {
+  const { mlsService, userId, pin, conversation } = deps;
+  if (!conversation.isReady || messageIds.length === 0) return;
+  try {
+    const payload = JSON.stringify({ type: 'read_receipt', messageIds });
+    await mlsService.sendMessage(conversation.groupId, payload);
+    const stateBytes = await mlsService.saveState(pin);
+    localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
+  } catch (e) {
+    console.warn('Failed to send read receipt:', e);
   }
 }
