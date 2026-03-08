@@ -16,16 +16,10 @@ import { KeyPackage } from './key-package.schema';
 import { WelcomeMessage } from './welcome-message.schema';
 import { GroupMember } from './group-member.schema';
 import { Group } from './group.schema';
-import { UserState } from './user-state.schema';
+import { PinVerifier } from './pin-verifier.schema';
 import Redis from 'ioredis';
 import * as crypto from 'crypto';
 
-// Server-Side Encryption Key (In production, use strict ENV vars or KMS)
-const ENCRYPTION_KEY = Buffer.from(
-  'b340600b2f803ee7fab5e4bd8a69c142ef06c682002c85e9f230ab8dd1df0b7e',
-  'hex',
-);
-const IV_LENGTH = 16;
 const SAFE_QUERY_VALUE_REGEX = /^[a-zA-Z0-9_.:@-]{1,128}$/;
 
 function sanitizeQueryValue(value: unknown, fieldName: string): string {
@@ -72,31 +66,6 @@ function sanitizeObjectIdList(value: unknown): Types.ObjectId[] {
   return objectIds;
 }
 
-function encryptServerSide(text: string): string {
-  const iv = crypto.randomBytes(IV_LENGTH);
-  const cipher = crypto.createCipheriv('aes-256-gcm', ENCRYPTION_KEY, iv);
-  let encrypted = cipher.update(text, 'utf8', 'hex');
-  encrypted += cipher.final('hex');
-  const authTag = cipher.getAuthTag().toString('hex');
-  // Store as IV:AuthTag:Encrypted
-  return `${iv.toString('hex')}:${authTag}:${encrypted}`;
-}
-
-function decryptServerSide(text: string): string {
-  const parts = text.split(':');
-  if (parts.length < 3) return text; // Fallback for unencrypted legacy data
-
-  const iv = Buffer.from(parts[0], 'hex');
-  const authTag = Buffer.from(parts[1], 'hex');
-  const encryptedText = parts[2];
-
-  const decipher = crypto.createDecipheriv('aes-256-gcm', ENCRYPTION_KEY, iv);
-  decipher.setAuthTag(authTag);
-  let decrypted = decipher.update(encryptedText, 'hex', 'utf8');
-  decrypted += decipher.final('utf8');
-  return decrypted;
-}
-
 import { v4 as uuidv4 } from 'uuid';
 
 @Controller()
@@ -109,41 +78,51 @@ export class AppController {
     private welcomeMessageModel: Model<WelcomeMessage>,
     @InjectModel(GroupMember.name) private groupMemberModel: Model<GroupMember>,
     @InjectModel(Group.name) private groupModel: Model<Group>,
-    @InjectModel(UserState.name) private userStateModel: Model<UserState>,
+    @InjectModel(PinVerifier.name) private pinVerifierModel: Model<PinVerifier>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
   ) {}
 
-  @Post('mls/state')
-  async uploadUserState(
-    @Body() body: { userId: string; encryptedState: string },
+  /**
+   * Check (and register on first use) the PIN verifier for a user.
+   *
+   * The client sends a PBKDF2-SHA-256 verifier derived from the PIN and
+   * userId.  We never see the raw PIN.
+   *
+   * Responses:
+   *   { status: 'registered' }  – first device; verifier stored server-side.
+   *   { status: 'ok' }          – verifier matches; PIN is consistent.
+   *   { status: 'mismatch' }    – verifier differs; wrong PIN for this user.
+   */
+  @Post('mls-api/pin-verifier/check')
+  async checkPinVerifier(
+    @Body() body: { userId: string; verifier: string },
   ) {
-    // Double Encryption: Encrypt the already client-encrypted blob with Server Key
-    const serverEncrypted = encryptServerSide(body.encryptedState);
+    const safeUserId = sanitizeQueryValue(body.userId, 'userId');
+    const safeVerifier = sanitizeQueryValue(body.verifier, 'verifier');
 
-    await this.userStateModel.updateOne(
-      { userId: body.userId },
-      { $set: { encryptedState: serverEncrypted, updatedAt: new Date() } },
-      { upsert: true },
-    );
-    return { status: 'success' };
-  }
-
-  @Get('mls/state/:userId')
-  async getUserState(@Param('userId') userId: string) {
-    const safeUserId = sanitizeQueryValue(userId, 'userId');
-    const doc = await this.userStateModel
-      .findOne({ userId: safeUserId })
-      .exec();
-    if (!doc) return null;
-
-    // Decrypt before sending back to client
-    try {
-      const originalBlob = decryptServerSide(doc.encryptedState);
-      return { ...doc.toObject(), encryptedState: originalBlob };
-    } catch {
-      console.error('Decryption failed for user state');
-      return null;
+    // Verifier must be a 64-char lowercase hex string (32 bytes PBKDF2 output).
+    if (!/^[0-9a-f]{64}$/.test(safeVerifier)) {
+      throw new BadRequestException('verifier format invalid');
     }
+
+    const doc = await this.pinVerifierModel.findOne({ userId: safeUserId }).exec();
+
+    if (!doc) {
+      await this.pinVerifierModel.create({
+        userId: safeUserId,
+        verifier: safeVerifier,
+      });
+      return { status: 'registered' };
+    }
+
+    // Constant-time comparison to prevent timing-based inference.
+    const stored = Buffer.from(doc.verifier, 'hex');
+    const incoming = Buffer.from(safeVerifier, 'hex');
+    const match =
+      stored.length === incoming.length &&
+      crypto.timingSafeEqual(stored, incoming);
+
+    return { status: match ? 'ok' : 'mismatch' };
   }
 
   @Post('mls-api/groups')

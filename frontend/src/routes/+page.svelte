@@ -112,6 +112,35 @@
 
   // --- Auth & Initialisation ---
 
+  /**
+   * Derive a PBKDF2-SHA-256 verifier from the PIN and userId.
+   * This is deterministic, non-reversible, and is the same value on every
+   * device that uses the correct PIN for this user.
+   */
+  async function computePinVerifier(uid: string, userPin: string): Promise<string> {
+    const enc = new TextEncoder();
+    const baseKey = await crypto.subtle.importKey(
+      'raw',
+      enc.encode(userPin),
+      'PBKDF2',
+      false,
+      ['deriveBits'],
+    );
+    const bits = await crypto.subtle.deriveBits(
+      {
+        name: 'PBKDF2',
+        salt: enc.encode('canari:' + uid),
+        iterations: 100_000,
+        hash: 'SHA-256',
+      },
+      baseKey,
+      256,
+    );
+    return Array.from(new Uint8Array(bits))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+  }
+
   async function generateDevToken(uid: string): Promise<string> {
     const secret = import.meta.env.VITE_JWT_SECRET;
     if (!secret) {
@@ -162,6 +191,23 @@
 
     try {
       const mlsService = ensureMls(); // Ensure MLS is initialized
+
+      // Verify PIN consistency across devices before doing anything else
+      log('Vérification du PIN...');
+      const verifier = await computePinVerifier(userId, pin);
+      const verifierRes = await fetch(`${historyBaseUrl}/mls-api/pin-verifier/check`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, verifier }),
+      });
+      if (!verifierRes.ok) throw new Error('Impossible de vérifier le PIN (serveur inaccessible).');
+      const verifierData = await verifierRes.json();
+      if (verifierData.status === 'mismatch') {
+        throw new Error('PIN incorrect : ce PIN ne correspond pas à celui enregistré pour cet utilisateur. Tous vos appareils doivent utiliser le même PIN.');
+      }
+      if (verifierData.status === 'registered') {
+        log('Premier appareil : PIN enregistré.');
+      }
 
       log('Initialisation MLS...');
       let stateBytes: Uint8Array | undefined;

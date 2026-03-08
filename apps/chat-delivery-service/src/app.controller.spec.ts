@@ -4,7 +4,6 @@ import { getModelToken } from '@nestjs/mongoose';
 import { QueuedMessage } from './queued-message.schema';
 import { KeyPackage } from './key-package.schema';
 import { WelcomeMessage } from './welcome-message.schema';
-import { UserState } from './user-state.schema';
 import { GroupMember } from './group-member.schema';
 import { Group } from './group.schema';
 
@@ -13,7 +12,6 @@ describe('AppController', () => {
   let mockQueuedMessageModel: any;
   let mockKeyPackageModel: any;
   let mockWelcomeMessageModel: any;
-  let mockUserStateModel: any;
 
   beforeEach(async () => {
     mockQueuedMessageModel = {
@@ -36,12 +34,6 @@ describe('AppController', () => {
     };
 
     mockWelcomeMessageModel = {};
-
-    mockUserStateModel = {
-      updateOne: jest.fn().mockReturnThis(),
-      findOne: jest.fn().mockReturnThis(),
-      exec: jest.fn(),
-    };
 
     const mockGroupMemberModel = {
       find: jest.fn().mockReturnThis(),
@@ -75,10 +67,6 @@ describe('AppController', () => {
         {
           provide: getModelToken(WelcomeMessage.name),
           useValue: mockWelcomeMessageModel,
-        },
-        {
-          provide: getModelToken(UserState.name),
-          useValue: mockUserStateModel,
         },
         {
           provide: getModelToken(GroupMember.name),
