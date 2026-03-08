@@ -9,3 +9,4 @@ export { default as ChatHeader } from './ChatHeader.svelte';
 export { default as MessageBubble } from './MessageBubble.svelte';
 export { default as ChatComposer } from './ChatComposer.svelte';
 export { default as LogsPanel } from './LogsPanel.svelte';
+export { default as MainChatPage } from './MainChatPage.svelte';
