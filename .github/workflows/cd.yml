@@ -169,21 +169,6 @@ jobs:
             exit 1
           fi
 
-      - name: Stop host Nginx if running
-        run: |
-          echo "🔍 Checking for host nginx on port 80..."
-          if sudo systemctl is-active --quiet nginx 2>/dev/null; then
-            echo "⚠️ Host nginx is running. Stopping to free port 80 for Docker edge..."
-            sudo systemctl stop nginx && echo "✅ Nginx stopped" || echo "⚠️ Nginx stop failed"
-          elif sudo ss -ltnp 2>/dev/null | grep -q ':80.*nginx'; then
-            echo "⚠️ Nginx process found on port 80. Stopping..."
-            sudo pkill -f nginx || echo "⚠️ pkill failed"
-            sleep 2
-            echo "✅ Nginx forcefully stopped"
-          else
-            echo "✅ No nginx conflict detected on port 80"
-          fi
-
       - name: Authenticate to GHCR
         env:
           REGISTRY: ${{ env.REGISTRY }}
@@ -215,6 +200,15 @@ jobs:
         working-directory: ${{ env.DEPLOY_PATH }}
         run: |
           echo "🔍 Checking environment configuration..."
+
+          FRONTEND_HOST_PORT=8080
+          if [ -f infrastructure/.env ]; then
+            ENV_PORT=$(grep -E '^FRONTEND_HOST_PORT=' infrastructure/.env | cut -d= -f2 || true)
+            if [ -n "$ENV_PORT" ]; then
+              FRONTEND_HOST_PORT="$ENV_PORT"
+            fi
+          fi
+          echo "FRONTEND_HOST_PORT=$FRONTEND_HOST_PORT" >> $GITHUB_ENV
 
           if [ ! -f infrastructure/.env ]; then
             echo ""
@@ -278,11 +272,9 @@ jobs:
           set -e
 
           if [ "$DEPLOY_STATUS" -ne 0 ]; then
-            echo "⚠️ First deploy attempt failed. Checking for port 80/443 conflicts..."
+            echo "⚠️ First deploy attempt failed. Checking for frontend host port conflicts..."
 
-            CONFLICTS_80=$(eval "$DOCKER_CLI ps --filter 'publish=80' --format '{{.ID}} {{.Image}} {{.Names}}'")
-            CONFLICTS_443=$(eval "$DOCKER_CLI ps --filter 'publish=443' --format '{{.ID}} {{.Image}} {{.Names}}'")
-            CONFLICTS=$(printf "%s\n%s\n" "$CONFLICTS_80" "$CONFLICTS_443" | sed '/^$/d' | sort -u)
+            CONFLICTS=$(eval "$DOCKER_CLI ps --filter 'publish=$FRONTEND_HOST_PORT' --format '{{.ID}} {{.Image}} {{.Names}}'")
 
             NON_CANARI_CONFLICT=0
             if [ -n "$CONFLICTS" ]; then
@@ -304,7 +296,7 @@ jobs:
             fi
 
             if [ "$NON_CANARI_CONFLICT" -ne 0 ]; then
-              echo "Resolve host port 80/443 conflicts and retry deployment."
+              echo "Resolve host port ${FRONTEND_HOST_PORT} conflicts and retry deployment."
               exit 1
             fi
 
@@ -354,11 +346,10 @@ jobs:
           echo "🔍 Performing health checks..."
           sleep 10
 
-          # Check gateway (local)
-          curl -f http://localhost:8080/health || echo "⚠️ Gateway health check failed"
+          FRONTEND_HOST_PORT="${FRONTEND_HOST_PORT:-8080}"
 
-          # Check delivery service (local)
-          curl -f http://localhost:3001/api/health || echo "⚠️ Delivery service health check failed"
+          # Check frontend (local host port)
+          curl -f "http://localhost:${FRONTEND_HOST_PORT}/" || echo "⚠️ Frontend health check failed"
 
           echo "✅ Health checks completed"
 

@@ -164,13 +164,15 @@ Services disponibles (développement local) :
 - **Redis** : localhost:6379
 - **Kafka** : localhost:9092
 
-**En production (derrière Nginx reverse proxy) :**
+**En production (Cloudflare Tunnel / cloudflared) :**
 
-- **Frontend** : https://canari-emse.fr (HTTPS port 443)
+- **Frontend public** : https://canari-emse.fr
 - **WebSocket** : wss://canari-emse.fr/ws (proxied vers chat-gateway:3000)
 - **API MLS** : https://canari-emse.fr/mls-api/ (proxied vers chat-delivery-service:3001)
 
 En production Docker, le reverse proxy (`/ws`, `/groups/`, `/mls-api/`) est intégré dans l'image `frontend`.
+Le conteneur frontend écoute sur le port hôte `${FRONTEND_HOST_PORT}` (par défaut `8080`),
+et `cloudflared` doit pointer vers `http://localhost:8080`.
 
 ### Déploiement production (Linux)
 
@@ -254,6 +256,7 @@ Au **premier lancement**, cette commande :
    # Optionnel : ajuster la configuration production
    nano infrastructure/.env
    # → Vérifier POSTGRES_PASSWORD, DOMAIN, ALLOW_ORIGIN
+   # → FRONTEND_HOST_PORT=8080 (recommandé avec cloudflared)
    ```
 
 Au **deuxième lancement** (après configuration) :
@@ -277,6 +280,13 @@ Push sur `main` déclenche automatiquement :
 **Note importante** : Le workflow CD **ne crée pas** les fichiers `.env`. Ils doivent exister sur le serveur (créés lors du premier déploiement via `make production`). Les déploiements CD suivants utilisent les `.env` existants sans les modifier.
 
 **Note proxy production** : Le service `frontend` embarque sa configuration Nginx (SPA + proxy WebSocket/API). Il n'est pas nécessaire de monter `infrastructure/nginx/conf.d` dans `docker-compose.prod.yml`.
+
+**Note cloudflared** : utilisez cette ingress pour l'app principale :
+
+```yaml
+- hostname: canari-emse.fr
+   service: http://localhost:8080
+```
 
 **Option 3 : Déploiement manuel étape par étape**
 
