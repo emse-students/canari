@@ -271,6 +271,17 @@
                   return true;
                 }
 
+                if (parsed.type === 'groupDeleted') {
+                  log(`🗑️ Groupe supprimé par ${senderNorm}`);
+                  if (storage) await storage.deleteConversation(convoKey);
+                  conversations.delete(convoKey);
+                  if (selectedContact === convoKey) {
+                    selectedContact = null;
+                    mobileView = 'list';
+                  }
+                  return true;
+                }
+
                 if (parsed.type === 'reaction' && parsed.messageId && parsed.emoji) {
                   // Add reaction to message
                   const reactions = messageReactions.get(parsed.messageId) || [];
@@ -475,7 +486,6 @@
         let mlsUpdated = false;
 
         for (const msg of history) {
-          if (msg.sender_id === userId) continue;
           try {
             const bytesStr = atob(msg.content);
             const bytes = new Uint8Array(bytesStr.length);
@@ -483,12 +493,35 @@
 
             const decrypted = await mlsService.processIncomingMessage(groupId, bytes);
             if (decrypted) {
+              // Check if it's JSON control message
+              try {
+                const parsed = JSON.parse(decrypted);
+                if (parsed.type === 'text' || parsed.type === 'reply') {
+                  const content = parsed.content;
+                  if (content) {
+                    await addMessageToChat(msg.sender_id, content, contactName, parsed.replyTo);
+                    addedMsg++;
+                    mlsUpdated = true;
+                    continue;
+                  }
+                } else if (parsed.type === 'reaction' || parsed.type === 'groupRenamed' || parsed.type === 'memberRemoved' || parsed.type === 'memberAdded' || parsed.type === 'groupDeleted') {
+                   // We skip history processing for reactions/system events to avoid duplicates
+                   mlsUpdated = true;
+                   continue;
+                }
+              } catch {
+                // Not JSON -> legacy plain text
+              }
               await addMessageToChat(msg.sender_id, decrypted, contactName);
               addedMsg++;
               mlsUpdated = true;
             }
-          } catch {
-            // Silently ignore errors in processing individual messages
+          } catch (err) {
+            // Silently ignore CannotDecryptOwnMessage for exporting device retrieving its own messages
+            if (String(err).includes('CannotDecryptOwnMessage')) {
+               continue;
+            }
+            console.warn(`History msg error: ${err}`);
           }
         }
         if (mlsUpdated) {
@@ -960,6 +993,15 @@
     if (!convo) return;
     try {
       const mlsService = ensureMls();
+
+      // Send control message to notify all members (and own devices)
+      try {
+        const controlMsg = JSON.stringify({ type: 'groupDeleted' });
+        await mlsService.sendMessage(convo.groupId, controlMsg);
+      } catch (e) {
+        console.warn('Failed to broadcast group deletion:', e);
+      }
+
       await mlsService.deleteGroupOnServer(convo.groupId);
       if (storage) await storage.deleteConversation(selectedContact);
       conversations.delete(selectedContact);
