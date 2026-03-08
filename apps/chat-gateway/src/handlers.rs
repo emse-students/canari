@@ -344,6 +344,7 @@ async fn handle_socket(
                                         );
                                         let body = serde_json::json!({
                                             "senderId": user_id,
+                                            "senderDeviceId": device_id,
                                             "recipients": offline_list,
                                             "content": payload,
                                             "groupId": group_id
