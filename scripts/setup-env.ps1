@@ -297,6 +297,7 @@ else {
 # Write secrets to files
 if (Test-Path $FrontendEnv) {
     Write-EnvVar $FrontendEnv "VITE_JWT_SECRET" $FrontendSecret
+    Write-EnvVar $FrontendEnv "VITE_MEDIA_URL" "http://localhost:3002"
     Write-Success "Updated frontend VITE_JWT_SECRET"
 }
 

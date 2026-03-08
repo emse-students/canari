@@ -6,7 +6,7 @@
   import { onMount, tick } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { fade } from 'svelte/transition';
-  import { fromHex } from '$lib/utils/hex';
+  import { fromHex, toHex } from '$lib/utils/hex';
   import { computePinVerifier, generateDevToken } from '$lib/utils/mainChatAuth';
   import {
     addDevMember,
@@ -34,6 +34,7 @@
   } from '$lib/utils/mainChatGroupCreation';
   import { sendChatMessage, addReaction } from '$lib/utils/mainChatMessaging';
   import { migrateFromLocalStorage } from '$lib/utils/migration';
+  import { MediaService } from '$lib/media';
   import LoginForm from './LoginForm.svelte';
   import Navbar from './Navbar.svelte';
   import Sidebar from './Sidebar.svelte';
@@ -96,6 +97,12 @@
 
   // Reply state
   let replyingTo = $state<ChatMessage | null>(null);
+
+  // Media
+  const mediaService = new MediaService();
+  let authToken = $state('');
+  let pendingMediaFile = $state<File | null>(null);
+  let isUploadingMedia = $state(false);
 
   // Helper to ensure MLS service exists
   function ensureMls(): IMlsService {
@@ -216,6 +223,12 @@
         loadHistoryForConversation,
         log,
       });
+
+      authToken = await generateDevToken(
+        userId,
+        import.meta.env.VITE_JWT_SECRET,
+        import.meta.env.DEV
+      );
 
       // Initialize WebSocket connection
       await initializeConnection({
@@ -404,16 +417,49 @@
 
   async function handleSendChat() {
     const text = messageText.trim();
-    if (!text || !selectedContact) return;
+    const fileToSend = pendingMediaFile;
+
+    if (!text && !fileToSend) return;
+    if (!selectedContact) return;
     const convo = conversations.get(selectedContact);
     if (!convo) return;
 
     const currentReplyingTo = replyingTo;
-    messageText = '';
+    if (text) messageText = '';
     replyingTo = null;
     sendError = '';
 
     const mlsService = ensureMls();
+
+    if (fileToSend) {
+      pendingMediaFile = null;
+      isUploadingMedia = true;
+      try {
+        if (!authToken) {
+          authToken = await generateDevToken(
+            userId,
+            import.meta.env.VITE_JWT_SECRET,
+            import.meta.env.DEV
+          );
+        }
+        const mediaRef = await mediaService.encryptAndUpload(fileToSend, authToken);
+        const payload = JSON.stringify(mediaRef);
+        await mlsService.sendMessage(convo.groupId, payload);
+        const stateBytes = await mlsService.saveState(pin);
+        localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
+        await addMessageToChat(userId, payload, selectedContact);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        pendingMediaFile = fileToSend;
+        sendError = `Échec de l'envoi du média : ${errorMessage}`;
+        log(`Erreur envoi média: ${errorMessage}`);
+      } finally {
+        isUploadingMedia = false;
+      }
+    }
+
+    if (!text) return;
+
     const result = await sendChatMessage(text, selectedContact, currentReplyingTo, {
       mlsService,
       userId,
@@ -428,6 +474,11 @@
       replyingTo = currentReplyingTo;
       sendError = result.error || "Échec de l'envoi";
     }
+  }
+
+  function handleFileSelected(file: File) {
+    pendingMediaFile = file;
+    void handleSendChat();
   }
 
   async function handleAddReaction(messageId: string, emoji: string) {
@@ -589,6 +640,9 @@
     selectedContact = null;
     statusLog = [];
     storage = null;
+    authToken = '';
+    pendingMediaFile = null;
+    isUploadingMedia = false;
     groupMembers = [];
     sendError = '';
     localStorage.removeItem('canari_saved_user');
@@ -769,6 +823,9 @@
         onReply={handleReply}
         onReact={handleAddReaction}
         onCancelReply={cancelReply}
+        {authToken}
+        onFileSelected={handleFileSelected}
+        isUploading={isUploadingMedia}
       />
 
       {#if showLogs}

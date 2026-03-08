@@ -56,6 +56,9 @@
     onReply?: (message: ChatMessage) => void;
     onReact?: (messageId: string, emoji: string) => void;
     onCancelReply?: () => void;
+    authToken?: string;
+    onFileSelected?: (file: File) => void;
+    isUploading?: boolean;
   }
 
   let {
@@ -78,6 +81,9 @@
     onReply,
     onReact,
     onCancelReply,
+    authToken = '',
+    onFileSelected,
+    isUploading = false,
   }: Props = $props();
 
   let chatContainer = $state<HTMLDivElement>();
@@ -123,6 +129,7 @@
           reactions={messageReactions?.get(msg.id) || []}
           onReply={onReply ? () => onReply?.(msg) : undefined}
           {onReact}
+          {authToken}
         />
       {/each}
     </div>
@@ -135,7 +142,15 @@
       </div>
     {/if}
 
-    <ChatComposer {messageText} {onMessageChange} {onSend} {replyingTo} {onCancelReply} />
+    <ChatComposer
+      {messageText}
+      {onMessageChange}
+      {onSend}
+      {replyingTo}
+      {onCancelReply}
+      onFileSelected={onFileSelected}
+      {isUploading}
+    />
   {:else}
     <EmptyState
       icon={ShieldCheck}

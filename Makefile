@@ -292,6 +292,24 @@ else
 		fi \
 	)
 endif
+	@echo "${BLUE}📦 Installing media-service dependencies...${RESET}"
+ifeq ($(OS),Windows_NT)
+	@cd apps/media-service && npm install
+else
+	@cd apps/media-service && ( \
+		if [ -x "$$HOME/.bun/bin/bun" ]; then \
+			$$HOME/.bun/bin/bun install; \
+		elif command -v bun >/dev/null 2>&1; then \
+			bun install; \
+		elif command -v npm >/dev/null 2>&1; then \
+			npm install; \
+		else \
+			export NVM_DIR="$$HOME/.nvm"; \
+			[ -s "$$NVM_DIR/nvm.sh" ] && \. "$$NVM_DIR/nvm.sh"; \
+			npm install; \
+		fi \
+	)
+endif
 	@echo "${GREEN}✅ Services Node.js prêts${RESET}"
 
 install-hooks:

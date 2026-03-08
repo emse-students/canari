@@ -115,3 +115,9 @@ jobs:
           npm ci
           npm run lint
           npm test
+
+      - name: Build Media Service
+        working-directory: apps/media-service
+        run: |
+          npm install
+          npm run build

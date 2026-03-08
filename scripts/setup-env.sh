@@ -49,6 +49,11 @@ if [[ "$PROD" == "false" ]]; then
         cp "$ROOT/frontend/.env.example" "$FRONTEND_ENV"
     fi
     sed -i.bak "s|^VITE_JWT_SECRET=.*|VITE_JWT_SECRET=${JWT_SECRET}|" "$FRONTEND_ENV" && rm -f "${FRONTEND_ENV}.bak"
+    if grep -q '^VITE_MEDIA_URL=' "$FRONTEND_ENV"; then
+        sed -i.bak "s|^VITE_MEDIA_URL=.*|VITE_MEDIA_URL=http://localhost:3002|" "$FRONTEND_ENV" && rm -f "${FRONTEND_ENV}.bak"
+    else
+        echo "VITE_MEDIA_URL=http://localhost:3002" >> "$FRONTEND_ENV"
+    fi
     ok "VITE_JWT_SECRET synchronisé dans frontend/.env (dev local)"
 else
     warn "Mode --prod : frontend/.env ignoré (VITE_JWT_SECRET est injecté par le CI via GitHub Secrets)"

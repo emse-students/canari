@@ -80,7 +80,13 @@ Set-Location "apps/user-service"
 npm install
 Set-Location ../../
 
-# 3.5 Frontend
+# 3.5 Media Service
+Write-Host "   👉 apps/media-service"
+Set-Location "apps/media-service"
+npm install
+Set-Location ../../
+
+# 3.6 Frontend
 Write-Host "   👉 frontend"
 Set-Location "frontend"
 npm install

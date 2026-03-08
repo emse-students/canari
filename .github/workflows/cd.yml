@@ -60,9 +60,10 @@ jobs:
           echo "VITE_JWT_SECRET=${JWT_SECRET}" > .env
           # VITE_GATEWAY_URL et VITE_DELIVERY_URL intentionnellement vides :
           # le code utilise window.location.origin comme fallback, ce qui fonctionne
-          # derrière nginx (même domaine, /ws et /mls-api/ routés par le reverse proxy).
+          # derrière nginx (même domaine, /ws, /mls-api/ et /media/ routés par le reverse proxy).
           echo "VITE_GATEWAY_URL=" >> .env
           echo "VITE_HISTORY_URL=" >> .env
+          echo "VITE_MEDIA_URL=" >> .env
 
       - name: Build frontend
         working-directory: frontend
@@ -94,6 +95,9 @@ jobs:
           - name: frontend
             context: .
             dockerfile: ./infrastructure/local/Dockerfile.frontend
+          - name: media-service
+            context: .
+            dockerfile: ./infrastructure/local/Dockerfile.media-service
     steps:
       - uses: actions/checkout@v4
 

@@ -187,6 +187,64 @@ services:
         max_attempts: 3
 
   # ─────────────────────────────────────────────────────
+  # MinIO – stockage objet S3-compatible pour médias chiffrés
+  # ─────────────────────────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    restart: always
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio_data:/data
+    networks:
+      - canari-network
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  # ─────────────────────────────────────────────────────
+  # Media Service (NestJS) — port 3002
+  # ─────────────────────────────────────────────────────
+  media-service:
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/media-service:${TAG:-latest}
+    restart: always
+    environment:
+      NODE_ENV: production
+      PORT: "3002"
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio}
+      MINIO_PORT: "${MINIO_PORT:-9000}"
+      MINIO_USE_SSL: "${MINIO_USE_SSL:-false}"
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-${MINIO_ROOT_USER:-minioadmin}}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-${MINIO_ROOT_PASSWORD:-minioadmin}}
+      MINIO_BUCKET: ${MINIO_BUCKET:-canari-media}
+      MEDIA_MAX_SIZE_MB: "${MEDIA_MAX_SIZE_MB:-50}"
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - canari-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+
+  # ─────────────────────────────────────────────────────
   # Frontend (Nginx + Svelte built) — port 80 interne Docker
   # ─────────────────────────────────────────────────────
   frontend:
@@ -197,6 +255,7 @@ services:
     depends_on:
       - chat-gateway
       - chat-delivery-service
+      - media-service
     networks:
       - canari-network
     healthcheck:
@@ -222,3 +281,4 @@ volumes:
   mongo_data:
   mongo_config:
   postgres_data:
+  minio_data:

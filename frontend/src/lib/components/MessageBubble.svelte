@@ -1,8 +1,11 @@
 <script lang="ts">
   import { format } from 'date-fns';
   import { fly } from 'svelte/transition';
-  import { Reply, Smile } from 'lucide-svelte';
+  import { Reply, Smile, FileText, Download } from 'lucide-svelte';
   import { clickOutside } from '$lib/actions/clickOutside';
+  import { onDestroy } from 'svelte';
+  import { parseMediaMessage, MediaService } from '$lib/media';
+  import type { MediaRef } from '$lib/media';
   import 'emoji-picker-element';
 
   interface MessageReaction {
@@ -25,6 +28,7 @@
     reactions?: MessageReaction[];
     onReply?: (messageId: string) => void;
     onReact?: (messageId: string, emoji: string) => void;
+    authToken?: string;
   }
 
   let {
@@ -38,16 +42,19 @@
     reactions = [],
     onReply,
     onReact,
+    authToken = '',
   }: Props = $props();
 
   let showEmojiPicker = $state(false);
+  let mediaRef = $derived(parseMediaMessage(content));
+  let blobUrl = $state<string | null>(null);
+  let loadError = $state(false);
 
-  // Group reactions by emoji
   const groupedReactions = $derived(
     reactions.reduce(
-      (acc, r) => {
-        if (!acc[r.emoji]) acc[r.emoji] = [];
-        acc[r.emoji].push(r.userId);
+      (acc, reaction) => {
+        if (!acc[reaction.emoji]) acc[reaction.emoji] = [];
+        acc[reaction.emoji].push(reaction.userId);
         return acc;
       },
       {} as Record<string, string[]>
@@ -70,9 +77,51 @@
       },
     };
   }
+
+  $effect(() => {
+    if (!mediaRef || !authToken) return;
+
+    if (blobUrl) {
+      URL.revokeObjectURL(blobUrl);
+      blobUrl = null;
+    }
+    loadError = false;
+
+    const ref: MediaRef = mediaRef;
+    const token: string = authToken;
+
+    new MediaService()
+      .downloadAndDecrypt(ref, token)
+      .then((url) => {
+        blobUrl = url;
+      })
+      .catch(() => {
+        loadError = true;
+      });
+  });
+
+  onDestroy(() => {
+    if (blobUrl) URL.revokeObjectURL(blobUrl);
+  });
+
+  function formatFileSize(bytes: number): string {
+    if (bytes < 1024) return `${bytes} o`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} Ko`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
+  }
+
+  function openBlob(url: string) {
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }
+
+  function downloadBlob(url: string, fileName: string) {
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    link.click();
+  }
 </script>
 
-<!-- System message (centered, gray) -->
 {#if isSystem}
   <div class="flex w-full justify-center my-2">
     <div class="px-4 py-1.5 bg-gray-100 rounded-full text-xs text-gray-600 text-center max-w-md">
@@ -80,7 +129,6 @@
     </div>
   </div>
 {:else}
-  <!-- Regular message bubble -->
   <div class="flex w-full {isOwn ? 'justify-end' : 'justify-start'} group">
     <div
       use:clickOutside={() => (showEmojiPicker = false)}
@@ -99,14 +147,67 @@
           </div>
         {/if}
 
-        <p class="text-base leading-relaxed break-words">{content}</p>
+        {#if mediaRef}
+          <div class="overflow-hidden rounded-xl">
+            {#if mediaRef.type === 'image'}
+              {#if blobUrl}
+                <button
+                  type="button"
+                  onclick={() => openBlob(blobUrl!)}
+                  aria-label="Ouvrir l'image en plein écran"
+                >
+                  <img
+                    src={blobUrl}
+                    alt={mediaRef.fileName ?? 'Image'}
+                    class="rounded-xl max-h-64 object-contain"
+                  />
+                </button>
+              {:else if loadError}
+                <div class="w-48 h-32 rounded-xl bg-gray-100 flex items-center justify-center text-xs text-gray-400 px-3 text-center">
+                  Impossible de charger l'image
+                </div>
+              {:else}
+                <div class="w-48 h-32 rounded-xl bg-gray-100 animate-pulse"></div>
+              {/if}
+            {:else if mediaRef.type === 'video'}
+              {#if blobUrl}
+                <!-- svelte-ignore a11y_media_has_caption -->
+                <video src={blobUrl} controls class="rounded-xl max-h-64 max-w-xs"></video>
+              {:else if loadError}
+                <div class="w-48 h-24 rounded-xl bg-gray-100 flex items-center justify-center text-xs text-gray-400">
+                  Impossible de charger la vidéo
+                </div>
+              {:else}
+                <div class="w-48 h-24 rounded-xl bg-gray-100 animate-pulse"></div>
+              {/if}
+            {:else}
+              <div class="flex items-center gap-3 px-3 py-3 min-w-[180px] bg-white/40 rounded-xl">
+                <FileText size={28} class="flex-shrink-0 opacity-60" />
+                <div class="flex-1 min-w-0">
+                  <p class="text-sm font-medium truncate">{mediaRef.fileName ?? 'Fichier'}</p>
+                  <p class="text-xs opacity-60">{formatFileSize(mediaRef.size)}</p>
+                </div>
+                {#if blobUrl}
+                  <button
+                    type="button"
+                    onclick={() => downloadBlob(blobUrl!, mediaRef.fileName ?? 'fichier')}
+                    aria-label="Télécharger"
+                  >
+                    <Download size={18} class="opacity-70 hover:opacity-100" />
+                  </button>
+                {/if}
+              </div>
+            {/if}
+          </div>
+        {:else}
+          <p class="text-base leading-relaxed break-words">{content}</p>
+        {/if}
 
         <div class="flex items-center justify-between mt-2 gap-2">
           <span class="text-[0.65rem] opacity-70">
             {format(timestamp, 'HH:mm')}
           </span>
 
-          <!-- Action buttons (show on hover) -->
           <div class="opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
             {#if onReply}
               <button
@@ -132,7 +233,6 @@
         </div>
       </div>
 
-      <!-- Reactions display (grouped) -->
       {#if Object.keys(groupedReactions).length > 0}
         <div class="flex gap-1 flex-wrap px-2">
           {#each Object.entries(groupedReactions) as [emoji, users] (emoji)}
@@ -148,7 +248,6 @@
         </div>
       {/if}
 
-      <!-- Emoji picker popup -->
       {#if showEmojiPicker}
         <div
           class="absolute bottom-full mb-1 {isOwn

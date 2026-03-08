@@ -28,6 +28,7 @@ Canari est une application de **messagerie instantanée sécurisée** avec chiff
 - 👥 **Conversations de groupe** - Support complet des groupes avec gestion des membres
 - 💬 **Historique sécurisé** - Messages indexés et stockés en base de données
 - 🔔 **Notifications en temps réel** - WebSocket avec routage smart online/offline
+- 🖼️ **Partage de médias chiffrés E2E** - Images/vidéos/fichiers chiffrés côté client
 - 📱 **Support multi-device** - Synchronisation fluide entre appareils
 - 🖥️ **Desktop & Web** - Frontend Tauri (desktop) et SvelteKit (web)
 - ⚡ **Infrastructure scalable** - Kafka, Redis, PostgreSQL, MongoDB
@@ -71,7 +72,7 @@ Canari est une application de **messagerie instantanée sécurisée** avec chiff
 | **Frontend** | SvelteKit 2.9 • Svelte 5 • TailwindCSS 4 • Tauri 2 |
 | **Gateway**  | Rust 1.87 (Axum) • Tokio • Tonic • Rdkafka         |
 | **Services** | NestJS • Node.js 20                                |
-| **Data**     | PostgreSQL • MongoDB • Redis • Kafka               |
+| **Data**     | PostgreSQL • MongoDB • Redis • Kafka • MinIO       |
 | **DevOps**   | Docker • Docker Compose • GitHub Actions • Nginx   |
 | **Quality**  | ESLint • Prettier • Clippy • Husky • Pre-commit    |
 
@@ -118,6 +119,7 @@ cd canari
 chmod +x scripts/setup-env.sh
 ./scripts/setup-env.sh
 # Crée infrastructure/.env et frontend/.env avec un JWT_SECRET généré automatiquement
+# Synchronise aussi VITE_MEDIA_URL=http://localhost:3002 pour le dev local
 ```
 
 3. **Installer les dépendances**
@@ -129,7 +131,7 @@ make install
 4. **Lancer les services Docker + frontend**
 
 ```bash
-make run-services              # Lance Redis, Kafka, MongoDB, PostgreSQL, Chat Gateway, Delivery
+make run-services              # Lance Redis, Kafka, MongoDB, PostgreSQL, Chat Gateway, Delivery, Media, MinIO
 cd frontend && bun run dev     # Frontend sur http://localhost:5173
 ```
 
@@ -144,6 +146,9 @@ Services disponibles après `make run-services` :
 | Frontend dev  | http://localhost:5173  |
 | Chat Gateway  | ws://localhost:3000/ws |
 | Chat Delivery | http://localhost:3001  |
+| Media Service | http://localhost:3002  |
+| MinIO API     | http://localhost:9000  |
+| MinIO Console | http://localhost:9001  |
 | PostgreSQL    | localhost:5432         |
 | MongoDB       | localhost:27017        |
 | Redis         | localhost:6379         |
