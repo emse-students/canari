@@ -1,11 +1,11 @@
-.PHONY: all install install-node install-bun install-rust install-wasm-pack install-frontend install-services install-hooks setup-env setup-env-prod build-frontend nginx-install reload-services test test-libs test-gateway test-history clean nginx-uninstall nginx-https
+.PHONY: all install install-node install-bun install-rust install-wasm-pack install-frontend install-services install-hooks setup-env setup-env-prod production production-check build-frontend nginx-install reload-services test test-libs test-gateway test-history clean nginx-uninstall nginx-https
 
-# Cible par défaut : installation complète et déploiement
+# Cible par défaut : installation complète et déploiement LOCAL
 .DEFAULT_GOAL := all
 
 all: install install-hooks build-frontend nginx-install reload-services
 	@echo ""
-	@echo "${BOLD}${GREEN}🎉 INSTALLATION COMPLÈTE TERMINÉE${RESET}"
+	@echo "${BOLD}${GREEN}🎉 INSTALLATION COMPLÈTE TERMINÉE (DEV LOCAL)${RESET}"
 	@echo "---------------------------------------------------"
 	@echo "${GREEN}✅ Dépendances installées${RESET}"
 	@echo "${GREEN}✅ Git hooks configurés${RESET}"
@@ -14,6 +14,85 @@ all: install install-hooks build-frontend nginx-install reload-services
 	@echo "${GREEN}✅ Services Docker rechargés${RESET}"
 	@echo "---------------------------------------------------"
 	@echo ""
+
+# ── Déploiement Production ────────────────────────────────────────────────────
+production: production-check
+	@echo ""
+	@echo "${BOLD}${BLUE}🚀 DÉPLOIEMENT PRODUCTION${RESET}"
+	@echo "---------------------------------------------------"
+	@echo "${BLUE}📥 Pulling Docker images from GHCR...${RESET}"
+	@docker compose -f infrastructure/docker-compose.prod.yml pull
+	@echo "${BLUE}🛑 Stopping existing containers...${RESET}"
+	@docker compose -f infrastructure/docker-compose.prod.yml down --remove-orphans
+	@echo "${BLUE}🚀 Starting production services...${RESET}"
+	@docker compose -f infrastructure/docker-compose.prod.yml up -d --remove-orphans
+	@echo ""
+	@echo "${BOLD}${GREEN}✅ DÉPLOIEMENT PRODUCTION TERMINÉ${RESET}"
+	@echo "---------------------------------------------------"
+	@echo "${GREEN}✅ Configuration validée${RESET}"
+	@echo "${GREEN}✅ Images Docker pullées${RESET}"
+	@echo "${GREEN}✅ Services démarrés${RESET}"
+	@echo "---------------------------------------------------"
+	@echo ""
+	@echo "${YELLOW}🔍 Vérifier les services :${RESET}"
+	@echo "  docker compose -f infrastructure/docker-compose.prod.yml ps"
+	@echo ""
+	@echo "${YELLOW}📋 Voir les logs :${RESET}"
+	@echo "  docker compose -f infrastructure/docker-compose.prod.yml logs -f"
+	@echo ""
+
+production-check:
+	@echo "${BLUE}🔍 Vérification de la configuration production...${RESET}"
+	@if [ ! -f infrastructure/.env ]; then \
+		echo "${YELLOW}⚠️  Fichier infrastructure/.env manquant${RESET}"; \
+		echo "${BLUE}📝 Création depuis .env.example...${RESET}"; \
+		cp infrastructure/.env.example infrastructure/.env; \
+		echo ""; \
+		echo "${RED}╔═══════════════════════════════════════════════════════════╗${RESET}"; \
+		echo "${RED}║  ⚠️  CONFIGURATION REQUISE                                ║${RESET}"; \
+		echo "${RED}╚═══════════════════════════════════════════════════════════╝${RESET}"; \
+		echo ""; \
+		echo "${YELLOW}Avant de continuer, éditez infrastructure/.env :${RESET}"; \
+		echo ""; \
+		echo "  ${BLUE}1. Générer un secret JWT :${RESET}"; \
+		echo "     openssl rand -hex 32"; \
+		echo ""; \
+		echo "  ${BLUE}2. Éditer le fichier :${RESET}"; \
+		echo "     nano infrastructure/.env"; \
+		echo ""; \
+		echo "  ${BLUE}3. Configurer ces variables :${RESET}"; \
+		echo "     - JWT_SECRET=<résultat de openssl rand -hex 32>"; \
+		echo "     - POSTGRES_PASSWORD=<mot de passe sécurisé>"; \
+		echo "     - DOMAIN=canari-emse.fr"; \
+		echo ""; \
+		echo "  ${BLUE}4. Relancer :${RESET}"; \
+		echo "     make production"; \
+		echo ""; \
+		exit 1; \
+	fi
+	@if [ ! -f frontend/.env ]; then \
+		echo "${YELLOW}⚠️  Fichier frontend/.env manquant${RESET}"; \
+		echo "${BLUE}📝 Création depuis .env.example...${RESET}"; \
+		cp frontend/.env.example frontend/.env; \
+	fi
+	@echo "${BLUE}🔐 Synchronisation des secrets JWT...${RESET}"
+	@chmod +x scripts/setup-env.sh
+	@./scripts/setup-env.sh --prod --sync-only || { \
+		echo ""; \
+		echo "${RED}╔═══════════════════════════════════════════════════════════╗${RESET}"; \
+		echo "${RED}║  ❌ ERREUR DE CONFIGURATION                               ║${RESET}"; \
+		echo "${RED}╚═══════════════════════════════════════════════════════════╝${RESET}"; \
+		echo ""; \
+		echo "${YELLOW}Vérifiez que :${RESET}"; \
+		echo "  1. infrastructure/.env contient un JWT_SECRET valide (64 char hex)"; \
+		echo "  2. frontend/.env contient le même secret dans VITE_JWT_SECRET"; \
+		echo ""; \
+		echo "${BLUE}Pour générer un secret valide :${RESET}"; \
+		echo "  openssl rand -hex 32"; \
+		echo ""; \
+		exit 1; \
+	}
+	@echo "${GREEN}✅ Configuration validée${RESET}"
 
 # ── Configuration déploiement Nginx ───────────────────────────────────────────
 DOMAIN             ?= canari-emse.fr

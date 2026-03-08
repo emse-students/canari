@@ -154,27 +154,128 @@ Les services Docker se lancent automatiquement avec `make`, ou manuellement depu
 docker compose -f infrastructure/local/docker-compose.yml up -d --build --remove-orphans
 ```
 
-Services disponibles :
+Services disponibles (développement local) :
 
 - **Frontend** : http://localhost:5173
-- **Chat Gateway** : ws://localhost:8000
+- **Chat Gateway** : http://localhost:3000 (WebSocket: ws://localhost:3000/ws)
+- **Chat Delivery Service** : http://localhost:3001
 - **PostgreSQL** : localhost:5432
 - **MongoDB** : localhost:27017
 - **Redis** : localhost:6379
 - **Kafka** : localhost:9092
 
+**En production (derrière Nginx reverse proxy) :**
+
+- **Frontend** : https://canari-emse.fr (HTTPS port 443)
+- **WebSocket** : wss://canari-emse.fr/ws (proxied vers chat-gateway:3000)
+- **API MLS** : https://canari-emse.fr/mls-api/ (proxied vers chat-delivery:3001)
+
 ### Déploiement production (Linux)
 
 **⚠️ Prérequis** : Les images Docker doivent être disponibles sur GHCR
 
-**Option 1 : Via workflow CD (recommandé)**
+#### 🎯 Workflow Premier Déploiement
+
+Pour un **nouveau serveur**, suivez ce processus :
+
+1. **SSH sur le serveur de production** :
+   ```bash
+   ssh votre-serveur
+   cd /home/canari  # ou votre répertoire de déploiement
+   ```
+
+2. **Cloner le repository** :
+   ```bash
+   git clone https://github.com/emse-students/canari.git
+   cd canari
+   ```
+
+3. **Première configuration via Makefile** :
+   ```bash
+   make production
+   ```
+   
+   Cette commande va :
+   - Créer `infrastructure/.env` et `frontend/.env` depuis les templates
+   - **S'arrêter** et vous demander de configurer les secrets
+   
+4. **Générer et configurer les secrets** :
+   ```bash
+   # Générer un secret JWT sécurisé
+   openssl rand -hex 32
+   
+   # Éditer infrastructure/.env
+   nano infrastructure/.env
+   # → Remplir JWT_SECRET (résultat de openssl)
+   # → Remplir POSTGRES_PASSWORD (mot de passe sécurisé)
+   # → Vérifier DOMAIN=canari-emse.fr
+   ```
+
+5. **Relancer le déploiement** :
+   ```bash
+   make production
+   ```
+   
+   Cette fois, la commande va :
+   - ✅ Valider la configuration
+   - ✅ Synchroniser les secrets JWT
+   - ✅ Pull les images Docker
+   - ✅ Démarrer les services
+
+6. **Vérifier le déploiement** :
+   ```bash
+   docker compose -f infrastructure/docker-compose.prod.yml ps
+   docker compose -f infrastructure/docker-compose.prod.yml logs -f
+   ```
+
+**✅ C'est prêt !** Les prochains déploiements se feront automatiquement via GitHub Actions (voir Option 2).
+
+---
+
+**Option 1 : Via Makefile (recommandé pour premier déploiement sur Linux)**
+
+```bash
+# Première exécution : génère les .env et vous guide
+make production
+```
+
+**⚠️ Note** : `make production` nécessite Linux/macOS. Sur Windows, utilisez l'Option 3 (manuel).
+
+Au **premier lancement**, cette commande :
+1. Créé `infrastructure/.env` et `frontend/.env` depuis les templates
+2. **S'arrête** et vous demande de configurer les secrets :
+   ```bash
+   # Générer un secret JWT
+   openssl rand -hex 32
+   
+   # Éditer infrastructure/.env
+   nano infrastructure/.env
+   # → Remplir JWT_SECRET, POSTGRES_PASSWORD, DOMAIN
+   
+   # Relancer le déploiement
+   make production
+   ```
+
+Au **deuxième lancement** (après configuration) :
+- ✅ Valide la configuration
+- ✅ Synchronise les secrets JWT entre frontend et backend
+- ✅ Pull les images Docker depuis `ghcr.io/emse-students/canari/*`
+- ✅ Démarre les services avec `docker-compose.prod.yml`
+
+**Option 2 : Via workflow CD (automatique)**
+
+⚠️ **Prérequis** : Le serveur doit avoir été configuré une première fois avec `make production` (voir Option 1)
 
 Push sur `main` déclenche automatiquement :
+
 - Build des images Docker
 - Push sur `ghcr.io/emse-students/canari/*`
-- Déploiement sur le serveur (si configuré via GitHub Actions)
+- Déploiement sur le serveur (pull images + restart services)
+- Vérification de santé des services
 
-**Option 2 : Déploiement manuel**
+**Note importante** : Le workflow CD **ne crée pas** les fichiers `.env`. Ils doivent exister sur le serveur (créés lors du premier déploiement via `make production`). Les déploiements CD suivants utilisent les `.env` existants sans les modifier.
+
+**Option 3 : Déploiement manuel étape par étape**
 
 ```bash
 # 1) Configurer les secrets
@@ -187,7 +288,7 @@ docker compose -f infrastructure/docker-compose.prod.yml pull
 docker compose -f infrastructure/docker-compose.prod.yml up -d --remove-orphans
 ```
 
-**Option 3 : Build local (dev/test)**
+**Option 4 : Build local (dev/test)**
 
 ```bash
 docker compose -f infrastructure/local/docker-compose.yml up -d --build --remove-orphans
@@ -205,13 +306,16 @@ docker compose -f infrastructure/local/docker-compose.yml up -d --build --remove
 ### Scripts Principaux
 
 ```bash
-# Installation
+# Installation (développement local)
 make install           # Installer toutes les dépendances
 make install-hooks    # Configurer les Git hooks Husky
 
 # Build
 make build-frontend   # Compiler le frontend (WASM + Svelte)
 make nginx-install    # Configurer Nginx (production)
+
+# Déploiement
+make production       # Déploiement production (pull images GHCR + start)
 
 # Tests
 make test             # Lancer tous les tests

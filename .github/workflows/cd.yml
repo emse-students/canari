@@ -211,6 +211,48 @@ jobs:
           git reset --hard origin/main
           echo "✅ Code updated to $(git rev-parse --short HEAD)"
 
+      - name: Check environment configuration
+        working-directory: ${{ env.DEPLOY_PATH }}
+        run: |
+          echo "🔍 Checking environment configuration..."
+          
+          if [ ! -f infrastructure/.env ]; then
+            echo ""
+            echo "╔═══════════════════════════════════════════════════════════╗"
+            echo "║  ⚠️  CONFIGURATION MANQUANTE                             ║"
+            echo "╚═══════════════════════════════════════════════════════════╝"
+            echo ""
+            echo "Le fichier infrastructure/.env n'existe pas."
+            echo "Pour le premier déploiement, vous devez :"
+            echo ""
+            echo "  1. SSH sur le serveur :"
+            echo "     ssh ${{ env.DEPLOY_PATH }}"
+            echo ""
+            echo "  2. Lancer la configuration initiale :"
+            echo "     make production"
+            echo ""
+            echo "  3. Configurer les secrets dans infrastructure/.env"
+            echo ""
+            echo "  4. Relancer ce workflow"
+            echo ""
+            exit 1
+          fi
+          
+          if [ ! -f frontend/.env ]; then
+            echo "⚠️ frontend/.env manquant, création depuis template..."
+            cp frontend/.env.example frontend/.env
+          fi
+          
+          echo "✅ Configuration .env présente"
+          
+          # Vérifier que JWT_SECRET est configuré (sans afficher la valeur)
+          if grep -q "^JWT_SECRET=.*change.*me" infrastructure/.env 2>/dev/null; then
+            echo ""
+            echo "⚠️  WARNING: JWT_SECRET semble être une valeur par défaut"
+            echo "   Assurez-vous d'avoir configuré un secret sécurisé !"
+            echo ""
+          fi
+
       - name: Pull Docker images
         working-directory: ${{ env.DEPLOY_PATH }}
         env:
