@@ -112,7 +112,7 @@
     if (!res.ok) {
       throw new Error(`Auth service error: ${res.status} ${res.statusText}`);
     }
-    const data = await res.json() as { token: string };
+    const data = (await res.json()) as { token: string };
     return data.token;
   }
 
