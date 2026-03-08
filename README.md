@@ -86,6 +86,7 @@ Canari est une application de **messagerie instantanée sécurisée** avec chiff
 - **Python** 3.9+ _(optionnel, pour pre-commit hooks avancés)_
 
 **Auto-installé par `make` sur Linux/macOS :**
+
 - Node.js 20+ LTS + npm (via nvm)
 - Bun (gestionnaire de paquets rapide)
 - Rust stable + cargo (via rustup)
@@ -113,7 +114,7 @@ cd canari
 
 2. **Configurer les variables d'environnement**
 
-```bash
+````bash
 # Linux/macOS
 chmod +x scripts/setup-env.sh
 ./scripts/setup-env.sh
@@ -138,7 +139,7 @@ docker compose -f infrastructure/docker-compose.prod.yml pull
 
 # 3) Démarrer les services
 docker compose -f infrastructure/docker-compose.prod.yml up -d
-```
+````
 
 **Option 3 : Build local (dev/test)**
 
@@ -146,6 +147,7 @@ docker compose -f infrastructure/docker-compose.prod.yml up -d
 # Build local des images (sans GHCR)
 docker compose -f infrastructure/local/docker-compose.yml up -d --build
 ```
+
 4. **Lancer le frontend en mode dev (optionnel)**
 
 ```bash
@@ -173,30 +175,39 @@ Services disponibles :
 - **Kafka** : localhost:9092
 
 ### Déploiement production (Linux)
+
 **⚠️ Prérequis** : Les images Docker doivent être disponibles sur GHCR
- 
+
 **Option 1 : Via workflow CD (recommandé)**
- 
+
+Push sur `main` déclenche automatiquement :
+- Build des images Docker
+- Push sur `ghcr.io/emse-students/canari/*`
+- Déploiement sur le serveur (si configuré)
+
+**Option 2 : Déploiement manuel**
 
 ```bash
-Push sur main déclenche automatiquement :
-- Build des images Docker
-- Push sur ghcr.io/emse-students/canari/*
-- Déploiement sur le serveur (si configuré)
- 
-**Option 2 : Déploiement manuel**
- 
-1) Configurer les secrets
+# 1) Configurer les secrets
 ./scripts/setup-env.sh --prod --sync-only
 
-2) Pull des images depuis GHCR (buildées par CD)
-3) Démarrer les services
-docker compose -f infrastructure/docker-compose.prod.yml up -d --build
- 
-**Option 3 : Build local (dev/test)**
- 
-Build local des images (sans GHCR)
+# 2) Pull des images depuis GHCR (buildées par CD)
+docker compose -f infrastructure/docker-compose.prod.yml pull
+
+# 3) Démarrer les services
+docker compose -f infrastructure/docker-compose.prod.yml up -d --remove-orphans
 ```
+
+**Option 3 : Build local (dev/test)**
+
+```bash
+docker compose -f infrastructure/local/docker-compose.yml up -d --build --remove-orphans
+```
+
+### Pourquoi il y a 2 docker-compose ?
+
+- `infrastructure/local/docker-compose.yml` : développement local, build des images en local
+- `infrastructure/docker-compose.prod.yml` : production, pull des images depuis GHCR
 
 ---
 

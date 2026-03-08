@@ -74,7 +74,7 @@ POSTGRES_DB=auth_db
 DOMAIN=canari-emse.fr
 ALLOW_ORIGIN=https://canari-emse.fr
 REGISTRY=ghcr.io
-IMAGE_PREFIX=your-github-org/canari
+IMAGE_PREFIX=emse-students/canari
 TAG=latest
 RUST_LOG=chat_gateway=info,tower_http=info
 NODE_ENV=production
