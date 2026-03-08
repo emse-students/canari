@@ -111,7 +111,12 @@
   async function generateDevToken(uid: string): Promise<string> {
     const secret = import.meta.env.VITE_JWT_SECRET;
     if (!secret) {
-      throw new Error('VITE_JWT_SECRET not configured in .env');
+      const isDev = import.meta.env.DEV;
+      throw new Error(
+        isDev
+          ? 'VITE_JWT_SECRET non configuré dans frontend/.env (développement)'
+          : 'VITE_JWT_SECRET absent du bundle — vérifier le GitHub Secret JWT_SECRET dans Settings → Secrets → Actions'
+      );
     }
     if (typeof crypto === 'undefined' || !crypto.subtle) {
       throw new Error(
@@ -328,7 +333,11 @@
       if (!saved) continue;
       const contactName = key.substring(prefix.length);
       let data: any;
-      try { data = JSON.parse(saved); } catch { continue; }
+      try {
+        data = JSON.parse(saved);
+      } catch {
+        continue;
+      }
 
       await storage.saveConversation({
         id: contactName,
@@ -340,14 +349,19 @@
 
       for (const m of (data.messages || []) as any[]) {
         try {
-          await storage.saveMessage({
-            id: m.id || crypto.randomUUID(),
-            conversationId: contactName,
-            senderId: m.senderId || '',
-            content: m.content || '',
-            timestamp: m.timestamp ? new Date(m.timestamp).getTime() : Date.now(),
-          }, pin);
-        } catch { /* skip invalid rows */ }
+          await storage.saveMessage(
+            {
+              id: m.id || crypto.randomUUID(),
+              conversationId: contactName,
+              senderId: m.senderId || '',
+              content: m.content || '',
+              timestamp: m.timestamp ? new Date(m.timestamp).getTime() : Date.now(),
+            },
+            pin
+          );
+        } catch {
+          /* skip invalid rows */
+        }
       }
 
       localStorage.removeItem(key);
@@ -638,13 +652,16 @@
     // Persist message to DB (encrypted with PIN)
     if (storage) {
       try {
-        await storage.saveMessage({
-          id: newMsg.id,
-          conversationId: normalized,
-          senderId: newMsg.senderId,
-          content: newMsg.content,
-          timestamp: newMsg.timestamp.getTime()
-        }, pin);
+        await storage.saveMessage(
+          {
+            id: newMsg.id,
+            conversationId: normalized,
+            senderId: newMsg.senderId,
+            content: newMsg.content,
+            timestamp: newMsg.timestamp.getTime(),
+          },
+          pin
+        );
         await saveConversation(normalized);
       } catch (e) {
         console.error('[DB] Failed to persist message:', e);
@@ -702,7 +719,10 @@
   }
 
   async function resetAll() {
-    if (storage) { await storage.clear(); storage = null; }
+    if (storage) {
+      await storage.clear();
+      storage = null;
+    }
     localStorage.clear();
     logout();
   }
@@ -795,7 +815,9 @@
       const filename = `canari-backup-${userId}-${date}.canari`;
 
       // Works in both browser and Tauri WebView
-      const url = URL.createObjectURL(new Blob([blob.buffer as ArrayBuffer], { type: 'application/octet-stream' }));
+      const url = URL.createObjectURL(
+        new Blob([blob.buffer as ArrayBuffer], { type: 'application/octet-stream' })
+      );
       const a = document.createElement('a');
       a.href = url;
       a.download = filename;
@@ -839,7 +861,7 @@
         // a Welcome for each group.
         log(
           '⚠️ Nouvel appareil détecté. Les conversations sont importées en lecture seule. ' +
-          'Reconnectez l\'appareil exportateur pour déclencher l\'invitation automatique aux groupes.'
+            "Reconnectez l'appareil exportateur pour déclencher l'invitation automatique aux groupes."
         );
         // Clear the known-devices cache on the exporter side so it will re-sync
         // when it comes online (transparent to this device, but good hygiene).
@@ -851,7 +873,7 @@
 
       log(
         `✅ Sauvegarde importée : ${backup.conversations.length} conversation(s), ` +
-        `${backup.messages.length} message(s).`
+          `${backup.messages.length} message(s).`
       );
     } catch (e) {
       log(`Erreur import : ${e}`);
