@@ -350,10 +350,18 @@ endif
 
 build-frontend:
 	@echo "${BLUE}🚀 Building frontend...${RESET}"
-	@cd frontend/mls-wasm && wasm-pack build --target web --out-dir ../src/lib/wasm
 ifeq ($(OS),Windows_NT)
+	@cd frontend/mls-wasm && wasm-pack build --target web --out-dir ../src/lib/wasm
 	@cd frontend && ($(CHECK_CMD) bun >$(NULL_DEV) 2>&1 && bun run build || npm run build)
 else
+	@cd frontend/mls-wasm && ( \
+		if command -v wasm-pack >/dev/null 2>&1; then \
+			wasm-pack build --target web --out-dir ../src/lib/wasm; \
+		else \
+			. "$$HOME/.cargo/env" 2>/dev/null || true; \
+			wasm-pack build --target web --out-dir ../src/lib/wasm; \
+		fi \
+	)
 	@cd frontend && ( \
 		if [ -x "$$HOME/.bun/bin/bun" ]; then \
 			$$HOME/.bun/bin/bun run build; \
