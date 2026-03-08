@@ -1,16 +1,15 @@
-.PHONY: all install install-node install-bun install-rust install-wasm-pack install-frontend install-services install-hooks setup-env setup-env-prod production production-check build-frontend nginx-install reload-services test test-libs test-gateway test-history clean nginx-uninstall nginx-https
+.PHONY: all install install-node install-bun install-rust install-wasm-pack install-frontend install-services install-hooks setup-env setup-env-prod production production-check build-frontend reload-services test test-libs test-gateway test-history clean
 
 # Cible par défaut : installation complète et déploiement LOCAL
 .DEFAULT_GOAL := all
 
-all: install install-hooks build-frontend nginx-install reload-services
+all: install install-hooks build-frontend reload-services
 	@echo ""
 	@echo "${BOLD}${GREEN}🎉 INSTALLATION COMPLÈTE TERMINÉE (DEV LOCAL)${RESET}"
 	@echo "---------------------------------------------------"
 	@echo "${GREEN}✅ Dépendances installées${RESET}"
 	@echo "${GREEN}✅ Git hooks configurés${RESET}"
 	@echo "${GREEN}✅ Frontend buildé${RESET}"
-	@echo "${GREEN}✅ Nginx configuré${RESET}"
 	@echo "${GREEN}✅ Services Docker rechargés${RESET}"
 	@echo "---------------------------------------------------"
 	@echo ""
@@ -62,18 +61,8 @@ production-check:
 	fi
 	@echo "${GREEN}✅ Configuration validée${RESET}"
 
-# ── Configuration déploiement Nginx ───────────────────────────────────────────
-DOMAIN             ?= canari-emse.fr
-GATEWAY_PORT       ?= 3000
-DELIVERY_PORT      ?= 3001
-NGINX_PORT         ?= 8080  # Port sur lequel nginx écoute (Cloudflare forward ici)
-NGINX_CONF_NAME    ?= canari
-WWW_DIR            := /var/www/$(NGINX_CONF_NAME)
-FRONTEND_BUILD_PATH := $(WWW_DIR)
-NGINX_SITES_AVAIL  := /etc/nginx/sites-available
-NGINX_SITES_ENABLED:= /etc/nginx/sites-enabled
-
-# Note: HTTPS est géré par Cloudflare Tunnel, nginx écoute en HTTP
+# Note: le frontend est servi par le container Docker nginx (infrastructure/local/Dockerfile.frontend)
+# HTTPS est géré par Cloudflare Tunnel. Pas de nginx externe.
 
 # Détection de l'OS pour la compatibilité
 ifeq ($(OS),Windows_NT)
@@ -362,43 +351,6 @@ test-gateway:
 test-history:
 	@echo "${BLUE}🧪 Testing Chat Delivery Service...${RESET}"
 	@cd apps/chat-delivery-service && npm test -- --coverage
-
-# ── Nginx ─────────────────────────────────────────────────────────────────────
-ifeq ($(OS),Windows_NT)
-nginx-install:
-	@echo "${BLUE}ℹ️ Skipping Nginx install on Windows (sudo/nginx not available)${RESET}"
-	@echo "${BLUE}ℹ️ Use local Docker services instead: make run-services${RESET}"
-
-nginx-uninstall:
-	@echo "${BLUE}ℹ️ Skipping Nginx uninstall on Windows${RESET}"
-else
-nginx-install:
-	@echo "${BLUE}🔧 Deploying frontend build to $(WWW_DIR)...${RESET}"
-	@sudo mkdir -p $(WWW_DIR)
-	@sudo rsync -a --delete frontend/build/ $(WWW_DIR)/
-	@sudo chown -R www-data:www-data $(WWW_DIR)
-	@echo "${BLUE}🔧 Generating Nginx config for domain: ${BOLD}$(DOMAIN)${RESET}"
-	@echo "${BLUE}� Nginx will listen on port: $(NGINX_PORT) (Cloudflare Tunnel)${RESET}"
-	@TMPFILE=$$(mktemp) && \
-	 DOMAIN="$(DOMAIN)" \
-	 GATEWAY_PORT="$(GATEWAY_PORT)" \
-	 DELIVERY_PORT="$(DELIVERY_PORT)" \
-	 FRONTEND_BUILD_PATH="$(WWW_DIR)" \
-	 NGINX_PORT="$(NGINX_PORT)" \
-	 envsubst '$$DOMAIN $$GATEWAY_PORT $$DELIVERY_PORT $$FRONTEND_BUILD_PATH $$NGINX_PORT' \
-	 < infrastructure/nginx/canari.conf.template \
-	 > "$$TMPFILE" && \
-	 sudo cp "$$TMPFILE" $(NGINX_SITES_AVAIL)/$(NGINX_CONF_NAME) && \
-	 rm -f "$$TMPFILE"
-	@sudo ln -sf $(NGINX_SITES_AVAIL)/$(NGINX_CONF_NAME) $(NGINX_SITES_ENABLED)/$(NGINX_CONF_NAME)
-	@sudo nginx -t && sudo systemctl reload nginx
-	@echo "${GREEN}✅ Nginx configuré et rechargé pour $(DOMAIN) (port $(NGINX_PORT))${RESET}"
-
-nginx-uninstall:
-	@sudo rm -f $(NGINX_SITES_ENABLED)/$(NGINX_CONF_NAME) $(NGINX_SITES_AVAIL)/$(NGINX_CONF_NAME)
-	@sudo nginx -t && sudo systemctl reload nginx
-	@echo "${GREEN}✅ Config Nginx supprimée${RESET}"
-endif
 
 build-frontend:
 	@echo "${BLUE}🚀 Building frontend...${RESET}"
