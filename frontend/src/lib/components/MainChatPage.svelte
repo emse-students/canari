@@ -144,7 +144,6 @@
 
   // --- Auth & Initialisation ---
 
-
   async function handleLogin() {
     if (!userId.trim() || !pin.trim()) {
       loginError = 'Veuillez remplir tous les champs.';
@@ -169,7 +168,9 @@
       if (!verifierRes.ok) throw new Error('Impossible de vérifier le PIN (serveur inaccessible).');
       const verifierData = await verifierRes.json();
       if (verifierData.status === 'mismatch') {
-        throw new Error('PIN incorrect : ce PIN ne correspond pas à celui enregistré pour cet utilisateur. Tous vos appareils doivent utiliser le même PIN.');
+        throw new Error(
+          'PIN incorrect : ce PIN ne correspond pas à celui enregistré pour cet utilisateur. Tous vos appareils doivent utiliser le même PIN.'
+        );
       }
       if (verifierData.status === 'registered') {
         log('Premier appareil : PIN enregistré.');
@@ -549,7 +550,9 @@
     if (reconnectTimer !== null) return; // already scheduled
     const delay = RECONNECT_DELAYS[Math.min(reconnectAttempts, RECONNECT_DELAYS.length - 1)];
     reconnectAttempts++;
-    log(`Connexion perdue. Nouvelle tentative dans ${delay / 1000}s… (tentative ${reconnectAttempts})`);
+    log(
+      `Connexion perdue. Nouvelle tentative dans ${delay / 1000}s… (tentative ${reconnectAttempts})`
+    );
     reconnectTimer = setTimeout(attemptReconnect, delay);
   }
 

@@ -6,6 +6,7 @@ import { KeyPackage } from './key-package.schema';
 import { WelcomeMessage } from './welcome-message.schema';
 import { GroupMember } from './group-member.schema';
 import { Group } from './group.schema';
+import { PinVerifier } from './pin-verifier.schema';
 
 describe('AppController', () => {
   let appController: AppController;
@@ -47,6 +48,12 @@ describe('AppController', () => {
       exec: jest.fn().mockResolvedValue(null),
     };
 
+    const mockPinVerifierModel = {
+      findOne: jest.fn().mockReturnThis(),
+      updateOne: jest.fn().mockReturnThis(),
+      exec: jest.fn().mockResolvedValue(null),
+    };
+
     const mockRedis = {
       exists: jest.fn().mockResolvedValue(0),
       get: jest.fn().mockResolvedValue(null),
@@ -75,6 +82,10 @@ describe('AppController', () => {
         {
           provide: getModelToken(Group.name),
           useValue: mockGroupModel,
+        },
+        {
+          provide: getModelToken(PinVerifier.name),
+          useValue: mockPinVerifierModel,
         },
         {
           provide: 'REDIS_CLIENT',

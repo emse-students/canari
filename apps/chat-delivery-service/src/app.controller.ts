@@ -94,9 +94,7 @@ export class AppController {
    *   { status: 'mismatch' }    – verifier differs; wrong PIN for this user.
    */
   @Post('mls-api/pin-verifier/check')
-  async checkPinVerifier(
-    @Body() body: { userId: string; verifier: string },
-  ) {
+  async checkPinVerifier(@Body() body: { userId: string; verifier: string }) {
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
     const safeVerifier = sanitizeQueryValue(body.verifier, 'verifier');
 
@@ -105,7 +103,9 @@ export class AppController {
       throw new BadRequestException('verifier format invalid');
     }
 
-    const doc = await this.pinVerifierModel.findOne({ userId: safeUserId }).exec();
+    const doc = await this.pinVerifierModel
+      .findOne({ userId: safeUserId })
+      .exec();
 
     if (!doc) {
       await this.pinVerifierModel.create({

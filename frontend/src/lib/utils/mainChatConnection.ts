@@ -73,7 +73,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       const convo = conversations.get(convoKey)!;
       try {
         const decrypted = await mlsService.processIncomingMessage(convo.groupId, content);
-        
+
         // Auto-save MLS state
         try {
           const stBytes = await mlsService.saveState(pin);
@@ -150,7 +150,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           } catch {
             // Not JSON or unknown control message → treat as plain text (legacy)
           }
-          
+
           // Plain text message (legacy format)
           await addMessageToChat(senderNorm, decrypted, convoKey);
         }
