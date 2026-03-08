@@ -85,8 +85,8 @@ Canari est une application de **messagerie instantanée sécurisée** avec chiff
 - **Rust** 1.87+
 - **Docker** + **Docker Compose**
 - **Make** (GNU Make)
-- **Bun** *(optionnel : auto-installé par `make install` sur Linux/macOS si absent)*
-- **Python** 3.9+ *(optionnel, pour pre-commit)*
+- **Bun** _(optionnel : auto-installé par `make install` sur Linux/macOS si absent)_
+- **Python** 3.9+ _(optionnel, pour pre-commit)_
 
 Vérifier les dépendances :
 
@@ -126,6 +126,7 @@ make  # ou: make all
 ```
 
 Cette commande :
+
 - installe Bun automatiquement (Linux/macOS) si absent,
 - installe dépendances frontend + services,
 - configure les hooks Git,
