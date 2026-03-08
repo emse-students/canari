@@ -77,9 +77,33 @@ endif
 
 install-frontend:
 	@echo "${BLUE}📦 Installing frontend dependencies...${RESET}"
+ifeq ($(OS),Windows_NT)
 	@cd frontend && ($(CHECK_CMD) bun >$(NULL_DEV) 2>&1 && bun install || npm install --legacy-peer-deps)
+else
+	@cd frontend && ( \
+		if [ -x "$$HOME/.bun/bin/bun" ]; then \
+			$$HOME/.bun/bin/bun install; \
+		elif command -v bun >/dev/null 2>&1; then \
+			bun install; \
+		else \
+			npm install --legacy-peer-deps; \
+		fi \
+	)
+endif
 	@echo "${BLUE}🔄 Running svelte-kit sync...${RESET}"
+ifeq ($(OS),Windows_NT)
 	@cd frontend && ($(CHECK_CMD) bunx >$(NULL_DEV) 2>&1 && bunx svelte-kit sync || npx svelte-kit sync)
+else
+	@cd frontend && ( \
+		if [ -x "$$HOME/.bun/bin/bun" ]; then \
+			$$HOME/.bun/bin/bunx svelte-kit sync; \
+		elif command -v bunx >/dev/null 2>&1; then \
+			bunx svelte-kit sync; \
+		else \
+			npx svelte-kit sync; \
+		fi \
+	)
+endif
 	@echo "${GREEN}✅ Frontend prêt${RESET}"
 
 install-services:
@@ -95,7 +119,19 @@ install-services:
 
 install-hooks:
 	@echo "${BLUE}🪝 Installing Git hooks via Husky...${RESET}"
+ifeq ($(OS),Windows_NT)
 	@cd frontend && (bun install 2>$(NULL_DEV) || npm install --legacy-peer-deps)
+else
+	@cd frontend && ( \
+		if [ -x "$$HOME/.bun/bin/bun" ]; then \
+			$$HOME/.bun/bin/bun install; \
+		elif command -v bun >/dev/null 2>&1; then \
+			bun install; \
+		else \
+			npm install --legacy-peer-deps; \
+		fi \
+	)
+endif
 	@echo "${GREEN}✅ Git hooks configurés${RESET}"
 
 # ── Environment & Secrets Management ──────────────────────────────────────────
@@ -173,7 +209,19 @@ endif
 build-frontend:
 	@echo "${BLUE}🚀 Building frontend...${RESET}"
 	@cd frontend/mls-wasm && wasm-pack build --target web --out-dir ../src/lib/wasm
+ifeq ($(OS),Windows_NT)
 	@cd frontend && ($(CHECK_CMD) bun >$(NULL_DEV) 2>&1 && bun run build || npm run build)
+else
+	@cd frontend && ( \
+		if [ -x "$$HOME/.bun/bin/bun" ]; then \
+			$$HOME/.bun/bin/bun run build; \
+		elif command -v bun >/dev/null 2>&1; then \
+			bun run build; \
+		else \
+			npm run build; \
+		fi \
+	)
+endif
 	@echo "${GREEN}✅ Frontend buildé${RESET}"
 
 run-services:
