@@ -16,6 +16,7 @@
     content: string;
     timestamp: Date;
     isOwn: boolean;
+    isSystem?: boolean;
     replyTo?: {
       id: string;
       senderId: string;
@@ -241,15 +242,35 @@
               // Check if it's a control message (JSON)
               try {
                 const parsed = JSON.parse(decrypted);
-                
+
                 if (parsed.type === 'groupRenamed' && parsed.newName) {
                   // Update group name locally
                   conversations.set(convoKey, { ...convo, name: parsed.newName });
                   if (storage) await saveConversation(convoKey);
+                  await addSystemMessage(
+                    `${senderNorm} a renommé le groupe en "${parsed.newName}"`,
+                    convoKey
+                  );
                   log(`📝 Groupe renommé en "${parsed.newName}" par ${senderNorm}`);
                   return true;
                 }
-                
+
+                if (parsed.type === 'memberRemoved' && parsed.targetUser) {
+                  await addSystemMessage(
+                    `${senderNorm} a retiré ${parsed.targetUser} du groupe`,
+                    convoKey
+                  );
+                  return true;
+                }
+
+                if (parsed.type === 'memberAdded' && parsed.newUser) {
+                  await addSystemMessage(
+                    `${senderNorm} a ajouté ${parsed.newUser} au groupe`,
+                    convoKey
+                  );
+                  return true;
+                }
+
                 if (parsed.type === 'reaction' && parsed.messageId && parsed.emoji) {
                   // Add reaction to message
                   const reactions = messageReactions.get(parsed.messageId) || [];
@@ -260,13 +281,13 @@
                   log(`👍 ${senderNorm} a réagi avec ${parsed.emoji}`);
                   return true;
                 }
-                
+
                 if (parsed.type === 'reply' && parsed.content) {
                   // Reply message with quote
                   await addMessageToChat(senderNorm, parsed.content, convoKey, parsed.replyTo);
                   return true;
                 }
-                
+
                 if (parsed.type === 'text' && parsed.content) {
                   // Standard text message (new format)
                   await addMessageToChat(senderNorm, parsed.content, convoKey);
@@ -497,7 +518,7 @@
         messages: storedMessages.map((m) => {
           let content = m.content;
           let replyTo: ChatMessage['replyTo'] = undefined;
-          
+
           // Try to parse JSON (new format with replyTo)
           try {
             const parsed = JSON.parse(m.content);
@@ -508,7 +529,7 @@
           } catch {
             // Legacy plain text format
           }
-          
+
           return {
             id: m.id,
             senderId: m.senderId,
@@ -622,6 +643,16 @@
       if (bulk.commit) await mlsService.sendCommit(bulk.commit, convo.groupId);
 
       log(`✅ ${targetUser} invité (${bulk.addedDeviceIds.length}/${devices.length} appareils).`);
+
+      // Send control message to notify all members
+      try {
+        const controlMsg = JSON.stringify({ type: 'memberAdded', newUser: targetUser });
+        await mlsService.sendMessage(convo.groupId, controlMsg);
+        const st = await mlsService.saveState(pin);
+        localStorage.setItem('mls_autosave_' + userId, toHex(st));
+      } catch (e) {
+        console.warn('Failed to broadcast member addition:', e);
+      }
     } catch (e) {
       log(`Erreur invitation: ${e}`);
     }
@@ -726,7 +757,8 @@
     senderId: string,
     content: string,
     contactName: string,
-    replyTo?: { id: string; senderId: string; content: string }
+    replyTo?: { id: string; senderId: string; content: string },
+    isSystem = false
   ) {
     const normalized = contactName.toLowerCase();
     const convo = conversations.get(normalized);
@@ -741,6 +773,7 @@
       timestamp: new Date(),
       isOwn,
       replyTo,
+      isSystem,
     };
 
     conversations.set(normalized, {
@@ -749,8 +782,8 @@
     });
 
     // Persist message to DB (encrypted with PIN)
-    // Store as JSON to preserve replyTo metadata
-    if (storage) {
+    // Store as JSON to preserve replyTo metadata (skip system messages)
+    if (storage && !isSystem) {
       try {
         const storageContent = JSON.stringify({ content, replyTo });
         await storage.saveMessage(
@@ -774,6 +807,10 @@
     });
   }
 
+  async function addSystemMessage(content: string, contactName: string) {
+    await addMessageToChat('system', content, contactName, undefined, true);
+  }
+
   async function handleSendChat() {
     const text = messageText.trim();
     if (!text || !selectedContact) return;
@@ -782,14 +819,14 @@
 
     messageText = '';
     sendError = '';
-    
+
     try {
       const mlsService = ensureMls();
-      
+
       // Build payload based on reply state
       let payload: string;
       let replyToData: ChatMessage['replyTo'] = undefined;
-      
+
       if (replyingTo) {
         payload = JSON.stringify({
           type: 'reply',
@@ -809,7 +846,7 @@
       } else {
         payload = JSON.stringify({ type: 'text', content: text });
       }
-      
+
       await mlsService.sendMessage(convo.groupId, payload);
       const stateBytes = await mlsService.saveState(pin);
       localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
@@ -842,7 +879,7 @@
       await mlsService.sendMessage(convo.groupId, payload);
       const stateBytes = await mlsService.saveState(pin);
       localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
-      
+
       // Update local reactions immediately
       const reactions = messageReactions.get(messageId) || [];
       const filtered = reactions.filter((r) => r.userId !== userId.toLowerCase());
@@ -901,7 +938,7 @@
       conversations.set(selectedContact, { ...convo, name });
       if (storage) await saveConversation(selectedContact);
       log(`Groupe renommé en "${name}"`);
-      
+
       // Send control message to propagate rename to all group members
       try {
         const controlMsg = JSON.stringify({ type: 'groupRenamed', newName: name });
@@ -945,6 +982,16 @@
       await mlsService.removeMemberFromServer(convo.groupId, memberId);
       groupMembers = groupMembers.filter((m) => m !== memberId);
       log(`${memberId} retiré du groupe.`);
+
+      // Send control message to notify all members
+      try {
+        const controlMsg = JSON.stringify({ type: 'memberRemoved', targetUser: memberId });
+        await mlsService.sendMessage(convo.groupId, controlMsg);
+        const stBytes = await mlsService.saveState(pin);
+        localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
+      } catch (e) {
+        console.warn('Failed to broadcast member removal:', e);
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       log(`Erreur retrait membre: ${msg}`);

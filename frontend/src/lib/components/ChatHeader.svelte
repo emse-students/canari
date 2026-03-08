@@ -180,6 +180,26 @@
       </div>
 
       <!-- Members list -->
+      <div class="md:hidden flex flex-col gap-2 border-t border-cn-border pt-3">
+        <span class="text-xs text-gray-500 font-medium">Inviter un membre</span>
+        <div class="flex gap-2">
+          <input
+            type="text"
+            value={inviteMemberInput}
+            oninput={(e) => onInviteInputChange(e.currentTarget.value)}
+            onkeydown={handleKeydown}
+            placeholder="Pseudo..."
+            class="flex-1 px-2 py-1.5 border border-cn-border rounded-lg text-sm outline-none focus:border-cn-yellow"
+          />
+          <button
+            onclick={onInviteMember}
+            class="px-3 py-1.5 bg-cn-dark text-white rounded-lg text-sm font-semibold hover:bg-gray-800 transition-colors"
+          >
+            Inviter
+          </button>
+        </div>
+      </div>
+
       {#if groupMembers.length > 0}
         <div class="flex flex-col gap-1">
           <span class="text-xs text-gray-500 font-medium">Membres ({groupMembers.length})</span>

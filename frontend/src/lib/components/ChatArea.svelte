@@ -12,6 +12,7 @@
     content: string;
     timestamp: Date;
     isOwn: boolean;
+    isSystem?: boolean;
     replyTo?: {
       id: string;
       senderId: string;
@@ -117,10 +118,11 @@
           content={msg.content}
           timestamp={msg.timestamp}
           isOwn={msg.isOwn}
+          isSystem={msg.isSystem}
           replyTo={msg.replyTo}
           reactions={messageReactions?.get(msg.id) || []}
           onReply={onReply ? () => onReply?.(msg) : undefined}
-          onReact={onReact}
+          {onReact}
         />
       {/each}
     </div>
@@ -133,13 +135,7 @@
       </div>
     {/if}
 
-    <ChatComposer
-      {messageText}
-      {onMessageChange}
-      {onSend}
-      {replyingTo}
-      {onCancelReply}
-    />
+    <ChatComposer {messageText} {onMessageChange} {onSend} {replyingTo} {onCancelReply} />
   {:else}
     <EmptyState
       icon={ShieldCheck}

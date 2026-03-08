@@ -15,13 +15,7 @@
     onCancelReply?: () => void;
   }
 
-  let {
-    messageText,
-    onMessageChange,
-    onSend,
-    replyingTo,
-    onCancelReply,
-  }: Props = $props();
+  let { messageText, onMessageChange, onSend, replyingTo, onCancelReply }: Props = $props();
   let textareaEl: HTMLTextAreaElement;
 
   function handleKeydown(e: KeyboardEvent) {
@@ -50,9 +44,7 @@
 
 <footer class="bg-white border-t border-cn-border">
   {#if replyingTo}
-    <div
-      class="px-6 py-2 bg-gray-50 border-b border-cn-border flex items-center justify-between"
-    >
+    <div class="px-6 py-2 bg-gray-50 border-b border-cn-border flex items-center justify-between">
       <div class="flex-1 min-w-0">
         <div class="text-xs font-semibold text-gray-600">
           Répondre à {replyingTo.senderId}
