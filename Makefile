@@ -330,14 +330,16 @@ nginx-install:
 	@sudo rsync -a --delete frontend/build/ $(WWW_DIR)/
 	@sudo chown -R www-data:www-data $(WWW_DIR)
 	@echo "${BLUE}🔧 Generating Nginx config for domain: ${BOLD}$(DOMAIN)${RESET}"
-	@DOMAIN="$(DOMAIN)" \
+	@TMPFILE=$$(mktemp) && \
+	 DOMAIN="$(DOMAIN)" \
 	 GATEWAY_PORT="$(GATEWAY_PORT)" \
 	 DELIVERY_PORT="$(DELIVERY_PORT)" \
 	 FRONTEND_BUILD_PATH="$(WWW_DIR)" \
 	 envsubst '$$DOMAIN $$GATEWAY_PORT $$DELIVERY_PORT $$FRONTEND_BUILD_PATH' \
 	 < infrastructure/nginx/canari.conf.template \
-	 > /tmp/$(NGINX_CONF_NAME).conf
-	@sudo cp /tmp/$(NGINX_CONF_NAME).conf $(NGINX_SITES_AVAIL)/$(NGINX_CONF_NAME)
+	 > "$$TMPFILE" && \
+	 sudo cp "$$TMPFILE" $(NGINX_SITES_AVAIL)/$(NGINX_CONF_NAME) && \
+	 rm -f "$$TMPFILE"
 	@sudo ln -sf $(NGINX_SITES_AVAIL)/$(NGINX_CONF_NAME) $(NGINX_SITES_ENABLED)/$(NGINX_CONF_NAME)
 	@sudo nginx -t && sudo systemctl reload nginx
 	@echo "${GREEN}✅ Nginx configuré et rechargé pour $(DOMAIN)${RESET}"
