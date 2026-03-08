@@ -61,15 +61,6 @@ RUN printf 'server {\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
     proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
     }\n\
-    \n\
-    location /auth/ {\n\
-    set $upstream_auth auth-service:3002;\n\
-    proxy_pass http://$upstream_auth;\n\
-    proxy_set_header Host $host;\n\
-    proxy_set_header X-Real-IP $remote_addr;\n\
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
-    proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
-    }\n\
     }\n' > /etc/nginx/conf.d/default.conf
 
 EXPOSE 80

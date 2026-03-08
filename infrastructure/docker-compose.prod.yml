@@ -114,33 +114,6 @@ services:
           memory: 512M
 
   # ─────────────────────────────────────────────────────
-  # Auth Service (NestJS) — port 3002
-  # ─────────────────────────────────────────────────────
-  auth-service:
-    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/auth-service:${TAG:-latest}
-    restart: always
-    environment:
-      NODE_ENV: production
-      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
-    networks:
-      - canari-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3002/auth/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 256M
-      restart_policy:
-        condition: on-failure
-        delay: 5s
-        max_attempts: 3
-
-  # ─────────────────────────────────────────────────────
   # Chat Gateway (Rust / Axum) — port 3000
   # ─────────────────────────────────────────────────────
   chat-gateway:
@@ -224,7 +197,6 @@ services:
     depends_on:
       - chat-gateway
       - chat-delivery-service
-      - auth-service
     networks:
       - canari-network
     healthcheck:
