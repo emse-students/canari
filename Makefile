@@ -108,13 +108,61 @@ endif
 
 install-services:
 	@echo "${BLUE}📦 Installing shared-ts dependencies...${RESET}"
+ifeq ($(OS),Windows_NT)
 	@cd libs/shared-ts && npm install
+else
+	@cd libs/shared-ts && ( \
+		if [ -x "$$HOME/.bun/bin/bun" ]; then \
+			$$HOME/.bun/bin/bun install; \
+		elif command -v bun >/dev/null 2>&1; then \
+			bun install; \
+		else \
+			npm install; \
+		fi \
+	)
+endif
 	@echo "${BLUE}📦 Installing auth-service dependencies...${RESET}"
+ifeq ($(OS),Windows_NT)
 	@cd apps/auth-service && npm install
+else
+	@cd apps/auth-service && ( \
+		if [ -x "$$HOME/.bun/bin/bun" ]; then \
+			$$HOME/.bun/bin/bun install; \
+		elif command -v bun >/dev/null 2>&1; then \
+			bun install; \
+		else \
+			npm install; \
+		fi \
+	)
+endif
 	@echo "${BLUE}📦 Installing user-service dependencies...${RESET}"
+ifeq ($(OS),Windows_NT)
 	@cd apps/user-service && npm install
+else
+	@cd apps/user-service && ( \
+		if [ -x "$$HOME/.bun/bin/bun" ]; then \
+			$$HOME/.bun/bin/bun install; \
+		elif command -v bun >/dev/null 2>&1; then \
+			bun install; \
+		else \
+			npm install; \
+		fi \
+	)
+endif
 	@echo "${BLUE}📦 Installing chat-delivery-service dependencies...${RESET}"
+ifeq ($(OS),Windows_NT)
 	@cd apps/chat-delivery-service && npm install
+else
+	@cd apps/chat-delivery-service && ( \
+		if [ -x "$$HOME/.bun/bin/bun" ]; then \
+			$$HOME/.bun/bin/bun install; \
+		elif command -v bun >/dev/null 2>&1; then \
+			bun install; \
+		else \
+			npm install; \
+		fi \
+	)
+endif
 	@echo "${GREEN}✅ Services Node.js prêts${RESET}"
 
 install-hooks:
