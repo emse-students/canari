@@ -117,7 +117,7 @@ services:
   # Chat Gateway (Rust / Axum) — port 3000
   # ─────────────────────────────────────────────────────
   chat-gateway:
-    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX}/chat-gateway:${TAG:-latest}
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/chat-gateway:${TAG:-latest}
     restart: always
     environment:
       RUST_LOG: ${RUST_LOG:-chat_gateway=info,tower_http=info}
@@ -153,7 +153,7 @@ services:
   # Chat Delivery Service (NestJS) — port 3001
   # ─────────────────────────────────────────────────────
   chat-delivery-service:
-    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX}/chat-delivery-service:${TAG:-latest}
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/chat-delivery-service:${TAG:-latest}
     restart: always
     environment:
       NODE_ENV: production
@@ -190,7 +190,7 @@ services:
   # Frontend (Nginx + Svelte built) — port 80
   # ─────────────────────────────────────────────────────
   frontend:
-    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX}/frontend:${TAG:-latest}
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/frontend:${TAG:-latest}
     restart: always
     ports:
       - "80:80"

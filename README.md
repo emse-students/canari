@@ -81,12 +81,15 @@ Canari est une application de **messagerie instantanée sécurisée** avec chiff
 
 ### Prérequis
 
-- **Node.js** 20+ et **npm**
-- **Rust** 1.87+
 - **Docker** + **Docker Compose**
 - **Make** (GNU Make)
-- **Bun** _(optionnel : auto-installé par `make install` sur Linux/macOS si absent)_
-- **Python** 3.9+ _(optionnel, pour pre-commit)_
+- **Python** 3.9+ _(optionnel, pour pre-commit hooks avancés)_
+
+**Auto-installé par `make` sur Linux/macOS :**
+- Node.js 20+ LTS + npm (via nvm)
+- Bun (gestionnaire de paquets rapide)
+- Rust stable + cargo (via rustup)
+- wasm-pack (build WASM)
 
 Vérifier les dépendances :
 
@@ -115,24 +118,34 @@ cd canari
 chmod +x scripts/setup-env.sh
 ./scripts/setup-env.sh
 
-# Windows (PowerShell)
-# .\scripts\setup-env.ps1
-```
+**⚠️ Prérequis** : Les images Docker doivent être disponibles sur GHCR
 
-3. **Installer dépendances + build + services**
+**Option 1 : Via workflow CD (recommandé)**
+
+Push sur `main` déclenche automatiquement :
+- Build des images Docker
+- Push sur `ghcr.io/emse-students/canari/*`
+- Déploiement sur le serveur (si configuré via GitHub Actions)
+
+**Option 2 : Déploiement manuel**
 
 ```bash
-make  # ou: make all
+# 1) Configurer les secrets
+./scripts/setup-env.sh --prod --sync-only
+
+# 2) Pull des images depuis GHCR (buildées par CD)
+docker compose -f infrastructure/docker-compose.prod.yml pull
+
+# 3) Démarrer les services
+docker compose -f infrastructure/docker-compose.prod.yml up -d
 ```
 
-Cette commande :
+**Option 3 : Build local (dev/test)**
 
-- installe Bun automatiquement (Linux/macOS) si absent,
-- installe dépendances frontend + services,
-- configure les hooks Git,
-- build le frontend,
-- lance les services Docker locaux.
-
+```bash
+# Build local des images (sans GHCR)
+docker compose -f infrastructure/local/docker-compose.yml up -d --build
+```
 4. **Lancer le frontend en mode dev (optionnel)**
 
 ```bash
@@ -160,13 +173,29 @@ Services disponibles :
 - **Kafka** : localhost:9092
 
 ### Déploiement production (Linux)
+**⚠️ Prérequis** : Les images Docker doivent être disponibles sur GHCR
+ 
+**Option 1 : Via workflow CD (recommandé)**
+ 
 
 ```bash
-# 1) Secrets/env en mode strict
+Push sur main déclenche automatiquement :
+- Build des images Docker
+- Push sur ghcr.io/emse-students/canari/*
+- Déploiement sur le serveur (si configuré)
+ 
+**Option 2 : Déploiement manuel**
+ 
+1) Configurer les secrets
 ./scripts/setup-env.sh --prod --sync-only
 
-# 2) Déploiement stack prod
+2) Pull des images depuis GHCR (buildées par CD)
+3) Démarrer les services
 docker compose -f infrastructure/docker-compose.prod.yml up -d --build
+ 
+**Option 3 : Build local (dev/test)**
+ 
+Build local des images (sans GHCR)
 ```
 
 ---
