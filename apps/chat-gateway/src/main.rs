@@ -32,26 +32,61 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
+    tracing::info!("=== Chat Gateway démarrage ===");
+
     // Redis connection
     let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1/".to_string());
-    let redis_client = redis::Client::open(redis_url).expect("Invalid Redis URL");
+    tracing::info!("Connexion Redis: {}", redis_url);
+    let redis_client = match redis::Client::open(redis_url.clone()) {
+        Ok(c) => {
+            tracing::info!("Client Redis créé");
+            c
+        }
+        Err(e) => {
+            tracing::error!("URL Redis invalide '{}': {}", redis_url, e);
+            std::process::exit(1);
+        }
+    };
 
     // JWT Secret
-    let jwt_secret = std::env::var("JWT_SECRET")
-        .expect("JWT_SECRET environment variable is required. Generate with: openssl rand -hex 32");
+    let jwt_secret = match std::env::var("JWT_SECRET") {
+        Ok(s) if !s.is_empty() => {
+            tracing::info!("JWT_SECRET configuré ({} chars)", s.len());
+            s
+        }
+        Ok(_) => {
+            tracing::error!("JWT_SECRET est vide");
+            std::process::exit(1);
+        }
+        Err(_) => {
+            tracing::error!("JWT_SECRET manquant. Générer avec: openssl rand -hex 32");
+            std::process::exit(1);
+        }
+    };
 
     // Kafka Producer
     let kafka_brokers =
         std::env::var("KAFKA_BROKERS").unwrap_or_else(|_| "localhost:9092".to_string());
-    let kafka_producer: FutureProducer = ClientConfig::new()
+    tracing::info!("Connexion Kafka: {}", kafka_brokers);
+    let kafka_producer: FutureProducer = match ClientConfig::new()
         .set("bootstrap.servers", &kafka_brokers)
         .set("message.timeout.ms", "5000")
         .create()
-        .expect("Producer creation error");
+    {
+        Ok(p) => {
+            tracing::info!("Producteur Kafka créé");
+            p
+        }
+        Err(e) => {
+            tracing::error!("Erreur création producteur Kafka: {}", e);
+            std::process::exit(1);
+        }
+    };
 
     let http_client = HttpClient::new();
     let delivery_service_url = std::env::var("DELIVERY_SERVICE_URL")
         .unwrap_or_else(|_| "http://localhost:3001".to_string());
+    tracing::info!("Delivery service URL: {}", delivery_service_url);
 
     let app_state = Arc::new(AppState::new(
         redis_client.clone(),
@@ -61,65 +96,92 @@ async fn main() {
         delivery_service_url,
     ));
 
-    // Spawn Redis Subscriber Task (Direct Routing)
+    // Spawn Redis Subscriber Task (Direct Routing) — avec retry en cas d'échec
     {
         let redis_client = redis_client.clone();
         let connected_users = app_state.connected_users.clone();
         tokio::spawn(async move {
-            let mut pubsub = redis_client
-                .get_async_pubsub()
-                .await
-                .expect("Redis connect failed");
-            // Listen for direct messages from Backend or other Gateways
-            pubsub
-                .subscribe("chat:messages")
-                .await
-                .expect("Redis subscribe failed");
-            let mut stream = pubsub.on_message();
+            loop {
+                tracing::info!("Tentative de connexion au pub/sub Redis...");
+                let pubsub_result = redis_client.get_async_pubsub().await;
+                let mut pubsub = match pubsub_result {
+                    Ok(p) => p,
+                    Err(e) => {
+                        tracing::warn!("Echec connexion pub/sub Redis: {}. Retry dans 5s...", e);
+                        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                        continue;
+                    }
+                };
 
-            while let Some(msg) = stream.next().await {
-                if let Ok(payload_str) = msg.get_payload::<String>() {
-                    // Expect format: { recipientId, deviceId, content, ... }
-                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&payload_str) {
-                        // Extract routing info
-                        if let (Some(recipient_id), Some(device_id)) = (
-                            json.get("recipientId").and_then(|v| v.as_str()),
-                            json.get("deviceId").and_then(|v| v.as_str()),
-                        ) {
-                            let key = format!("{}:{}", recipient_id, device_id);
+                match pubsub.subscribe("chat:messages").await {
+                    Ok(_) => tracing::info!("Abonné au canal Redis 'chat:messages'"),
+                    Err(e) => {
+                        tracing::warn!("Echec abonnement Redis: {}. Retry dans 5s...", e);
+                        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                        continue;
+                    }
+                }
 
-                            // Send to ALL active connections for this key (multi-tab support)
-                            let senders = {
-                                let map = connected_users.lock().unwrap();
-                                map.get(&key).cloned()
-                            };
+                // Listen for direct messages from Backend or other Gateways
+                let mut stream = pubsub.on_message();
+                while let Some(msg) = stream.next().await {
+                    if let Ok(payload_str) = msg.get_payload::<String>() {
+                        // Expect format: { recipientId, deviceId, content, ... }
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&payload_str) {
+                            // Extract routing info
+                            if let (Some(recipient_id), Some(device_id)) = (
+                                json.get("recipientId").and_then(|v| v.as_str()),
+                                json.get("deviceId").and_then(|v| v.as_str()),
+                            ) {
+                                let key = format!("{}:{}", recipient_id, device_id);
 
-                            if let Some(senders) = senders {
-                                for tx in &senders {
-                                    let _ = tx.send(payload_str.clone());
+                                // Send to ALL active connections for this key (multi-tab support)
+                                let senders = {
+                                    let map = connected_users.lock().unwrap();
+                                    map.get(&key).cloned()
+                                };
+
+                                if let Some(senders) = senders {
+                                    for tx in &senders {
+                                        let _ = tx.send(payload_str.clone());
+                                    }
                                 }
                             }
                         }
                     }
                 }
+                // Stream ended (Redis déconnecté), on réessaie
+                tracing::warn!("Stream Redis pub/sub terminé, reconnexion dans 5s...");
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
             }
         });
     }
 
     let allow_origin = std::env::var("ALLOW_ORIGIN").unwrap_or_else(|_| "*".to_string());
+    tracing::info!("CORS ALLOW_ORIGIN: {}", allow_origin);
     let cors = if allow_origin == "*" {
         CorsLayer::new()
             .allow_origin(Any)
             .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
             .allow_headers(Any)
     } else {
-        let origin = allow_origin
-            .parse::<axum::http::HeaderValue>()
-            .expect("Invalid ALLOW_ORIGIN");
-        CorsLayer::new()
-            .allow_origin(origin)
-            .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
-            .allow_headers(Any)
+        match allow_origin.parse::<axum::http::HeaderValue>() {
+            Ok(origin) => CorsLayer::new()
+                .allow_origin(origin)
+                .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+                .allow_headers(Any),
+            Err(e) => {
+                tracing::error!(
+                    "ALLOW_ORIGIN invalide '{}': {}. Utilisation de '*' en fallback.",
+                    allow_origin,
+                    e
+                );
+                CorsLayer::new()
+                    .allow_origin(Any)
+                    .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+                    .allow_headers(Any)
+            }
+        }
     };
 
     let app = Router::new()
@@ -134,7 +196,20 @@ async fn main() {
         .with_state(app_state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
-    tracing::info!("listening on {}", addr);
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    tracing::info!("Écoute sur {}", addr);
+    let listener = match tokio::net::TcpListener::bind(addr).await {
+        Ok(l) => {
+            tracing::info!("=== Chat Gateway démarré et prêt sur {} ===", addr);
+            l
+        }
+        Err(e) => {
+            tracing::error!("Impossible de bind sur {}: {}", addr, e);
+            std::process::exit(1);
+        }
+    };
+
+    if let Err(e) = axum::serve(listener, app).await {
+        tracing::error!("Erreur serveur axum: {}", e);
+        std::process::exit(1);
+    }
 }
