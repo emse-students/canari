@@ -3,7 +3,7 @@
   import type { IMlsService } from '$lib/mlsService';
   import { getStorage } from '$lib/db';
   import type { IStorage } from '$lib/db';
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { fade } from 'svelte/transition';
   import { fromHex, toHex } from '$lib/utils/hex';
@@ -156,17 +156,19 @@
           conversation: convo,
         }).then(() => {
           // Optimistically mark as read locally
-          const newMsgs = [...convo.messages];
-          let updated = false;
-          for (const m of newMsgs) {
-            if (ids.includes(m.id)) {
-              m.readBy = [...(m.readBy || []), userId.toLowerCase()];
-              updated = true;
+          untrack(() => {
+            const newMsgs = [...convo.messages];
+            let updated = false;
+            for (const m of newMsgs) {
+              if (ids.includes(m.id)) {
+                m.readBy = [...(m.readBy || []), userId.toLowerCase()];
+                updated = true;
+              }
             }
-          }
-          if (updated && currentContact) {
-            conversations.set(currentContact, { ...convo, messages: newMsgs });
-          }
+            if (updated && currentContact) {
+              conversations.set(currentContact, { ...convo, messages: newMsgs });
+            }
+          });
         });
       } catch {
         // Wait till next chance

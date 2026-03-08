@@ -91,10 +91,8 @@
   $effect(() => {
     if (!mediaRef || !authToken) return;
 
-    if (blobUrl) {
-      URL.revokeObjectURL(blobUrl);
-      blobUrl = null;
-    }
+    let destroyed = false;
+    let urlToRevoke: string | null = null;
     loadError = false;
 
     const ref: MediaRef = mediaRef;
@@ -103,11 +101,26 @@
     new MediaService()
       .downloadAndDecrypt(ref, token)
       .then((url) => {
-        blobUrl = url;
+        if (destroyed) {
+          URL.revokeObjectURL(url);
+        } else {
+          blobUrl = url;
+          urlToRevoke = url;
+        }
       })
       .catch(() => {
-        loadError = true;
+        if (!destroyed) {
+          loadError = true;
+        }
       });
+
+    return () => {
+      destroyed = true;
+      if (urlToRevoke) {
+        URL.revokeObjectURL(urlToRevoke);
+      }
+      blobUrl = null;
+    };
   });
 
   onDestroy(() => {
