@@ -28,9 +28,8 @@ async fn main() {
     let redis_client = redis::Client::open(redis_url).expect("Invalid Redis URL");
 
     // JWT Secret
-    let jwt_secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| {
-        "9a2f8c4e6b0d71f3e8b925b1234567890abcdef1234567890abcdef12345678".to_string()
-    });
+    let jwt_secret = std::env::var("JWT_SECRET")
+        .expect("JWT_SECRET environment variable is required. Generate with: openssl rand -hex 32");
 
     // Kafka Producer
     let kafka_brokers =
