@@ -163,7 +163,9 @@
                   />
                 </button>
               {:else if loadError}
-                <div class="w-48 h-32 rounded-xl bg-gray-100 flex items-center justify-center text-xs text-gray-400 px-3 text-center">
+                <div
+                  class="w-48 h-32 rounded-xl bg-gray-100 flex items-center justify-center text-xs text-gray-400 px-3 text-center"
+                >
                   Impossible de charger l'image
                 </div>
               {:else}
@@ -174,7 +176,9 @@
                 <!-- svelte-ignore a11y_media_has_caption -->
                 <video src={blobUrl} controls class="rounded-xl max-h-64 max-w-xs"></video>
               {:else if loadError}
-                <div class="w-48 h-24 rounded-xl bg-gray-100 flex items-center justify-center text-xs text-gray-400">
+                <div
+                  class="w-48 h-24 rounded-xl bg-gray-100 flex items-center justify-center text-xs text-gray-400"
+                >
                   Impossible de charger la vidéo
                 </div>
               {:else}

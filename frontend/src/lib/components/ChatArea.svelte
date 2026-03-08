@@ -148,7 +148,7 @@
       {onSend}
       {replyingTo}
       {onCancelReply}
-      onFileSelected={onFileSelected}
+      {onFileSelected}
       {isUploading}
     />
   {:else}

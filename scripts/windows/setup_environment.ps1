@@ -23,7 +23,7 @@ catch {
 try {
     $cargoVersion = cargo --version
     Write-Host "✅ Rust/Cargo est installe." -ForegroundColor Green
-    
+
     # Check wasm-pack
     try {
         wasm-pack --version | Out-Null
@@ -42,7 +42,7 @@ catch {
     winget install Rustlang.Rustup
     Write-Host "⚠️ IMPORTANT : L'installation de Rust n'est pas finie !" -ForegroundColor Magenta
     Write-Host "   Veuillez executer 'rustup-init.exe' manuellement, choisir l'installation par defaut (1), puis redemarrer votre terminal."
-    
+
     # On ne peut pas continuer pour les trucs Rust sans Rust
 }
 
