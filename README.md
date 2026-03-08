@@ -168,7 +168,9 @@ Services disponibles (développement local) :
 
 - **Frontend** : https://canari-emse.fr (HTTPS port 443)
 - **WebSocket** : wss://canari-emse.fr/ws (proxied vers chat-gateway:3000)
-- **API MLS** : https://canari-emse.fr/mls-api/ (proxied vers chat-delivery:3001)
+- **API MLS** : https://canari-emse.fr/mls-api/ (proxied vers chat-delivery-service:3001)
+
+En production Docker, le reverse proxy (`/ws`, `/groups/`, `/mls-api/`) est intégré dans l'image `frontend`.
 
 ### Déploiement production (Linux)
 
@@ -273,6 +275,8 @@ Push sur `main` déclenche automatiquement :
 - Vérification de santé des services
 
 **Note importante** : Le workflow CD **ne crée pas** les fichiers `.env`. Ils doivent exister sur le serveur (créés lors du premier déploiement via `make production`). Les déploiements CD suivants utilisent les `.env` existants sans les modifier.
+
+**Note proxy production** : Le service `frontend` embarque sa configuration Nginx (SPA + proxy WebSocket/API). Il n'est pas nécessaire de monter `infrastructure/nginx/conf.d` dans `docker-compose.prod.yml`.
 
 **Option 3 : Déploiement manuel étape par étape**
 

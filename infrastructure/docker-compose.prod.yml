@@ -195,9 +195,6 @@ services:
     ports:
       - "80:80"
       - "443:443"
-    volumes:
-      - ./nginx/ssl:/etc/nginx/ssl:ro  # Certificats SSL
-      - ./nginx/conf.d:/etc/nginx/conf.d:ro  # Config personnalisée
     depends_on:
       - chat-gateway
       - chat-delivery-service
