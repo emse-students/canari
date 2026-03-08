@@ -89,7 +89,6 @@ interface AddReactionDeps {
   userId: string;
   pin: string;
   conversation: Conversation;
-  updateLocalReaction: (messageId: string, emoji: string) => void;
 }
 
 /**
@@ -100,7 +99,7 @@ export async function addReaction(
   emoji: string,
   deps: AddReactionDeps
 ): Promise<void> {
-  const { mlsService, userId, pin, conversation, updateLocalReaction } = deps;
+  const { mlsService, userId, pin, conversation } = deps;
 
   if (!conversation.isReady) return;
 
@@ -109,9 +108,6 @@ export async function addReaction(
     await mlsService.sendMessage(conversation.groupId, payload);
     const stateBytes = await mlsService.saveState(pin);
     localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
-
-    // Update local reactions immediately
-    updateLocalReaction(messageId, emoji);
   } catch (e) {
     console.warn('Failed to send reaction:', e);
   }

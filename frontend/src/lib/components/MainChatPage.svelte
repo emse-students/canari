@@ -492,12 +492,6 @@
       userId,
       pin,
       conversation: convo,
-      updateLocalReaction: (msgId, emojiStr) => {
-        const reactions = messageReactions.get(msgId) || [];
-        const filtered = reactions.filter((r) => r.userId !== userId.toLowerCase());
-        filtered.push({ emoji: emojiStr, userId: userId.toLowerCase() });
-        messageReactions.set(msgId, filtered);
-      },
     });
   }
 
