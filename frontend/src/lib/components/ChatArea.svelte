@@ -33,6 +33,12 @@
     onInviteMember: () => void;
     onBack?: () => void;
     isHidden?: boolean;
+    // Group management
+    groupMembers?: string[];
+    sendError?: string;
+    onGroupRename?: (name: string) => void;
+    onGroupDelete?: () => void;
+    onGroupRemoveMember?: (userId: string) => void;
   }
 
   let {
@@ -45,6 +51,11 @@
     onInviteMember,
     onBack,
     isHidden = false,
+    groupMembers = [],
+    sendError = '',
+    onGroupRename,
+    onGroupDelete,
+    onGroupRemoveMember,
   }: Props = $props();
 
   let chatContainer = $state<HTMLDivElement>();
@@ -72,6 +83,10 @@
       {onInviteInputChange}
       {onInviteMember}
       {onBack}
+      {groupMembers}
+      {onGroupRename}
+      {onGroupDelete}
+      {onGroupRemoveMember}
     />
 
     <!-- Messages -->
@@ -88,6 +103,12 @@
         />
       {/each}
     </div>
+
+    {#if sendError}
+      <div class="px-6 py-2 bg-red-50 border-t border-red-200 text-sm text-red-600 flex items-center gap-2">
+        <span>⚠️ {sendError}</span>
+      </div>
+    {/if}
 
     <ChatComposer {messageText} {onMessageChange} {onSend} />
   {:else}

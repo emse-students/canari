@@ -457,4 +457,38 @@ export class WebMlsService implements IMlsService {
     getDeviceId(): string {
         return this.deviceId;
     }
+
+    async renameGroup(groupId: string, name: string): Promise<void> {
+        const res = await fetch(`${this.historyUrl}/mls-api/groups/${groupId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name }),
+        });
+        if (!res.ok) throw new Error(`Rename failed: ${res.status}`);
+    }
+
+    async deleteGroupOnServer(groupId: string): Promise<void> {
+        const res = await fetch(`${this.historyUrl}/mls-api/groups/${groupId}`, {
+            method: 'DELETE',
+        });
+        if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+    }
+
+    async removeMemberFromServer(groupId: string, userId: string): Promise<void> {
+        const res = await fetch(
+            `${this.historyUrl}/mls-api/groups/${groupId}/members/${userId}`,
+            { method: 'DELETE' }
+        );
+        if (!res.ok) throw new Error(`Remove member failed: ${res.status}`);
+    }
+
+    async getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]> {
+        try {
+            const res = await fetch(`${this.historyUrl}/mls-api/groups/${groupId}/members`);
+            if (!res.ok) return [];
+            return await res.json();
+        } catch {
+            return [];
+        }
+    }
 }

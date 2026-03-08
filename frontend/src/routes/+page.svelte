@@ -70,6 +70,10 @@
   let isExporting = $state(false);
   let isImporting = $state(false);
 
+  // Group management
+  let groupMembers = $state<string[]>([]);
+  let sendError = $state('');
+
   // Helper to ensure MLS service exists
   function ensureMls(): IMlsService {
     if (!mls) throw new Error('MLS Service not initialized');
@@ -180,8 +184,8 @@
       myDeviceId = mlsService.getDeviceId();
       log(`Identité MLS initialisée (device: ${myDeviceId})`);
 
-      // Initialise persistent storage (IndexedDB or SQLite)
-      storage = await getStorage();
+      // Initialise persistent storage (IndexedDB or SQLite), scoped per user
+      storage = await getStorage(userId);
       log('Base de données locale initialisée.');
 
       isLoggedIn = true;
@@ -692,6 +696,7 @@
     if (!convo?.isReady) return;
 
     messageText = '';
+    sendError = '';
     try {
       const mlsService = ensureMls();
       await mlsService.sendMessage(convo.groupId, text);
@@ -702,6 +707,11 @@
       const msg = _e instanceof Error ? _e.message : String(_e);
       log(`Erreur envoi: ${msg}`);
       messageText = text;
+      if (msg.includes('Groupe introuvable') || msg.includes('not found') || msg.includes('group')) {
+        sendError = "Tu n'es plus membre de ce groupe. Supprime-le et demande une nouvelle invitation.";
+      } else {
+        sendError = `Échec de l'envoi : ${msg}`;
+      }
     }
   }
 
@@ -715,6 +725,73 @@
   function selectConversation(name: string) {
     selectedContact = name;
     mobileView = 'chat';
+    sendError = '';
+    // Load member list for the selected group
+    const convo = conversations.get(name);
+    if (convo?.groupId) loadGroupMembers(convo.groupId);
+  }
+
+  async function loadGroupMembers(groupId: string) {
+    try {
+      const mlsService = ensureMls();
+      const members = await mlsService.getGroupMembers(groupId);
+      // Deduplicate by userId (a user may have multiple devices)
+      const uniqueUsers = [...new Set(members.map((m) => m.userId))];
+      groupMembers = uniqueUsers;
+    } catch (e) {
+      console.warn('[GroupMembers]', e);
+      groupMembers = [];
+    }
+  }
+
+  async function handleRenameGroup(name: string) {
+    if (!selectedContact) return;
+    const convo = conversations.get(selectedContact);
+    if (!convo) return;
+    try {
+      const mlsService = ensureMls();
+      await mlsService.renameGroup(convo.groupId, name);
+      conversations.set(selectedContact, { ...convo, name });
+      if (storage) await saveConversation(selectedContact);
+      log(`Groupe renommé en "${name}"`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      log(`Erreur renommage: ${msg}`);
+    }
+  }
+
+  async function handleDeleteGroup() {
+    if (!selectedContact) return;
+    const convo = conversations.get(selectedContact);
+    if (!convo) return;
+    try {
+      const mlsService = ensureMls();
+      await mlsService.deleteGroupOnServer(convo.groupId);
+      if (storage) await storage.deleteConversation(selectedContact);
+      conversations.delete(selectedContact);
+      selectedContact = null;
+      mobileView = 'list';
+      groupMembers = [];
+      log(`Groupe "${convo.name}" supprimé.`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      log(`Erreur suppression groupe: ${msg}`);
+    }
+  }
+
+  async function handleRemoveMember(memberId: string) {
+    if (!selectedContact) return;
+    const convo = conversations.get(selectedContact);
+    if (!convo) return;
+    try {
+      const mlsService = ensureMls();
+      await mlsService.removeMemberFromServer(convo.groupId, memberId);
+      groupMembers = groupMembers.filter((m) => m !== memberId);
+      log(`${memberId} retiré du groupe.`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      log(`Erreur retrait membre: ${msg}`);
+    }
   }
 
   function goBackToMenu() {
@@ -728,6 +805,8 @@
     selectedContact = null;
     statusLog = [];
     storage = null;
+    groupMembers = [];
+    sendError = '';
     localStorage.removeItem('canari_saved_user');
     localStorage.removeItem('canari_saved_pin');
   }
@@ -996,6 +1075,11 @@
         }}
         onBack={goBackToMenu}
         isHidden={mobileView === 'list'}
+        {groupMembers}
+        {sendError}
+        onGroupRename={handleRenameGroup}
+        onGroupDelete={handleDeleteGroup}
+        onGroupRemoveMember={handleRemoveMember}
       />
 
       {#if showLogs}

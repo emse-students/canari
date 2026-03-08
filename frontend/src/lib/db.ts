@@ -67,8 +67,12 @@ export interface IStorage {
 // ---------------------------------------------------------------------------
 
 export class IndexedDbStorage implements IStorage {
-    private readonly dbName = 'CanariDB';
+    private readonly dbName: string;
     private db: IDBDatabase | null = null;
+
+    constructor(userId: string) {
+        this.dbName = `CanariDB_${userId}`;
+    }
 
     async init(): Promise<void> {
         return new Promise((resolve, reject) => {
@@ -266,9 +270,13 @@ export class IndexedDbStorage implements IStorage {
 // ---------------------------------------------------------------------------
 
 export class SqliteStorage implements IStorage {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     private db: any = null;
-    private readonly dbPath = 'sqlite:canari.db';
+    private readonly dbPath: string;
+
+    constructor(userId: string) {
+        this.dbPath = `sqlite:canari_${userId}.db`;
+    }
 
     async init(): Promise<void> {
         const Database = (await import('@tauri-apps/plugin-sql')).default;
@@ -424,10 +432,10 @@ export class SqliteStorage implements IStorage {
 // Factory
 // ---------------------------------------------------------------------------
 
-export async function getStorage(): Promise<IStorage> {
+export async function getStorage(userId: string): Promise<IStorage> {
     if ((window as any).__TAURI_INTERNALS__) {
         try {
-            const s = new SqliteStorage();
+            const s = new SqliteStorage(userId);
             await s.init();
             console.log('[DB] Using SQLite storage (Tauri)');
             return s;
@@ -435,8 +443,8 @@ export async function getStorage(): Promise<IStorage> {
             console.warn('[DB] SQLite failed, falling back to IndexedDB:', e);
         }
     }
-    const s = new IndexedDbStorage();
+    const s = new IndexedDbStorage(userId);
     await s.init();
-    console.log('[DB] Using IndexedDB storage (Web)');
+    console.log(`[DB] Using IndexedDB storage (Web) for user: ${userId}`);
     return s;
 }

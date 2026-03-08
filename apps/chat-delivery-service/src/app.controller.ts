@@ -2,6 +2,8 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
+  Delete,
   Body,
   Param,
   Inject,
@@ -182,6 +184,51 @@ export class AppController {
   @Get('mls-api/groups/:groupId/members')
   async getGroupMembers(@Param('groupId') groupId: string) {
     return this.groupMemberModel.find({ groupId }).exec();
+  }
+
+  @Patch('mls-api/groups/:groupId')
+  async renameGroup(
+    @Param('groupId') groupId: string,
+    @Body() body: { name: string },
+  ) {
+    const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
+    if (typeof body.name !== 'string' || !body.name.trim()) {
+      throw new BadRequestException('name is required');
+    }
+    await this.groupModel.updateOne(
+      { groupId: safeGroupId },
+      { $set: { name: body.name.trim() } },
+    );
+    return { status: 'renamed' };
+  }
+
+  @Delete('mls-api/groups/:groupId/members/:userId')
+  async removeGroupMember(
+    @Param('groupId') groupId: string,
+    @Param('userId') userId: string,
+  ) {
+    const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
+    const safeUserId = sanitizeQueryValue(userId, 'userId');
+    await this.groupMemberModel.deleteMany({
+      groupId: safeGroupId,
+      userId: safeUserId,
+    });
+    // Remove all devices of this user from the Redis set
+    const members = await this.redis.smembers(`group:members:${safeGroupId}`);
+    const toRemove = members.filter((m) => m.startsWith(`${safeUserId}:`));
+    if (toRemove.length > 0) {
+      await this.redis.srem(`group:members:${safeGroupId}`, ...toRemove);
+    }
+    return { status: 'removed' };
+  }
+
+  @Delete('mls-api/groups/:groupId')
+  async deleteGroup(@Param('groupId') groupId: string) {
+    const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
+    await this.groupModel.deleteOne({ groupId: safeGroupId });
+    await this.groupMemberModel.deleteMany({ groupId: safeGroupId });
+    await this.redis.del(`group:members:${safeGroupId}`);
+    return { status: 'deleted' };
   }
 
   @Post('mls-api/register-device')

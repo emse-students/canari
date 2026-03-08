@@ -20,6 +20,12 @@ export interface IMlsService {
     fetchHistory(groupId: string): Promise<{ sender_id: string, content: string, timestamp: string }[]>;
     getDeviceId(): string;
     
+    // Group management
+    renameGroup(groupId: string, name: string): Promise<void>;
+    deleteGroupOnServer(groupId: string): Promise<void>;
+    removeMemberFromServer(groupId: string, userId: string): Promise<void>;
+    getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]>;
+    
     // Callbacks
     onMessage(callback: (senderId: string, content: Uint8Array, groupId?: string) => Promise<boolean>): void;
 }
