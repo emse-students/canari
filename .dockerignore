@@ -8,7 +8,8 @@
 **/*.log
 
 # Artefacts frontend
-frontend/build
+# frontend/build est intentionnellement inclus : le CI y dépose le build Svelte
+# (avec VITE_JWT_SECRET injecté) avant de construire l'image Docker.
 frontend/pkg
 frontend/mls-wasm/pkg
 
