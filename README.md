@@ -279,6 +279,8 @@ Push sur `main` déclenche automatiquement :
 
 **Note importante** : Le workflow CD **ne crée pas** les fichiers `.env`. Ils doivent exister sur le serveur (créés lors du premier déploiement via `make production`). Les déploiements CD suivants utilisent les `.env` existants sans les modifier.
 
+**Note JWT_SECRET** : Le frontend est un site statique compilé. Le workflow CD injecte automatiquement le `JWT_SECRET` depuis **GitHub Secrets** lors du build (étape "Build frontend"). Assurez-vous que le secret GitHub correspond au `JWT_SECRET` du serveur.
+
 **Note proxy production** : Le service `frontend` embarque sa configuration Nginx (SPA + proxy WebSocket/API). Il n'est pas nécessaire de monter `infrastructure/nginx/conf.d` dans `docker-compose.prod.yml`.
 
 **Note cloudflared** : utilisez cette ingress pour l'app principale :
@@ -513,7 +515,10 @@ SSH_PRIVATE_KEY=<votre clé ED25519>
 SSH_USER=<utilisateur déploiement>
 SERVER_HOST=<IP/hostname>
 DEPLOY_PATH=<chemin projet>
+JWT_SECRET=<secret JWT 64 caractères hex - généré avec: openssl rand -hex 32>
 ```
+
+> 💡 **Important** : Le `JWT_SECRET` doit correspondre au secret généré sur le serveur avec `./scripts/setup-env.sh`
 
 2. **GitHub Variables** (Settings → Variables)
 
