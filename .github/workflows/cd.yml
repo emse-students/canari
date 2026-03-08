@@ -215,7 +215,7 @@ jobs:
         working-directory: ${{ env.DEPLOY_PATH }}
         run: |
           echo "🔍 Checking environment configuration..."
-          
+
           if [ ! -f infrastructure/.env ]; then
             echo ""
             echo "╔═══════════════════════════════════════════════════════════╗"
@@ -237,14 +237,14 @@ jobs:
             echo ""
             exit 1
           fi
-          
+
           if [ ! -f frontend/.env ]; then
             echo "⚠️ frontend/.env manquant, création depuis template..."
             cp frontend/.env.example frontend/.env
           fi
-          
+
           echo "✅ Configuration .env présente"
-          
+
           # Vérifier que JWT_SECRET est configuré (sans afficher la valeur)
           if grep -q "^JWT_SECRET=.*change.*me" infrastructure/.env 2>/dev/null; then
             echo ""

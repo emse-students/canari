@@ -179,31 +179,35 @@ Services disponibles (développement local) :
 Pour un **nouveau serveur**, suivez ce processus :
 
 1. **SSH sur le serveur de production** :
+
    ```bash
    ssh votre-serveur
    cd /home/canari  # ou votre répertoire de déploiement
    ```
 
 2. **Cloner le repository** :
+
    ```bash
    git clone https://github.com/emse-students/canari.git
    cd canari
    ```
 
 3. **Première configuration via Makefile** :
+
    ```bash
    make production
    ```
-   
+
    Cette commande va :
    - Créer `infrastructure/.env` et `frontend/.env` depuis les templates
    - **S'arrêter** et vous demander de configurer les secrets
-   
+
 4. **Générer et configurer les secrets** :
+
    ```bash
    # Générer un secret JWT sécurisé
    openssl rand -hex 32
-   
+
    # Éditer infrastructure/.env
    nano infrastructure/.env
    # → Remplir JWT_SECRET (résultat de openssl)
@@ -212,10 +216,11 @@ Pour un **nouveau serveur**, suivez ce processus :
    ```
 
 5. **Relancer le déploiement** :
+
    ```bash
    make production
    ```
-   
+
    Cette fois, la commande va :
    - ✅ Valider la configuration
    - ✅ Synchroniser les secrets JWT
@@ -242,21 +247,24 @@ make production
 **⚠️ Note** : `make production` nécessite Linux/macOS. Sur Windows, utilisez l'Option 3 (manuel).
 
 Au **premier lancement**, cette commande :
+
 1. Créé `infrastructure/.env` et `frontend/.env` depuis les templates
 2. **S'arrête** et vous demande de configurer les secrets :
+
    ```bash
    # Générer un secret JWT
    openssl rand -hex 32
-   
+
    # Éditer infrastructure/.env
    nano infrastructure/.env
    # → Remplir JWT_SECRET, POSTGRES_PASSWORD, DOMAIN
-   
+
    # Relancer le déploiement
    make production
    ```
 
 Au **deuxième lancement** (après configuration) :
+
 - ✅ Valide la configuration
 - ✅ Synchronise les secrets JWT entre frontend et backend
 - ✅ Pull les images Docker depuis `ghcr.io/emse-students/canari/*`
