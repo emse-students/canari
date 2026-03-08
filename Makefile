@@ -47,36 +47,16 @@ production-check:
 		echo "${YELLOW}⚠️  Fichier infrastructure/.env manquant${RESET}"; \
 		echo "${BLUE}📝 Création depuis .env.example...${RESET}"; \
 		cp infrastructure/.env.example infrastructure/.env; \
-		echo ""; \
-		echo "${RED}╔═══════════════════════════════════════════════════════════╗${RESET}"; \
-		echo "${RED}║  ⚠️  CONFIGURATION REQUISE                                ║${RESET}"; \
-		echo "${RED}╚═══════════════════════════════════════════════════════════╝${RESET}"; \
-		echo ""; \
-		echo "${YELLOW}Avant de continuer, éditez infrastructure/.env :${RESET}"; \
-		echo ""; \
-		echo "  ${BLUE}1. Générer un secret JWT :${RESET}"; \
-		echo "     openssl rand -hex 32"; \
-		echo ""; \
-		echo "  ${BLUE}2. Éditer le fichier :${RESET}"; \
-		echo "     nano infrastructure/.env"; \
-		echo ""; \
-		echo "  ${BLUE}3. Configurer ces variables :${RESET}"; \
-		echo "     - JWT_SECRET=<résultat de openssl rand -hex 32>"; \
-		echo "     - POSTGRES_PASSWORD=<mot de passe sécurisé>"; \
-		echo "     - DOMAIN=canari-emse.fr"; \
-		echo ""; \
-		echo "  ${BLUE}4. Relancer :${RESET}"; \
-		echo "     make production"; \
-		echo ""; \
-		exit 1; \
 	fi
 	@if [ ! -f frontend/.env ]; then \
 		echo "${YELLOW}⚠️  Fichier frontend/.env manquant${RESET}"; \
 		echo "${BLUE}📝 Création depuis .env.example...${RESET}"; \
 		cp frontend/.env.example frontend/.env; \
 	fi
-	@echo "${BLUE}🔐 Synchronisation des secrets JWT...${RESET}"
+	@echo "${BLUE}🔐 Initialisation/synchronisation des secrets JWT...${RESET}"
 	@chmod +x scripts/setup-env.sh
+	@./scripts/setup-env.sh --sync-only
+	@echo "${BLUE}🔒 Validation stricte mode production...${RESET}"
 	@./scripts/setup-env.sh --prod --sync-only || { \
 		echo ""; \
 		echo "${RED}╔═══════════════════════════════════════════════════════════╗${RESET}"; \
@@ -92,6 +72,9 @@ production-check:
 		echo ""; \
 		exit 1; \
 	}
+	@if grep -q '^POSTGRES_PASSWORD=change-me-strong-password' infrastructure/.env; then \
+		echo "${YELLOW}⚠️  Pensez à changer POSTGRES_PASSWORD dans infrastructure/.env${RESET}"; \
+	fi
 	@echo "${GREEN}✅ Configuration validée${RESET}"
 
 # ── Configuration déploiement Nginx ───────────────────────────────────────────

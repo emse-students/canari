@@ -200,17 +200,14 @@ Pour un **nouveau serveur**, suivez ce processus :
 
    Cette commande va :
    - Créer `infrastructure/.env` et `frontend/.env` depuis les templates
-   - **S'arrêter** et vous demander de configurer les secrets
+   - Générer automatiquement un `JWT_SECRET` sécurisé et le synchroniser frontend/backend
+   - Pull les images Docker et démarrer les services
 
-4. **Générer et configurer les secrets** :
+4. **Configurer uniquement les variables non-secrètes automatiques** :
 
    ```bash
-   # Générer un secret JWT sécurisé
-   openssl rand -hex 32
-
    # Éditer infrastructure/.env
    nano infrastructure/.env
-   # → Remplir JWT_SECRET (résultat de openssl)
    # → Remplir POSTGRES_PASSWORD (mot de passe sécurisé)
    # → Vérifier DOMAIN=canari-emse.fr
    ```
@@ -223,7 +220,7 @@ Pour un **nouveau serveur**, suivez ce processus :
 
    Cette fois, la commande va :
    - ✅ Valider la configuration
-   - ✅ Synchroniser les secrets JWT
+   - ✅ Conserver et valider les secrets JWT existants
    - ✅ Pull les images Docker
    - ✅ Démarrer les services
 
@@ -249,18 +246,12 @@ make production
 Au **premier lancement**, cette commande :
 
 1. Créé `infrastructure/.env` et `frontend/.env` depuis les templates
-2. **S'arrête** et vous demande de configurer les secrets :
+2. Génère automatiquement un `JWT_SECRET` sécurisé et le synchronise :
 
    ```bash
-   # Générer un secret JWT
-   openssl rand -hex 32
-
-   # Éditer infrastructure/.env
+   # Optionnel : ajuster la configuration production
    nano infrastructure/.env
-   # → Remplir JWT_SECRET, POSTGRES_PASSWORD, DOMAIN
-
-   # Relancer le déploiement
-   make production
+   # → Vérifier POSTGRES_PASSWORD, DOMAIN, ALLOW_ORIGIN
    ```
 
 Au **deuxième lancement** (après configuration) :
@@ -286,13 +277,16 @@ Push sur `main` déclenche automatiquement :
 **Option 3 : Déploiement manuel étape par étape**
 
 ```bash
-# 1) Configurer les secrets
+# 1) Créer/synchroniser automatiquement le JWT_SECRET
+./scripts/setup-env.sh --sync-only
+
+# 2) Valider la config production
 ./scripts/setup-env.sh --prod --sync-only
 
-# 2) Pull des images depuis GHCR (buildées par CD)
+# 3) Pull des images depuis GHCR (buildées par CD)
 docker compose -f infrastructure/docker-compose.prod.yml pull
 
-# 3) Démarrer les services
+# 4) Démarrer les services
 docker compose -f infrastructure/docker-compose.prod.yml up -d --remove-orphans
 ```
 
