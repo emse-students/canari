@@ -6,13 +6,12 @@
   import { onMount, tick } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { fade } from 'svelte/transition';
-  import { toHex, fromHex } from '$lib/utils/hex';
-  import { migrateFromLocalStorage } from '$lib/utils/migration';
+  import { fromHex } from '$lib/utils/hex';
+  import { computePinVerifier, generateDevToken } from '$lib/utils/mainChatAuth';
   import {
     addDevMember,
     exportUserBackup,
     generateDevKeyPackage,
-    generateDevToken,
     importUserBackup,
     processDevWelcome,
     syncOwnDevicesToGroups,
@@ -23,6 +22,18 @@
     removeMemberAndBroadcast,
     renameGroupAndBroadcast,
   } from '$lib/utils/mainChatGroupActions';
+  import {
+    mapStoredMessagesToChatMessages,
+    replayConversationHistory,
+  } from '$lib/utils/mainChatHistory';
+  import { setupMessageHandler, initializeConnection } from '$lib/utils/mainChatConnection';
+  import {
+    createNewGroup as createGroup,
+    inviteMemberToGroup,
+    startNewConversation as startConversation,
+  } from '$lib/utils/mainChatGroupCreation';
+  import { sendChatMessage, addReaction } from '$lib/utils/mainChatMessaging';
+  import { migrateFromLocalStorage } from '$lib/utils/migration';
   import LoginForm from './LoginForm.svelte';
   import Navbar from './Navbar.svelte';
   import Sidebar from './Sidebar.svelte';
@@ -46,12 +57,16 @@
   let newContactInput = $state('');
   let newGroupInput = $state('');
   let inviteMemberInput = $state('');
-  let _isAddingContact = $state(false);
   let messageText = $state('');
   let chatContainer = $state<HTMLElement>();
 
   let isWsConnected = $state(false);
   let myDeviceId = $state('');
+
+  // Reconnection
+  const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 16000, 30000];
+  let reconnectAttempts = 0;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Variables de débogage
   let lastKeyPackage = $state('');
@@ -63,7 +78,6 @@
   let currentConvo = $derived(
     selectedContact ? (conversations.get(selectedContact) ?? null) : null
   );
-  let _currentMessages = $derived(currentConvo?.messages ?? []);
 
   // Service MLS
   let mls: IMlsService | null = $state(null);
@@ -130,6 +144,7 @@
 
   // --- Auth & Initialisation ---
 
+
   async function handleLogin() {
     if (!userId.trim() || !pin.trim()) {
       loginError = 'Veuillez remplir tous les champs.';
@@ -142,6 +157,23 @@
 
     try {
       const mlsService = ensureMls(); // Ensure MLS is initialized
+
+      // Verify PIN consistency across devices before doing anything else
+      log('Vérification du PIN...');
+      const verifier = await computePinVerifier(userId, pin);
+      const verifierRes = await fetch(`${historyBaseUrl}/mls-api/pin-verifier/check`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, verifier }),
+      });
+      if (!verifierRes.ok) throw new Error('Impossible de vérifier le PIN (serveur inaccessible).');
+      const verifierData = await verifierRes.json();
+      if (verifierData.status === 'mismatch') {
+        throw new Error('PIN incorrect : ce PIN ne correspond pas à celui enregistré pour cet utilisateur. Tous vos appareils doivent utiliser le même PIN.');
+      }
+      if (verifierData.status === 'registered') {
+        log('Premier appareil : PIN enregistré.');
+      }
 
       log('Initialisation MLS...');
       let stateBytes: Uint8Array | undefined;
@@ -165,183 +197,38 @@
       localStorage.setItem('canari_saved_pin', pin);
       await loadExistingConversations();
 
-      // Listener de messages
-      mlsService.onMessage(async (sender, content, groupId): Promise<boolean> => {
-        log(`Message de ${sender} (${content.length} octets) - Grp: ${groupId}`);
-        const senderNorm = sender.toLowerCase();
-
-        let convoKey: string | undefined;
-        if (groupId) {
-          for (const [k, c] of conversations.entries()) {
-            if (c.groupId === groupId) {
-              convoKey = k;
-              break;
-            }
-          }
-        }
-        if (!convoKey && conversations.has(senderNorm)) convoKey = senderNorm;
-
-        if (convoKey) {
-          const convo = conversations.get(convoKey)!;
-          try {
-            const decrypted = await mlsService.processIncomingMessage(convo.groupId, content);
-            try {
-              const stBytes = await mlsService.saveState(pin);
-              localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
-            } catch {
-              // Silent fallback if autosave fails
-            }
-
-            if (decrypted) {
-              // Check if it's a control message (JSON)
-              try {
-                const parsed = JSON.parse(decrypted);
-
-                if (parsed.type === 'groupRenamed' && parsed.newName) {
-                  // Update group name locally
-                  conversations.set(convoKey, { ...convo, name: parsed.newName });
-                  if (storage) await saveConversation(convoKey);
-                  await addSystemMessage(
-                    `${senderNorm} a renommé le groupe en "${parsed.newName}"`,
-                    convoKey
-                  );
-                  log(`📝 Groupe renommé en "${parsed.newName}" par ${senderNorm}`);
-                  return true;
-                }
-
-                if (parsed.type === 'memberRemoved' && parsed.targetUser) {
-                  await addSystemMessage(
-                    `${senderNorm} a retiré ${parsed.targetUser} du groupe`,
-                    convoKey
-                  );
-                  return true;
-                }
-
-                if (parsed.type === 'memberAdded' && parsed.newUser) {
-                  await addSystemMessage(
-                    `${senderNorm} a ajouté ${parsed.newUser} au groupe`,
-                    convoKey
-                  );
-                  return true;
-                }
-
-                if (parsed.type === 'groupDeleted') {
-                  log(`🗑️ Groupe supprimé par ${senderNorm}`);
-                  if (storage) await storage.deleteConversation(convoKey);
-                  conversations.delete(convoKey);
-                  if (selectedContact === convoKey) {
-                    selectedContact = null;
-                    mobileView = 'list';
-                  }
-                  return true;
-                }
-
-                if (parsed.type === 'reaction' && parsed.messageId && parsed.emoji) {
-                  // Add reaction to message
-                  const reactions = messageReactions.get(parsed.messageId) || [];
-                  // Remove previous reaction from same user, add new one
-                  const filtered = reactions.filter((r) => r.userId !== senderNorm);
-                  filtered.push({ emoji: parsed.emoji, userId: senderNorm });
-                  messageReactions.set(parsed.messageId, filtered);
-                  log(`👍 ${senderNorm} a réagi avec ${parsed.emoji}`);
-                  return true;
-                }
-
-                if (parsed.type === 'reply' && parsed.content) {
-                  // Reply message with quote
-                  await addMessageToChat(senderNorm, parsed.content, convoKey, parsed.replyTo);
-                  return true;
-                }
-
-                if (parsed.type === 'text' && parsed.content) {
-                  // Standard text message (new format)
-                  await addMessageToChat(senderNorm, parsed.content, convoKey);
-                  return true;
-                }
-              } catch {
-                // Not JSON or not a control message → treat as plain text (legacy)
-              }
-              await addMessageToChat(senderNorm, decrypted, convoKey);
-            }
-            return true;
-          } catch (_e) {
-            const errMsg = String(_e);
-            // Filter out normal OpenMLS behavior: you can't decrypt your own messages
-            if (errMsg.includes('CannotDecryptOwnMessage')) {
-              return false; // Silent ignore
-            }
-            log(`Erreur message (groupe connu): ${errMsg}`);
-            return false;
-          }
-        }
-
-        // Si groupe inconnu -> Traitement Welcome
-        try {
-          const joinedGroupId = await mlsService.processWelcome(content);
-          let groupName = senderNorm;
-
-          try {
-            const gRes = await fetch(
-              `${historyBaseUrl}/mls-api/groups/${groupId || joinedGroupId}`
-            );
-            if (gRes.ok) {
-              const gData = await gRes.json();
-              if (gData?.name) groupName = gData.name;
-            }
-          } catch {
-            // Silent fallback if group metadata fetch fails
-          }
-
-          conversations.set(senderNorm, {
-            contactName: senderNorm,
-            name: groupName,
-            groupId: joinedGroupId,
-            messages: [],
-            isReady: true,
-            mlsStateHex: null,
-          });
-          saveConversation(senderNorm);
-
-          try {
-            const stBytes = await mlsService.saveState(pin);
-            localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
-          } catch {
-            // Silent fallback if autosave fails
-          }
-
-          log(`✅ Handshake complété avec ${senderNorm}`);
-          loadHistoryForConversation(senderNorm, joinedGroupId);
-          return true;
-        } catch {
-          log(`Ignoré: pas un message pour un groupe existant ni un welcome.`);
-          return false;
-        }
+      // Setup message handler
+      setupMessageHandler({
+        mlsService,
+        storage,
+        userId,
+        pin,
+        historyBaseUrl,
+        conversations,
+        messageReactions,
+        selectedContact,
+        setSelectedContact: (value) => (selectedContact = value),
+        setMobileView: (value) => (mobileView = value),
+        saveConversation,
+        addMessageToChat,
+        addSystemMessage,
+        loadHistoryForConversation,
+        log,
       });
 
-      log('Connexion Gateway...');
-      try {
-        const token = await generateDevToken(
-          userId,
-          import.meta.env.VITE_JWT_SECRET,
-          import.meta.env.DEV
-        );
-        await mlsService.connect(token);
-        isWsConnected = true;
-        log('Connecté au réseau !');
-        // Detect new own devices (added after last login) and invite them to
-        // all existing groups so they can receive Welcomes automatically.
-        runSyncOwnDevicesToGroups().catch(() => {});
-      } catch (_wsErr: unknown) {
-        const msg = _wsErr instanceof Error ? _wsErr.message : String(_wsErr);
-        log(`Gateway inaccessible: ${msg}`);
-      }
-
-      try {
-        await mlsService.generateKeyPackage(pin);
-        log('KeyPackage publié.');
-      } catch {
-        // Silent fallback if key package generation fails
-      }
+      // Initialize WebSocket connection
+      await initializeConnection({
+        mlsService,
+        userId,
+        pin,
+        jwtSecret: import.meta.env.VITE_JWT_SECRET,
+        isDev: import.meta.env.DEV,
+        scheduleReconnect,
+        setIsWsConnected: (value) => (isWsConnected = value),
+        setReconnectAttempts: (value) => (reconnectAttempts = value),
+        syncOwnDevicesToGroupsLocally,
+        log,
+      });
     } catch (_e: unknown) {
       const msg = _e instanceof Error ? _e.message : String(_e);
       loginError = msg;
@@ -373,66 +260,15 @@
 
   async function loadHistoryForConversation(contactName: string, groupId: string) {
     const mlsService = ensureMls();
-    try {
-      const history = await mlsService.fetchHistory(groupId);
-      if (history.length > 0) {
-        let addedMsg = 0;
-        let mlsUpdated = false;
-
-        for (const msg of history) {
-          try {
-            const bytesStr = atob(msg.content);
-            const bytes = new Uint8Array(bytesStr.length);
-            for (let i = 0; i < bytesStr.length; i++) bytes[i] = bytesStr.charCodeAt(i);
-
-            const decrypted = await mlsService.processIncomingMessage(groupId, bytes);
-            if (decrypted) {
-              // Check if it's JSON control message
-              try {
-                const parsed = JSON.parse(decrypted);
-                if (parsed.type === 'text' || parsed.type === 'reply') {
-                  const content = parsed.content;
-                  if (content) {
-                    await addMessageToChat(msg.sender_id, content, contactName, parsed.replyTo);
-                    addedMsg++;
-                    mlsUpdated = true;
-                    continue;
-                  }
-                } else if (
-                  parsed.type === 'reaction' ||
-                  parsed.type === 'groupRenamed' ||
-                  parsed.type === 'memberRemoved' ||
-                  parsed.type === 'memberAdded' ||
-                  parsed.type === 'groupDeleted'
-                ) {
-                  // We skip history processing for reactions/system events to avoid duplicates
-                  mlsUpdated = true;
-                  continue;
-                }
-              } catch {
-                // Not JSON -> legacy plain text
-              }
-              await addMessageToChat(msg.sender_id, decrypted, contactName);
-              addedMsg++;
-              mlsUpdated = true;
-            }
-          } catch (err) {
-            // Silently ignore CannotDecryptOwnMessage for exporting device retrieving its own messages
-            if (String(err).includes('CannotDecryptOwnMessage')) {
-              continue;
-            }
-            console.warn(`History msg error: ${err}`);
-          }
-        }
-        if (mlsUpdated) {
-          const stateBytes = await mlsService.saveState(pin);
-          localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
-          log(`✅ ${addedMsg} msg rattrapés pour ${contactName}.`);
-        }
-      }
-    } catch {
-      // Silently ignore errors in loading history
-    }
+    await replayConversationHistory({
+      mlsService,
+      groupId,
+      contactName,
+      userId,
+      pin,
+      addMessageToChat,
+      log,
+    });
   }
 
   async function loadExistingConversations() {
@@ -448,30 +284,7 @@
         contactName: meta.id,
         name: meta.name,
         groupId: meta.groupId,
-        messages: storedMessages.map((m) => {
-          let content = m.content;
-          let replyTo: ChatMessage['replyTo'] = undefined;
-
-          // Try to parse JSON (new format with replyTo)
-          try {
-            const parsed = JSON.parse(m.content);
-            if (parsed.content) {
-              content = parsed.content;
-              replyTo = parsed.replyTo;
-            }
-          } catch {
-            // Legacy plain text format
-          }
-
-          return {
-            id: m.id,
-            senderId: m.senderId,
-            content,
-            timestamp: new Date(m.timestamp),
-            isOwn: m.senderId.toLowerCase() === userId.toLowerCase(),
-            replyTo,
-          };
-        }),
+        messages: mapStoredMessagesToChatMessages(storedMessages, userId),
         isReady: meta.isReady,
         mlsStateHex: null,
       });
@@ -482,207 +295,51 @@
   // --- Gestion Groupes & Membres ---
   async function createNewGroup(nameRaw: string) {
     const mlsService = ensureMls();
-    if (!nameRaw.trim()) return;
-    const name = nameRaw.trim();
-    if (conversations.has(name)) return log(`Groupe "${name}" existe déjà.`);
-
-    try {
-      const groupId = await mlsService.createRemoteGroup(name);
-      await mlsService.createGroup(groupId);
-      await mlsService.registerMember(groupId, userId, mlsService.getDeviceId());
-
-      // Ajout de ses propres autres appareils (CORRIGÉ)
-      const ownDevices = (await mlsService.fetchUserDevices(userId)).filter(
-        (d) => d.deviceId !== mlsService.getDeviceId()
-      );
-      for (const device of ownDevices) {
-        try {
-          const result = await mlsService.addMember(groupId, device.keyPackage);
-          await mlsService.registerMember(groupId, userId, device.deviceId);
-          if (result.welcome) {
-            await mlsService.sendWelcome(result.welcome, userId, groupId, device.deviceId);
-          }
-          if (result.commit) {
-            await mlsService.sendCommit(result.commit, groupId);
-          }
-        } catch (e) {
-          log(`Erreur synchro propre appareil ${device.deviceId}: ${e}`);
-        }
-      }
-
-      const stateBytes = await mlsService.saveState(pin);
-      localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
-
-      conversations.set(name, {
-        contactName: name,
-        name,
-        groupId,
-        messages: [],
-        isReady: true,
-        mlsStateHex: null,
-      });
-      selectConversation(name);
-      saveConversation(name);
-      log(`✅ Groupe "${name}" créé!`);
-    } catch (e) {
-      log(`Erreur création groupe: ${e}`);
-    }
+    await createGroup(nameRaw, {
+      mlsService,
+      storage,
+      userId,
+      pin,
+      historyBaseUrl,
+      conversations,
+      selectConversation,
+      saveConversation,
+      log,
+    });
   }
 
   async function inviteMemberToCurrentGroup(memberId: string) {
-    if (!selectedContact || !memberId.trim()) return;
+    if (!selectedContact) return;
     const mlsService = ensureMls();
-    const targetUser = memberId.trim().toLowerCase();
     const convo = conversations.get(selectedContact);
     if (!convo) return;
 
-    log(`Invitation de ${targetUser}...`);
-    try {
-      await mlsService.registerMember(convo.groupId, userId, mlsService.getDeviceId());
-      const devices = await mlsService.fetchUserDevices(targetUser);
-      if (devices.length === 0) return log(`❌ Aucun appareil trouvé pour ${targetUser}.`);
-
-      // Utilisation stricte de l'ajout par lot (CORRIGÉ)
-      const bulk = await mlsService.addMembersBulk(convo.groupId, devices);
-
-      for (const did of bulk.addedDeviceIds) {
-        await mlsService.registerMember(convo.groupId, targetUser, did);
-      }
-
-      const stateBytes = await mlsService.saveState(pin);
-      localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
-
-      if (bulk.welcome) {
-        const welcomeB64 = btoa(
-          Array.from(bulk.welcome)
-            .map((b) => String.fromCharCode(b))
-            .join('')
-        );
-        for (const did of bulk.addedDeviceIds) {
-          await fetch(`${historyBaseUrl}/mls-api/welcome`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              targetDeviceId: did,
-              targetUserId: targetUser,
-              senderUserId: userId,
-              welcomePayload: welcomeB64,
-              groupId: convo.groupId,
-            }),
-          });
-        }
-      }
-
-      if (bulk.commit) await mlsService.sendCommit(bulk.commit, convo.groupId);
-
-      log(`✅ ${targetUser} invité (${bulk.addedDeviceIds.length}/${devices.length} appareils).`);
-
-      // Send control message to notify all members
-      try {
-        const controlMsg = JSON.stringify({ type: 'memberAdded', newUser: targetUser });
-        await mlsService.sendMessage(convo.groupId, controlMsg);
-        const st = await mlsService.saveState(pin);
-        localStorage.setItem('mls_autosave_' + userId, toHex(st));
-      } catch (e) {
-        console.warn('Failed to broadcast member addition:', e);
-      }
-    } catch (e) {
-      log(`Erreur invitation: ${e}`);
-    }
+    await inviteMemberToGroup(memberId, convo, {
+      mlsService,
+      storage,
+      userId,
+      pin,
+      historyBaseUrl,
+      conversations,
+      selectConversation,
+      saveConversation,
+      log,
+    });
   }
 
   async function startNewConversation(contactNameRaw: string) {
-    const contact = contactNameRaw.trim().toLowerCase();
     const mlsService = ensureMls();
-    if (!contact || contact === userId) return;
-
-    if (conversations.has(contact)) {
-      selectConversation(contact);
-      return;
-    }
-
-    const groupName = `${userId} & ${contact}`;
-    try {
-      const groupId = await mlsService.createRemoteGroup(groupName);
-
-      conversations.set(contact, {
-        contactName: contact,
-        name: groupName,
-        groupId,
-        messages: [],
-        isReady: false,
-        mlsStateHex: null,
-      });
-      selectConversation(contact);
-
-      await mlsService.createGroup(groupId);
-      await mlsService.registerMember(groupId, userId, mlsService.getDeviceId());
-
-      // Synchro de ses autres appareils (CORRIGÉ)
-      const ownDevices = (await mlsService.fetchUserDevices(userId)).filter(
-        (d) => d.deviceId !== mlsService.getDeviceId()
-      );
-      for (const device of ownDevices) {
-        try {
-          const result = await mlsService.addMember(groupId, device.keyPackage);
-          await mlsService.registerMember(groupId, userId, device.deviceId);
-          if (result.welcome)
-            await mlsService.sendWelcome(result.welcome, userId, groupId, device.deviceId);
-          if (result.commit) await mlsService.sendCommit(result.commit, groupId);
-        } catch {
-          // Silently ignore errors in device sync
-        }
-      }
-
-      const stBytes = await mlsService.saveState(pin);
-      localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
-
-      // Ajout des appareils du contact cible (CORRIGÉ)
-      const devices = await mlsService.fetchUserDevices(contact);
-      if (devices.length > 0) {
-        const bulk = await mlsService.addMembersBulk(groupId, devices);
-
-        for (const did of bulk.addedDeviceIds) {
-          await mlsService.registerMember(groupId, contact, did);
-        }
-
-        const st2Bytes = await mlsService.saveState(pin);
-        localStorage.setItem('mls_autosave_' + userId, toHex(st2Bytes));
-
-        if (bulk.welcome) {
-          const welcomeB64 = btoa(
-            Array.from(bulk.welcome)
-              .map((b) => String.fromCharCode(b))
-              .join('')
-          );
-          for (const did of bulk.addedDeviceIds) {
-            await fetch(`${historyBaseUrl}/mls-api/welcome`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                targetDeviceId: did,
-                targetUserId: contact,
-                senderUserId: userId,
-                welcomePayload: welcomeB64,
-                groupId,
-              }),
-            });
-          }
-        }
-        if (bulk.commit) await mlsService.sendCommit(bulk.commit, groupId);
-
-        const convo = conversations.get(contact)!;
-        conversations.set(contact, { ...convo, isReady: true });
-        saveConversation(contact);
-        log(`✅ Canal sécurisé avec ${contact}.`);
-      } else {
-        log(`❌ Appareils introuvables pour ${contact}.`);
-        conversations.delete(contact);
-      }
-    } catch (_e: unknown) {
-      const msg = _e instanceof Error ? _e.message : String(_e);
-      log(`Erreur création: ${msg}`);
-    }
+    await startConversation(contactNameRaw, {
+      mlsService,
+      storage,
+      userId,
+      pin,
+      historyBaseUrl,
+      conversations,
+      selectConversation,
+      saveConversation,
+      log,
+    });
   }
 
   // --- Messages & UI ---
@@ -748,79 +405,48 @@
     const text = messageText.trim();
     if (!text || !selectedContact) return;
     const convo = conversations.get(selectedContact);
-    if (!convo?.isReady) return;
+    if (!convo) return;
 
+    const currentReplyingTo = replyingTo;
     messageText = '';
+    replyingTo = null;
     sendError = '';
 
-    try {
-      const mlsService = ensureMls();
+    const mlsService = ensureMls();
+    const result = await sendChatMessage(text, selectedContact, currentReplyingTo, {
+      mlsService,
+      userId,
+      pin,
+      conversation: convo,
+      addMessageToChat,
+      log,
+    });
 
-      // Build payload based on reply state
-      let payload: string;
-      let replyToData: ChatMessage['replyTo'] = undefined;
-
-      if (replyingTo) {
-        payload = JSON.stringify({
-          type: 'reply',
-          content: text,
-          replyTo: {
-            id: replyingTo.id,
-            senderId: replyingTo.senderId,
-            content: replyingTo.content.slice(0, 100), // preview only
-          },
-        });
-        replyToData = {
-          id: replyingTo.id,
-          senderId: replyingTo.senderId,
-          content: replyingTo.content.slice(0, 100),
-        };
-        replyingTo = null; // Clear reply state
-      } else {
-        payload = JSON.stringify({ type: 'text', content: text });
-      }
-
-      await mlsService.sendMessage(convo.groupId, payload);
-      const stateBytes = await mlsService.saveState(pin);
-      localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
-      await addMessageToChat(userId, text, selectedContact, replyToData);
-    } catch (_e: unknown) {
-      const msg = _e instanceof Error ? _e.message : String(_e);
-      log(`Erreur envoi: ${msg}`);
+    if (!result.success) {
       messageText = text;
-      if (
-        msg.includes('Groupe introuvable') ||
-        msg.includes('not found') ||
-        msg.includes('group')
-      ) {
-        sendError =
-          "Tu n'es plus membre de ce groupe. Supprime-le et demande une nouvelle invitation.";
-      } else {
-        sendError = `Échec de l'envoi : ${msg}`;
-      }
+      replyingTo = currentReplyingTo;
+      sendError = result.error || "Échec de l'envoi";
     }
   }
 
   async function handleAddReaction(messageId: string, emoji: string) {
     if (!selectedContact) return;
     const convo = conversations.get(selectedContact);
-    if (!convo?.isReady) return;
+    if (!convo) return;
 
-    try {
-      const mlsService = ensureMls();
-      const payload = JSON.stringify({ type: 'reaction', messageId, emoji });
-      await mlsService.sendMessage(convo.groupId, payload);
-      const stateBytes = await mlsService.saveState(pin);
-      localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
-
-      // Update local reactions immediately
-      const reactions = messageReactions.get(messageId) || [];
-      const filtered = reactions.filter((r) => r.userId !== userId.toLowerCase());
-      filtered.push({ emoji, userId: userId.toLowerCase() });
-      messageReactions.set(messageId, filtered);
-    } catch (e) {
-      console.warn('Failed to send reaction:', e);
-    }
+    const mlsService = ensureMls();
+    await addReaction(messageId, emoji, {
+      mlsService,
+      userId,
+      pin,
+      conversation: convo,
+      updateLocalReaction: (msgId, emojiStr) => {
+        const reactions = messageReactions.get(msgId) || [];
+        const filtered = reactions.filter((r) => r.userId !== userId.toLowerCase());
+        filtered.push({ emoji: emojiStr, userId: userId.toLowerCase() });
+        messageReactions.set(msgId, filtered);
+      },
+    });
   }
 
   function handleReply(message: ChatMessage) {
@@ -830,13 +456,6 @@
 
   function cancelReply() {
     replyingTo = null;
-  }
-
-  function _handleKeydown(_e: KeyboardEvent) {
-    if (_e.key === 'Enter' && !_e.shiftKey) {
-      _e.preventDefault();
-      handleSendChat();
-    }
   }
 
   function selectConversation(name: string) {
@@ -886,10 +505,7 @@
     if (!convo) return;
     try {
       const mlsService = ensureMls();
-      await deleteGroupAndBroadcast({
-        mlsService,
-        groupId: convo.groupId,
-      });
+      await deleteGroupAndBroadcast({ mlsService, groupId: convo.groupId });
       if (storage) await storage.deleteConversation(selectedContact);
       conversations.delete(selectedContact);
       selectedContact = null;
@@ -927,7 +543,43 @@
     mobileView = 'list';
   }
 
+  function scheduleReconnect() {
+    if (!isLoggedIn) return;
+    isWsConnected = false;
+    if (reconnectTimer !== null) return; // already scheduled
+    const delay = RECONNECT_DELAYS[Math.min(reconnectAttempts, RECONNECT_DELAYS.length - 1)];
+    reconnectAttempts++;
+    log(`Connexion perdue. Nouvelle tentative dans ${delay / 1000}s… (tentative ${reconnectAttempts})`);
+    reconnectTimer = setTimeout(attemptReconnect, delay);
+  }
+
+  async function attemptReconnect() {
+    reconnectTimer = null;
+    if (!isLoggedIn) return;
+    try {
+      log('Reconnexion en cours…');
+      const token = await generateDevToken(
+        userId,
+        import.meta.env.VITE_JWT_SECRET,
+        import.meta.env.DEV
+      );
+      const mlsService = ensureMls();
+      await mlsService.connect(token);
+      isWsConnected = true;
+      reconnectAttempts = 0;
+      log('✅ Reconnecté au réseau !');
+      syncOwnDevicesToGroupsLocally().catch(() => {});
+    } catch {
+      scheduleReconnect();
+    }
+  }
+
   function logout() {
+    if (reconnectTimer !== null) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    reconnectAttempts = 0;
     isLoggedIn = false;
     isWsConnected = false;
     conversations.clear();
@@ -951,21 +603,7 @@
 
   // --- Sauvegarde (export / import WhatsApp-style) ---
 
-  /**
-   * Run on every connect: fetch this user's own registered devices and, for
-   * any that are new (not yet in the local cache), add them to each existing
-   * MLS group and send them the resulting Welcome.
-   *
-   * A device is considered "new" when its deviceId is absent from the
-   * `known_own_devices:<userId>` key in localStorage.  This avoids redundant
-   * `addMember` calls on every login for devices already synced.
-   *
-   * Device B (the importing device) cannot invite itself – it has no group
-   * state yet.  It must wait for Device A to run this function and deliver
-   * Welcomes, after which the existing `onMessage → processWelcome` path
-   * handles everything automatically.
-   */
-  async function runSyncOwnDevicesToGroups() {
+  async function syncOwnDevicesToGroupsLocally() {
     const mlsService = ensureMls();
     await syncOwnDevicesToGroups({
       mlsService,
