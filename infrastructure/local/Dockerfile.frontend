@@ -1,21 +1,11 @@
-# ── Build stage : SvelteKit static (WASM déjà compilé dans le repo) ──────────
-FROM node:20-alpine AS frontend-builder
-
-WORKDIR /app/frontend
-
-COPY frontend/package*.json ./
-RUN npm install --legacy-peer-deps
-
-COPY frontend ./
-# Le WASM pré-compilé est déjà dans frontend/src/lib/wasm/ (versionné dans le repo)
-# Si vous voulez forcer la recompilation WASM, lancez d'abord : make wasm (cf. Makefile)
-
-RUN npm run build
-
 # ── Runtime: Nginx servant le build statique ─────────────────────────────────
+# Le build Svelte est effectué en amont par le CI (job build-frontend) avec les
+# secrets injectés (VITE_JWT_SECRET). L'artifact compilé est téléchargé dans
+# frontend/build/ avant que cette image soit construite.
+# NE PAS rebuilder ici : le secret ne serait pas disponible dans ce contexte.
 FROM nginx:stable-alpine
 
-COPY --from=frontend-builder /app/frontend/build /usr/share/nginx/html
+COPY frontend/build /usr/share/nginx/html
 
 # SPA fallback + reverse proxy WebSocket/API vers les services Docker
 RUN printf 'server {\n\
