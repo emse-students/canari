@@ -61,6 +61,10 @@ jobs:
         working-directory: frontend/mls-wasm
         run: wasm-pack build --target web --out-dir ../src/lib/wasm
 
+      - name: Generate protobuf bindings
+        working-directory: frontend
+        run: bun run proto:gen
+
       - name: Create frontend .env with JWT_SECRET
         working-directory: frontend
         env:

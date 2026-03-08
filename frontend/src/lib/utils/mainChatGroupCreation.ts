@@ -3,6 +3,7 @@ import type { IStorage } from '$lib/db';
 import type { Conversation } from '$lib/types';
 import { toHex } from '$lib/utils/hex';
 import type { SvelteMap } from 'svelte/reactivity';
+import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
 
 interface GroupCreationDeps {
   mlsService: IMlsService;
@@ -136,7 +137,7 @@ export async function inviteMemberToGroup(
 
     // Broadcast member addition notification
     try {
-      const controlMsg = JSON.stringify({ type: 'memberAdded', newUser: targetUser });
+      const controlMsg = encodeAppMessage(mkSystem('memberAdded', JSON.stringify({ newUser: targetUser })));
       await mlsService.sendMessage(conversation.groupId, controlMsg);
       const st = await mlsService.saveState(pin);
       localStorage.setItem('mls_autosave_' + userId, toHex(st));

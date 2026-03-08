@@ -7,8 +7,8 @@ export interface IMlsService {
     addMember(groupId: string, keyPackageBytes: Uint8Array): Promise<{ commit: Uint8Array, welcome?: Uint8Array }>;
     addMembersBulk(groupId: string, devices: Array<{ keyPackage: Uint8Array, deviceId: string }>): Promise<{ commit: Uint8Array, welcome?: Uint8Array, addedDeviceIds: string[] }>;
     processWelcome(welcomeBytes: Uint8Array): Promise<string>;
-    sendMessage(groupId: string, message: string): Promise<Uint8Array>;
-    processIncomingMessage(groupId: string, messageBytes: Uint8Array): Promise<string | null>;
+    sendMessage(groupId: string, messageBytes: Uint8Array): Promise<Uint8Array>;
+    processIncomingMessage(groupId: string, messageBytes: Uint8Array): Promise<Uint8Array | null>;
 
     // Networking
     connect(token: string): Promise<void>;

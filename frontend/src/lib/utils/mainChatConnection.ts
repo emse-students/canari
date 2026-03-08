@@ -4,6 +4,7 @@ import type { ChatMessage, Conversation } from '$lib/types';
 import { toHex } from '$lib/utils/hex';
 import type { SvelteMap } from 'svelte/reactivity';
 import type { MessageReaction } from '$lib/types';
+import { decodeAppMessage } from '$lib/proto/codec';
 
 interface MessageHandlerDeps {
   mlsService: IMlsService;
@@ -74,7 +75,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
     if (convoKey) {
       const convo = conversations.get(convoKey)!;
       try {
-        const decrypted = await mlsService.processIncomingMessage(convo.groupId, content);
+        const decryptedBytes = await mlsService.processIncomingMessage(convo.groupId, content);
 
         // Auto-save MLS state
         try {
@@ -84,40 +85,70 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           // Silent fallback if autosave fails
         }
 
-        if (decrypted) {
-          // Try to parse as JSON control message
-          try {
-            const parsed = JSON.parse(decrypted);
+        if (decryptedBytes) {
+          const msg = decodeAppMessage(decryptedBytes);
 
-            // Group renamed
-            if (parsed.type === 'groupRenamed' && parsed.newName) {
-              conversations.set(convoKey, { ...convo, name: parsed.newName });
+          if (msg?.text) {
+            await addMessageToChat(senderNorm, msg.text.content ?? '', convoKey, undefined, false, msg.messageId || undefined);
+            return true;
+          }
+
+          if (msg?.reply) {
+            await addMessageToChat(
+              senderNorm,
+              msg.reply.content ?? '',
+              convoKey,
+              msg.reply.replyTo
+                ? { id: msg.reply.replyTo.id ?? '', senderId: msg.reply.replyTo.senderId ?? '', content: msg.reply.replyTo.preview ?? '' }
+                : undefined,
+              false,
+              msg.messageId || undefined
+            );
+            return true;
+          }
+
+          if (msg?.reaction) {
+            const reactions = messageReactions.get(msg.reaction.messageId ?? '') || [];
+            const filtered = reactions.filter((r) => r.userId !== senderNorm);
+            filtered.push({ emoji: msg.reaction.emoji ?? '', userId: senderNorm });
+            messageReactions.set(msg.reaction.messageId ?? '', filtered);
+            log(`👍 ${senderNorm} a réagi avec ${msg.reaction.emoji}`);
+            return true;
+          }
+
+          if (msg?.media) {
+            // Media: store the serialised proto bytes as content (renderer handles it)
+            const mediaJson = JSON.stringify({
+              type: msg.media.kind,
+              mediaId: msg.media.mediaId,
+              mimeType: msg.media.mimeType,
+              size: msg.media.size,
+              fileName: msg.media.fileName,
+            });
+            await addMessageToChat(senderNorm, mediaJson, convoKey, undefined, false, msg.messageId || undefined);
+            return true;
+          }
+
+          if (msg?.system) {
+            const event = msg.system.event;
+            const data = msg.system.data ? JSON.parse(msg.system.data) : {};
+
+            if (event === 'groupRenamed' && data.newName) {
+              conversations.set(convoKey, { ...convo, name: data.newName });
               if (storage) await saveConversation(convoKey);
-              await addSystemMessage(
-                `${senderNorm} a renommé le groupe en "${parsed.newName}"`,
-                convoKey
-              );
-              log(`📝 Groupe renommé en "${parsed.newName}" par ${senderNorm}`);
+              await addSystemMessage(`${senderNorm} a renommé le groupe en "${data.newName}"`, convoKey);
+              log(`📝 Groupe renommé en "${data.newName}" par ${senderNorm}`);
               return true;
             }
-
-            // Member removed
-            if (parsed.type === 'memberRemoved' && parsed.targetUser) {
-              await addSystemMessage(
-                `${senderNorm} a retiré ${parsed.targetUser} du groupe`,
-                convoKey
-              );
+            if (event === 'memberRemoved' && data.targetUser) {
+              await addSystemMessage(`${senderNorm} a retiré ${data.targetUser} du groupe`, convoKey);
               return true;
             }
-
-            // Member added
-            if (parsed.type === 'memberAdded' && parsed.newUser) {
-              await addSystemMessage(`${senderNorm} a ajouté ${parsed.newUser} au groupe`, convoKey);
+            if (event === 'memberAdded' && data.newUser) {
+              await addSystemMessage(`${senderNorm} a ajouté ${data.newUser} au groupe`, convoKey);
               return true;
             }
-
-            // Group deleted
-            if (parsed.type === 'groupDeleted') {
+            if (event === 'groupDeleted') {
               log(`🗑️ Groupe supprimé par ${senderNorm}`);
               if (storage) await storage.deleteConversation(convoKey);
               conversations.delete(convoKey);
@@ -127,105 +158,63 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               }
               return true;
             }
-
-            // Reaction
-            if (parsed.type === 'reaction' && parsed.messageId && parsed.emoji) {
-              const reactions = messageReactions.get(parsed.messageId) || [];
-              const filtered = reactions.filter((r) => r.userId !== senderNorm);
-              filtered.push({ emoji: parsed.emoji, userId: senderNorm });
-              messageReactions.set(parsed.messageId, filtered);
-              log(`👍 ${senderNorm} a réagi avec ${parsed.emoji}`);
-              return true;
-            }
-
-            // Read Receipt
-            if (parsed.type === 'read_receipt' && Array.isArray(parsed.messageIds)) {
-              const convo = conversations.get(convoKey);
-              if (convo) {
+            if (event === 'read_receipt') {
+              const msgIds: string[] = data.messageIds ?? [];
+              const c = conversations.get(convoKey);
+              if (c && msgIds.length > 0) {
                 let updated = false;
-                const newMsgs = [...convo.messages];
-                for (const msgId of parsed.messageIds) {
-                  const idx = newMsgs.findIndex(m => m.id === msgId);
+                const newMsgs = [...c.messages];
+                for (const msgId of msgIds) {
+                  const idx = newMsgs.findIndex((m) => m.id === msgId);
                   if (idx !== -1) {
-                    const msg = { ...newMsgs[idx] };
-                    const readBy = msg.readBy || [];
+                    const m = { ...newMsgs[idx] };
+                    const readBy = m.readBy || [];
                     if (!readBy.includes(senderNorm)) {
-                      msg.readBy = [...readBy, senderNorm];
-                      newMsgs[idx] = msg;
+                      m.readBy = [...readBy, senderNorm];
+                      newMsgs[idx] = m;
                       updated = true;
                     }
                   }
                 }
-                if (updated) {
-                  conversations.set(convoKey, { ...convo, messages: newMsgs });
+                if (updated) conversations.set(convoKey, { ...c, messages: newMsgs });
+              }
+              return true;
+            }
+            if (event === 'delete_message') {
+              const c = conversations.get(convoKey);
+              if (c && data.messageId) {
+                const newMsgs = [...c.messages];
+                const idx = newMsgs.findIndex((m) => m.id === data.messageId);
+                if (idx !== -1 && newMsgs[idx].senderId === senderNorm) {
+                  newMsgs[idx] = { ...newMsgs[idx], isDeleted: true, content: 'Ce message a été supprimé.' };
+                  conversations.set(convoKey, { ...c, messages: newMsgs });
                 }
               }
               return true;
             }
-
-            // Delete Message
-            if (parsed.type === 'delete_message' && parsed.messageId) {
-              const convo = conversations.get(convoKey);
-              if (convo) {
-                const newMsgs = [...convo.messages];
-                const MathMsg = newMsgs.findIndex(m => m.id === parsed.messageId);
-                // Ensure the person deleting is the original author
-                if (MathMsg !== -1 && newMsgs[MathMsg].senderId === senderNorm) {
-                  newMsgs[MathMsg] = { ...newMsgs[MathMsg], isDeleted: true, content: 'Ce message a été supprimé.' };
-                  conversations.set(convoKey, { ...convo, messages: newMsgs });
+            if (event === 'edit_message' && data.messageId && data.newContent) {
+              const c = conversations.get(convoKey);
+              if (c) {
+                const newMsgs = [...c.messages];
+                const idx = newMsgs.findIndex((m) => m.id === data.messageId);
+                if (idx !== -1 && newMsgs[idx].senderId === senderNorm) {
+                  newMsgs[idx] = { ...newMsgs[idx], isEdited: true, content: data.newContent };
+                  conversations.set(convoKey, { ...c, messages: newMsgs });
                 }
               }
               return true;
             }
-
-            // Edit Message
-            if (parsed.type === 'edit_message' && parsed.messageId && parsed.newContent) {
-              const convo = conversations.get(convoKey);
-              if (convo) {
-                const newMsgs = [...convo.messages];
-                const MathMsg = newMsgs.findIndex(m => m.id === parsed.messageId);
-                if (MathMsg !== -1 && newMsgs[MathMsg].senderId === senderNorm) {
-                  // Only text messages should be editable simply like this
-                  newMsgs[MathMsg] = { ...newMsgs[MathMsg], isEdited: true, content: parsed.newContent };
-                  conversations.set(convoKey, { ...convo, messages: newMsgs });
-                }
-              }
-              return true;
-            }
-
-            // Reply message
-            if (parsed.type === 'reply' && parsed.content) {
-              await addMessageToChat(senderNorm, parsed.content, convoKey, parsed.replyTo, false, parsed.id);
-              return true;
-            }
-
-            // Types media
-            if (
-               parsed.type === 'image' ||
-               parsed.type === 'video' ||
-               parsed.type === 'audio' ||
-               parsed.type === 'file'
-            ) {
-              await addMessageToChat(senderNorm, decrypted, convoKey, undefined, false, parsed.id);
-              return true;
-            }
-
-            // Standard text message
-            if (parsed.type === 'text' && parsed.content) {
-              await addMessageToChat(senderNorm, parsed.content, convoKey, undefined, false, parsed.id);
-              return true;
-            }
-          } catch {
-            // Not JSON or unknown control message → treat as plain text (legacy)
+            // Unknown system event — ignore silently
+            return true;
           }
 
-          // Plain text message (legacy format)
-          await addMessageToChat(senderNorm, decrypted, convoKey);
+          // Fallback: treat raw bytes as legacy plain text
+          const legacyText = new TextDecoder().decode(decryptedBytes);
+          await addMessageToChat(senderNorm, legacyText, convoKey);
         }
         return true;
       } catch (_e) {
         const errMsg = String(_e);
-        // Filter out normal OpenMLS behavior: you can't decrypt your own messages
         if (errMsg.includes('CannotDecryptOwnMessage')) {
           return false; // Silent ignore
         }

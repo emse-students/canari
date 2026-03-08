@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { IMlsService } from './IMlsService';
+import { decodeInboundMsg, encodeEnvelope, mkMlsEnvelope, mkWelcomeEnvelope } from '$lib/proto/codec';
 
 // Implémentation pour Tauri (App Mobile/Desktop)
 // Note: We use a dynamic import or checks to prevent this from crashing in pure web if invoked eagerly
@@ -42,27 +43,17 @@ export class TauriMlsService implements IMlsService {
             };
             this.ws.onmessage = async (event) => {
                 try {
-                    const data = JSON.parse(event.data);
-                    let base64Content: string | null = null;
-                    const senderId: string = data.senderId || data.sender_id || "unknown";
-
-                    if (data.type === "mlsWelcome" && data.content) {
-                        base64Content = data.content;
-                    } else if (data.content) {
-                        base64Content = data.content;
-                    }
-
-                    if (base64Content && this.messageCallback) {
-                        const binaryString = atob(base64Content);
-                        const bytes = new Uint8Array(binaryString.length);
-                        for (let i = 0; i < binaryString.length; i++) {
-                            bytes[i] = binaryString.charCodeAt(i);
-                        }
-                        const groupId = data.groupId || data.session_id;
-                        this.messageCallback(senderId, bytes, groupId);
+                    const buffer: ArrayBuffer = event.data instanceof ArrayBuffer
+                        ? event.data
+                        : await (event.data as Blob).arrayBuffer();
+                    const inbound = decodeInboundMsg(new Uint8Array(buffer));
+                    const senderId = inbound.senderId || 'unknown';
+                    const groupId = inbound.groupId || undefined;
+                    if (inbound.ciphertext?.length && this.messageCallback) {
+                        this.messageCallback(senderId, inbound.ciphertext as Uint8Array, groupId);
                     }
                 } catch (e) {
-                    console.error("Failed to process WebSocket message:", e);
+                    console.error('Failed to process WebSocket message:', e);
                 }
             };
         });
@@ -236,12 +227,10 @@ export class TauriMlsService implements IMlsService {
         }
 
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            this.ws.send(JSON.stringify({
-                type: "welcomeMessage",
-                payload: base64,
-                recipients: [{ userId: targetUserId, deviceId: null }],
-                groupId
-            }));
+            this.ws.send(encodeEnvelope(mkWelcomeEnvelope(
+                welcomeBytes, groupId,
+                [{ userId: targetUserId, deviceId: targetDeviceId ?? '' }]
+            )));
         }
     }
 
@@ -286,13 +275,7 @@ export class TauriMlsService implements IMlsService {
         const base64 = btoa(String.fromCharCode(...commitBytes));
 
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            // Send via WebSocket for instant delivery to online group members
-            const payload = {
-                type: "mlsMessage", // Treated as a regular MLS message (Application or Handshake, opaque to server)
-                payload: base64,
-                groupId: groupId
-            };
-            this.ws.send(JSON.stringify(payload));
+            this.ws.send(encodeEnvelope(mkMlsEnvelope(commitBytes, groupId)));
         } else {
              // Fallback HTTP
              await fetch(`${this.historyUrl}/mls-api/send`, {
@@ -361,14 +344,14 @@ export class TauriMlsService implements IMlsService {
         return await invoke<string>('trailer_welcome', { welcomeBytes: Array.from(welcomeBytes) });
     }
 
-    async sendMessage(groupId: string, message: string) {
-        const res = await invoke<number[]>('envoyer_message', { groupId, message });
+    async sendMessage(groupId: string, messageBytes: Uint8Array) {
+        const res = await invoke<number[]>('envoyer_message_bytes', { groupId, messageBytes: Array.from(messageBytes) });
         const encryptedBytes = Uint8Array.from(res);
         const base64 = btoa(String.fromCharCode(...encryptedBytes));
 
         // Send via WebSocket if connected
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            this.ws.send(JSON.stringify({ type: "mlsMessage", payload: base64, groupId: groupId }));
+            this.ws.send(encodeEnvelope(mkMlsEnvelope(encryptedBytes, groupId)));
         } else {
             console.warn("WebSocket not open, using HTTP fallback");
             try {
@@ -394,8 +377,9 @@ export class TauriMlsService implements IMlsService {
         return encryptedBytes;
     }
 
-    async processIncomingMessage(groupId: string, messageBytes: Uint8Array) {
-        return await invoke<string | null>('recevoir_message', { groupId, messageBytes: Array.from(messageBytes) });
+    async processIncomingMessage(groupId: string, messageBytes: Uint8Array): Promise<Uint8Array | null> {
+        const res = await invoke<number[] | null>('recevoir_message_bytes', { groupId, messageBytes: Array.from(messageBytes) });
+        return res ? Uint8Array.from(res) : null;
     }
 
     async fetchHistory(groupId: string): Promise<{ sender_id: string, content: string, timestamp: string }[]> {

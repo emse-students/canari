@@ -1,9 +1,24 @@
+use prost::Message as ProstMessage;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
+
+// ── Protobuf generated types ────────────────────────────────────────────────
+// Generated from libs/proto/canari.proto by prost-build (build.rs).
+// protoc is supplied by the protoc-bin-vendored crate — no system install needed.
+#[allow(dead_code, unused_imports)]
+pub mod proto {
+    include!(concat!(env!("OUT_DIR"), "/canari.rs"));
+}
+
+pub use proto::{
+    InboundMsg, MlsFrame, Recipient, WelcomeFrame, WsEnvelope,
+    ws_envelope::Body as WsBody,
+};
+
+// ── JWT / REST serde types (unchanged) ──────────────────────────────────────
 
 #[derive(Serialize, Deserialize)]
 pub struct Claims {
-    pub sub: String, // User ID
+    pub sub: String,
     pub exp: usize,
 }
 
@@ -13,40 +28,21 @@ pub struct AuthParams {
     pub device_id: Option<String>,
 }
 
-#[derive(Deserialize, Debug, PartialEq)]
-#[serde(tag = "type", rename_all = "camelCase")]
-pub enum WebSocketMessage {
-    #[serde(rename_all = "camelCase")]
-    MlsMessage {
-        payload: String, // Opaque MLS content (Base64)
-        group_id: Option<String>,
-        // List of recipients for fan-out
-        recipients: Option<Vec<Recipient>>,
-    },
-    #[serde(rename_all = "camelCase")]
-    WelcomeMessage {
-        payload: String,
-        group_id: String,
-        recipients: Vec<Recipient>,
-    },
-    #[serde(rename_all = "camelCase")]
-    Read { message_id: Uuid },
-}
-
-#[derive(Deserialize, Debug, PartialEq, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct Recipient {
-    pub user_id: String,
-    pub device_id: Option<String>,
-}
-
-// REST Payload for Ratchet Tree storage
+/// REST payload for Ratchet-Tree storage (unchanged).
 #[derive(Serialize, Deserialize)]
 pub struct RatchetTreePayload {
-    pub data: String, // Base64 encoded Tree
+    pub data: String,
     pub version: u64,
 }
 
-pub fn process_incoming(text: &str) -> Result<WebSocketMessage, serde_json::Error> {
-    serde_json::from_str(text)
+// ── Codec helpers ────────────────────────────────────────────────────────────
+
+/// Decode a binary WebSocket frame into a `WsEnvelope`.
+pub fn decode_ws_frame(bytes: &[u8]) -> Result<WsEnvelope, prost::DecodeError> {
+    WsEnvelope::decode(bytes)
+}
+
+/// Encode an `InboundMsg` to wire bytes (for Redis pub/sub → WS client).
+pub fn encode_inbound(msg: &InboundMsg) -> Vec<u8> {
+    msg.encode_to_vec()
 }

@@ -1,5 +1,6 @@
 import { toHex } from '$lib/utils/hex';
 import type { IMlsService } from '$lib/mlsService';
+import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
 
 export async function fetchUniqueGroupMembers(mlsService: IMlsService, groupId: string) {
   const members = await mlsService.getGroupMembers(groupId);
@@ -16,7 +17,7 @@ export async function renameGroupAndBroadcast(params: {
   const { mlsService, groupId, newName, userId, pin } = params;
   await mlsService.renameGroup(groupId, newName);
 
-  const controlMsg = JSON.stringify({ type: 'groupRenamed', newName });
+  const controlMsg = encodeAppMessage(mkSystem('groupRenamed', JSON.stringify({ newName })));
   await mlsService.sendMessage(groupId, controlMsg);
   const stBytes = await mlsService.saveState(pin);
   localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
@@ -28,7 +29,7 @@ export async function deleteGroupAndBroadcast(params: {
 }) {
   const { mlsService, groupId } = params;
 
-  const controlMsg = JSON.stringify({ type: 'groupDeleted' });
+  const controlMsg = encodeAppMessage(mkSystem('groupDeleted'));
   try {
     await mlsService.sendMessage(groupId, controlMsg);
   } catch {
@@ -48,7 +49,7 @@ export async function removeMemberAndBroadcast(params: {
   const { mlsService, groupId, memberId, userId, pin } = params;
 
   await mlsService.removeMemberFromServer(groupId, memberId);
-  const controlMsg = JSON.stringify({ type: 'memberRemoved', targetUser: memberId });
+  const controlMsg = encodeAppMessage(mkSystem('memberRemoved', JSON.stringify({ targetUser: memberId })));
   await mlsService.sendMessage(groupId, controlMsg);
   const stBytes = await mlsService.saveState(pin);
   localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));

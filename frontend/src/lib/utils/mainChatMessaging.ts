@@ -1,6 +1,7 @@
 import type { IMlsService } from '$lib/mlsService';
 import type { ChatMessage, Conversation } from '$lib/types';
 import { toHex } from '$lib/utils/hex';
+import { encodeAppMessage, mkText, mkReply, mkReaction, mkSystem } from '$lib/proto/codec';
 
 interface SendMessageDeps {
   mlsService: IMlsService;
@@ -35,21 +36,19 @@ export async function sendChatMessage(
   }
 
   try {
-    // Build payload based on reply state
-    let payload: string;
+    // Build proto payload based on reply state
+    let payload: Uint8Array;
     let replyToData: ChatMessage['replyTo'] = undefined;
     const messageId = crypto.randomUUID();
 
     if (replyingTo) {
-      payload = JSON.stringify({
-        id: messageId,
-        type: 'reply',
-        content: text,
-        replyTo: {
+      payload = encodeAppMessage({
+        ...mkReply(text, {
           id: replyingTo.id,
           senderId: replyingTo.senderId,
-          content: replyingTo.content.slice(0, 100), // preview only
-        },
+          preview: replyingTo.content.slice(0, 100),
+        }),
+        messageId,
       });
       replyToData = {
         id: replyingTo.id,
@@ -57,7 +56,7 @@ export async function sendChatMessage(
         content: replyingTo.content.slice(0, 100),
       };
     } else {
-      payload = JSON.stringify({ id: messageId, type: 'text', content: text });
+      payload = encodeAppMessage({ ...mkText(text), messageId });
     }
 
     await mlsService.sendMessage(conversation.groupId, payload);
@@ -108,7 +107,7 @@ export async function addReaction(
   if (!conversation.isReady) return;
 
   try {
-    const payload = JSON.stringify({ type: 'reaction', messageId, emoji });
+    const payload = encodeAppMessage(mkReaction(messageId, emoji));
     await mlsService.sendMessage(conversation.groupId, payload);
     const stateBytes = await mlsService.saveState(pin);
     localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
@@ -124,7 +123,7 @@ export async function editMessage(
   const { mlsService, userId, pin, conversation } = deps;
   if (!conversation.isReady) return;
   try {
-    const payload = JSON.stringify({ type: 'edit_message', messageId, newContent });
+    const payload = encodeAppMessage(mkSystem('edit_message', JSON.stringify({ messageId, newContent })));
     await mlsService.sendMessage(conversation.groupId, payload);
     const stateBytes = await mlsService.saveState(pin);
     localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
@@ -140,7 +139,7 @@ export async function deleteMessage(
   const { mlsService, userId, pin, conversation } = deps;
   if (!conversation.isReady) return;
   try {
-    const payload = JSON.stringify({ type: 'delete_message', messageId });
+    const payload = encodeAppMessage(mkSystem('delete_message', JSON.stringify({ messageId })));
     await mlsService.sendMessage(conversation.groupId, payload);
     const stateBytes = await mlsService.saveState(pin);
     localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
@@ -156,7 +155,7 @@ export async function sendReadReceipt(
   const { mlsService, userId, pin, conversation } = deps;
   if (!conversation.isReady || messageIds.length === 0) return;
   try {
-    const payload = JSON.stringify({ type: 'read_receipt', messageIds });
+    const payload = encodeAppMessage(mkSystem('read_receipt', JSON.stringify({ messageIds })));
     await mlsService.sendMessage(conversation.groupId, payload);
     const stateBytes = await mlsService.saveState(pin);
     localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));

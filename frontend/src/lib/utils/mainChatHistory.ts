@@ -2,6 +2,7 @@ import { toHex } from '$lib/utils/hex';
 import type { StoredMessage } from '$lib/db';
 import type { ChatMessage } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
+import { decodeAppMessage } from '$lib/proto/codec';
 
 export function mapStoredMessagesToChatMessages(storedMessages: StoredMessage[], userId: string) {
   return storedMessages.map((m) => {
@@ -60,46 +61,56 @@ export async function replayConversationHistory(params: {
         const bytes = new Uint8Array(bytesStr.length);
         for (let i = 0; i < bytesStr.length; i++) bytes[i] = bytesStr.charCodeAt(i);
 
-        const decrypted = await mlsService.processIncomingMessage(groupId, bytes);
-        if (!decrypted) continue;
+        const decryptedBytes = await mlsService.processIncomingMessage(groupId, bytes);
+        if (!decryptedBytes) continue;
 
-        try {
-          const parsed = JSON.parse(decrypted);
-          if (parsed.type === 'text' || parsed.type === 'reply') {
-            const content = parsed.content;
-            if (content) {
-              await addMessageToChat(msg.sender_id, content, contactName, parsed.replyTo, false, parsed.id);
-              addedMsg++;
-              mlsUpdated = true;
-              continue;
-            }
-          } else if (
-             parsed.type === 'image' ||
-             parsed.type === 'video' ||
-             parsed.type === 'audio' ||
-             parsed.type === 'file'
-          ) {
-            await addMessageToChat(msg.sender_id, decrypted, contactName, undefined, false, parsed.id);
+        const parsed = decodeAppMessage(decryptedBytes);
+
+        if (parsed?.text) {
+          if (parsed.text.content) {
+            await addMessageToChat(msg.sender_id, parsed.text.content ?? '', contactName, undefined, false, parsed.messageId || undefined);
             addedMsg++;
             mlsUpdated = true;
             continue;
-          } else if (
-            parsed.type === 'reaction' ||
-            parsed.type === 'groupRenamed' ||
-            parsed.type === 'memberRemoved' ||
-            parsed.type === 'memberAdded' ||
-            parsed.type === 'groupDeleted'
-          ) {
-            mlsUpdated = true;
-            continue;
           }
-        } catch {
-          // Not JSON -> legacy plain text
+        } else if (parsed?.reply) {
+          await addMessageToChat(
+            msg.sender_id,
+            parsed.reply.content ?? '',
+            contactName,
+            parsed.reply.replyTo
+              ? { id: parsed.reply.replyTo.id ?? '', senderId: parsed.reply.replyTo.senderId ?? '', content: parsed.reply.replyTo.preview ?? '' }
+              : undefined,
+            false,
+            parsed.messageId || undefined
+          );
+          addedMsg++;
+          mlsUpdated = true;
+          continue;
+        } else if (parsed?.media) {
+          const mediaJson = JSON.stringify({
+            type: parsed.media.kind,
+            mediaId: parsed.media.mediaId,
+            mimeType: parsed.media.mimeType,
+            size: parsed.media.size,
+            fileName: parsed.media.fileName,
+          });
+          await addMessageToChat(msg.sender_id, mediaJson, contactName, undefined, false, parsed.messageId || undefined);
+          addedMsg++;
+          mlsUpdated = true;
+          continue;
+        } else if (parsed?.reaction || parsed?.system) {
+          // Control/reaction messages don't add chat entries in history replay
+          mlsUpdated = true;
+          continue;
+        } else {
+          // Legacy plain text or unknown format
+          const legacyText = new TextDecoder().decode(decryptedBytes);
+          await addMessageToChat(msg.sender_id, legacyText, contactName);
+          addedMsg++;
+          mlsUpdated = true;
+          continue;
         }
-
-        await addMessageToChat(msg.sender_id, decrypted, contactName);
-        addedMsg++;
-        mlsUpdated = true;
       } catch (err) {
         if (String(err).includes('CannotDecryptOwnMessage')) {
           continue;

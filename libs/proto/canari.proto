@@ -1,0 +1,137 @@
+syntax = "proto3";
+
+package canari;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WebSocket transport envelope  (client ↔ gateway)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// All WebSocket frames are sent as binary (not text).
+// The client wraps every outgoing frame in WsEnvelope; the gateway sends back
+// InboundMsg directly (no outer envelope needed for server → client).
+//
+// Wire flow:
+//   Client   →  WsEnvelope (binary)  →  Gateway
+//   Gateway  →  InboundMsg (binary)  →  Client
+
+message WsEnvelope {
+  oneof body {
+    MlsFrame     mls     = 1;  // application message or MLS commit
+    WelcomeFrame welcome = 2;  // MLS Welcome (group invite)
+    ReadAck      read    = 3;  // read receipt
+  }
+}
+
+// A single fan-out target.
+message Recipient {
+  string user_id   = 1;
+  string device_id = 2; // empty = fan-out to all devices of this user
+}
+
+// Wraps an opaque MLS ciphertext (application message or commit).
+message MlsFrame {
+  bytes             ciphertext = 1; // raw MLS ciphertext bytes (never base64)
+  string            group_id   = 2; // empty on commits sent without explicit group
+  repeated Recipient recipients = 3; // leave empty = derive from group members
+}
+
+// Wraps an MLS Welcome message.
+message WelcomeFrame {
+  bytes             ciphertext = 1;
+  string            group_id   = 2;
+  repeated Recipient recipients = 3;
+}
+
+// Read receipt.
+message ReadAck {
+  string message_id = 1; // UUID string of the acknowledged message
+}
+
+// Server → client delivery frame (pushed via Redis pub/sub).
+message InboundMsg {
+  bytes  ciphertext       = 1; // raw MLS bytes
+  string sender_id        = 2;
+  string sender_device_id = 3;
+  string group_id         = 4;
+  bool   is_welcome       = 5; // true → process as MLS Welcome, not as application msg
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Application payload  (plaintext INSIDE the MLS ciphertext)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// This is what gets encrypted end-to-end by MLS.
+// The server never sees the plaintext; it only routes opaque ciphertext blobs.
+//
+// Encoding: proto3 binary serialised with this schema, passed as raw bytes to
+// `WasmMlsClient::send_message_bytes()`.
+
+message AppMessage {
+  // Unique identifier assigned by the sender (UUID string).
+  string message_id = 6;
+  oneof kind {
+    TextMsg     text     = 1;
+    ReplyMsg    reply    = 2;
+    ReactionMsg reaction = 3;
+    MediaMsg    media    = 4;
+    SystemMsg   system   = 5;
+  }
+}
+
+// ── Plain text ───────────────────────────────────────────────────────────
+
+message TextMsg {
+  string content = 1;
+}
+
+// ── Reply (quote) ────────────────────────────────────────────────────────
+
+message ReplyRef {
+  string id        = 1;
+  string sender_id = 2;
+  string preview   = 3; // first 100 chars of the quoted message
+}
+
+message ReplyMsg {
+  string   content  = 1;
+  ReplyRef reply_to = 2;
+}
+
+// ── Emoji reaction ───────────────────────────────────────────────────────
+
+message ReactionMsg {
+  string message_id = 1; // UUID of the reacted-to message
+  string emoji      = 2;
+}
+
+// ── Encrypted media attachment ───────────────────────────────────────────
+//
+// Security model: the media service stores only opaque AES-GCM ciphertext.
+// The CEK and IV live inside this proto message, which is itself end-to-end
+// encrypted by MLS. Only group members can decrypt both the key and the blob.
+
+enum MediaKind {
+  MEDIA_FILE  = 0; // generic binary
+  MEDIA_IMAGE = 1;
+  MEDIA_VIDEO = 2;
+  MEDIA_AUDIO = 3;
+}
+
+message MediaMsg {
+  MediaKind kind      = 1;
+  string    media_id  = 2; // opaque server-side identifier
+  bytes     key       = 3; // 32-byte AES-256-GCM CEK  (raw bytes, NOT hex)
+  bytes     iv        = 4; // 12-byte GCM nonce         (raw bytes, NOT hex)
+  string    mime_type = 5;
+  uint32    size      = 6; // plaintext file size in bytes
+  string    file_name = 7; // optional display name
+}
+
+// ── System / group-management events ────────────────────────────────────
+
+message SystemMsg {
+  // One of: "groupRenamed" | "memberAdded" | "memberRemoved" | "groupDeleted"
+  string event = 1;
+  // Arbitrary JSON payload (kept flexible for future events).
+  string data  = 2;
+}

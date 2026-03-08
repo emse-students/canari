@@ -112,6 +112,23 @@ fn envoyer_message(
 }
 
 #[tauri::command]
+fn envoyer_message_bytes(
+    group_id: String,
+    message_bytes: Vec<u8>,
+    state: tauri::State<AppState>,
+) -> Result<Vec<u8>, String> {
+    let mut lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+
+    manager
+        .send_message(&group_id, &message_bytes)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn recevoir_message(
     group_id: String,
     message_bytes: Vec<u8>,
@@ -133,6 +150,23 @@ fn recevoir_message(
     }
 }
 
+#[tauri::command]
+fn recevoir_message_bytes(
+    group_id: String,
+    message_bytes: Vec<u8>,
+    state: tauri::State<AppState>,
+) -> Result<Option<Vec<u8>>, String> {
+    let mut lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+
+    manager
+        .process_incoming_message(&group_id, &message_bytes)
+        .map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -149,7 +183,9 @@ pub fn run() {
             ajouter_membre,
             trailer_welcome,
             envoyer_message,
-            recevoir_message
+            envoyer_message_bytes,
+            recevoir_message,
+            recevoir_message_bytes
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

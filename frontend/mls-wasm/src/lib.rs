@@ -206,6 +206,19 @@ impl WasmMlsClient {
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
+    /// Encrypts raw bytes (e.g. a proto-encoded AppMessage) as the MLS application payload.
+    #[wasm_bindgen]
+    pub fn send_message_bytes(&mut self, group_id: String, message_bytes: Vec<u8>) -> Result<Vec<u8>, JsValue> {
+        log::info!(
+            "send_message_bytes to group: {} ({} bytes)",
+            group_id,
+            message_bytes.len()
+        );
+        self.manager
+            .send_message(&group_id, &message_bytes)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
     #[wasm_bindgen]
     pub fn process_incoming_message(
         &mut self,
@@ -226,6 +239,23 @@ impl WasmMlsClient {
             Some(bytes) => Ok(Some(String::from_utf8_lossy(&bytes).to_string())),
             None => Ok(None),
         }
+    }
+
+    /// Returns the raw decrypted bytes of an MLS application message (proto-encoded AppMessage).
+    #[wasm_bindgen]
+    pub fn process_incoming_message_bytes(
+        &mut self,
+        group_id: String,
+        message_bytes: Vec<u8>,
+    ) -> Result<Option<Vec<u8>>, JsValue> {
+        log::info!(
+            "process_incoming_message_bytes for group: {} ({} bytes)",
+            group_id,
+            message_bytes.len()
+        );
+        self.manager
+            .process_incoming_message(&group_id, &message_bytes)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 }
 

@@ -1,4 +1,5 @@
 import type { IMlsService } from './IMlsService';
+import { decodeInboundMsg, encodeEnvelope, mkMlsEnvelope, mkWelcomeEnvelope } from '$lib/proto/codec';
 
 // Implémentation pour le Site Web (WASM)
 export class WebMlsService implements IMlsService {
@@ -64,26 +65,18 @@ export class WebMlsService implements IMlsService {
             };
             this.ws.onmessage = async (event) => {
                 try {
-                    const data = JSON.parse(event.data);
-                    let base64Content: string | null = null;
-                    const senderId: string = data.senderId || data.sender_id || "unknown";
+                    // Gateway now sends binary proto InboundMsg frames.
+                    const buffer: ArrayBuffer = event.data instanceof ArrayBuffer
+                        ? event.data
+                        : await (event.data as Blob).arrayBuffer();
+                    const inbound = decodeInboundMsg(new Uint8Array(buffer));
 
-                    if (data.type === "mlsWelcome" && data.content) {
-                        // Welcome message pour rejoindre un groupe
-                        base64Content = data.content;
-                    } else if (data.content) {
-                        // Message MLS chiffré standard
-                        base64Content = data.content;
-                    }
-
-                    if (base64Content && this.messageCallback) {
-                        const binaryString = atob(base64Content);
-                        const bytes = new Uint8Array(binaryString.length);
-                        for (let i = 0; i < binaryString.length; i++) {
-                            bytes[i] = binaryString.charCodeAt(i);
-                        }
-                        const groupId = data.groupId || data.session_id; // Support both legacy and new
-                        this.messageCallback(senderId, bytes, groupId);
+                    if (inbound.ciphertext && inbound.ciphertext.length > 0 && this.messageCallback) {
+                        await this.messageCallback(
+                            inbound.senderId || 'unknown',
+                            new Uint8Array(inbound.ciphertext),
+                            inbound.groupId || undefined
+                        );
                     }
                 } catch (e) {
                     console.error("Failed to process WebSocket message:", e);
@@ -160,30 +153,27 @@ export class WebMlsService implements IMlsService {
     }
 
     private async simulateMessageReceive(data: any): Promise<boolean> {
-        if (this.messageCallback) {
-             let base64Content: string | null = null;
-             // Handle same logic as onmessage
-             if (data.type === "mlsWelcome" && data.content) {
-                 base64Content = data.content;
-             } else if (data.content) {
-                 base64Content = data.content;
-             }
+        if (!this.messageCallback) return false;
 
-             if (base64Content) {
-                 const binaryString = atob(base64Content);
-                 const bytes = new Uint8Array(binaryString.length);
-                 for (let i = 0; i < binaryString.length; i++) {
-                     bytes[i] = binaryString.charCodeAt(i);
-                 }
-                 const senderId = data.senderId || "unknown";
-                 const groupId = data.groupId || data.session_id;
-                 try {
-                     return await this.messageCallback(senderId, bytes, groupId);
-                 } catch (e) {
-                     console.error("Message processing failed", e);
-                     return false;
-                 }
-             }
+        // Offline messages from the delivery service REST API arrive as
+        // JSON objects with a base64 `content` field (unchanged HTTP format).
+        let bytes: Uint8Array | null = null;
+        if (data.content) {
+            try {
+                const binaryString = atob(data.content as string);
+                bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+            } catch { /* ignore */ }
+        }
+
+        if (bytes) {
+            const senderId = (data.senderId || data.sender_id || 'unknown') as string;
+            const groupId  = (data.groupId  || data.session_id)             as string | undefined;
+            try {
+                return await this.messageCallback(senderId, bytes, groupId);
+            } catch (e) {
+                console.error("Message processing failed", e);
+            }
         }
         return false;
     }
@@ -257,12 +247,10 @@ export class WebMlsService implements IMlsService {
                 })
             });
         } else if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            this.ws.send(JSON.stringify({
-                type: "welcomeMessage",
-                payload: base64,
-                recipients: [{ userId: targetUserId, deviceId: null }],
-                groupId
-            }));
+            this.ws.send(encodeEnvelope(mkWelcomeEnvelope(
+                welcomeBytes, groupId,
+                [{ userId: targetUserId, deviceId: targetDeviceId ?? '' }]
+            )));
         } else {
             await fetch(`${this.historyUrl}/mls-api/send`, {
                 method: 'POST',
@@ -279,25 +267,18 @@ export class WebMlsService implements IMlsService {
     }
 
     async sendCommit(commitBytes: Uint8Array, groupId: string): Promise<void> {
-        const base64 = btoa(String.fromCharCode(...commitBytes));
-
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            // Send via WebSocket for instant delivery to online group members
-            const payload = {
-                type: "mlsMessage", // Treated as a regular MLS message (Application or Handshake, opaque to server)
-                payload: base64,
-                groupId: groupId
-            };
-            this.ws.send(JSON.stringify(payload));
+            // MLS commit is also an MlsFrame (opaque to the server)
+            this.ws.send(encodeEnvelope(mkMlsEnvelope(commitBytes, groupId)));
         } else {
-             // Fallback HTTP
-             await fetch(`${this.historyUrl}/mls-api/send`, {
+            const base64 = btoa(String.fromCharCode(...commitBytes));
+            await fetch(`${this.historyUrl}/mls-api/send`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     senderId: this.userId,
                     senderDeviceId: this.deviceId,
-                    groupId: groupId,
+                    groupId,
                     content: base64,
                     type: 'handshake'
                 })
@@ -410,21 +391,15 @@ export class WebMlsService implements IMlsService {
         return this.client.process_welcome(welcomeBytes);
     }
 
-    async sendMessage(groupId: string, message: string) {
-        const encryptedBytes = this.client.send_message(groupId, message);
-        const base64 = btoa(String.fromCharCode(...encryptedBytes));
+    async sendMessage(groupId: string, messageBytes: Uint8Array) {
+        const encryptedBytes: Uint8Array = this.client.send_message_bytes(groupId, messageBytes);
 
-        // Send via WebSocket if connected
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            const payload = {
-                type: "mlsMessage",
-                payload: base64,
-                groupId: groupId
-            };
-            this.ws.send(JSON.stringify(payload));
+            // Binary proto WsEnvelope { mls: { ciphertext, groupId } }
+            this.ws.send(encodeEnvelope(mkMlsEnvelope(encryptedBytes, groupId)));
         } else {
-            // Fallback: Send via HTTP to History Service (Delivery)
             console.warn("WebSocket not connected. Sending via HTTP fallback...");
+            const base64 = btoa(String.fromCharCode(...encryptedBytes));
             try {
                 await fetch(`${this.historyUrl}/mls-api/send`, {
                     method: 'POST',
@@ -433,13 +408,11 @@ export class WebMlsService implements IMlsService {
                         senderId: this.userId,
                         senderDeviceId: this.deviceId,
                         content: base64,
-                        groupId: groupId
+                        groupId
                     })
                 });
             } catch (e) {
                 console.error("HTTP Send failed:", e);
-                // Throw error so UI knows it failed?
-                // But encryptedBytes is returned... UI might think it succeeded.
                 throw e;
             }
         }
@@ -447,8 +420,9 @@ export class WebMlsService implements IMlsService {
         return encryptedBytes;
     }
 
-    async processIncomingMessage(groupId: string, messageBytes: Uint8Array) {
-        return this.client.process_incoming_message(groupId, messageBytes);
+    async processIncomingMessage(groupId: string, messageBytes: Uint8Array): Promise<Uint8Array | null> {
+        const result = this.client.process_incoming_message_bytes(groupId, messageBytes);
+        return result ?? null;
     }
 
     async fetchHistory(groupId: string): Promise<{ sender_id: string, content: string, timestamp: string }[]> {

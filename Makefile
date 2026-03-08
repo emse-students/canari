@@ -374,6 +374,7 @@ build-frontend:
 	@echo "${BLUE}🚀 Building frontend...${RESET}"
 ifeq ($(OS),Windows_NT)
 	@cd frontend/mls-wasm && wasm-pack build --target web --out-dir ../src/lib/wasm
+	@cd frontend && ($(CHECK_CMD) bun >$(NULL_DEV) 2>&1 && bun run proto:gen || npm run proto:gen)
 	@cd frontend && ($(CHECK_CMD) bun >$(NULL_DEV) 2>&1 && bun run build || npm run build)
 else
 	@cd frontend/mls-wasm && ( \
@@ -382,6 +383,20 @@ else
 		else \
 			. "$$HOME/.cargo/env" 2>/dev/null || true; \
 			wasm-pack build --target web --out-dir ../src/lib/wasm; \
+		fi \
+	)
+	@echo "${BLUE}🔄 Generating protobuf bindings...${RESET}"
+	@cd frontend && ( \
+		if [ -x "$$HOME/.bun/bin/bun" ]; then \
+			$$HOME/.bun/bin/bun run proto:gen; \
+		elif command -v bun >/dev/null 2>&1; then \
+			bun run proto:gen; \
+		elif command -v npm >/dev/null 2>&1; then \
+			npm run proto:gen; \
+		else \
+			export NVM_DIR="$$HOME/.nvm"; \
+			[ -s "$$NVM_DIR/nvm.sh" ] && \. "$$NVM_DIR/nvm.sh"; \
+			npm run proto:gen; \
 		fi \
 	)
 	@cd frontend && ( \

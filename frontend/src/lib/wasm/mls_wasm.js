@@ -116,12 +116,34 @@ export class WasmMlsClient {
         return v3;
     }
     /**
+     * Returns the raw decrypted bytes of an MLS application message (proto-encoded AppMessage).
+     * @param {string} group_id
+     * @param {Uint8Array} message_bytes
+     * @returns {Uint8Array | undefined}
+     */
+    process_incoming_message_bytes(group_id, message_bytes) {
+        const ptr0 = passStringToWasm0(group_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(message_bytes, wasm.__wbindgen_malloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmmlsclient_process_incoming_message_bytes(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        if (ret[3]) {
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        let v3;
+        if (ret[0] !== 0) {
+            v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        }
+        return v3;
+    }
+    /**
      * @param {Uint8Array} welcome_bytes
      * @returns {string}
      */
     process_welcome(welcome_bytes) {
-        let deferred3_0 = 0;
-        let deferred3_1 = 0;
+        let deferred3_0;
+        let deferred3_1;
         try {
             const ptr0 = passArray8ToWasm0(welcome_bytes, wasm.__wbindgen_malloc);
             const len0 = WASM_VECTOR_LEN;
@@ -129,6 +151,7 @@ export class WasmMlsClient {
             var ptr2 = ret[0];
             var len2 = ret[1];
             if (ret[3]) {
+                ptr2 = 0; len2 = 0;
                 throw takeFromExternrefTable0(ret[2]);
             }
             deferred3_0 = ptr2;
@@ -164,6 +187,25 @@ export class WasmMlsClient {
         const ptr1 = passStringToWasm0(message, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len1 = WASM_VECTOR_LEN;
         const ret = wasm.wasmmlsclient_send_message(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        if (ret[3]) {
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v3;
+    }
+    /**
+     * Encrypts raw bytes (e.g. a proto-encoded AppMessage) as the MLS application payload.
+     * @param {string} group_id
+     * @param {Uint8Array} message_bytes
+     * @returns {Uint8Array}
+     */
+    send_message_bytes(group_id, message_bytes) {
+        const ptr0 = passStringToWasm0(group_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(message_bytes, wasm.__wbindgen_malloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmmlsclient_send_message_bytes(this.__wbg_ptr, ptr0, len0, ptr1, len1);
         if (ret[3]) {
             throw takeFromExternrefTable0(ret[2]);
         }
@@ -282,7 +324,7 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbg_new_cbee8c0d5c479eac: function() {
-            const ret = [];
+            const ret = new Array();
             return ret;
         },
         __wbg_new_from_slice_d7e202fdbee3c396: function(arg0, arg1) {
@@ -512,9 +554,10 @@ if (!('encodeInto' in cachedTextEncoder)) {
 
 let WASM_VECTOR_LEN = 0;
 
-let wasm;
-function __wbg_finalize_init(instance, _module) {
+let wasmModule, wasm;
+function __wbg_finalize_init(instance, module) {
     wasm = instance.exports;
+    wasmModule = module;
     cachedDataViewMemory0 = null;
     cachedUint8ArrayMemory0 = null;
     wasm.__wbindgen_start();

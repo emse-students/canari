@@ -20,4 +20,11 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.20.0", features = ["serde", "v4"] }
 jsonwebtoken = { version = "10.2.0", features = ["use_pem", "rust_crypto"] }
 reqwest = { version = "0.13.2", features = ["json"] }
+prost = "0.13"
+bytes = "1"
+base64 = "0.22"
+
+[build-dependencies]
+prost-build = "0.13"
+protoc-bin-vendored = "3"
 
