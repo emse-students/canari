@@ -5,7 +5,7 @@
   import type { IStorage } from '$lib/db';
   import { exportBackup, importBackup } from '$lib/backup';
   import { onMount, tick } from 'svelte';
-  import { SvelteMap } from 'svelte/reactivity';
+  import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import { fade } from 'svelte/transition';
   import { LoginForm, Navbar, Sidebar, ChatArea, LogsPanel } from '$lib/components';
 
@@ -738,11 +738,11 @@
 
     // Cache of device IDs we've already fully synced (all groups attempted).
     const cacheKey = `known_own_devices:${userId}`;
-    let knownIds: Set<string>;
+    let knownIds: SvelteSet<string>;
     try {
-      knownIds = new Set(JSON.parse(localStorage.getItem(cacheKey) ?? '[]'));
+      knownIds = new SvelteSet(JSON.parse(localStorage.getItem(cacheKey) ?? '[]'));
     } catch {
-      knownIds = new Set();
+      knownIds = new SvelteSet();
     }
 
     const newDevices = allOwnDevices.filter((d) => !knownIds.has(d.deviceId));

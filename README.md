@@ -103,7 +103,7 @@ docker compose version
 make --version
 ```
 
-### Démarrage local (dev, sans HTTPS)
+### Démarrage local (dev)
 
 1. **Cloner le dépôt**
 
@@ -112,210 +112,87 @@ git clone https://github.com/emse-students/canari.git
 cd canari
 ```
 
-2. **Configurer les variables d'environnement**
+2. **Créer les fichiers `.env` et générer les secrets**
 
 ```bash
-# Linux/macOS
 chmod +x scripts/setup-env.sh
 ./scripts/setup-env.sh
-
-# Windows (PowerShell)
-# .\scripts\setup-env.ps1
+# Crée infrastructure/.env et frontend/.env avec un JWT_SECRET généré automatiquement
 ```
 
-3. **Installer dépendances + build + services**
+3. **Installer les dépendances**
 
 ```bash
-make  # ou: make all
+make install
 ```
 
-Cette commande :
-
-- installe automatiquement Node.js/npm, Bun, Rust et wasm-pack (Linux/macOS) si absents,
-- installe dépendances frontend + services,
-- configure les hooks Git,
-- build le frontend,
-- lance les services Docker locaux.
-
-4. **Lancer le frontend en mode dev (optionnel)**
+4. **Lancer les services Docker + frontend**
 
 ```bash
-cd frontend
-bun run dev || npm run dev
+make run-services              # Lance Redis, Kafka, MongoDB, PostgreSQL, Chat Gateway, Delivery
+cd frontend && bun run dev     # Frontend sur http://localhost:5173
 ```
 
-L'application sera accessible sur **http://localhost:5173** 🎉
+> **Windows** : installer manuellement [Node.js](https://nodejs.org/), [Bun](https://bun.sh/), [Rust](https://rustup.rs/) et `cargo install wasm-pack`, puis `npm install` à la place de `bun install`.
 
 ### Infrastructure locale
 
-Les services Docker se lancent automatiquement avec `make`, ou manuellement depuis la racine :
+Services disponibles après `make run-services` :
+
+| Service | URL |
+|---|---|
+| Frontend dev | http://localhost:5173 |
+| Chat Gateway | ws://localhost:3000/ws |
+| Chat Delivery | http://localhost:3001 |
+| PostgreSQL | localhost:5432 |
+| MongoDB | localhost:27017 |
+| Redis | localhost:6379 |
+| Kafka | localhost:9092 |
+
+### Déploiement production (premier déploiement)
+
+**Architecture** : `Cloudflare Tunnel → http://localhost:8080 → Docker frontend:80 → nginx interne → services`
+
+> Le frontend est un **bundle statique compilé par le CI**. Le fichier `frontend/.env` sur le serveur n'est jamais lu. Les variables `VITE_*` sont injectées lors du build GitHub Actions depuis les **GitHub Secrets**.
+
+1. **Sur le serveur** — cloner et configurer
 
 ```bash
-docker compose -f infrastructure/local/docker-compose.yml up -d --build --remove-orphans
+git clone https://github.com/emse-students/canari.git ~/canari
+cd ~/canari
+./scripts/setup-env.sh --prod
+# Crée infrastructure/.env avec un JWT_SECRET généré
 ```
 
-Services disponibles (développement local) :
-
-- **Frontend** : http://localhost:5173
-- **Chat Gateway** : http://localhost:3000 (WebSocket: ws://localhost:3000/ws)
-- **Chat Delivery Service** : http://localhost:3001
-- **PostgreSQL** : localhost:5432
-- **MongoDB** : localhost:27017
-- **Redis** : localhost:6379
-- **Kafka** : localhost:9092
-
-**En production (Cloudflare Tunnel / cloudflared) :**
-
-- **Frontend public** : https://canari-emse.fr
-- **WebSocket** : wss://canari-emse.fr/ws (proxied vers chat-gateway:3000)
-- **API MLS** : https://canari-emse.fr/mls-api/ (proxied vers chat-delivery-service:3001)
-
-En production Docker, le reverse proxy (`/ws`, `/groups/`, `/mls-api/`) est intégré dans l'image `frontend`.
-Le conteneur frontend écoute sur le port hôte `${FRONTEND_HOST_PORT}` (par défaut `8080`),
-et `cloudflared` doit pointer vers `http://localhost:8080`.
-
-### Déploiement production (Linux)
-
-**⚠️ Prérequis** : Les images Docker doivent être disponibles sur GHCR
-
-#### 🎯 Workflow Premier Déploiement
-
-Pour un **nouveau serveur**, suivez ce processus :
-
-1. **SSH sur le serveur de production** :
-
-   ```bash
-   ssh votre-serveur
-   cd /home/canari  # ou votre répertoire de déploiement
-   ```
-
-2. **Cloner le repository** :
-
-   ```bash
-   git clone https://github.com/emse-students/canari.git
-   cd canari
-   ```
-
-3. **Première configuration via Makefile** :
-
-   ```bash
-   make production
-   ```
-
-   Cette commande va :
-   - Créer `infrastructure/.env` et `frontend/.env` depuis les templates
-   - Générer automatiquement un `JWT_SECRET` sécurisé et le synchroniser frontend/backend
-   - Pull les images Docker et démarrer les services
-
-4. **Configurer uniquement les variables non-secrètes automatiques** :
-
-   ```bash
-   # Éditer infrastructure/.env
-   nano infrastructure/.env
-   # → Remplir POSTGRES_PASSWORD (mot de passe sécurisé)
-   # → Vérifier DOMAIN=canari-emse.fr
-   ```
-
-5. **Relancer le déploiement** :
-
-   ```bash
-   make production
-   ```
-
-   Cette fois, la commande va :
-   - ✅ Valider la configuration
-   - ✅ Conserver et valider les secrets JWT existants
-   - ✅ Pull les images Docker
-   - ✅ Démarrer les services
-
-6. **Vérifier le déploiement** :
-   ```bash
-   docker compose -f infrastructure/docker-compose.prod.yml ps
-   docker compose -f infrastructure/docker-compose.prod.yml logs -f
-   ```
-
-**✅ C'est prêt !** Les prochains déploiements se feront automatiquement via GitHub Actions (voir Option 2).
-
----
-
-**Option 1 : Via Makefile (recommandé pour premier déploiement sur Linux)**
+2. **Éditer `infrastructure/.env`** — remplir les valeurs obligatoires
 
 ```bash
-# Première exécution : génère les .env et vous guide
+nano infrastructure/.env
+# POSTGRES_PASSWORD=<mot-de-passe-fort>
+# DOMAIN=canari-emse.fr
+# ALLOW_ORIGIN=https://canari-emse.fr
+```
+
+3. **Ajouter le `JWT_SECRET` dans les GitHub Secrets**
+
+`Settings → Secrets and variables → Actions → New repository secret`
+
+```
+JWT_SECRET=<même valeur que dans infrastructure/.env>
+```
+
+> Ce secret est injecté dans le bundle JS lors du build CI. **Il doit correspondre** à `infrastructure/.env` pour que le chat-gateway valide les tokens.
+
+4. **Déployer**
+
+```bash
 make production
+# Pull les images depuis GHCR et démarre les services
 ```
 
-**⚠️ Note** : `make production` nécessite Linux/macOS. Sur Windows, utilisez l'Option 3 (manuel).
+5. **Configurer Cloudflare Tunnel** pour pointer vers `http://localhost:8080`
 
-Au **premier lancement**, cette commande :
-
-1. Créé `infrastructure/.env` et `frontend/.env` depuis les templates
-2. Génère automatiquement un `JWT_SECRET` sécurisé et le synchronise :
-
-   ```bash
-   # Optionnel : ajuster la configuration production
-   nano infrastructure/.env
-   # → Vérifier POSTGRES_PASSWORD, DOMAIN, ALLOW_ORIGIN
-   # → FRONTEND_HOST_PORT=8080 (recommandé avec cloudflared)
-   ```
-
-Au **deuxième lancement** (après configuration) :
-
-- ✅ Valide la configuration
-- ✅ Synchronise les secrets JWT entre frontend et backend
-- ✅ Pull les images Docker depuis `ghcr.io/emse-students/canari/*`
-- ✅ Démarre les services avec `docker-compose.prod.yml`
-
-**Option 2 : Via workflow CD (automatique)**
-
-⚠️ **Prérequis** : Le serveur doit avoir été configuré une première fois avec `make production` (voir Option 1)
-
-Push sur `main` déclenche automatiquement :
-
-- Build des images Docker
-- Push sur `ghcr.io/emse-students/canari/*`
-- Déploiement sur le serveur (pull images + restart services)
-- Vérification de santé des services
-
-**Note importante** : Le workflow CD **ne crée pas** les fichiers `.env`. Ils doivent exister sur le serveur (créés lors du premier déploiement via `make production`). Les déploiements CD suivants utilisent les `.env` existants sans les modifier.
-
-**Note JWT_SECRET** : Le frontend est un site statique compilé. Le workflow CD injecte automatiquement le `JWT_SECRET` depuis **GitHub Secrets** lors du build (étape "Build frontend"). Assurez-vous que le secret GitHub correspond au `JWT_SECRET` du serveur.
-
-**Note proxy production** : Le service `frontend` embarque sa configuration Nginx (SPA + proxy WebSocket/API). Il n'est pas nécessaire de monter `infrastructure/nginx/conf.d` dans `docker-compose.prod.yml`.
-
-**Note cloudflared** : utilisez cette ingress pour l'app principale :
-
-```yaml
-- hostname: canari-emse.fr
-   service: http://localhost:8080
-```
-
-**Option 3 : Déploiement manuel étape par étape**
-
-```bash
-# 1) Créer/synchroniser automatiquement le JWT_SECRET
-./scripts/setup-env.sh --sync-only
-
-# 2) Valider la config production
-./scripts/setup-env.sh --prod --sync-only
-
-# 3) Pull des images depuis GHCR (buildées par CD)
-docker compose -f infrastructure/docker-compose.prod.yml pull
-
-# 4) Démarrer les services
-docker compose -f infrastructure/docker-compose.prod.yml up -d --remove-orphans
-```
-
-**Option 4 : Build local (dev/test)**
-
-```bash
-docker compose -f infrastructure/local/docker-compose.yml up -d --build --remove-orphans
-```
-
-### Pourquoi il y a 2 docker-compose ?
-
-- `infrastructure/local/docker-compose.yml` : développement local, build des images en local
-- `infrastructure/docker-compose.prod.yml` : production, pull des images depuis GHCR
+**Les déploiements suivants** se font automatiquement via GitHub Actions à chaque push sur `main`.
 
 ---
 
@@ -324,25 +201,34 @@ docker compose -f infrastructure/local/docker-compose.yml up -d --build --remove
 ### Scripts Principaux
 
 ```bash
-# Installation (développement local)
-make install           # Installer toutes les dépendances
-make install-hooks    # Configurer les Git hooks Husky
+# Setup environnement (dev)
+./scripts/setup-env.sh        # Crée frontend/.env + infrastructure/.env
+
+# Setup environnement (prod, sur le serveur)
+./scripts/setup-env.sh --prod # Crée uniquement infrastructure/.env
+
+# Installation dépendances (dev)
+make install
+make install-hooks
 
 # Build
-make build-frontend   # Compiler le frontend (WASM + Svelte)
-make nginx-install    # Configurer Nginx (production)
+make build-frontend           # Compile WASM + SvelteKit
 
-# Déploiement
-make production       # Déploiement production (pull images GHCR + start)
+# Services locaux
+make run-services             # Lance les services Docker locaux
+make reload-services          # Redémarre les services
+
+# Déploiement production
+make production               # Pull images GHCR + démarrage services
 
 # Tests
-make test             # Lancer tous les tests
-make test-libs        # Tests Rust libs
-make test-gateway     # Tests Chat Gateway
-make test-history     # Tests History Service (NestJS)
+make test                     # Tous les tests
+make test-libs                # Tests Rust libs
+make test-gateway             # Tests Chat Gateway
+make test-history             # Tests Chat Delivery (NestJS)
 
-# Nettoyage
-make clean            # Supprimer les build artifacts
+# Nginx (optionnel, hors Docker)
+make nginx-install            # Configure nginx hôte
 ```
 
 ### Frontend (SvelteKit)
@@ -485,61 +371,24 @@ Chaque `push` sur `main` déclenche automatiquement :
    - Construction 3 images Docker :
      - `chat-gateway` (Rust)
      - `chat-delivery-service` (NestJS)
-     - `frontend` (Nginx + SvelteKit)
-   - Push sur **GitHub Container Registry**
+     - `frontend` (Nginx + SvelteKit statique)
+   - Push sur **GitHub Container Registry** (`ghcr.io/emse-students/canari/*`)
 
-4. **SSH Deployment** 🚀 _(optionnel)_
-   - SSH vers serveur production
-   - Pull des images
+4. **Déploiement 🚀**
+   - Sur le runner self-hosted (serveur de prod)
+   - Pull des images GHCR
    - Redémarrage services Docker Compose
    - Health checks post-déploiement
 
-### Déploiement Manuel
-
-```bash
-# Déploiement local (simulation)
-./scripts/deploy.sh local
-
-# Production (requiert secrets GitHub)
-./scripts/deploy.sh production
-```
-
 ### Configuration du Déploiement
 
-📖 **Guide complet avec instructions visuelles** : [GITHUB_SECRETS_SETUP.md](docs/GITHUB_SECRETS_SETUP.md)
+**GitHub Secrets** (Settings → Secrets and variables → Actions)
 
-1. **GitHub Secrets** (Settings → Secrets → Actions)
+| Secret | Description |
+|---|---|
+| `JWT_SECRET` | Secret JWT 64 chars hex — `openssl rand -hex 32`. **Doit correspondre** à `infrastructure/.env` sur le serveur. Injecté dans le bundle JS au build. |
 
-```
-SSH_PRIVATE_KEY=<votre clé ED25519>
-SSH_USER=<utilisateur déploiement>
-SERVER_HOST=<IP/hostname>
-DEPLOY_PATH=<chemin projet>
-JWT_SECRET=<secret JWT 64 caractères hex - généré avec: openssl rand -hex 32>
-```
-
-> 💡 **Important** : Le `JWT_SECRET` doit correspondre au secret généré sur le serveur avec `./scripts/setup-env.sh`
-
-2. **GitHub Variables** (Settings → Variables)
-
-```
-DOMAIN=<votre-domaine.com>
-```
-
-3. **Préparation du serveur**
-
-```bash
-# Sur le serveur
-sudo useradd -m -s /bin/bash deploy
-sudo usermod -aG docker deploy
-sudo mkdir -p /opt/canari
-sudo chown deploy:deploy /opt/canari
-
-# Configurer SSH
-ssh-copy-id -i ~/.ssh/github_deploy.pub deploy@<SERVER_HOST>
-```
-
----
+**Runner self-hosted** : le déploiement utilise un runner GitHub Actions hébergé sur le serveur. Pas de SSH externe nécessaire.
 
 ## 📁 Structure du Projet
 
@@ -586,16 +435,16 @@ canari/
 │   └── dependabot.yml            # Auto-updates
 │
 ├── scripts/
-│   ├── deploy.sh                 # Manual deployment
-│   ├── windows/                  # Windows scripts
-│   └── linux/                    # Linux scripts
+│   ├── setup-env.sh              # Configuration .env (dev + prod)
+│   ├── deploy.sh                 # Déploiement manuel
+│   ├── windows/                  # Scripts Windows
+│   └── linux/                    # Scripts Linux (start/stop services)
 │
 ├── docs/
 │   ├── ARCHITECTURE.md           # Architecture decisions
 │   ├── DEVELOPMENT.md            # Development guide
 │   ├── CHIFFREMENT.md            # Encryption details
-│   ├── MULTI_DEVICE.md           # Multi-device sync
-│   └── CI_CD.md                  # CI/CD docs
+│   └── CLOUDFLARE_TUNNEL.md      # Configuration Cloudflare Tunnel
 │
 ├── Makefile                      # Build automation
 ├── .prettierrc                   # Prettier config
@@ -613,9 +462,7 @@ canari/
 - **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** - Décisions architecturales et patterns
 - **[DEVELOPMENT.md](docs/DEVELOPMENT.md)** - Guide de développement détaillé
 - **[CHIFFREMENT.md](docs/CHIFFREMENT.md)** - Protocole MLS et chiffrement E2E
-- **[MULTI_DEVICE.md](docs/MULTI_DEVICE.md)** - Synchronisation multi-device
-- **[CI_CD.md](docs/CI_CD.md)** - Configuration CI/CD et déploiement
-- **[GITHUB_SECRETS_SETUP.md](docs/GITHUB_SECRETS_SETUP.md)** - Guide complet des secrets GitHub
+- **[CLOUDFLARE_TUNNEL.md](docs/CLOUDFLARE_TUNNEL.md)** - Configuration Cloudflare Tunnel
 
 ---
 

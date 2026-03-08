@@ -44,36 +44,21 @@ production: production-check
 production-check:
 	@echo "${BLUE}🔍 Vérification de la configuration production...${RESET}"
 	@if [ ! -f infrastructure/.env ]; then \
-		echo "${YELLOW}⚠️  Fichier infrastructure/.env manquant${RESET}"; \
-		echo "${BLUE}📝 Création depuis .env.example...${RESET}"; \
-		cp infrastructure/.env.example infrastructure/.env; \
-	fi
-	@if [ ! -f frontend/.env ]; then \
-		echo "${YELLOW}⚠️  Fichier frontend/.env manquant${RESET}"; \
-		echo "${BLUE}📝 Création depuis .env.example...${RESET}"; \
-		cp frontend/.env.example frontend/.env; \
-	fi
-	@echo "${BLUE}🔐 Initialisation/synchronisation des secrets JWT...${RESET}"
-	@chmod +x scripts/setup-env.sh
-	@./scripts/setup-env.sh --sync-only
-	@echo "${BLUE}🔒 Validation stricte mode production...${RESET}"
-	@./scripts/setup-env.sh --prod --sync-only || { \
+		echo "${YELLOW}⚠️  infrastructure/.env manquant — création depuis le template${RESET}"; \
+		chmod +x scripts/setup-env.sh; \
+		./scripts/setup-env.sh --prod; \
 		echo ""; \
-		echo "${RED}╔═══════════════════════════════════════════════════════════╗${RESET}"; \
-		echo "${RED}║  ❌ ERREUR DE CONFIGURATION                               ║${RESET}"; \
-		echo "${RED}╚═══════════════════════════════════════════════════════════╝${RESET}"; \
-		echo ""; \
-		echo "${YELLOW}Vérifiez que :${RESET}"; \
-		echo "  1. infrastructure/.env contient un JWT_SECRET valide (64 char hex)"; \
-		echo "  2. frontend/.env contient le même secret dans VITE_JWT_SECRET"; \
-		echo ""; \
-		echo "${BLUE}Pour générer un secret valide :${RESET}"; \
-		echo "  openssl rand -hex 32"; \
-		echo ""; \
+		echo "${YELLOW}⚠️  Éditez infrastructure/.env (POSTGRES_PASSWORD, DOMAIN...) puis relancez.${RESET}"; \
 		exit 1; \
-	}
+	fi
+	@JWT=$$(grep -E '^JWT_SECRET=' infrastructure/.env | cut -d= -f2 || true); \
+	if [ -z "$$JWT" ] || [ "$$JWT" = "your-secret-jwt-key-here-change-me" ]; then \
+		echo "${RED}❌ JWT_SECRET non configuré dans infrastructure/.env${RESET}"; \
+		echo "${BLUE}Générez-en un : openssl rand -hex 32${RESET}"; \
+		exit 1; \
+	fi
 	@if grep -q '^POSTGRES_PASSWORD=change-me-strong-password' infrastructure/.env; then \
-		echo "${YELLOW}⚠️  Pensez à changer POSTGRES_PASSWORD dans infrastructure/.env${RESET}"; \
+		echo "${YELLOW}⚠️  Changez POSTGRES_PASSWORD dans infrastructure/.env${RESET}"; \
 	fi
 	@echo "${GREEN}✅ Configuration validée${RESET}"
 
@@ -342,17 +327,15 @@ endif
 	@echo "${GREEN}✅ Git hooks configurés${RESET}"
 
 # ── Environment & Secrets Management ──────────────────────────────────────────
+# Développement : crée frontend/.env + infrastructure/.env avec secrets générés
 setup-env:
-	@echo "${BLUE}🔐 Setting up environment files and generating secrets...${RESET}"
 	@chmod +x scripts/setup-env.sh
 	@./scripts/setup-env.sh
-	@echo "${GREEN}✅ Environment setup complete${RESET}"
 
+# Production : crée uniquement infrastructure/.env (frontend/.env ignoré en prod)
 setup-env-prod:
-	@echo "${BLUE}🔐 Syncing secrets in production mode...${RESET}"
 	@chmod +x scripts/setup-env.sh
-	@./scripts/setup-env.sh --prod --sync-only
-	@echo "${GREEN}✅ Production secrets synchronized${RESET}"
+	@./scripts/setup-env.sh --prod
 
 # Cible principale
 test: test-libs test-gateway test-history
