@@ -214,18 +214,18 @@ export class WebMlsService implements IMlsService {
     async publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void> {
         // Publish to Chat History Service (delivery service)
         const base64 = btoa(String.fromCharCode(...keyPackageBytes));
-        try {
-            await fetch(`${this.historyUrl}/mls-api/register-device`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    userId: this.userId,
-                    deviceId: this.deviceId,
-                    keyPackage: base64
-                })
-            });
-        } catch (e) {
-            console.error("Failed to publish KeyPackage", e);
+        const response = await fetch(`${this.historyUrl}/mls-api/register-device`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                userId: this.userId,
+                deviceId: this.deviceId,
+                keyPackage: base64
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to publish KeyPackage: ${response.status} ${response.statusText}`);
         }
     }
 

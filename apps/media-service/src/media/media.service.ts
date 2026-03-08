@@ -45,7 +45,7 @@ export class MediaService {
   }
 
   async appendChunk(uploadId: string, chunk: Buffer): Promise<void> {
-    // We assume sequential chunk upload for simplicity. 
+    // We assume sequential chunk upload for simplicity.
     // The client should await each part or we save per part_index and combine.
     // Given the context, sequential client uploads are easiest.
     const tempFile = path.join(CHUNK_DIR, uploadId);

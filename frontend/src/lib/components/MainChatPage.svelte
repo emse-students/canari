@@ -142,38 +142,40 @@
     if (!convo || !convo.isReady) return;
 
     // Find messages we haven't read
+    const meNorm = userId.toLowerCase();
     const unread = convo.messages.filter(
-      (m) => !m.isOwn && !m.isSystem && !(m.readBy || []).includes(userId.toLowerCase())
+      (m) => !m.isOwn && !m.isSystem && !(m.readBy || []).includes(meNorm)
     );
-    if (unread.length > 0) {
-      const ids = unread.map((m) => m.id);
-      const currentContact = selectedContact;
-      try {
-        const mlsService = ensureMls();
-        sendReadReceipt(ids, {
-          mlsService,
-          userId,
-          pin,
-          conversation: convo,
-        }).then(() => {
-          // Optimistically mark as read locally
-          untrack(() => {
-            const newMsgs = [...convo.messages];
-            let updated = false;
-            for (const m of newMsgs) {
-              if (ids.includes(m.id)) {
-                m.readBy = [...(m.readBy || []), userId.toLowerCase()];
-                updated = true;
-              }
-            }
-            if (updated && currentContact) {
-              conversations.set(currentContact, { ...convo, messages: newMsgs });
-            }
-          });
-        });
-      } catch {
-        // Wait till next chance
-      }
+    if (unread.length === 0) return;
+
+    const ids = unread.map((m) => m.id);
+    const currentContact = selectedContact;
+
+    // Mark as read IMMEDIATELY (synchronously, untracked) so any subsequent
+    // re-run of this effect sees them as already read and doesn't re-send.
+    untrack(() => {
+      const freshConvo = conversations.get(currentContact);
+      if (!freshConvo) return;
+      const newMsgs = freshConvo.messages.map((m) =>
+        ids.includes(m.id) ? { ...m, readBy: [...(m.readBy || []), meNorm] } : m
+      );
+      conversations.set(currentContact, { ...freshConvo, messages: newMsgs });
+    });
+
+    // Then send the receipt over the wire (best-effort, no retry needed
+    // because the optimistic update already prevents duplicate sends).
+    try {
+      const mlsService = ensureMls();
+      sendReadReceipt(ids, {
+        mlsService,
+        userId,
+        pin,
+        conversation: convo,
+      }).catch(() => {
+        // Silently ignore — the local state is already updated.
+      });
+    } catch {
+      // MLS not ready yet, will catch next time.
     }
   });
 

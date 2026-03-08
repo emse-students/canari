@@ -4,9 +4,19 @@ import svelte from 'eslint-plugin-svelte';
 import globals from 'globals';
 
 export default [
+  // Global ignores: generated files that should not be linted
+  {
+    ignores: [
+      'build/**',
+      'dist/**',
+      '.svelte-kit/**',
+      'node_modules/**',
+      'src/lib/proto/**',
+      'src/lib/wasm/**',
+    ],
+  },
   {
     files: ['src/**/*.{js,jsx,ts,tsx,svelte}'],
-    ignores: ['build', 'dist', '.svelte-kit', 'node_modules'],
   },
   js.configs.recommended,
   ...ts.configs.recommended,

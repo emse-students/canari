@@ -5,11 +5,11 @@ import type { ChatMessage } from '$lib/types';
 export type MessageGroup =
     | { type: 'date_separator'; date: string }
     | { type: 'time_separator'; time: string }
-    | { type: 'message'; message: ChatMessage };
+    | { type: 'message'; message: ChatMessage; showTimestamp: boolean };
 
 function formatDateSeparator(date: Date): string {
     if (isToday(date)) return "Aujourd'hui";
-    if (isYesterday(date)) return 'Hier';  
+    if (isYesterday(date)) return 'Hier';
     return format(date, 'EEEE d MMMM yyyy', { locale: fr });
 }
 
@@ -20,16 +20,17 @@ function formatDateSeparator(date: Date): string {
  */
 export function groupMessages(messages: ChatMessage[]): MessageGroup[] {
     if (messages.length === 0) return [];
-    
+
     const groups: MessageGroup[] = [];
     let lastDate: string | null = null;
     let lastTimestamp: number | null = null;
-    const TIME_GAP_MS = 15 * 60 * 1000; // 15 minutes
-    
+    let nextMessageShowsTimestamp = true; // first message always shows timestamp
+    const TIME_GAP_MS = 10 * 60 * 1000; // 10 minutes
+
     for (const msg of messages) {
         const msgDate = format(msg.timestamp, 'yyyy-MM-dd');
         const msgTime = msg.timestamp.getTime();
-        
+
         // Date separator (new day)
         if (lastDate !== msgDate) {
             groups.push({
@@ -38,9 +39,10 @@ export function groupMessages(messages: ChatMessage[]): MessageGroup[] {
             });
             lastDate = msgDate;
             lastTimestamp = null; // Reset time gap check for new day
+            nextMessageShowsTimestamp = true;
         }
-        
-        // Time separator (15+ min gap, but not for first message of the day or system messages)
+
+        // Time separator (10+ min gap, but not for first message of the day or system messages)
         if (
             lastTimestamp !== null &&
             !msg.isSystem &&
@@ -50,16 +52,20 @@ export function groupMessages(messages: ChatMessage[]): MessageGroup[] {
                 type: 'time_separator',
                 time: format(msg.timestamp, 'HH:mm'),
             });
+            nextMessageShowsTimestamp = true;
         }
-        
+
         // Message
+        const showTimestamp = nextMessageShowsTimestamp;
         groups.push({
             type: 'message',
             message: msg,
+            showTimestamp: msg.isSystem ? false : showTimestamp,
         });
-        
+        if (!msg.isSystem) nextMessageShowsTimestamp = false;
+
         lastTimestamp = msgTime;
     }
-    
+
     return groups;
 }

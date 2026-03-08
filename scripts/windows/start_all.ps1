@@ -29,11 +29,37 @@ if ([string]::IsNullOrWhiteSpace($JWT_SECRET)) {
     }
 }
 
+function Wait-Port {
+    param(
+        [Parameter(Mandatory = $true)] [string]$TargetHost,
+        [Parameter(Mandatory = $true)] [int]$Port,
+        [int]$TimeoutSeconds = 60
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        try {
+            $client = New-Object System.Net.Sockets.TcpClient
+            $iar = $client.BeginConnect($TargetHost, $Port, $null, $null)
+            $ok = $iar.AsyncWaitHandle.WaitOne(1000, $false)
+            if ($ok -and $client.Connected) {
+                $client.EndConnect($iar)
+                $client.Close()
+                return $true
+            }
+            $client.Close()
+        }
+        catch {}
+        Start-Sleep -Milliseconds 500
+    }
+    return $false
+}
+
 # --- Nettoyage des processus existants ---
 Write-Host "`n[0/4] Nettoyage des processus existants..." -ForegroundColor Magenta
 
 # Tuer les processus occupant les ports clés
-foreach ($port in @(3000, 3001, 3002, 8080, 8081)) {
+foreach ($port in @(3000, 3001, 3002, 3003, 3004, 8080, 8081)) {
     $pids = (netstat -ano | Select-String "LISTENING" | Select-String ":$port\s" | ForEach-Object {
             ($_.Line -split '\s+')[-1]
         } | Where-Object { $_ -match '^\d+$' } | Select-Object -Unique)
@@ -56,8 +82,30 @@ Start-Sleep -Seconds 1
 # 1. Démarrer l'infrastructure Docker (Kafka, Redis, Authentik...)
 Write-Host "`n[1/4] Démarrage de l'infrastructure Docker..." -ForegroundColor Yellow
 Push-Location -Path "infrastructure/local"
-docker compose up -d
+# Éviter les conflits de ports: les services applicatifs tournent en local, pas dans Docker
+docker compose stop chat-gateway chat-delivery-service media-service 2>$null
+docker compose rm -f chat-gateway chat-delivery-service media-service 2>$null
+
+# Démarrer uniquement les dépendances d'infra
+docker compose up -d zookeeper kafka redis mongo postgres minio
+$dockerExit = $LASTEXITCODE
 Pop-Location
+
+if ($dockerExit -ne 0) {
+    Write-Host "❌ Échec du démarrage Docker. Vérifiez que Docker Desktop est lancé, puis relancez le script." -ForegroundColor Red
+    exit 1
+}
+
+Write-Host "  -> Vérification disponibilité Redis (6379) et Kafka (9092)..." -ForegroundColor DarkGray
+if (-not (Wait-Port -TargetHost "127.0.0.1" -Port 6379 -TimeoutSeconds 60)) {
+    Write-Host "❌ Redis (port 6379) indisponible. Arrêt du démarrage." -ForegroundColor Red
+    exit 1
+}
+if (-not (Wait-Port -TargetHost "127.0.0.1" -Port 9092 -TimeoutSeconds 90)) {
+    Write-Host "❌ Kafka (port 9092) indisponible. Arrêt du démarrage." -ForegroundColor Red
+    exit 1
+}
+Write-Host "  ✓ Infrastructure Docker prête" -ForegroundColor Green
 
 # 2. Build des librairies partagées
 Write-Host "`n[2/4] Compilation des librairies partagées (shared-ts)..." -ForegroundColor Yellow
@@ -82,19 +130,19 @@ else {
 
 # Chat Delivery Service (NestJS)
 Write-Host "  -> Lancement de Chat Delivery Service" -ForegroundColor DarkGray
-Start-Process pwsh -ArgumentList "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", "`$host.UI.RawUI.WindowTitle='Chat Delivery Service (Node)'; Set-Location apps/chat-delivery-service; npm install; npm run start:dev"
+Start-Process pwsh -ArgumentList "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", "`$host.UI.RawUI.WindowTitle='Chat Delivery Service (Node)'; Set-Location apps/chat-delivery-service; `$env:KAFKA_BROKERS='localhost:9092'; `$env:REDIS_HOST='localhost'; `$env:REDIS_PORT='6379'; npm install; npm run start:dev"
 
 # Auth Service (NestJS)
 Write-Host "  -> Lancement de Auth Service" -ForegroundColor DarkGray
-Start-Process pwsh -ArgumentList "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", "`$host.UI.RawUI.WindowTitle='Auth Service (Node)'; Set-Location apps/auth-service; npm install; npm run start:dev"
+Start-Process pwsh -ArgumentList "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", "`$host.UI.RawUI.WindowTitle='Auth Service (Node)'; Set-Location apps/auth-service; `$env:PORT='3003'; npm install; npm run start:dev"
 
 # User Service (NestJS)
 Write-Host "  -> Lancement de User Service" -ForegroundColor DarkGray
-Start-Process pwsh -ArgumentList "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", "`$host.UI.RawUI.WindowTitle='User Service (Node)'; Set-Location apps/user-service; npm install; npm run start:dev"
+Start-Process pwsh -ArgumentList "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", "`$host.UI.RawUI.WindowTitle='User Service (Node)'; Set-Location apps/user-service; `$env:PORT='3004'; npm install; npm run start:dev"
 
 # Media Service (NestJS)
 Write-Host "  -> Lancement de Media Service" -ForegroundColor DarkGray
-Start-Process pwsh -ArgumentList "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", "`$host.UI.RawUI.WindowTitle='Media Service (Node)'; Set-Location apps/media-service; npm install; npm run start:dev"
+Start-Process pwsh -ArgumentList "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", "`$host.UI.RawUI.WindowTitle='Media Service (Node)'; Set-Location apps/media-service; `$env:PORT='3002'; npm install; npm run start:dev"
 
 # 4. Lancement du frontend (Tauri)
 Write-Host "`n[4/4] Lancement du Frontend (Application Desktop Tauri)..." -ForegroundColor Yellow

@@ -17,6 +17,22 @@ interface GroupCreationDeps {
   log: (msg: string) => void;
 }
 
+async function fetchDevicesWithRetry(
+  mlsService: IMlsService,
+  userId: string,
+  attempts = 6,
+  delayMs = 1500
+) {
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const devices = await mlsService.fetchUserDevices(userId);
+    if (devices.length > 0) return devices;
+    if (attempt < attempts) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  return [];
+}
+
 /**
  * Crée un nouveau groupe MLS multi-utilisateurs.
  * Ajoute automatiquement les autres appareils de l'utilisateur courant au groupe.
@@ -96,8 +112,12 @@ export async function inviteMemberToGroup(
   log(`Invitation de ${targetUser}...`);
   try {
     await mlsService.registerMember(conversation.groupId, userId, mlsService.getDeviceId());
-    const devices = await mlsService.fetchUserDevices(targetUser);
-    if (devices.length === 0) return log(`❌ Aucun appareil trouvé pour ${targetUser}.`);
+    const devices = await fetchDevicesWithRetry(mlsService, targetUser);
+    if (devices.length === 0) {
+      return log(
+        `❌ Appareils introuvables pour ${targetUser}. Il/elle doit se connecter au moins une fois pour publier son KeyPackage.`
+      );
+    }
 
     // Add all devices in bulk
     const bulk = await mlsService.addMembersBulk(conversation.groupId, devices);
@@ -213,7 +233,7 @@ export async function startNewConversation(
     localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
 
     // Add target contact's devices
-    const devices = await mlsService.fetchUserDevices(contact);
+    const devices = await fetchDevicesWithRetry(mlsService, contact);
     if (devices.length > 0) {
       const bulk = await mlsService.addMembersBulk(groupId, devices);
 
@@ -251,7 +271,9 @@ export async function startNewConversation(
       saveConversation(contact);
       log(`✅ Canal sécurisé avec ${contact}.`);
     } else {
-      log(`❌ Appareils introuvables pour ${contact}.`);
+      log(
+        `❌ Appareils introuvables pour ${contact}. Le contact doit se connecter une première fois pour publier son KeyPackage.`
+      );
       conversations.delete(contact);
     }
   } catch (_e: unknown) {

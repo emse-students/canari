@@ -9,14 +9,24 @@ export class TauriMlsService implements IMlsService {
     private ws: WebSocket | null = null;
     private messageCallback: ((senderId: string, content: Uint8Array, groupId?: string) => Promise<boolean>) | null = null;
     private disconnectCallback: (() => void) | null = null;
-    private baseUrl = import.meta.env.VITE_GATEWAY_URL ?? "https://localhost:3000";
-    private historyUrl = "https://localhost:3001";
+    private baseUrl: string;
+    private historyUrl: string;
     private userId: string = "unknown";
     private deviceId: string;
 
     constructor() {
         // Device ID is initialized per-user in init() — see WebMlsService for rationale.
         this.deviceId = "pending";
+
+        const envGateway = import.meta.env.VITE_GATEWAY_URL;
+        this.baseUrl = (envGateway && envGateway.trim())
+            ? envGateway
+            : 'http://localhost:3000';
+
+        const envHistory = import.meta.env.VITE_HISTORY_URL;
+        this.historyUrl = (envHistory && envHistory.trim())
+            ? envHistory
+            : 'http://localhost:3001';
     }
 
     async connect(token: string): Promise<void> {
@@ -193,18 +203,18 @@ export class TauriMlsService implements IMlsService {
 
     async publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void> {
         const base64 = btoa(String.fromCharCode(...keyPackageBytes));
-        try {
-            await fetch(`${this.historyUrl}/mls-api/register-device`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    userId: this.userId,
-                    deviceId: this.deviceId,
-                    keyPackage: base64
-                })
-            });
-        } catch (e) {
-            console.error("Failed to publish KeyPackage", e);
+        const response = await fetch(`${this.historyUrl}/mls-api/register-device`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                userId: this.userId,
+                deviceId: this.deviceId,
+                keyPackage: base64
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to publish KeyPackage: ${response.status} ${response.statusText}`);
         }
     }
 
