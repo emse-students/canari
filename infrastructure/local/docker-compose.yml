@@ -71,7 +71,7 @@ services:
       - "3000:3000"
     environment:
       RUST_LOG: chat_gateway=info,tower_http=info
-      JWT_SECRET: "9a2f8c4e6b0d71f3e8b925b1234567890abcdef1234567890abcdef12345678"
+      JWT_SECRET: ${JWT_SECRET}
       REDIS_URL: redis://redis:6379
       KAFKA_BROKERS: kafka:9092
       DELIVERY_SERVICE_URL: http://chat-delivery-service:3001
