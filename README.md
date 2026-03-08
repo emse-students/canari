@@ -81,22 +81,25 @@ Canari est une application de **messagerie instantanée sécurisée** avec chiff
 
 ### Prérequis
 
-- **Bun** 1.3.6+ (ou Node.js 20+)
+- **Node.js** 20+ et **npm**
 - **Rust** 1.87+
-- **Docker Desktop** 4.0+
+- **Docker** + **Docker Compose**
 - **Make** (GNU Make)
-- **Python** 3.9+ (optionnel, pour pre-commit)
+- **Bun** *(optionnel : auto-installé par `make install` sur Linux/macOS si absent)*
+- **Python** 3.9+ *(optionnel, pour pre-commit)*
 
 Vérifier les dépendances :
 
 ```bash
-bun --version
+node --version
+npm --version
 rustc --version
 docker --version
+docker compose version
 make --version
 ```
 
-### Démarrage en 3 étapes
+### Démarrage local (dev, sans HTTPS)
 
 1. **Cloner le dépôt**
 
@@ -105,29 +108,45 @@ git clone https://github.com/emse-students/canari.git
 cd canari
 ```
 
-2. **Installation complète (automatisée)**
+2. **Configurer les variables d'environnement**
+
+```bash
+# Linux/macOS
+chmod +x scripts/setup-env.sh
+./scripts/setup-env.sh
+
+# Windows (PowerShell)
+# .\scripts\setup-env.ps1
+```
+
+3. **Installer dépendances + build + services**
 
 ```bash
 make  # ou: make all
 ```
 
-Cela installe toutes les dépendances, configure les Git hooks, et lance l'infrastructure Docker.
+Cette commande :
+- installe Bun automatiquement (Linux/macOS) si absent,
+- installe dépendances frontend + services,
+- configure les hooks Git,
+- build le frontend,
+- lance les services Docker locaux.
 
-3. **Lancer le frontend**
+4. **Lancer le frontend en mode dev (optionnel)**
 
 ```bash
-cd frontend && bun run dev
+cd frontend
+bun run dev || npm run dev
 ```
 
 L'application sera accessible sur **http://localhost:5173** 🎉
 
 ### Infrastructure locale
 
-Les services Docker se lancent automatiquement avec `make`, ou manuellement :
+Les services Docker se lancent automatiquement avec `make`, ou manuellement depuis la racine :
 
 ```bash
-cd infrastructure/local
-docker compose up -d
+docker compose -f infrastructure/local/docker-compose.yml up -d --build
 ```
 
 Services disponibles :
@@ -138,6 +157,16 @@ Services disponibles :
 - **MongoDB** : localhost:27017
 - **Redis** : localhost:6379
 - **Kafka** : localhost:9092
+
+### Déploiement production (Linux)
+
+```bash
+# 1) Secrets/env en mode strict
+./scripts/setup-env.sh --prod --sync-only
+
+# 2) Déploiement stack prod
+docker compose -f infrastructure/docker-compose.prod.yml up -d --build
+```
 
 ---
 

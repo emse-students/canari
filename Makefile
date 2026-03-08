@@ -1,4 +1,4 @@
-.PHONY: all install install-frontend install-services install-hooks setup-env setup-env-prod build-frontend nginx-install reload-services test test-libs test-gateway test-history clean nginx-uninstall nginx-https
+.PHONY: all install install-bun install-frontend install-services install-hooks setup-env setup-env-prod build-frontend nginx-install reload-services test test-libs test-gateway test-history clean nginx-uninstall nginx-https
 
 # Cible par défaut : installation complète et déploiement
 .DEFAULT_GOAL := all
@@ -57,13 +57,29 @@ else
 endif
 
 # ── Installation des dépendances ──────────────────────────────────────────────
-install: install-frontend install-services
+install: install-bun install-frontend install-services
+
+ifeq ($(OS),Windows_NT)
+install-bun:
+	@echo "${BLUE}ℹ️ Bun auto-install skipped on Windows${RESET}"
+	@echo "${BLUE}ℹ️ Install manually if needed: https://bun.sh/docs/installation${RESET}"
+else
+install-bun:
+	@echo "${BLUE}📦 Checking Bun installation...${RESET}"
+	@if command -v bun >/dev/null 2>&1; then \
+		echo "${GREEN}✅ Bun already installed: $$(bun --version)${RESET}"; \
+	else \
+		echo "${BLUE}⬇️ Installing Bun...${RESET}"; \
+		curl -fsSL https://bun.sh/install | bash; \
+		echo "${YELLOW}⚠ Open a new shell or run: export PATH=\"$$HOME/.bun/bin:$$PATH\"${RESET}"; \
+	fi
+endif
 
 install-frontend:
 	@echo "${BLUE}📦 Installing frontend dependencies...${RESET}"
-	@cd frontend && bun install
+	@cd frontend && ($(CHECK_CMD) bun >$(NULL_DEV) 2>&1 && bun install || npm install --legacy-peer-deps)
 	@echo "${BLUE}🔄 Running svelte-kit sync...${RESET}"
-	@cd frontend && bunx svelte-kit sync
+	@cd frontend && ($(CHECK_CMD) bunx >$(NULL_DEV) 2>&1 && bunx svelte-kit sync || npx svelte-kit sync)
 	@echo "${GREEN}✅ Frontend prêt${RESET}"
 
 install-services:
@@ -157,7 +173,7 @@ endif
 build-frontend:
 	@echo "${BLUE}🚀 Building frontend...${RESET}"
 	@cd frontend/mls-wasm && wasm-pack build --target web --out-dir ../src/lib/wasm
-	@cd frontend && bun run build
+	@cd frontend && ($(CHECK_CMD) bun >$(NULL_DEV) 2>&1 && bun run build || npm run build)
 	@echo "${GREEN}✅ Frontend buildé${RESET}"
 
 run-services:
