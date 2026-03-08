@@ -10,8 +10,7 @@ pub mod proto {
 }
 
 pub use proto::{
-    InboundMsg, MlsFrame, Recipient, WelcomeFrame, WsEnvelope,
-    ws_envelope::Body as WsBody,
+    InboundMsg, MlsFrame, Recipient, WelcomeFrame, WsEnvelope, ws_envelope::Body as WsBody,
 };
 
 // ── JWT / REST serde types (unchanged) ──────────────────────────────────────

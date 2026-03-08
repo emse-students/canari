@@ -208,7 +208,11 @@ impl WasmMlsClient {
 
     /// Encrypts raw bytes (e.g. a proto-encoded AppMessage) as the MLS application payload.
     #[wasm_bindgen]
-    pub fn send_message_bytes(&mut self, group_id: String, message_bytes: Vec<u8>) -> Result<Vec<u8>, JsValue> {
+    pub fn send_message_bytes(
+        &mut self,
+        group_id: String,
+        message_bytes: Vec<u8>,
+    ) -> Result<Vec<u8>, JsValue> {
         log::info!(
             "send_message_bytes to group: {} ({} bytes)",
             group_id,

@@ -41,6 +41,7 @@
   } from '$lib/utils/mainChatMessaging';
   import { migrateFromLocalStorage } from '$lib/utils/migration';
   import { MediaService } from '$lib/media';
+  import { encodeAppMessage, mkMedia, MediaKind } from '$lib/proto/codec';
   import LoginForm from './LoginForm.svelte';
   import Navbar from './Navbar.svelte';
   import Sidebar from './Sidebar.svelte';
@@ -505,10 +506,19 @@
         }
         const mediaRef = await mediaService.encryptAndUpload(fileToSend, authToken);
         const messageId = crypto.randomUUID();
-        const payload = JSON.stringify({ ...mediaRef, id: messageId });
-        await mlsService.sendMessage(convo.groupId, payload);
+        // Encode as proto AppMessage for MLS encryption
+        const kindMap: Record<string, number> = { image: MediaKind.MEDIA_IMAGE, video: MediaKind.MEDIA_VIDEO, audio: MediaKind.MEDIA_AUDIO, file: MediaKind.MEDIA_FILE };
+        const keyBytes = new Uint8Array((mediaRef.key.match(/.{1,2}/g) ?? []).map((b) => parseInt(b, 16)));
+        const ivBytes  = new Uint8Array((mediaRef.iv.match(/.{1,2}/g)  ?? []).map((b) => parseInt(b, 16)));
+        const protoBytes = encodeAppMessage({
+          ...mkMedia({ kind: kindMap[mediaRef.type] ?? MediaKind.MEDIA_FILE, mediaId: mediaRef.mediaId, key: keyBytes, iv: ivBytes, mimeType: mediaRef.mimeType, size: mediaRef.size, fileName: mediaRef.fileName ?? '' }),
+          messageId,
+        });
+        await mlsService.sendMessage(convo.groupId, protoBytes);
         const stateBytes = await mlsService.saveState(pin);
         localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
+        // Store as JSON locally for the media renderer
+        const payload = JSON.stringify({ ...mediaRef, id: messageId });
         await addMessageToChat(userId, payload, selectedContact, undefined, false, messageId);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);

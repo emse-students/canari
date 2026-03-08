@@ -6,7 +6,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Json, Response},
 };
-use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
 use chrono::Utc;
 use futures::{sink::SinkExt, stream::StreamExt};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
@@ -19,8 +19,8 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::models::{
-    AuthParams, Claims, InboundMsg, MlsFrame, Recipient, RatchetTreePayload, WelcomeFrame,
-    WsBody, decode_ws_frame, encode_inbound,
+    AuthParams, Claims, InboundMsg, MlsFrame, RatchetTreePayload, Recipient, WelcomeFrame, WsBody,
+    decode_ws_frame, encode_inbound,
 };
 use crate::state::AppState;
 
@@ -152,7 +152,11 @@ async fn handle_socket(
                         group_id,
                         is_welcome: true,
                     };
-                    if sender.send(Message::Binary(inbound.encode_to_vec().into())).await.is_err() {
+                    if sender
+                        .send(Message::Binary(inbound.encode_to_vec().into()))
+                        .await
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -190,7 +194,11 @@ async fn handle_socket(
 
                 match msg {
                     Ok(Message::Binary(bytes)) => {
-                        tracing::info!("Received WS binary frame from {} ({} bytes)", user_id, bytes.len());
+                        tracing::info!(
+                            "Received WS binary frame from {} ({} bytes)",
+                            user_id,
+                            bytes.len()
+                        );
                         let envelope = match decode_ws_frame(&bytes) {
                             Ok(e) => e,
                             Err(e) => {
@@ -200,7 +208,11 @@ async fn handle_socket(
                         };
 
                         match envelope.body {
-                            Some(WsBody::Mls(MlsFrame { ciphertext, group_id, recipients })) => {
+                            Some(WsBody::Mls(MlsFrame {
+                                ciphertext,
+                                group_id,
+                                recipients,
+                            })) => {
                                 tracing::info!(
                                     "Processing MLS frame. GroupID: {:?}, recipients: {}",
                                     group_id,
@@ -215,7 +227,8 @@ async fn handle_socket(
                                     username: "Anonymous".to_string(),
                                     content: payload_b64.clone(),
                                     timestamp: Utc::now(),
-                                    conversation_id: Some(group_id.clone()).filter(|s| !s.is_empty()),
+                                    conversation_id: Some(group_id.clone())
+                                        .filter(|s| !s.is_empty()),
                                 }) {
                                     let record = FutureRecord::to(TOPIC_CHAT_MESSAGES)
                                         .payload(&serialized)
@@ -252,10 +265,8 @@ async fn handle_socket(
                                 let mut target_recipients: Vec<Recipient> = recipients;
 
                                 if target_recipients.is_empty() && !group_id.is_empty() {
-                                    if let Ok(mut con) = state
-                                        .redis_client
-                                        .get_multiplexed_async_connection()
-                                        .await
+                                    if let Ok(mut con) =
+                                        state.redis_client.get_multiplexed_async_connection().await
                                     {
                                         let key = format!("group:members:{}", group_id);
                                         if let Ok(members) =
@@ -285,8 +296,10 @@ async fn handle_socket(
                                             continue;
                                         }
 
-                                        let target_key =
-                                            format!("{}:{}", recipient.user_id, recipient.device_id);
+                                        let target_key = format!(
+                                            "{}:{}",
+                                            recipient.user_id, recipient.device_id
+                                        );
                                         let redis_presence_key =
                                             format!("user:online:{}", target_key);
                                         let mut is_online = false;
@@ -353,7 +366,11 @@ async fn handle_socket(
                                 }
                             }
 
-                            Some(WsBody::Welcome(WelcomeFrame { ciphertext, group_id, recipients })) => {
+                            Some(WsBody::Welcome(WelcomeFrame {
+                                ciphertext,
+                                group_id,
+                                recipients,
+                            })) => {
                                 tracing::info!("Processing Welcome frame for group {}", group_id);
 
                                 for recipient in recipients {
@@ -380,14 +397,11 @@ async fn handle_socket(
 
                                     let target_key =
                                         format!("{}:{}", recipient.user_id, recipient.device_id);
-                                    let redis_presence_key =
-                                        format!("user:online:{}", target_key);
+                                    let redis_presence_key = format!("user:online:{}", target_key);
                                     let mut sent = false;
 
-                                    if let Ok(mut con) = state
-                                        .redis_client
-                                        .get_multiplexed_async_connection()
-                                        .await
+                                    if let Ok(mut con) =
+                                        state.redis_client.get_multiplexed_async_connection().await
                                     {
                                         if let Ok(true) =
                                             con.exists::<_, bool>(&redis_presence_key).await
@@ -400,10 +414,7 @@ async fn handle_socket(
                                                 is_welcome: true,
                                             };
                                             let _: Result<(), _> = con
-                                                .publish(
-                                                    "chat:messages",
-                                                    encode_inbound(&inbound),
-                                                )
+                                                .publish("chat:messages", encode_inbound(&inbound))
                                                 .await;
                                             sent = true;
                                         }
