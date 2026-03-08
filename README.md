@@ -114,39 +114,28 @@ cd canari
 
 2. **Configurer les variables d'environnement**
 
-````bash
+```bash
 # Linux/macOS
 chmod +x scripts/setup-env.sh
 ./scripts/setup-env.sh
 
-**⚠️ Prérequis** : Les images Docker doivent être disponibles sur GHCR
-
-**Option 1 : Via workflow CD (recommandé)**
-
-Push sur `main` déclenche automatiquement :
-- Build des images Docker
-- Push sur `ghcr.io/emse-students/canari/*`
-- Déploiement sur le serveur (si configuré via GitHub Actions)
-
-**Option 2 : Déploiement manuel**
-
-```bash
-# 1) Configurer les secrets
-./scripts/setup-env.sh --prod --sync-only
-
-# 2) Pull des images depuis GHCR (buildées par CD)
-docker compose -f infrastructure/docker-compose.prod.yml pull
-
-# 3) Démarrer les services
-docker compose -f infrastructure/docker-compose.prod.yml up -d
-````
-
-**Option 3 : Build local (dev/test)**
-
-```bash
-# Build local des images (sans GHCR)
-docker compose -f infrastructure/local/docker-compose.yml up -d --build
+# Windows (PowerShell)
+# .\scripts\setup-env.ps1
 ```
+
+3. **Installer dépendances + build + services**
+
+```bash
+make  # ou: make all
+```
+
+Cette commande :
+
+- installe automatiquement Node.js/npm, Bun, Rust et wasm-pack (Linux/macOS) si absents,
+- installe dépendances frontend + services,
+- configure les hooks Git,
+- build le frontend,
+- lance les services Docker locaux.
 
 4. **Lancer le frontend en mode dev (optionnel)**
 
@@ -162,7 +151,7 @@ L'application sera accessible sur **http://localhost:5173** 🎉
 Les services Docker se lancent automatiquement avec `make`, ou manuellement depuis la racine :
 
 ```bash
-docker compose -f infrastructure/local/docker-compose.yml up -d --build
+docker compose -f infrastructure/local/docker-compose.yml up -d --build --remove-orphans
 ```
 
 Services disponibles :
@@ -183,7 +172,7 @@ Services disponibles :
 Push sur `main` déclenche automatiquement :
 - Build des images Docker
 - Push sur `ghcr.io/emse-students/canari/*`
-- Déploiement sur le serveur (si configuré)
+- Déploiement sur le serveur (si configuré via GitHub Actions)
 
 **Option 2 : Déploiement manuel**
 
