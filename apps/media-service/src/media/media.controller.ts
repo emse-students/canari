@@ -26,6 +26,7 @@ import {
   PayloadTooLargeException,
   UnauthorizedException,
   Logger,
+  Body,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Request, Response } from 'express';
@@ -111,8 +112,54 @@ export class MediaController {
     return { mediaId };
   }
 
+  // ---------------------------------------------------------------------------  // POST /media/upload/chunk/init
   // ---------------------------------------------------------------------------
-  // GET /media/:id
+  @Post('upload/chunk/init')
+  async initChunkedUpload(@Req() req: Request): Promise<{ uploadId: string }> {
+    this.verifyToken(req);
+    const uploadId = await this.mediaService.initChunkedUpload();
+    this.logger.log(`Initialized chunked upload: ${uploadId}`);
+    return { uploadId };
+  }
+
+  // ---------------------------------------------------------------------------
+  // POST /media/upload/chunk/:id
+  // ---------------------------------------------------------------------------
+  @Post('upload/chunk/:id')
+  @UseInterceptors(
+    FileInterceptor('chunk', {
+      limits: { fileSize: 50 * 1024 * 1024 }, // Max 50 MB per chunk
+      storage: undefined,
+    }),
+  )
+  async appendChunk(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+    @Req() req: Request,
+  ): Promise<{ ok: boolean }> {
+    this.verifyToken(req);
+    if (!file) {
+      throw new PayloadTooLargeException('No chunk provided');
+    }
+    await this.mediaService.appendChunk(id, file.buffer);
+    return { ok: true };
+  }
+
+  // ---------------------------------------------------------------------------
+  // POST /media/upload/chunk/:id/complete
+  // ---------------------------------------------------------------------------
+  @Post('upload/chunk/:id/complete')
+  async completeChunkedUpload(
+    @Param('id') id: string,
+    @Req() req: Request,
+  ): Promise<{ mediaId: string }> {
+    this.verifyToken(req);
+    const mediaId = await this.mediaService.completeChunkedUpload(id);
+    this.logger.log(`Completed chunked upload: ${id} -> ${mediaId}`);
+    return { mediaId };
+  }
+
+  // ---------------------------------------------------------------------------  // GET /media/:id
   // ---------------------------------------------------------------------------
   @Get(':id')
   async download(

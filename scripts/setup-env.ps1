@@ -298,6 +298,14 @@ else {
 if (Test-Path $FrontendEnv) {
     Write-EnvVar $FrontendEnv "VITE_JWT_SECRET" $FrontendSecret
     Write-EnvVar $FrontendEnv "VITE_MEDIA_URL" "http://localhost:3002"
+    Write-EnvVar $FrontendEnv "VITE_MEDIA_MAX_SIZE_MB" "50"
+
+    # VITE_TENOR_API_KEY (optionnel - clé demo incluse dans le code)
+    $currentTenorKey = Read-EnvVar $FrontendEnv "VITE_TENOR_API_KEY"
+    if ($currentTenorKey -eq "") {
+        Write-EnvVar $FrontendEnv "VITE_TENOR_API_KEY" ""
+    }
+
     Write-Success "Updated frontend VITE_JWT_SECRET"
 }
 

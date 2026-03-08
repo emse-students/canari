@@ -56,17 +56,14 @@ export class StorageService implements OnModuleInit {
   }
 
   /**
-   * Retrieve an encrypted blob as a Buffer.
-   * Returns null if the object does not exist.
+   * Store an opaque encrypted blob from a local file.
    */
-  async get(objectId: string): Promise<Buffer | null> {
-    try {
-      const stream = await this.client.getObject(this.bucket, objectId);
-      const chunks: Buffer[] = [];
-      for await (const chunk of stream) {
-        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-      }
-      return Buffer.concat(chunks);
+  async putFileStream(objectId: string, filePath: string, size: number): Promise<void> {
+    await this.client.fPutObject(this.bucket, objectId, filePath, {
+      'Content-Type': 'application/octet-stream',
+      'x-amz-meta-encrypted': 'true',
+    });
+  }
     } catch (err: any) {
       if (err?.code === 'NoSuchKey') return null;
       throw err;

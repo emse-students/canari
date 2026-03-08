@@ -12,6 +12,8 @@ RUN printf 'server {\n\
     listen 80;\n\
     root /usr/share/nginx/html;\n\
     index index.html;\n\
+    # Limite d\'upload pour les médias (évite les 413 nginx par défaut ~1MB)\n\
+    client_max_body_size 100m;\n\
     \n\
     # Utilise le resolver DNS interne de Docker pour la résolution des upstreams\n\
     # Cela évite que nginx refuse de démarrer si un upstream est temporairement absent\n\

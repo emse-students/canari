@@ -54,6 +54,15 @@ if [[ "$PROD" == "false" ]]; then
     else
         echo "VITE_MEDIA_URL=http://localhost:3002" >> "$FRONTEND_ENV"
     fi
+    if grep -q '^VITE_MEDIA_MAX_SIZE_MB=' "$FRONTEND_ENV"; then
+        sed -i.bak "s|^VITE_MEDIA_MAX_SIZE_MB=.*|VITE_MEDIA_MAX_SIZE_MB=50|" "$FRONTEND_ENV" && rm -f "${FRONTEND_ENV}.bak"
+    else
+        echo "VITE_MEDIA_MAX_SIZE_MB=50" >> "$FRONTEND_ENV"
+    fi
+    # VITE_TENOR_API_KEY (optionnel - clé demo incluse dans le code)
+    if ! grep -q '^VITE_TENOR_API_KEY=' "$FRONTEND_ENV"; then
+        echo "VITE_TENOR_API_KEY=" >> "$FRONTEND_ENV"
+    fi
     ok "VITE_JWT_SECRET synchronisé dans frontend/.env (dev local)"
 else
     warn "Mode --prod : frontend/.env ignoré (VITE_JWT_SECRET est injecté par le CI via GitHub Secrets)"
