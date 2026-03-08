@@ -4,15 +4,14 @@
 
 Pour développer sur ce projet, vous avez besoin des outils suivants installés et disponibles dans votre PATH :
 
-1.  **Java JDK 21+** (Installé: Vérifié)
-2.  **Node.js LTS (v20+)** (Installé: Vérifié)
-3.  **Rust & Cargo** (Requis pour Gateway et WASM)
+1.  **Node.js LTS (v20+)** (Installé: Vérifié)
+2.  **Rust & Cargo** (Requis pour Gateway et WASM)
     - Installateur: https://rustup.rs/
     - Ou via Winget: `winget install Rustlang.Rustup` puis exécuter `rustup-init`
-4.  **Make** (Optionnel mais recommandé pour utiliser le Makefile)
+3.  **Make** (Optionnel mais recommandé pour utiliser le Makefile)
     - Via Winget: `winget install ezwinports.make`
     - Ou Chocolatey: `choco install make`
-5.  **Docker & Docker Compose** (Requis pour l'infrastructure)
+4.  **Docker & Docker Compose** (Requis pour l'infrastructure)
 
 ## Installation Automatisée
 
@@ -24,10 +23,10 @@ Un script PowerShell `setup_environment.ps1` est fourni à la racine pour instal
 
 ## Structure du Projet
 
-- **Backend Auth (Java)**: `apps/auth-service`
-  - Lancer: `./gradlew bootRun`
-- **Backend User (Java)**: `apps/user-service`
-  - Lancer: `./gradlew bootRun`
+- **Backend Auth (NestJS)**: `apps/auth-service`
+  - Lancer: `npm run start:dev`
+- **Backend User (NestJS)**: `apps/user-service`
+  - Lancer: `npm run start:dev`
 - **Backend Chat Delivery (NestJS)**: `apps/chat-delivery-service`
   - Dépend de `libs/shared-ts`
   - Lancer: `npm run start:dev`

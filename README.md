@@ -70,7 +70,7 @@ Canari est une application de **messagerie instantanée sécurisée** avec chiff
 | ------------ | -------------------------------------------------- |
 | **Frontend** | SvelteKit 2.9 • Svelte 5 • TailwindCSS 4 • Tauri 2 |
 | **Gateway**  | Rust 1.87 (Axum) • Tokio • Tonic • Rdkafka         |
-| **Services** | NestJS • Spring Boot • Node.js 20                  |
+| **Services** | NestJS • Node.js 20                                |
 | **Data**     | PostgreSQL • MongoDB • Redis • Kafka               |
 | **DevOps**   | Docker • Docker Compose • GitHub Actions • Nginx   |
 | **Quality**  | ESLint • Prettier • Clippy • Husky • Pre-commit    |

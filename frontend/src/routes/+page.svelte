@@ -1,6 +1,9 @@
 <script lang="ts">
   import { TauriMlsService, WebMlsService } from '$lib/mlsService';
   import type { IMlsService } from '$lib/mlsService';
+  import { getStorage } from '$lib/db';
+  import type { IStorage } from '$lib/db';
+  import { exportBackup, importBackup } from '$lib/backup';
   import { onMount, tick } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { fade } from 'svelte/transition';
@@ -61,6 +64,11 @@
 
   // Service MLS
   let mls: IMlsService | null = $state(null);
+
+  // Persistent storage (IndexedDB on web, SQLite on Tauri)
+  let storage: IStorage | null = $state(null);
+  let isExporting = $state(false);
+  let isImporting = $state(false);
 
   // Helper to ensure MLS service exists
   function ensureMls(): IMlsService {
@@ -158,8 +166,12 @@
       myDeviceId = mlsService.getDeviceId();
       log(`Identité MLS initialisée (device: ${myDeviceId})`);
 
+      // Initialise persistent storage (IndexedDB or SQLite)
+      storage = await getStorage();
+      log('Base de données locale initialisée.');
+
       isLoggedIn = true;
-      loadExistingConversations();
+      await loadExistingConversations();
 
       // Listener de messages
       mlsService.onMessage(async (sender, content, groupId): Promise<boolean> => {
@@ -188,7 +200,7 @@
               // Silent fallback if autosave fails
             }
 
-            if (decrypted) addMessageToChat(senderNorm, decrypted, convoKey);
+            if (decrypted) await addMessageToChat(senderNorm, decrypted, convoKey);
             return true;
           } catch (_e) {
             log(`Erreur message (groupe connu): ${_e}`);
@@ -245,6 +257,9 @@
         await mlsService.connect(token);
         isWsConnected = true;
         log('Connecté au réseau !');
+        // Detect new own devices (added after last login) and invite them to
+        // all existing groups so they can receive Welcomes automatically.
+        syncOwnDevicesToGroups().catch(() => {});
       } catch (_wsErr: unknown) {
         const msg = _wsErr instanceof Error ? _wsErr.message : String(_wsErr);
         log(`Gateway inaccessible: ${msg}`);
@@ -278,23 +293,66 @@
     return new Uint8Array(match.map((byte) => parseInt(byte, 16)));
   }
 
-  // --- Persistance ---
-  function saveConversation(contactName: string) {
+  // --- Persistance (DB) ---
+
+  /** Upsert conversation metadata into the persistent DB. */
+  async function saveConversation(contactName: string) {
+    if (!storage) return;
     const normalized = contactName.toLowerCase();
     const convo = conversations.get(normalized);
     if (!convo) return;
-    localStorage.setItem(
-      `conversation:${userId}:${normalized}`,
-      JSON.stringify({
-        groupId: convo.groupId,
-        name: convo.name,
-        messages: convo.messages.map((m: ChatMessage) => ({
-          ...m,
-          timestamp: m.timestamp.toISOString(),
-        })),
-        isReady: convo.isReady,
-      })
-    );
+    await storage.saveConversation({
+      id: normalized,
+      groupId: convo.groupId,
+      name: convo.name,
+      isReady: convo.isReady,
+      updatedAt: Date.now(),
+    });
+  }
+
+  /** Migrate legacy localStorage conversations to the DB (run once on first login). */
+  async function migrateFromLocalStorage() {
+    if (!storage) return;
+    const prefix = `conversation:${userId}:`;
+    const keysToMigrate: string[] = [];
+
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith(prefix)) keysToMigrate.push(key);
+    }
+    if (keysToMigrate.length === 0) return;
+
+    log(`Migration de ${keysToMigrate.length} conversation(s) depuis localStorage…`);
+    for (const key of keysToMigrate) {
+      const saved = localStorage.getItem(key);
+      if (!saved) continue;
+      const contactName = key.substring(prefix.length);
+      let data: any;
+      try { data = JSON.parse(saved); } catch { continue; }
+
+      await storage.saveConversation({
+        id: contactName,
+        groupId: data.groupId,
+        name: data.name || contactName,
+        isReady: data.isReady || false,
+        updatedAt: Date.now(),
+      });
+
+      for (const m of (data.messages || []) as any[]) {
+        try {
+          await storage.saveMessage({
+            id: m.id || crypto.randomUUID(),
+            conversationId: contactName,
+            senderId: m.senderId || '',
+            content: m.content || '',
+            timestamp: m.timestamp ? new Date(m.timestamp).getTime() : Date.now(),
+          }, pin);
+        } catch { /* skip invalid rows */ }
+      }
+
+      localStorage.removeItem(key);
+    }
+    log('Migration terminée ✅');
   }
 
   async function loadHistoryForConversation(contactName: string, groupId: string) {
@@ -314,7 +372,7 @@
 
             const decrypted = await mlsService.processIncomingMessage(groupId, bytes);
             if (decrypted) {
-              addMessageToChat(msg.sender_id, decrypted, contactName);
+              await addMessageToChat(msg.sender_id, decrypted, contactName);
               addedMsg++;
               mlsUpdated = true;
             }
@@ -333,32 +391,30 @@
     }
   }
 
-  function loadExistingConversations() {
-    const prefix = `conversation:${userId}:`;
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key?.startsWith(prefix)) {
-        const contactName = key.substring(prefix.length).toLowerCase();
-        const saved = localStorage.getItem(key);
-        if (saved) {
-          const data = JSON.parse(saved);
-          conversations.set(contactName, {
-            contactName,
-            name: data.name || contactName,
-            groupId: data.groupId,
-            messages: (data.messages || []).map((_m: unknown) => {
-              const m = _m as ChatMessage;
-              return {
-                ...m,
-                timestamp: new Date(m.timestamp),
-              };
-            }),
-            isReady: data.isReady || false,
-            mlsStateHex: null,
-          });
-          loadHistoryForConversation(contactName, data.groupId);
-        }
-      }
+  async function loadExistingConversations() {
+    if (!storage) return;
+
+    // One-time migration from the old localStorage format
+    await migrateFromLocalStorage();
+
+    const convMetas = await storage.getConversations();
+    for (const meta of convMetas) {
+      const storedMessages = await storage.getMessages(meta.id, pin);
+      conversations.set(meta.id, {
+        contactName: meta.id,
+        name: meta.name,
+        groupId: meta.groupId,
+        messages: storedMessages.map((m) => ({
+          id: m.id,
+          senderId: m.senderId,
+          content: m.content,
+          timestamp: new Date(m.timestamp),
+          isOwn: m.senderId.toLowerCase() === userId.toLowerCase(),
+        })),
+        isReady: meta.isReady,
+        mlsStateHex: null,
+      });
+      loadHistoryForConversation(meta.id, meta.groupId);
     }
   }
 
@@ -559,7 +615,7 @@
   }
 
   // --- Messages & UI ---
-  function addMessageToChat(senderId: string, content: string, contactName: string) {
+  async function addMessageToChat(senderId: string, content: string, contactName: string) {
     const normalized = contactName.toLowerCase();
     const convo = conversations.get(normalized);
     if (!convo) return;
@@ -578,7 +634,22 @@
       ...convo,
       messages: [...convo.messages, newMsg],
     });
-    saveConversation(normalized);
+
+    // Persist message to DB (encrypted with PIN)
+    if (storage) {
+      try {
+        await storage.saveMessage({
+          id: newMsg.id,
+          conversationId: normalized,
+          senderId: newMsg.senderId,
+          content: newMsg.content,
+          timestamp: newMsg.timestamp.getTime()
+        }, pin);
+        await saveConversation(normalized);
+      } catch (e) {
+        console.error('[DB] Failed to persist message:', e);
+      }
+    }
 
     tick().then(() => {
       if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
@@ -597,7 +668,7 @@
       await mlsService.sendMessage(convo.groupId, text);
       const stateBytes = await mlsService.saveState(pin);
       localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
-      addMessageToChat(userId, text, selectedContact);
+      await addMessageToChat(userId, text, selectedContact);
     } catch (_e: unknown) {
       const msg = _e instanceof Error ? _e.message : String(_e);
       log(`Erreur envoi: ${msg}`);
@@ -627,11 +698,166 @@
     conversations.clear();
     selectedContact = null;
     statusLog = [];
+    storage = null;
   }
 
-  function resetAll() {
+  async function resetAll() {
+    if (storage) { await storage.clear(); storage = null; }
     localStorage.clear();
     logout();
+  }
+
+  // --- Sauvegarde (export / import WhatsApp-style) ---
+
+  /**
+   * Run on every connect: fetch this user's own registered devices and, for
+   * any that are new (not yet in the local cache), add them to each existing
+   * MLS group and send them the resulting Welcome.
+   *
+   * A device is considered "new" when its deviceId is absent from the
+   * `known_own_devices:<userId>` key in localStorage.  This avoids redundant
+   * `addMember` calls on every login for devices already synced.
+   *
+   * Device B (the importing device) cannot invite itself – it has no group
+   * state yet.  It must wait for Device A to run this function and deliver
+   * Welcomes, after which the existing `onMessage → processWelcome` path
+   * handles everything automatically.
+   */
+  async function syncOwnDevicesToGroups() {
+    const mlsService = ensureMls();
+
+    let allOwnDevices: { keyPackage: Uint8Array; deviceId: string }[];
+    try {
+      allOwnDevices = (await mlsService.fetchUserDevices(userId)).filter(
+        (d) => d.deviceId !== mlsService.getDeviceId()
+      );
+    } catch {
+      return;
+    }
+    if (allOwnDevices.length === 0) return;
+
+    // Cache of device IDs we've already fully synced (all groups attempted).
+    const cacheKey = `known_own_devices:${userId}`;
+    let knownIds: Set<string>;
+    try {
+      knownIds = new Set(JSON.parse(localStorage.getItem(cacheKey) ?? '[]'));
+    } catch {
+      knownIds = new Set();
+    }
+
+    const newDevices = allOwnDevices.filter((d) => !knownIds.has(d.deviceId));
+    if (newDevices.length === 0) return;
+
+    log(`🔄 Nouvel(s) appareil(s) détecté(s) : synchronisation en cours…`);
+    let totalWelcomes = 0;
+
+    for (const device of newDevices) {
+      let allOk = true;
+      for (const [, convo] of conversations.entries()) {
+        if (!convo.isReady) continue;
+        try {
+          const result = await mlsService.addMember(convo.groupId, device.keyPackage);
+          await mlsService.registerMember(convo.groupId, userId, device.deviceId);
+          if (result.welcome) {
+            await mlsService.sendWelcome(result.welcome, userId, convo.groupId, device.deviceId);
+            totalWelcomes++;
+          }
+          if (result.commit) {
+            await mlsService.sendCommit(result.commit, convo.groupId);
+          }
+          const stBytes = await mlsService.saveState(pin);
+          localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
+        } catch {
+          // Device might already be in the group, or key package was already
+          // consumed – skip silently.  Don't mark as known so we retry next
+          // time in case it was a transient error.
+          allOk = false;
+        }
+      }
+      if (allOk) {
+        knownIds.add(device.deviceId);
+        localStorage.setItem(cacheKey, JSON.stringify([...knownIds]));
+      }
+    }
+
+    if (totalWelcomes > 0) {
+      log(`✅ ${totalWelcomes} Welcome(s) envoyé(s) aux nouveaux appareils.`);
+    }
+  }
+
+  async function handleExport() {
+    if (!storage) return;
+    isExporting = true;
+    try {
+      const mlsStateHex = localStorage.getItem('mls_autosave_' + userId) ?? undefined;
+      const blob = await exportBackup(storage, userId, pin, myDeviceId, mlsStateHex);
+      const date = new Date().toISOString().split('T')[0];
+      const filename = `canari-backup-${userId}-${date}.canari`;
+
+      // Works in both browser and Tauri WebView
+      const url = URL.createObjectURL(new Blob([blob.buffer as ArrayBuffer], { type: 'application/octet-stream' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      log(`✅ Sauvegarde exportée : ${filename}`);
+    } catch (e) {
+      log(`Erreur export : ${e}`);
+    } finally {
+      isExporting = false;
+    }
+  }
+
+  async function handleImport(file: File) {
+    if (!storage) return;
+    isImporting = true;
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const { data: backup, isSameDevice } = await importBackup(
+        new Uint8Array(arrayBuffer),
+        pin,
+        storage,
+        myDeviceId
+      );
+
+      if (isSameDevice) {
+        // Same physical device (wipe + restore): the MLS state blob is valid
+        // for this device's leaf keypair – restore it unconditionally.
+        const existingMlsState = localStorage.getItem('mls_autosave_' + userId);
+        if (backup.mlsState && !existingMlsState) {
+          localStorage.setItem('mls_autosave_' + userId, backup.mlsState);
+          log('État MLS restauré (même appareil).');
+        } else if (existingMlsState) {
+          log('État MLS local conservé (appareil déjà actif).');
+        }
+      } else {
+        // Different device: the MLS state blob belongs to the exporter's leaf
+        // keypair – applying it here would corrupt or impersonate that identity.
+        // Conversations were imported with isReady=false; this device must wait
+        // for the original device to call syncOwnDevicesToGroups() and deliver
+        // a Welcome for each group.
+        log(
+          '⚠️ Nouvel appareil détecté. Les conversations sont importées en lecture seule. ' +
+          'Reconnectez l\'appareil exportateur pour déclencher l\'invitation automatique aux groupes.'
+        );
+        // Clear the known-devices cache on the exporter side so it will re-sync
+        // when it comes online (transparent to this device, but good hygiene).
+      }
+
+      // Reload conversations from the freshly populated DB
+      conversations.clear();
+      await loadExistingConversations();
+
+      log(
+        `✅ Sauvegarde importée : ${backup.conversations.length} conversation(s), ` +
+        `${backup.messages.length} message(s).`
+      );
+    } catch (e) {
+      log(`Erreur import : ${e}`);
+    } finally {
+      isImporting = false;
+    }
   }
 
   // --- Outils Dev ---
@@ -712,6 +938,10 @@
           }
         }}
         onSelectConversation={selectConversation}
+        onExport={handleExport}
+        onImport={handleImport}
+        {isExporting}
+        {isImporting}
         isHidden={mobileView === 'chat'}
       />
 
