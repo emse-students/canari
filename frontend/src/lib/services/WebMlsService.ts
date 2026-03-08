@@ -44,9 +44,19 @@ export class WebMlsService implements IMlsService {
                 await this.fetchPendingMessages();
                 resolve();
             };
-            this.ws.onerror = (e) => {
-                console.error("WebSocket Error:", e);
-                reject(e);
+            this.ws.onerror = (event) => {
+                console.error("WebSocket Error:", event);
+                const errorMsg = `WebSocket connection failed to ${wsUrl}/ws. Check that Chat Gateway is running and accessible.`;
+                reject(new Error(errorMsg));
+            };
+            this.ws.onclose = (event) => {
+                if (!event.wasClean) {
+                    console.error(`WebSocket closed unexpectedly. Code: ${event.code}, Reason: ${event.reason || 'No reason provided'}`);
+                    // Only reject if we haven't resolved yet (connection never opened)
+                    if (this.ws?.readyState !== WebSocket.OPEN) {
+                        reject(new Error(`WebSocket closed before opening. Code: ${event.code}, Reason: ${event.reason || 'Connection refused or network error'}`));
+                    }
+                }
             };
             this.ws.onmessage = async (event) => {
                 try {
