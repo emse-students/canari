@@ -1,15 +1,13 @@
 name: Code Analysis
 
 on:
-  push:
-    branches:
-      - main
   pull_request:
     branches:
       - main
   schedule:
     # Daily analysis at 2 AM UTC
     - cron: '0 2 * * *'
+  workflow_call:
 
 permissions:
   actions: read
