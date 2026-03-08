@@ -7,6 +7,7 @@ import type { IMlsService } from './IMlsService';
 export class TauriMlsService implements IMlsService {
     private ws: WebSocket | null = null;
     private messageCallback: ((senderId: string, content: Uint8Array, groupId?: string) => Promise<boolean>) | null = null;
+    private disconnectCallback: (() => void) | null = null;
     private baseUrl = import.meta.env.VITE_GATEWAY_URL ?? "https://localhost:3000";
     private historyUrl = "https://localhost:3001";
     private userId: string = "unknown";
@@ -21,12 +22,24 @@ export class TauriMlsService implements IMlsService {
         // Reuse direct WebSocket logic for now (Tauri allows localhost by default)
         return new Promise((resolve, reject) => {
             this.ws = new WebSocket(`${this.baseUrl.replace('http', 'ws')}/ws?token=${token}&device_id=${this.deviceId}`);
+            let resolved = false;
             this.ws.onopen = async () => {
+                resolved = true;
                 console.log("Connected to Chat Gateway (Tauri) with DeviceID:", this.deviceId);
                 await this.fetchPendingMessages();
                 resolve();
             };
-            this.ws.onerror = (e) => reject(e);
+            this.ws.onerror = (e) => {
+                if (!resolved) reject(e);
+            };
+            this.ws.onclose = (event) => {
+                if (!resolved) {
+                    reject(new Error(`WebSocket closed before opening. Code: ${event.code}`));
+                } else {
+                    console.warn(`WebSocket disconnected. Code: ${event.code}`);
+                    this.disconnectCallback?.();
+                }
+            };
             this.ws.onmessage = async (event) => {
                 try {
                     const data = JSON.parse(event.data);
@@ -147,6 +160,9 @@ export class TauriMlsService implements IMlsService {
         this.messageCallback = callback;
     }
 
+    onDisconnect(callback: () => void) {
+        this.disconnectCallback = callback;
+    }
 
     getDeviceId(): string {
         return this.deviceId;

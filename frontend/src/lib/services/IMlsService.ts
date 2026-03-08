@@ -28,4 +28,5 @@ export interface IMlsService {
 
     // Callbacks
     onMessage(callback: (senderId: string, content: Uint8Array, groupId?: string) => Promise<boolean>): void;
+    onDisconnect(callback: () => void): void;
 }

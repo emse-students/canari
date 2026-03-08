@@ -35,6 +35,11 @@
   let isWsConnected = $state(false);
   let myDeviceId = $state('');
 
+  // Reconnection
+  const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 16000, 30000];
+  let reconnectAttempts = 0;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
   // Variables de débogage
   let lastKeyPackage = $state('');
   let incomingBytesHex = $state('');
@@ -389,7 +394,9 @@
         const token = await generateDevToken(userId);
         await mlsService.connect(token);
         isWsConnected = true;
+        reconnectAttempts = 0;
         log('Connecté au réseau !');
+        mlsService.onDisconnect(scheduleReconnect);
         // Detect new own devices (added after last login) and invite them to
         // all existing groups so they can receive Welcomes automatically.
         syncOwnDevicesToGroups().catch(() => {});
@@ -1006,7 +1013,39 @@
     mobileView = 'list';
   }
 
+  function scheduleReconnect() {
+    if (!isLoggedIn) return;
+    isWsConnected = false;
+    if (reconnectTimer !== null) return; // already scheduled
+    const delay = RECONNECT_DELAYS[Math.min(reconnectAttempts, RECONNECT_DELAYS.length - 1)];
+    reconnectAttempts++;
+    log(`Connexion perdue. Nouvelle tentative dans ${delay / 1000}s… (tentative ${reconnectAttempts})`);
+    reconnectTimer = setTimeout(attemptReconnect, delay);
+  }
+
+  async function attemptReconnect() {
+    reconnectTimer = null;
+    if (!isLoggedIn) return;
+    try {
+      log('Reconnexion en cours…');
+      const token = await generateDevToken(userId);
+      const mlsService = ensureMls();
+      await mlsService.connect(token);
+      isWsConnected = true;
+      reconnectAttempts = 0;
+      log('✅ Reconnecté au réseau !');
+      syncOwnDevicesToGroups().catch(() => {});
+    } catch {
+      scheduleReconnect();
+    }
+  }
+
   function logout() {
+    if (reconnectTimer !== null) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    reconnectAttempts = 0;
     isLoggedIn = false;
     isWsConnected = false;
     conversations.clear();

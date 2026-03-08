@@ -5,6 +5,7 @@ export class WebMlsService implements IMlsService {
     private client: any;
     private ws: WebSocket | null = null;
     private messageCallback: ((senderId: string, content: Uint8Array, groupId?: string) => Promise<boolean>) | null = null;
+    private disconnectCallback: (() => void) | null = null;
     private baseUrl: string;   // Chat Gateway URL
     private historyUrl: string; // Chat Delivery Service URL
     private userId: string = "unknown";
@@ -38,24 +39,27 @@ export class WebMlsService implements IMlsService {
 
             console.log(`Connecting to WebSocket: ${fullWsUrl.replace(/token=[^&]+/, 'token=***')}`);
             this.ws = new WebSocket(fullWsUrl);
+            let resolved = false;
 
             this.ws.onopen = async () => {
+                resolved = true;
                 console.log("Connected to Chat Gateway with DeviceID:", this.deviceId);
                 await this.fetchPendingMessages();
                 resolve();
             };
             this.ws.onerror = (event) => {
                 console.error("WebSocket Error:", event);
-                const errorMsg = `WebSocket connection failed to ${wsUrl}/ws. Check that Chat Gateway is running and accessible.`;
-                reject(new Error(errorMsg));
+                if (!resolved) {
+                    const errorMsg = `WebSocket connection failed to ${wsUrl}/ws. Check that Chat Gateway is running and accessible.`;
+                    reject(new Error(errorMsg));
+                }
             };
             this.ws.onclose = (event) => {
-                if (!event.wasClean) {
-                    console.error(`WebSocket closed unexpectedly. Code: ${event.code}, Reason: ${event.reason || 'No reason provided'}`);
-                    // Only reject if we haven't resolved yet (connection never opened)
-                    if (this.ws?.readyState !== WebSocket.OPEN) {
-                        reject(new Error(`WebSocket closed before opening. Code: ${event.code}, Reason: ${event.reason || 'Connection refused or network error'}`));
-                    }
+                if (!resolved) {
+                    reject(new Error(`WebSocket closed before opening. Code: ${event.code}, Reason: ${event.reason || 'Connection refused or network error'}`));
+                } else {
+                    console.warn(`WebSocket disconnected. Code: ${event.code}, Reason: ${event.reason || 'no reason'}`);
+                    this.disconnectCallback?.();
                 }
             };
             this.ws.onmessage = async (event) => {
@@ -90,6 +94,10 @@ export class WebMlsService implements IMlsService {
 
     onMessage(callback: (senderId: string, content: Uint8Array, groupId?: string) => Promise<boolean>) {
         this.messageCallback = callback;
+    }
+
+    onDisconnect(callback: () => void) {
+        this.disconnectCallback = callback;
     }
     async fetchPendingMessages() {
         if (this.userId === "unknown") return;
