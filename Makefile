@@ -1,4 +1,4 @@
-.PHONY: all install install-frontend install-services install-hooks build-frontend nginx-install reload-services test test-libs test-gateway test-history clean nginx-uninstall nginx-https
+.PHONY: all install install-frontend install-services install-hooks setup-env setup-env-prod build-frontend nginx-install reload-services test test-libs test-gateway test-history clean nginx-uninstall nginx-https
 
 # Cible par défaut : installation complète et déploiement
 .DEFAULT_GOAL := all
@@ -81,6 +81,19 @@ install-hooks:
 	@echo "${BLUE}🪝 Installing Git hooks via Husky...${RESET}"
 	@cd frontend && bun install 2>/dev/null || npm install
 	@echo "${GREEN}✅ Git hooks configurés${RESET}"
+
+# ── Environment & Secrets Management ──────────────────────────────────────────
+setup-env:
+	@echo "${BLUE}🔐 Setting up environment files and generating secrets...${RESET}"
+	@chmod +x scripts/setup-env.sh
+	@./scripts/setup-env.sh
+	@echo "${GREEN}✅ Environment setup complete${RESET}"
+
+setup-env-prod:
+	@echo "${BLUE}🔐 Syncing secrets in production mode...${RESET}"
+	@chmod +x scripts/setup-env.sh
+	@./scripts/setup-env.sh --prod --sync-only
+	@echo "${GREEN}✅ Production secrets synchronized${RESET}"
 
 # Cible principale
 test: test-libs test-gateway test-history
