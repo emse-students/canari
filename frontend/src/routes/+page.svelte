@@ -96,6 +96,15 @@
       mls = new WebMlsService();
       log('Initialisé en mode WEB (WASM)');
     }
+
+    // Auto-login si des identifiants sont mémorisés
+    const savedUser = localStorage.getItem('canari_saved_user');
+    const savedPin = localStorage.getItem('canari_saved_pin');
+    if (savedUser && savedPin) {
+      userId = savedUser;
+      pin = savedPin;
+      handleLogin();
+    }
   });
 
   function log(msg: string) {
@@ -176,6 +185,9 @@
       log('Base de données locale initialisée.');
 
       isLoggedIn = true;
+      // Mémoriser les identifiants pour auto-login au prochain chargement
+      localStorage.setItem('canari_saved_user', userId);
+      localStorage.setItem('canari_saved_pin', pin);
       await loadExistingConversations();
 
       // Listener de messages
@@ -716,6 +728,8 @@
     selectedContact = null;
     statusLog = [];
     storage = null;
+    localStorage.removeItem('canari_saved_user');
+    localStorage.removeItem('canari_saved_pin');
   }
 
   async function resetAll() {
