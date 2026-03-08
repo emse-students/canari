@@ -221,10 +221,30 @@
               // Silent fallback if autosave fails
             }
 
-            if (decrypted) await addMessageToChat(senderNorm, decrypted, convoKey);
+            if (decrypted) {
+              // Check if it's a control message (JSON)
+              try {
+                const parsed = JSON.parse(decrypted);
+                if (parsed.type === 'groupRenamed' && parsed.newName) {
+                  // Update group name locally
+                  conversations.set(convoKey, { ...convo, name: parsed.newName });
+                  if (storage) await saveConversation(convoKey);
+                  log(`📝 Groupe renommé en "${parsed.newName}" par ${senderNorm}`);
+                  return true; // Don't display as a chat message
+                }
+              } catch {
+                // Not JSON or not a control message → treat as regular message
+              }
+              await addMessageToChat(senderNorm, decrypted, convoKey);
+            }
             return true;
           } catch (_e) {
-            log(`Erreur message (groupe connu): ${_e}`);
+            const errMsg = String(_e);
+            // Filter out normal OpenMLS behavior: you can't decrypt your own messages
+            if (errMsg.includes('CannotDecryptOwnMessage')) {
+              return false; // Silent ignore
+            }
+            log(`Erreur message (groupe connu): ${errMsg}`);
             return false;
           }
         }
@@ -707,8 +727,13 @@
       const msg = _e instanceof Error ? _e.message : String(_e);
       log(`Erreur envoi: ${msg}`);
       messageText = text;
-      if (msg.includes('Groupe introuvable') || msg.includes('not found') || msg.includes('group')) {
-        sendError = "Tu n'es plus membre de ce groupe. Supprime-le et demande une nouvelle invitation.";
+      if (
+        msg.includes('Groupe introuvable') ||
+        msg.includes('not found') ||
+        msg.includes('group')
+      ) {
+        sendError =
+          "Tu n'es plus membre de ce groupe. Supprime-le et demande une nouvelle invitation.";
       } else {
         sendError = `Échec de l'envoi : ${msg}`;
       }
@@ -754,6 +779,16 @@
       conversations.set(selectedContact, { ...convo, name });
       if (storage) await saveConversation(selectedContact);
       log(`Groupe renommé en "${name}"`);
+      
+      // Send control message to propagate rename to all group members
+      try {
+        const controlMsg = JSON.stringify({ type: 'groupRenamed', newName: name });
+        await mlsService.sendMessage(convo.groupId, controlMsg);
+        const stBytes = await mlsService.saveState(pin);
+        localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
+      } catch (e) {
+        console.warn('Failed to broadcast rename:', e);
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       log(`Erreur renommage: ${msg}`);

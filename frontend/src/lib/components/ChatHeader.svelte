@@ -1,5 +1,14 @@
 <script lang="ts">
-  import { ChevronLeft, LockKeyhole, Clock, Settings, X, Trash2, UserMinus, Check } from "lucide-svelte";
+  import {
+    ChevronLeft,
+    LockKeyhole,
+    Clock,
+    Settings,
+    X,
+    Trash2,
+    UserMinus,
+    Check,
+  } from 'lucide-svelte';
 
   interface Props {
     contactName: string;
@@ -30,14 +39,14 @@
     onGroupRemoveMember,
   }: Props = $props();
 
-  const avatarLetter = $derived(contactName[0]?.toUpperCase() || "?");
+  const avatarLetter = $derived(contactName[0]?.toUpperCase() || '?');
 
   let showPanel = $state(false);
   let renameInput = $state('');
   let confirmDelete = $state(false);
 
   function handleKeydown(e: KeyboardEvent) {
-    if (e.key === "Enter" && inviteMemberInput.trim()) {
+    if (e.key === 'Enter' && inviteMemberInput.trim()) {
       onInviteMember();
     }
   }
@@ -57,21 +66,15 @@
   }
 
   function handleRenameKey(e: KeyboardEvent) {
-    if (e.key === "Enter") submitRename();
-    if (e.key === "Escape") showPanel = false;
+    if (e.key === 'Enter') submitRename();
+    if (e.key === 'Escape') showPanel = false;
   }
 </script>
 
-<header
-  class="bg-white px-6 py-3 border-b border-cn-border flex items-center gap-4 relative"
->
+<header class="bg-white px-6 py-3 border-b border-cn-border flex items-center gap-4 relative">
   <!-- Back button (mobile) -->
   {#if onBack}
-    <button
-      onclick={onBack}
-      aria-label="Retour au menu"
-      class="md:hidden p-1 text-cn-dark"
-    >
+    <button onclick={onBack} aria-label="Retour au menu" class="md:hidden p-1 text-cn-dark">
       <ChevronLeft size={24} />
     </button>
   {/if}
@@ -131,7 +134,9 @@
     <!-- Backdrop -->
     <button
       class="fixed inset-0 z-30 cursor-default bg-transparent border-0"
-      onclick={() => { showPanel = false; }}
+      onclick={() => {
+        showPanel = false;
+      }}
       aria-label="Fermer le panneau"
     ></button>
 
@@ -141,14 +146,21 @@
       <!-- Close -->
       <div class="flex items-center justify-between">
         <span class="text-sm font-semibold text-cn-dark">Paramètres du groupe</span>
-        <button onclick={() => { showPanel = false; }} class="text-gray-400 hover:text-cn-dark">
+        <button
+          onclick={() => {
+            showPanel = false;
+          }}
+          class="text-gray-400 hover:text-cn-dark"
+        >
           <X size={16} />
         </button>
       </div>
 
       <!-- Rename -->
       <div class="flex flex-col gap-1">
-        <label for="group-rename-input" class="text-xs text-gray-500 font-medium">Nom du groupe</label>
+        <label for="group-rename-input" class="text-xs text-gray-500 font-medium"
+          >Nom du groupe</label
+        >
         <div class="flex gap-2">
           <input
             id="group-rename-input"
@@ -177,7 +189,9 @@
                 <span class="text-sm text-cn-dark truncate">{member}</span>
                 {#if onGroupRemoveMember}
                   <button
-                    onclick={() => { onGroupRemoveMember?.(member); }}
+                    onclick={() => {
+                      onGroupRemoveMember?.(member);
+                    }}
                     aria-label="Retirer {member}"
                     class="p-1 text-gray-400 hover:text-red-500 transition-colors flex-shrink-0"
                   >
@@ -195,7 +209,9 @@
         <div class="border-t border-cn-border pt-3">
           {#if !confirmDelete}
             <button
-              onclick={() => { confirmDelete = true; }}
+              onclick={() => {
+                confirmDelete = true;
+              }}
               class="w-full flex items-center justify-center gap-2 px-3 py-2 text-red-500 border border-red-200 rounded-lg text-sm hover:bg-red-50 transition-colors"
             >
               <Trash2 size={14} /> Supprimer le groupe
@@ -205,13 +221,20 @@
               <p class="text-xs text-red-600 text-center">Confirmer la suppression ?</p>
               <div class="flex gap-2">
                 <button
-                  onclick={() => { confirmDelete = false; }}
+                  onclick={() => {
+                    confirmDelete = false;
+                  }}
                   class="flex-1 px-3 py-1.5 border border-cn-border rounded-lg text-sm text-gray-600 hover:bg-gray-50"
-                >Annuler</button>
+                  >Annuler</button
+                >
                 <button
-                  onclick={() => { onGroupDelete?.(); showPanel = false; }}
+                  onclick={() => {
+                    onGroupDelete?.();
+                    showPanel = false;
+                  }}
                   class="flex-1 px-3 py-1.5 bg-red-500 text-white rounded-lg text-sm hover:bg-red-600 transition-colors"
-                >Supprimer</button>
+                  >Supprimer</button
+                >
               </div>
             </div>
           {/if}

@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { ShieldCheck } from "lucide-svelte";
-  import { tick } from "svelte";
-  import ChatHeader from "./ChatHeader.svelte";
-  import MessageBubble from "./MessageBubble.svelte";
-  import ChatComposer from "./ChatComposer.svelte";
-  import EmptyState from "./EmptyState.svelte";
+  import { ShieldCheck } from 'lucide-svelte';
+  import { tick } from 'svelte';
+  import ChatHeader from './ChatHeader.svelte';
+  import MessageBubble from './MessageBubble.svelte';
+  import ChatComposer from './ChatComposer.svelte';
+  import EmptyState from './EmptyState.svelte';
 
   interface ChatMessage {
     id: string;
@@ -71,9 +71,7 @@
   });
 </script>
 
-<section
-  class="flex-1 flex flex-col bg-cn-bg {isHidden ? 'hidden md:flex' : ''}"
->
+<section class="flex-1 flex flex-col bg-cn-bg {isHidden ? 'hidden md:flex' : ''}">
   {#if conversation}
     <ChatHeader
       contactName={conversation.contactName}
@@ -90,10 +88,7 @@
     />
 
     <!-- Messages -->
-    <div
-      bind:this={chatContainer}
-      class="flex-1 overflow-y-auto px-6 py-6 flex flex-col gap-2"
-    >
+    <div bind:this={chatContainer} class="flex-1 overflow-y-auto px-6 py-6 flex flex-col gap-2">
       {#each conversation.messages as msg (msg.id)}
         <MessageBubble
           senderId={msg.senderId}
@@ -105,7 +100,9 @@
     </div>
 
     {#if sendError}
-      <div class="px-6 py-2 bg-red-50 border-t border-red-200 text-sm text-red-600 flex items-center gap-2">
+      <div
+        class="px-6 py-2 bg-red-50 border-t border-red-200 text-sm text-red-600 flex items-center gap-2"
+      >
         <span>⚠️ {sendError}</span>
       </div>
     {/if}

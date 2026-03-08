@@ -270,7 +270,7 @@ export class IndexedDbStorage implements IStorage {
 // ---------------------------------------------------------------------------
 
 export class SqliteStorage implements IStorage {
-     
+
     private db: any = null;
     private readonly dbPath: string;
 

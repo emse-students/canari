@@ -85,7 +85,7 @@ export class TauriMlsService implements IMlsService {
                 const messages = await res.json();
                 if (Array.isArray(messages) && messages.length > 0) {
                     console.log(`Fetched ${messages.length} pending messages`);
-                    
+
                     const successfullyProcessedIds: string[] = [];
 
                     for (const msg of messages) {
@@ -123,7 +123,7 @@ export class TauriMlsService implements IMlsService {
              } else if (data.content) {
                  base64Content = data.content;
              }
-             
+
              if (base64Content) {
                  const binaryString = atob(base64Content);
                  const bytes = new Uint8Array(binaryString.length);
@@ -157,7 +157,7 @@ export class TauriMlsService implements IMlsService {
             const res = await fetch(`${this.historyUrl}/mls-api/devices/${userId}`);
             if (!res.ok) return [];
             const devices = await res.json();
-            
+
             return devices.map((d: any) => {
                 const binaryString = atob(d.keyPackage);
                 const bytes = new Uint8Array(binaryString.length);
@@ -349,7 +349,7 @@ export class TauriMlsService implements IMlsService {
         const res = await invoke<number[]>('envoyer_message', { groupId, message });
         const encryptedBytes = Uint8Array.from(res);
         const base64 = btoa(String.fromCharCode(...encryptedBytes));
-        
+
         // Send via WebSocket if connected
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
             this.ws.send(JSON.stringify({ type: "mlsMessage", payload: base64, groupId: groupId }));

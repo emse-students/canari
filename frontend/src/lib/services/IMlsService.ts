@@ -9,7 +9,7 @@ export interface IMlsService {
     processWelcome(welcomeBytes: Uint8Array): Promise<string>;
     sendMessage(groupId: string, message: string): Promise<Uint8Array>;
     processIncomingMessage(groupId: string, messageBytes: Uint8Array): Promise<string | null>;
-    
+
     // Networking
     connect(token: string): Promise<void>;
     fetchUserDevices(userId: string): Promise<Array<{ keyPackage: Uint8Array, deviceId: string }>>;
@@ -19,13 +19,13 @@ export interface IMlsService {
     registerMember(groupId: string, userId: string, deviceId: string): Promise<void>;
     fetchHistory(groupId: string): Promise<{ sender_id: string, content: string, timestamp: string }[]>;
     getDeviceId(): string;
-    
+
     // Group management
     renameGroup(groupId: string, name: string): Promise<void>;
     deleteGroupOnServer(groupId: string): Promise<void>;
     removeMemberFromServer(groupId: string, userId: string): Promise<void>;
     getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]>;
-    
+
     // Callbacks
     onMessage(callback: (senderId: string, content: Uint8Array, groupId?: string) => Promise<boolean>): void;
 }
