@@ -58,8 +58,11 @@ jobs:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
         run: |
           echo "VITE_JWT_SECRET=${JWT_SECRET}" > .env
-          echo "VITE_GATEWAY_URL=wss://${{ env.DOMAIN }}/ws" >> .env
-          echo "VITE_DELIVERY_URL=https://${{ env.DOMAIN }}/mls-api" >> .env
+          # VITE_GATEWAY_URL et VITE_DELIVERY_URL intentionnellement vides :
+          # le code utilise window.location.origin comme fallback, ce qui fonctionne
+          # derrière nginx (même domaine, /ws et /mls-api/ routés par le reverse proxy).
+          echo "VITE_GATEWAY_URL=" >> .env
+          echo "VITE_HISTORY_URL=" >> .env
 
       - name: Build frontend
         working-directory: frontend
