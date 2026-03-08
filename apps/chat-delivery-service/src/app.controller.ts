@@ -1,6 +1,14 @@
-import { Controller, Get, Post, Body, Param, Inject } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Inject,
+  BadRequestException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, AnyBulkWriteOperation } from 'mongoose';
+import { Model, AnyBulkWriteOperation, Types } from 'mongoose';
 import { QueuedMessage } from './queued-message.schema';
 import { KeyPackage } from './key-package.schema';
 import { WelcomeMessage } from './welcome-message.schema';
@@ -16,6 +24,51 @@ const ENCRYPTION_KEY = Buffer.from(
   'hex',
 );
 const IV_LENGTH = 16;
+const SAFE_QUERY_VALUE_REGEX = /^[a-zA-Z0-9_.:@-]{1,128}$/;
+
+function sanitizeQueryValue(value: unknown, fieldName: string): string {
+  if (typeof value !== 'string') {
+    throw new BadRequestException(`${fieldName} must be a string`);
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new BadRequestException(`${fieldName} is required`);
+  }
+
+  if (!SAFE_QUERY_VALUE_REGEX.test(trimmed)) {
+    throw new BadRequestException(`${fieldName} contains invalid characters`);
+  }
+
+  return trimmed;
+}
+
+function sanitizeOptionalQueryValue(
+  value: unknown,
+  fieldName: string,
+): string | undefined {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+
+  return sanitizeQueryValue(value, fieldName);
+}
+
+function sanitizeObjectIdList(value: unknown): Types.ObjectId[] {
+  if (!Array.isArray(value)) {
+    throw new BadRequestException('messageIds must be an array');
+  }
+
+  const objectIds: Types.ObjectId[] = [];
+  for (const id of value) {
+    if (typeof id !== 'string' || !Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('messageIds contains invalid ObjectId');
+    }
+    objectIds.push(new Types.ObjectId(id));
+  }
+
+  return objectIds;
+}
 
 function encryptServerSide(text: string): string {
   const iv = crypto.randomBytes(IV_LENGTH);
@@ -75,15 +128,18 @@ export class AppController {
 
   @Get('mls/state/:userId')
   async getUserState(@Param('userId') userId: string) {
-    const doc = await this.userStateModel.findOne({ userId }).exec();
+    const safeUserId = sanitizeQueryValue(userId, 'userId');
+    const doc = await this.userStateModel
+      .findOne({ userId: safeUserId })
+      .exec();
     if (!doc) return null;
 
     // Decrypt before sending back to client
     try {
       const originalBlob = decryptServerSide(doc.encryptedState);
       return { ...doc.toObject(), encryptedState: originalBlob };
-    } catch (e) {
-      console.error('Decryption failed for user', userId, e);
+    } catch {
+      console.error('Decryption failed for user state');
       return null;
     }
   }
@@ -166,44 +222,54 @@ export class AppController {
       groupId: string;
     },
   ) {
+    const targetDeviceId = sanitizeQueryValue(
+      body.targetDeviceId,
+      'targetDeviceId',
+    );
+    const targetUserId = sanitizeOptionalQueryValue(
+      body.targetUserId,
+      'targetUserId',
+    );
+    const senderUserId =
+      sanitizeOptionalQueryValue(body.senderUserId, 'senderUserId') || 'system';
+    const safeGroupId = sanitizeQueryValue(body.groupId, 'groupId');
+
     // Look up recipient device — include userId in the query when provided so the lookup
     // is unambiguous even if two users happen to share the same raw device ID string
     // (common in same-browser multi-tab testing).
-    const query: Record<string, string> = { deviceId: body.targetDeviceId };
-    if (body.targetUserId) {
-      query.userId = body.targetUserId;
+    const query: Record<string, string> = { deviceId: targetDeviceId };
+    if (targetUserId) {
+      query.userId = targetUserId;
     }
     const deviceInfo = await this.keyPackageModel.findOne(query).exec();
 
     if (!deviceInfo) {
       throw new Error(
-        `Device ${body.targetDeviceId} (user: ${body.targetUserId ?? 'unknown'}) not found. Cannot deliver Welcome message.`,
+        `Device ${targetDeviceId} (user: ${targetUserId ?? 'unknown'}) not found. Cannot deliver Welcome message.`,
       );
     }
 
-    const senderUserId = body.senderUserId || 'system';
-
     await this.welcomeMessageModel.create({
-      deviceId: body.targetDeviceId,
+      deviceId: targetDeviceId,
       userId: deviceInfo.userId,
       senderUserId,
-      groupId: body.groupId,
+      groupId: safeGroupId,
       message: body.welcomePayload,
       createdAt: new Date(),
     });
 
     // Real-time push via Gateway when the target device is currently online.
     const isOnline = await this.redis.exists(
-      `user:online:${deviceInfo.userId}:${body.targetDeviceId}`,
+      `user:online:${deviceInfo.userId}:${targetDeviceId}`,
     );
     if (isOnline) {
       await this.redis.publish(
         'chat:messages',
         JSON.stringify({
           recipientId: deviceInfo.userId,
-          deviceId: body.targetDeviceId,
+          deviceId: targetDeviceId,
           senderId: senderUserId,
-          groupId: body.groupId,
+          groupId: safeGroupId,
           content: body.welcomePayload,
           type: 'mlsWelcome',
         }),
@@ -236,7 +302,13 @@ export class AppController {
       type?: string;
     },
   ) {
-    const { senderId, senderDeviceId, content, groupId, type } = body;
+    const senderId = sanitizeQueryValue(body.senderId, 'senderId');
+    const senderDeviceId = sanitizeOptionalQueryValue(
+      body.senderDeviceId,
+      'senderDeviceId',
+    );
+    const groupId = sanitizeQueryValue(body.groupId, 'groupId');
+    const { content, type } = body;
 
     let targetList: { userId: string; deviceId: string }[] = [];
 
@@ -256,11 +328,22 @@ export class AppController {
     } else {
       // Process provided recipients (NO FAN_OUT - Strict Device Targeting)
       for (const r of body.recipients) {
+        const recipientUserId = sanitizeQueryValue(
+          r.userId,
+          'recipients.userId',
+        );
         if (r.deviceId) {
-          targetList.push({ userId: r.userId, deviceId: r.deviceId });
+          const recipientDeviceId = sanitizeQueryValue(
+            r.deviceId,
+            'recipients.deviceId',
+          );
+          targetList.push({
+            userId: recipientUserId,
+            deviceId: recipientDeviceId,
+          });
         } else {
           console.warn(
-            `Skipping recipient ${r.userId} without deviceId. Fan-out is disabled for MLS security.`,
+            'Skipping recipient without deviceId. Fan-out is disabled for MLS security.',
           );
         }
       }
@@ -345,11 +428,14 @@ export class AppController {
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
   ) {
+    const safeUserId = sanitizeQueryValue(userId, 'userId');
+    const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
+
     // On renvoie juste la liste
     return this.queuedMessageModel
       .find({
-        recipientId: userId,
-        deviceId: deviceId,
+        recipientId: safeUserId,
+        deviceId: safeDeviceId,
       })
       .sort({ createdAt: 1 })
       .lean()
@@ -361,15 +447,19 @@ export class AppController {
   async acknowledgeMessages(
     @Body() body: { userId: string; deviceId: string; messageIds: string[] },
   ) {
-    if (!body.messageIds || body.messageIds.length === 0) {
+    const safeUserId = sanitizeQueryValue(body.userId, 'userId');
+    const safeDeviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
+    const safeMessageIds = sanitizeObjectIdList(body.messageIds);
+
+    if (safeMessageIds.length === 0) {
       return { status: 'ignored' };
     }
 
     // On supprime uniquement les messages que le client a confirmés
     const result = (await this.queuedMessageModel.deleteMany({
-      _id: { $in: body.messageIds },
-      recipientId: body.userId,
-      deviceId: body.deviceId, // Sécurité pour éviter qu'un device supprime les messages d'un autre
+      _id: { $in: safeMessageIds },
+      recipientId: safeUserId,
+      deviceId: safeDeviceId, // Sécurité pour éviter qu'un device supprime les messages d'un autre
     })) as unknown as { deletedCount: number };
 
     return { status: 'deleted', count: result.deletedCount };

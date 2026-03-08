@@ -120,8 +120,8 @@ export class WasmMlsClient {
      * @returns {string}
      */
     process_welcome(welcome_bytes) {
-        let deferred3_0;
-        let deferred3_1;
+        let deferred3_0 = 0;
+        let deferred3_1 = 0;
         try {
             const ptr0 = passArray8ToWasm0(welcome_bytes, wasm.__wbindgen_malloc);
             const len0 = WASM_VECTOR_LEN;
@@ -129,7 +129,6 @@ export class WasmMlsClient {
             var ptr2 = ret[0];
             var len2 = ret[1];
             if (ret[3]) {
-                ptr2 = 0; len2 = 0;
                 throw takeFromExternrefTable0(ret[2]);
             }
             deferred3_0 = ptr2;
@@ -513,10 +512,9 @@ if (!('encodeInto' in cachedTextEncoder)) {
 
 let WASM_VECTOR_LEN = 0;
 
-let wasmModule, wasm;
-function __wbg_finalize_init(instance, module) {
+let wasm;
+function __wbg_finalize_init(instance, _module) {
     wasm = instance.exports;
-    wasmModule = module;
     cachedDataViewMemory0 = null;
     cachedUint8ArrayMemory0 = null;
     wasm.__wbindgen_start();
