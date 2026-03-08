@@ -100,7 +100,11 @@
 
   // --- Auth & Initialisation ---
   async function generateDevToken(uid: string) {
-    const secret = '9a2f8c4e6b0d71f3e8b925b1234567890abcdef1234567890abcdef12345678';
+    // ⚠️ Secret must be configured in .env file, NOT hardcoded
+    const secret = import.meta.env.VITE_JWT_SECRET;
+    if (!secret) {
+      throw new Error('VITE_JWT_SECRET not configured in .env');
+    }
     const header = JSON.stringify({ alg: 'HS256', typ: 'JWT' });
     const payload = JSON.stringify({
       sub: uid,
