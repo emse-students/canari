@@ -16,6 +16,16 @@
     content: string;
     timestamp: Date;
     isOwn: boolean;
+    replyTo?: {
+      id: string;
+      senderId: string;
+      content: string;
+    };
+  }
+
+  interface MessageReaction {
+    emoji: string;
+    userId: string;
   }
 
   interface Conversation {
@@ -73,6 +83,12 @@
   // Group management
   let groupMembers = $state<string[]>([]);
   let sendError = $state('');
+
+  // Reactions (messageId -> array of reactions)
+  let messageReactions = new SvelteMap<string, MessageReaction[]>();
+
+  // Reply state
+  let replyingTo = $state<ChatMessage | null>(null);
 
   // Helper to ensure MLS service exists
   function ensureMls(): IMlsService {
@@ -225,15 +241,39 @@
               // Check if it's a control message (JSON)
               try {
                 const parsed = JSON.parse(decrypted);
+                
                 if (parsed.type === 'groupRenamed' && parsed.newName) {
                   // Update group name locally
                   conversations.set(convoKey, { ...convo, name: parsed.newName });
                   if (storage) await saveConversation(convoKey);
                   log(`📝 Groupe renommé en "${parsed.newName}" par ${senderNorm}`);
-                  return true; // Don't display as a chat message
+                  return true;
+                }
+                
+                if (parsed.type === 'reaction' && parsed.messageId && parsed.emoji) {
+                  // Add reaction to message
+                  const reactions = messageReactions.get(parsed.messageId) || [];
+                  // Remove previous reaction from same user, add new one
+                  const filtered = reactions.filter((r) => r.userId !== senderNorm);
+                  filtered.push({ emoji: parsed.emoji, userId: senderNorm });
+                  messageReactions.set(parsed.messageId, filtered);
+                  log(`👍 ${senderNorm} a réagi avec ${parsed.emoji}`);
+                  return true;
+                }
+                
+                if (parsed.type === 'reply' && parsed.content) {
+                  // Reply message with quote
+                  await addMessageToChat(senderNorm, parsed.content, convoKey, parsed.replyTo);
+                  return true;
+                }
+                
+                if (parsed.type === 'text' && parsed.content) {
+                  // Standard text message (new format)
+                  await addMessageToChat(senderNorm, parsed.content, convoKey);
+                  return true;
                 }
               } catch {
-                // Not JSON or not a control message → treat as regular message
+                // Not JSON or not a control message → treat as plain text (legacy)
               }
               await addMessageToChat(senderNorm, decrypted, convoKey);
             }
@@ -454,13 +494,30 @@
         contactName: meta.id,
         name: meta.name,
         groupId: meta.groupId,
-        messages: storedMessages.map((m) => ({
-          id: m.id,
-          senderId: m.senderId,
-          content: m.content,
-          timestamp: new Date(m.timestamp),
-          isOwn: m.senderId.toLowerCase() === userId.toLowerCase(),
-        })),
+        messages: storedMessages.map((m) => {
+          let content = m.content;
+          let replyTo: ChatMessage['replyTo'] = undefined;
+          
+          // Try to parse JSON (new format with replyTo)
+          try {
+            const parsed = JSON.parse(m.content);
+            if (parsed.content) {
+              content = parsed.content;
+              replyTo = parsed.replyTo;
+            }
+          } catch {
+            // Legacy plain text format
+          }
+          
+          return {
+            id: m.id,
+            senderId: m.senderId,
+            content,
+            timestamp: new Date(m.timestamp),
+            isOwn: m.senderId.toLowerCase() === userId.toLowerCase(),
+            replyTo,
+          };
+        }),
         isReady: meta.isReady,
         mlsStateHex: null,
       });
@@ -665,7 +722,12 @@
   }
 
   // --- Messages & UI ---
-  async function addMessageToChat(senderId: string, content: string, contactName: string) {
+  async function addMessageToChat(
+    senderId: string,
+    content: string,
+    contactName: string,
+    replyTo?: { id: string; senderId: string; content: string }
+  ) {
     const normalized = contactName.toLowerCase();
     const convo = conversations.get(normalized);
     if (!convo) return;
@@ -678,6 +740,7 @@
       content,
       timestamp: new Date(),
       isOwn,
+      replyTo,
     };
 
     conversations.set(normalized, {
@@ -686,14 +749,16 @@
     });
 
     // Persist message to DB (encrypted with PIN)
+    // Store as JSON to preserve replyTo metadata
     if (storage) {
       try {
+        const storageContent = JSON.stringify({ content, replyTo });
         await storage.saveMessage(
           {
             id: newMsg.id,
             conversationId: normalized,
             senderId: newMsg.senderId,
-            content: newMsg.content,
+            content: storageContent,
             timestamp: newMsg.timestamp.getTime(),
           },
           pin
@@ -717,12 +782,38 @@
 
     messageText = '';
     sendError = '';
+    
     try {
       const mlsService = ensureMls();
-      await mlsService.sendMessage(convo.groupId, text);
+      
+      // Build payload based on reply state
+      let payload: string;
+      let replyToData: ChatMessage['replyTo'] = undefined;
+      
+      if (replyingTo) {
+        payload = JSON.stringify({
+          type: 'reply',
+          content: text,
+          replyTo: {
+            id: replyingTo.id,
+            senderId: replyingTo.senderId,
+            content: replyingTo.content.slice(0, 100), // preview only
+          },
+        });
+        replyToData = {
+          id: replyingTo.id,
+          senderId: replyingTo.senderId,
+          content: replyingTo.content.slice(0, 100),
+        };
+        replyingTo = null; // Clear reply state
+      } else {
+        payload = JSON.stringify({ type: 'text', content: text });
+      }
+      
+      await mlsService.sendMessage(convo.groupId, payload);
       const stateBytes = await mlsService.saveState(pin);
       localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
-      await addMessageToChat(userId, text, selectedContact);
+      await addMessageToChat(userId, text, selectedContact, replyToData);
     } catch (_e: unknown) {
       const msg = _e instanceof Error ? _e.message : String(_e);
       log(`Erreur envoi: ${msg}`);
@@ -738,6 +829,37 @@
         sendError = `Échec de l'envoi : ${msg}`;
       }
     }
+  }
+
+  async function handleAddReaction(messageId: string, emoji: string) {
+    if (!selectedContact) return;
+    const convo = conversations.get(selectedContact);
+    if (!convo?.isReady) return;
+
+    try {
+      const mlsService = ensureMls();
+      const payload = JSON.stringify({ type: 'reaction', messageId, emoji });
+      await mlsService.sendMessage(convo.groupId, payload);
+      const stateBytes = await mlsService.saveState(pin);
+      localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
+      
+      // Update local reactions immediately
+      const reactions = messageReactions.get(messageId) || [];
+      const filtered = reactions.filter((r) => r.userId !== userId.toLowerCase());
+      filtered.push({ emoji, userId: userId.toLowerCase() });
+      messageReactions.set(messageId, filtered);
+    } catch (e) {
+      console.warn('Failed to send reaction:', e);
+    }
+  }
+
+  function handleReply(message: ChatMessage) {
+    replyingTo = message;
+    // Focus composer (will be handled by ChatComposer)
+  }
+
+  function cancelReply() {
+    replyingTo = null;
   }
 
   function _handleKeydown(_e: KeyboardEvent) {
@@ -1115,6 +1237,11 @@
         onGroupRename={handleRenameGroup}
         onGroupDelete={handleDeleteGroup}
         onGroupRemoveMember={handleRemoveMember}
+        {messageReactions}
+        {replyingTo}
+        onReply={handleReply}
+        onReact={handleAddReaction}
+        onCancelReply={cancelReply}
       />
 
       {#if showLogs}

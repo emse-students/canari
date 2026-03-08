@@ -12,6 +12,16 @@
     content: string;
     timestamp: Date;
     isOwn: boolean;
+    replyTo?: {
+      id: string;
+      senderId: string;
+      content: string;
+    };
+  }
+
+  interface MessageReaction {
+    emoji: string;
+    userId: string;
   }
 
   interface Conversation {
@@ -39,6 +49,12 @@
     onGroupRename?: (name: string) => void;
     onGroupDelete?: () => void;
     onGroupRemoveMember?: (userId: string) => void;
+    // Reactions & replies
+    messageReactions?: Map<string, MessageReaction[]>;
+    replyingTo?: ChatMessage | null;
+    onReply?: (message: ChatMessage) => void;
+    onReact?: (messageId: string, emoji: string) => void;
+    onCancelReply?: () => void;
   }
 
   let {
@@ -56,6 +72,11 @@
     onGroupRename,
     onGroupDelete,
     onGroupRemoveMember,
+    messageReactions,
+    replyingTo,
+    onReply,
+    onReact,
+    onCancelReply,
   }: Props = $props();
 
   let chatContainer = $state<HTMLDivElement>();
@@ -91,10 +112,15 @@
     <div bind:this={chatContainer} class="flex-1 overflow-y-auto px-6 py-6 flex flex-col gap-2">
       {#each conversation.messages as msg (msg.id)}
         <MessageBubble
+          messageId={msg.id}
           senderId={msg.senderId}
           content={msg.content}
           timestamp={msg.timestamp}
           isOwn={msg.isOwn}
+          replyTo={msg.replyTo}
+          reactions={messageReactions?.get(msg.id) || []}
+          onReply={onReply ? () => onReply?.(msg) : undefined}
+          onReact={onReact}
         />
       {/each}
     </div>
@@ -107,7 +133,13 @@
       </div>
     {/if}
 
-    <ChatComposer {messageText} {onMessageChange} {onSend} />
+    <ChatComposer
+      {messageText}
+      {onMessageChange}
+      {onSend}
+      {replyingTo}
+      {onCancelReply}
+    />
   {:else}
     <EmptyState
       icon={ShieldCheck}
