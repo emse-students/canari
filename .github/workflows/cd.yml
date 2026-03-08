@@ -52,13 +52,10 @@ jobs:
         working-directory: frontend/mls-wasm
         run: wasm-pack build --target web --out-dir ../src/lib/wasm
 
-      - name: Create frontend .env with JWT_SECRET
+      - name: Create frontend .env
         working-directory: frontend
-        env:
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
         run: |
-          echo "VITE_JWT_SECRET=${JWT_SECRET}" > .env
-          echo "VITE_GATEWAY_URL=wss://${{ env.DOMAIN }}/ws" >> .env
+          echo "VITE_GATEWAY_URL=wss://${{ env.DOMAIN }}/ws" > .env
           echo "VITE_DELIVERY_URL=https://${{ env.DOMAIN }}/mls-api" >> .env
 
       - name: Build frontend
@@ -82,6 +79,9 @@ jobs:
     strategy:
       matrix:
         service:
+          - name: auth-service
+            context: .
+            dockerfile: ./infrastructure/local/Dockerfile.auth-service
           - name: chat-gateway
             context: .
             dockerfile: ./infrastructure/local/Dockerfile.chat-gateway

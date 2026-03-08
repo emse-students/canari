@@ -100,45 +100,20 @@
 
   // --- Auth & Initialisation ---
 
-  async function generateDevToken(uid: string) {
-    // ⚠️ Secret must be configured in .env file, NOT hardcoded
-    const secret = import.meta.env.VITE_JWT_SECRET;
-    if (!secret) {
-      throw new Error('VITE_JWT_SECRET not configured in .env');
-    }
-
-    // Check if crypto.subtle is available
-    // Note: With Cloudflare Tunnel handling HTTPS, this should always be available
-    if (typeof crypto === 'undefined' || !crypto.subtle) {
-      // Log warning but provide helpful error message
-      console.error('crypto.subtle is not available - HTTPS required');
-      throw new Error(
-        'Erreur de sécurité : crypto.subtle indisponible.\n\n' +
-          "Cause probable : l'application n'est pas accédée via HTTPS.\n" +
-          'Vérifiez que Cloudflare Tunnel est actif et que vous accédez via https://canari-emse.fr\n\n' +
-          'Pour les développeurs : crypto.subtle nécessite un contexte sécurisé (HTTPS ou localhost).'
-      );
-    }
-
-    const header = JSON.stringify({ alg: 'HS256', typ: 'JWT' });
-    const payload = JSON.stringify({
-      sub: uid,
-      exp: Math.floor(Date.now() / 1000) + 3600 * 24,
+  async function fetchAuthToken(uid: string): Promise<string> {
+    const authUrl =
+      import.meta.env.VITE_AUTH_URL ||
+      (typeof window !== 'undefined' ? window.location.origin : '');
+    const res = await fetch(`${authUrl}/auth/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: uid }),
     });
-    const b64url = (str: string) =>
-      btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-    const unsignedToken = `${b64url(header)}.${b64url(payload)}`;
-    const enc = new TextEncoder();
-    const key = await crypto.subtle.importKey(
-      'raw',
-      enc.encode(secret),
-      { name: 'HMAC', hash: 'SHA-256' },
-      false,
-      ['sign']
-    );
-    const signature = await crypto.subtle.sign('HMAC', key, enc.encode(unsignedToken));
-    const sigB64 = b64url(String.fromCharCode(...new Uint8Array(signature)));
-    return `${unsignedToken}.${sigB64}`;
+    if (!res.ok) {
+      throw new Error(`Auth service error: ${res.status} ${res.statusText}`);
+    }
+    const data = await res.json() as { token: string };
+    return data.token;
   }
 
   async function handleLogin() {
@@ -249,7 +224,7 @@
 
       log('Connexion Gateway...');
       try {
-        const token = await generateDevToken(userId);
+        const token = await fetchAuthToken(userId);
         await mlsService.connect(token);
         isWsConnected = true;
         log('Connecté au réseau !');

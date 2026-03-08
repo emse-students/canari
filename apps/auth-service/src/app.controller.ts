@@ -1,12 +1,21 @@
-import { Controller, Get } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Post } from '@nestjs/common';
 import { AppService } from './app.service';
 
-@Controller()
+@Controller('auth')
 export class AppController {
   constructor(private readonly appService: AppService) {}
 
-  @Get()
-  getHello(): string {
-    return this.appService.getHello();
+  @Get('health')
+  health(): string {
+    return 'OK';
+  }
+
+  @Post('token')
+  getToken(@Body() body: { userId?: string }): { token: string } {
+    const userId = body?.userId?.trim()?.toLowerCase();
+    if (!userId) {
+      throw new BadRequestException('userId is required');
+    }
+    return this.appService.generateToken(userId);
   }
 }
