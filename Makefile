@@ -57,13 +57,37 @@ else
 endif
 
 # ── Installation des dépendances ──────────────────────────────────────────────
-install: install-bun install-frontend install-services
+install: install-node install-bun install-frontend install-services
 
 ifeq ($(OS),Windows_NT)
+install-node:
+	@echo "${BLUE}ℹ️ Node.js/npm auto-install skipped on Windows${RESET}"
+	@echo "${BLUE}ℹ️ Install manually from: https://nodejs.org/${RESET}"
+
 install-bun:
 	@echo "${BLUE}ℹ️ Bun auto-install skipped on Windows${RESET}"
 	@echo "${BLUE}ℹ️ Install manually if needed: https://bun.sh/docs/installation${RESET}"
 else
+install-node:
+	@echo "${BLUE}📦 Checking Node.js/npm installation...${RESET}"
+	@if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then \
+		echo "${GREEN}✅ Node.js already installed: $$(node --version)${RESET}"; \
+		echo "${GREEN}✅ npm already installed: $$(npm --version)${RESET}"; \
+	else \
+		echo "${BLUE}⬇️ Installing Node.js via nvm...${RESET}"; \
+		if [ ! -d "$$HOME/.nvm" ]; then \
+			curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash; \
+			export NVM_DIR="$$HOME/.nvm"; \
+			[ -s "$$NVM_DIR/nvm.sh" ] && \. "$$NVM_DIR/nvm.sh"; \
+		else \
+			export NVM_DIR="$$HOME/.nvm"; \
+			[ -s "$$NVM_DIR/nvm.sh" ] && \. "$$NVM_DIR/nvm.sh"; \
+		fi; \
+		nvm install --lts; \
+		nvm use --lts; \
+		echo "${YELLOW}⚠ Open a new shell or run: source ~/.bashrc${RESET}"; \
+	fi
+
 install-bun:
 	@echo "${BLUE}📦 Checking Bun installation...${RESET}"
 	@if command -v bun >/dev/null 2>&1; then \
@@ -85,7 +109,11 @@ else
 			$$HOME/.bun/bin/bun install; \
 		elif command -v bun >/dev/null 2>&1; then \
 			bun install; \
+		elif command -v npm >/dev/null 2>&1; then \
+			npm install --legacy-peer-deps; \
 		else \
+			export NVM_DIR="$$HOME/.nvm"; \
+			[ -s "$$NVM_DIR/nvm.sh" ] && \. "$$NVM_DIR/nvm.sh"; \
 			npm install --legacy-peer-deps; \
 		fi \
 	)
@@ -99,7 +127,11 @@ else
 			$$HOME/.bun/bin/bunx svelte-kit sync; \
 		elif command -v bunx >/dev/null 2>&1; then \
 			bunx svelte-kit sync; \
+		elif command -v npx >/dev/null 2>&1; then \
+			npx svelte-kit sync; \
 		else \
+			export NVM_DIR="$$HOME/.nvm"; \
+			[ -s "$$NVM_DIR/nvm.sh" ] && \. "$$NVM_DIR/nvm.sh"; \
 			npx svelte-kit sync; \
 		fi \
 	)
@@ -116,7 +148,11 @@ else
 			$$HOME/.bun/bin/bun install; \
 		elif command -v bun >/dev/null 2>&1; then \
 			bun install; \
+		elif command -v npm >/dev/null 2>&1; then \
+			npm install; \
 		else \
+			export NVM_DIR="$$HOME/.nvm"; \
+			[ -s "$$NVM_DIR/nvm.sh" ] && \. "$$NVM_DIR/nvm.sh"; \
 			npm install; \
 		fi \
 	)
@@ -130,7 +166,11 @@ else
 			$$HOME/.bun/bin/bun install; \
 		elif command -v bun >/dev/null 2>&1; then \
 			bun install; \
+		elif command -v npm >/dev/null 2>&1; then \
+			npm install; \
 		else \
+			export NVM_DIR="$$HOME/.nvm"; \
+			[ -s "$$NVM_DIR/nvm.sh" ] && \. "$$NVM_DIR/nvm.sh"; \
 			npm install; \
 		fi \
 	)
@@ -144,7 +184,11 @@ else
 			$$HOME/.bun/bin/bun install; \
 		elif command -v bun >/dev/null 2>&1; then \
 			bun install; \
+		elif command -v npm >/dev/null 2>&1; then \
+			npm install; \
 		else \
+			export NVM_DIR="$$HOME/.nvm"; \
+			[ -s "$$NVM_DIR/nvm.sh" ] && \. "$$NVM_DIR/nvm.sh"; \
 			npm install; \
 		fi \
 	)
@@ -158,7 +202,11 @@ else
 			$$HOME/.bun/bin/bun install; \
 		elif command -v bun >/dev/null 2>&1; then \
 			bun install; \
+		elif command -v npm >/dev/null 2>&1; then \
+			npm install; \
 		else \
+			export NVM_DIR="$$HOME/.nvm"; \
+			[ -s "$$NVM_DIR/nvm.sh" ] && \. "$$NVM_DIR/nvm.sh"; \
 			npm install; \
 		fi \
 	)
@@ -175,7 +223,11 @@ else
 			$$HOME/.bun/bin/bun install; \
 		elif command -v bun >/dev/null 2>&1; then \
 			bun install; \
+		elif command -v npm >/dev/null 2>&1; then \
+			npm install --legacy-peer-deps; \
 		else \
+			export NVM_DIR="$$HOME/.nvm"; \
+			[ -s "$$NVM_DIR/nvm.sh" ] && \. "$$NVM_DIR/nvm.sh"; \
 			npm install --legacy-peer-deps; \
 		fi \
 	)
@@ -265,7 +317,11 @@ else
 			$$HOME/.bun/bin/bun run build; \
 		elif command -v bun >/dev/null 2>&1; then \
 			bun run build; \
+		elif command -v npm >/dev/null 2>&1; then \
+			npm run build; \
 		else \
+			export NVM_DIR="$$HOME/.nvm"; \
+			[ -s "$$NVM_DIR/nvm.sh" ] && \. "$$NVM_DIR/nvm.sh"; \
 			npm run build; \
 		fi \
 	)
