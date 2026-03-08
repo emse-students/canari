@@ -1,4 +1,4 @@
-.PHONY: all install install-bun install-frontend install-services install-hooks setup-env setup-env-prod build-frontend nginx-install reload-services test test-libs test-gateway test-history clean nginx-uninstall nginx-https
+.PHONY: all install install-node install-bun install-wasm-pack install-frontend install-services install-hooks setup-env setup-env-prod build-frontend nginx-install reload-services test test-libs test-gateway test-history clean nginx-uninstall nginx-https
 
 # Cible par défaut : installation complète et déploiement
 .DEFAULT_GOAL := all
@@ -57,7 +57,7 @@ else
 endif
 
 # ── Installation des dépendances ──────────────────────────────────────────────
-install: install-node install-bun install-frontend install-services
+install: install-node install-bun install-wasm-pack install-frontend install-services
 
 ifeq ($(OS),Windows_NT)
 install-node:
@@ -67,6 +67,10 @@ install-node:
 install-bun:
 	@echo "${BLUE}ℹ️ Bun auto-install skipped on Windows${RESET}"
 	@echo "${BLUE}ℹ️ Install manually if needed: https://bun.sh/docs/installation${RESET}"
+
+install-wasm-pack:
+	@echo "${BLUE}ℹ️ wasm-pack auto-install skipped on Windows${RESET}"
+	@echo "${BLUE}ℹ️ Install manually: cargo install wasm-pack${RESET}"
 else
 install-node:
 	@echo "${BLUE}📦 Checking Node.js/npm installation...${RESET}"
@@ -96,6 +100,21 @@ install-bun:
 		echo "${BLUE}⬇️ Installing Bun...${RESET}"; \
 		curl -fsSL https://bun.sh/install | bash; \
 		echo "${YELLOW}⚠ Open a new shell or run: export PATH=\"$$HOME/.bun/bin:$$PATH\"${RESET}"; \
+	fi
+
+install-wasm-pack:
+	@echo "${BLUE}📦 Checking wasm-pack installation...${RESET}"
+	@if command -v wasm-pack >/dev/null 2>&1; then \
+		echo "${GREEN}✅ wasm-pack already installed: $$(wasm-pack --version)${RESET}"; \
+	else \
+		echo "${BLUE}⬇️ Installing wasm-pack via cargo...${RESET}"; \
+		if command -v cargo >/dev/null 2>&1; then \
+			cargo install wasm-pack; \
+			echo "${GREEN}✅ wasm-pack installed successfully${RESET}"; \
+		else \
+			echo "${RED}❌ Error: Rust/cargo not found. Install from https://rustup.rs/${RESET}"; \
+			exit 1; \
+		fi; \
 	fi
 endif
 
