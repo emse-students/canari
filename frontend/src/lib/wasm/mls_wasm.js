@@ -28,6 +28,23 @@ export class WasmMlsClient {
         return takeFromExternrefTable0(ret[0]);
     }
     /**
+     * Add multiple members in a single commit (single epoch increment).
+     * `key_packages` is a JS Array of Uint8Array.
+     * Returns [commit: Uint8Array, welcome: Uint8Array, added_count: number].
+     * @param {string} group_id
+     * @param {Array<any>} key_packages
+     * @returns {Array<any>}
+     */
+    add_members_bulk(group_id, key_packages) {
+        const ptr0 = passStringToWasm0(group_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmmlsclient_add_members_bulk(this.__wbg_ptr, ptr0, len0, key_packages);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
      * @param {string} group_id
      */
     create_group(group_id) {
@@ -245,7 +262,15 @@ function __wbg_get_imports() {
         __wbg_getRandomValues_c44a50d8cfdaebeb: function() { return handleError(function (arg0, arg1) {
             arg0.getRandomValues(arg1);
         }, arguments); },
+        __wbg_get_unchecked_3d0f4b91c8eca4f0: function(arg0, arg1) {
+            const ret = arg0[arg1 >>> 0];
+            return ret;
+        },
         __wbg_length_5855c1f289dfffc1: function(arg0) {
+            const ret = arg0.length;
+            return ret;
+        },
+        __wbg_length_a31e05262e09b7f8: function(arg0) {
             const ret = arg0.length;
             return ret;
         },
@@ -329,12 +354,17 @@ function __wbg_get_imports() {
         __wbg_wasm_bindings_log_6f7530ce66479727: function(arg0, arg1, arg2, arg3) {
             window.wasm_bindings_log(getStringFromWasm0(arg0, arg1), getStringFromWasm0(arg2, arg3));
         },
-        __wbindgen_cast_0000000000000001: function(arg0, arg1) {
+        __wbindgen_cast_0000000000000001: function(arg0) {
+            // Cast intrinsic for `F64 -> Externref`.
+            const ret = arg0;
+            return ret;
+        },
+        __wbindgen_cast_0000000000000002: function(arg0, arg1) {
             // Cast intrinsic for `Ref(Slice(U8)) -> NamedExternref("Uint8Array")`.
             const ret = getArrayU8FromWasm0(arg0, arg1);
             return ret;
         },
-        __wbindgen_cast_0000000000000002: function(arg0, arg1) {
+        __wbindgen_cast_0000000000000003: function(arg0, arg1) {
             // Cast intrinsic for `Ref(String) -> Externref`.
             const ret = getStringFromWasm0(arg0, arg1);
             return ret;
@@ -483,10 +513,10 @@ if (!('encodeInto' in cachedTextEncoder)) {
 
 let WASM_VECTOR_LEN = 0;
 
-let _wasmModule, wasm;
+let wasmModule, wasm;
 function __wbg_finalize_init(instance, module) {
     wasm = instance.exports;
-    _wasmModule = module;
+    wasmModule = module;
     cachedDataViewMemory0 = null;
     cachedUint8ArrayMemory0 = null;
     wasm.__wbindgen_start();

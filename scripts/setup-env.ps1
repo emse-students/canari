@@ -25,7 +25,7 @@ $ErrorActionPreference = "Stop"
 # Setup
 # ──────────────────────────────────────────────────────────────────────────────
 
-$ScriptDir = Split-Path -Parent $PSScriptRoot
+$ScriptDir = $PSScriptRoot
 $ProjectRoot = Split-Path -Parent $ScriptDir
 $FrontendDir = Join-Path $ProjectRoot "frontend"
 $InfraDir = Join-Path $ProjectRoot "infrastructure"
@@ -66,7 +66,7 @@ Examples:
     exit 0
 }
 
-function Generate-Secret {
+function New-Secret {
     # Generate 64-char hex string (32 bytes)
     $bytes = New-Object byte[] 32
     $rng = [System.Security.Cryptography.RNGCryptoServiceProvider]::new()
@@ -75,9 +75,9 @@ function Generate-Secret {
     return -join $secret
 }
 
-function Validate-Secret {
+function Test-Secret {
     param([string]$Secret)
-    
+
     if ($Secret -match "^[0-9a-f]{64}$") {
         return $true
     }
@@ -89,11 +89,11 @@ function Read-EnvVar {
         [string]$File,
         [string]$Var
     )
-    
+
     if (-not (Test-Path $File)) {
         return ""
     }
-    
+
     $line = Get-Content $File | Where-Object { $_ -match "^${Var}=" } | Select-Object -First 1
     if ($line) {
         return $line -replace "^${Var}=", ""
@@ -107,34 +107,37 @@ function Write-EnvVar {
         [string]$Var,
         [string]$Value
     )
-    
+
     if (-not (Test-Path $File)) {
         "$Var=$Value" | Add-Content $File
         return
     }
-    
-    $content = Get-Content $File
-    $found = $false
-    
-    $newContent = $content | ForEach-Object {
-        if ($_ -match "^${Var}=") {
+
+    $content = Get-Content $File -Raw
+
+    if ($content -match "(?m)^${Var}=") {
+        $updatedContent = [System.Text.RegularExpressions.Regex]::Replace(
+            $content,
+            "(?m)^${Var}=.*$",
             "${Var}=${Value}"
-            $found = $true
-        } else {
-            $_
+        )
+    }
+    else {
+        $separator = "`n"
+        if ($content -and -not $content.EndsWith("`n")) {
+            $updatedContent = "${content}${separator}${Var}=${Value}${separator}"
+        }
+        else {
+            $updatedContent = "${content}${Var}=${Value}${separator}"
         }
     }
-    
-    if (-not $found) {
-        $newContent += "${Var}=${Value}"
-    }
-    
-    $newContent | Set-Content $File
+
+    $updatedContent | Set-Content $File -NoNewline
 }
 
 function Backup-IfExists {
     param([string]$File)
-    
+
     if ((Test-Path $File) -and -not $NoBackup) {
         $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
         $backup = "${File}.backup_${timestamp}"
@@ -158,13 +161,12 @@ Write-Info ""
 
 # Check prerequisites
 Write-Info "Checking prerequisites..."
-try {
-    $opensslVersion = openssl version 2>$null
-    Write-Success "OpenSSL found: $opensslVersion"
-} catch {
-    Write-Error "OpenSSL not found. Install OpenSSL and try again."
+if (-not (Test-Path $FrontendDir) -or -not (Test-Path $InfraDir)) {
+    Write-Error "Project structure not found from script path."
+    Write-Error "Expected folders: '$FrontendDir' and '$InfraDir'"
     exit 1
 }
+Write-Success "Project structure detected"
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Frontend Setup
@@ -184,7 +186,8 @@ if ((-not (Test-Path $FrontendEnv)) -and -not $SyncOnly) {
     Backup-IfExists $FrontendEnv
     Copy-Item $FrontendExample $FrontendEnv
     Write-Success "Frontend .env created"
-} elseif (Test-Path $FrontendEnv) {
+}
+elseif (Test-Path $FrontendEnv) {
     Write-Success "Frontend .env already exists"
 }
 
@@ -206,7 +209,8 @@ if ((-not (Test-Path $InfraEnv)) -and -not $SyncOnly) {
     Backup-IfExists $InfraEnv
     Copy-Item $InfraExample $InfraEnv
     Write-Success "Infrastructure .env created"
-} elseif (Test-Path $InfraEnv) {
+}
+elseif (Test-Path $InfraEnv) {
     Write-Success "Infrastructure .env already exists"
 }
 
@@ -230,7 +234,8 @@ if (Test-Path $InfraEnv) {
 $ShouldGenerate = $false
 if ([string]::IsNullOrEmpty($FrontendSecret) -or $FrontendSecret -eq "dev_secret_change_me_in_env_file_never_expose") {
     $ShouldGenerate = $true
-} elseif (-not (Validate-Secret $FrontendSecret)) {
+}
+elseif (-not (Test-Secret $FrontendSecret)) {
     Write-Warn "Frontend secret is not a valid 64-char hex string"
     $ShouldGenerate = $true
 }
@@ -241,25 +246,27 @@ if ($ShouldGenerate) {
         Write-Error "Set JWT_SECRET in both .env files and retry with -Prod"
         exit 1
     }
-    
+
     Write-Info "Generating new JWT secret..."
-    $NewSecret = Generate-Secret
-    
-    if (-not (Validate-Secret $NewSecret)) {
+    $NewSecret = New-Secret
+
+    if (-not (Test-Secret $NewSecret)) {
         Write-Error "Failed to generate valid secret"
         exit 1
     }
-    
+
     Write-Success "Generated new secret: $($NewSecret.Substring(0, 16))..."
     $FrontendSecret = $NewSecret
     $InfraSecret = $NewSecret
-} else {
+}
+else {
     # Secrets exist, check if they're in sync
     if ($FrontendSecret -ne $InfraSecret) {
         if (-not $Prod) {
             Write-Info "Frontend and infrastructure secrets don't match, synchronizing..."
             $InfraSecret = $FrontendSecret
-        } else {
+        }
+        else {
             Write-Error "Frontend and infrastructure JWT_SECRET don't match!"
             Write-Error "Frontend: $($FrontendSecret.Substring(0, 16))..."
             Write-Error "Infrastructure: $($InfraSecret.Substring(0, 16))..."
@@ -288,26 +295,30 @@ Write-Info "Validating configuration..."
 # Check frontend required vars
 if (Test-Path $FrontendEnv) {
     $FrontendCheck = Read-EnvVar $FrontendEnv "VITE_JWT_SECRET"
-    if (Validate-Secret $FrontendCheck) {
+    if (Test-Secret $FrontendCheck) {
         Write-Success "Frontend VITE_JWT_SECRET is valid"
-    } else {
+    }
+    else {
         Write-Error "Frontend VITE_JWT_SECRET is invalid or missing"
         exit 1
     }
-} else {
+}
+else {
     Write-Warn "Frontend .env not found (will be created on first use)"
 }
 
 # Check infrastructure required vars
 if (Test-Path $InfraEnv) {
     $InfraCheck = Read-EnvVar $InfraEnv "JWT_SECRET"
-    if (Validate-Secret $InfraCheck) {
+    if (Test-Secret $InfraCheck) {
         Write-Success "Infrastructure JWT_SECRET is valid"
-    } else {
+    }
+    else {
         Write-Error "Infrastructure JWT_SECRET is invalid or missing"
         exit 1
     }
-} else {
+}
+else {
     Write-Warn "Infrastructure .env not found (will be created on first use)"
 }
 
@@ -317,7 +328,8 @@ if ((Test-Path $FrontendEnv) -and (Test-Path $InfraEnv)) {
     $InfraSecretCheck = Read-EnvVar $InfraEnv "JWT_SECRET"
     if ($FeSecret -eq $InfraSecretCheck) {
         Write-Success "✓ JWT secrets are synchronized"
-    } else {
+    }
+    else {
         Write-Error "JWT secrets are NOT synchronized!"
         exit 1
     }

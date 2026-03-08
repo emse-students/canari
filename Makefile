@@ -79,7 +79,7 @@ install-services:
 
 install-hooks:
 	@echo "${BLUE}🪝 Installing Git hooks via Husky...${RESET}"
-	@cd frontend && bun install 2>/dev/null || npm install
+	@cd frontend && (bun install 2>$(NULL_DEV) || npm install --legacy-peer-deps)
 	@echo "${GREEN}✅ Git hooks configurés${RESET}"
 
 # ── Environment & Secrets Management ──────────────────────────────────────────
@@ -122,6 +122,14 @@ test-history:
 	@cd apps/chat-delivery-service && npm test -- --coverage
 
 # ── Nginx ─────────────────────────────────────────────────────────────────────
+ifeq ($(OS),Windows_NT)
+nginx-install:
+	@echo "${BLUE}ℹ️ Skipping Nginx install on Windows (sudo/nginx not available)${RESET}"
+	@echo "${BLUE}ℹ️ Use local Docker services instead: make run-services${RESET}"
+
+nginx-uninstall:
+	@echo "${BLUE}ℹ️ Skipping Nginx uninstall on Windows${RESET}"
+else
 nginx-install:
 	@echo "${BLUE}🔧 Deploying frontend build to $(WWW_DIR)...${RESET}"
 	@sudo mkdir -p $(WWW_DIR)
@@ -144,6 +152,7 @@ nginx-uninstall:
 	@sudo rm -f $(NGINX_SITES_ENABLED)/$(NGINX_CONF_NAME) $(NGINX_SITES_AVAIL)/$(NGINX_CONF_NAME)
 	@sudo nginx -t && sudo systemctl reload nginx
 	@echo "${GREEN}✅ Config Nginx supprimée${RESET}"
+endif
 
 build-frontend:
 	@echo "${BLUE}🚀 Building frontend...${RESET}"

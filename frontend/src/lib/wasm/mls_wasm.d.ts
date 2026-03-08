@@ -1,8 +1,16 @@
+/* tslint:disable */
+/* eslint-disable */
 
 export class WasmMlsClient {
     free(): void;
     [Symbol.dispose](): void;
     add_member(group_id: string, key_package_bytes: Uint8Array): Array<any>;
+    /**
+     * Add multiple members in a single commit (single epoch increment).
+     * `key_packages` is a JS Array of Uint8Array.
+     * Returns [commit: Uint8Array, welcome: Uint8Array, added_count: number].
+     */
+    add_members_bulk(group_id: string, key_packages: Array<any>): Array<any>;
     create_group(group_id: string): void;
     generate_key_package(): Uint8Array;
     get_groups(): Array<any>;
@@ -28,6 +36,7 @@ export interface InitOutput {
     readonly encrypt_with_pin: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly init_logger: () => void;
     readonly wasmmlsclient_add_member: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
+    readonly wasmmlsclient_add_members_bulk: (a: number, b: number, c: number, d: any) => [number, number, number];
     readonly wasmmlsclient_create_group: (a: number, b: number, c: number) => [number, number];
     readonly wasmmlsclient_generate_key_package: (a: number) => [number, number, number, number];
     readonly wasmmlsclient_get_groups: (a: number) => any;
