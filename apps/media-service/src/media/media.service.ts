@@ -21,7 +21,14 @@ export class MediaService {
   }
 
   async download(mediaId: string): Promise<Buffer | null> {
-    return this.storage.get(mediaId);
+    const stream = await this.storage.get(mediaId);
+    if (!stream) return null;
+
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) {
+      chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+    }
+    return Buffer.concat(chunks);
   }
 
   async remove(mediaId: string): Promise<void> {
@@ -37,7 +44,7 @@ export class MediaService {
     return uploadId;
   }
 
-  async appendChunk(uploadId: string, chunk: Buffer, partIndex: number): Promise<void> {
+  async appendChunk(uploadId: string, chunk: Buffer): Promise<void> {
     // We assume sequential chunk upload for simplicity. 
     // The client should await each part or we save per part_index and combine.
     // Given the context, sequential client uploads are easiest.

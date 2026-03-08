@@ -64,6 +64,13 @@ export class StorageService implements OnModuleInit {
       'x-amz-meta-encrypted': 'true',
     });
   }
+
+  /**
+   * Retrieve an encrypted blob as a stream. Returns null if not found.
+   */
+  async get(objectId: string): Promise<Readable | null> {
+    try {
+      return await this.client.getObject(this.bucket, objectId);
     } catch (err: any) {
       if (err?.code === 'NoSuchKey') return null;
       throw err;
