@@ -33,6 +33,9 @@
     onInviteMember: () => void;
     onBack?: () => void;
     isHidden?: boolean;
+    authToken?: string;
+    onFileSelected?: (file: File) => void;
+    isUploading?: boolean;
   }
 
   let {
@@ -45,6 +48,9 @@
     onInviteMember,
     onBack,
     isHidden = false,
+    authToken = '',
+    onFileSelected,
+    isUploading = false,
   }: Props = $props();
 
   let chatContainer = $state<HTMLDivElement>();
@@ -85,11 +91,12 @@
           content={msg.content}
           timestamp={msg.timestamp}
           isOwn={msg.isOwn}
+          {authToken}
         />
       {/each}
     </div>
 
-    <ChatComposer {messageText} {onMessageChange} {onSend} />
+    <ChatComposer {messageText} {onMessageChange} {onSend} onFileSelected={onFileSelected} {isUploading} />
   {:else}
     <EmptyState
       icon={ShieldCheck}

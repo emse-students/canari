@@ -4,6 +4,7 @@
   import { getStorage } from '$lib/db';
   import type { IStorage } from '$lib/db';
   import { exportBackup, importBackup } from '$lib/backup';
+  import { MediaService } from '$lib/media';
   import { onMount, tick } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { fade } from 'svelte/transition';
@@ -69,6 +70,12 @@
   let storage: IStorage | null = $state(null);
   let isExporting = $state(false);
   let isImporting = $state(false);
+
+  // Media
+  const mediaService = new MediaService();
+  let authToken = $state('');
+  let pendingMediaFile = $state<File | null>(null);
+  let isUploadingMedia = $state(false);
 
   // Helper to ensure MLS service exists
   function ensureMls(): IMlsService {
@@ -138,7 +145,9 @@
     );
     const signature = await crypto.subtle.sign('HMAC', key, enc.encode(unsignedToken));
     const sigB64 = b64url(String.fromCharCode(...new Uint8Array(signature)));
-    return `${unsignedToken}.${sigB64}`;
+    const token = `${unsignedToken}.${sigB64}`;
+    authToken = token;
+    return token;
   }
 
   async function handleLogin() {
@@ -656,23 +665,56 @@
     });
   }
 
+  function handleFileSelected(file: File) {
+    pendingMediaFile = file;
+    // Trigger send immediately (file-only message)
+    handleSendChat();
+  }
+
   async function handleSendChat() {
     const text = messageText.trim();
-    if (!text || !selectedContact) return;
+    const hasMedia = pendingMediaFile !== null;
+    if (!text && !hasMedia) return;
+    if (!selectedContact) return;
     const convo = conversations.get(selectedContact);
     if (!convo?.isReady) return;
 
-    messageText = '';
-    try {
-      const mlsService = ensureMls();
-      await mlsService.sendMessage(convo.groupId, text);
-      const stateBytes = await mlsService.saveState(pin);
-      localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
-      await addMessageToChat(userId, text, selectedContact);
-    } catch (_e: unknown) {
-      const msg = _e instanceof Error ? _e.message : String(_e);
-      log(`Erreur envoi: ${msg}`);
-      messageText = text;
+    const mlsService = ensureMls();
+
+    // ── Send media ──────────────────────────────────────────────────────────
+    if (hasMedia) {
+      const file = pendingMediaFile!;
+      pendingMediaFile = null;
+      isUploadingMedia = true;
+      try {
+        const ref = await mediaService.encryptAndUpload(file, authToken);
+        const payload = JSON.stringify(ref);
+        await mlsService.sendMessage(convo.groupId, payload);
+        const stateBytes = await mlsService.saveState(pin);
+        localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
+        await addMessageToChat(userId, payload, selectedContact);
+      } catch (_e: unknown) {
+        const msg = _e instanceof Error ? _e.message : String(_e);
+        log(`Erreur envoi media: ${msg}`);
+        pendingMediaFile = file;
+      } finally {
+        isUploadingMedia = false;
+      }
+    }
+
+    // ── Send text ────────────────────────────────────────────────────────────
+    if (text) {
+      messageText = '';
+      try {
+        await mlsService.sendMessage(convo.groupId, text);
+        const stateBytes = await mlsService.saveState(pin);
+        localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
+        await addMessageToChat(userId, text, selectedContact);
+      } catch (_e: unknown) {
+        const msg = _e instanceof Error ? _e.message : String(_e);
+        log(`Erreur envoi: ${msg}`);
+        messageText = text;
+      }
     }
   }
 
@@ -960,6 +1002,9 @@
         }}
         onBack={goBackToMenu}
         isHidden={mobileView === 'list'}
+        {authToken}
+        onFileSelected={handleFileSelected}
+        isUploading={isUploadingMedia}
       />
 
       {#if showLogs}

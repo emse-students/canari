@@ -104,6 +104,51 @@ services:
       mongo:
         condition: service_started
 
+  # ─────────────────────────────────────────────────────
+  # MinIO – S3-compatible object storage for encrypted media blobs
+  # ─────────────────────────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Web console (http://localhost:9001)
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ─────────────────────────────────────────────────────
+  # Media Service (NestJS) — port 3002
+  # Stores only opaque encrypted blobs; never sees decryption keys.
+  # ─────────────────────────────────────────────────────
+  media-service:
+    build:
+      context: ../../
+      dockerfile: infrastructure/local/Dockerfile.media-service
+    ports:
+      - "3002:3002"
+    environment:
+      PORT: "3002"
+      JWT_SECRET: "9a2f8c4e6b0d71f3e8b925b1234567890abcdef1234567890abcdef12345678"
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: "9000"
+      MINIO_USE_SSL: "false"
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET: canari-media
+      MEDIA_MAX_SIZE_MB: "50"
+    depends_on:
+      minio:
+        condition: service_healthy
+
 volumes:
   mongo_data:
   postgres_data:
+  minio_data:
