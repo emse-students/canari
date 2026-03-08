@@ -120,8 +120,9 @@
               : messageReactions?.[msg.id] || []}
           {@const prevGroup = index > 0 ? messageGroups[index - 1] : null}
           {@const prevMsg = prevGroup?.type === 'message' ? prevGroup.message : null}
-          {@const showSender = !msg.isOwn && (!prevMsg || prevMsg.senderId !== msg.senderId || prevMsg.isOwn)}
-          
+          {@const showSender =
+            !msg.isOwn && (!prevMsg || prevMsg.senderId !== msg.senderId || prevMsg.isOwn)}
+
           {#if msg.isSystem}
             <div class="flex justify-center my-2">
               <MessageBubble
@@ -149,14 +150,14 @@
                   {/if}
                 </div>
               {/if}
-              
+
               <div class="flex flex-col {msg.isOwn ? 'items-end' : 'items-start'} max-w-[75%]">
                 {#if showSender}
                   <div class="text-xs text-gray-500 px-2 mb-1 font-medium">
                     {msg.senderId}
                   </div>
                 {/if}
-                
+
                 <MessageBubble
                   messageId={msg.id}
                   senderId={msg.senderId}

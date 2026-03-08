@@ -32,7 +32,13 @@
     inviteMemberToGroup,
     startNewConversation as startConversation,
   } from '$lib/utils/mainChatGroupCreation';
-  import { sendChatMessage, addReaction, editMessage, deleteMessage, sendReadReceipt } from '$lib/utils/mainChatMessaging';
+  import {
+    sendChatMessage,
+    addReaction,
+    editMessage,
+    deleteMessage,
+    sendReadReceipt,
+  } from '$lib/utils/mainChatMessaging';
   import { migrateFromLocalStorage } from '$lib/utils/migration';
   import { MediaService } from '$lib/media';
   import LoginForm from './LoginForm.svelte';
@@ -135,9 +141,11 @@
     if (!convo || !convo.isReady) return;
 
     // Find messages we haven't read
-    const unread = convo.messages.filter(m => !m.isOwn && !m.isSystem && !(m.readBy || []).includes(userId.toLowerCase()));
+    const unread = convo.messages.filter(
+      (m) => !m.isOwn && !m.isSystem && !(m.readBy || []).includes(userId.toLowerCase())
+    );
     if (unread.length > 0) {
-      const ids = unread.map(m => m.id);
+      const ids = unread.map((m) => m.id);
       const currentContact = selectedContact;
       try {
         const mlsService = ensureMls();
@@ -145,7 +153,7 @@
           mlsService,
           userId,
           pin,
-          conversation: convo
+          conversation: convo,
         }).then(() => {
           // Optimistically mark as read locally
           const newMsgs = [...convo.messages];
@@ -160,7 +168,7 @@
             conversations.set(currentContact, { ...convo, messages: newMsgs });
           }
         });
-      } catch (_e) {
+      } catch {
         // Wait till next chance
       }
     }
@@ -587,7 +595,7 @@
 
     // Update locally
     const newMsgs = [...convo.messages];
-    const idx = newMsgs.findIndex(m => m.id === messageId);
+    const idx = newMsgs.findIndex((m) => m.id === messageId);
     if (idx !== -1) {
       newMsgs[idx] = { ...newMsgs[idx], isDeleted: true, content: 'Ce message a été supprimé.' };
       conversations.set(selectedContact, { ...convo, messages: newMsgs });
@@ -610,7 +618,7 @@
 
     // Update locally
     const newMsgs = [...convo.messages];
-    const idx = newMsgs.findIndex(m => m.id === messageId);
+    const idx = newMsgs.findIndex((m) => m.id === messageId);
     if (idx !== -1) {
       newMsgs[idx] = { ...newMsgs[idx], isEdited: true, content: text };
       conversations.set(selectedContact, { ...convo, messages: newMsgs });

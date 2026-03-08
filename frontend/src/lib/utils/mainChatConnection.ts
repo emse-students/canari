@@ -201,9 +201,9 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
 
             // Types media
             if (
-               parsed.type === 'image' || 
-               parsed.type === 'video' || 
-               parsed.type === 'audio' || 
+               parsed.type === 'image' ||
+               parsed.type === 'video' ||
+               parsed.type === 'audio' ||
                parsed.type === 'file'
             ) {
               await addMessageToChat(senderNorm, decrypted, convoKey, undefined, false, parsed.id);

@@ -74,9 +74,9 @@ export async function replayConversationHistory(params: {
               continue;
             }
           } else if (
-             parsed.type === 'image' || 
-             parsed.type === 'video' || 
-             parsed.type === 'audio' || 
+             parsed.type === 'image' ||
+             parsed.type === 'video' ||
+             parsed.type === 'audio' ||
              parsed.type === 'file'
           ) {
             await addMessageToChat(msg.sender_id, decrypted, contactName, undefined, false, parsed.id);
