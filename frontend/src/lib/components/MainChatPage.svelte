@@ -803,6 +803,23 @@
       await storage.clear();
       storage = null;
     }
+    // Delete all CanariDB_* IndexedDB databases so no trace remains after a reset.
+    if (!(window as any).__TAURI_INTERNALS__) {
+      const allDbs = await indexedDB.databases();
+      await Promise.all(
+        allDbs
+          .filter((db) => db.name?.startsWith('CanariDB'))
+          .map(
+            (db) =>
+              new Promise<void>((resolve) => {
+                const req = indexedDB.deleteDatabase(db.name!);
+                req.onsuccess = () => resolve();
+                req.onerror = () => resolve();
+                req.onblocked = () => resolve();
+              }),
+          ),
+      );
+    }
     localStorage.clear();
     logout();
   }
