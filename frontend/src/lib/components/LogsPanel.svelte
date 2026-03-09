@@ -43,7 +43,7 @@
 </script>
 
 <aside
-  class="w-80 bg-slate-900 text-green-400 flex flex-col z-50 border-l border-slate-800"
+  class="w-full h-full md:w-80 bg-slate-900 text-green-400 flex flex-col border-l border-slate-800"
   transition:slide={{ axis: 'x' }}
 >
   <!-- Header -->

@@ -202,6 +202,17 @@
       pin = savedPin;
       handleLogin();
     }
+
+    // Reconnexion automatique quand la page redevient visible (mobile/onglets)
+    // Les navigateurs mobiles ferment le WebSocket quand l'app est mise en arrière-plan.
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && isLoggedIn && !isWsConnected) {
+        log('Page visible de nouveau — reconnexion…');
+        void attemptReconnect();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   });
 
   function log(msg: string) {
@@ -970,6 +981,8 @@
       />
 
       {#if showLogs}
+        <!-- Sur mobile : overlay plein écran. Sur desktop : panneau latéral dans la flexrow. -->
+        <div class="fixed inset-0 z-50 flex flex-col md:relative md:inset-auto md:z-auto md:block">
         <LogsPanel
           logs={statusLog}
           onClose={() => (showLogs = false)}
@@ -982,6 +995,7 @@
           {incomingBytesHex}
           onIncomingBytesChange={(value) => (incomingBytesHex = value)}
         />
+        </div>
       {/if}
     </main>
   </div>
