@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ComponentType } from "svelte";
+  import type { ComponentType } from 'svelte';
 
   interface Props {
     icon: ComponentType;
@@ -11,9 +11,7 @@
   let { icon: Icon, iconSize = 64, title, description }: Props = $props();
 </script>
 
-<div
-  class="flex-1 flex flex-col items-center justify-center text-center p-8 text-text-muted"
->
+<div class="flex-1 flex flex-col items-center justify-center text-center p-8 text-text-muted">
   <div class="mb-4 opacity-20">
     <Icon size={iconSize} />
   </div>

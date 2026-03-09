@@ -8,16 +8,9 @@
     onClick: () => void;
   }
 
-  let {
-    contactName,
-    displayName,
-    lastMessage,
-    isReady,
-    isSelected,
-    onClick,
-  }: Props = $props();
+  let { contactName, displayName, lastMessage, isReady, isSelected, onClick }: Props = $props();
 
-  const avatarLetter = $derived(contactName[0]?.toUpperCase() || "?");
+  const avatarLetter = $derived(contactName[0]?.toUpperCase() || '?');
 </script>
 
 <button
@@ -45,7 +38,7 @@
       {/if}
     </div>
     <div class="text-sm text-text-muted truncate">
-      {lastMessage || "Canal E2E établi."}
+      {lastMessage || 'Canal E2E établi.'}
     </div>
   </div>
 </button>

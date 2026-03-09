@@ -91,7 +91,7 @@ export async function compressImage(
   }
 
   try {
-    return await new Promise((resolve, reject) => {
+    return await new Promise((resolve, _reject) => {
       const img = new Image();
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');

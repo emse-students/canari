@@ -48,7 +48,11 @@ if [[ "$PROD" == "false" ]]; then
         info "Création de frontend/.env depuis le template..."
         cp "$ROOT/frontend/.env.example" "$FRONTEND_ENV"
     fi
-    sed -i.bak "s|^VITE_JWT_SECRET=.*|VITE_JWT_SECRET=${JWT_SECRET}|" "$FRONTEND_ENV" && rm -f "${FRONTEND_ENV}.bak"
+    if grep -q '^VITE_JWT_SECRET=' "$FRONTEND_ENV"; then
+        sed -i.bak "s|^VITE_JWT_SECRET=.*|VITE_JWT_SECRET=${JWT_SECRET}|" "$FRONTEND_ENV" && rm -f "${FRONTEND_ENV}.bak"
+    else
+        echo "VITE_JWT_SECRET=${JWT_SECRET}" >> "$FRONTEND_ENV"
+    fi
     if grep -q '^VITE_MEDIA_URL=' "$FRONTEND_ENV"; then
         sed -i.bak "s|^VITE_MEDIA_URL=.*|VITE_MEDIA_URL=http://localhost:3002|" "$FRONTEND_ENV" && rm -f "${FRONTEND_ENV}.bak"
     else

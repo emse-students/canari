@@ -270,6 +270,15 @@
       storage = await getStorage(userId);
       log('Base de données locale initialisée.');
 
+      // Generate auth token before switching to the main view so that a missing
+      // VITE_JWT_SECRET surfaces as a visible error on the login form rather than
+      // being silently swallowed after isLoggedIn = true.
+      authToken = await generateDevToken(
+        userId,
+        import.meta.env.VITE_JWT_SECRET,
+        import.meta.env.DEV
+      );
+
       isLoggedIn = true;
       // Mémoriser les identifiants pour auto-login au prochain chargement
       localStorage.setItem('canari_saved_user', userId);
@@ -294,12 +303,6 @@
         loadHistoryForConversation,
         log,
       });
-
-      authToken = await generateDevToken(
-        userId,
-        import.meta.env.VITE_JWT_SECRET,
-        import.meta.env.DEV
-      );
 
       // Initialize WebSocket connection
       await initializeConnection({

@@ -6,7 +6,7 @@
   import ChatComposer from './ChatComposer.svelte';
   import EmptyState from './EmptyState.svelte';
   import Avatar from './Avatar.svelte';
-  import { groupMessages, type MessageGroup } from '$lib/utils/messageGrouping';
+  import { groupMessages } from '$lib/utils/messageGrouping';
   import type { ChatMessage, MessageReaction, Conversation } from '$lib/types';
 
   interface Props {

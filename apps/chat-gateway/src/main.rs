@@ -126,25 +126,36 @@ async fn main() {
                 // Listen for direct messages from Backend or other Gateways
                 let mut stream = pubsub.on_message();
                 while let Some(msg) = stream.next().await {
-                    if let Ok(payload_str) = msg.get_payload::<String>() {
-                        // Expect format: { "recipientId": "...", "deviceId": "...", "proto": "<base64 InboundMsg>" }
-                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&payload_str)
-                            && let (Some(recipient_id), Some(device_id), Some(proto_b64)) = (
-                                json.get("recipientId").and_then(|v| v.as_str()),
-                                json.get("deviceId").and_then(|v| v.as_str()),
-                                json.get("proto").and_then(|v| v.as_str()),
-                            )
-                        {
-                            let proto_bytes = match B64.decode(proto_b64) {
-                                Ok(b) => b,
-                                Err(e) => {
-                                    tracing::warn!(
-                                        "Failed to decode proto bytes from Redis: {}",
-                                        e
-                                    );
+                    if let Ok(payload_str) = msg.get_payload::<String>()
+                        && let Ok(json) = serde_json::from_str::<serde_json::Value>(&payload_str)
+                    {
+                            let recipient_id =
+                                match json.get("recipientId").and_then(|v| v.as_str()) {
+                                    Some(v) => v.to_string(),
+                                    None => continue,
+                                };
+                            let device_id = match json.get("deviceId").and_then(|v| v.as_str()) {
+                                Some(v) => v.to_string(),
+                                None => continue,
+                            };
+
+                            let proto_bytes = match json.get("proto").and_then(|v| v.as_str()) {
+                                Some(proto_b64) => match B64.decode(proto_b64) {
+                                    Ok(b) => b,
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "Failed to decode proto bytes from Redis: {}",
+                                            e
+                                        );
+                                        continue;
+                                    }
+                                },
+                                None => {
+                                    tracing::warn!("Redis message missing 'proto' field, dropping");
                                     continue;
                                 }
                             };
+
                             let key = format!("{}:{}", recipient_id, device_id);
 
                             // Send to ALL active connections for this key (multi-tab support)
@@ -158,7 +169,6 @@ async fn main() {
                                     let _ = tx.send(proto_bytes.clone());
                                 }
                             }
-                        }
                     }
                 }
                 // Stream ended (Redis déconnecté), on réessaie

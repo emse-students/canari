@@ -19,6 +19,7 @@ import { Group } from './group.schema';
 import { PinVerifier } from './pin-verifier.schema';
 import Redis from 'ioredis';
 import * as crypto from 'crypto';
+import { encodeInboundMsgEnvelope } from '@mines-app/shared-ts';
 
 const SAFE_QUERY_VALUE_REGEX = /^[a-zA-Z0-9_.:@-]{1,128}$/;
 
@@ -289,17 +290,19 @@ export class AppController {
       `user:online:${deviceInfo.userId}:${targetDeviceId}`,
     );
     if (isOnline) {
-      await this.redis.publish(
-        'chat:messages',
-        JSON.stringify({
-          recipientId: deviceInfo.userId,
-          deviceId: targetDeviceId,
+      const ciphertext = Buffer.from(body.welcomePayload, 'base64');
+      const envelope = await encodeInboundMsgEnvelope(
+        deviceInfo.userId,
+        targetDeviceId,
+        {
+          ciphertext,
           senderId: senderUserId,
+          senderDeviceId: '',
           groupId: safeGroupId,
-          content: body.welcomePayload,
-          type: 'mlsWelcome',
-        }),
+          isWelcome: true,
+        },
       );
+      await this.redis.publish('chat:messages', envelope);
     }
 
     return { status: 'queued' };
@@ -386,19 +389,17 @@ export class AppController {
       );
 
       if (isOnline) {
-        // Push directly to Gateway via Redis PubSub
-        await this.redis.publish(
-          'chat:messages',
-          JSON.stringify({
-            recipientId: r.userId,
-            deviceId: r.deviceId,
-            senderId,
-            senderDeviceId,
-            groupId,
-            content,
-            type,
-          }),
-        );
+        // Push directly to Gateway via Redis PubSub (proto-encoded InboundMsg)
+        const ciphertext = Buffer.from(content, 'base64');
+        const isWelcome = type === 'mlsWelcome';
+        const envelope = await encodeInboundMsgEnvelope(r.userId, r.deviceId, {
+          ciphertext,
+          senderId,
+          senderDeviceId: senderDeviceId ?? '',
+          groupId,
+          isWelcome,
+        });
+        await this.redis.publish('chat:messages', envelope);
         sentCount++;
       } else {
         // Queue for polling (Store)

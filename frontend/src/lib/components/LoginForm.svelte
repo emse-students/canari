@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { fade, slide } from "svelte/transition";
+  import { fade, slide } from 'svelte/transition';
 
   interface Props {
     userId: string;
@@ -24,7 +24,7 @@
   }: Props = $props();
 
   function handleKeydown(e: KeyboardEvent) {
-    if (e.key === "Enter" && !isLoggingIn) {
+    if (e.key === 'Enter' && !isLoggingIn) {
       onLogin();
     }
   }
@@ -37,24 +37,16 @@
       <div
         class="w-20 h-20 bg-cn-dark text-cn-yellow rounded-3xl flex items-center justify-center mx-auto mb-6"
       >
-        <img
-          src="/favicon.png"
-          alt="Canari Logo"
-          class="w-3/5 h-3/5 object-contain"
-        />
+        <img src="/favicon.png" alt="Canari Logo" class="w-3/5 h-3/5 object-contain" />
       </div>
       <h1 class="text-4xl font-black text-cn-dark tracking-tight">Canari</h1>
-      <p class="text-text-muted text-base mt-2">
-        Mines Saint-Étienne
-      </p>
+      <p class="text-text-muted text-base mt-2">Mines Saint-Étienne</p>
     </div>
 
     <!-- Form -->
     <div class="space-y-5">
       <div class="text-left">
-        <label for="uid" class="block text-sm font-bold text-cn-dark mb-2"
-          >Nom d'utilisateur</label
-        >
+        <label for="uid" class="block text-sm font-bold text-cn-dark mb-2">Nom d'utilisateur</label>
         <input
           id="uid"
           type="text"
@@ -67,9 +59,7 @@
       </div>
 
       <div class="text-left">
-        <label for="pin" class="block text-sm font-bold text-cn-dark mb-2"
-          >PIN</label
-        >
+        <label for="pin" class="block text-sm font-bold text-cn-dark mb-2">PIN</label>
         <input
           id="pin"
           type="password"

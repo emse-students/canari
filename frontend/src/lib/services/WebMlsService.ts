@@ -94,10 +94,13 @@ export class WebMlsService implements IMlsService {
           const inbound = decodeInboundMsg(new Uint8Array(buffer));
 
           if (inbound.ciphertext && inbound.ciphertext.length > 0 && this.messageCallback) {
+            // Pass groupId only for application messages; for Welcome messages the
+            // connection handler must call processWelcome (no groupId routing needed).
+            const groupIdForCallback = inbound.isWelcome ? undefined : inbound.groupId || undefined;
             await this.messageCallback(
               inbound.senderId || 'unknown',
               new Uint8Array(inbound.ciphertext),
-              inbound.groupId || undefined
+              groupIdForCallback
             );
           }
         } catch (e) {

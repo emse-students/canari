@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { Terminal, LogOut } from "lucide-svelte";
-  import StatusPill from "./StatusPill.svelte";
+  import { Terminal, LogOut } from 'lucide-svelte';
+  import StatusPill from './StatusPill.svelte';
 
   interface Props {
     isWsConnected: boolean;
@@ -11,14 +11,10 @@
   let { isWsConnected, onToggleLogs, onLogout }: Props = $props();
 </script>
 
-<header
-  class="h-16 bg-white border-b border-cn-border flex items-center justify-between px-6 z-20"
->
+<header class="h-16 bg-white border-b border-cn-border flex items-center justify-between px-6 z-20">
   <!-- Brand -->
   <div class="flex items-center gap-3">
-    <div
-      class="w-8 h-8 bg-cn-dark text-cn-yellow rounded-lg flex items-center justify-center"
-    >
+    <div class="w-8 h-8 bg-cn-dark text-cn-yellow rounded-lg flex items-center justify-center">
       <img src="/favicon.png" alt="Canari" class="w-3/4 h-3/4 object-contain" />
     </div>
     <span class="font-black text-xl text-cn-dark">Canari</span>

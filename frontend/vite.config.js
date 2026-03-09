@@ -3,9 +3,25 @@ import { sveltekit } from '@sveltejs/kit/vite';
 
 const host = process.env.TAURI_DEV_HOST;
 
+/** @returns {import('vite').Plugin} */
+function protobufPatch() {
+  return {
+    name: 'protobuf-patch',
+    transform(code, id) {
+      // https://github.com/protobufjs/protobuf.js/issues/1754
+      if (id.endsWith('@protobufjs/inquire/index.js')) {
+        return {
+          code: code.replace(`eval("quire".replace(/^/,"re"))`, 'require'),
+          map: null,
+        };
+      }
+    },
+  };
+}
+
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-  plugins: [sveltekit()],
+  plugins: [sveltekit(), protobufPatch()],
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
