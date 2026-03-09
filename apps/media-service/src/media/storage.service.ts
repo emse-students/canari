@@ -6,7 +6,7 @@
  *
  * Configuration via environment variables:
  *   MINIO_ENDPOINT  (default: localhost)
- *   MINIO_PORT      (default: 9000)
+ *   MINIO_PORT      (default: 9100)
  *   MINIO_USE_SSL   (default: false)
  *   MINIO_ACCESS_KEY
  *   MINIO_SECRET_KEY
@@ -26,7 +26,7 @@ export class StorageService implements OnModuleInit {
     this.bucket = process.env.MINIO_BUCKET ?? 'canari-media';
     this.client = new Minio.Client({
       endPoint: process.env.MINIO_ENDPOINT ?? 'localhost',
-      port: parseInt(process.env.MINIO_PORT ?? '9000', 10),
+      port: parseInt(process.env.MINIO_PORT ?? '9100', 10),
       useSSL: process.env.MINIO_USE_SSL === 'true',
       accessKey: process.env.MINIO_ACCESS_KEY ?? 'minioadmin',
       secretKey: process.env.MINIO_SECRET_KEY ?? 'minioadmin',

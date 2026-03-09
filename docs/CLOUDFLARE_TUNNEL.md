@@ -14,7 +14,9 @@
 [Services Docker]
   ├─ Chat Gateway :3000
   ├─ Chat Delivery :3001
-  └─ Auth Service :9000
+  ├─ Auth Service :3002
+  └─ Media Service : 9100 (MinIO)
+  
 ```
 
 ## Avantages de Cloudflare Tunnel

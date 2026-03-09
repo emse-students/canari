@@ -118,7 +118,7 @@ Le fichier `infrastructure/local/docker-compose.yml` doit provisionner :
 - **Redis** (Port 6379)
 - **PostgreSQL** (Port 5432 - DB: `auth_db`)
 - **MongoDB** (Port 27017 - DB: `social_db` & `chat_db`)
-- **MinIO** (S3 Local - Port 9000)
+- **MinIO** (S3 Local - Port 9100)
 
 ---
 
