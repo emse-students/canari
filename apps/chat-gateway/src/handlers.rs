@@ -326,10 +326,10 @@ async fn handle_socket(
                                                     "recipientId": recipient.user_id,
                                                     "deviceId": recipient.device_id,
                                                     "proto": B64.encode(encode_inbound(&inbound))
-                                                }).to_string();
-                                                let _: Result<(), _> = con
-                                                    .publish("chat:messages", &routing)
-                                                    .await;
+                                                })
+                                                .to_string();
+                                                let _: Result<(), _> =
+                                                    con.publish("chat:messages", &routing).await;
                                             }
                                         }
 
@@ -420,10 +420,10 @@ async fn handle_socket(
                                                 "recipientId": recipient.user_id,
                                                 "deviceId": recipient.device_id,
                                                 "proto": B64.encode(encode_inbound(&inbound))
-                                            }).to_string();
-                                            let _: Result<(), _> = con
-                                                .publish("chat:messages", &routing)
-                                                .await;
+                                            })
+                                            .to_string();
+                                            let _: Result<(), _> =
+                                                con.publish("chat:messages", &routing).await;
                                             sent = true;
                                         }
                                     }

@@ -2,13 +2,13 @@ mod handlers;
 mod models;
 mod state;
 
-use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
 use axum::{
     Router,
     http::{Method, StatusCode},
     response::IntoResponse,
     routing::get,
 };
+use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
 use futures::stream::StreamExt;
 use rdkafka::{ClientConfig, producer::FutureProducer};
 use reqwest::Client as HttpClient;
@@ -137,7 +137,10 @@ async fn main() {
                                 let proto_bytes = match B64.decode(proto_b64) {
                                     Ok(b) => b,
                                     Err(e) => {
-                                        tracing::warn!("Failed to decode proto bytes from Redis: {}", e);
+                                        tracing::warn!(
+                                            "Failed to decode proto bytes from Redis: {}",
+                                            e
+                                        );
                                         continue;
                                     }
                                 };
