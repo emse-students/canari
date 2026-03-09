@@ -432,3 +432,10 @@ reset-services:
 	@docker compose -f infrastructure/local/docker-compose.yml --env-file infrastructure/.env down -v --remove-orphans && \
 		docker compose -f infrastructure/local/docker-compose.yml --env-file infrastructure/.env up -d --build --remove-orphans
 	@echo "${GREEN}✅ Services reset${RESET}"
+
+reset-services-prod:
+	@echo "${BLUE}🔄 Resetting services (stop + remove volumes)...${RESET}"
+	@docker compose -f infrastructure/docker-compose.prod.yml --env-file infrastructure/.env down -v --remove-orphans && \
+		docker compose -f infrastructure/docker-compose.prod.yml --env-file infrastructure/.env up -d --build --remove-orphans
+	@echo "${GREEN}✅ Services reset${RESET}"
+
