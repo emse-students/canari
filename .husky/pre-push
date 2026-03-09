@@ -32,7 +32,7 @@ fi
 
 if [ "$RUN_FRONTEND" -eq 1 ]; then
   (
-    cd frontend && bun run lint --quiet && bun run check
+    cd frontend && bun run lint -- --no-cache --quiet && bun run check
   ) || {
     echo "❌ Frontend checks failed (lint/check)."
     exit 1

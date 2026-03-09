@@ -21,7 +21,7 @@ fi
 
 if [ "$RUN_FRONTEND" -eq 1 ]; then
   (
-    cd frontend && bun run lint --quiet
+    cd frontend && bun run lint -- --no-cache --quiet
   ) || {
     echo "❌ Frontend lint failed. Use 'cd frontend && bun run lint:fix'."
     exit 1

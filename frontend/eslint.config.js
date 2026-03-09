@@ -39,6 +39,7 @@ export default [
       },
     },
     rules: {
+      'svelte/no-navigation-without-resolve': 'off',
       'no-console': 'off',
       'no-unused-vars': 'off',
       '@typescript-eslint/no-unused-vars': [
