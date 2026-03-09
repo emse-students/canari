@@ -198,7 +198,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                 const newMsgs = [...c.messages];
                 const idx = newMsgs.findIndex((m) => m.id === data.messageId);
                 if (idx !== -1 && newMsgs[idx].senderId === senderNorm) {
-                  newMsgs[idx] = { ...newMsgs[idx], isEdited: true, content: data.newContent };
+                  newMsgs[idx] = { ...newMsgs[idx], isEdited: true, content: data.newContent, readBy: [] };
                   conversations.set(convoKey, { ...c, messages: newMsgs });
                 }
               }

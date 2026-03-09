@@ -5,7 +5,7 @@ import type { ChatMessage } from '$lib/types';
 export type MessageGroup =
     | { type: 'date_separator'; date: string }
     | { type: 'time_separator'; time: string }
-    | { type: 'message'; message: ChatMessage; showTimestamp: boolean };
+    | { type: 'message'; message: ChatMessage };
 
 function formatDateSeparator(date: Date): string {
     if (isToday(date)) return "Aujourd'hui";
@@ -24,7 +24,6 @@ export function groupMessages(messages: ChatMessage[]): MessageGroup[] {
     const groups: MessageGroup[] = [];
     let lastDate: string | null = null;
     let lastTimestamp: number | null = null;
-    let nextMessageShowsTimestamp = true; // first message always shows timestamp
     const TIME_GAP_MS = 10 * 60 * 1000; // 10 minutes
 
     for (const msg of messages) {
@@ -39,7 +38,6 @@ export function groupMessages(messages: ChatMessage[]): MessageGroup[] {
             });
             lastDate = msgDate;
             lastTimestamp = null; // Reset time gap check for new day
-            nextMessageShowsTimestamp = true;
         }
 
         // Time separator (10+ min gap, but not for first message of the day or system messages)
@@ -52,17 +50,9 @@ export function groupMessages(messages: ChatMessage[]): MessageGroup[] {
                 type: 'time_separator',
                 time: format(msg.timestamp, 'HH:mm'),
             });
-            nextMessageShowsTimestamp = true;
         }
 
-        // Message
-        const showTimestamp = nextMessageShowsTimestamp;
-        groups.push({
-            type: 'message',
-            message: msg,
-            showTimestamp: msg.isSystem ? false : showTimestamp,
-        });
-        if (!msg.isSystem) nextMessageShowsTimestamp = false;
+        groups.push({ type: 'message', message: msg });
 
         lastTimestamp = msgTime;
     }

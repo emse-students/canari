@@ -168,7 +168,6 @@
                   replyTo={msg.replyTo}
                   {reactions}
                   readBy={msg.readBy}
-                  showTimestamp={group.showTimestamp}
                   isEdited={msg.isEdited}
                   isDeleted={msg.isDeleted}
                   onReply={onReply ? () => onReply?.(msg) : undefined}

@@ -644,7 +644,7 @@
     const newMsgs = [...convo.messages];
     const idx = newMsgs.findIndex((m) => m.id === messageId);
     if (idx !== -1) {
-      newMsgs[idx] = { ...newMsgs[idx], isEdited: true, content: text };
+      newMsgs[idx] = { ...newMsgs[idx], isEdited: true, content: text, readBy: [] };
       conversations.set(selectedContact, { ...convo, messages: newMsgs });
       // TODO: update in local storage if needed
     }
