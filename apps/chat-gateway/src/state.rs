@@ -5,12 +5,14 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
+type ConnectedUser = mpsc::UnboundedSender<Vec<u8>>; // Channel to send raw proto-encoded InboundMsg bytes
+
 pub struct AppState {
     pub redis_client: RedisClient,
     pub kafka_producer: FutureProducer,
     // Map: "UserId:DeviceId" -> list of senders (multiple tabs / reconnects)
     // Channel carries raw proto-encoded InboundMsg bytes ready to send over WS.
-    pub connected_users: Arc<Mutex<HashMap<String, Vec<mpsc::UnboundedSender<Vec<u8>>>>>>,
+    pub connected_users: Arc<Mutex<HashMap<String, Vec<ConnectedUser>>>>,
     pub jwt_secret: String,
     pub http_client: HttpClient,
     pub delivery_service_url: String,

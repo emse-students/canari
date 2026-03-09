@@ -68,7 +68,14 @@ export async function replayConversationHistory(params: {
 
         if (parsed?.text) {
           if (parsed.text.content) {
-            await addMessageToChat(msg.sender_id, parsed.text.content ?? '', contactName, undefined, false, parsed.messageId || undefined);
+            await addMessageToChat(
+              msg.sender_id,
+              parsed.text.content ?? '',
+              contactName,
+              undefined,
+              false,
+              parsed.messageId || undefined
+            );
             addedMsg++;
             mlsUpdated = true;
             continue;
@@ -79,7 +86,11 @@ export async function replayConversationHistory(params: {
             parsed.reply.content ?? '',
             contactName,
             parsed.reply.replyTo
-              ? { id: parsed.reply.replyTo.id ?? '', senderId: parsed.reply.replyTo.senderId ?? '', content: parsed.reply.replyTo.preview ?? '' }
+              ? {
+                  id: parsed.reply.replyTo.id ?? '',
+                  senderId: parsed.reply.replyTo.senderId ?? '',
+                  content: parsed.reply.replyTo.preview ?? '',
+                }
               : undefined,
             false,
             parsed.messageId || undefined
@@ -95,7 +106,14 @@ export async function replayConversationHistory(params: {
             size: parsed.media.size,
             fileName: parsed.media.fileName,
           });
-          await addMessageToChat(msg.sender_id, mediaJson, contactName, undefined, false, parsed.messageId || undefined);
+          await addMessageToChat(
+            msg.sender_id,
+            mediaJson,
+            contactName,
+            undefined,
+            false,
+            parsed.messageId || undefined
+          );
           addedMsg++;
           mlsUpdated = true;
           continue;

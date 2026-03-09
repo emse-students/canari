@@ -179,10 +179,7 @@ export async function importUserBackup(params: {
   );
 }
 
-export async function generateDevKeyPackage(params: {
-  mlsService: IMlsService;
-  pin: string;
-}) {
+export async function generateDevKeyPackage(params: { mlsService: IMlsService; pin: string }) {
   const { mlsService, pin } = params;
   const bytes = await mlsService.generateKeyPackage(pin);
   return toHex(bytes);

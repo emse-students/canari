@@ -128,8 +128,8 @@ async fn main() {
                 while let Some(msg) = stream.next().await {
                     if let Ok(payload_str) = msg.get_payload::<String>() {
                         // Expect format: { "recipientId": "...", "deviceId": "...", "proto": "<base64 InboundMsg>" }
-                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&payload_str) {
-                            if let (Some(recipient_id), Some(device_id), Some(proto_b64)) = (
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&payload_str)
+                            && let (Some(recipient_id), Some(device_id), Some(proto_b64)) = (
                                 json.get("recipientId").and_then(|v| v.as_str()),
                                 json.get("deviceId").and_then(|v| v.as_str()),
                                 json.get("proto").and_then(|v| v.as_str()),
@@ -158,7 +158,6 @@ async fn main() {
                                     }
                                 }
                             }
-                        }
                     }
                 }
                 // Stream ended (Redis déconnecté), on réessaie

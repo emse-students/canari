@@ -8,11 +8,11 @@ import { TauriMlsService } from './services/TauriMlsService';
 import type { IMlsService } from './services/IMlsService';
 
 export function createMlsService(): IMlsService {
-    // Basic detection for Tauri environment
-    if (typeof window !== 'undefined' && window.__TAURI_INTERNALS__) {
-        console.log("Detecting Tauri environment -> Using TauriMlsService");
-        return new TauriMlsService();
-    }
-    console.log("Detecting Web environment -> Using WebMlsService");
-    return new WebMlsService();
+  // Basic detection for Tauri environment
+  if (typeof window !== 'undefined' && window.__TAURI_INTERNALS__) {
+    console.log('Detecting Tauri environment -> Using TauriMlsService');
+    return new TauriMlsService();
+  }
+  console.log('Detecting Web environment -> Using WebMlsService');
+  return new WebMlsService();
 }

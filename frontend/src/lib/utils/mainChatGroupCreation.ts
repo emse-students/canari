@@ -38,15 +38,8 @@ async function fetchDevicesWithRetry(
  * Ajoute automatiquement les autres appareils de l'utilisateur courant au groupe.
  */
 export async function createNewGroup(name: string, deps: GroupCreationDeps): Promise<void> {
-  const {
-    mlsService,
-    userId,
-    pin,
-    conversations,
-    selectConversation,
-    saveConversation,
-    log,
-  } = deps;
+  const { mlsService, userId, pin, conversations, selectConversation, saveConversation, log } =
+    deps;
 
   if (!name.trim()) return;
   const groupName = name.trim();
@@ -157,7 +150,9 @@ export async function inviteMemberToGroup(
 
     // Broadcast member addition notification
     try {
-      const controlMsg = encodeAppMessage(mkSystem('memberAdded', JSON.stringify({ newUser: targetUser })));
+      const controlMsg = encodeAppMessage(
+        mkSystem('memberAdded', JSON.stringify({ newUser: targetUser }))
+      );
       await mlsService.sendMessage(conversation.groupId, controlMsg);
       const st = await mlsService.saveState(pin);
       localStorage.setItem('mls_autosave_' + userId, toHex(st));

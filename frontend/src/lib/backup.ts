@@ -48,24 +48,24 @@ import type { IStorage, ConversationMeta } from './db';
 // ---------------------------------------------------------------------------
 
 interface SerializedRow {
-    id: string;
-    conversationId: string;
-    timestamp: number;
-    iv: number[];
-    salt: number[];
-    cipherText: number[];
+  id: string;
+  conversationId: string;
+  timestamp: number;
+  iv: number[];
+  salt: number[];
+  cipherText: number[];
 }
 
 export interface BackupData {
-    version: number;
-    userId: string;
-    exportedAt: number;
-    /** MLS device ID of the device that created this backup. */
-    exporterDeviceId: string;
-    conversations: ConversationMeta[];
-    messages: SerializedRow[];
-    /** Hex-encoded, PIN-encrypted MLS state (from localStorage). */
-    mlsState?: string;
+  version: number;
+  userId: string;
+  exportedAt: number;
+  /** MLS device ID of the device that created this backup. */
+  exporterDeviceId: string;
+  conversations: ConversationMeta[];
+  messages: SerializedRow[];
+  /** Hex-encoded, PIN-encrypted MLS state (from localStorage). */
+  mlsState?: string;
 }
 
 // Magic header: bytes for 'C', 'A', 'N', version=1
@@ -88,42 +88,42 @@ const MAGIC = new Uint8Array([0x43, 0x41, 0x4e, 0x01]);
  * @returns Binary blob ready to be saved / downloaded as a .canari file.
  */
 export async function exportBackup(
-    storage: IStorage,
-    userId: string,
-    pin: string,
-    deviceId: string,
-    mlsStateHex?: string
+  storage: IStorage,
+  userId: string,
+  pin: string,
+  deviceId: string,
+  mlsStateHex?: string
 ): Promise<Uint8Array> {
-    const conversations = await storage.getConversations();
-    const rawRows = await storage.getAllEncryptedRows();
+  const conversations = await storage.getConversations();
+  const rawRows = await storage.getAllEncryptedRows();
 
-    const messages: SerializedRow[] = rawRows.map((r) => ({
-        id: r.id,
-        conversationId: r.conversationId,
-        timestamp: r.timestamp,
-        iv: Array.from(r.iv),
-        salt: Array.from(r.salt),
-        cipherText: Array.from(r.cipherText),
-    }));
+  const messages: SerializedRow[] = rawRows.map((r) => ({
+    id: r.id,
+    conversationId: r.conversationId,
+    timestamp: r.timestamp,
+    iv: Array.from(r.iv),
+    salt: Array.from(r.salt),
+    cipherText: Array.from(r.cipherText),
+  }));
 
-    const backup: BackupData = {
-        version: 1,
-        userId,
-        exportedAt: Date.now(),
-        exporterDeviceId: deviceId,
-        conversations,
-        messages,
-        mlsState: mlsStateHex,
-    };
+  const backup: BackupData = {
+    version: 1,
+    userId,
+    exportedAt: Date.now(),
+    exporterDeviceId: deviceId,
+    conversations,
+    messages,
+    mlsState: mlsStateHex,
+  };
 
-    const wasm = await import('$lib/wasm/mls_wasm.js');
-    const plaintext = new TextEncoder().encode(JSON.stringify(backup));
-    const encrypted: Uint8Array = wasm.encrypt_with_pin(pin, plaintext);
+  const wasm = await import('$lib/wasm/mls_wasm.js');
+  const plaintext = new TextEncoder().encode(JSON.stringify(backup));
+  const encrypted: Uint8Array = wasm.encrypt_with_pin(pin, plaintext);
 
-    const result = new Uint8Array(MAGIC.length + encrypted.length);
-    result.set(MAGIC);
-    result.set(encrypted, MAGIC.length);
-    return result;
+  const result = new Uint8Array(MAGIC.length + encrypted.length);
+  result.set(MAGIC);
+  result.set(encrypted, MAGIC.length);
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -147,67 +147,64 @@ export async function exportBackup(
  *          format is unsupported.
  */
 export async function importBackup(
-    fileData: Uint8Array,
-    pin: string,
-    storage: IStorage,
-    currentDeviceId: string
+  fileData: Uint8Array,
+  pin: string,
+  storage: IStorage,
+  currentDeviceId: string
 ): Promise<{ data: BackupData; isSameDevice: boolean }> {
-    // Validate magic header
-    if (
-        fileData.length < 4 ||
-        fileData[0] !== MAGIC[0] ||
-        fileData[1] !== MAGIC[1] ||
-        fileData[2] !== MAGIC[2] ||
-        fileData[3] !== MAGIC[3]
-    ) {
-        throw new Error('Fichier de sauvegarde invalide ou corrompu.');
-    }
+  // Validate magic header
+  if (
+    fileData.length < 4 ||
+    fileData[0] !== MAGIC[0] ||
+    fileData[1] !== MAGIC[1] ||
+    fileData[2] !== MAGIC[2] ||
+    fileData[3] !== MAGIC[3]
+  ) {
+    throw new Error('Fichier de sauvegarde invalide ou corrompu.');
+  }
 
-    const encrypted = fileData.slice(4);
+  const encrypted = fileData.slice(4);
 
-    // Decrypt outer envelope
-    const wasm = await import('$lib/wasm/mls_wasm.js');
-    let decrypted: Uint8Array;
-    try {
-        decrypted = wasm.decrypt_with_pin(pin, encrypted);
-    } catch {
-        throw new Error('PIN incorrect ou données corrompues.');
-    }
+  // Decrypt outer envelope
+  const wasm = await import('$lib/wasm/mls_wasm.js');
+  let decrypted: Uint8Array;
+  try {
+    decrypted = wasm.decrypt_with_pin(pin, encrypted);
+  } catch {
+    throw new Error('PIN incorrect ou données corrompues.');
+  }
 
-    const backup: BackupData = JSON.parse(new TextDecoder().decode(decrypted));
+  const backup: BackupData = JSON.parse(new TextDecoder().decode(decrypted));
 
-    if (backup.version !== 1) {
-        throw new Error(`Version de sauvegarde non supportée : ${backup.version}`);
-    }
+  if (backup.version !== 1) {
+    throw new Error(`Version de sauvegarde non supportée : ${backup.version}`);
+  }
 
-    // Detect whether this is the same physical device (wipe/restore) or a
-    // second device receiving a transfer.  Back-compat: old backups without
-    // exporterDeviceId are treated as same-device to preserve previous behaviour.
-    const isSameDevice =
-        !backup.exporterDeviceId || backup.exporterDeviceId === currentDeviceId;
+  // Detect whether this is the same physical device (wipe/restore) or a
+  // second device receiving a transfer.  Back-compat: old backups without
+  // exporterDeviceId are treated as same-device to preserve previous behaviour.
+  const isSameDevice = !backup.exporterDeviceId || backup.exporterDeviceId === currentDeviceId;
 
-    // Merge conversation metadata: INSERT OR IGNORE so a device that already
-    // has the conversation keeps its live (newer) state.
-    // On a different device, force isReady = false: the device is not yet a
-    // cryptographic member of these groups and must wait for Welcome messages.
-    for (const conv of backup.conversations) {
-        await storage.mergeConversation(
-            isSameDevice ? conv : { ...conv, isReady: false }
-        );
-    }
+  // Merge conversation metadata: INSERT OR IGNORE so a device that already
+  // has the conversation keeps its live (newer) state.
+  // On a different device, force isReady = false: the device is not yet a
+  // cryptographic member of these groups and must wait for Welcome messages.
+  for (const conv of backup.conversations) {
+    await storage.mergeConversation(isSameDevice ? conv : { ...conv, isReady: false });
+  }
 
-    // Merge message rows: INSERT OR IGNORE so messages received on this device
-    // after the backup was taken are never overwritten.
-    for (const msg of backup.messages) {
-        await storage.importEncryptedRow({
-            id: msg.id,
-            conversationId: msg.conversationId,
-            timestamp: msg.timestamp,
-            iv: new Uint8Array(msg.iv),
-            salt: new Uint8Array(msg.salt),
-            cipherText: new Uint8Array(msg.cipherText),
-        });
-    }
+  // Merge message rows: INSERT OR IGNORE so messages received on this device
+  // after the backup was taken are never overwritten.
+  for (const msg of backup.messages) {
+    await storage.importEncryptedRow({
+      id: msg.id,
+      conversationId: msg.conversationId,
+      timestamp: msg.timestamp,
+      iv: new Uint8Array(msg.iv),
+      salt: new Uint8Array(msg.salt),
+      cipherText: new Uint8Array(msg.cipherText),
+    });
+  }
 
-    return { data: backup, isSameDevice };
+  return { data: backup, isSameDevice };
 }

@@ -89,7 +89,14 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           const msg = decodeAppMessage(decryptedBytes);
 
           if (msg?.text) {
-            await addMessageToChat(senderNorm, msg.text.content ?? '', convoKey, undefined, false, msg.messageId || undefined);
+            await addMessageToChat(
+              senderNorm,
+              msg.text.content ?? '',
+              convoKey,
+              undefined,
+              false,
+              msg.messageId || undefined
+            );
             return true;
           }
 
@@ -99,7 +106,11 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               msg.reply.content ?? '',
               convoKey,
               msg.reply.replyTo
-                ? { id: msg.reply.replyTo.id ?? '', senderId: msg.reply.replyTo.senderId ?? '', content: msg.reply.replyTo.preview ?? '' }
+                ? {
+                    id: msg.reply.replyTo.id ?? '',
+                    senderId: msg.reply.replyTo.senderId ?? '',
+                    content: msg.reply.replyTo.preview ?? '',
+                  }
                 : undefined,
               false,
               msg.messageId || undefined
@@ -125,7 +136,14 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               size: msg.media.size,
               fileName: msg.media.fileName,
             });
-            await addMessageToChat(senderNorm, mediaJson, convoKey, undefined, false, msg.messageId || undefined);
+            await addMessageToChat(
+              senderNorm,
+              mediaJson,
+              convoKey,
+              undefined,
+              false,
+              msg.messageId || undefined
+            );
             return true;
           }
 
@@ -136,12 +154,18 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             if (event === 'groupRenamed' && data.newName) {
               conversations.set(convoKey, { ...convo, name: data.newName });
               if (storage) await saveConversation(convoKey);
-              await addSystemMessage(`${senderNorm} a renommé le groupe en "${data.newName}"`, convoKey);
+              await addSystemMessage(
+                `${senderNorm} a renommé le groupe en "${data.newName}"`,
+                convoKey
+              );
               log(`📝 Groupe renommé en "${data.newName}" par ${senderNorm}`);
               return true;
             }
             if (event === 'memberRemoved' && data.targetUser) {
-              await addSystemMessage(`${senderNorm} a retiré ${data.targetUser} du groupe`, convoKey);
+              await addSystemMessage(
+                `${senderNorm} a retiré ${data.targetUser} du groupe`,
+                convoKey
+              );
               return true;
             }
             if (event === 'memberAdded' && data.newUser) {
@@ -186,7 +210,11 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                 const newMsgs = [...c.messages];
                 const idx = newMsgs.findIndex((m) => m.id === data.messageId);
                 if (idx !== -1 && newMsgs[idx].senderId === senderNorm) {
-                  newMsgs[idx] = { ...newMsgs[idx], isDeleted: true, content: 'Ce message a été supprimé.' };
+                  newMsgs[idx] = {
+                    ...newMsgs[idx],
+                    isDeleted: true,
+                    content: 'Ce message a été supprimé.',
+                  };
                   conversations.set(convoKey, { ...c, messages: newMsgs });
                 }
               }
@@ -198,7 +226,12 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                 const newMsgs = [...c.messages];
                 const idx = newMsgs.findIndex((m) => m.id === data.messageId);
                 if (idx !== -1 && newMsgs[idx].senderId === senderNorm) {
-                  newMsgs[idx] = { ...newMsgs[idx], isEdited: true, content: data.newContent, readBy: [] };
+                  newMsgs[idx] = {
+                    ...newMsgs[idx],
+                    isEdited: true,
+                    content: data.newContent,
+                    readBy: [],
+                  };
                   conversations.set(convoKey, { ...c, messages: newMsgs });
                 }
               }

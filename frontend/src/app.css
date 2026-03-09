@@ -1,4 +1,4 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 
 @theme {
   /* Couleurs principales Canari */
@@ -7,11 +7,11 @@
   --color-cn-yellow-hover: #eab308;
   --color-cn-bg: #f9fafb;
   --color-cn-border: #e5e7eb;
-  
+
   /* Couleurs texte */
   --color-text-main: #111827;
   --color-text-muted: #6b7280;
-  
+
   /* Couleurs état */
   --color-green-ok: #10b981;
   --color-red-err: #ef4444;

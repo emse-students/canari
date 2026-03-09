@@ -69,11 +69,7 @@ export async function sendChatMessage(
     const msg = _e instanceof Error ? _e.message : String(_e);
     log(`Erreur envoi: ${msg}`);
 
-    if (
-      msg.includes('Groupe introuvable') ||
-      msg.includes('not found') ||
-      msg.includes('group')
-    ) {
+    if (msg.includes('Groupe introuvable') || msg.includes('not found') || msg.includes('group')) {
       return {
         success: false,
         error: "Tu n'es plus membre de ce groupe. Supprime-le et demande une nouvelle invitation.",
@@ -123,7 +119,9 @@ export async function editMessage(
   const { mlsService, userId, pin, conversation } = deps;
   if (!conversation.isReady) return;
   try {
-    const payload = encodeAppMessage(mkSystem('edit_message', JSON.stringify({ messageId, newContent })));
+    const payload = encodeAppMessage(
+      mkSystem('edit_message', JSON.stringify({ messageId, newContent }))
+    );
     await mlsService.sendMessage(conversation.groupId, payload);
     const stateBytes = await mlsService.saveState(pin);
     localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
@@ -132,10 +130,7 @@ export async function editMessage(
   }
 }
 
-export async function deleteMessage(
-  messageId: string,
-  deps: AddReactionDeps
-): Promise<void> {
+export async function deleteMessage(messageId: string, deps: AddReactionDeps): Promise<void> {
   const { mlsService, userId, pin, conversation } = deps;
   if (!conversation.isReady) return;
   try {
@@ -148,10 +143,7 @@ export async function deleteMessage(
   }
 }
 
-export async function sendReadReceipt(
-  messageIds: string[],
-  deps: AddReactionDeps
-): Promise<void> {
+export async function sendReadReceipt(messageIds: string[], deps: AddReactionDeps): Promise<void> {
   const { mlsService, userId, pin, conversation } = deps;
   if (!conversation.isReady || messageIds.length === 0) return;
   try {
