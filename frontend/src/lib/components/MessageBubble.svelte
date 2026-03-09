@@ -175,19 +175,26 @@
 {:else}
   <!-- Outer wrapper: relative for absolute children (emoji picker, info tooltip) -->
   <div
-    use:clickOutside={() => { showEmojiPicker = false; showInfo = false; }}
+    use:clickOutside={() => {
+      showEmojiPicker = false;
+      showInfo = false;
+    }}
     class="relative group"
   >
     <!-- Main row: [action-bar | bubble] reversed for own messages -->
     <div class="flex items-end gap-2 {isOwn ? 'flex-row-reverse' : 'flex-row'}">
-
       <!-- ── Bubble ── -->
       <div
         in:fly={{ y: 5, duration: 200 }}
         role="button"
         tabindex="0"
         onclick={toggleInfo}
-        onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleInfo(e as unknown as MouseEvent); } }}
+        onkeydown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            toggleInfo(e as unknown as MouseEvent);
+          }
+        }}
         class="px-4 py-2.5 rounded-[1.25rem] cursor-pointer min-w-0 {isOwn
           ? 'bg-cn-yellow text-cn-dark rounded-br-sm'
           : 'bg-white text-cn-dark border border-cn-border rounded-bl-sm'}"
@@ -205,7 +212,10 @@
               {#if blobUrl}
                 <button
                   type="button"
-                  onclick={(e) => { e.stopPropagation(); openBlob(blobUrl!); }}
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    openBlob(blobUrl!);
+                  }}
                   aria-label="Ouvrir l'image en plein écran"
                   class="hover:opacity-90 transition-opacity"
                 >
@@ -276,7 +286,10 @@
                 {#if blobUrl}
                   <button
                     type="button"
-                    onclick={(e) => { e.stopPropagation(); downloadBlob(blobUrl!, mediaRef!.fileName ?? 'fichier'); }}
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      downloadBlob(blobUrl!, mediaRef!.fileName ?? 'fichier');
+                    }}
                     aria-label="Télécharger"
                     class="p-2 rounded-lg hover:bg-black/10 transition-colors"
                   >
@@ -303,7 +316,9 @@
               <span class="italic text-[0.6rem] opacity-60">(modifié)</span>
             {/if}
             {#if isOwn && readBy.length > 0}
-              <span class="text-blue-500 font-bold text-xs" title="Lu par {readBy.join(', ')}">✓</span>
+              <span class="text-blue-500 font-bold text-xs" title="Lu par {readBy.join(', ')}"
+                >✓</span
+              >
             {/if}
           </div>
         {/if}
@@ -311,7 +326,9 @@
 
       <!-- ── Action bar (visible on hover) ── -->
       <div
-        class="opacity-0 {showEmojiPicker ? 'opacity-100' : 'group-hover:opacity-100'} transition-opacity flex flex-col gap-0.5 pb-1 shrink-0 self-center"
+        class="opacity-0 {showEmojiPicker
+          ? 'opacity-100'
+          : 'group-hover:opacity-100'} transition-opacity flex flex-col gap-0.5 pb-1 shrink-0 self-center"
       >
         {#if !isDeleted && onReply}
           <button
@@ -324,7 +341,10 @@
         {/if}
         {#if onReact}
           <button
-            onclick={(e) => { e.stopPropagation(); showEmojiPicker = !showEmojiPicker; }}
+            onclick={(e) => {
+              e.stopPropagation();
+              showEmojiPicker = !showEmojiPicker;
+            }}
             class="p-1.5 rounded-lg hover:bg-gray-200 transition-colors text-gray-400 hover:text-gray-700"
             aria-label="Réagir"
           >
@@ -333,7 +353,11 @@
         {/if}
         {#if !isDeleted && isOwn && !mediaRef && onEdit}
           <button
-            onclick={(e) => { e.stopPropagation(); editText = content; showEditModal = true; }}
+            onclick={(e) => {
+              e.stopPropagation();
+              editText = content;
+              showEditModal = true;
+            }}
             class="p-1.5 rounded-lg hover:bg-gray-200 transition-colors text-gray-400 hover:text-gray-700"
             aria-label="Modifier"
           >
@@ -342,7 +366,10 @@
         {/if}
         {#if !isDeleted && isOwn && onDelete}
           <button
-            onclick={(e) => { e.stopPropagation(); showDeleteModal = true; }}
+            onclick={(e) => {
+              e.stopPropagation();
+              showDeleteModal = true;
+            }}
             class="p-1.5 rounded-lg hover:bg-gray-200 transition-colors text-red-400 hover:text-red-600"
             aria-label="Supprimer"
           >
@@ -382,7 +409,9 @@
     <!-- ── Info tooltip (time sent + readBy) on bubble click ── -->
     {#if showInfo}
       <div
-        class="absolute {isOwn ? 'right-0' : 'left-0'} top-full mt-1 px-3 py-1.5 bg-gray-800 text-white text-[0.65rem] rounded-lg shadow-lg z-50 whitespace-nowrap flex flex-col gap-0.5 pointer-events-none"
+        class="absolute {isOwn
+          ? 'right-0'
+          : 'left-0'} top-full mt-1 px-3 py-1.5 bg-gray-800 text-white text-[0.65rem] rounded-lg shadow-lg z-50 whitespace-nowrap flex flex-col gap-0.5 pointer-events-none"
         in:fly={{ y: -3, duration: 100 }}
       >
         <span>Envoyé à {format(timestamp, 'HH:mm')}</span>
@@ -394,17 +423,22 @@
   </div>
 
   <!-- ── Modals (outside the relative div so z-index is clean) ── -->
-  <Modal open={showEditModal} title="Modifier le message" onClose={() => showEditModal = false}>
+  <Modal open={showEditModal} title="Modifier le message" onClose={() => (showEditModal = false)}>
     <textarea
       bind:value={editText}
       rows="3"
       class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-cn-yellow/50"
       placeholder="Nouveau texte…"
-      onkeydown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); confirmEdit(); } }}
+      onkeydown={(e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          confirmEdit();
+        }
+      }}
     ></textarea>
     {#snippet footer()}
       <button
-        onclick={() => showEditModal = false}
+        onclick={() => (showEditModal = false)}
         class="px-4 py-2 text-sm rounded-lg text-gray-600 hover:bg-gray-100 transition-colors"
       >
         Annuler
@@ -418,11 +452,17 @@
     {/snippet}
   </Modal>
 
-  <Modal open={showDeleteModal} title="Supprimer le message" onClose={() => showDeleteModal = false}>
-    <p class="text-sm text-gray-600">Supprimer définitivement ce message ? Cette action est irréversible.</p>
+  <Modal
+    open={showDeleteModal}
+    title="Supprimer le message"
+    onClose={() => (showDeleteModal = false)}
+  >
+    <p class="text-sm text-gray-600">
+      Supprimer définitivement ce message ? Cette action est irréversible.
+    </p>
     {#snippet footer()}
       <button
-        onclick={() => showDeleteModal = false}
+        onclick={() => (showDeleteModal = false)}
         class="px-4 py-2 text-sm rounded-lg text-gray-600 hover:bg-gray-100 transition-colors"
       >
         Annuler

@@ -75,6 +75,8 @@
   const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 16000, 30000];
   let reconnectAttempts = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let isReconnecting = false; // guard against concurrent reconnect attempts
+  let isSyncing = false;       // guard against concurrent device-sync storms
 
   // Variables de débogage
   let lastKeyPackage = $state('');
@@ -198,6 +200,11 @@
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && isLoggedIn && !isWsConnected) {
         log('Page visible de nouveau — reconnexion…');
+        // Cancel any pending timer so we don't reconnect twice
+        if (reconnectTimer !== null) {
+          clearTimeout(reconnectTimer);
+          reconnectTimer = null;
+        }
         void attemptReconnect();
       }
     };
@@ -356,16 +363,35 @@
     await migrateFromLocalStorage(userId, pin, storage, log);
 
     const convMetas = await storage.getConversations();
+
+    // Phase 1 (fast, blocking): populate the conversations map with metadata
+    // only so the WS message handler can route messages immediately.
     for (const meta of convMetas) {
-      const storedMessages = await storage.getMessages(meta.id, pin);
       conversations.set(meta.id, {
         contactName: meta.id,
         name: meta.name,
         groupId: meta.groupId,
-        messages: mapStoredMessagesToChatMessages(storedMessages, userId),
+        messages: [],            // loaded asynchronously in phase 2
         isReady: meta.isReady,
         mlsStateHex: null,
       });
+    }
+
+    // Phase 2 (background, non-blocking): decrypt stored messages and replay
+    // remote history. Run all conversations in parallel so decryption doesn't
+    // serialize across conversations.
+    for (const meta of convMetas) {
+      storage
+        .getMessages(meta.id, pin)
+        .then((storedMessages) => {
+          const msgs = mapStoredMessagesToChatMessages(storedMessages, userId);
+          const existing = conversations.get(meta.id);
+          // Only inject if no live messages arrived in the meantime
+          if (existing && existing.messages.length === 0 && msgs.length > 0) {
+            conversations.set(meta.id, { ...existing, messages: msgs });
+          }
+        })
+        .catch(() => {});
       loadHistoryForConversation(meta.id, meta.groupId);
     }
   }
@@ -510,11 +536,28 @@
         const mediaRef = await mediaService.encryptAndUpload(fileToSend, authToken);
         const messageId = crypto.randomUUID();
         // Encode as proto AppMessage for MLS encryption
-        const kindMap: Record<string, number> = { image: MediaKind.MEDIA_IMAGE, video: MediaKind.MEDIA_VIDEO, audio: MediaKind.MEDIA_AUDIO, file: MediaKind.MEDIA_FILE };
-        const keyBytes = new Uint8Array((mediaRef.key.match(/.{1,2}/g) ?? []).map((b) => parseInt(b, 16)));
-        const ivBytes  = new Uint8Array((mediaRef.iv.match(/.{1,2}/g)  ?? []).map((b) => parseInt(b, 16)));
+        const kindMap: Record<string, number> = {
+          image: MediaKind.MEDIA_IMAGE,
+          video: MediaKind.MEDIA_VIDEO,
+          audio: MediaKind.MEDIA_AUDIO,
+          file: MediaKind.MEDIA_FILE,
+        };
+        const keyBytes = new Uint8Array(
+          (mediaRef.key.match(/.{1,2}/g) ?? []).map((b) => parseInt(b, 16))
+        );
+        const ivBytes = new Uint8Array(
+          (mediaRef.iv.match(/.{1,2}/g) ?? []).map((b) => parseInt(b, 16))
+        );
         const protoBytes = encodeAppMessage({
-          ...mkMedia({ kind: kindMap[mediaRef.type] ?? MediaKind.MEDIA_FILE, mediaId: mediaRef.mediaId, key: keyBytes, iv: ivBytes, mimeType: mediaRef.mimeType, size: mediaRef.size, fileName: mediaRef.fileName ?? '' }),
+          ...mkMedia({
+            kind: kindMap[mediaRef.type] ?? MediaKind.MEDIA_FILE,
+            mediaId: mediaRef.mediaId,
+            key: keyBytes,
+            iv: ivBytes,
+            mimeType: mediaRef.mimeType,
+            size: mediaRef.size,
+            fileName: mediaRef.fileName ?? '',
+          }),
           messageId,
         });
         await mlsService.sendMessage(convo.groupId, protoBytes);
@@ -748,6 +791,7 @@
     if (!isLoggedIn) return;
     isWsConnected = false;
     if (reconnectTimer !== null) return; // already scheduled
+    if (isReconnecting) return;          // already in progress
     const delay = RECONNECT_DELAYS[Math.min(reconnectAttempts, RECONNECT_DELAYS.length - 1)];
     reconnectAttempts++;
     log(
@@ -759,6 +803,8 @@
   async function attemptReconnect() {
     reconnectTimer = null;
     if (!isLoggedIn) return;
+    if (isReconnecting) return; // prevent concurrent reconnect storms
+    isReconnecting = true;
     try {
       log('Reconnexion en cours…');
       const token = await generateDevToken(
@@ -768,12 +814,16 @@
       );
       const mlsService = ensureMls();
       await mlsService.connect(token);
+      // Re-register disconnect handler after each successful reconnection
+      mlsService.onDisconnect(scheduleReconnect);
       isWsConnected = true;
       reconnectAttempts = 0;
       log('✅ Reconnecté au réseau !');
       syncOwnDevicesToGroupsLocally().catch(() => {});
     } catch {
       scheduleReconnect();
+    } finally {
+      isReconnecting = false;
     }
   }
 
@@ -827,14 +877,20 @@
   // --- Sauvegarde (export / import WhatsApp-style) ---
 
   async function syncOwnDevicesToGroupsLocally() {
-    const mlsService = ensureMls();
-    await syncOwnDevicesToGroups({
-      mlsService,
-      userId,
-      pin,
-      conversations,
-      log,
-    });
+    if (isSyncing) return; // prevent concurrent sync storms
+    isSyncing = true;
+    try {
+      const mlsService = ensureMls();
+      await syncOwnDevicesToGroups({
+        mlsService,
+        userId,
+        pin,
+        conversations,
+        log,
+      });
+    } finally {
+      isSyncing = false;
+    }
   }
 
   async function handleExport() {
@@ -984,7 +1040,7 @@
         onGroupRename={handleRenameGroup}
         onGroupDelete={handleDeleteGroup}
         onGroupRemoveMember={handleRemoveMember}
-        messageReactions={messageReactions}
+        {messageReactions}
         {replyingTo}
         onReply={handleReply}
         onReact={handleAddReaction}
@@ -999,18 +1055,18 @@
       {#if showLogs}
         <!-- Sur mobile : overlay plein écran. Sur desktop : panneau latéral dans la flexrow. -->
         <div class="fixed inset-0 z-50 flex flex-col md:relative md:inset-auto md:z-auto md:block">
-        <LogsPanel
-          logs={statusLog}
-          onClose={() => (showLogs = false)}
-          onGenerateKeyPackage={devGenerateKeyPackage}
-          onAddMember={devAddMember}
-          onProcessWelcome={devProcessWelcome}
-          {lastKeyPackage}
-          {lastCommit}
-          {lastWelcome}
-          {incomingBytesHex}
-          onIncomingBytesChange={(value) => (incomingBytesHex = value)}
-        />
+          <LogsPanel
+            logs={statusLog}
+            onClose={() => (showLogs = false)}
+            onGenerateKeyPackage={devGenerateKeyPackage}
+            onAddMember={devAddMember}
+            onProcessWelcome={devProcessWelcome}
+            {lastKeyPackage}
+            {lastCommit}
+            {lastWelcome}
+            {incomingBytesHex}
+            onIncomingBytesChange={(value) => (incomingBytesHex = value)}
+          />
         </div>
       {/if}
     </main>

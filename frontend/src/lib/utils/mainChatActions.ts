@@ -78,7 +78,6 @@ export async function syncOwnDevicesToGroups(params: {
   let totalWelcomes = 0;
 
   for (const device of newDevices) {
-    let allOk = true;
     for (const [, convo] of conversations.entries()) {
       if (!convo.isReady) continue;
       try {
@@ -94,13 +93,16 @@ export async function syncOwnDevicesToGroups(params: {
         const stBytes = await mlsService.saveState(pin);
         localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
       } catch {
-        allOk = false;
+        // Per-group failure is expected (deleted group, wrong epoch, etc.).
+        // Don't block caching — we still mark the device as known so we
+        // don't re-trigger a full sync-storm on every reconnect.
       }
     }
-    if (allOk) {
-      knownIds.add(device.deviceId);
-      localStorage.setItem(cacheKey, JSON.stringify([...knownIds]));
-    }
+    // Always cache the device as "known" after attempting the sync.
+    // If a specific group failed, it will be fixed separately (re-invite, etc.)
+    // rather than by re-running the full sync loop on every connection.
+    knownIds.add(device.deviceId);
+    localStorage.setItem(cacheKey, JSON.stringify([...knownIds]));
   }
 
   if (totalWelcomes > 0) {
