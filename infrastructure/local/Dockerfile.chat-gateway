@@ -11,6 +11,7 @@ WORKDIR /build
 # Copy all sources in one shot (pas de dummy binary — la cache GHA causait le déploiement
 # du stub fn main(){} au lieu du vrai binaire)
 COPY libs/shared-rust ./libs/shared-rust
+COPY libs/proto ./libs/proto
 COPY apps/chat-gateway ./apps/chat-gateway
 
 RUN cd apps/chat-gateway && cargo build --release
