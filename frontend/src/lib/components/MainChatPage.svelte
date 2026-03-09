@@ -102,16 +102,6 @@
   // Reactions (messageId -> array of reactions)
   let messageReactions = new SvelteMap<string, MessageReaction[]>();
 
-  // Derived reactions object for reactive prop passing
-  // Using forEach to ensure reactivity with SvelteMap
-  let reactionsForProps = $derived.by(() => {
-    const obj: Record<string, MessageReaction[]> = {};
-    messageReactions.forEach((value, key) => {
-      obj[key] = value;
-    });
-    return obj;
-  });
-
   // Reply state
   let replyingTo = $state<ChatMessage | null>(null);
 
@@ -596,6 +586,15 @@
     const convo = conversations.get(selectedContact);
     if (!convo) return;
 
+    // Optimistic local update: l'expéditeur ne peut pas déchiffrer
+    // son propre message MLS (CannotDecryptOwnMessage), donc on met
+    // à jour immédiatement sans attendre le retour du gateway.
+    const meNorm = userId.toLowerCase();
+    const existing = messageReactions.get(messageId) ?? [];
+    const updated = existing.filter((r) => r.userId !== meNorm);
+    updated.push({ emoji, userId: meNorm });
+    messageReactions.set(messageId, updated);
+
     const mlsService = ensureMls();
     await addReaction(messageId, emoji, {
       mlsService,
@@ -968,7 +967,7 @@
         onGroupRename={handleRenameGroup}
         onGroupDelete={handleDeleteGroup}
         onGroupRemoveMember={handleRemoveMember}
-        messageReactions={reactionsForProps}
+        messageReactions={messageReactions}
         {replyingTo}
         onReply={handleReply}
         onReact={handleAddReaction}
