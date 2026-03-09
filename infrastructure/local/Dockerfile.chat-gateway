@@ -1,5 +1,5 @@
 # ── Build stage ──────────────────────────────────────────────────────────────
-FROM rust:1.87-slim AS builder
+FROM rust:slim AS builder
 
 # System deps for rdkafka (cmake build feature)
 RUN apt-get update && apt-get install -y cmake pkg-config libssl-dev g++ libcurl4-openssl-dev && rm -rf /var/lib/apt/lists/*
