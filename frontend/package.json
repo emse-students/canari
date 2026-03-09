@@ -7,7 +7,7 @@
     "dev": "vite dev",
     "build": "vite build",
     "preview": "vite preview",
-    "prepare": "cd .. && husky install frontend/.husky || true",
+    "prepare": "cd .. && node frontend/node_modules/.bin/husky frontend/.husky 2>/dev/null || true",
     "proto:gen": "pbjs -t static-module -w es6 --es6 --no-service --force-number -o src/lib/proto/canari.js ../libs/proto/canari.proto && pbts -o src/lib/proto/canari.d.ts src/lib/proto/canari.js",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",

@@ -133,31 +133,32 @@ async fn main() {
                                 json.get("recipientId").and_then(|v| v.as_str()),
                                 json.get("deviceId").and_then(|v| v.as_str()),
                                 json.get("proto").and_then(|v| v.as_str()),
-                            ) {
-                                let proto_bytes = match B64.decode(proto_b64) {
-                                    Ok(b) => b,
-                                    Err(e) => {
-                                        tracing::warn!(
-                                            "Failed to decode proto bytes from Redis: {}",
-                                            e
-                                        );
-                                        continue;
-                                    }
-                                };
-                                let key = format!("{}:{}", recipient_id, device_id);
+                            )
+                        {
+                            let proto_bytes = match B64.decode(proto_b64) {
+                                Ok(b) => b,
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "Failed to decode proto bytes from Redis: {}",
+                                        e
+                                    );
+                                    continue;
+                                }
+                            };
+                            let key = format!("{}:{}", recipient_id, device_id);
 
-                                // Send to ALL active connections for this key (multi-tab support)
-                                let senders = {
-                                    let map = connected_users.lock().unwrap();
-                                    map.get(&key).cloned()
-                                };
+                            // Send to ALL active connections for this key (multi-tab support)
+                            let senders = {
+                                let map = connected_users.lock().unwrap();
+                                map.get(&key).cloned()
+                            };
 
-                                if let Some(senders) = senders {
-                                    for tx in &senders {
-                                        let _ = tx.send(proto_bytes.clone());
-                                    }
+                            if let Some(senders) = senders {
+                                for tx in &senders {
+                                    let _ = tx.send(proto_bytes.clone());
                                 }
                             }
+                        }
                     }
                 }
                 // Stream ended (Redis déconnecté), on réessaie

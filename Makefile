@@ -1,4 +1,4 @@
-.PHONY: all install install-node install-bun install-rust install-wasm-pack install-frontend install-services install-hooks setup-env setup-env-prod production production-check build-frontend reload-services test test-libs test-gateway test-history clean
+.PHONY: all install install-node install-bun install-rust install-wasm-pack install-frontend install-services install-hooks setup-env setup-env-prod production production-check build-frontend reload-services test test-libs test-gateway test-history clean run-ci lint-frontend
 
 # Cible par défaut : installation complète et déploiement LOCAL
 .DEFAULT_GOAL := all
@@ -438,4 +438,29 @@ reset-services-prod:
 	@docker compose -f infrastructure/docker-compose.prod.yml --env-file infrastructure/.env down -v --remove-orphans && \
 		docker compose -f infrastructure/docker-compose.prod.yml --env-file infrastructure/.env up -d --build --remove-orphans
 	@echo "${GREEN}✅ Services reset${RESET}"
+
+# ── CI Pipeline ──────────────────────────────────────────────────────────────
+# Runs all checks locally: Rust tests, TS type-check, frontend lint, frontend build.
+# Usage: make run-ci
+run-ci: lint-frontend test
+	@echo ""
+	@echo "${BOLD}${GREEN}✅ CI COMPLETE — tous les checks ont passé${RESET}"
+	@echo ""
+
+lint-frontend:
+	@echo "${BLUE}🧹 Type-checking & linting frontend...${RESET}"
+	@cd frontend && ( \
+		if [ -x "$$HOME/.bun/bin/bun" ]; then \
+			$$HOME/.bun/bin/bun run check; \
+		elif command -v bun >/dev/null 2>&1; then \
+			bun run check; \
+		elif command -v npm >/dev/null 2>&1; then \
+			npm run check; \
+		else \
+			export NVM_DIR="$$HOME/.nvm"; \
+			[ -s "$$NVM_DIR/nvm.sh" ] && \. "$$NVM_DIR/nvm.sh"; \
+			npm run check; \
+		fi \
+	)
+	@echo "${GREEN}✅ Frontend type-check OK${RESET}"
 
