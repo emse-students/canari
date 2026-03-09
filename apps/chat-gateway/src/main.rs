@@ -2,6 +2,7 @@ mod handlers;
 mod models;
 mod state;
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
 use axum::{
     Router,
     http::{Method, StatusCode},
@@ -126,13 +127,20 @@ async fn main() {
                 let mut stream = pubsub.on_message();
                 while let Some(msg) = stream.next().await {
                     if let Ok(payload_str) = msg.get_payload::<String>() {
-                        // Expect format: { recipientId, deviceId, content, ... }
+                        // Expect format: { "recipientId": "...", "deviceId": "...", "proto": "<base64 InboundMsg>" }
                         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&payload_str) {
-                            // Extract routing info
-                            if let (Some(recipient_id), Some(device_id)) = (
+                            if let (Some(recipient_id), Some(device_id), Some(proto_b64)) = (
                                 json.get("recipientId").and_then(|v| v.as_str()),
                                 json.get("deviceId").and_then(|v| v.as_str()),
+                                json.get("proto").and_then(|v| v.as_str()),
                             ) {
+                                let proto_bytes = match B64.decode(proto_b64) {
+                                    Ok(b) => b,
+                                    Err(e) => {
+                                        tracing::warn!("Failed to decode proto bytes from Redis: {}", e);
+                                        continue;
+                                    }
+                                };
                                 let key = format!("{}:{}", recipient_id, device_id);
 
                                 // Send to ALL active connections for this key (multi-tab support)
@@ -143,7 +151,7 @@ async fn main() {
 
                                 if let Some(senders) = senders {
                                     for tx in &senders {
-                                        let _ = tx.send(payload_str.clone());
+                                        let _ = tx.send(proto_bytes.clone());
                                     }
                                 }
                             }

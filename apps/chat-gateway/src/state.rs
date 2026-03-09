@@ -9,7 +9,8 @@ pub struct AppState {
     pub redis_client: RedisClient,
     pub kafka_producer: FutureProducer,
     // Map: "UserId:DeviceId" -> list of senders (multiple tabs / reconnects)
-    pub connected_users: Arc<Mutex<HashMap<String, Vec<mpsc::UnboundedSender<String>>>>>,
+    // Channel carries raw proto-encoded InboundMsg bytes ready to send over WS.
+    pub connected_users: Arc<Mutex<HashMap<String, Vec<mpsc::UnboundedSender<Vec<u8>>>>>>,
     pub jwt_secret: String,
     pub http_client: HttpClient,
     pub delivery_service_url: String,

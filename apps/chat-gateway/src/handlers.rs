@@ -313,7 +313,8 @@ async fn handle_socket(
                                                 con.exists::<_, bool>(&redis_presence_key).await
                                             {
                                                 is_online = true;
-                                                // Encode InboundMsg as proto bytes and publish
+                                                // Publish a JSON routing envelope so the subscriber
+                                                // knows which connected client to forward to.
                                                 let inbound = InboundMsg {
                                                     ciphertext: ciphertext.clone(),
                                                     sender_id: user_id.clone(),
@@ -321,11 +322,13 @@ async fn handle_socket(
                                                     group_id: group_id.clone(),
                                                     is_welcome: false,
                                                 };
+                                                let routing = serde_json::json!({
+                                                    "recipientId": recipient.user_id,
+                                                    "deviceId": recipient.device_id,
+                                                    "proto": B64.encode(encode_inbound(&inbound))
+                                                }).to_string();
                                                 let _: Result<(), _> = con
-                                                    .publish(
-                                                        "chat:messages",
-                                                        encode_inbound(&inbound),
-                                                    )
+                                                    .publish("chat:messages", &routing)
                                                     .await;
                                             }
                                         }
@@ -413,8 +416,13 @@ async fn handle_socket(
                                                 group_id: group_id.clone(),
                                                 is_welcome: true,
                                             };
+                                            let routing = serde_json::json!({
+                                                "recipientId": recipient.user_id,
+                                                "deviceId": recipient.device_id,
+                                                "proto": B64.encode(encode_inbound(&inbound))
+                                            }).to_string();
                                             let _: Result<(), _> = con
-                                                .publish("chat:messages", encode_inbound(&inbound))
+                                                .publish("chat:messages", &routing)
                                                 .await;
                                             sent = true;
                                         }
