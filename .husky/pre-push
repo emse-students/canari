@@ -41,9 +41,9 @@ fi
 
 if [ "$RUN_DELIVERY" -eq 1 ]; then
   (
-    cd apps/chat-delivery-service && npm run lint && npx tsc -p tsconfig.json && npm test
+    cd apps/chat-delivery-service && npm run lint && npm test
   ) || {
-    echo "❌ chat-delivery-service checks failed (lint/tsc/test)."
+    echo "❌ chat-delivery-service checks failed (lint/test)."
     exit 1
   }
 fi

@@ -76,7 +76,7 @@
   let reconnectAttempts = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let isReconnecting = false; // guard against concurrent reconnect attempts
-  let isSyncing = false;       // guard against concurrent device-sync storms
+  let isSyncing = false; // guard against concurrent device-sync storms
 
   // Variables de débogage
   let lastKeyPackage = $state('');
@@ -371,7 +371,7 @@
         contactName: meta.id,
         name: meta.name,
         groupId: meta.groupId,
-        messages: [],            // loaded asynchronously in phase 2
+        messages: [], // loaded asynchronously in phase 2
         isReady: meta.isReady,
         mlsStateHex: null,
       });
@@ -791,7 +791,7 @@
     if (!isLoggedIn) return;
     isWsConnected = false;
     if (reconnectTimer !== null) return; // already scheduled
-    if (isReconnecting) return;          // already in progress
+    if (isReconnecting) return; // already in progress
     const delay = RECONNECT_DELAYS[Math.min(reconnectAttempts, RECONNECT_DELAYS.length - 1)];
     reconnectAttempts++;
     log(
@@ -866,8 +866,8 @@
                 req.onsuccess = () => resolve();
                 req.onerror = () => resolve();
                 req.onblocked = () => resolve();
-              }),
-          ),
+              })
+          )
       );
     }
     localStorage.clear();

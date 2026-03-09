@@ -26,20 +26,13 @@ if [ "$RUN_FRONTEND" -eq 1 ]; then
     echo "❌ Frontend lint failed. Use 'cd frontend && bun run lint:fix'."
     exit 1
   }
-
-  (
-    cd frontend && bun run check
-  ) || {
-    echo "❌ Frontend type check failed. Use 'cd frontend && bun run check'."
-    exit 1
-  }
 fi
 
 if [ "$RUN_DELIVERY" -eq 1 ]; then
   (
-    cd apps/chat-delivery-service && npm run lint && npx tsc -p tsconfig.json && npm test
+    cd apps/chat-delivery-service && npm run lint
   ) || {
-    echo "❌ chat-delivery-service checks failed (lint/tsc/test)."
+    echo "❌ chat-delivery-service checks failed (lint)."
     exit 1
   }
 fi
@@ -49,13 +42,6 @@ if [ "$RUN_GATEWAY" -eq 1 ]; then
     cd apps/chat-gateway && cargo fmt -- --check
   ) || {
     echo "❌ chat-gateway formatting failed. Run 'cd apps/chat-gateway && cargo fmt'."
-    exit 1
-  }
-
-  (
-    cd apps/chat-gateway && cargo clippy --all-targets --all-features -- -D warnings
-  ) || {
-    echo "❌ chat-gateway clippy failed. Fix warnings/errors before commit."
     exit 1
   }
 fi

@@ -22,7 +22,6 @@ jobs:
 
   build-frontend:
     name: Build Frontend
-    needs: [run-code-analysis]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -158,7 +157,7 @@ jobs:
   deploy-to-server:
     name: Deploy to Production Server
     runs-on: self-hosted
-    needs: [run-ci, build-docker-images]
+    needs: [run-ci, run-code-analysis, build-docker-images]
     if: github.ref == 'refs/heads/main'
     permissions:
       contents: read
