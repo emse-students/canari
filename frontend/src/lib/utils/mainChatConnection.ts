@@ -55,6 +55,10 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
     log,
   } = deps;
 
+  // Compteur d'échecs MLS par conversation — détection des groupes fantômes
+  const groupMlsFailures = new Map<string, number>();
+  const PHANTOM_THRESHOLD = 3;
+
   mlsService.onMessage(async (sender, content, groupId): Promise<boolean> => {
     log(`Message de ${sender} (${content.length} octets) - Grp: ${groupId}`);
     const senderNorm = sender.toLowerCase();
@@ -252,6 +256,32 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           return false; // Silent ignore
         }
         log(`Erreur message (groupe connu): ${errMsg}`);
+
+        // Détection de groupe fantôme : le groupId existe dans nos conversations
+        // mais n'est plus dans l'état WASM MLS → nettoyage automatique après N échecs
+        const isPhantom =
+          errMsg.toLowerCase().includes('groupe introuvable') ||
+          errMsg.toLowerCase().includes('group not found');
+        if (isPhantom) {
+          const failures = (groupMlsFailures.get(convoKey) ?? 0) + 1;
+          groupMlsFailures.set(convoKey, failures);
+          log(`⚠️ Groupe fantôme potentiel "${convoKey}" (échec ${failures}/${PHANTOM_THRESHOLD})`);
+          if (failures >= PHANTOM_THRESHOLD) {
+            log(`🧹 Suppression locale du groupe fantôme "${convoKey}" après ${failures} échecs consécutifs`);
+            if (storage) {
+              await storage.deleteConversation(convoKey).catch((e) =>
+                log(`Erreur suppression DB "${convoKey}": ${e}`)
+              );
+            }
+            conversations.delete(convoKey);
+            groupMlsFailures.delete(convoKey);
+            if (selectedContact === convoKey) {
+              setSelectedContact(null);
+              setMobileView('list');
+            }
+          }
+        }
+
         return false;
       }
     }
