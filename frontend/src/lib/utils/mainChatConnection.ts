@@ -267,11 +267,13 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           groupMlsFailures.set(convoKey, failures);
           log(`⚠️ Groupe fantôme potentiel "${convoKey}" (échec ${failures}/${PHANTOM_THRESHOLD})`);
           if (failures >= PHANTOM_THRESHOLD) {
-            log(`🧹 Suppression locale du groupe fantôme "${convoKey}" après ${failures} échecs consécutifs`);
+            log(
+              `🧹 Suppression locale du groupe fantôme "${convoKey}" après ${failures} échecs consécutifs`
+            );
             if (storage) {
-              await storage.deleteConversation(convoKey).catch((e) =>
-                log(`Erreur suppression DB "${convoKey}": ${e}`)
-              );
+              await storage
+                .deleteConversation(convoKey)
+                .catch((e) => log(`Erreur suppression DB "${convoKey}": ${e}`));
             }
             conversations.delete(convoKey);
             groupMlsFailures.delete(convoKey);

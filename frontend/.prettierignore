@@ -5,6 +5,8 @@ dist
 .tauri
 coverage
 target
+src/lib/proto
+src/lib/wasm
 *.tsbuildinfo
 .env
 .env.local
