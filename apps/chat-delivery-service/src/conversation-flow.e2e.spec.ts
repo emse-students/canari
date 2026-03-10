@@ -366,7 +366,7 @@ describe('PARTIE A - Groupe a 2 utilisateurs (user_test1 <> user_test2)', () => 
       expect(env.redis.exists).toHaveBeenCalledWith(
         `user:online:${USERS.u2.userId}:${USERS.u2.deviceId}`,
       );
-      const expectedEnvelope = await encodeInboundMsgEnvelope(
+      const expectedEnvelope = encodeInboundMsgEnvelope(
         USERS.u2.userId,
         USERS.u2.deviceId,
         {
@@ -419,7 +419,7 @@ describe('PARTIE A - Groupe a 2 utilisateurs (user_test1 <> user_test2)', () => 
         content: CONTENT.msgHello,
       });
       expect(res).toEqual({ status: 'processed', queued: 0, sent: 1 });
-      const expectedEnvelope = await encodeInboundMsgEnvelope(
+      const expectedEnvelope = encodeInboundMsgEnvelope(
         USERS.u2.userId,
         USERS.u2.deviceId,
         {
@@ -474,7 +474,7 @@ describe('PARTIE A - Groupe a 2 utilisateurs (user_test1 <> user_test2)', () => 
         content: CONTENT.msgHi,
       });
       expect(res.sent).toBe(1);
-      const expectedEnvelope = await encodeInboundMsgEnvelope(
+      const expectedEnvelope = encodeInboundMsgEnvelope(
         USERS.u1.userId,
         USERS.u1.deviceId,
         {
@@ -561,7 +561,7 @@ describe('PARTIE A - Groupe a 2 utilisateurs (user_test1 <> user_test2)', () => 
         type: 'reaction',
       });
       expect(res).toEqual({ status: 'processed', queued: 0, sent: 1 });
-      const expectedEnvelope = await encodeInboundMsgEnvelope(
+      const expectedEnvelope = encodeInboundMsgEnvelope(
         USERS.u1.userId,
         USERS.u1.deviceId,
         {
@@ -647,7 +647,7 @@ describe('PARTIE A - Groupe a 2 utilisateurs (user_test1 <> user_test2)', () => 
         type: 'chat',
       });
       expect(res.sent).toBe(1);
-      const expectedEnvelope = await encodeInboundMsgEnvelope(
+      const expectedEnvelope = encodeInboundMsgEnvelope(
         USERS.u2.userId,
         USERS.u2.deviceId,
         {
@@ -763,7 +763,7 @@ describe('PARTIE A - Groupe a 2 utilisateurs (user_test1 <> user_test2)', () => 
         type: 'handshake',
       });
       expect(env.redis.publish).toHaveBeenCalledTimes(1);
-      const expectedEnvelope = await encodeInboundMsgEnvelope(
+      const expectedEnvelope = encodeInboundMsgEnvelope(
         USERS.u2.userId,
         USERS.u2.deviceId,
         {
@@ -985,7 +985,7 @@ describe('PARTIE B - Groupe a 3 utilisateurs (user_test1, user_test2, user_test3
         welcomePayload: 'wlc_u3_live==',
         groupId,
       });
-      const expectedEnvelope = await encodeInboundMsgEnvelope(
+      const expectedEnvelope = encodeInboundMsgEnvelope(
         USERS.u3.userId,
         USERS.u3.deviceId,
         {
@@ -1035,7 +1035,7 @@ describe('PARTIE B - Groupe a 3 utilisateurs (user_test1, user_test2, user_test3
       });
       expect(res).toEqual({ status: 'processed', queued: 0, sent: 2 });
       expect(env.redis.publish).toHaveBeenCalledTimes(2);
-      const expectedEnvelope2 = await encodeInboundMsgEnvelope(
+      const expectedEnvelope2 = encodeInboundMsgEnvelope(
         USERS.u2.userId,
         USERS.u2.deviceId,
         {
@@ -1046,7 +1046,7 @@ describe('PARTIE B - Groupe a 3 utilisateurs (user_test1, user_test2, user_test3
           isWelcome: false,
         },
       );
-      const expectedEnvelope3 = await encodeInboundMsgEnvelope(
+      const expectedEnvelope3 = encodeInboundMsgEnvelope(
         USERS.u3.userId,
         USERS.u3.deviceId,
         {
@@ -1075,7 +1075,7 @@ describe('PARTIE B - Groupe a 3 utilisateurs (user_test1, user_test2, user_test3
         content: CONTENT.msgTriangle,
       });
       expect(res).toEqual({ status: 'processed', queued: 1, sent: 1 });
-      const expectedEnvelope = await encodeInboundMsgEnvelope(
+      const expectedEnvelope = encodeInboundMsgEnvelope(
         USERS.u2.userId,
         USERS.u2.deviceId,
         {
@@ -1135,7 +1135,7 @@ describe('PARTIE B - Groupe a 3 utilisateurs (user_test1, user_test2, user_test3
         type: 'reaction',
       });
       expect(res).toEqual({ status: 'processed', queued: 0, sent: 2 });
-      const expectedEnvelope1 = await encodeInboundMsgEnvelope(
+      const expectedEnvelope1 = encodeInboundMsgEnvelope(
         USERS.u1.userId,
         USERS.u1.deviceId,
         {
@@ -1146,7 +1146,7 @@ describe('PARTIE B - Groupe a 3 utilisateurs (user_test1, user_test2, user_test3
           isWelcome: false,
         },
       );
-      const expectedEnvelope2 = await encodeInboundMsgEnvelope(
+      const expectedEnvelope2 = encodeInboundMsgEnvelope(
         USERS.u2.userId,
         USERS.u2.deviceId,
         {
@@ -1205,7 +1205,7 @@ describe('PARTIE B - Groupe a 3 utilisateurs (user_test1, user_test2, user_test3
         type: 'chat',
       });
       expect(res.sent).toBe(2);
-      const expectedEnvelope1 = await encodeInboundMsgEnvelope(
+      const expectedEnvelope1 = encodeInboundMsgEnvelope(
         USERS.u1.userId,
         USERS.u1.deviceId,
         {
@@ -1216,7 +1216,7 @@ describe('PARTIE B - Groupe a 3 utilisateurs (user_test1, user_test2, user_test3
           isWelcome: false,
         },
       );
-      const expectedEnvelope3 = await encodeInboundMsgEnvelope(
+      const expectedEnvelope3 = encodeInboundMsgEnvelope(
         USERS.u3.userId,
         USERS.u3.deviceId,
         {
