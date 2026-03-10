@@ -64,13 +64,17 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
         const result = await mlsService.addMember(groupId, device.keyPackage);
         await mlsService.registerMember(groupId, userId, device.deviceId);
         if (result.welcome) {
-          await mlsService.sendWelcome(
-            result.welcome,
-            userId,
-            groupId,
-            device.deviceId,
-            result.ratchetTree
-          );
+          if (result.ratchetTree) {
+            await mlsService.sendWelcome(
+              result.welcome,
+              userId,
+              groupId,
+              device.deviceId,
+              result.ratchetTree
+            );
+          } else {
+            await mlsService.sendWelcome(result.welcome, userId, groupId, device.deviceId);
+          }
         }
         if (result.commit) {
           await mlsService.sendCommit(result.commit, groupId);
@@ -135,14 +139,31 @@ export async function inviteMemberToGroup(
 
     // Send Welcome messages
     if (bulk.welcome) {
+      const welcomeB64 = btoa(
+        Array.from(bulk.welcome)
+          .map((b) => String.fromCharCode(b))
+          .join('')
+      );
+      const ratchetTreeB64 = bulk.ratchetTree
+        ? btoa(
+            Array.from(bulk.ratchetTree)
+              .map((b) => String.fromCharCode(b))
+              .join('')
+          )
+        : undefined;
       for (const did of bulk.addedDeviceIds) {
-        await mlsService.sendWelcome(
-          bulk.welcome,
-          targetUser,
-          conversation.groupId,
-          did,
-          bulk.ratchetTree
-        );
+        await fetch(`${historyBaseUrl}/mls-api/welcome`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            targetDeviceId: did,
+            targetUserId: targetUser,
+            senderUserId: userId,
+            welcomePayload: welcomeB64,
+            ratchetTreePayload: ratchetTreeB64,
+            groupId: conversation.groupId,
+          }),
+        });
       }
     }
 
@@ -219,13 +240,17 @@ export async function startNewConversation(
         const result = await mlsService.addMember(groupId, device.keyPackage);
         await mlsService.registerMember(groupId, userId, device.deviceId);
         if (result.welcome)
-          await mlsService.sendWelcome(
-            result.welcome,
-            userId,
-            groupId,
-            device.deviceId,
-            result.ratchetTree
-          );
+          if (result.ratchetTree) {
+            await mlsService.sendWelcome(
+              result.welcome,
+              userId,
+              groupId,
+              device.deviceId,
+              result.ratchetTree
+            );
+          } else {
+            await mlsService.sendWelcome(result.welcome, userId, groupId, device.deviceId);
+          }
         if (result.commit) await mlsService.sendCommit(result.commit, groupId);
       } catch {
         // Silently ignore errors in device sync
@@ -248,8 +273,31 @@ export async function startNewConversation(
       localStorage.setItem('mls_autosave_' + userId, toHex(st2Bytes));
 
       if (bulk.welcome) {
+        const welcomeB64 = btoa(
+          Array.from(bulk.welcome)
+            .map((b) => String.fromCharCode(b))
+            .join('')
+        );
+        const ratchetTreeB64 = bulk.ratchetTree
+          ? btoa(
+              Array.from(bulk.ratchetTree)
+                .map((b) => String.fromCharCode(b))
+                .join('')
+            )
+          : undefined;
         for (const did of bulk.addedDeviceIds) {
-          await mlsService.sendWelcome(bulk.welcome, contact, groupId, did, bulk.ratchetTree);
+          await fetch(`${historyBaseUrl}/mls-api/welcome`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              targetDeviceId: did,
+              targetUserId: contact,
+              senderUserId: userId,
+              welcomePayload: welcomeB64,
+              ratchetTreePayload: ratchetTreeB64,
+              groupId,
+            }),
+          });
         }
       }
       if (bulk.commit) await mlsService.sendCommit(bulk.commit, groupId);

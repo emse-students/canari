@@ -28,6 +28,7 @@ pub enum MlsError {
 }
 
 type AddMembersBulkResult = (Vec<u8>, Option<Vec<u8>>, usize, Option<Vec<u8>>);
+type AddMemberResult = (Vec<u8>, Option<Vec<u8>>, Option<Vec<u8>>);
 
 // --- 1. LE MODÈLE DE PERSISTANCE (DISQUE) ---
 
@@ -175,7 +176,7 @@ impl MlsManager {
         &mut self,
         group_id: &str,
         key_package_bytes: &[u8],
-    ) -> Result<(Vec<u8>, Option<Vec<u8>>, Option<Vec<u8>>), MlsError> {
+    ) -> Result<AddMemberResult, MlsError> {
         let (commit, welcome, _, ratchet_tree) =
             self.add_members_bulk(group_id, &[key_package_bytes])?;
         Ok((commit, welcome, ratchet_tree))

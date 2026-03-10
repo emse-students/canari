@@ -456,16 +456,14 @@ export class AppController {
           console.log(
             `[DELIVERY] Encoding message for ${redisKey}, isWelcome: ${isWelcome}`,
           );
-          const envelope = await encodeInboundMsgEnvelope(
-            r.userId,
-            r.deviceId,
-            {
+          const envelope = await Promise.resolve(
+            encodeInboundMsgEnvelope(r.userId, r.deviceId, {
               ciphertext,
               senderId,
               senderDeviceId: senderDeviceId ?? '',
               groupId,
               isWelcome,
-            },
+            }),
           );
           console.log(
             `[DELIVERY] Publishing Message to ${redisKey}, envelope length: ${envelope.length}`,
