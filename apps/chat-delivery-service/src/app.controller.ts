@@ -306,7 +306,9 @@ export class AppController {
           isWelcome: true, // Welcome MUST be correctly formatted when creating InboundMsg
         },
       );
-      console.log(`[DELIVERY] Publishing Welcome message to ${redisKey}, envelope length: ${envelope.length}`);
+      console.log(
+        `[DELIVERY] Publishing Welcome message to ${redisKey}, envelope length: ${envelope.length}`,
+      );
       await this.redis.publish('chat:messages', envelope);
     } else {
       console.log(`[DELIVERY] Target ${redisKey} is OFFLINE, message queued.`);
@@ -394,14 +396,18 @@ export class AppController {
       const redisKey = `user:online:${r.userId}:${r.deviceId}`;
       const isOnline = await this.redis.exists(redisKey);
 
-      console.log(`[DELIVERY] Checking presence for ${redisKey} -> ${isOnline}`);
+      console.log(
+        `[DELIVERY] Checking presence for ${redisKey} -> ${isOnline}`,
+      );
 
       if (isOnline) {
         // Push directly to Gateway via Redis PubSub (proto-encoded InboundMsg)
         const ciphertext = Buffer.from(content, 'base64');
         const isWelcome = type === 'mlsWelcome';
 
-        console.log(`[DELIVERY] Encoding message for ${redisKey}, isWelcome: ${isWelcome}`);
+        console.log(
+          `[DELIVERY] Encoding message for ${redisKey}, isWelcome: ${isWelcome}`,
+        );
         const envelope = await encodeInboundMsgEnvelope(r.userId, r.deviceId, {
           ciphertext,
           senderId,
@@ -410,7 +416,9 @@ export class AppController {
           isWelcome,
         });
 
-        console.log(`[DELIVERY] Publishing Message to ${redisKey}, envelope length: ${envelope.length}`);
+        console.log(
+          `[DELIVERY] Publishing Message to ${redisKey}, envelope length: ${envelope.length}`,
+        );
         await this.redis.publish('chat:messages', envelope);
         sentCount++;
       } else {

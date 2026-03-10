@@ -485,7 +485,10 @@ describe('PARTIE A - Groupe a 2 utilisateurs (user_test1 <> user_test2)', () => 
           isWelcome: false,
         },
       );
-      expect(env.redis.publish).toHaveBeenCalledWith('chat:messages', expectedEnvelope);
+      expect(env.redis.publish).toHaveBeenCalledWith(
+        'chat:messages',
+        expectedEnvelope,
+      );
     });
 
     it('user_test2 recupere ses messages en attente (polling)', async () => {
@@ -569,7 +572,10 @@ describe('PARTIE A - Groupe a 2 utilisateurs (user_test1 <> user_test2)', () => 
           isWelcome: false,
         },
       );
-      expect(env.redis.publish).toHaveBeenCalledWith('chat:messages', expectedEnvelope);
+      expect(env.redis.publish).toHaveBeenCalledWith(
+        'chat:messages',
+        expectedEnvelope,
+      );
     });
 
     it('user_test2 OFFLINE envoie une reaction -> queue MongoDB avec type "reaction"', async () => {
@@ -652,7 +658,10 @@ describe('PARTIE A - Groupe a 2 utilisateurs (user_test1 <> user_test2)', () => 
           isWelcome: false,
         },
       );
-      expect(env.redis.publish).toHaveBeenCalledWith('chat:messages', expectedEnvelope);
+      expect(env.redis.publish).toHaveBeenCalledWith(
+        'chat:messages',
+        expectedEnvelope,
+      );
     });
 
     it('user_test2 OFFLINE recoit une reponse -> queue MongoDB', async () => {
@@ -765,7 +774,10 @@ describe('PARTIE A - Groupe a 2 utilisateurs (user_test1 <> user_test2)', () => 
           isWelcome: false,
         },
       );
-      expect(env.redis.publish).toHaveBeenCalledWith('chat:messages', expectedEnvelope);
+      expect(env.redis.publish).toHaveBeenCalledWith(
+        'chat:messages',
+        expectedEnvelope,
+      );
     });
 
     it('la notification de renommage est queued pour user_test2 OFFLINE', async () => {
@@ -1045,7 +1057,7 @@ describe('PARTIE B - Groupe a 3 utilisateurs (user_test1, user_test2, user_test3
           isWelcome: false,
         },
       );
-      const callsContent = env.redis.publish.mock.calls.map(c => c[1]);
+      const callsContent = env.redis.publish.mock.calls.map((c) => c[1]);
       expect(callsContent).toContain(expectedEnvelope2);
       expect(callsContent).toContain(expectedEnvelope3);
     });
@@ -1074,7 +1086,10 @@ describe('PARTIE B - Groupe a 3 utilisateurs (user_test1, user_test2, user_test3
           isWelcome: false,
         },
       );
-      expect(env.redis.publish).toHaveBeenCalledWith('chat:messages', expectedEnvelope);
+      expect(env.redis.publish).toHaveBeenCalledWith(
+        'chat:messages',
+        expectedEnvelope,
+      );
       const queuedTo =
         env.queueModel.bulkWrite.mock.calls[0][0][0].insertOne.document
           .recipientId;
@@ -1142,7 +1157,7 @@ describe('PARTIE B - Groupe a 3 utilisateurs (user_test1, user_test2, user_test3
           isWelcome: false,
         },
       );
-      const callsContent = env.redis.publish.mock.calls.map(c => c[1]);
+      const callsContent = env.redis.publish.mock.calls.map((c) => c[1]);
       expect(callsContent).toContain(expectedEnvelope1);
       expect(callsContent).toContain(expectedEnvelope2);
     });
@@ -1212,7 +1227,7 @@ describe('PARTIE B - Groupe a 3 utilisateurs (user_test1, user_test2, user_test3
           isWelcome: false,
         },
       );
-      const callsContent = env.redis.publish.mock.calls.map(c => c[1]);
+      const callsContent = env.redis.publish.mock.calls.map((c) => c[1]);
       expect(callsContent).toContain(expectedEnvelope1);
       expect(callsContent).toContain(expectedEnvelope3);
     });
