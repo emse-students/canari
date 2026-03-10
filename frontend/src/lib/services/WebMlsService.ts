@@ -217,7 +217,7 @@ export class WebMlsService implements IMlsService {
             inbound.senderId || 'unknown',
             new Uint8Array(inbound.ciphertext),
             inbound.groupId || undefined,
-            inbound.isWelcome === true,
+            inbound.isWelcome === true
           );
         }
       } catch (e) {
@@ -236,7 +236,7 @@ export class WebMlsService implements IMlsService {
           (data.senderId || data.sender_id || 'unknown') as string,
           bytes,
           (data.groupId || data.session_id) as string | undefined,
-          data.type === 'mlsWelcome',
+          data.type === 'mlsWelcome'
         );
       } catch (e) {
         console.error('Message processing failed', e);

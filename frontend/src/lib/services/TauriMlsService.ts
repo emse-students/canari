@@ -161,7 +161,7 @@ export class TauriMlsService implements IMlsService {
             inbound.senderId || 'unknown',
             new Uint8Array(inbound.ciphertext),
             inbound.groupId || undefined,
-            inbound.isWelcome === true,
+            inbound.isWelcome === true
           );
         }
       } catch (e) {
@@ -180,7 +180,7 @@ export class TauriMlsService implements IMlsService {
           (data.senderId || 'unknown') as string,
           bytes,
           (data.groupId || data.session_id) as string | undefined,
-          data.type === 'mlsWelcome',
+          data.type === 'mlsWelcome'
         );
       } catch (e) {
         console.error('Message processing failed', e);

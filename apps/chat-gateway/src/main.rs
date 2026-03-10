@@ -151,14 +151,16 @@ async fn main() {
                                     }
                                 },
                                 None => {
-                                    tracing::warn!("Redis message missing 'proto' field, dropping (all publishers must use {{recipientId, deviceId, proto}} format)");
+                                    tracing::warn!(
+                                        "Redis message missing 'proto' field, dropping (all publishers must use {{recipientId, deviceId, proto}} format)"
+                                    );
                                     continue;
                                 }
                             };
 
                             let key = format!("{}:{}", recipient_id, device_id);
 
-                              tracing::info!("Looking for connected user: {}", key);
+                            tracing::info!("Looking for connected user: {}", key);
 
                             tracing::info!("Looking for connected user: {}", key);
 
