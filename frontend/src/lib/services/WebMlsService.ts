@@ -1,10 +1,5 @@
 import type { IMlsService } from './IMlsService';
-import {
-  decodeInboundMsg,
-  encodeEnvelope,
-  mkMlsEnvelope,
-  mkWelcomeEnvelope,
-} from '$lib/proto/codec';
+import { decodeInboundMsg } from '$lib/proto/codec';
 
 // Implémentation pour le Site Web (WASM)
 export class WebMlsService implements IMlsService {
@@ -91,33 +86,37 @@ export class WebMlsService implements IMlsService {
       };
       this.ws.onmessage = async (event) => {
         try {
-          console.log(
-            `[WS RCV] Raw websocket event. Type: ${typeof event.data}, isArrayBuffer: ${event.data instanceof ArrayBuffer}, isBlob: ${event.data instanceof Blob}`
-          );
-          // Gateway now sends binary proto InboundMsg frames.
-          const buffer: ArrayBuffer =
-            event.data instanceof ArrayBuffer
+          // Gateway sends JSON text frames: { senderId, senderDeviceId, groupId, isWelcome, proto: base64(ciphertext) }
+          const text: string =
+            typeof event.data === 'string'
               ? event.data
-              : await (event.data as Blob).arrayBuffer();
+              : event.data instanceof Blob
+                ? await (event.data as Blob).text()
+                : new TextDecoder().decode(event.data as ArrayBuffer);
 
-          console.log(`[WS RCV] Buffer byte length: ${buffer.byteLength}`);
-
-          const inbound = decodeInboundMsg(new Uint8Array(buffer));
+          const msg = JSON.parse(text);
           console.log(
-            `[WS RCV] Decoded InboundMsg: senderId=${inbound.senderId}, groupId=${inbound.groupId}, isWelcome=${inbound.isWelcome}, cipherLength=${inbound.ciphertext?.length}`
+            `[WS RCV] JSON frame: senderId=${msg.senderId}, groupId=${msg.groupId}, isWelcome=${msg.isWelcome}, protoLen=${(msg.proto as string)?.length}`
           );
 
-          if (inbound.ciphertext && inbound.ciphertext.length > 0 && this.messageCallback) {
-            console.log(`[WS RCV] Triggering messageCallback for inboud...`);
-            await this.messageCallback(
-              inbound.senderId || 'unknown',
-              new Uint8Array(inbound.ciphertext),
-              inbound.groupId || undefined,
-              inbound.isWelcome === true
-            );
-            console.log(`[WS RCV] messageCallback finished.`);
+          if (msg.proto && this.messageCallback) {
+            const binaryString = atob(msg.proto as string);
+            const ciphertext = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++)
+              ciphertext[i] = binaryString.charCodeAt(i);
+
+            if (ciphertext.length > 0) {
+              console.log(`[WS RCV] Triggering messageCallback...`);
+              await this.messageCallback(
+                (msg.senderId as string) || 'unknown',
+                ciphertext,
+                (msg.groupId as string) || undefined,
+                msg.isWelcome === true
+              );
+              console.log(`[WS RCV] messageCallback finished.`);
+            }
           } else {
-            console.warn(`[WS RCV] No ciphertext or no messageCallback set. Message ignored.`);
+            console.warn(`[WS RCV] No proto or no messageCallback set. Message ignored.`);
           }
         } catch (e) {
           console.error('Failed to process WebSocket message:', e);
@@ -321,11 +320,12 @@ export class WebMlsService implements IMlsService {
       });
     } else if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(
-        encodeEnvelope(
-          mkWelcomeEnvelope(welcomeBytes, groupId, [
-            { userId: targetUserId, deviceId: targetDeviceId ?? '' },
-          ])
-        )
+        JSON.stringify({
+          type: 'welcome',
+          groupId,
+          proto: btoa(String.fromCharCode(...welcomeBytes)),
+          recipients: [{ userId: targetUserId, deviceId: targetDeviceId ?? '' }],
+        })
       );
     } else {
       await fetch(`${this.historyUrl}/mls-api/send`, {
@@ -345,7 +345,7 @@ export class WebMlsService implements IMlsService {
   async sendCommit(commitBytes: Uint8Array, groupId: string): Promise<void> {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       // MLS commit is also an MlsFrame (opaque to the server)
-      this.ws.send(encodeEnvelope(mkMlsEnvelope(commitBytes, groupId)));
+      this.ws.send(JSON.stringify({ type: 'mls', groupId, proto: btoa(String.fromCharCode(...commitBytes)) }));
     } else {
       const base64 = btoa(String.fromCharCode(...commitBytes));
       await fetch(`${this.historyUrl}/mls-api/send`, {
@@ -486,7 +486,7 @@ export class WebMlsService implements IMlsService {
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       // Binary proto WsEnvelope { mls: { ciphertext, groupId } }
-      this.ws.send(encodeEnvelope(mkMlsEnvelope(encryptedBytes, groupId)));
+      this.ws.send(JSON.stringify({ type: 'mls', groupId, proto: btoa(String.fromCharCode(...encryptedBytes)) }));
     } else {
       console.warn('WebSocket not connected. Sending via HTTP fallback...');
       const base64 = btoa(String.fromCharCode(...encryptedBytes));

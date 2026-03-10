@@ -10,6 +10,7 @@ use axum::{
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
 use futures::stream::StreamExt;
+use prost::Message as ProstMessage;
 use rdkafka::{ClientConfig, producer::FutureProducer};
 use reqwest::Client as HttpClient;
 use std::{net::SocketAddr, sync::Arc};
@@ -17,6 +18,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::handlers::{get_ratchet_tree, post_ratchet_tree, ws_handler};
+use crate::models::InboundMsg;
 use crate::state::AppState;
 
 async fn health_check() -> impl IntoResponse {
@@ -158,9 +160,24 @@ async fn main() {
                                 }
                             };
 
-                            let key = format!("{}:{}", recipient_id, device_id);
+                            // Decode InboundMsg proto and re-encode as a JSON text frame:
+                            // { senderId, senderDeviceId, groupId, isWelcome, proto: base64(ciphertext) }
+                            let json_frame = match InboundMsg::decode(proto_bytes.as_slice()) {
+                                Ok(inbound) => serde_json::json!({
+                                    "senderId": inbound.sender_id,
+                                    "senderDeviceId": inbound.sender_device_id,
+                                    "groupId": inbound.group_id,
+                                    "isWelcome": inbound.is_welcome,
+                                    "proto": B64.encode(&inbound.ciphertext)
+                                })
+                                .to_string(),
+                                Err(e) => {
+                                    tracing::warn!("Failed to decode InboundMsg from Redis: {}", e);
+                                    continue;
+                                }
+                            };
 
-                            tracing::info!("Looking for connected user: {}", key);
+                            let key = format!("{}:{}", recipient_id, device_id);
 
                             tracing::info!("Looking for connected user: {}", key);
 
@@ -172,11 +189,11 @@ async fn main() {
 
                             if let Some(senders) = senders {
                                 for tx in &senders {
-                                    if tx.send(proto_bytes.clone()).is_ok() {
+                                    if tx.send(json_frame.clone()).is_ok() {
                                         tracing::info!(
-                                            "[Gateway] Message directly routed to {}, payload size: {} bytes",
+                                            "[Gateway] Message directly routed to {}, json_frame length: {} bytes",
                                             key,
-                                            proto_bytes.len()
+                                            json_frame.len()
                                         );
                                     } else {
                                         tracing::warn!(

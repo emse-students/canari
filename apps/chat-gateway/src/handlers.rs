@@ -10,7 +10,6 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
 use chrono::Utc;
 use futures::{sink::SinkExt, stream::StreamExt};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
-use prost::Message as ProstMessage;
 use rdkafka::producer::FutureRecord;
 use redis::AsyncCommands;
 use shared_rust::{MessageSentEvent, TOPIC_CHAT_MESSAGES};
@@ -19,8 +18,7 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::models::{
-    AuthParams, Claims, InboundMsg, MlsFrame, RatchetTreePayload, Recipient, WelcomeFrame, WsBody,
-    decode_ws_frame, encode_inbound,
+    AuthParams, Claims, InboundMsg, RatchetTreePayload, Recipient, encode_inbound,
 };
 use crate::state::AppState;
 
@@ -127,14 +125,12 @@ async fn handle_socket(
         if let Ok(msgs) = pending {
             for msg in msgs {
                 // Legacy pending_welcomes entries are JSON strings.
-                // Wrap them in a proto InboundMsg so the client receives a
-                // uniform binary frame even for offline-buffered welcomes.
+                // Build a JSON delivery frame directly.
                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&msg) {
                     let b64_payload = parsed["content"]
                         .as_str()
                         .or_else(|| parsed["payload"].as_str())
                         .unwrap_or_default();
-                    let ciphertext = B64.decode(b64_payload).unwrap_or_default();
                     let sender_id = parsed["senderId"]
                         .as_str()
                         .or_else(|| parsed["sender_id"].as_str())
@@ -145,18 +141,15 @@ async fn handle_socket(
                         .or_else(|| parsed["group_id"].as_str())
                         .unwrap_or_default()
                         .to_string();
-                    let inbound = InboundMsg {
-                        ciphertext,
-                        sender_id,
-                        sender_device_id: String::new(),
-                        group_id,
-                        is_welcome: true,
-                    };
-                    if sender
-                        .send(Message::Binary(inbound.encode_to_vec().into()))
-                        .await
-                        .is_err()
-                    {
+                    let json_msg = serde_json::json!({
+                        "senderId": sender_id,
+                        "senderDeviceId": "",
+                        "groupId": group_id,
+                        "isWelcome": true,
+                        "proto": b64_payload
+                    })
+                    .to_string();
+                    if sender.send(Message::Text(json_msg.into())).await.is_err() {
                         break;
                     }
                 }
@@ -170,10 +163,25 @@ async fn handle_socket(
 
     // Task to receive all messages from Redis/Backend and send to this client
     let mut send_task = tokio::spawn(async move {
-        while let Some(msg) = rx.recv().await {
-            // Messages in the channel are proto-encoded InboundMsg bytes.
-            if sender.send(Message::Binary(msg.into())).await.is_err() {
-                break;
+        let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(30));
+
+        loop {
+            tokio::select! {
+              msg_opt = rx.recv() => {
+                if let Some(msg) = msg_opt {
+                    // msg is a JSON string: { senderId, senderDeviceId, groupId, isWelcome, proto: base64(ciphertext) }
+                    if sender.send(Message::Text(msg.into())).await.is_err() {
+                        break;
+                    }
+                } else {
+                    break; // Channel closed
+                }
+              }
+              _ = ping_interval.tick() => {
+                if sender.send(Message::Ping(vec![].into())).await.is_err() {
+                    break;
+                }
+              }
             }
         }
     });
@@ -193,26 +201,58 @@ async fn handle_socket(
                 }
 
                 match msg {
-                    Ok(Message::Binary(bytes)) => {
+                    Ok(Message::Text(text)) => {
                         tracing::info!(
-                            "Received WS binary frame from {} ({} bytes)",
+                            "Received WS JSON frame from {} ({} bytes)",
                             user_id,
-                            bytes.len()
+                            text.len()
                         );
-                        let envelope = match decode_ws_frame(&bytes) {
-                            Ok(e) => e,
+                        let json = match serde_json::from_str::<serde_json::Value>(&text) {
+                            Ok(v) => v,
                             Err(e) => {
-                                tracing::error!("Proto decode error from {}: {}", user_id, e);
+                                tracing::error!("JSON parse error from {}: {}", user_id, e);
                                 continue;
                             }
                         };
 
-                        match envelope.body {
-                            Some(WsBody::Mls(MlsFrame {
-                                ciphertext,
-                                group_id,
-                                recipients,
-                            })) => {
+                        let msg_type = json.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                        let proto_b64 = json
+                            .get("proto")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default();
+                        let ciphertext = match B64.decode(proto_b64) {
+                            Ok(b) => b,
+                            Err(e) => {
+                                tracing::error!("Base64 decode error from {}: {}", user_id, e);
+                                continue;
+                            }
+                        };
+                        let group_id = json
+                            .get("groupId")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .to_string();
+                        let recipients: Vec<Recipient> = json
+                            .get("recipients")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|r| {
+                                        Some(Recipient {
+                                            user_id: r.get("userId")?.as_str()?.to_string(),
+                                            device_id: r
+                                                .get("deviceId")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or_default()
+                                                .to_string(),
+                                        })
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+
+                        match msg_type {
+                            "mls" => {
                                 tracing::info!(
                                     "Processing MLS frame. GroupID: {:?}, recipients: {}",
                                     group_id,
@@ -372,11 +412,7 @@ async fn handle_socket(
                                 }
                             }
 
-                            Some(WsBody::Welcome(WelcomeFrame {
-                                ciphertext,
-                                group_id,
-                                recipients,
-                            })) => {
+                            "welcome" => {
                                 tracing::info!("Processing Welcome frame for group {}", group_id);
 
                                 for recipient in recipients {
@@ -460,12 +496,20 @@ async fn handle_socket(
                                 }
                             }
 
-                            Some(WsBody::Read(ack)) => {
-                                tracing::info!("Read receipt for message {}", ack.message_id);
+                            "read" => {
+                                let message_id = json
+                                    .get("messageId")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or_default();
+                                tracing::info!("Read receipt for message {}", message_id);
                             }
 
-                            None => {
-                                tracing::warn!("Empty WsEnvelope from {}", user_id);
+                            _ => {
+                                tracing::warn!(
+                                    "Unknown message type '{}' from {}",
+                                    msg_type,
+                                    user_id
+                                );
                             }
                         }
                     }
@@ -477,7 +521,7 @@ async fn handle_socket(
                         tracing::error!("WebSocket Error from {}: {}", user_id, e);
                         break;
                     }
-                    _ => {} // Text or other frames ignored (proto uses binary only)
+                    _ => {} // Non-text frames (binary, ping/pong) ignored
                 }
             }
         })

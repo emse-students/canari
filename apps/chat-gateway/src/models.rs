@@ -9,9 +9,7 @@ pub mod proto {
     include!(concat!(env!("OUT_DIR"), "/canari.rs"));
 }
 
-pub use proto::{
-    InboundMsg, MlsFrame, Recipient, WelcomeFrame, WsEnvelope, ws_envelope::Body as WsBody,
-};
+pub use proto::{InboundMsg, Recipient};
 
 // ── JWT / REST serde types (unchanged) ──────────────────────────────────────
 
@@ -36,12 +34,7 @@ pub struct RatchetTreePayload {
 
 // ── Codec helpers ────────────────────────────────────────────────────────────
 
-/// Decode a binary WebSocket frame into a `WsEnvelope`.
-pub fn decode_ws_frame(bytes: &[u8]) -> Result<WsEnvelope, prost::DecodeError> {
-    WsEnvelope::decode(bytes)
-}
-
-/// Encode an `InboundMsg` to wire bytes (for Redis pub/sub → WS client).
+/// Encode an `InboundMsg` to wire bytes (for Redis pub/sub → WS send).
 pub fn encode_inbound(msg: &InboundMsg) -> Vec<u8> {
     msg.encode_to_vec()
 }
