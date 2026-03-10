@@ -108,6 +108,12 @@ jobs:
           cache: 'npm'
           cache-dependency-path: '**/package-lock.json'
 
+      - name: Build shared-ts
+        working-directory: libs/shared-ts
+        run: |
+          npm ci
+          npm run build
+
       - name: Test Chat History Service
         working-directory: apps/chat-delivery-service
         run: |
