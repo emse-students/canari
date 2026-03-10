@@ -147,30 +147,43 @@ export class TauriMlsService implements IMlsService {
   }
 
   private async simulateMessageReceive(data: any): Promise<boolean> {
-    if (this.messageCallback) {
-      let base64Content: string | null = null;
-      // Handle same logic as onmessage
-      if (data.type === 'mlsWelcome' && data.content) {
-        base64Content = data.content;
-      } else if (data.content) {
-        base64Content = data.content;
-      }
+    if (!this.messageCallback) return false;
 
-      if (base64Content) {
-        const binaryString = atob(base64Content);
+    // New format: pre-encoded InboundMsg proto (base64) — queued by gateway via delivery service
+    if (data.proto) {
+      try {
+        const binaryString = atob(data.proto as string);
+        const protoBytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) protoBytes[i] = binaryString.charCodeAt(i);
+        const inbound = decodeInboundMsg(protoBytes);
+        if (inbound.ciphertext?.length) {
+          return await this.messageCallback(
+            inbound.senderId || 'unknown',
+            new Uint8Array(inbound.ciphertext),
+            inbound.groupId || undefined,
+            inbound.isWelcome === true,
+          );
+        }
+      } catch (e) {
+        console.error('Message processing failed', e);
+      }
+      return false;
+    }
+
+    // Legacy format: raw base64 ciphertext + metadata (from /mls-api/welcome offline inbox)
+    if (data.content) {
+      try {
+        const binaryString = atob(data.content as string);
         const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
-        }
-        const senderId = data.senderId || 'unknown';
-        const groupId = data.groupId || data.session_id;
-        const isWelcome = data.type === 'mlsWelcome';
-        try {
-          return await this.messageCallback(senderId, bytes, groupId, isWelcome);
-        } catch (e) {
-          console.error('Message processing failed', e);
-          return false;
-        }
+        for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+        return await this.messageCallback(
+          (data.senderId || 'unknown') as string,
+          bytes,
+          (data.groupId || data.session_id) as string | undefined,
+          data.type === 'mlsWelcome',
+        );
+      } catch (e) {
+        console.error('Message processing failed', e);
       }
     }
     return false;

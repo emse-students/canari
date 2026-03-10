@@ -7,27 +7,31 @@ export type QueuedMessageDocument = HydratedDocument<QueuedMessage>;
 @Schema()
 export class QueuedMessage {
   @Prop({ required: true })
-  recipientId: string; // The user who should receive this
+  recipientId: string;
 
   @Prop({ required: true })
-  deviceId: string; // The specific device for fan-out
-
-  @Prop({ required: true })
-  senderId: string;
+  deviceId: string;
 
   @Prop()
-  senderDeviceId: string;
+  proto?: string; // base64(InboundMsg) — set by gateway
+
+  // Legacy fields (frontend fallback path)
+  @Prop()
+  senderId?: string;
 
   @Prop()
-  groupId: string; // Optional context
+  senderDeviceId?: string;
 
   @Prop()
-  type: string;
+  groupId?: string;
 
-  @Prop({ required: true })
-  content: string; // Base64 content (MlsMessage)
+  @Prop()
+  type?: string;
 
-  @Prop({ default: Date.now, expires: '7d' }) // Auto-delete after 7 days if unread
+  @Prop()
+  content?: string;
+
+  @Prop({ default: Date.now, expires: '7d' })
   createdAt: Date;
 }
 

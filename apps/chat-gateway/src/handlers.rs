@@ -339,10 +339,14 @@ async fn handle_socket(
                                     }
 
                                     if !offline_list.is_empty() {
-                                        // Delivery service still uses JSON/base64 over HTTP.
+                                        let inbound = InboundMsg {
+                                            ciphertext: ciphertext.clone(),
+                                            sender_id: user_id.clone(),
+                                            sender_device_id: device_id.clone(),
+                                            group_id: group_id.clone(),
+                                            is_welcome: false,
+                                        };
                                         let body = serde_json::json!({
-                                            "senderId": user_id,
-                                            "senderDeviceId": device_id,
                                             "recipients": offline_list
                                                 .iter()
                                                 .map(|r| serde_json::json!({
@@ -350,8 +354,7 @@ async fn handle_socket(
                                                     "deviceId": if r.device_id.is_empty() { serde_json::Value::Null } else { r.device_id.clone().into() }
                                                 }))
                                                 .collect::<Vec<_>>(),
-                                            "content": B64.encode(&ciphertext),
-                                            "groupId": group_id
+                                            "proto": B64.encode(encode_inbound(&inbound))
                                         });
                                         if let Err(e) = state
                                             .http_client
@@ -379,12 +382,16 @@ async fn handle_socket(
                                 for recipient in recipients {
                                     if recipient.device_id.is_empty() {
                                         // Fan-out via delivery service
+                                        let inbound = InboundMsg {
+                                            ciphertext: ciphertext.clone(),
+                                            sender_id: user_id.clone(),
+                                            sender_device_id: device_id.clone(),
+                                            group_id: group_id.clone(),
+                                            is_welcome: true,
+                                        };
                                         let body = serde_json::json!({
-                                            "senderId": user_id,
-                                            "recipients": [{ "userId": recipient.user_id, "deviceId": null }],
-                                            "content": B64.encode(&ciphertext),
-                                            "groupId": group_id,
-                                            "type": "mlsWelcome"
+                                            "recipients": [{ "userId": recipient.user_id, "deviceId": serde_json::Value::Null }],
+                                            "proto": B64.encode(encode_inbound(&inbound))
                                         });
                                         let _ = state
                                             .http_client
@@ -429,11 +436,16 @@ async fn handle_socket(
                                     }
 
                                     if !sent {
+                                        let inbound = InboundMsg {
+                                            ciphertext: ciphertext.clone(),
+                                            sender_id: user_id.clone(),
+                                            sender_device_id: device_id.clone(),
+                                            group_id: group_id.clone(),
+                                            is_welcome: true,
+                                        };
                                         let body = serde_json::json!({
-                                            "senderId": user_id,
                                             "recipients": [{ "userId": recipient.user_id, "deviceId": recipient.device_id }],
-                                            "content": B64.encode(&ciphertext),
-                                            "groupId": group_id
+                                            "proto": B64.encode(encode_inbound(&inbound))
                                         });
                                         let _ = state
                                             .http_client

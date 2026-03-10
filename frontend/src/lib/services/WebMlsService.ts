@@ -205,25 +205,39 @@ export class WebMlsService implements IMlsService {
   private async simulateMessageReceive(data: any): Promise<boolean> {
     if (!this.messageCallback) return false;
 
-    // Offline messages from the delivery service REST API arrive as
-    // JSON objects with a base64 `content` field (unchanged HTTP format).
-    let bytes: Uint8Array | null = null;
+    // New format: pre-encoded InboundMsg proto (base64) — queued by gateway via delivery service
+    if (data.proto) {
+      try {
+        const binaryString = atob(data.proto as string);
+        const protoBytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) protoBytes[i] = binaryString.charCodeAt(i);
+        const inbound = decodeInboundMsg(protoBytes);
+        if (inbound.ciphertext?.length) {
+          return await this.messageCallback(
+            inbound.senderId || 'unknown',
+            new Uint8Array(inbound.ciphertext),
+            inbound.groupId || undefined,
+            inbound.isWelcome === true,
+          );
+        }
+      } catch (e) {
+        console.error('Message processing failed', e);
+      }
+      return false;
+    }
+
+    // Legacy format: raw base64 ciphertext + metadata (from /mls-api/welcome offline inbox)
     if (data.content) {
       try {
         const binaryString = atob(data.content as string);
-        bytes = new Uint8Array(binaryString.length);
+        const bytes = new Uint8Array(binaryString.length);
         for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
-      } catch {
-        /* ignore */
-      }
-    }
-
-    if (bytes) {
-      const senderId = (data.senderId || data.sender_id || 'unknown') as string;
-      const groupId = (data.groupId || data.session_id) as string | undefined;
-      const isWelcome = data.type === 'mlsWelcome';
-      try {
-        return await this.messageCallback(senderId, bytes, groupId, isWelcome);
+        return await this.messageCallback(
+          (data.senderId || data.sender_id || 'unknown') as string,
+          bytes,
+          (data.groupId || data.session_id) as string | undefined,
+          data.type === 'mlsWelcome',
+        );
       } catch (e) {
         console.error('Message processing failed', e);
       }

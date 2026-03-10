@@ -332,113 +332,152 @@ export class AppController {
   async sendMessage(
     @Body()
     body: {
-      senderId: string;
-      senderDeviceId?: string;
+      proto?: string; // base64(InboundMsg) — sent by gateway
       recipients?: { userId: string; deviceId?: string }[];
-      content: string;
-      groupId: string;
+      // legacy fields (frontend fallback / group fan-out)
+      senderId?: string;
+      senderDeviceId?: string;
+      content?: string;
+      groupId?: string;
       type?: string;
     },
   ) {
-    const senderId = sanitizeQueryValue(body.senderId, 'senderId');
-    const senderDeviceId = sanitizeOptionalQueryValue(
-      body.senderDeviceId,
-      'senderDeviceId',
-    );
-    const groupId = sanitizeQueryValue(body.groupId, 'groupId');
-    const { content, type } = body;
+    const ops: AnyBulkWriteOperation<QueuedMessage>[] = [];
+    let sentCount = 0;
 
-    let targetList: { userId: string; deviceId: string }[] = [];
-
-    // If recipients not provided, fetch from Group Members in DB
-    if (!body.recipients || body.recipients.length === 0) {
-      const members = await this.groupMemberModel
-        .find({ groupId })
-        .lean()
-        .exec();
-      targetList = members
-        .filter((m) => {
-          if (senderDeviceId)
-            return !(m.userId === senderId && m.deviceId === senderDeviceId);
-          return m.userId !== senderId;
-        })
-        .map((m) => ({ userId: m.userId, deviceId: m.deviceId }));
-    } else {
-      // Process provided recipients (NO FAN_OUT - Strict Device Targeting)
-      for (const r of body.recipients) {
+    if (body.proto) {
+      // ── Proto path (gateway): proto is already a base64(InboundMsg) ────────
+      const { proto } = body;
+      for (const r of body.recipients ?? []) {
+        if (!r.userId || !r.deviceId) continue;
         const recipientUserId = sanitizeQueryValue(
           r.userId,
           'recipients.userId',
         );
-        if (r.deviceId) {
-          const recipientDeviceId = sanitizeQueryValue(
-            r.deviceId,
-            'recipients.deviceId',
-          );
-          targetList.push({
-            userId: recipientUserId,
+        const recipientDeviceId = sanitizeQueryValue(
+          r.deviceId,
+          'recipients.deviceId',
+        );
+        const redisKey = `user:online:${recipientUserId}:${recipientDeviceId}`;
+        const isOnline = await this.redis.exists(redisKey);
+        console.log(
+          `[DELIVERY] Checking presence for ${redisKey} -> ${isOnline}`,
+        );
+        if (isOnline) {
+          const envelope = JSON.stringify({
+            recipientId: recipientUserId,
             deviceId: recipientDeviceId,
+            proto,
           });
-        } else {
-          console.warn(
-            'Skipping recipient without deviceId. Fan-out is disabled for MLS security.',
+          console.log(
+            `[DELIVERY] Publishing proto message to ${redisKey}, envelope length: ${envelope.length}`,
           );
+          await this.redis.publish('chat:messages', envelope);
+          sentCount++;
+        } else {
+          ops.push({
+            insertOne: {
+              document: {
+                recipientId: recipientUserId,
+                deviceId: recipientDeviceId,
+                proto,
+                createdAt: new Date(),
+              },
+            },
+          });
         }
       }
-    }
-
-    const ops: AnyBulkWriteOperation<QueuedMessage>[] = [];
-    let sentCount = 0;
-
-    for (const r of targetList) {
-      // Check if specific device is connected to Gateway
-      // Note: Gateway uses "user:online:userId:deviceId"
-      const redisKey = `user:online:${r.userId}:${r.deviceId}`;
-      const isOnline = await this.redis.exists(redisKey);
-
-      console.log(
-        `[DELIVERY] Checking presence for ${redisKey} -> ${isOnline}`,
+    } else {
+      // ── Legacy path (frontend fallback / group fan-out) ───────────────────
+      const senderId = sanitizeQueryValue(body.senderId, 'senderId');
+      const senderDeviceId = sanitizeOptionalQueryValue(
+        body.senderDeviceId,
+        'senderDeviceId',
       );
+      const groupId = sanitizeQueryValue(body.groupId, 'groupId');
+      const { content, type } = body;
 
-      if (isOnline) {
-        // Push directly to Gateway via Redis PubSub (proto-encoded InboundMsg)
-        const ciphertext = Buffer.from(content, 'base64');
-        const isWelcome = type === 'mlsWelcome';
+      let targetList: { userId: string; deviceId: string }[] = [];
 
-        console.log(
-          `[DELIVERY] Encoding message for ${redisKey}, isWelcome: ${isWelcome}`,
-        );
-        const envelope = await encodeInboundMsgEnvelope(r.userId, r.deviceId, {
-          ciphertext,
-          senderId,
-          senderDeviceId: senderDeviceId ?? '',
-          groupId,
-          isWelcome,
-        });
-
-        console.log(
-          `[DELIVERY] Publishing Message to ${redisKey}, envelope length: ${envelope.length}`,
-        );
-        await this.redis.publish('chat:messages', envelope);
-        sentCount++;
+      if (!body.recipients || body.recipients.length === 0) {
+        const members = await this.groupMemberModel
+          .find({ groupId })
+          .lean()
+          .exec();
+        targetList = members
+          .filter((m) => {
+            if (senderDeviceId)
+              return !(m.userId === senderId && m.deviceId === senderDeviceId);
+            return m.userId !== senderId;
+          })
+          .map((m) => ({ userId: m.userId, deviceId: m.deviceId }));
       } else {
-        // Queue for polling (Store)
-        // Only store if we haven't already queued for this exact target?
-        // MongoDB bulkWrite is just operations.
-        ops.push({
-          insertOne: {
-            document: {
-              recipientId: r.userId,
-              deviceId: r.deviceId,
+        for (const r of body.recipients) {
+          const recipientUserId = sanitizeQueryValue(
+            r.userId,
+            'recipients.userId',
+          );
+          if (r.deviceId) {
+            const recipientDeviceId = sanitizeQueryValue(
+              r.deviceId,
+              'recipients.deviceId',
+            );
+            targetList.push({
+              userId: recipientUserId,
+              deviceId: recipientDeviceId,
+            });
+          } else {
+            console.warn(
+              'Skipping recipient without deviceId. Fan-out is disabled for MLS security.',
+            );
+          }
+        }
+      }
+
+      for (const r of targetList) {
+        const redisKey = `user:online:${r.userId}:${r.deviceId}`;
+        const isOnline = await this.redis.exists(redisKey);
+        console.log(
+          `[DELIVERY] Checking presence for ${redisKey} -> ${isOnline}`,
+        );
+        if (isOnline) {
+          const ciphertext = Buffer.from(content, 'base64');
+          const isWelcome = type === 'mlsWelcome';
+          console.log(
+            `[DELIVERY] Encoding message for ${redisKey}, isWelcome: ${isWelcome}`,
+          );
+          const envelope = await encodeInboundMsgEnvelope(
+            r.userId,
+            r.deviceId,
+            {
+              ciphertext,
               senderId,
-              senderDeviceId,
+              senderDeviceId: senderDeviceId ?? '',
               groupId,
-              content,
-              type,
-              createdAt: new Date(),
+              isWelcome,
             },
-          },
-        });
+          );
+          console.log(
+            `[DELIVERY] Publishing Message to ${redisKey}, envelope length: ${envelope.length}`,
+          );
+          await this.redis.publish('chat:messages', envelope);
+          sentCount++;
+        } else {
+          ops.push({
+            insertOne: {
+              document: {
+                recipientId: r.userId,
+                deviceId: r.deviceId,
+                senderId,
+                senderDeviceId,
+                groupId,
+                content: content,
+                type,
+                createdAt: new Date(),
+              },
+            },
+          });
+        }
       }
     }
 

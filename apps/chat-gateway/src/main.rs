@@ -151,47 +151,14 @@ async fn main() {
                                     }
                                 },
                                 None => {
-                                    // Fallback for Delivery Service format which sends 'content' (base64 ciphertext)
-                                    // and 'type' ("mlsWelcome")
-                                    if let Some(content_b64) =
-                                        json.get("content").and_then(|v| v.as_str())
-                                    {
-                                        let is_welcome = json.get("type").and_then(|v| v.as_str())
-                                            == Some("mlsWelcome");
-                                        let sender_id = json
-                                            .get("senderId")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("unknown")
-                                            .to_string();
-                                        let group_id = json
-                                            .get("groupId")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("")
-                                            .to_string();
-                                        let ciphertext = match B64.decode(content_b64) {
-                                            Ok(b) => b,
-                                            Err(_) => continue,
-                                        };
-
-                                        let inbound = crate::models::InboundMsg {
-                                            ciphertext,
-                                            sender_id,
-                                            sender_device_id: String::new(),
-                                            group_id,
-                                            is_welcome,
-                                        };
-                                        use prost::Message;
-                                        inbound.encode_to_vec()
-                                    } else {
-                                        tracing::warn!(
-                                            "Redis message missing 'proto' and 'content' fields, dropping"
-                                        );
-                                        continue;
-                                    }
+                                    tracing::warn!("Redis message missing 'proto' field, dropping (all publishers must use {{recipientId, deviceId, proto}} format)");
+                                    continue;
                                 }
                             };
 
                             let key = format!("{}:{}", recipient_id, device_id);
+
+                              tracing::info!("Looking for connected user: {}", key);
 
                             tracing::info!("Looking for connected user: {}", key);
 
