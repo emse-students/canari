@@ -345,7 +345,9 @@ export class WebMlsService implements IMlsService {
   async sendCommit(commitBytes: Uint8Array, groupId: string): Promise<void> {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       // MLS commit is also an MlsFrame (opaque to the server)
-      this.ws.send(JSON.stringify({ type: 'mls', groupId, proto: btoa(String.fromCharCode(...commitBytes)) }));
+      this.ws.send(
+        JSON.stringify({ type: 'mls', groupId, proto: btoa(String.fromCharCode(...commitBytes)) })
+      );
     } else {
       const base64 = btoa(String.fromCharCode(...commitBytes));
       await fetch(`${this.historyUrl}/mls-api/send`, {
@@ -486,7 +488,13 @@ export class WebMlsService implements IMlsService {
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       // Binary proto WsEnvelope { mls: { ciphertext, groupId } }
-      this.ws.send(JSON.stringify({ type: 'mls', groupId, proto: btoa(String.fromCharCode(...encryptedBytes)) }));
+      this.ws.send(
+        JSON.stringify({
+          type: 'mls',
+          groupId,
+          proto: btoa(String.fromCharCode(...encryptedBytes)),
+        })
+      );
     } else {
       console.warn('WebSocket not connected. Sending via HTTP fallback...');
       const base64 = btoa(String.fromCharCode(...encryptedBytes));

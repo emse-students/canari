@@ -345,7 +345,9 @@ export class TauriMlsService implements IMlsService {
     const base64 = btoa(String.fromCharCode(...commitBytes));
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: 'mls', groupId, proto: btoa(String.fromCharCode(...commitBytes)) }));
+      this.ws.send(
+        JSON.stringify({ type: 'mls', groupId, proto: btoa(String.fromCharCode(...commitBytes)) })
+      );
     } else {
       // Fallback HTTP
       await fetch(`${this.historyUrl}/mls-api/send`, {
@@ -430,7 +432,13 @@ export class TauriMlsService implements IMlsService {
 
     // Send via WebSocket if connected
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: 'mls', groupId, proto: btoa(String.fromCharCode(...encryptedBytes)) }));
+      this.ws.send(
+        JSON.stringify({
+          type: 'mls',
+          groupId,
+          proto: btoa(String.fromCharCode(...encryptedBytes)),
+        })
+      );
     } else {
       console.warn('WebSocket not open, using HTTP fallback');
       try {
