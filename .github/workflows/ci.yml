@@ -140,6 +140,10 @@ jobs:
         working-directory: frontend
         run: npm install --ignore-scripts
 
+      - name: Sync SvelteKit
+        working-directory: frontend
+        run: npx svelte-kit sync
+
       - name: Run Vitest unit tests
         working-directory: frontend
         run: npm test
