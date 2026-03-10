@@ -13,7 +13,12 @@ import {
 export class TauriMlsService implements IMlsService {
   private ws: WebSocket | null = null;
   private messageCallback:
-    | ((senderId: string, content: Uint8Array, groupId?: string) => Promise<boolean>)
+    | ((
+        senderId: string,
+        content: Uint8Array,
+        groupId?: string,
+        isWelcome?: boolean
+      ) => Promise<boolean>)
     | null = null;
   private disconnectCallback: (() => void) | null = null;
   private baseUrl: string;
@@ -66,7 +71,12 @@ export class TauriMlsService implements IMlsService {
           const senderId = inbound.senderId || 'unknown';
           const groupId = inbound.groupId || undefined;
           if (inbound.ciphertext?.length && this.messageCallback) {
-            this.messageCallback(senderId, inbound.ciphertext as Uint8Array, groupId);
+            this.messageCallback(
+              senderId,
+              inbound.ciphertext as Uint8Array,
+              groupId,
+              inbound.isWelcome === true
+            );
           }
         } catch (e) {
           console.error('Failed to process WebSocket message:', e);
@@ -154,8 +164,9 @@ export class TauriMlsService implements IMlsService {
         }
         const senderId = data.senderId || 'unknown';
         const groupId = data.groupId || data.session_id;
+        const isWelcome = data.type === 'mlsWelcome';
         try {
-          return await this.messageCallback(senderId, bytes, groupId);
+          return await this.messageCallback(senderId, bytes, groupId, isWelcome);
         } catch (e) {
           console.error('Message processing failed', e);
           return false;
@@ -166,7 +177,12 @@ export class TauriMlsService implements IMlsService {
   }
 
   onMessage(
-    callback: (senderId: string, content: Uint8Array, groupId?: string) => Promise<boolean>
+    callback: (
+      senderId: string,
+      content: Uint8Array,
+      groupId?: string,
+      isWelcome?: boolean
+    ) => Promise<boolean>
   ) {
     this.messageCallback = callback;
   }

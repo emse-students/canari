@@ -126,46 +126,84 @@ async fn main() {
                 // Listen for direct messages from Backend or other Gateways
                 let mut stream = pubsub.on_message();
                 while let Some(msg) = stream.next().await {
-                    if let Ok(payload_str) = msg.get_payload::<String>()
-                        && let Ok(json) = serde_json::from_str::<serde_json::Value>(&payload_str)
-                    {
-                        let recipient_id = match json.get("recipientId").and_then(|v| v.as_str()) {
-                            Some(v) => v.to_string(),
-                            None => continue,
-                        };
-                        let device_id = match json.get("deviceId").and_then(|v| v.as_str()) {
-                            Some(v) => v.to_string(),
-                            None => continue,
-                        };
+                    if let Ok(payload_str) = msg.get_payload::<String>() {
+                        tracing::debug!("Received pub/sub message: {}", payload_str);
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&payload_str) {
+                            let recipient_id =
+                                match json.get("recipientId").and_then(|v| v.as_str()) {
+                                    Some(v) => v.to_string(),
+                                    None => continue,
+                                };
+                            let device_id = match json.get("deviceId").and_then(|v| v.as_str()) {
+                                Some(v) => v.to_string(),
+                                None => continue,
+                            };
 
-                        let proto_bytes = match json.get("proto").and_then(|v| v.as_str()) {
-                            Some(proto_b64) => match B64.decode(proto_b64) {
-                                Ok(b) => b,
-                                Err(e) => {
-                                    tracing::warn!(
-                                        "Failed to decode proto bytes from Redis: {}",
-                                        e
-                                    );
-                                    continue;
+                            let proto_bytes = match json.get("proto").and_then(|v| v.as_str()) {
+                                Some(proto_b64) => match B64.decode(proto_b64) {
+                                    Ok(b) => b,
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "Failed to decode proto bytes from Redis: {}",
+                                            e
+                                        );
+                                        continue;
+                                    }
+                                },
+                                None => {
+                                    // Fallback for Delivery Service format which sends 'content' (base64 ciphertext)
+                                    // and 'type' ("mlsWelcome")
+                                    if let Some(content_b64) = json.get("content").and_then(|v| v.as_str()) {
+                                        let is_welcome = json.get("type").and_then(|v| v.as_str()) == Some("mlsWelcome");
+                                        let sender_id = json.get("senderId").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+                                        let group_id = json.get("groupId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                        let ciphertext = match B64.decode(content_b64) {
+                                            Ok(b) => b,
+                                            Err(_) => continue,
+                                        };
+                                        
+                                        let inbound = crate::models::InboundMsg {
+                                            ciphertext,
+                                            sender_id,
+                                            sender_device_id: String::new(),
+                                            group_id,
+                                            is_welcome,
+                                        };
+                                        use prost::Message;
+                                        inbound.encode_to_vec()
+                                    } else {
+                                        tracing::warn!("Redis message missing 'proto' and 'content' fields, dropping");
+                                        continue;
+                                    }
                                 }
-                            },
-                            None => {
-                                tracing::warn!("Redis message missing 'proto' field, dropping");
-                                continue;
-                            }
-                        };
+                            };
 
-                        let key = format!("{}:{}", recipient_id, device_id);
+                            let key = format!("{}:{}", recipient_id, device_id);
+                              
+                              tracing::info!("Looking for connected user: {}", key);
 
-                        // Send to ALL active connections for this key (multi-tab support)
-                        let senders = {
-                            let map = connected_users.lock().unwrap();
-                            map.get(&key).cloned()
-                        };
+                              // Send to ALL active connections for this key (multi-tab support)
+                              let senders = {
+                                  let map = connected_users.lock().unwrap();
+                                  map.get(&key).cloned()
+                              };
 
-                        if let Some(senders) = senders {
-                            for tx in &senders {
-                                let _ = tx.send(proto_bytes.clone());
+                              if let Some(senders) = senders {
+                                  for tx in &senders {
+                                      if tx.send(proto_bytes.clone()).is_ok() {
+                                          tracing::info!(
+                                              "[Gateway] Message directly routed to {}, payload size: {} bytes",
+                                              key,
+                                              proto_bytes.len()
+                                          );
+                                      } else {
+                                          tracing::warn!("Failed to send to socket for {} (channel closed)", key);
+                                      }
+                                  }
+                              } else {
+                                  let map = connected_users.lock().unwrap();
+                                  let connected_keys: Vec<_> = map.keys().cloned().collect();
+                                  tracing::warn!("User {} not connected to this gateway instance. Re-try? Connected keys: {:?}", key, connected_keys);
                             }
                         }
                     }

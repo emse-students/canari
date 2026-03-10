@@ -11,7 +11,7 @@ export class WebMlsService implements IMlsService {
   private client: any;
   private ws: WebSocket | null = null;
   private messageCallback:
-    | ((senderId: string, content: Uint8Array, groupId?: string) => Promise<boolean>)
+    | ((senderId: string, content: Uint8Array, groupId?: string, isWelcome?: boolean) => Promise<boolean>)
     | null = null;
   private disconnectCallback: (() => void) | null = null;
   private baseUrl: string; // Chat Gateway URL
@@ -86,22 +86,29 @@ export class WebMlsService implements IMlsService {
       };
       this.ws.onmessage = async (event) => {
         try {
+          console.log(`[WS RCV] Raw websocket event. Type: ${typeof event.data}, isArrayBuffer: ${event.data instanceof ArrayBuffer}, isBlob: ${event.data instanceof Blob}`);
           // Gateway now sends binary proto InboundMsg frames.
           const buffer: ArrayBuffer =
             event.data instanceof ArrayBuffer
               ? event.data
               : await (event.data as Blob).arrayBuffer();
+              
+          console.log(`[WS RCV] Buffer byte length: ${buffer.byteLength}`);
+          
           const inbound = decodeInboundMsg(new Uint8Array(buffer));
+          console.log(`[WS RCV] Decoded InboundMsg: senderId=${inbound.senderId}, groupId=${inbound.groupId}, isWelcome=${inbound.isWelcome}, cipherLength=${inbound.ciphertext?.length}`);
 
           if (inbound.ciphertext && inbound.ciphertext.length > 0 && this.messageCallback) {
-            // Pass groupId only for application messages; for Welcome messages the
-            // connection handler must call processWelcome (no groupId routing needed).
-            const groupIdForCallback = inbound.isWelcome ? undefined : inbound.groupId || undefined;
+            console.log(`[WS RCV] Triggering messageCallback for inboud...`);
             await this.messageCallback(
               inbound.senderId || 'unknown',
               new Uint8Array(inbound.ciphertext),
-              groupIdForCallback
+              inbound.groupId || undefined,
+              inbound.isWelcome === true
             );
+            console.log(`[WS RCV] messageCallback finished.`);
+          } else {
+            console.warn(`[WS RCV] No ciphertext or no messageCallback set. Message ignored.`);
           }
         } catch (e) {
           console.error('Failed to process WebSocket message:', e);
@@ -111,7 +118,12 @@ export class WebMlsService implements IMlsService {
   }
 
   onMessage(
-    callback: (senderId: string, content: Uint8Array, groupId?: string) => Promise<boolean>
+    callback: (
+      senderId: string, 
+      content: Uint8Array, 
+      groupId?: string, 
+      isWelcome?: boolean
+    ) => Promise<boolean>
   ) {
     this.messageCallback = callback;
   }
@@ -200,8 +212,9 @@ export class WebMlsService implements IMlsService {
     if (bytes) {
       const senderId = (data.senderId || data.sender_id || 'unknown') as string;
       const groupId = (data.groupId || data.session_id) as string | undefined;
+      const isWelcome = data.type === 'mlsWelcome';
       try {
-        return await this.messageCallback(senderId, bytes, groupId);
+        return await this.messageCallback(senderId, bytes, groupId, isWelcome);
       } catch (e) {
         console.error('Message processing failed', e);
       }

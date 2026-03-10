@@ -7,7 +7,10 @@
     "dev": "vite dev",
     "build": "vite build",
     "preview": "vite preview",
-    "prepare": "cd .. && node frontend/node_modules/.bin/husky frontend/.husky 2>/dev/null || true",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "prepare": "node ./scripts/install-husky.js",
     "proto:gen": "pbjs -t static-module -w es6 --es6 --no-service --force-number -o src/lib/proto/canari.js ../libs/proto/canari.proto && pbts -o src/lib/proto/canari.d.ts src/lib/proto/canari.js",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
@@ -36,11 +39,13 @@
     "@types/node": "^25.3.5",
     "@typescript-eslint/eslint-plugin": "^8.56.1",
     "@typescript-eslint/parser": "^8.56.1",
+    "@vitest/coverage-v8": "^2.1.9",
     "autoprefixer": "^10.4.27",
     "eslint": "^9.12.0",
     "eslint-plugin-svelte": "^3.15.0",
     "globals": "^17.4.0",
     "husky": "^9.1.7",
+    "jsdom": "^25.0.1",
     "postcss": "^8.5.8",
     "prettier": "^3.8.1",
     "prettier-plugin-svelte": "^3.2.6",
@@ -51,6 +56,7 @@
     "tailwindcss": "^4.2.1",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.0.0",
-    "vite": "^7.3.1"
+    "vite": "^7.3.1",
+    "vitest": "^2.1.9"
   }
 }

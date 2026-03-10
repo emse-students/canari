@@ -1,4 +1,4 @@
-.PHONY: all install install-node install-bun install-rust install-wasm-pack install-frontend install-services install-hooks setup-env setup-env-prod production production-check build-frontend reload-services test test-libs test-gateway test-history clean run-ci lint-frontend
+.PHONY: all install install-node install-bun install-rust install-wasm-pack install-frontend install-services install-hooks setup-env setup-env-prod production production-check build-frontend reload-services test test-libs test-gateway test-history test-frontend clean run-ci lint-frontend
 
 # Cible par défaut : installation complète et déploiement LOCAL
 .DEFAULT_GOAL := all
@@ -345,15 +345,38 @@ setup-env-prod:
 	@./scripts/setup-env.sh --prod
 
 # Cible principale
-test: test-libs test-gateway test-history
+test: test-libs test-gateway test-history test-frontend
 	@echo ""
 	@echo "${BOLD}📊 BILAN DES TESTS${RESET}"
 	@echo "---------------------------------------------------"
-	@echo "${GREEN}✅ Shared Rust Lib      : PASS${RESET}"
-	@echo "${GREEN}✅ Chat Gateway (Rust)  : PASS${RESET}"
-	@echo "${GREEN}✅ History Service (TS) : PASS${RESET}"
+	@echo "${GREEN}✅ Shared Rust Lib         : PASS${RESET}"
+	@echo "${GREEN}✅ Chat Gateway (Rust)     : PASS${RESET}"
+	@echo "${GREEN}✅ Delivery Service (TS)   : PASS${RESET}"
+	@echo "${GREEN}✅ Frontend (Vitest)       : PASS${RESET}"
 	@echo "---------------------------------------------------"
 	@echo ""
+
+# Tests frontend (Vitest — logique de création de conversations)
+test-frontend:
+	@echo "${BLUE}🧪 Testing Frontend conversation logic...${RESET}"
+ifeq ($(OS),Windows_NT)
+	@cd frontend && ($(CHECK_CMD) bun >$(NULL_DEV) 2>&1 && bun run test || npx vitest run)
+else
+	@cd frontend && ( \
+		if [ -x "$$HOME/.bun/bin/bun" ]; then \
+			$$HOME/.bun/bin/bun run test; \
+		elif command -v bun >/dev/null 2>&1; then \
+			bun run test; \
+		elif command -v npm >/dev/null 2>&1; then \
+			npm test; \
+		else \
+			export NVM_DIR="$$HOME/.nvm"; \
+			[ -s "$$NVM_DIR/nvm.sh" ] && \. "$$NVM_DIR/nvm.sh"; \
+			npm test; \
+		fi \
+	)
+endif
+	@echo "${GREEN}✅ Frontend tests OK${RESET}"
 
 # Tests Libs Rust
 test-libs:

@@ -20,6 +20,7 @@ interface GroupCreationDeps {
 async function fetchDevicesWithRetry(
   mlsService: IMlsService,
   userId: string,
+  log: (msg: string) => void,
   attempts = 6,
   delayMs = 1500
 ) {
@@ -27,6 +28,7 @@ async function fetchDevicesWithRetry(
     const devices = await mlsService.fetchUserDevices(userId);
     if (devices.length > 0) return devices;
     if (attempt < attempts) {
+      log(`⏳ Appareils introuvables pour ${userId} (tentative ${attempt}/${attempts}), nouvelle tentative dans ${delayMs / 1000}s...`);
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
@@ -42,11 +44,12 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
     deps;
 
   if (!name.trim()) return;
-  const groupName = name.trim();
-  if (conversations.has(groupName)) return log(`Groupe "${groupName}" existe déjà.`);
+  const groupDisplayName = name.trim();
+  const groupName = groupDisplayName.toLowerCase(); // clé normalisée utilisée dans la map et la DB
+  if (conversations.has(groupName)) return log(`Groupe "${groupDisplayName}" existe déjà.`);
 
   try {
-    const groupId = await mlsService.createRemoteGroup(groupName);
+    const groupId = await mlsService.createRemoteGroup(groupDisplayName);
     await mlsService.createGroup(groupId);
     await mlsService.registerMember(groupId, userId, mlsService.getDeviceId());
 
@@ -74,7 +77,7 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
 
     conversations.set(groupName, {
       contactName: groupName,
-      name: groupName,
+      name: groupDisplayName, // conserve la casse originale pour l'affichage
       groupId,
       messages: [],
       isReady: true,
@@ -82,7 +85,7 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
     });
     selectConversation(groupName);
     saveConversation(groupName);
-    log(`✅ Groupe "${groupName}" créé!`);
+    log(`✅ Groupe "${groupDisplayName}" créé!`);
   } catch (e) {
     log(`Erreur création groupe: ${e}`);
   }
@@ -105,7 +108,7 @@ export async function inviteMemberToGroup(
   log(`Invitation de ${targetUser}...`);
   try {
     await mlsService.registerMember(conversation.groupId, userId, mlsService.getDeviceId());
-    const devices = await fetchDevicesWithRetry(mlsService, targetUser);
+    const devices = await fetchDevicesWithRetry(mlsService, targetUser, log);
     if (devices.length === 0) {
       return log(
         `❌ Appareils introuvables pour ${targetUser}. Il/elle doit se connecter au moins une fois pour publier son KeyPackage.`
@@ -228,7 +231,7 @@ export async function startNewConversation(
     localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
 
     // Add target contact's devices
-    const devices = await fetchDevicesWithRetry(mlsService, contact);
+    const devices = await fetchDevicesWithRetry(mlsService, contact, log);
     if (devices.length > 0) {
       const bulk = await mlsService.addMembersBulk(groupId, devices);
 

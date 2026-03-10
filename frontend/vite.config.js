@@ -38,8 +38,24 @@ export default defineConfig(async () => ({
           host,
           port: 1421,
         }
-      : undefined,
-    watch: {
+      : undefined,    proxy: {
+      // Proxy the delivery-service API so VITE_HISTORY_URL is not needed in local dev.
+      // Requests to /mls-api/* and /history/* are forwarded to the NestJS service.
+      '/mls-api': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+      },
+      '/history': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+      },
+      // Proxy /ws WebSocket to the chat-gateway so VITE_GATEWAY_URL is not needed in local dev.
+      '/ws': {
+        target: 'ws://localhost:3000',
+        ws: true,
+        changeOrigin: true,
+      },
+    },    watch: {
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ['**/src-tauri/**'],
     },

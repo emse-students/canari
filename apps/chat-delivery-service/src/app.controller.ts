@@ -148,15 +148,19 @@ export class AppController {
     @Param('groupId') groupId: string,
     @Body() body: { userId: string; deviceId: string },
   ) {
+    const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
+    const safeUserId = sanitizeQueryValue(body.userId, 'userId');
+    const safeDeviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
+
     await this.groupMemberModel.updateOne(
-      { groupId, userId: body.userId, deviceId: body.deviceId },
+      { groupId: safeGroupId, userId: safeUserId, deviceId: safeDeviceId },
       { $set: { joinedAt: new Date() } },
       { upsert: true },
     );
     // Sync to Redis for Gateway access
     await this.redis.sadd(
-      `group:members:${groupId}`,
-      `${body.userId}:${body.deviceId}`,
+      `group:members:${safeGroupId}`,
+      `${safeUserId}:${safeDeviceId}`,
     );
     return { status: 'added' };
   }
@@ -286,9 +290,9 @@ export class AppController {
     });
 
     // Real-time push via Gateway when the target device is currently online.
-    const isOnline = await this.redis.exists(
-      `user:online:${deviceInfo.userId}:${targetDeviceId}`,
-    );
+    const redisKey = `user:online:${deviceInfo.userId}:${targetDeviceId}`;
+    const isOnline = await this.redis.exists(redisKey);
+    console.log(`[DELIVERY] Checking presence for ${redisKey} -> ${isOnline}`);
     if (isOnline) {
       const ciphertext = Buffer.from(body.welcomePayload, 'base64');
       const envelope = await encodeInboundMsgEnvelope(
@@ -299,10 +303,13 @@ export class AppController {
           senderId: senderUserId,
           senderDeviceId: '',
           groupId: safeGroupId,
-          isWelcome: true,
+          isWelcome: true, // Welcome MUST be correctly formatted when creating InboundMsg
         },
       );
+      console.log(`[DELIVERY] Publishing Welcome message to ${redisKey}, envelope length: ${envelope.length}`);
       await this.redis.publish('chat:messages', envelope);
+    } else {
+      console.log(`[DELIVERY] Target ${redisKey} is OFFLINE, message queued.`);
     }
 
     return { status: 'queued' };
@@ -384,14 +391,17 @@ export class AppController {
     for (const r of targetList) {
       // Check if specific device is connected to Gateway
       // Note: Gateway uses "user:online:userId:deviceId"
-      const isOnline = await this.redis.exists(
-        `user:online:${r.userId}:${r.deviceId}`,
-      );
+      const redisKey = `user:online:${r.userId}:${r.deviceId}`;
+      const isOnline = await this.redis.exists(redisKey);
+      
+      console.log(`[DELIVERY] Checking presence for ${redisKey} -> ${isOnline}`);
 
       if (isOnline) {
         // Push directly to Gateway via Redis PubSub (proto-encoded InboundMsg)
         const ciphertext = Buffer.from(content, 'base64');
         const isWelcome = type === 'mlsWelcome';
+        
+        console.log(`[DELIVERY] Encoding message for ${redisKey}, isWelcome: ${isWelcome}`);
         const envelope = await encodeInboundMsgEnvelope(r.userId, r.deviceId, {
           ciphertext,
           senderId,
@@ -399,6 +409,8 @@ export class AppController {
           groupId,
           isWelcome,
         });
+        
+        console.log(`[DELIVERY] Publishing Message to ${redisKey}, envelope length: ${envelope.length}`);
         await this.redis.publish('chat:messages', envelope);
         sentCount++;
       } else {

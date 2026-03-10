@@ -117,36 +117,43 @@ Pop-Location
 # 3. Lancement des services backend dans des fenêtres séparées
 Write-Host "`n[3/4] Lancement des services backend dans de nouvelles fenêtres..." -ForegroundColor Yellow
 
+# Fichier de suivi des PIDs pour stop_all.ps1
+$pidFile = Join-Path $PSScriptRoot "..\..\.canari_pids"
+"" | Out-File -FilePath $pidFile -Encoding utf8 -Force
+
+function Launch {
+    param([string]$Title, [string]$Command)
+    $p = Start-Process pwsh -ArgumentList "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", "`$host.UI.RawUI.WindowTitle='$Title'; $Command" -PassThru
+    Add-Content -Path $pidFile -Value $p.Id
+    Write-Host "  -> $Title (PID $($p.Id))" -ForegroundColor DarkGray
+}
+
 # Chat Gateway (Rust) - utilise le binaire release si dispo, sinon compile
 Write-Host "  -> Lancement de Chat Gateway (port 3000/WS)" -ForegroundColor DarkGray
 $gatewayBin = "apps\chat-gateway\target\release\chat-gateway.exe"
 $gatewayEnv = "`$env:JWT_SECRET='$JWT_SECRET'; `$env:REDIS_URL='redis://127.0.0.1:6379'; `$env:KAFKA_BROKERS='localhost:9092'; `$env:DELIVERY_SERVICE_URL='http://localhost:3001'"
 if (Test-Path $gatewayBin) {
-    Start-Process pwsh -ArgumentList "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", "`$host.UI.RawUI.WindowTitle='Chat Gateway (Rust)'; $gatewayEnv; & '$((Resolve-Path $gatewayBin).Path)'"
+    Launch "Chat Gateway (Rust)" "$gatewayEnv; & '$((Resolve-Path $gatewayBin).Path)'"
 }
 else {
-    Start-Process pwsh -ArgumentList "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", "`$host.UI.RawUI.WindowTitle='Chat Gateway (Rust)'; Set-Location apps/chat-gateway; $gatewayEnv; cargo run --release"
+    Launch "Chat Gateway (Rust)" "Set-Location apps/chat-gateway; $gatewayEnv; cargo run --release"
 }
 
 # Chat Delivery Service (NestJS)
-Write-Host "  -> Lancement de Chat Delivery Service" -ForegroundColor DarkGray
-Start-Process pwsh -ArgumentList "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", "`$host.UI.RawUI.WindowTitle='Chat Delivery Service (Node)'; Set-Location apps/chat-delivery-service; `$env:KAFKA_BROKERS='localhost:9092'; `$env:REDIS_HOST='localhost'; `$env:REDIS_PORT='6379'; npm install; npm run start:dev"
+Launch "Chat Delivery Service (Node)" "Set-Location apps/chat-delivery-service; `$env:KAFKA_BROKERS='localhost:9092'; `$env:REDIS_HOST='localhost'; `$env:REDIS_PORT='6379'; npm install; npm run start:dev"
 
 # Auth Service (NestJS)
-Write-Host "  -> Lancement de Auth Service" -ForegroundColor DarkGray
-Start-Process pwsh -ArgumentList "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", "`$host.UI.RawUI.WindowTitle='Auth Service (Node)'; Set-Location apps/auth-service; `$env:PORT='3003'; npm install; npm run start:dev"
+Launch "Auth Service (Node)" "Set-Location apps/auth-service; `$env:PORT='3003'; npm install; npm run start:dev"
 
 # User Service (NestJS)
-Write-Host "  -> Lancement de User Service" -ForegroundColor DarkGray
-Start-Process pwsh -ArgumentList "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", "`$host.UI.RawUI.WindowTitle='User Service (Node)'; Set-Location apps/user-service; `$env:PORT='3004'; npm install; npm run start:dev"
+Launch "User Service (Node)" "Set-Location apps/user-service; `$env:PORT='3004'; npm install; npm run start:dev"
 
 # Media Service (NestJS)
-Write-Host "  -> Lancement de Media Service" -ForegroundColor DarkGray
-Start-Process pwsh -ArgumentList "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", "`$host.UI.RawUI.WindowTitle='Media Service (Node)'; Set-Location apps/media-service; `$env:PORT='3002'; npm install; npm run start:dev"
+Launch "Media Service (Node)" "Set-Location apps/media-service; `$env:PORT='3002'; npm install; npm run start:dev"
 
 # 4. Lancement du frontend (Tauri)
 Write-Host "`n[4/4] Lancement du Frontend (Application Desktop Tauri)..." -ForegroundColor Yellow
-Start-Process pwsh -ArgumentList "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", "`$host.UI.RawUI.WindowTitle='Frontend (Tauri)'; Set-Location frontend; `$env:JWT_SECRET='$JWT_SECRET'; npm install; npm run tauri dev"
+Launch "Frontend (Tauri)" "Set-Location frontend; `$env:JWT_SECRET='$JWT_SECRET'; npm install; npm run tauri dev"
 
 Write-Host "`n===================================================" -ForegroundColor Green
 Write-Host "  Tous les services sont en cours de lancement !   " -ForegroundColor Green

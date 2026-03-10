@@ -38,25 +38,38 @@ foreach ($port in @(3000, 8080, 8081)) {
     }
 }
 
-# Fermer les fenêtres de terminal par leur titre (avec taskkill /T pour tuer l'arbre de processus)
+# Fermer les terminaux via les PIDs enregistrés par start_all.ps1
 Write-Host "`n[3/3] Fermeture des terminaux ouverts par start_all..." -ForegroundColor Yellow
-$titles = @(
-    "Chat Gateway (Rust)",
-    "Chat History Service (Node)",
-    "Auth Service (Node)",
-    "User Service (Node)",
-    "Frontend (Tauri)"
-)
-foreach ($title in $titles) {
-    # taskkill /FI filtre par titre de fenêtre et /T tue tout l'arbre de processus
-    $result = taskkill /FI "WINDOWTITLE eq $title" /T /F 2>&1
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "  -> Fenêtre '$title' fermée" -ForegroundColor DarkGray
+$pidFile = Join-Path $PSScriptRoot "..\..\.canari_pids"
+if (Test-Path $pidFile) {
+    $savedPids = Get-Content $pidFile | Where-Object { $_ -match '^\s*\d+\s*$' }
+    foreach ($p in $savedPids) {
+        $targetPid = [int]$p.Trim()
+        $result = taskkill /PID $targetPid /T /F 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  -> PID $targetPid et son arbre arrêtés" -ForegroundColor DarkGray
+        }
     }
-    # Fallback via MainWindowTitle (si le titre a changé légèrement)
-    Get-Process -Name pwsh, powershell -ErrorAction SilentlyContinue |
-    Where-Object { $_.MainWindowTitle -eq $title } |
-    ForEach-Object { taskkill /PID $_.Id /T /F 2>&1 | Out-Null }
+    Remove-Item $pidFile -Force
+    Write-Host "  -> Fichier de suivi .canari_pids supprimé" -ForegroundColor DarkGray
+}
+else {
+    Write-Host "  -> Aucun fichier .canari_pids trouvé (services déjà arrêtés ou lancés manuellement)" -ForegroundColor DarkYellow
+    # Fallback : fermeture par titre de fenêtre
+    $titles = @(
+        "Chat Gateway (Rust)",
+        "Chat Delivery Service (Node)",
+        "Auth Service (Node)",
+        "User Service (Node)",
+        "Media Service (Node)",
+        "Frontend (Tauri)"
+    )
+    foreach ($title in $titles) {
+        taskkill /FI "WINDOWTITLE eq $title" /T /F 2>&1 | Out-Null
+        Get-Process -Name pwsh, powershell -ErrorAction SilentlyContinue |
+        Where-Object { $_.MainWindowTitle -like "*$title*" } |
+        ForEach-Object { taskkill /PID $_.Id /T /F 2>&1 | Out-Null }
+    }
 }
 
 Write-Host "`n===================================================" -ForegroundColor Green
