@@ -19,6 +19,9 @@ FROM node:20-alpine
 
 WORKDIR /app
 
+# shared-ts must be present because node_modules/@mines-app/shared-ts is a symlink to ../../libs/shared-ts
+COPY --from=builder /app/libs/shared-ts ./libs/shared-ts
+
 COPY --from=builder /app/apps/chat-delivery-service/dist ./dist
 COPY --from=builder /app/apps/chat-delivery-service/node_modules ./node_modules
 COPY --from=builder /app/apps/chat-delivery-service/package.json ./
