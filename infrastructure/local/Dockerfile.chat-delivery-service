@@ -9,7 +9,9 @@ RUN cd libs/shared-ts && npm install --legacy-peer-deps && npm run build
 
 # Delivery service
 COPY apps/chat-delivery-service/package*.json ./apps/chat-delivery-service/
-RUN cd apps/chat-delivery-service && npm install --legacy-peer-deps
+# --install-links copies file: deps (shared-ts) into node_modules instead of symlinking,
+# which is required for Docker multi-stage builds where directory depth changes.
+RUN cd apps/chat-delivery-service && npm install --legacy-peer-deps --install-links
 
 COPY apps/chat-delivery-service ./apps/chat-delivery-service
 RUN cd apps/chat-delivery-service && npx tsc -p tsconfig.json
@@ -18,9 +20,6 @@ RUN cd apps/chat-delivery-service && npx tsc -p tsconfig.json
 FROM node:20-alpine
 
 WORKDIR /app
-
-# shared-ts must be present because node_modules/@mines-app/shared-ts is a symlink to ../../libs/shared-ts
-COPY --from=builder /app/libs/shared-ts ./libs/shared-ts
 
 COPY --from=builder /app/apps/chat-delivery-service/dist ./dist
 COPY --from=builder /app/apps/chat-delivery-service/node_modules ./node_modules
