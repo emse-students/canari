@@ -393,14 +393,14 @@ export class AppController {
       // Note: Gateway uses "user:online:userId:deviceId"
       const redisKey = `user:online:${r.userId}:${r.deviceId}`;
       const isOnline = await this.redis.exists(redisKey);
-      
+
       console.log(`[DELIVERY] Checking presence for ${redisKey} -> ${isOnline}`);
 
       if (isOnline) {
         // Push directly to Gateway via Redis PubSub (proto-encoded InboundMsg)
         const ciphertext = Buffer.from(content, 'base64');
         const isWelcome = type === 'mlsWelcome';
-        
+
         console.log(`[DELIVERY] Encoding message for ${redisKey}, isWelcome: ${isWelcome}`);
         const envelope = await encodeInboundMsgEnvelope(r.userId, r.deviceId, {
           ciphertext,
@@ -409,7 +409,7 @@ export class AppController {
           groupId,
           isWelcome,
         });
-        
+
         console.log(`[DELIVERY] Publishing Message to ${redisKey}, envelope length: ${envelope.length}`);
         await this.redis.publish('chat:messages', envelope);
         sentCount++;

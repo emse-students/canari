@@ -28,7 +28,9 @@ async function fetchDevicesWithRetry(
     const devices = await mlsService.fetchUserDevices(userId);
     if (devices.length > 0) return devices;
     if (attempt < attempts) {
-      log(`⏳ Appareils introuvables pour ${userId} (tentative ${attempt}/${attempts}), nouvelle tentative dans ${delayMs / 1000}s...`);
+      log(
+        `⏳ Appareils introuvables pour ${userId} (tentative ${attempt}/${attempts}), nouvelle tentative dans ${delayMs / 1000}s...`
+      );
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }

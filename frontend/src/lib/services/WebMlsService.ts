@@ -11,7 +11,12 @@ export class WebMlsService implements IMlsService {
   private client: any;
   private ws: WebSocket | null = null;
   private messageCallback:
-    | ((senderId: string, content: Uint8Array, groupId?: string, isWelcome?: boolean) => Promise<boolean>)
+    | ((
+        senderId: string,
+        content: Uint8Array,
+        groupId?: string,
+        isWelcome?: boolean
+      ) => Promise<boolean>)
     | null = null;
   private disconnectCallback: (() => void) | null = null;
   private baseUrl: string; // Chat Gateway URL
@@ -86,17 +91,21 @@ export class WebMlsService implements IMlsService {
       };
       this.ws.onmessage = async (event) => {
         try {
-          console.log(`[WS RCV] Raw websocket event. Type: ${typeof event.data}, isArrayBuffer: ${event.data instanceof ArrayBuffer}, isBlob: ${event.data instanceof Blob}`);
+          console.log(
+            `[WS RCV] Raw websocket event. Type: ${typeof event.data}, isArrayBuffer: ${event.data instanceof ArrayBuffer}, isBlob: ${event.data instanceof Blob}`
+          );
           // Gateway now sends binary proto InboundMsg frames.
           const buffer: ArrayBuffer =
             event.data instanceof ArrayBuffer
               ? event.data
               : await (event.data as Blob).arrayBuffer();
-              
+
           console.log(`[WS RCV] Buffer byte length: ${buffer.byteLength}`);
-          
+
           const inbound = decodeInboundMsg(new Uint8Array(buffer));
-          console.log(`[WS RCV] Decoded InboundMsg: senderId=${inbound.senderId}, groupId=${inbound.groupId}, isWelcome=${inbound.isWelcome}, cipherLength=${inbound.ciphertext?.length}`);
+          console.log(
+            `[WS RCV] Decoded InboundMsg: senderId=${inbound.senderId}, groupId=${inbound.groupId}, isWelcome=${inbound.isWelcome}, cipherLength=${inbound.ciphertext?.length}`
+          );
 
           if (inbound.ciphertext && inbound.ciphertext.length > 0 && this.messageCallback) {
             console.log(`[WS RCV] Triggering messageCallback for inboud...`);
@@ -119,9 +128,9 @@ export class WebMlsService implements IMlsService {
 
   onMessage(
     callback: (
-      senderId: string, 
-      content: Uint8Array, 
-      groupId?: string, 
+      senderId: string,
+      content: Uint8Array,
+      groupId?: string,
       isWelcome?: boolean
     ) => Promise<boolean>
   ) {

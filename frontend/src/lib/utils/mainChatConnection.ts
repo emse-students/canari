@@ -60,7 +60,9 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   const PHANTOM_THRESHOLD = 3;
 
   mlsService.onMessage(async (sender, content, groupId, isWelcome): Promise<boolean> => {
-    log(`Message de ${sender} (${content.length} octets) - Grp: ${groupId} (isWelcome: ${!!isWelcome})`);
+    log(
+      `Message de ${sender} (${content.length} octets) - Grp: ${groupId} (isWelcome: ${!!isWelcome})`
+    );
     const senderNorm = sender.toLowerCase();
 
     // Find conversation by groupId or sender

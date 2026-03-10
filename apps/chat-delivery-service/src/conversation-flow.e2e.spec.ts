@@ -42,6 +42,7 @@ import { WelcomeMessage } from './welcome-message.schema';
 import { GroupMember } from './group-member.schema';
 import { Group } from './group.schema';
 import { PinVerifier } from './pin-verifier.schema';
+import { encodeInboundMsgEnvelope } from '@mines-app/shared-ts';
 
 // ---- Fixtures de test -------------------------------------------------------
 
@@ -365,16 +366,20 @@ describe('PARTIE A - Groupe a 2 utilisateurs (user_test1 <> user_test2)', () => 
       expect(env.redis.exists).toHaveBeenCalledWith(
         `user:online:${USERS.u2.userId}:${USERS.u2.deviceId}`,
       );
+      const expectedEnvelope = await encodeInboundMsgEnvelope(
+        USERS.u2.userId,
+        USERS.u2.deviceId,
+        {
+          ciphertext: Buffer.from('welcome_online_b64==', 'base64'),
+          senderId: USERS.u1.userId,
+          senderDeviceId: '',
+          groupId: gid,
+          isWelcome: true,
+        },
+      );
       expect(env.redis.publish).toHaveBeenCalledWith(
         'chat:messages',
-        JSON.stringify({
-          recipientId: USERS.u2.userId,
-          deviceId: USERS.u2.deviceId,
-          senderId: USERS.u1.userId,
-          groupId: gid,
-          content: 'welcome_online_b64==',
-          type: 'mlsWelcome',
-        }),
+        expectedEnvelope,
       );
     });
 
@@ -414,17 +419,20 @@ describe('PARTIE A - Groupe a 2 utilisateurs (user_test1 <> user_test2)', () => 
         content: CONTENT.msgHello,
       });
       expect(res).toEqual({ status: 'processed', queued: 0, sent: 1 });
-      expect(env.redis.publish).toHaveBeenCalledWith(
-        'chat:messages',
-        JSON.stringify({
-          recipientId: USERS.u2.userId,
-          deviceId: USERS.u2.deviceId,
+      const expectedEnvelope = await encodeInboundMsgEnvelope(
+        USERS.u2.userId,
+        USERS.u2.deviceId,
+        {
+          ciphertext: Buffer.from(CONTENT.msgHello, 'base64'),
           senderId: USERS.u1.userId,
           senderDeviceId: USERS.u1.deviceId,
           groupId: gid,
-          content: CONTENT.msgHello,
-          type: undefined,
-        }),
+          isWelcome: false,
+        },
+      );
+      expect(env.redis.publish).toHaveBeenCalledWith(
+        'chat:messages',
+        expectedEnvelope,
       );
       expect(env.queueModel.bulkWrite).not.toHaveBeenCalled();
     });
@@ -466,10 +474,18 @@ describe('PARTIE A - Groupe a 2 utilisateurs (user_test1 <> user_test2)', () => 
         content: CONTENT.msgHi,
       });
       expect(res.sent).toBe(1);
-      expect(env.redis.publish).toHaveBeenCalledWith(
-        'chat:messages',
-        expect.stringContaining(USERS.u1.userId),
+      const expectedEnvelope = await encodeInboundMsgEnvelope(
+        USERS.u1.userId,
+        USERS.u1.deviceId,
+        {
+          ciphertext: Buffer.from(CONTENT.msgHi, 'base64'),
+          senderId: USERS.u2.userId,
+          senderDeviceId: USERS.u2.deviceId,
+          groupId: gid,
+          isWelcome: false,
+        },
       );
+      expect(env.redis.publish).toHaveBeenCalledWith('chat:messages', expectedEnvelope);
     });
 
     it('user_test2 recupere ses messages en attente (polling)', async () => {
@@ -542,10 +558,18 @@ describe('PARTIE A - Groupe a 2 utilisateurs (user_test1 <> user_test2)', () => 
         type: 'reaction',
       });
       expect(res).toEqual({ status: 'processed', queued: 0, sent: 1 });
-      const published = JSON.parse(env.redis.publish.mock.calls[0][1]);
-      expect(published.type).toBe('reaction');
-      expect(published.content).toBe(CONTENT.reaction);
-      expect(published.recipientId).toBe(USERS.u1.userId);
+      const expectedEnvelope = await encodeInboundMsgEnvelope(
+        USERS.u1.userId,
+        USERS.u1.deviceId,
+        {
+          ciphertext: Buffer.from(CONTENT.reaction, 'base64'),
+          senderId: USERS.u2.userId,
+          senderDeviceId: USERS.u2.deviceId,
+          groupId: gid,
+          isWelcome: false,
+        },
+      );
+      expect(env.redis.publish).toHaveBeenCalledWith('chat:messages', expectedEnvelope);
     });
 
     it('user_test2 OFFLINE envoie une reaction -> queue MongoDB avec type "reaction"', async () => {
@@ -617,9 +641,18 @@ describe('PARTIE A - Groupe a 2 utilisateurs (user_test1 <> user_test2)', () => 
         type: 'chat',
       });
       expect(res.sent).toBe(1);
-      const published = JSON.parse(env.redis.publish.mock.calls[0][1]);
-      expect(published.content).toBe(CONTENT.replyBody);
-      expect(published.senderId).toBe(USERS.u1.userId);
+      const expectedEnvelope = await encodeInboundMsgEnvelope(
+        USERS.u2.userId,
+        USERS.u2.deviceId,
+        {
+          ciphertext: Buffer.from(CONTENT.replyBody, 'base64'),
+          senderId: USERS.u1.userId,
+          senderDeviceId: USERS.u1.deviceId,
+          groupId: gid,
+          isWelcome: false,
+        },
+      );
+      expect(env.redis.publish).toHaveBeenCalledWith('chat:messages', expectedEnvelope);
     });
 
     it('user_test2 OFFLINE recoit une reponse -> queue MongoDB', async () => {
@@ -721,8 +754,18 @@ describe('PARTIE A - Groupe a 2 utilisateurs (user_test1 <> user_test2)', () => 
         type: 'handshake',
       });
       expect(env.redis.publish).toHaveBeenCalledTimes(1);
-      const published = JSON.parse(env.redis.publish.mock.calls[0][1]);
-      expect(published.recipientId).toBe(USERS.u2.userId);
+      const expectedEnvelope = await encodeInboundMsgEnvelope(
+        USERS.u2.userId,
+        USERS.u2.deviceId,
+        {
+          ciphertext: Buffer.from(CONTENT.rename, 'base64'),
+          senderId: USERS.u1.userId,
+          senderDeviceId: USERS.u1.deviceId,
+          groupId: gid,
+          isWelcome: false,
+        },
+      );
+      expect(env.redis.publish).toHaveBeenCalledWith('chat:messages', expectedEnvelope);
     });
 
     it('la notification de renommage est queued pour user_test2 OFFLINE', async () => {
@@ -930,9 +973,20 @@ describe('PARTIE B - Groupe a 3 utilisateurs (user_test1, user_test2, user_test3
         welcomePayload: 'wlc_u3_live==',
         groupId,
       });
+      const expectedEnvelope = await encodeInboundMsgEnvelope(
+        USERS.u3.userId,
+        USERS.u3.deviceId,
+        {
+          ciphertext: Buffer.from('wlc_u3_live==', 'base64'),
+          senderId: USERS.u1.userId,
+          senderDeviceId: '',
+          groupId,
+          isWelcome: true,
+        },
+      );
       expect(env.redis.publish).toHaveBeenCalledWith(
         'chat:messages',
-        expect.stringContaining('"type":"mlsWelcome"'),
+        expectedEnvelope,
       );
     });
 
@@ -969,11 +1023,31 @@ describe('PARTIE B - Groupe a 3 utilisateurs (user_test1, user_test2, user_test3
       });
       expect(res).toEqual({ status: 'processed', queued: 0, sent: 2 });
       expect(env.redis.publish).toHaveBeenCalledTimes(2);
-      const destinations = env.redis.publish.mock.calls.map(
-        ([, body]: [string, string]) => JSON.parse(body).recipientId,
+      const expectedEnvelope2 = await encodeInboundMsgEnvelope(
+        USERS.u2.userId,
+        USERS.u2.deviceId,
+        {
+          ciphertext: Buffer.from(CONTENT.msgHello, 'base64'),
+          senderId: USERS.u1.userId,
+          senderDeviceId: USERS.u1.deviceId,
+          groupId,
+          isWelcome: false,
+        },
       );
-      expect(destinations).toContain(USERS.u2.userId);
-      expect(destinations).toContain(USERS.u3.userId);
+      const expectedEnvelope3 = await encodeInboundMsgEnvelope(
+        USERS.u3.userId,
+        USERS.u3.deviceId,
+        {
+          ciphertext: Buffer.from(CONTENT.msgHello, 'base64'),
+          senderId: USERS.u1.userId,
+          senderDeviceId: USERS.u1.deviceId,
+          groupId,
+          isWelcome: false,
+        },
+      );
+      const callsContent = env.redis.publish.mock.calls.map(c => c[1]);
+      expect(callsContent).toContain(expectedEnvelope2);
+      expect(callsContent).toContain(expectedEnvelope3);
     });
 
     it('user_test1 MESSAGE -> user_test2 online / user_test3 offline (split)', async () => {
@@ -989,13 +1063,21 @@ describe('PARTIE B - Groupe a 3 utilisateurs (user_test1, user_test2, user_test3
         content: CONTENT.msgTriangle,
       });
       expect(res).toEqual({ status: 'processed', queued: 1, sent: 1 });
-      const publishedTo = JSON.parse(
-        env.redis.publish.mock.calls[0][1],
-      ).recipientId;
+      const expectedEnvelope = await encodeInboundMsgEnvelope(
+        USERS.u2.userId,
+        USERS.u2.deviceId,
+        {
+          ciphertext: Buffer.from(CONTENT.msgTriangle, 'base64'),
+          senderId: USERS.u1.userId,
+          senderDeviceId: USERS.u1.deviceId,
+          groupId,
+          isWelcome: false,
+        },
+      );
+      expect(env.redis.publish).toHaveBeenCalledWith('chat:messages', expectedEnvelope);
       const queuedTo =
         env.queueModel.bulkWrite.mock.calls[0][0][0].insertOne.document
           .recipientId;
-      expect(publishedTo).toBe(USERS.u2.userId);
       expect(queuedTo).toBe(USERS.u3.userId);
     });
 
@@ -1038,14 +1120,31 @@ describe('PARTIE B - Groupe a 3 utilisateurs (user_test1, user_test2, user_test3
         type: 'reaction',
       });
       expect(res).toEqual({ status: 'processed', queued: 0, sent: 2 });
-      const calls = env.redis.publish.mock.calls.map(
-        ([, body]: [string, string]) => JSON.parse(body),
+      const expectedEnvelope1 = await encodeInboundMsgEnvelope(
+        USERS.u1.userId,
+        USERS.u1.deviceId,
+        {
+          ciphertext: Buffer.from(CONTENT.reaction, 'base64'),
+          senderId: USERS.u3.userId,
+          senderDeviceId: USERS.u3.deviceId,
+          groupId,
+          isWelcome: false,
+        },
       );
-      expect(calls[0].type).toBe('reaction');
-      expect(calls[0].senderId).toBe(USERS.u3.userId);
-      const recipients = calls.map((c: any) => c.recipientId);
-      expect(recipients).toContain(USERS.u1.userId);
-      expect(recipients).toContain(USERS.u2.userId);
+      const expectedEnvelope2 = await encodeInboundMsgEnvelope(
+        USERS.u2.userId,
+        USERS.u2.deviceId,
+        {
+          ciphertext: Buffer.from(CONTENT.reaction, 'base64'),
+          senderId: USERS.u3.userId,
+          senderDeviceId: USERS.u3.deviceId,
+          groupId,
+          isWelcome: false,
+        },
+      );
+      const callsContent = env.redis.publish.mock.calls.map(c => c[1]);
+      expect(callsContent).toContain(expectedEnvelope1);
+      expect(callsContent).toContain(expectedEnvelope2);
     });
 
     it('user_test3 OFFLINE reaction -> queued pour user_test1 et user_test2', async () => {
@@ -1091,11 +1190,31 @@ describe('PARTIE B - Groupe a 3 utilisateurs (user_test1, user_test2, user_test3
         type: 'chat',
       });
       expect(res.sent).toBe(2);
-      const recipients = env.redis.publish.mock.calls.map(
-        ([, body]: [string, string]) => JSON.parse(body).recipientId,
+      const expectedEnvelope1 = await encodeInboundMsgEnvelope(
+        USERS.u1.userId,
+        USERS.u1.deviceId,
+        {
+          ciphertext: Buffer.from(CONTENT.replyBody, 'base64'),
+          senderId: USERS.u2.userId,
+          senderDeviceId: USERS.u2.deviceId,
+          groupId,
+          isWelcome: false,
+        },
       );
-      expect(recipients).toContain(USERS.u1.userId);
-      expect(recipients).toContain(USERS.u3.userId);
+      const expectedEnvelope3 = await encodeInboundMsgEnvelope(
+        USERS.u3.userId,
+        USERS.u3.deviceId,
+        {
+          ciphertext: Buffer.from(CONTENT.replyBody, 'base64'),
+          senderId: USERS.u2.userId,
+          senderDeviceId: USERS.u2.deviceId,
+          groupId,
+          isWelcome: false,
+        },
+      );
+      const callsContent = env.redis.publish.mock.calls.map(c => c[1]);
+      expect(callsContent).toContain(expectedEnvelope1);
+      expect(callsContent).toContain(expectedEnvelope3);
     });
 
     it('user_test2 OFFLINE reply -> queued pour user_test1 et user_test3', async () => {
