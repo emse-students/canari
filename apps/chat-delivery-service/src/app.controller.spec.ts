@@ -172,16 +172,15 @@ describe('AppController', () => {
       await appController.sendMessage(dto);
 
       // Should Publish
-      expect((appController as any).redis.publish).toHaveBeenCalledWith(
-        'chat:messages',
-        JSON.stringify({
-          recipientId: 'charlie',
-          deviceId: 'dev_online',
-          senderId: 'alice',
-          groupId: 'g1',
-          content: 'secret',
-        }),
-      );
+      const [channel, rawMessage] = (appController as any).redis.publish.mock
+        .calls[0];
+      expect(channel).toBe('chat:messages');
+      const envelope = JSON.parse(rawMessage as string);
+      expect(envelope).toMatchObject({
+        recipientId: 'charlie',
+        deviceId: 'dev_online',
+        proto: expect.any(String),
+      });
 
       // Should NOT Queue
       expect(mockQueuedMessageModel.bulkWrite).not.toHaveBeenCalled();

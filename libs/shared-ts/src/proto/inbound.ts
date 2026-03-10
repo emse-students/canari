@@ -3,7 +3,7 @@ import * as protobuf from 'protobufjs';
 import * as base64 from 'base64-js';
 
 // Resolve the .proto file relative to this package regardless of CWD.
-const PROTO_PATH = path.resolve(__dirname, '../../../../proto/canari.proto');
+const PROTO_PATH = path.resolve(__dirname, '../../../../libs/proto/canari.proto');
 
 let _InboundMsg: protobuf.Type | null = null;
 
