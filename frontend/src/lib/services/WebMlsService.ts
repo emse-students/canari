@@ -9,7 +9,8 @@ export class WebMlsService implements IMlsService {
         senderId: string,
         content: Uint8Array,
         groupId?: string,
-        isWelcome?: boolean
+        isWelcome?: boolean,
+        ratchetTreeBytes?: Uint8Array
       ) => Promise<boolean>)
     | null = null;
   private disconnectCallback: (() => void) | null = null;
@@ -103,6 +104,10 @@ export class WebMlsService implements IMlsService {
             const ciphertext = new Uint8Array(binaryString.length);
             for (let i = 0; i < binaryString.length; i++)
               ciphertext[i] = binaryString.charCodeAt(i);
+            const ratchetTreeBytes =
+              typeof msg.ratchetTree === 'string' && msg.ratchetTree.length > 0
+                ? Uint8Array.from(atob(msg.ratchetTree as string), (c) => c.charCodeAt(0))
+                : undefined;
 
             if (ciphertext.length > 0) {
               console.log(`[WS RCV] Triggering messageCallback...`);
@@ -110,7 +115,8 @@ export class WebMlsService implements IMlsService {
                 (msg.senderId as string) || 'unknown',
                 ciphertext,
                 (msg.groupId as string) || undefined,
-                msg.isWelcome === true
+                msg.isWelcome === true,
+                ratchetTreeBytes
               );
               console.log(`[WS RCV] messageCallback finished.`);
             }
@@ -129,7 +135,8 @@ export class WebMlsService implements IMlsService {
       senderId: string,
       content: Uint8Array,
       groupId?: string,
-      isWelcome?: boolean
+      isWelcome?: boolean,
+      ratchetTreeBytes?: Uint8Array
     ) => Promise<boolean>
   ) {
     this.messageCallback = callback;
@@ -155,6 +162,7 @@ export class WebMlsService implements IMlsService {
               content: w.message,
               senderId: w.senderUserId ?? 'system', // senderUserId = the inviter, NOT the recipient
               groupId: w.groupId,
+              ratchetTree: w.ratchetTree,
             });
           }
         }
@@ -214,7 +222,10 @@ export class WebMlsService implements IMlsService {
             (data.senderId as string) || 'unknown',
             ciphertext,
             (data.groupId as string) || undefined,
-            data.isWelcome === true
+            data.isWelcome === true,
+            typeof data.ratchetTree === 'string' && data.ratchetTree.length > 0
+              ? Uint8Array.from(atob(data.ratchetTree as string), (c) => c.charCodeAt(0))
+              : undefined
           );
         }
       } catch (e) {
@@ -233,7 +244,10 @@ export class WebMlsService implements IMlsService {
           (data.senderId || data.sender_id || 'unknown') as string,
           bytes,
           (data.groupId || data.session_id) as string | undefined,
-          data.type === 'mlsWelcome'
+          data.type === 'mlsWelcome',
+          typeof data.ratchetTree === 'string' && data.ratchetTree.length > 0
+            ? Uint8Array.from(atob(data.ratchetTree as string), (c) => c.charCodeAt(0))
+            : undefined
         );
       } catch (e) {
         console.error('Message processing failed', e);
@@ -298,9 +312,13 @@ export class WebMlsService implements IMlsService {
     welcomeBytes: Uint8Array,
     targetUserId: string,
     groupId: string,
-    targetDeviceId?: string
+    targetDeviceId?: string,
+    ratchetTreeBytes?: Uint8Array
   ): Promise<void> {
     const base64 = btoa(String.fromCharCode(...welcomeBytes));
+    const ratchetTreeBase64 = ratchetTreeBytes
+      ? btoa(String.fromCharCode(...ratchetTreeBytes))
+      : undefined;
 
     if (targetDeviceId) {
       // Dedicated welcome endpoint: persists to MongoDB (offline inbox) and pushes
@@ -313,6 +331,7 @@ export class WebMlsService implements IMlsService {
           targetUserId, // required to disambiguate when device IDs collide
           senderUserId: this.userId,
           welcomePayload: base64,
+          ratchetTreePayload: ratchetTreeBase64,
           groupId,
         }),
       });
@@ -322,6 +341,7 @@ export class WebMlsService implements IMlsService {
           type: 'welcome',
           groupId,
           proto: btoa(String.fromCharCode(...welcomeBytes)),
+          ratchetTree: ratchetTreeBase64,
           recipients: [{ userId: targetUserId, deviceId: targetDeviceId ?? '' }],
         })
       );
@@ -334,6 +354,7 @@ export class WebMlsService implements IMlsService {
           recipients: [{ userId: targetUserId }],
           content: base64,
           groupId,
+          ratchetTree: ratchetTreeBase64,
           type: 'mlsWelcome',
         }),
       });
@@ -454,6 +475,7 @@ export class WebMlsService implements IMlsService {
     return {
       commit: res[0],
       welcome: res[1],
+      ratchetTree: res[2] as Uint8Array | undefined,
     };
   }
 
@@ -474,11 +496,12 @@ export class WebMlsService implements IMlsService {
       commit: res[0] as Uint8Array,
       welcome: res[1] as Uint8Array | undefined,
       addedDeviceIds,
+      ratchetTree: res[3] as Uint8Array | undefined,
     };
   }
 
-  async processWelcome(welcomeBytes: Uint8Array) {
-    return this.client.process_welcome(welcomeBytes);
+  async processWelcome(welcomeBytes: Uint8Array, ratchetTreeBytes?: Uint8Array) {
+    return this.client.process_welcome(welcomeBytes, ratchetTreeBytes);
   }
 
   async sendMessage(groupId: string, messageBytes: Uint8Array) {

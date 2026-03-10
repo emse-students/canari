@@ -66,7 +66,7 @@ fn ajouter_membre(
     group_id: String,
     key_package_bytes: Vec<u8>,
     state: tauri::State<AppState>,
-) -> Result<(Vec<u8>, Option<Vec<u8>>), String> {
+) -> Result<(Vec<u8>, Option<Vec<u8>>, Option<Vec<u8>>), String> {
     let mut lock = state
         .mls_manager
         .lock()
@@ -81,6 +81,7 @@ fn ajouter_membre(
 #[tauri::command]
 fn trailer_welcome(
     welcome_bytes: Vec<u8>,
+    ratchet_tree_bytes: Option<Vec<u8>>,
     state: tauri::State<AppState>,
 ) -> Result<String, String> {
     let mut lock = state
@@ -90,7 +91,7 @@ fn trailer_welcome(
     let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
 
     manager
-        .process_welcome(&welcome_bytes, None)
+        .process_welcome(&welcome_bytes, ratchet_tree_bytes.as_deref())
         .map_err(|e| e.to_string())
 }
 

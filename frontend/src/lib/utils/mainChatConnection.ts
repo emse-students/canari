@@ -59,32 +59,34 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   const groupMlsFailures = new Map<string, number>();
   const PHANTOM_THRESHOLD = 3;
 
-  mlsService.onMessage(async (sender, content, groupId, isWelcome): Promise<boolean> => {
-    log(
-      `Message de ${sender} (${content.length} octets) - Grp: ${groupId} (isWelcome: ${!!isWelcome})`
-    );
-    const senderNorm = sender.toLowerCase();
+  mlsService.onMessage(
+    async (sender, content, groupId, isWelcome, ratchetTreeBytes): Promise<boolean> => {
+      log(
+        `Message de ${sender} (${content.length} octets) - Grp: ${groupId} (isWelcome: ${!!isWelcome})`
+      );
+      const senderNorm = sender.toLowerCase();
 
-    // Find conversation by groupId or sender
-    let convoKey: string | undefined;
-    if (groupId) {
-      for (const [k, c] of conversations.entries()) {
-        if (c.groupId === groupId) {
-          convoKey = k;
-          break;
+      // Find conversation by groupId or sender
+      let convoKey: string | undefined;
+      if (groupId) {
+        for (const [k, c] of conversations.entries()) {
+          if (c.groupId === groupId) {
+            convoKey = k;
+            break;
+          }
         }
       }
-    }
-    // Only fall back to sender-based routing when no groupId is provided.
-    // If a groupId is present but unknown, it is likely a Welcome for a new group
-    // — routing it to an existing 1-to-1 conversation would silently discard it.
-    if (!convoKey && !groupId && conversations.has(senderNorm)) convoKey = senderNorm;
 
-    // Process message for known conversation
-    if (convoKey && !isWelcome) {
-      const convo = conversations.get(convoKey)!;
-      try {
-        const decryptedBytes = await mlsService.processIncomingMessage(convo.groupId, content);
+      // Only fall back to sender-based routing when no groupId is provided.
+      // If a groupId is present but unknown, it is likely a Welcome for a new group
+      // — routing it to an existing 1-to-1 conversation would silently discard it.
+      if (!convoKey && !groupId && conversations.has(senderNorm)) convoKey = senderNorm;
+
+      // Process message for known conversation
+      if (convoKey && !isWelcome) {
+        const convo = conversations.get(convoKey)!;
+        try {
+          const decryptedBytes = await mlsService.processIncomingMessage(convo.groupId, content);
 
         // Auto-save MLS state
         try {
@@ -255,12 +257,12 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           await addMessageToChat(senderNorm, legacyText, convoKey);
         }
         return true;
-      } catch (_e) {
-        const errMsg = String(_e);
-        if (errMsg.includes('CannotDecryptOwnMessage')) {
-          return false; // Silent ignore
-        }
-        log(`Erreur message (groupe connu): ${errMsg}`);
+        } catch (_e) {
+          const errMsg = String(_e);
+          if (errMsg.includes('CannotDecryptOwnMessage')) {
+            return false; // Silent ignore
+          }
+          log(`Erreur message (groupe connu): ${errMsg}`);
 
         // Détection de groupe fantôme : le groupId existe dans nos conversations
         // mais n'est plus dans l'état WASM MLS → nettoyage automatique après N échecs
@@ -289,56 +291,62 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           }
         }
 
+          return false;
+        }
+      }
+
+      if (!isWelcome) {
+        log(`Ignoré: message pour groupe inconnu ${groupId ?? '(sans groupe)'}`);
+        return false;
+      }
+
+      // Unknown group → Process Welcome message
+      try {
+        const joinedGroupId = await mlsService.processWelcome(content, ratchetTreeBytes);
+        let groupName = senderNorm;
+
+        // Fetch group metadata
+        try {
+          const gRes = await fetch(`${historyBaseUrl}/mls-api/groups/${groupId || joinedGroupId}`);
+          if (gRes.ok) {
+            const gData = await gRes.json();
+            if (gData?.name) groupName = gData.name;
+          }
+        } catch {
+          // Silent fallback if group metadata fetch fails
+        }
+
+        // Use the group name (lowercased) as key to avoid overwriting a 1-to-1
+        // conversation that might already be keyed under senderNorm.
+        const newConvoKey = groupName.toLowerCase();
+        // Create new conversation
+        conversations.set(newConvoKey, {
+          contactName: newConvoKey,
+          name: groupName,
+          groupId: joinedGroupId,
+          messages: [],
+          isReady: true,
+          mlsStateHex: null,
+        });
+        saveConversation(newConvoKey);
+
+        // Auto-save MLS state
+        try {
+          const stBytes = await mlsService.saveState(pin);
+          localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
+        } catch {
+          // Silent fallback if autosave fails
+        }
+
+        log(`✅ Handshake complété avec ${senderNorm}`);
+        loadHistoryForConversation(newConvoKey, joinedGroupId);
+        return true;
+      } catch (_e) {
+        log(`Ignoré: pas un message pour un groupe existant ni un welcome. Erreur: ${String(_e)}`);
         return false;
       }
     }
-
-    // Unknown group → Process Welcome message
-    try {
-      const joinedGroupId = await mlsService.processWelcome(content);
-      let groupName = senderNorm;
-
-      // Fetch group metadata
-      try {
-        const gRes = await fetch(`${historyBaseUrl}/mls-api/groups/${groupId || joinedGroupId}`);
-        if (gRes.ok) {
-          const gData = await gRes.json();
-          if (gData?.name) groupName = gData.name;
-        }
-      } catch {
-        // Silent fallback if group metadata fetch fails
-      }
-
-      // Use the group name (lowercased) as key to avoid overwriting a 1-to-1
-      // conversation that might already be keyed under senderNorm.
-      const newConvoKey = groupName.toLowerCase();
-      // Create new conversation
-      conversations.set(newConvoKey, {
-        contactName: newConvoKey,
-        name: groupName,
-        groupId: joinedGroupId,
-        messages: [],
-        isReady: true,
-        mlsStateHex: null,
-      });
-      saveConversation(newConvoKey);
-
-      // Auto-save MLS state
-      try {
-        const stBytes = await mlsService.saveState(pin);
-        localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
-      } catch {
-        // Silent fallback if autosave fails
-      }
-
-      log(`✅ Handshake complété avec ${senderNorm}`);
-      loadHistoryForConversation(newConvoKey, joinedGroupId);
-      return true;
-    } catch (_e) {
-      log(`Ignoré: pas un message pour un groupe existant ni un welcome. Erreur: ${String(_e)}`);
-      return false;
-    }
-  });
+  );
 }
 
 interface ConnectionDeps {

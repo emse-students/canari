@@ -6,6 +6,7 @@ export interface InboundMsgPayload {
   senderDeviceId: string;
   groupId: string;
   isWelcome: boolean;
+  ratchetTree?: string;
 }
 
 /**
@@ -27,6 +28,7 @@ export function encodeInboundMsgEnvelope(
     senderDeviceId: payload.senderDeviceId,
     groupId: payload.groupId,
     isWelcome: payload.isWelcome,
+    ratchetTree: payload.ratchetTree,
     proto: base64.fromByteArray(payload.ciphertext as Uint8Array),
   });
 }

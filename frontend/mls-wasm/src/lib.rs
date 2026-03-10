@@ -125,7 +125,7 @@ impl WasmMlsClient {
             group_id,
             key_package_bytes.len()
         );
-        let (commit, welcome) = self
+        let (commit, welcome, ratchet_tree) = self
             .manager
             .add_member(&group_id, &key_package_bytes)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
@@ -134,6 +134,11 @@ impl WasmMlsClient {
         array.push(&js_sys::Uint8Array::from(&commit[..]));
         if let Some(w) = welcome {
             array.push(&js_sys::Uint8Array::from(&w[..]));
+        } else {
+            array.push(&JsValue::UNDEFINED);
+        }
+        if let Some(rt) = ratchet_tree {
+            array.push(&js_sys::Uint8Array::from(&rt[..]));
         } else {
             array.push(&JsValue::UNDEFINED);
         }
@@ -170,7 +175,7 @@ impl WasmMlsClient {
 
         let kp_slices: Vec<&[u8]> = kp_vecs.iter().map(|v| v.as_slice()).collect();
 
-        let (commit, welcome, added) = self
+        let (commit, welcome, added, ratchet_tree) = self
             .manager
             .add_members_bulk(&group_id, &kp_slices)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
@@ -183,14 +188,23 @@ impl WasmMlsClient {
             array.push(&JsValue::UNDEFINED);
         }
         array.push(&JsValue::from_f64(added as f64));
+        if let Some(rt) = ratchet_tree {
+            array.push(&js_sys::Uint8Array::from(&rt[..]));
+        } else {
+            array.push(&JsValue::UNDEFINED);
+        }
         Ok(array)
     }
 
     #[wasm_bindgen]
-    pub fn process_welcome(&mut self, welcome_bytes: Vec<u8>) -> Result<String, JsValue> {
+    pub fn process_welcome(
+        &mut self,
+        welcome_bytes: Vec<u8>,
+        ratchet_tree_bytes: Option<Vec<u8>>,
+    ) -> Result<String, JsValue> {
         log::info!("process_welcome ({} bytes)", welcome_bytes.len());
         self.manager
-            .process_welcome(&welcome_bytes, None)
+            .process_welcome(&welcome_bytes, ratchet_tree_bytes.as_deref())
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 

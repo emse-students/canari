@@ -250,6 +250,7 @@ export class AppController {
       targetUserId?: string; // used to disambiguate when multiple users share a device ID
       senderUserId?: string; // the user who is inviting (their identity shown to the recipient)
       welcomePayload: string;
+      ratchetTreePayload?: string;
       groupId: string;
     },
   ) {
@@ -286,6 +287,7 @@ export class AppController {
       senderUserId,
       groupId: safeGroupId,
       message: body.welcomePayload,
+      ratchetTree: body.ratchetTreePayload,
       createdAt: new Date(),
     });
 
@@ -295,17 +297,16 @@ export class AppController {
     console.log(`[DELIVERY] Checking presence for ${redisKey} -> ${isOnline}`);
     if (isOnline) {
       const ciphertext = Buffer.from(body.welcomePayload, 'base64');
-      const envelope = encodeInboundMsgEnvelope(
-        deviceInfo.userId,
-        targetDeviceId,
-        {
-          ciphertext,
-          senderId: senderUserId,
-          senderDeviceId: '',
-          groupId: safeGroupId,
-          isWelcome: true,
-        },
-      );
+      const envelope = JSON.stringify({
+        recipientId: deviceInfo.userId,
+        deviceId: targetDeviceId,
+        senderId: senderUserId,
+        senderDeviceId: '',
+        groupId: safeGroupId,
+        isWelcome: true,
+        ratchetTree: body.ratchetTreePayload,
+        proto: ciphertext.toString('base64'),
+      });
       console.log(
         `[DELIVERY] Publishing Welcome message to ${redisKey}, envelope length: ${envelope.length}`,
       );
@@ -455,13 +456,17 @@ export class AppController {
           console.log(
             `[DELIVERY] Encoding message for ${redisKey}, isWelcome: ${isWelcome}`,
           );
-          const envelope = encodeInboundMsgEnvelope(r.userId, r.deviceId, {
-            ciphertext,
-            senderId,
-            senderDeviceId: senderDeviceId ?? '',
-            groupId,
-            isWelcome,
-          });
+          const envelope = await encodeInboundMsgEnvelope(
+            r.userId,
+            r.deviceId,
+            {
+              ciphertext,
+              senderId,
+              senderDeviceId: senderDeviceId ?? '',
+              groupId,
+              isWelcome,
+            },
+          );
           console.log(
             `[DELIVERY] Publishing Message to ${redisKey}, envelope length: ${envelope.length}`,
           );

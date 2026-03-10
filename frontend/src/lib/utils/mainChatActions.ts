@@ -84,7 +84,13 @@ export async function syncOwnDevicesToGroups(params: {
         const result = await mlsService.addMember(convo.groupId, device.keyPackage);
         await mlsService.registerMember(convo.groupId, userId, device.deviceId);
         if (result.welcome) {
-          await mlsService.sendWelcome(result.welcome, userId, convo.groupId, device.deviceId);
+          await mlsService.sendWelcome(
+            result.welcome,
+            userId,
+            convo.groupId,
+            device.deviceId,
+            result.ratchetTree
+          );
           totalWelcomes++;
         }
         if (result.commit) {

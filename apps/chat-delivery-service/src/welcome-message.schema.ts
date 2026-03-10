@@ -20,6 +20,9 @@ export class WelcomeMessage {
   @Prop({ required: true })
   message: string; // Base64 encoded Welcome message
 
+  @Prop()
+  ratchetTree?: string; // Base64 encoded RatchetTree for Welcome processing
+
   @Prop({ default: Date.now })
   createdAt: Date;
 }

@@ -120,8 +120,29 @@
               : messageReactions?.[msg.id] || []}
           {@const prevGroup = index > 0 ? messageGroups[index - 1] : null}
           {@const prevMsg = prevGroup?.type === 'message' ? prevGroup.message : null}
+          {@const nextGroup = index < messageGroups.length - 1 ? messageGroups[index + 1] : null}
+          {@const nextMsg = nextGroup?.type === 'message' ? nextGroup.message : null}
+          {@const continuesFromPrev =
+            !!prevMsg &&
+            !msg.isSystem &&
+            !prevMsg.isSystem &&
+            prevMsg.senderId === msg.senderId &&
+            prevMsg.isOwn === msg.isOwn}
+          {@const continuesToNext =
+            !!nextMsg &&
+            !msg.isSystem &&
+            !nextMsg.isSystem &&
+            nextMsg.senderId === msg.senderId &&
+            nextMsg.isOwn === msg.isOwn}
+          {@const groupPosition = continuesFromPrev
+            ? continuesToNext
+              ? 'middle'
+              : 'end'
+            : continuesToNext
+              ? 'start'
+              : 'single'}
           {@const showSender =
-            !msg.isOwn && (!prevMsg || prevMsg.senderId !== msg.senderId || prevMsg.isOwn)}
+            !msg.isOwn && groupPosition !== 'middle' && groupPosition !== 'end'}
 
           {#if msg.isSystem}
             <div class="flex justify-center my-2">
@@ -170,6 +191,7 @@
                   readBy={msg.readBy}
                   isEdited={msg.isEdited}
                   isDeleted={msg.isDeleted}
+                  {groupPosition}
                   onReply={onReply ? () => onReply?.(msg) : undefined}
                   {onReact}
                   {onDelete}

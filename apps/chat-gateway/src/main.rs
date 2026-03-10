@@ -152,6 +152,7 @@ async fn main() {
                                 "senderDeviceId": json.get("senderDeviceId").and_then(|v| v.as_str()).unwrap_or(""),
                                 "groupId": json.get("groupId").and_then(|v| v.as_str()).unwrap_or(""),
                                 "isWelcome": json.get("isWelcome").and_then(|v| v.as_bool()).unwrap_or(false),
+                                "ratchetTree": json.get("ratchetTree").cloned().unwrap_or(serde_json::Value::Null),
                                 "proto": proto_b64
                             })
                             .to_string();

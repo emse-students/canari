@@ -7,12 +7,17 @@ export interface IMlsService {
   addMember(
     groupId: string,
     keyPackageBytes: Uint8Array
-  ): Promise<{ commit: Uint8Array; welcome?: Uint8Array }>;
+  ): Promise<{ commit: Uint8Array; welcome?: Uint8Array; ratchetTree?: Uint8Array }>;
   addMembersBulk(
     groupId: string,
     devices: Array<{ keyPackage: Uint8Array; deviceId: string }>
-  ): Promise<{ commit: Uint8Array; welcome?: Uint8Array; addedDeviceIds: string[] }>;
-  processWelcome(welcomeBytes: Uint8Array): Promise<string>;
+  ): Promise<{
+    commit: Uint8Array;
+    welcome?: Uint8Array;
+    addedDeviceIds: string[];
+    ratchetTree?: Uint8Array;
+  }>;
+  processWelcome(welcomeBytes: Uint8Array, ratchetTreeBytes?: Uint8Array): Promise<string>;
   sendMessage(groupId: string, messageBytes: Uint8Array): Promise<Uint8Array>;
   processIncomingMessage(groupId: string, messageBytes: Uint8Array): Promise<Uint8Array | null>;
 
@@ -24,7 +29,8 @@ export interface IMlsService {
     welcomeBytes: Uint8Array,
     targetUserId: string,
     groupId: string,
-    targetDeviceId?: string
+    targetDeviceId?: string,
+    ratchetTreeBytes?: Uint8Array
   ): Promise<void>;
   sendCommit(commitBytes: Uint8Array, groupId: string): Promise<void>; // New Method for WS priority
   registerMember(groupId: string, userId: string, deviceId: string): Promise<void>;
@@ -45,7 +51,8 @@ export interface IMlsService {
       senderId: string,
       content: Uint8Array,
       groupId?: string,
-      isWelcome?: boolean
+      isWelcome?: boolean,
+      ratchetTreeBytes?: Uint8Array
     ) => Promise<boolean>
   ): void;
   onDisconnect(callback: () => void): void;

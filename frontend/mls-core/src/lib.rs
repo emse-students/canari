@@ -27,7 +27,7 @@ pub enum MlsError {
     InvalidData,
 }
 
-type AddMembersBulkResult = (Vec<u8>, Option<Vec<u8>>, usize);
+type AddMembersBulkResult = (Vec<u8>, Option<Vec<u8>>, usize, Option<Vec<u8>>);
 
 // --- 1. LE MODÈLE DE PERSISTANCE (DISQUE) ---
 
@@ -175,9 +175,10 @@ impl MlsManager {
         &mut self,
         group_id: &str,
         key_package_bytes: &[u8],
-    ) -> Result<(Vec<u8>, Option<Vec<u8>>), MlsError> {
-        let (commit, welcome, _) = self.add_members_bulk(group_id, &[key_package_bytes])?;
-        Ok((commit, welcome))
+    ) -> Result<(Vec<u8>, Option<Vec<u8>>, Option<Vec<u8>>), MlsError> {
+        let (commit, welcome, _, ratchet_tree) =
+            self.add_members_bulk(group_id, &[key_package_bytes])?;
+        Ok((commit, welcome, ratchet_tree))
     }
 
     /// Add multiple members in a single commit so all new members share the same epoch.
@@ -225,8 +226,17 @@ impl MlsManager {
         let welcome_bytes = welcome_msg_out
             .tls_serialize_detached()
             .map_err(|e| MlsError::OpenMls(e.to_string()))?;
+        let ratchet_tree_bytes = group
+            .export_ratchet_tree()
+            .tls_serialize_detached()
+            .map_err(|e| MlsError::OpenMls(e.to_string()))?;
 
-        Ok((commit_bytes, Some(welcome_bytes), count))
+        Ok((
+            commit_bytes,
+            Some(welcome_bytes),
+            count,
+            Some(ratchet_tree_bytes),
+        ))
     }
 
     // --- C2. REJOINDRE UN GROUPE (Traitement Welcome) ---
@@ -250,7 +260,9 @@ impl MlsManager {
             }
         };
 
-        let group_config = MlsGroupJoinConfig::default();
+        let group_config = MlsGroupJoinConfig::builder()
+            .use_ratchet_tree_extension(true)
+            .build();
 
         // If ratchet tree is provided externally (e.g. via specific server endpoint), deserialize it
         // Otherwise pass None (OpenMLS can often reconstruct or it might be in the Welcome extension)

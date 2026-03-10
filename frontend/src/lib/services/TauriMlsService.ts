@@ -11,7 +11,8 @@ export class TauriMlsService implements IMlsService {
         senderId: string,
         content: Uint8Array,
         groupId?: string,
-        isWelcome?: boolean
+        isWelcome?: boolean,
+        ratchetTreeBytes?: Uint8Array
       ) => Promise<boolean>)
     | null = null;
   private disconnectCallback: (() => void) | null = null;
@@ -71,13 +72,18 @@ export class TauriMlsService implements IMlsService {
             const ciphertext = new Uint8Array(binaryString.length);
             for (let i = 0; i < binaryString.length; i++)
               ciphertext[i] = binaryString.charCodeAt(i);
+            const ratchetTreeBytes =
+              typeof msg.ratchetTree === 'string' && msg.ratchetTree.length > 0
+                ? Uint8Array.from(atob(msg.ratchetTree as string), (c) => c.charCodeAt(0))
+                : undefined;
 
             if (ciphertext.length > 0) {
-              this.messageCallback(
+              await this.messageCallback(
                 (msg.senderId as string) || 'unknown',
                 ciphertext,
                 (msg.groupId as string) || undefined,
-                msg.isWelcome === true
+                msg.isWelcome === true,
+                ratchetTreeBytes
               );
             }
           }
@@ -104,6 +110,7 @@ export class TauriMlsService implements IMlsService {
               content: w.message,
               senderId: w.senderUserId ?? 'system',
               groupId: w.groupId,
+              ratchetTree: w.ratchetTree,
             });
           }
         }
@@ -163,7 +170,10 @@ export class TauriMlsService implements IMlsService {
             (data.senderId as string) || 'unknown',
             ciphertext,
             (data.groupId as string) || undefined,
-            data.isWelcome === true
+            data.isWelcome === true,
+            typeof data.ratchetTree === 'string' && data.ratchetTree.length > 0
+              ? Uint8Array.from(atob(data.ratchetTree as string), (c) => c.charCodeAt(0))
+              : undefined
           );
         }
       } catch (e) {
@@ -182,7 +192,10 @@ export class TauriMlsService implements IMlsService {
           (data.senderId || 'unknown') as string,
           bytes,
           (data.groupId || data.session_id) as string | undefined,
-          data.type === 'mlsWelcome'
+          data.type === 'mlsWelcome',
+          typeof data.ratchetTree === 'string' && data.ratchetTree.length > 0
+            ? Uint8Array.from(atob(data.ratchetTree as string), (c) => c.charCodeAt(0))
+            : undefined
         );
       } catch (e) {
         console.error('Message processing failed', e);
@@ -196,7 +209,8 @@ export class TauriMlsService implements IMlsService {
       senderId: string,
       content: Uint8Array,
       groupId?: string,
-      isWelcome?: boolean
+      isWelcome?: boolean,
+      ratchetTreeBytes?: Uint8Array
     ) => Promise<boolean>
   ) {
     this.messageCallback = callback;
@@ -265,9 +279,13 @@ export class TauriMlsService implements IMlsService {
     welcomeBytes: Uint8Array,
     targetUserId: string,
     groupId: string,
-    targetDeviceId?: string
+    targetDeviceId?: string,
+    ratchetTreeBytes?: Uint8Array
   ): Promise<void> {
     const base64 = btoa(String.fromCharCode(...welcomeBytes));
+    const ratchetTreeBase64 = ratchetTreeBytes
+      ? btoa(String.fromCharCode(...ratchetTreeBytes))
+      : undefined;
 
     if (targetDeviceId) {
       await fetch(`${this.historyUrl}/mls-api/welcome`, {
@@ -278,6 +296,7 @@ export class TauriMlsService implements IMlsService {
           targetUserId,
           senderUserId: this.userId,
           welcomePayload: base64,
+          ratchetTreePayload: ratchetTreeBase64,
           groupId,
         }),
       });
@@ -290,6 +309,7 @@ export class TauriMlsService implements IMlsService {
           type: 'welcome',
           groupId,
           proto: base64,
+          ratchetTree: ratchetTreeBase64,
           recipients: [{ userId: targetUserId, deviceId: targetDeviceId ?? '' }],
         })
       );
@@ -382,13 +402,14 @@ export class TauriMlsService implements IMlsService {
 
   async addMember(groupId: string, keyPackageBytes: Uint8Array) {
     // Returns tuple (commit, welcome?)
-    const result = await invoke<[number[], number[] | null]>('ajouter_membre', {
+    const result = await invoke<[number[], number[] | null, number[] | null]>('ajouter_membre', {
       groupId,
       keyPackageBytes: Array.from(keyPackageBytes),
     });
     return {
       commit: Uint8Array.from(result[0]),
       welcome: result[1] ? Uint8Array.from(result[1]) : undefined,
+      ratchetTree: result[2] ? Uint8Array.from(result[2]) : undefined,
     };
   }
 
@@ -401,23 +422,33 @@ export class TauriMlsService implements IMlsService {
     // The welcome from the LAST successful add covers all added members (openMLS behaviour).
     let lastCommit: Uint8Array | undefined;
     let lastWelcome: Uint8Array | undefined;
+    let lastRatchetTree: Uint8Array | undefined;
     const addedDeviceIds: string[] = [];
     for (const device of devices) {
       try {
         const res = await this.addMember(groupId, device.keyPackage);
         lastCommit = res.commit;
         lastWelcome = res.welcome;
+        lastRatchetTree = res.ratchetTree;
         addedDeviceIds.push(device.deviceId);
       } catch (e) {
         console.warn(`Skipping device ${device.deviceId}: ${e}`);
       }
     }
     if (!lastCommit) throw new Error('No valid devices to add');
-    return { commit: lastCommit, welcome: lastWelcome, addedDeviceIds };
+    return {
+      commit: lastCommit,
+      welcome: lastWelcome,
+      addedDeviceIds,
+      ratchetTree: lastRatchetTree,
+    };
   }
 
-  async processWelcome(welcomeBytes: Uint8Array) {
-    return await invoke<string>('trailer_welcome', { welcomeBytes: Array.from(welcomeBytes) });
+  async processWelcome(welcomeBytes: Uint8Array, ratchetTreeBytes?: Uint8Array) {
+    return await invoke<string>('trailer_welcome', {
+      welcomeBytes: Array.from(welcomeBytes),
+      ratchetTreeBytes: ratchetTreeBytes ? Array.from(ratchetTreeBytes) : null,
+    });
   }
 
   async sendMessage(groupId: string, messageBytes: Uint8Array) {

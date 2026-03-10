@@ -1,7 +1,7 @@
 <script lang="ts">
   import { format } from 'date-fns';
   import { fly } from 'svelte/transition';
-  import { Reply, Smile, FileText, Download, Pencil, Trash2 } from 'lucide-svelte';
+  import { Reply, Smile, FileText, Download, Pencil, Trash2, CheckCheck } from 'lucide-svelte';
   import { clickOutside } from '$lib/actions/clickOutside';
   import { onDestroy } from 'svelte';
   import { parseMediaMessage, MediaService } from '$lib/media';
@@ -30,6 +30,7 @@
     readBy?: string[];
     isEdited?: boolean;
     isDeleted?: boolean;
+    groupPosition?: 'single' | 'start' | 'middle' | 'end';
     onReply?: (messageId: string) => void;
     onReact?: (messageId: string, emoji: string) => void;
     onDelete?: (messageId: string) => void;
@@ -49,6 +50,7 @@
     readBy = [],
     isEdited = false,
     isDeleted = false,
+    groupPosition = 'single',
     onReply,
     onReact,
     onDelete,
@@ -166,6 +168,20 @@
     link.download = fileName;
     link.click();
   }
+
+  function getBubbleShapeClass(position: 'single' | 'start' | 'middle' | 'end') {
+    if (position === 'single') return 'rounded-[1.25rem]';
+
+    if (isOwn) {
+      if (position === 'start') return 'rounded-[1.25rem] rounded-br-md';
+      if (position === 'middle') return 'rounded-[1.25rem] rounded-tr-md rounded-br-md';
+      return 'rounded-[1.25rem] rounded-tr-md';
+    }
+
+    if (position === 'start') return 'rounded-[1.25rem] rounded-bl-md';
+    if (position === 'middle') return 'rounded-[1.25rem] rounded-tl-md rounded-bl-md';
+    return 'rounded-[1.25rem] rounded-tl-md';
+  }
 </script>
 
 {#if isSystem}
@@ -181,24 +197,22 @@
     }}
     class="relative group"
   >
-    <!-- Main row: [action-bar | bubble] reversed for own messages -->
-    <div class="flex items-end gap-2 {isOwn ? 'flex-row-reverse' : 'flex-row'}">
-      <!-- ── Bubble ── -->
-      <div
-        in:fly={{ y: 5, duration: 200 }}
-        role="button"
-        tabindex="0"
-        onclick={toggleInfo}
-        onkeydown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            toggleInfo(e as unknown as MouseEvent);
-          }
-        }}
-        class="px-4 py-2.5 rounded-[1.25rem] cursor-pointer min-w-0 {isOwn
-          ? 'bg-cn-yellow text-cn-dark rounded-br-sm'
-          : 'bg-white text-cn-dark border border-cn-border rounded-bl-sm'}"
-      >
+    <!-- ── Bubble ── -->
+    <div
+      in:fly={{ y: 5, duration: 200 }}
+      role="button"
+      tabindex="0"
+      onclick={toggleInfo}
+      onkeydown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          toggleInfo(e as unknown as MouseEvent);
+        }
+      }}
+      class="px-4 py-2.5 cursor-pointer min-w-0 {getBubbleShapeClass(groupPosition)} {isOwn
+        ? 'bg-cn-yellow text-cn-dark'
+        : 'bg-white text-cn-dark border border-cn-border'}"
+    >
         {#if replyTo}
           <div class="mb-2 pb-2 border-l-4 border-gray-400 pl-3 text-xs opacity-70">
             <div class="font-semibold">{replyTo.senderId}</div>
@@ -316,67 +330,68 @@
               <span class="italic text-[0.6rem] opacity-60">(modifié)</span>
             {/if}
             {#if isOwn && readBy.length > 0}
-              <span class="text-blue-500 font-bold text-xs" title="Lu par {readBy.join(', ')}"
-                >✓</span
-              >
+              <span class="text-blue-500" title="Lu par {readBy.join(', ')}">
+                <CheckCheck size={14} strokeWidth={2.25} />
+              </span>
             {/if}
           </div>
         {/if}
-      </div>
+    </div>
 
-      <!-- ── Action bar (visible on hover) ── -->
-      <div
-        class="opacity-0 {showEmojiPicker
-          ? 'opacity-100'
-          : 'group-hover:opacity-100'} transition-opacity flex flex-col gap-0.5 pb-1 shrink-0 self-center"
-      >
-        {#if !isDeleted && onReply}
-          <button
-            onclick={() => onReply?.(messageId)}
-            class="p-1.5 rounded-lg hover:bg-gray-200 transition-colors text-gray-400 hover:text-gray-700"
-            aria-label="Répondre"
-          >
-            <Reply size={15} />
-          </button>
-        {/if}
-        {#if onReact}
-          <button
-            onclick={(e) => {
-              e.stopPropagation();
-              showEmojiPicker = !showEmojiPicker;
-            }}
-            class="p-1.5 rounded-lg hover:bg-gray-200 transition-colors text-gray-400 hover:text-gray-700"
-            aria-label="Réagir"
-          >
-            <Smile size={15} />
-          </button>
-        {/if}
-        {#if !isDeleted && isOwn && !mediaRef && onEdit}
-          <button
-            onclick={(e) => {
-              e.stopPropagation();
-              editText = content;
-              showEditModal = true;
-            }}
-            class="p-1.5 rounded-lg hover:bg-gray-200 transition-colors text-gray-400 hover:text-gray-700"
-            aria-label="Modifier"
-          >
-            <Pencil size={15} />
-          </button>
-        {/if}
-        {#if !isDeleted && isOwn && onDelete}
-          <button
-            onclick={(e) => {
-              e.stopPropagation();
-              showDeleteModal = true;
-            }}
-            class="p-1.5 rounded-lg hover:bg-gray-200 transition-colors text-red-400 hover:text-red-600"
-            aria-label="Supprimer"
-          >
-            <Trash2 size={15} />
-          </button>
-        {/if}
-      </div>
+    <!-- ── Action bar (visible on hover) ── -->
+    <div
+      class="absolute top-1/2 -translate-y-1/2 {isOwn
+        ? 'right-full mr-2'
+        : 'left-full ml-2'} opacity-0 {showEmojiPicker
+        ? 'opacity-100'
+        : 'group-hover:opacity-100'} transition-opacity flex flex-row items-center gap-1 rounded-full bg-white/95 border border-cn-border shadow-sm px-1.5 py-1 z-10"
+    >
+      {#if !isDeleted && onReply}
+        <button
+          onclick={() => onReply?.(messageId)}
+          class="p-1.5 rounded-full hover:bg-gray-200 transition-colors text-gray-400 hover:text-gray-700"
+          aria-label="Répondre"
+        >
+          <Reply size={15} />
+        </button>
+      {/if}
+      {#if onReact}
+        <button
+          onclick={(e) => {
+            e.stopPropagation();
+            showEmojiPicker = !showEmojiPicker;
+          }}
+          class="p-1.5 rounded-full hover:bg-gray-200 transition-colors text-gray-400 hover:text-gray-700"
+          aria-label="Réagir"
+        >
+          <Smile size={15} />
+        </button>
+      {/if}
+      {#if !isDeleted && isOwn && !mediaRef && onEdit}
+        <button
+          onclick={(e) => {
+            e.stopPropagation();
+            editText = content;
+            showEditModal = true;
+          }}
+          class="p-1.5 rounded-full hover:bg-gray-200 transition-colors text-gray-400 hover:text-gray-700"
+          aria-label="Modifier"
+        >
+          <Pencil size={15} />
+        </button>
+      {/if}
+      {#if !isDeleted && isOwn && onDelete}
+        <button
+          onclick={(e) => {
+            e.stopPropagation();
+            showDeleteModal = true;
+          }}
+          class="p-1.5 rounded-full hover:bg-gray-200 transition-colors text-red-400 hover:text-red-600"
+          aria-label="Supprimer"
+        >
+          <Trash2 size={15} />
+        </button>
+      {/if}
     </div>
 
     <!-- ── Reactions (below bubble, aligned with it) ── -->
