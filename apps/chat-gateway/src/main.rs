@@ -8,9 +8,7 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
-use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
 use futures::stream::StreamExt;
-use prost::Message as ProstMessage;
 use rdkafka::{ClientConfig, producer::FutureProducer};
 use reqwest::Client as HttpClient;
 use std::{net::SocketAddr, sync::Arc};
@@ -18,7 +16,6 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::handlers::{get_ratchet_tree, post_ratchet_tree, ws_handler};
-use crate::models::InboundMsg;
 use crate::state::AppState;
 
 async fn health_check() -> impl IntoResponse {
@@ -141,41 +138,23 @@ async fn main() {
                                 None => continue,
                             };
 
-                            let proto_bytes = match json.get("proto").and_then(|v| v.as_str()) {
-                                Some(proto_b64) => match B64.decode(proto_b64) {
-                                    Ok(b) => b,
-                                    Err(e) => {
-                                        tracing::warn!(
-                                            "Failed to decode proto bytes from Redis: {}",
-                                            e
-                                        );
-                                        continue;
-                                    }
-                                },
-                                None => {
-                                    tracing::warn!(
-                                        "Redis message missing 'proto' field, dropping (all publishers must use {{recipientId, deviceId, proto}} format)"
-                                    );
+                            let proto_b64 = match json.get("proto").and_then(|v| v.as_str()) {
+                                Some(v) if !v.is_empty() => v,
+                                _ => {
+                                    tracing::warn!("Redis message missing 'proto' field, dropping");
                                     continue;
                                 }
                             };
 
-                            // Decode InboundMsg proto and re-encode as a JSON text frame:
-                            // { senderId, senderDeviceId, groupId, isWelcome, proto: base64(ciphertext) }
-                            let json_frame = match InboundMsg::decode(proto_bytes.as_slice()) {
-                                Ok(inbound) => serde_json::json!({
-                                    "senderId": inbound.sender_id,
-                                    "senderDeviceId": inbound.sender_device_id,
-                                    "groupId": inbound.group_id,
-                                    "isWelcome": inbound.is_welcome,
-                                    "proto": B64.encode(&inbound.ciphertext)
-                                })
-                                .to_string(),
-                                Err(e) => {
-                                    tracing::warn!("Failed to decode InboundMsg from Redis: {}", e);
-                                    continue;
-                                }
-                            };
+                            // Forward flat JSON to the WS client — no proto decode needed.
+                            let json_frame = serde_json::json!({
+                                "senderId": json.get("senderId").and_then(|v| v.as_str()).unwrap_or(""),
+                                "senderDeviceId": json.get("senderDeviceId").and_then(|v| v.as_str()).unwrap_or(""),
+                                "groupId": json.get("groupId").and_then(|v| v.as_str()).unwrap_or(""),
+                                "isWelcome": json.get("isWelcome").and_then(|v| v.as_bool()).unwrap_or(false),
+                                "proto": proto_b64
+                            })
+                            .to_string();
 
                             let key = format!("{}:{}", recipient_id, device_id);
 

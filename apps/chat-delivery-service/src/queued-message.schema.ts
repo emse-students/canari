@@ -13,9 +13,11 @@ export class QueuedMessage {
   deviceId: string;
 
   @Prop()
-  proto?: string; // base64(InboundMsg) — set by gateway
+  proto?: string; // base64(raw MLS ciphertext)
 
-  // Legacy fields (frontend fallback path)
+  // Flat metadata fields
+  @Prop()
+  isWelcome?: boolean;
   @Prop()
   senderId?: string;
 

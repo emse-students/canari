@@ -295,7 +295,7 @@ export class AppController {
     console.log(`[DELIVERY] Checking presence for ${redisKey} -> ${isOnline}`);
     if (isOnline) {
       const ciphertext = Buffer.from(body.welcomePayload, 'base64');
-      const envelope = await encodeInboundMsgEnvelope(
+      const envelope = encodeInboundMsgEnvelope(
         deviceInfo.userId,
         targetDeviceId,
         {
@@ -303,7 +303,7 @@ export class AppController {
           senderId: senderUserId,
           senderDeviceId: '',
           groupId: safeGroupId,
-          isWelcome: true, // Welcome MUST be correctly formatted when creating InboundMsg
+          isWelcome: true,
         },
       );
       console.log(
@@ -332,13 +332,14 @@ export class AppController {
   async sendMessage(
     @Body()
     body: {
-      proto?: string; // base64(InboundMsg) — sent by gateway
+      proto?: string; // base64(raw MLS ciphertext) — sent by gateway
       recipients?: { userId: string; deviceId?: string }[];
-      // legacy fields (frontend fallback / group fan-out)
       senderId?: string;
       senderDeviceId?: string;
-      content?: string;
       groupId?: string;
+      isWelcome?: boolean;
+      // legacy fields (frontend fallback / group fan-out)
+      content?: string;
       type?: string;
     },
   ) {
@@ -346,7 +347,7 @@ export class AppController {
     let sentCount = 0;
 
     if (body.proto) {
-      // ── Proto path (gateway): proto is already a base64(InboundMsg) ────────
+      // ── Proto path (gateway): proto = base64(raw MLS ciphertext) ─────────
       const { proto } = body;
       for (const r of body.recipients ?? []) {
         if (!r.userId || !r.deviceId) continue;
@@ -367,6 +368,10 @@ export class AppController {
           const envelope = JSON.stringify({
             recipientId: recipientUserId,
             deviceId: recipientDeviceId,
+            senderId: body.senderId ?? '',
+            senderDeviceId: body.senderDeviceId ?? '',
+            groupId: body.groupId ?? '',
+            isWelcome: body.isWelcome ?? false,
             proto,
           });
           console.log(
@@ -380,6 +385,10 @@ export class AppController {
               document: {
                 recipientId: recipientUserId,
                 deviceId: recipientDeviceId,
+                senderId: body.senderId,
+                senderDeviceId: body.senderDeviceId,
+                groupId: body.groupId,
+                isWelcome: body.isWelcome,
                 proto,
                 createdAt: new Date(),
               },
@@ -446,17 +455,13 @@ export class AppController {
           console.log(
             `[DELIVERY] Encoding message for ${redisKey}, isWelcome: ${isWelcome}`,
           );
-          const envelope = await encodeInboundMsgEnvelope(
-            r.userId,
-            r.deviceId,
-            {
-              ciphertext,
-              senderId,
-              senderDeviceId: senderDeviceId ?? '',
-              groupId,
-              isWelcome,
-            },
-          );
+          const envelope = encodeInboundMsgEnvelope(r.userId, r.deviceId, {
+            ciphertext,
+            senderId,
+            senderDeviceId: senderDeviceId ?? '',
+            groupId,
+            isWelcome,
+          });
           console.log(
             `[DELIVERY] Publishing Message to ${redisKey}, envelope length: ${envelope.length}`,
           );

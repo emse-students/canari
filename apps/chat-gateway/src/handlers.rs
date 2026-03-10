@@ -17,9 +17,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use crate::models::{
-    AuthParams, Claims, InboundMsg, RatchetTreePayload, Recipient, encode_inbound,
-};
+use crate::models::{AuthParams, Claims, RatchetTreePayload, Recipient};
 use crate::state::AppState;
 
 // --- REST Handlers for MLS ---
@@ -162,6 +160,7 @@ async fn handle_socket(
     }
 
     // Task to receive all messages from Redis/Backend and send to this client
+    let conn_key_ping = conn_key.clone();
     let mut send_task = tokio::spawn(async move {
         let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(30));
 
@@ -178,6 +177,7 @@ async fn handle_socket(
                 }
               }
               _ = ping_interval.tick() => {
+                tracing::debug!("Sending ping to {} to keep connection alive", conn_key_ping);
                 if sender.send(Message::Ping(vec![].into())).await.is_err() {
                     break;
                 }
@@ -353,19 +353,14 @@ async fn handle_socket(
                                                 con.exists::<_, bool>(&redis_presence_key).await
                                             {
                                                 is_online = true;
-                                                // Publish a JSON routing envelope so the subscriber
-                                                // knows which connected client to forward to.
-                                                let inbound = InboundMsg {
-                                                    ciphertext: ciphertext.clone(),
-                                                    sender_id: user_id.clone(),
-                                                    sender_device_id: device_id.clone(),
-                                                    group_id: group_id.clone(),
-                                                    is_welcome: false,
-                                                };
                                                 let routing = serde_json::json!({
                                                     "recipientId": recipient.user_id,
                                                     "deviceId": recipient.device_id,
-                                                    "proto": B64.encode(encode_inbound(&inbound))
+                                                    "senderId": user_id,
+                                                    "senderDeviceId": device_id,
+                                                    "groupId": group_id,
+                                                    "isWelcome": false,
+                                                    "proto": B64.encode(&ciphertext)
                                                 })
                                                 .to_string();
                                                 let _: Result<(), _> =
@@ -379,13 +374,6 @@ async fn handle_socket(
                                     }
 
                                     if !offline_list.is_empty() {
-                                        let inbound = InboundMsg {
-                                            ciphertext: ciphertext.clone(),
-                                            sender_id: user_id.clone(),
-                                            sender_device_id: device_id.clone(),
-                                            group_id: group_id.clone(),
-                                            is_welcome: false,
-                                        };
                                         let body = serde_json::json!({
                                             "recipients": offline_list
                                                 .iter()
@@ -394,7 +382,11 @@ async fn handle_socket(
                                                     "deviceId": if r.device_id.is_empty() { serde_json::Value::Null } else { r.device_id.clone().into() }
                                                 }))
                                                 .collect::<Vec<_>>(),
-                                            "proto": B64.encode(encode_inbound(&inbound))
+                                            "senderId": user_id,
+                                            "senderDeviceId": device_id,
+                                            "groupId": group_id,
+                                            "isWelcome": false,
+                                            "proto": B64.encode(&ciphertext)
                                         });
                                         if let Err(e) = state
                                             .http_client
@@ -418,16 +410,13 @@ async fn handle_socket(
                                 for recipient in recipients {
                                     if recipient.device_id.is_empty() {
                                         // Fan-out via delivery service
-                                        let inbound = InboundMsg {
-                                            ciphertext: ciphertext.clone(),
-                                            sender_id: user_id.clone(),
-                                            sender_device_id: device_id.clone(),
-                                            group_id: group_id.clone(),
-                                            is_welcome: true,
-                                        };
                                         let body = serde_json::json!({
                                             "recipients": [{ "userId": recipient.user_id, "deviceId": serde_json::Value::Null }],
-                                            "proto": B64.encode(encode_inbound(&inbound))
+                                            "senderId": user_id,
+                                            "senderDeviceId": device_id,
+                                            "groupId": group_id,
+                                            "isWelcome": true,
+                                            "proto": B64.encode(&ciphertext)
                                         });
                                         let _ = state
                                             .http_client
@@ -452,17 +441,14 @@ async fn handle_socket(
                                         if let Ok(true) =
                                             con.exists::<_, bool>(&redis_presence_key).await
                                         {
-                                            let inbound = InboundMsg {
-                                                ciphertext: ciphertext.clone(),
-                                                sender_id: user_id.clone(),
-                                                sender_device_id: device_id.clone(),
-                                                group_id: group_id.clone(),
-                                                is_welcome: true,
-                                            };
                                             let routing = serde_json::json!({
                                                 "recipientId": recipient.user_id,
                                                 "deviceId": recipient.device_id,
-                                                "proto": B64.encode(encode_inbound(&inbound))
+                                                "senderId": user_id,
+                                                "senderDeviceId": device_id,
+                                                "groupId": group_id,
+                                                "isWelcome": true,
+                                                "proto": B64.encode(&ciphertext)
                                             })
                                             .to_string();
                                             let _: Result<(), _> =
@@ -472,16 +458,13 @@ async fn handle_socket(
                                     }
 
                                     if !sent {
-                                        let inbound = InboundMsg {
-                                            ciphertext: ciphertext.clone(),
-                                            sender_id: user_id.clone(),
-                                            sender_device_id: device_id.clone(),
-                                            group_id: group_id.clone(),
-                                            is_welcome: true,
-                                        };
                                         let body = serde_json::json!({
                                             "recipients": [{ "userId": recipient.user_id, "deviceId": recipient.device_id }],
-                                            "proto": B64.encode(encode_inbound(&inbound))
+                                            "senderId": user_id,
+                                            "senderDeviceId": device_id,
+                                            "groupId": group_id,
+                                            "isWelcome": true,
+                                            "proto": B64.encode(&ciphertext)
                                         });
                                         let _ = state
                                             .http_client

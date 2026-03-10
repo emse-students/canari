@@ -1,6 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { IMlsService } from './IMlsService';
-import { decodeInboundMsg } from '$lib/proto/codec';
 
 // Implémentation pour Tauri (App Mobile/Desktop)
 // Note: We use a dynamic import or checks to prevent this from crashing in pure web if invoked eagerly
@@ -153,19 +152,18 @@ export class TauriMlsService implements IMlsService {
   private async simulateMessageReceive(data: any): Promise<boolean> {
     if (!this.messageCallback) return false;
 
-    // New format: pre-encoded InboundMsg proto (base64) — queued by gateway via delivery service
+    // Flat format: proto = base64(raw ciphertext), metadata fields alongside
     if (data.proto) {
       try {
         const binaryString = atob(data.proto as string);
-        const protoBytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) protoBytes[i] = binaryString.charCodeAt(i);
-        const inbound = decodeInboundMsg(protoBytes);
-        if (inbound.ciphertext?.length) {
+        const ciphertext = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) ciphertext[i] = binaryString.charCodeAt(i);
+        if (ciphertext.length > 0) {
           return await this.messageCallback(
-            inbound.senderId || 'unknown',
-            new Uint8Array(inbound.ciphertext),
-            inbound.groupId || undefined,
-            inbound.isWelcome === true
+            (data.senderId as string) || 'unknown',
+            ciphertext,
+            (data.groupId as string) || undefined,
+            data.isWelcome === true
           );
         }
       } catch (e) {
