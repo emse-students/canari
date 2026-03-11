@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onDestroy, tick } from 'svelte';
+  import jsQR from 'jsqr';
   import { Camera, Copy, QrCode, Smartphone, Loader2, X } from 'lucide-svelte';
 
   interface Props {
@@ -36,14 +37,13 @@
 
   let mediaStream: MediaStream | null = null;
   let scanAnimationFrame: number | null = null;
+  let scanCanvas: HTMLCanvasElement | null = null;
   let detector: {
     detect: (source: HTMLVideoElement) => Promise<Array<{ rawValue?: string }>>;
   } | null = null;
 
   const hasScannerSupport = $derived.by(() => {
-    if (typeof window === 'undefined') return false;
-    const maybeWindow = window as Window & { BarcodeDetector?: unknown };
-    return Boolean(maybeWindow.BarcodeDetector && navigator.mediaDevices?.getUserMedia);
+    return typeof window !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia);
   });
 
   function cleanupStream() {
@@ -68,15 +68,52 @@
     if (!isScanning || !videoEl || !detector) return;
 
     try {
-      const barcodes = await detector.detect(videoEl);
-      const value = barcodes[0]?.rawValue?.trim();
+      if (videoEl.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+        scanAnimationFrame = requestAnimationFrame(() => {
+          void scanLoop();
+        });
+        return;
+      }
+
+      let value = '';
+
+      if (detector) {
+        try {
+          const barcodes = await detector.detect(videoEl);
+          value = barcodes[0]?.rawValue?.trim() ?? '';
+        } catch {
+          // If BarcodeDetector fails at runtime, fallback to jsQR below.
+        }
+      }
+
+      if (!value) {
+        if (!scanCanvas) scanCanvas = document.createElement('canvas');
+        const canvas = scanCanvas;
+        const width = videoEl.videoWidth;
+        const height = videoEl.videoHeight;
+
+        if (width > 0 && height > 0) {
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d', { willReadFrequently: true });
+          if (ctx) {
+            ctx.drawImage(videoEl, 0, 0, width, height);
+            const imageData = ctx.getImageData(0, 0, width, height);
+            const decoded = jsQR(imageData.data, width, height, {
+              inversionAttempts: 'dontInvert',
+            });
+            value = decoded?.data?.trim() ?? '';
+          }
+        }
+      }
+
       if (value) {
         onJoinPayloadChange(value);
         cleanupStream();
         return;
       }
     } catch {
-      // Ignore transient detector errors and continue scanning.
+      // Ignore transient detector/camera errors and continue scanning.
     }
 
     scanAnimationFrame = requestAnimationFrame(() => {
@@ -95,6 +132,9 @@
       scanError = 'Scan QR non supporte sur cet appareil. Collez le payload manuellement.';
       return;
     }
+
+    isScanning = true;
+    await tick();
 
     const maybeWindow = window as Window & {
       BarcodeDetector?: new (opts: { formats: string[] }) => {
@@ -121,8 +161,7 @@
 
       videoEl.srcObject = mediaStream;
       await videoEl.play();
-      detector = new DetectorCtor({ formats: ['qr_code'] });
-      isScanning = true;
+      detector = DetectorCtor ? new DetectorCtor({ formats: ['qr_code'] }) : null;
       void scanLoop();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -149,13 +188,13 @@
 
 {#if isOpen}
   <button
-    class="fixed inset-0 z-[70] bg-black/40 border-0"
+    class="fixed inset-0 z-[180] bg-black/40 border-0"
     aria-label="Fermer la fenêtre de synchronisation"
     onclick={handleClose}
   ></button>
 
   <section
-    class="fixed z-[80] inset-x-3 top-10 md:inset-x-auto md:right-8 md:top-20 md:w-[34rem] bg-[var(--cn-surface)] border border-cn-border rounded-2xl shadow-2xl p-4 md:p-5 flex flex-col gap-3"
+    class="fixed z-[190] inset-x-3 top-4 md:inset-x-auto md:right-8 md:top-20 md:w-[34rem] max-h-[92dvh] overflow-y-auto bg-[var(--cn-surface)] border border-cn-border rounded-2xl shadow-2xl p-4 md:p-5 flex flex-col gap-3"
   >
     <div class="flex items-center justify-between">
       <h3 class="text-base font-semibold text-cn-dark inline-flex items-center gap-2">

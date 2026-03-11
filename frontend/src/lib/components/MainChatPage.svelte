@@ -1122,12 +1122,50 @@
 
   async function copySyncPayload() {
     if (!syncQrPayloadText) return;
+
+    const payload = syncQrPayloadText;
+
     try {
-      await navigator.clipboard.writeText(syncQrPayloadText);
+      await navigator.clipboard.writeText(payload);
       syncStatusText = 'Payload copie dans le presse-papiers.';
+      return;
     } catch {
-      syncStatusText = 'Impossible de copier le payload automatiquement.';
+      // Fallback to legacy copy for mobile/webviews without Clipboard API support.
     }
+
+    try {
+      const textarea = document.createElement('textarea');
+      textarea.value = payload;
+      textarea.setAttribute('readonly', 'true');
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      textarea.setSelectionRange(0, textarea.value.length);
+      const copied = document.execCommand('copy');
+      document.body.removeChild(textarea);
+      if (copied) {
+        syncStatusText = 'Payload copie dans le presse-papiers.';
+        return;
+      }
+    } catch {
+      // Ignore and fallback to share.
+    }
+
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: 'Canari Sync QR Payload',
+          text: payload,
+        });
+        syncStatusText = 'Payload partage avec succes.';
+        return;
+      } catch {
+        // User may cancel share; continue to final message.
+      }
+    }
+
+    syncStatusText = 'Impossible de copier automatiquement. Utilisez le partage ou copiez le texte manuellement.';
   }
 
   // --- Outils Dev ---
