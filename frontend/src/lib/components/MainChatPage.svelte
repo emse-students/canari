@@ -181,9 +181,8 @@
 
     if (window.__TAURI_INTERNALS__) {
       try {
-        const { isPermissionGranted, requestPermission } = await import(
-          '@tauri-apps/plugin-notification'
-        );
+        const { isPermissionGranted, requestPermission } =
+          await import('@tauri-apps/plugin-notification');
         const granted = await isPermissionGranted();
         if (!granted) {
           await requestPermission();
@@ -212,9 +211,8 @@
 
     if (window.__TAURI_INTERNALS__) {
       try {
-        const { isPermissionGranted, sendNotification } = await import(
-          '@tauri-apps/plugin-notification'
-        );
+        const { isPermissionGranted, sendNotification } =
+          await import('@tauri-apps/plugin-notification');
         if (await isPermissionGranted()) {
           await sendNotification({ title, body });
         }
@@ -257,7 +255,9 @@
     const compactDirectSeparator = '::';
 
     if (normalizedName.includes(compactDirectSeparator)) {
-      const [a, b] = normalizedName.split(compactDirectSeparator).map((v) => v.trim().toLowerCase());
+      const [a, b] = normalizedName
+        .split(compactDirectSeparator)
+        .map((v) => v.trim().toLowerCase());
       const peer = a === userId.toLowerCase() ? b : a;
       return {
         conversationType: 'direct',

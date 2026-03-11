@@ -146,7 +146,9 @@
         if (!searchQuery.trim()) return workspace;
         const query = searchQuery.trim().toLowerCase();
         const workspaceMatches = workspace.name.toLowerCase().includes(query);
-        const channels = workspace.channels.filter((channel) => channel.name.toLowerCase().includes(query));
+        const channels = workspace.channels.filter((channel) =>
+          channel.name.toLowerCase().includes(query)
+        );
         if (!workspaceMatches && channels.length === 0) return null;
         return {
           ...workspace,
@@ -228,7 +230,8 @@
       <button
         type="button"
         onclick={() => (activeSidebarTab = 'discussions')}
-        class="px-3 py-2 rounded-xl text-sm font-semibold transition-colors {activeSidebarTab === 'discussions'
+        class="px-3 py-2 rounded-xl text-sm font-semibold transition-colors {activeSidebarTab ===
+        'discussions'
           ? 'bg-white text-cn-dark shadow-sm'
           : 'text-text-muted hover:text-cn-dark'}"
       >
@@ -237,7 +240,8 @@
       <button
         type="button"
         onclick={() => (activeSidebarTab = 'channels')}
-        class="px-3 py-2 rounded-xl text-sm font-semibold transition-colors {activeSidebarTab === 'channels'
+        class="px-3 py-2 rounded-xl text-sm font-semibold transition-colors {activeSidebarTab ===
+        'channels'
           ? 'bg-white text-cn-dark shadow-sm'
           : 'text-text-muted hover:text-cn-dark'}"
       >
@@ -313,7 +317,9 @@
         {#each filteredChannelWorkspaces as workspace (workspace.id)}
           {@const isExpanded = expandedWorkspaceIds.includes(workspace.id)}
           <section class="rounded-2xl overflow-hidden">
-            <div class="flex items-center gap-2 px-2 py-2 hover:bg-cn-bg rounded-xl transition-colors">
+            <div
+              class="flex items-center gap-2 px-2 py-2 hover:bg-cn-bg rounded-xl transition-colors"
+            >
               <button
                 type="button"
                 onclick={() => toggleWorkspace(workspace.id)}
@@ -329,7 +335,9 @@
                 <div class="w-9 h-9 rounded-xl overflow-hidden flex-shrink-0">
                   <Avatar userId={workspace.avatarUserId} size="lg" />
                 </div>
-                <div class="flex-1 min-w-0 font-semibold text-cn-dark truncate">{workspace.name}</div>
+                <div class="flex-1 min-w-0 font-semibold text-cn-dark truncate">
+                  {workspace.name}
+                </div>
               </button>
               <button
                 type="button"
@@ -349,7 +357,8 @@
                     onclick={() => {
                       selectedChannelId = channel.id;
                     }}
-                    class="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-left transition-colors {selectedChannelId === channel.id
+                    class="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-left transition-colors {selectedChannelId ===
+                    channel.id
                       ? 'bg-[color-mix(in_srgb,var(--cn-yellow)_16%,transparent)] text-cn-dark'
                       : 'hover:bg-cn-bg text-text-muted'}"
                   >
@@ -362,7 +371,9 @@
                     </span>
                     <span class="flex-1 truncate text-sm font-medium">{channel.name}</span>
                     {#if channel.unreadCount}
-                      <span class="min-w-5 h-5 px-1 rounded-full bg-cn-dark text-cn-yellow text-[0.65rem] font-extrabold inline-flex items-center justify-center">
+                      <span
+                        class="min-w-5 h-5 px-1 rounded-full bg-cn-dark text-cn-yellow text-[0.65rem] font-extrabold inline-flex items-center justify-center"
+                      >
                         {channel.unreadCount}
                       </span>
                     {/if}

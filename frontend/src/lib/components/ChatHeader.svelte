@@ -180,7 +180,9 @@
           <div class="flex flex-col items-center text-center gap-2 pb-1">
             <Avatar userId={contactName} size="lg" />
             <div class="text-lg font-semibold truncate max-w-full">{displayName}</div>
-            <div class="text-xs text-white/60">{isReady ? 'En ligne' : 'Synchronisation en cours'}</div>
+            <div class="text-xs text-white/60">
+              {isReady ? 'En ligne' : 'Synchronisation en cours'}
+            </div>
           </div>
 
           <div class="rounded-2xl border border-white/10 bg-white/5 p-3 flex flex-col gap-2">
