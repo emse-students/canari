@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { goto } from '$app/navigation';
   import { TauriMlsService, WebMlsService } from '$lib/mlsService';
   import type { IMlsService } from '$lib/mlsService';
   import { getStorage } from '$lib/db';
@@ -61,6 +62,12 @@
   import ChatArea from './ChatArea.svelte';
   import LogsPanel from './LogsPanel.svelte';
   import type { ChatMessage, MessageReaction, Conversation } from '$lib/types';
+
+  interface Props {
+    routeMode?: 'chat' | 'login';
+  }
+
+  let { routeMode = 'chat' }: Props = $props();
 
   // --- State (Runes) ---
   let userId = $state('');
@@ -214,7 +221,9 @@
     if (savedUser && savedPin) {
       userId = savedUser;
       pin = savedPin;
-      handleLogin();
+      void handleLogin();
+    } else if (routeMode === 'chat') {
+      void goto('/login', { replaceState: true });
     }
 
     // Reconnexion automatique quand la page redevient visible (mobile/onglets)
@@ -307,6 +316,10 @@
       localStorage.setItem('canari_saved_user', userId);
       localStorage.setItem('canari_saved_pin', pin);
       await loadExistingConversations();
+
+      if (routeMode === 'login') {
+        void goto('/chat', { replaceState: true });
+      }
 
       const syncGuideKey = `canari_sync_guide_seen_${userId}`;
       if (!hadLocalStateBeforeLogin && localStorage.getItem(syncGuideKey) !== '1') {
@@ -955,6 +968,10 @@
     sendError = '';
     localStorage.removeItem('canari_saved_user');
     localStorage.removeItem('canari_saved_pin');
+
+    if (routeMode === 'chat') {
+      void goto('/login', { replaceState: true });
+    }
   }
 
   async function purgeLocalCaches() {
@@ -1247,16 +1264,22 @@
 <!-- ==================== UI ==================== -->
 
 {#if !isLoggedIn}
-  <LoginForm
-    {userId}
-    {pin}
-    {isLoggingIn}
-    {loginError}
-    onUserIdChange={(value) => (userId = value)}
-    onPinChange={(value) => (pin = value)}
-    onLogin={handleLogin}
-    onReset={resetAll}
-  />
+  {#if routeMode === 'login'}
+    <LoginForm
+      {userId}
+      {pin}
+      {isLoggingIn}
+      {loginError}
+      onUserIdChange={(value) => (userId = value)}
+      onPinChange={(value) => (pin = value)}
+      onLogin={handleLogin}
+      onReset={resetAll}
+    />
+  {:else}
+    <div class="min-h-screen flex items-center justify-center text-sm text-text-muted">
+      Redirection vers la page de connexion...
+    </div>
+  {/if}
 {:else}
   <div class="app-layout" in:fade>
     <Navbar {isWsConnected} onToggleLogs={() => (showLogs = !showLogs)} onLogout={logout} />

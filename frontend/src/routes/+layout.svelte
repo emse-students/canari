@@ -22,14 +22,14 @@
 
   .route-content {
     position: relative;
-    z-index: 1;
+    z-index: 2;
     min-height: 100dvh;
   }
 
   .chat-blobs {
     position: fixed;
     inset: 0;
-    z-index: 0;
+    z-index: 1;
     pointer-events: none;
     overflow: hidden;
   }
@@ -37,8 +37,9 @@
   .blob {
     position: absolute;
     border-radius: 9999px;
-    filter: blur(40px);
-    opacity: 0.45;
+    filter: blur(52px);
+    opacity: 0.68;
+    mix-blend-mode: screen;
     animation: drift 16s ease-in-out infinite;
   }
 
@@ -47,7 +48,7 @@
     height: min(48vw, 420px);
     left: -10%;
     top: -12%;
-    background: color-mix(in srgb, var(--cn-yellow) 70%, white 30%);
+    background: color-mix(in srgb, var(--cn-yellow) 82%, #0b0f18 18%);
   }
 
   .blob-b {
@@ -55,7 +56,7 @@
     height: min(42vw, 360px);
     right: -8%;
     top: 12%;
-    background: color-mix(in srgb, #8bc4ff 72%, white 28%);
+    background: color-mix(in srgb, #4da7ff 78%, #0b0f18 22%);
     animation-delay: -5s;
   }
 
@@ -64,7 +65,7 @@
     height: min(52vw, 460px);
     right: 12%;
     bottom: -20%;
-    background: color-mix(in srgb, #9de6c1 60%, white 40%);
+    background: color-mix(in srgb, #33d4a4 68%, #0b0f18 32%);
     animation-delay: -9s;
   }
 

@@ -31,9 +31,8 @@
       isDarkMode = false;
       applyTheme(false);
     } else {
-      const initialDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      isDarkMode = initialDark;
-      applyTheme(initialDark);
+      isDarkMode = true;
+      applyTheme(true);
     }
   }
 </script>

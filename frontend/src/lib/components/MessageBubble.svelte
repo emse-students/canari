@@ -330,7 +330,7 @@
         }
       }}
       class="px-4 py-2.5 cursor-pointer min-w-0 {getBubbleShapeClass(groupPosition)} {isOwn
-        ? 'bg-cn-yellow text-cn-dark'
+        ? 'bg-cn-yellow text-[#1a1303]'
         : 'bg-[var(--cn-surface)] text-cn-dark border border-cn-border'}"
     >
       {#if effectiveReplyTo}

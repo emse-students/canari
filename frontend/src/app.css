@@ -31,21 +31,21 @@
 }
 
 :root[data-theme='dark'] {
-  --cn-dark: #f4f8ff;
+  --cn-dark: #f3f8ff;
   --cn-yellow: #ffd45d;
   --cn-yellow-hover: #ffe082;
-  --cn-bg: #0f1724;
-  --cn-surface: #172233;
-  --cn-border: #25354e;
-  --text-main: #f1f6ff;
-  --text-muted: #8ea2bf;
+  --cn-bg: #070b12;
+  --cn-surface: #0f1622;
+  --cn-border: #1d2a3d;
+  --text-main: #eaf2ff;
+  --text-muted: #91a6c2;
   --green-ok: #2dd089;
   --red-err: #f07474;
   --app-bg-gradient:
-    radial-gradient(circle at 20% -10%, #5f4a15 0%, transparent 35%),
-    radial-gradient(circle at 90% 0%, #1d3760 0%, transparent 40%),
-    linear-gradient(180deg, #0d1623 0%, #0a121d 100%);
-  --surface-elevated: color-mix(in srgb, var(--cn-surface) 90%, #ffffff 10%);
+    radial-gradient(circle at 20% -10%, #5a4510 0%, transparent 35%),
+    radial-gradient(circle at 90% 0%, #0f2f5f 0%, transparent 42%),
+    linear-gradient(180deg, #060a11 0%, #04070d 100%);
+  --surface-elevated: color-mix(in srgb, var(--cn-surface) 92%, #ffffff 8%);
 }
 
 * {
