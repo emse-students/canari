@@ -1,9 +1,11 @@
 # Roadmap Synchronisation QR Multi-Appareils
 
 ## Objectif
+
 Mettre en place une synchronisation bidirectionnelle des historiques entre deux appareils d'un meme utilisateur, via QR code, sans modifier ni contourner le protocole MLS.
 
 ## Contraintes de securite
+
 - Le QR transporte uniquement un rendez-vous ephemere (session + jeton), jamais des messages.
 - Les donnees synchronisees restent chiffrees (rows deja chiffrees par PIN cote client).
 - Session one-shot avec expiration courte (TTL) et verification du meme userId.
@@ -11,7 +13,8 @@ Mettre en place une synchronisation bidirectionnelle des historiques entre deux 
 
 ## Plan d'implementation
 
-### Phase 1 (lancee dans ce commit)
+### Phase 1 (terminee)
+
 - Endpoint backend pour creer une session QR:
   - `POST /mls-api/sync/session/start`
 - Endpoint backend pour rejoindre une session:
@@ -28,21 +31,27 @@ Mettre en place une synchronisation bidirectionnelle des historiques entre deux 
   - Construction des chunks de transfert sur base des rows chiffrees
   - Client API pour start/join/manifest/diff
 
-### Phase 2 (prochaine etape)
-- Canal de transfert chiffre applicatif appareil<->appareil (relay websocket ou polling court).
-- Echange des chunks manquants dans les deux sens.
-- ACK de chunks + reprise sur erreur.
-- Import non destructif sur chaque appareil (`mergeConversation` + `importEncryptedRow`).
+### Phase 2 (terminee)
 
-### Phase 3
+- Canal de transfert via endpoints de session (stockage ephemere Redis).
+- Echange des chunks manquants dans les deux sens.
+- ACK one-shot sur pull (suppression du payload apres lecture).
+- Import non destructif sur chaque appareil (`mergeConversation` + `importEncryptedRow`).
+- Endpoints ajoutes:
+  - `POST /mls-api/sync/session/chunks/upload`
+  - `GET /mls-api/sync/session/:sessionId/chunks/pull`
+
+### Phase 3 (en place, version MVP)
+
 - UI complete:
-  - Ecran "Synchroniser un appareil"
-  - Affichage QR cote initiateur
-  - Scanner QR cote second appareil
-  - Progression et resume final
+  - Actions "Demarrer" / "Joindre" dans la sidebar
+  - Affichage payload QR cote initiateur
+  - Colle du payload cote second appareil (remplace temporairement le scan camera)
+  - Progression et resume final dans une modal dediee
 - Verification croisee finale (hash par conversation).
 
 ### Phase 4
+
 - Durcissement securite:
   - Code de verification 6 chiffres affiche sur les deux appareils
   - Rate limit par user/session
@@ -50,6 +59,7 @@ Mettre en place une synchronisation bidirectionnelle des historiques entre deux 
   - Telemetrie minimale (taux de succes, temps moyen)
 
 ## Regles de fusion des donnees
+
 - Identifiant canonique de message: `message.id`
 - Si meme `message.id` present des deux cotes:
   - `isDeleted`: tombstone gagnante
@@ -61,6 +71,7 @@ Mettre en place une synchronisation bidirectionnelle des historiques entre deux 
   - membership reste sourcee par MLS/serveur de groupe
 
 ## Validation attendue
+
 - Check/lint/tests frontend passent.
 - Build backend NestJS passe.
 - Scenario de test manuel:

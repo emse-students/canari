@@ -217,6 +217,26 @@ interface SyncSessionState {
   expiresAt: number;
 }
 
+interface SyncSerializedEncryptedRow {
+  id: string;
+  conversationId: string;
+  timestamp: number;
+  iv: number[];
+  salt: number[];
+  cipherText: number[];
+}
+
+interface SyncSerializedChunk {
+  conversation: {
+    id: string;
+    groupId: string;
+    name: string;
+    isReady: boolean;
+    updatedAt: number;
+  };
+  rows: SyncSerializedEncryptedRow[];
+}
+
 function hashJoinToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
@@ -281,6 +301,100 @@ function sanitizeSyncManifest(payload: unknown): SyncManifestPayload {
   );
 
   return { generatedAt, conversations };
+}
+
+function sanitizeByteArray(value: unknown, fieldName: string): number[] {
+  if (!Array.isArray(value)) {
+    throw new BadRequestException(`${fieldName} must be an array`);
+  }
+  const bytes = value.map((v) => {
+    if (typeof v !== 'number' || !Number.isInteger(v) || v < 0 || v > 255) {
+      throw new BadRequestException(
+        `${fieldName} contains invalid byte values`,
+      );
+    }
+    return v;
+  });
+  return bytes;
+}
+
+function sanitizeDisplayText(value: unknown, fieldName: string): string {
+  if (typeof value !== 'string') {
+    throw new BadRequestException(`${fieldName} must be a string`);
+  }
+  const text = value.trim();
+  if (!text) {
+    throw new BadRequestException(`${fieldName} is required`);
+  }
+  if (text.length > 256) {
+    throw new BadRequestException(`${fieldName} is too long`);
+  }
+  return text;
+}
+
+function sanitizeSerializedChunks(value: unknown): SyncSerializedChunk[] {
+  if (!Array.isArray(value)) {
+    throw new BadRequestException('chunks must be an array');
+  }
+
+  if (value.length > 2000) {
+    throw new BadRequestException('chunks payload too large');
+  }
+
+  return value.map((rawChunk) => {
+    if (!rawChunk || typeof rawChunk !== 'object') {
+      throw new BadRequestException('chunk entry is invalid');
+    }
+
+    const chunk = rawChunk as Record<string, unknown>;
+    const rawConversation = chunk.conversation as Record<string, unknown>;
+    if (!rawConversation || typeof rawConversation !== 'object') {
+      throw new BadRequestException('chunk.conversation is required');
+    }
+
+    const conversation = {
+      id: sanitizeQueryValue(rawConversation.id, 'conversation.id'),
+      groupId: sanitizeQueryValue(
+        rawConversation.groupId,
+        'conversation.groupId',
+      ),
+      name: sanitizeDisplayText(rawConversation.name, 'conversation.name'),
+      isReady: Boolean(rawConversation.isReady),
+      updatedAt:
+        typeof rawConversation.updatedAt === 'number' &&
+        Number.isFinite(rawConversation.updatedAt)
+          ? Math.floor(rawConversation.updatedAt)
+          : Date.now(),
+    };
+
+    if (!Array.isArray(chunk.rows)) {
+      throw new BadRequestException('chunk.rows must be an array');
+    }
+
+    const rows: SyncSerializedEncryptedRow[] = chunk.rows.map((rawRow) => {
+      if (!rawRow || typeof rawRow !== 'object') {
+        throw new BadRequestException('chunk row is invalid');
+      }
+
+      const row = rawRow as Record<string, unknown>;
+      return {
+        id: sanitizeQueryValue(row.id, 'row.id'),
+        conversationId: sanitizeQueryValue(
+          row.conversationId,
+          'row.conversationId',
+        ),
+        timestamp:
+          typeof row.timestamp === 'number' && Number.isFinite(row.timestamp)
+            ? Math.floor(row.timestamp)
+            : Date.now(),
+        iv: sanitizeByteArray(row.iv, 'row.iv'),
+        salt: sanitizeByteArray(row.salt, 'row.salt'),
+        cipherText: sanitizeByteArray(row.cipherText, 'row.cipherText'),
+      };
+    });
+
+    return { conversation, rows };
+  });
 }
 
 function computeManifestDiff(
@@ -598,6 +712,98 @@ export class AppController {
           0,
         ),
       },
+    };
+  }
+
+  @Post('mls-api/sync/session/chunks/upload')
+  async uploadSyncChunks(
+    @Body()
+    body: {
+      sessionId: string;
+      userId: string;
+      fromDeviceId: string;
+      toDeviceId: string;
+      chunks: SyncSerializedChunk[];
+    },
+  ) {
+    const sessionId = sanitizeQueryValue(body.sessionId, 'sessionId');
+    const userId = sanitizeQueryValue(body.userId, 'userId');
+    const fromDeviceId = sanitizeQueryValue(body.fromDeviceId, 'fromDeviceId');
+    const toDeviceId = sanitizeQueryValue(body.toDeviceId, 'toDeviceId');
+    const chunks = sanitizeSerializedChunks(body.chunks);
+
+    const raw = await this.redis.get(`sync:session:${sessionId}`);
+    if (!raw)
+      throw new BadRequestException('Sync session not found or expired');
+    const session = JSON.parse(raw) as SyncSessionState;
+    if (session.userId !== userId)
+      throw new BadRequestException('Session user mismatch');
+
+    const participants = new Set([
+      session.offerDeviceId,
+      session.answerDeviceId,
+    ]);
+    if (!participants.has(fromDeviceId) || !participants.has(toDeviceId)) {
+      throw new BadRequestException('Devices are not part of this session');
+    }
+
+    const ttlSeconds = Math.max(
+      Math.floor((session.expiresAt - Date.now()) / 1000),
+      30,
+    );
+    const key = `sync:session:${sessionId}:chunks:${toDeviceId}:${fromDeviceId}`;
+    await this.redis.set(key, JSON.stringify(chunks), 'EX', ttlSeconds);
+
+    return {
+      status: 'stored',
+      chunkCount: chunks.length,
+      rowCount: chunks.reduce((acc, chunk) => acc + chunk.rows.length, 0),
+    };
+  }
+
+  @Get('mls-api/sync/session/:sessionId/chunks/pull')
+  async pullSyncChunks(
+    @Param('sessionId') sessionIdRaw: string,
+    @Query('userId') userIdRaw: string,
+    @Query('toDeviceId') toDeviceIdRaw: string,
+    @Query('fromDeviceId') fromDeviceIdRaw: string,
+  ) {
+    const sessionId = sanitizeQueryValue(sessionIdRaw, 'sessionId');
+    const userId = sanitizeQueryValue(userIdRaw, 'userId');
+    const toDeviceId = sanitizeQueryValue(toDeviceIdRaw, 'toDeviceId');
+    const fromDeviceId = sanitizeQueryValue(fromDeviceIdRaw, 'fromDeviceId');
+
+    const raw = await this.redis.get(`sync:session:${sessionId}`);
+    if (!raw)
+      throw new BadRequestException('Sync session not found or expired');
+    const session = JSON.parse(raw) as SyncSessionState;
+    if (session.userId !== userId)
+      throw new BadRequestException('Session user mismatch');
+
+    const participants = new Set([
+      session.offerDeviceId,
+      session.answerDeviceId,
+    ]);
+    if (!participants.has(fromDeviceId) || !participants.has(toDeviceId)) {
+      throw new BadRequestException('Devices are not part of this session');
+    }
+
+    const key = `sync:session:${sessionId}:chunks:${toDeviceId}:${fromDeviceId}`;
+    const chunkRaw = await this.redis.get(key);
+    const chunks = chunkRaw
+      ? sanitizeSerializedChunks(JSON.parse(chunkRaw))
+      : [];
+
+    // One-shot pull acts as ACK.
+    if (chunkRaw) {
+      await this.redis.del(key);
+    }
+
+    return {
+      sessionId,
+      toDeviceId,
+      fromDeviceId,
+      chunks,
     };
   }
 

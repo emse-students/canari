@@ -26,6 +26,15 @@
     mapStoredMessagesToChatMessages,
     replayConversationHistory,
   } from '$lib/utils/mainChatHistory';
+  import {
+    encodeSyncQrPayload,
+    executeBidirectionalSyncRound,
+    generateEphemeralPublicKey,
+    getSyncSessionState,
+    joinSyncSession,
+    parseSyncQrPayload,
+    startSyncSession,
+  } from '$lib/sync/syncEngine';
   import { setupMessageHandler, initializeConnection } from '$lib/utils/mainChatConnection';
   import {
     createNewGroup as createGroup,
@@ -45,6 +54,7 @@
   import LoginForm from './LoginForm.svelte';
   import Navbar from './Navbar.svelte';
   import Sidebar from './Sidebar.svelte';
+  import SyncSessionModal from './SyncSessionModal.svelte';
   import ChatArea from './ChatArea.svelte';
   import LogsPanel from './LogsPanel.svelte';
   import type { ChatMessage, MessageReaction, Conversation } from '$lib/types';
@@ -97,6 +107,12 @@
   let storage: IStorage | null = $state(null);
   let isExporting = $state(false);
   let isImporting = $state(false);
+  let isSyncSessionOpen = $state(false);
+  let syncMode = $state<'offer' | 'join'>('offer');
+  let syncJoinPayload = $state('');
+  let syncQrPayloadText = $state('');
+  let syncStatusText = $state('');
+  let isSyncSessionBusy = $state(false);
 
   // Group management
   let groupMembers = $state<string[]>([]);
@@ -988,6 +1004,116 @@
     }
   }
 
+  async function runSyncRound(sessionId: string, peerDeviceId: string) {
+    if (!storage) throw new Error('Stockage local indisponible');
+    const result = await executeBidirectionalSyncRound({
+      historyBaseUrl,
+      storage,
+      pin,
+      userId,
+      myDeviceId,
+      peerDeviceId,
+      sessionId,
+    });
+
+    await loadExistingConversations();
+
+    log(
+      `[SYNC] Terminee. Envoyes: ${result.uploadedMessageCount}, importes: ${result.importedMessageCount}.`
+    );
+  }
+
+  async function handleStartSyncSession() {
+    try {
+      isSyncSessionBusy = true;
+      isSyncSessionOpen = true;
+      syncMode = 'offer';
+      syncStatusText = 'Initialisation de la session QR...';
+
+      const offerPublicKey = generateEphemeralPublicKey();
+      const session = await startSyncSession(historyBaseUrl, {
+        userId,
+        deviceId: myDeviceId,
+        offerPublicKey,
+      });
+
+      syncQrPayloadText = encodeSyncQrPayload(session.qrPayload);
+      syncStatusText = 'Session creee. En attente de jonction du second appareil...';
+
+      const waitUntil = Date.now() + 180_000;
+      while (Date.now() < waitUntil) {
+        const state = await getSyncSessionState(historyBaseUrl, {
+          sessionId: session.sessionId,
+          userId,
+        });
+        if (state.state === 'joined' && state.answerDeviceId) {
+          syncStatusText = 'Appareil rejoint. Synchronisation bidirectionnelle en cours...';
+          await runSyncRound(session.sessionId, state.answerDeviceId);
+          syncStatusText = 'Synchronisation terminee.';
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+      }
+
+      throw new Error('Timeout: aucun appareil n\'a rejoint la session');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      syncStatusText = `Erreur sync: ${msg}`;
+      log(`[SYNC] Erreur source: ${msg}`);
+    } finally {
+      isSyncSessionBusy = false;
+    }
+  }
+
+  function openJoinSyncModal() {
+    syncMode = 'join';
+    syncJoinPayload = '';
+    syncQrPayloadText = '';
+    syncStatusText = '';
+    isSyncSessionOpen = true;
+  }
+
+  async function handleConfirmJoinSync() {
+    try {
+      isSyncSessionBusy = true;
+      syncStatusText = 'Lecture du payload QR...';
+      const payload = parseSyncQrPayload(syncJoinPayload.trim());
+
+      if (payload.userId !== userId) {
+        throw new Error('Le payload appartient a un autre utilisateur');
+      }
+
+      const answerPublicKey = generateEphemeralPublicKey();
+      const joinRes = await joinSyncSession(historyBaseUrl, {
+        sessionId: payload.sessionId,
+        joinToken: payload.joinToken,
+        userId,
+        deviceId: myDeviceId,
+        answerPublicKey,
+      });
+
+      syncStatusText = 'Session rejointe. Synchronisation bidirectionnelle en cours...';
+      await runSyncRound(payload.sessionId, joinRes.offerDeviceId);
+      syncStatusText = 'Synchronisation terminee.';
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      syncStatusText = `Erreur sync: ${msg}`;
+      log(`[SYNC] Erreur cible: ${msg}`);
+    } finally {
+      isSyncSessionBusy = false;
+    }
+  }
+
+  async function copySyncPayload() {
+    if (!syncQrPayloadText) return;
+    try {
+      await navigator.clipboard.writeText(syncQrPayloadText);
+      syncStatusText = 'Payload copie dans le presse-papiers.';
+    } catch {
+      syncStatusText = 'Impossible de copier le payload automatiquement.';
+    }
+  }
+
   // --- Outils Dev ---
   async function devGenerateKeyPackage() {
     try {
@@ -1071,8 +1197,11 @@
         onSelectConversation={selectConversation}
         onExport={handleExport}
         onImport={handleImport}
+        onStartSync={handleStartSyncSession}
+        onJoinSync={openJoinSyncModal}
         {isExporting}
         {isImporting}
+        isSyncing={isSyncSessionBusy}
         isHidden={mobileView === 'chat'}
       />
 
@@ -1134,8 +1263,11 @@
           onSelectConversation={selectConversation}
           onExport={handleExport}
           onImport={handleImport}
+          onStartSync={handleStartSyncSession}
+          onJoinSync={openJoinSyncModal}
           {isExporting}
           {isImporting}
+          isSyncing={isSyncSessionBusy}
           isHidden={false}
           drawerMode={true}
           onCloseDrawer={() => {
@@ -1143,6 +1275,23 @@
           }}
         />
       {/if}
+
+      <SyncSessionModal
+        isOpen={isSyncSessionOpen}
+        mode={syncMode}
+        qrPayload={syncQrPayloadText}
+        joinPayload={syncJoinPayload}
+        statusText={syncStatusText}
+        isBusy={isSyncSessionBusy}
+        onJoinPayloadChange={(value: string) => (syncJoinPayload = value)}
+        onConfirmJoin={handleConfirmJoinSync}
+        onCopyPayload={copySyncPayload}
+        onClose={() => {
+          if (!isSyncSessionBusy) {
+            isSyncSessionOpen = false;
+          }
+        }}
+      />
 
       {#if showLogs}
         <!-- Sur mobile : overlay plein écran. Sur desktop : panneau latéral dans la flexrow. -->

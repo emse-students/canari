@@ -67,3 +67,38 @@ export interface SyncTransferChunk {
   conversation: ConversationMeta;
   rows: EncryptedMessageRow[];
 }
+
+export interface SyncQrPayload {
+  sessionId: string;
+  joinToken: string;
+  userId: string;
+}
+
+export interface SyncSerializedEncryptedRow {
+  id: string;
+  conversationId: string;
+  timestamp: number;
+  iv: number[];
+  salt: number[];
+  cipherText: number[];
+}
+
+export interface SyncSerializedChunk {
+  conversation: ConversationMeta;
+  rows: SyncSerializedEncryptedRow[];
+}
+
+export interface UploadSyncChunksRequest {
+  sessionId: string;
+  userId: string;
+  fromDeviceId: string;
+  toDeviceId: string;
+  chunks: SyncSerializedChunk[];
+}
+
+export interface PullSyncChunksResponse {
+  sessionId: string;
+  fromDeviceId: string;
+  toDeviceId: string;
+  chunks: SyncSerializedChunk[];
+}

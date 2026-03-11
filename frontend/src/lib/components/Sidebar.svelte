@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { User, Users, Hand, Download, Upload, X } from 'lucide-svelte';
+  import { User, Users, Hand, Download, Upload, X, ScanLine, Smartphone } from 'lucide-svelte';
   import ConversationTile from './ConversationTile.svelte';
 
   interface Conversation {
@@ -23,8 +23,11 @@
     onSelectConversation: (name: string) => void;
     onExport: () => void;
     onImport: (file: File) => void;
+    onStartSync: () => void;
+    onJoinSync: () => void;
     isExporting?: boolean;
     isImporting?: boolean;
+    isSyncing?: boolean;
     isHidden?: boolean;
     drawerMode?: boolean;
     onCloseDrawer?: () => void;
@@ -42,8 +45,11 @@
     onSelectConversation,
     onExport,
     onImport,
+    onStartSync,
+    onJoinSync,
     isExporting = false,
     isImporting = false,
+    isSyncing = false,
     isHidden = false,
     drawerMode = false,
     onCloseDrawer,
@@ -207,6 +213,31 @@
         class="hidden"
         onchange={handleFileChange}
       />
+    </div>
+
+    <p class="text-xs text-gray-400 px-1 pt-1">Synchro multi-appareils</p>
+    <div class="flex gap-2">
+      <button
+        onclick={onStartSync}
+        disabled={isSyncing}
+        class="flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-sm
+               bg-cn-bg text-cn-dark hover:bg-gray-200 transition-colors disabled:opacity-50"
+        title="Démarrer une session de synchronisation QR"
+      >
+        <ScanLine size={15} />
+        Démarrer
+      </button>
+
+      <button
+        onclick={onJoinSync}
+        disabled={isSyncing}
+        class="flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-sm
+               bg-cn-bg text-cn-dark hover:bg-gray-200 transition-colors disabled:opacity-50"
+        title="Rejoindre une session de synchronisation QR"
+      >
+        <Smartphone size={15} />
+        Joindre
+      </button>
     </div>
   </div>
 </aside>
