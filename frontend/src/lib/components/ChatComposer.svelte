@@ -123,7 +123,7 @@
   {/if}
 
   <div class="px-3 md:px-6 py-3 md:py-4 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-    <div class="flex items-end gap-2 md:gap-3 bg-cn-bg p-2.5 md:p-3 rounded-3xl">
+    <div class="max-w-full flex items-end gap-2 md:gap-3 bg-cn-bg p-2.5 md:p-3 rounded-3xl overflow-x-hidden">
       <button
         onclick={() => fileInput?.click()}
         disabled={isUploading}
@@ -169,7 +169,7 @@
         onkeydown={handleKeydown}
         placeholder="Message sécurisé..."
         rows="1"
-        class="flex-1 bg-transparent border-none resize-none outline-none font-normal text-[0.95rem] md:text-base px-2 py-1 max-h-32"
+        class="flex-1 min-w-0 bg-transparent border-none resize-none outline-none font-normal text-[0.95rem] md:text-base px-2 py-1 max-h-32"
       ></textarea>
       <button
         onclick={onSend}

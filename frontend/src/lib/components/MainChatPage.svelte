@@ -505,16 +505,15 @@
     });
 
     // Persist message to DB (encrypted with PIN)
-    // Store as JSON to preserve replyTo metadata (skip system messages)
+    // Persist the raw message envelope (skip system messages).
     if (storage && !isSystem) {
       try {
-        const storageContent = JSON.stringify({ content, replyTo });
         await storage.saveMessage(
           {
             id: newMsg.id,
             conversationId: normalized,
             senderId: newMsg.senderId,
-            content: storageContent,
+            content,
             timestamp: newMsg.timestamp.getTime(),
           },
           pin
@@ -1331,11 +1330,13 @@
 
 <style>
   .app-layout {
-    height: 100vh;
+    height: 100dvh;
+    min-height: 100svh;
     display: flex;
     flex-direction: column;
     overflow: hidden;
     position: relative;
+    width: 100%;
   }
 
   .app-layout::before {
@@ -1354,6 +1355,8 @@
   .main-content {
     display: flex;
     flex: 1;
+    min-height: 0;
+    min-width: 0;
     overflow: hidden;
     position: relative;
     z-index: 1;

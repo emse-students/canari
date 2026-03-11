@@ -3,7 +3,7 @@ import type { StoredMessage } from '$lib/db';
 import type { ChatMessage } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
 import { decodeAppMessage, MediaKind } from '$lib/proto/codec';
-import { serializeEnvelope, mkTextEnvelope, mkMediaEnvelope } from '$lib/envelope';
+import { serializeEnvelope, mkTextEnvelope, mkMediaEnvelope, parseEnvelope } from '$lib/envelope';
 
 function bytesToHex(bytes?: Uint8Array | null): string {
   if (!bytes || bytes.length === 0) return '';
@@ -36,7 +36,13 @@ export function mapStoredMessagesToChatMessages(storedMessages: StoredMessage[],
       const parsed = JSON.parse(m.content);
       // Legacy format: { content: string, replyTo?: ... }
       if (parsed.content && !parsed.kind) {
-        content = serializeEnvelope(mkTextEnvelope(parsed.content, parsed.replyTo));
+        if (typeof parsed.content === 'string') {
+          // If nested content is already an envelope string, keep its semantic kind.
+          const nestedEnvelope = parseEnvelope(parsed.content);
+          content = serializeEnvelope(nestedEnvelope);
+        } else {
+          content = serializeEnvelope(mkTextEnvelope(String(parsed.content ?? ''), parsed.replyTo));
+        }
         replyTo = parsed.replyTo;
       }
       // New envelope format — content stays as-is, replyTo is inside the envelope.

@@ -79,7 +79,7 @@
   });
 </script>
 
-<section class="flex-1 flex flex-col bg-cn-bg {isHidden ? 'hidden md:flex' : ''}">
+<section class="flex-1 min-h-0 min-w-0 flex flex-col bg-cn-bg {isHidden ? 'hidden md:flex' : ''}">
   {#if conversation}
     <ChatHeader
       contactName={conversation.contactName}
@@ -97,7 +97,7 @@
     <!-- Messages -->
     <div
       bind:this={chatContainer}
-      class="flex-1 overflow-y-auto px-3 py-3 md:px-6 md:py-6 flex flex-col gap-2"
+      class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 py-3 md:px-6 md:py-6 flex flex-col gap-2"
     >
       {#each messageGroups as group, index (group.type === 'message' ? group.message.id : `${group.type}-${index}`)}
         {#if group.type === 'date_separator'}
