@@ -33,7 +33,9 @@
     onEdit?: (messageId: string, text: string) => void;
     onCancelReply?: () => void;
     authToken?: string;
-    onFileSelected?: (file: File) => void;
+    onFilesSelected?: (files: File[]) => void;
+    pendingFiles?: File[];
+    onRemovePendingFile?: (index: number) => void;
     isUploading?: boolean;
   }
 
@@ -59,7 +61,9 @@
     onEdit,
     onCancelReply,
     authToken = '',
-    onFileSelected,
+    onFilesSelected,
+    pendingFiles = [],
+    onRemovePendingFile,
     isUploading = false,
   }: Props = $props();
 
@@ -229,7 +233,9 @@
       {onSend}
       {replyingTo}
       {onCancelReply}
-      {onFileSelected}
+      {onFilesSelected}
+      {pendingFiles}
+      {onRemovePendingFile}
       {isUploading}
     />
   {:else}

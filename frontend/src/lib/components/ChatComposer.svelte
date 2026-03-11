@@ -15,7 +15,9 @@
     onSend: () => void;
     replyingTo?: ReplyTo | null;
     onCancelReply?: () => void;
-    onFileSelected?: (file: File) => void;
+    onFilesSelected?: (files: File[]) => void;
+    pendingFiles?: File[];
+    onRemovePendingFile?: (index: number) => void;
     isUploading?: boolean;
   }
 
@@ -25,7 +27,9 @@
     onSend,
     replyingTo,
     onCancelReply,
-    onFileSelected,
+    onFilesSelected,
+    pendingFiles = [],
+    onRemovePendingFile,
     isUploading = false,
   }: Props = $props();
 
@@ -48,26 +52,26 @@
 
   function handleFileChange(e: Event) {
     const input = e.target as HTMLInputElement;
-    const file = input.files?.[0];
-    if (file && onFileSelected) {
-      onFileSelected(file);
+    const files = input.files ? Array.from(input.files) : [];
+    if (files.length > 0 && onFilesSelected) {
+      onFilesSelected(files);
       input.value = '';
     }
   }
 
   function handleVoiceRecording(audioBlob: Blob) {
-    if (!onFileSelected) return;
+    if (!onFilesSelected) return;
 
     // Convert Blob to File with explicit audio/webm type
     const audioFile = new File([audioBlob], `vocal_${Date.now()}.webm`, {
       type: 'audio/webm',
     });
 
-    onFileSelected(audioFile);
+    onFilesSelected([audioFile]);
   }
 
   async function handleGifSelected(gifUrl: string) {
-    if (!onFileSelected) return;
+    if (!onFilesSelected) return;
 
     try {
       // Download the GIF and convert to File
@@ -77,7 +81,7 @@
         type: 'image/gif',
       });
 
-      onFileSelected(gifFile);
+      onFilesSelected([gifFile]);
     } catch (error) {
       console.error('Erreur téléchargement GIF:', error);
     }
@@ -123,7 +127,27 @@
   {/if}
 
   <div class="px-3 md:px-6 py-3 md:py-4 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-    <div class="max-w-full flex items-end gap-2 md:gap-3 bg-cn-bg p-2.5 md:p-3 rounded-3xl overflow-x-hidden">
+    {#if pendingFiles.length > 0}
+      <div class="mb-2 flex flex-wrap gap-1.5">
+        {#each pendingFiles as file, index (`${file.name}-${index}`)}
+          <div class="inline-flex items-center gap-1.5 pl-2.5 pr-1 py-1 rounded-full bg-cn-bg border border-cn-border max-w-[80vw]">
+            <span class="text-xs text-text-main truncate max-w-[48vw]" title={file.name}>{file.name}</span>
+            {#if onRemovePendingFile}
+              <button
+                type="button"
+                class="w-5 h-5 rounded-full hover:bg-gray-200 inline-flex items-center justify-center text-gray-500"
+                onclick={() => onRemovePendingFile(index)}
+                aria-label="Retirer le fichier"
+              >
+                <X size={12} />
+              </button>
+            {/if}
+          </div>
+        {/each}
+      </div>
+    {/if}
+
+    <div class="max-w-full flex items-center gap-2 md:gap-3 bg-cn-bg p-2.5 md:p-3 rounded-3xl overflow-x-hidden">
       <button
         onclick={() => fileInput?.click()}
         disabled={isUploading}
@@ -157,6 +181,7 @@
       <input
         bind:this={fileInput}
         type="file"
+        multiple
         accept="image/*,video/*,audio/*,application/pdf,.doc,.docx,.zip"
         class="hidden"
         onchange={handleFileChange}
@@ -167,13 +192,13 @@
         value={messageText}
         oninput={(e) => onMessageChange(e.currentTarget.value)}
         onkeydown={handleKeydown}
-        placeholder="Message sécurisé..."
+        placeholder="Message..."
         rows="1"
-        class="flex-1 min-w-0 bg-transparent border-none resize-none outline-none font-normal text-[0.95rem] md:text-base px-2 py-1 max-h-32"
+        class="flex-1 min-w-0 bg-transparent border-none resize-none outline-none font-normal text-[0.95rem] md:text-base px-2 py-2 leading-6 max-h-32"
       ></textarea>
       <button
         onclick={onSend}
-        disabled={!messageText.trim() || isUploading}
+        disabled={(!messageText.trim() && pendingFiles.length === 0) || isUploading}
         aria-label="Envoyer le message"
         class="w-10 h-10 md:w-11 md:h-11 bg-cn-dark text-cn-yellow rounded-full flex items-center justify-center flex-shrink-0 transition-transform hover:scale-105 active:scale-100 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
       >

@@ -131,7 +131,7 @@
   const mediaMaxSizeMb = Number.parseInt(import.meta.env.VITE_MEDIA_MAX_SIZE_MB ?? '50', 10);
   const mediaMaxSizeBytes = mediaMaxSizeMb * 1024 * 1024;
   let authToken = $state('');
-  let pendingMediaFile = $state<File | null>(null);
+  let pendingMediaFiles = $state<File[]>([]);
   let isUploadingMedia = $state(false);
 
   // Helper to ensure MLS service exists
@@ -535,11 +535,11 @@
 
   async function handleSendChat() {
     const text = messageText.trim();
-    const fileToSend = pendingMediaFile;
+    const filesToSend = [...pendingMediaFiles];
     const mediaCaption = text || undefined;
-    let sentMediaMessage = false;
+    let sentMediaMessageCount = 0;
 
-    if (!text && !fileToSend) return;
+    if (!text && filesToSend.length === 0) return;
     if (!selectedContact) return;
     const convo = conversations.get(selectedContact);
     if (!convo) return;
@@ -557,8 +557,8 @@
 
     const mlsService = ensureMls();
 
-    if (fileToSend) {
-      pendingMediaFile = null;
+    if (filesToSend.length > 0) {
+      pendingMediaFiles = [];
       isUploadingMedia = true;
       try {
         if (!authToken) {
@@ -568,44 +568,50 @@
             import.meta.env.DEV
           );
         }
-        const mediaRef = await mediaService.encryptAndUpload(fileToSend, authToken);
-        const messageId = crypto.randomUUID();
-        // Encode as proto AppMessage for MLS encryption
-        const kindMap: Record<string, number> = {
-          image: MediaKind.MEDIA_IMAGE,
-          video: MediaKind.MEDIA_VIDEO,
-          audio: MediaKind.MEDIA_AUDIO,
-          file: MediaKind.MEDIA_FILE,
-        };
-        const keyBytes = new Uint8Array(
-          (mediaRef.key.match(/.{1,2}/g) ?? []).map((b) => parseInt(b, 16))
-        );
-        const ivBytes = new Uint8Array(
-          (mediaRef.iv.match(/.{1,2}/g) ?? []).map((b) => parseInt(b, 16))
-        );
-        const protoBytes = encodeAppMessage({
-          ...mkMedia({
-            kind: kindMap[mediaRef.type] ?? MediaKind.MEDIA_FILE,
-            mediaId: mediaRef.mediaId,
-            key: keyBytes,
-            iv: ivBytes,
-            mimeType: mediaRef.mimeType,
-            size: mediaRef.size,
-            fileName: mediaRef.fileName ?? '',
-            caption: mediaCaption,
-          }),
-          messageId,
-        });
-        await mlsService.sendMessage(convo.groupId, protoBytes);
-        const stateBytes = await mlsService.saveState(pin);
-        localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
-        // Store as envelope locally for consistent rendering + legacy compatibility.
-        const payload = serializeEnvelope(mkMediaEnvelope({ ...mediaRef }, mediaCaption));
-        await addMessageToChat(userId, payload, selectedContact, undefined, false, messageId);
-        sentMediaMessage = true;
+        for (let index = 0; index < filesToSend.length; index++) {
+          const fileToSend = filesToSend[index];
+          const captionForFile = index === 0 ? mediaCaption : undefined;
+          const mediaRef = await mediaService.encryptAndUpload(fileToSend, authToken);
+          const messageId = crypto.randomUUID();
+          // Encode as proto AppMessage for MLS encryption
+          const kindMap: Record<string, number> = {
+            image: MediaKind.MEDIA_IMAGE,
+            video: MediaKind.MEDIA_VIDEO,
+            audio: MediaKind.MEDIA_AUDIO,
+            file: MediaKind.MEDIA_FILE,
+          };
+          const keyBytes = new Uint8Array(
+            (mediaRef.key.match(/.{1,2}/g) ?? []).map((b) => parseInt(b, 16))
+          );
+          const ivBytes = new Uint8Array(
+            (mediaRef.iv.match(/.{1,2}/g) ?? []).map((b) => parseInt(b, 16))
+          );
+          const protoBytes = encodeAppMessage({
+            ...mkMedia({
+              kind: kindMap[mediaRef.type] ?? MediaKind.MEDIA_FILE,
+              mediaId: mediaRef.mediaId,
+              key: keyBytes,
+              iv: ivBytes,
+              mimeType: mediaRef.mimeType,
+              size: mediaRef.size,
+              fileName: mediaRef.fileName ?? '',
+              caption: captionForFile,
+            }),
+            messageId,
+          });
+          await mlsService.sendMessage(convo.groupId, protoBytes);
+          const stateBytes = await mlsService.saveState(pin);
+          localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
+          // Store as envelope locally for consistent rendering.
+          const payload = serializeEnvelope(mkMediaEnvelope({ ...mediaRef }, captionForFile));
+          await addMessageToChat(userId, payload, selectedContact, undefined, false, messageId);
+          sentMediaMessageCount++;
+        }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        pendingMediaFile = fileToSend;
+        if (sentMediaMessageCount < filesToSend.length) {
+          pendingMediaFiles = [...filesToSend.slice(sentMediaMessageCount), ...pendingMediaFiles];
+        }
         if (text) {
           messageText = text;
           replyingTo = currentReplyingTo;
@@ -617,7 +623,7 @@
       }
     }
 
-    if (sentMediaMessage) return;
+    if (sentMediaMessageCount > 0) return;
 
     if (!text) return;
 
@@ -637,34 +643,45 @@
     }
   }
 
-  async function handleFileSelected(file: File) {
-    if (Number.isFinite(mediaMaxSizeBytes) && file.size > mediaMaxSizeBytes) {
-      const errorMessage = `Fichier trop volumineux (${(file.size / 1024 / 1024).toFixed(1)} Mo). Limite: ${mediaMaxSizeMb} Mo.`;
-      sendError = errorMessage;
-      log(`Erreur envoi média: ${errorMessage}`);
-      return;
-    }
+  async function handleFilesSelected(files: File[]) {
+    const readyFiles: File[] = [];
 
-    // Compress images automatically
-    let processedFile = file;
-    if (file.type.startsWith('image/')) {
-      try {
-        const { compressImage } = await import('$lib/media');
-        const originalSize = file.size;
-        processedFile = await compressImage(file);
-        if (processedFile.size < originalSize) {
-          const savedPercent = ((1 - processedFile.size / originalSize) * 100).toFixed(0);
-          log(
-            `Image compressée: ${(originalSize / 1024 / 1024).toFixed(1)} Mo → ${(processedFile.size / 1024 / 1024).toFixed(1)} Mo (-${savedPercent}%)`
-          );
-        }
-      } catch (e) {
-        console.warn('Compression failed, using original:', e);
+    for (const file of files) {
+      if (Number.isFinite(mediaMaxSizeBytes) && file.size > mediaMaxSizeBytes) {
+        const errorMessage = `Fichier trop volumineux (${(file.size / 1024 / 1024).toFixed(1)} Mo). Limite: ${mediaMaxSizeMb} Mo.`;
+        sendError = errorMessage;
+        log(`Erreur envoi média: ${errorMessage}`);
+        continue;
       }
+
+      // Compress images automatically
+      let processedFile = file;
+      if (file.type.startsWith('image/')) {
+        try {
+          const { compressImage } = await import('$lib/media');
+          const originalSize = file.size;
+          processedFile = await compressImage(file);
+          if (processedFile.size < originalSize) {
+            const savedPercent = ((1 - processedFile.size / originalSize) * 100).toFixed(0);
+            log(
+              `Image compressée: ${(originalSize / 1024 / 1024).toFixed(1)} Mo → ${(processedFile.size / 1024 / 1024).toFixed(1)} Mo (-${savedPercent}%)`
+            );
+          }
+        } catch (e) {
+          console.warn('Compression failed, using original:', e);
+        }
+      }
+
+      readyFiles.push(processedFile);
     }
 
-    pendingMediaFile = processedFile;
-    void handleSendChat();
+    if (readyFiles.length > 0) {
+      pendingMediaFiles = [...pendingMediaFiles, ...readyFiles];
+    }
+  }
+
+  function removePendingMediaFile(index: number) {
+    pendingMediaFiles = pendingMediaFiles.filter((_, i) => i !== index);
   }
 
   async function handleAddReaction(messageId: string, emoji: string) {
@@ -922,7 +939,7 @@
     statusLog = [];
     storage = null;
     authToken = '';
-    pendingMediaFile = null;
+    pendingMediaFiles = [];
     isUploadingMedia = false;
     groupMembers = [];
     sendError = '';
@@ -1285,7 +1302,9 @@
         onEdit={handleEditMessage}
         onCancelReply={cancelReply}
         {authToken}
-        onFileSelected={handleFileSelected}
+        onFilesSelected={handleFilesSelected}
+        pendingFiles={pendingMediaFiles}
+        onRemovePendingFile={removePendingMediaFile}
         isUploading={isUploadingMedia}
       />
 
