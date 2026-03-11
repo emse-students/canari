@@ -140,7 +140,7 @@
         <button
           type="button"
           onclick={() => onCloseDrawer?.()}
-          class="p-2 rounded-lg text-gray-500 bg-cn-bg"
+          class="p-2 rounded-lg text-text-muted bg-cn-bg"
           aria-label="Fermer"
         >
           <X size={16} />
@@ -165,7 +165,7 @@
     {/each}
 
     {#if conversations.size === 0}
-      <div class="text-center py-8 px-4 text-gray-500">
+      <div class="text-center py-8 px-4 text-text-muted">
         <div class="mb-4 opacity-50 flex justify-center items-center">
           <Hand size={48} />
         </div>
@@ -174,7 +174,7 @@
     {/if}
   </div>
 
-  <div class="p-3 border-t border-cn-border space-y-2 text-xs text-gray-500">
+  <div class="p-3 border-t border-cn-border space-y-2 text-xs text-text-muted">
     <div class="flex items-center justify-between">
       <span>Sauvegarde chiffree</span>
       <div class="flex items-center gap-2">
@@ -187,7 +187,7 @@
           <Upload size={13} />
           {isImporting ? '...' : 'Importer'}
         </button>
-        <span class="text-gray-300">|</span>
+        <span class="text-text-muted/40">|</span>
         <button
           onclick={onExport}
           disabled={isExporting}
@@ -211,7 +211,7 @@
         <ScanLine size={13} />
         Demarrer
       </button>
-      <span class="text-gray-300">|</span>
+      <span class="text-text-muted/40">|</span>
       <button
         onclick={onJoinSync}
         disabled={isSyncing}
@@ -234,11 +234,11 @@
 </aside>
 
 <Modal open={showNewChatModal} onClose={closeNewChatModal} title="Nouvelle discussion">
-  <div class="flex gap-4 border-b border-gray-100 mb-4 pb-2">
+  <div class="flex gap-4 border-b border-cn-border mb-4 pb-2">
     <button
       class="px-2 py-1 text-sm font-medium transition-colors {activeTab === 'contact'
         ? 'text-cn-dark border-b-2 border-cn-dark'
-        : 'text-gray-400 hover:text-gray-600'}"
+        : 'text-text-muted hover:text-cn-dark'}"
       onclick={() => (activeTab = 'contact')}
     >
       Contact
@@ -246,7 +246,7 @@
     <button
       class="px-2 py-1 text-sm font-medium transition-colors {activeTab === 'group'
         ? 'text-cn-dark border-b-2 border-cn-dark'
-        : 'text-gray-400 hover:text-gray-600'}"
+        : 'text-text-muted hover:text-cn-dark'}"
       onclick={() => (activeTab = 'group')}
     >
       Groupe
@@ -256,7 +256,7 @@
   {#if activeTab === 'contact'}
     <div class="space-y-4">
       <div>
-        <label for="new-contact-id" class="block text-sm font-medium text-gray-700 mb-1"
+        <label for="new-contact-id" class="block text-sm font-medium text-text-main mb-1"
           >Identifiant du contact</label
         >
         <input
@@ -279,7 +279,7 @@
   {:else}
     <div class="space-y-4">
       <div>
-        <label for="new-group-name" class="block text-sm font-medium text-gray-700 mb-1"
+        <label for="new-group-name" class="block text-sm font-medium text-text-main mb-1"
           >Nom du groupe</label
         >
         <input

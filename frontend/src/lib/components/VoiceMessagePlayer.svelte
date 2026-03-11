@@ -90,7 +90,7 @@
 </script>
 
 <div
-  class="rounded-2xl border border-black/10 bg-white/70 px-3 py-2 w-[min(80vw,23rem)]"
+  class="rounded-2xl border border-cn-border bg-[color-mix(in_srgb,var(--cn-surface)_90%,transparent)] px-3 py-2 w-[min(80vw,23rem)]"
 >
   <audio
     bind:this={audioEl}
@@ -146,7 +146,7 @@
         class="w-full accent-[var(--cn-yellow)]"
         aria-label="Position de lecture"
       />
-      <div class="text-[0.68rem] opacity-70 flex items-center justify-between mt-0.5">
+      <div class="text-[0.68rem] text-text-muted flex items-center justify-between mt-0.5">
         <span>{formatTime(currentTime)}</span>
         <span>{formatTime(duration)}</span>
       </div>
@@ -158,7 +158,7 @@
         e.stopPropagation();
         cycleSpeed();
       }}
-      class="px-2 py-1 rounded-lg bg-black/10 text-[0.65rem] font-semibold"
+      class="px-2 py-1 rounded-lg bg-cn-bg text-[0.65rem] font-semibold text-cn-dark"
       aria-label="Vitesse de lecture"
     >
       x{speed}
@@ -170,7 +170,7 @@
         e.stopPropagation();
         onDownload?.();
       }}
-      class="w-7 h-7 rounded-full bg-black/10 text-cn-dark inline-flex items-center justify-center"
+      class="w-7 h-7 rounded-full bg-cn-bg text-cn-dark inline-flex items-center justify-center"
       aria-label="Telecharger le vocal"
     >
       <Download size={13} />

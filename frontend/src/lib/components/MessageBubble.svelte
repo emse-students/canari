@@ -250,6 +250,33 @@
     const match = text.match(/https?:\/\/[^\s]+/i);
     return match?.[0] ?? null;
   }
+
+  function splitTextWithLinks(text: string): Array<{ type: 'text' | 'link'; value: string }> {
+    const regex = /https?:\/\/[^\s]+/gi;
+    const segments: Array<{ type: 'text' | 'link'; value: string }> = [];
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+
+    while ((match = regex.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        segments.push({ type: 'text', value: text.slice(lastIndex, match.index) });
+      }
+      segments.push({ type: 'link', value: match[0] });
+      lastIndex = match.index + match[0].length;
+    }
+
+    if (lastIndex < text.length) {
+      segments.push({ type: 'text', value: text.slice(lastIndex) });
+    }
+
+    if (segments.length === 0) {
+      segments.push({ type: 'text', value: text });
+    }
+
+    return segments;
+  }
+
+  let textSegments = $derived(splitTextWithLinks(textContent));
 </script>
 
 {#if effectiveSystem}
@@ -419,7 +446,23 @@
           {/if}
         </div>
         {#if textContent}
-          <p class="mt-2 text-sm leading-relaxed break-words whitespace-pre-wrap">{textContent}</p>
+          <p class="mt-2 text-sm leading-relaxed break-words whitespace-pre-wrap">
+            {#each textSegments as segment, index (`${segment.type}-${segment.value}-${index}`)}
+              {#if segment.type === 'link'}
+                <a
+                  href={segment.value}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="underline underline-offset-2 decoration-current hover:opacity-80"
+                  onclick={(e) => e.stopPropagation()}
+                >
+                  {segment.value}
+                </a>
+              {:else}
+                {segment.value}
+              {/if}
+            {/each}
+          </p>
         {/if}
       {:else}
         <p
@@ -427,7 +470,21 @@
             ? 'italic text-gray-500'
             : ''}"
         >
-          {textContent}
+          {#each textSegments as segment, index (`${segment.type}-${segment.value}-${index}`)}
+            {#if segment.type === 'link'}
+              <a
+                href={segment.value}
+                target="_blank"
+                rel="noopener noreferrer"
+                class="underline underline-offset-2 decoration-current hover:opacity-80"
+                onclick={(e) => e.stopPropagation()}
+              >
+                {segment.value}
+              </a>
+            {:else}
+              {segment.value}
+            {/if}
+          {/each}
         </p>
         {#if firstLink}
           <LinkPreviewCard url={firstLink} />

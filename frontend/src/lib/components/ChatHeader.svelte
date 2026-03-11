@@ -120,7 +120,7 @@
     onclick={() => {
       showInviteModal = true;
     }}
-    class="hidden sm:flex items-center gap-2 px-3 py-2 rounded-xl bg-cn-bg hover:bg-gray-200 text-sm font-medium transition-colors"
+    class="hidden sm:flex items-center gap-2 px-3 py-2 rounded-xl bg-cn-bg hover:bg-[color-mix(in_srgb,var(--cn-bg)_85%,var(--cn-dark)_15%)] text-sm font-medium transition-colors"
   >
     <UserPlus size={16} />
     <span class="hidden md:inline">Ajouter</span>
@@ -130,7 +130,7 @@
   <button
     onclick={openPanel}
     aria-label="Paramètres du groupe"
-    class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 hover:text-cn-dark transition-colors"
+    class="p-2 rounded-lg text-text-muted hover:bg-cn-bg hover:text-cn-dark transition-colors"
   >
     <Settings size={18} />
   </button>
@@ -144,7 +144,7 @@
   >
     <div class="flex flex-col gap-4">
       <div class="flex flex-col gap-1">
-        <label for="group-rename-input" class="text-xs text-gray-500 font-medium"
+        <label for="group-rename-input" class="text-xs text-text-muted font-medium"
           >Nom du groupe</label
         >
         <div class="flex gap-2">
@@ -167,7 +167,7 @@
 
       {#if groupMembers.length > 0}
         <div class="flex flex-col gap-1">
-          <span class="text-xs text-gray-500 font-medium inline-flex items-center gap-1">
+          <span class="text-xs text-text-muted font-medium inline-flex items-center gap-1">
             <Users size={12} /> Membres ({groupMembers.length})
           </span>
           <ul class="flex flex-col gap-1.5 max-h-52 overflow-y-auto">
@@ -217,7 +217,7 @@
                   onclick={() => {
                     confirmDelete = false;
                   }}
-                  class="flex-1 px-3 py-1.5 border border-cn-border rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+                  class="flex-1 px-3 py-1.5 border border-cn-border rounded-lg text-sm text-text-muted hover:bg-cn-bg"
                   >Annuler</button
                 >
                 <button
@@ -245,7 +245,7 @@
     title={`Ajouter des membres a ${displayName}`}
   >
     <div class="space-y-4">
-      <p class="text-sm text-gray-500">
+      <p class="text-sm text-text-muted">
         Selectionnez plusieurs utilisateurs a inviter en une seule operation.
       </p>
 

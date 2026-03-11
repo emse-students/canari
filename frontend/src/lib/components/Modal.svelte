@@ -31,13 +31,13 @@
     onclick={handleBackdropClick}
     in:fly={{ duration: 150, y: 8 }}
   >
-    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+    <div class="bg-[var(--cn-surface)] border border-cn-border rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden text-text-main">
       {#if title}
-        <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+        <div class="px-6 py-4 border-b border-cn-border flex items-center justify-between">
           <h2 class="text-base font-semibold text-cn-dark">{title}</h2>
           <button
             onclick={onClose}
-            class="p-1.5 rounded-lg hover:bg-gray-100 transition-colors text-gray-400 hover:text-gray-600"
+            class="p-1.5 rounded-lg hover:bg-cn-bg transition-colors text-text-muted hover:text-cn-dark"
             aria-label="Fermer"
           >
             <X size={16} />

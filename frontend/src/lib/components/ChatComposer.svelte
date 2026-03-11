@@ -168,17 +168,17 @@
       class="px-3 md:px-6 py-2 bg-cn-bg border-b border-cn-border flex items-center justify-between"
     >
       <div class="flex-1 min-w-0">
-        <div class="text-xs font-semibold text-gray-600">
+        <div class="text-xs font-semibold text-text-main">
           Répondre à {replyingTo.senderId}
         </div>
-        <div class="text-sm text-gray-500 truncate">
+        <div class="text-sm text-text-muted truncate">
           {replyingTo.content}
         </div>
       </div>
       {#if onCancelReply}
         <button
           onclick={onCancelReply}
-          class="p-1 text-gray-400 hover:text-gray-600 transition-colors flex-shrink-0"
+          class="p-1 text-text-muted hover:text-cn-dark transition-colors flex-shrink-0"
           aria-label="Annuler la réponse"
         >
           <X size={16} />
@@ -190,7 +190,7 @@
   <div class="px-3 md:px-6 py-3 md:py-4 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
     {#if pendingFiles.length > 0}
       <div class="mb-2">
-        <div class="text-[0.7rem] text-gray-500 mb-1">{pendingFiles.length} fichier(s) en attente</div>
+        <div class="text-[0.7rem] text-text-muted mb-1">{pendingFiles.length} fichier(s) en attente</div>
         <div class="flex flex-wrap gap-2">
         {#each pendingFiles as file, index (`${file.name}-${index}`)}
           {@const key = fileKey(file, index)}
@@ -198,11 +198,11 @@
             {#if isImageFile(file) && previewUrls[key]}
               <img src={previewUrls[key]} alt={file.name} class="w-full h-full object-cover" />
             {:else if isPdfFile(file) && previewUrls[key]}
-              <div class="w-full h-full bg-white">
+              <div class="w-full h-full bg-[var(--cn-surface)]">
                 <embed src={previewUrls[key]} type="application/pdf" class="w-full h-full" />
               </div>
             {:else}
-              <div class="w-full h-full flex flex-col items-center justify-center gap-1 px-2 text-gray-500">
+              <div class="w-full h-full flex flex-col items-center justify-center gap-1 px-2 text-text-muted">
                 <FileText size={16} />
                 <span class="text-[0.6rem] text-center leading-tight line-clamp-2">{file.name}</span>
               </div>
@@ -248,7 +248,7 @@
         disabled={isUploading}
         title="Envoyer une image, vidéo ou fichier"
         aria-label="Joindre un fichier"
-        class="w-10 h-10 md:w-11 md:h-11 text-gray-400 rounded-full flex items-center justify-center flex-shrink-0 hover:text-cn-dark hover:bg-gray-200 transition-colors disabled:opacity-40"
+        class="w-10 h-10 md:w-11 md:h-11 text-text-muted rounded-full flex items-center justify-center flex-shrink-0 hover:text-cn-dark hover:bg-[color-mix(in_srgb,var(--cn-bg)_85%,var(--cn-dark)_15%)] transition-colors disabled:opacity-40"
       >
         {#if isUploading}
           <svg class="animate-spin w-5 h-5" viewBox="0 0 24 24" fill="none">
