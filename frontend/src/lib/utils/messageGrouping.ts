@@ -24,7 +24,7 @@ export function groupMessages(messages: ChatMessage[]): MessageGroup[] {
   const groups: MessageGroup[] = [];
   let lastDate: string | null = null;
   let lastTimestamp: number | null = null;
-  const TIME_GAP_MS = 10 * 60 * 1000; // 10 minutes
+  const TIME_GAP_MS = 15 * 60 * 1000; // 15 minutes
 
   for (const msg of messages) {
     const msgDate = format(msg.timestamp, 'yyyy-MM-dd');
@@ -40,7 +40,7 @@ export function groupMessages(messages: ChatMessage[]): MessageGroup[] {
       lastTimestamp = null; // Reset time gap check for new day
     }
 
-    // Time separator (10+ min gap, but not for first message of the day or system messages)
+    // Time separator (15+ min gap, but not for first message of the day or system messages)
     if (lastTimestamp !== null && !msg.isSystem && msgTime - lastTimestamp > TIME_GAP_MS) {
       groups.push({
         type: 'time_separator',

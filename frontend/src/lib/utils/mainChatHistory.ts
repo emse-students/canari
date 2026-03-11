@@ -67,7 +67,8 @@ export async function replayConversationHistory(params: {
     contactName: string,
     replyTo?: { id: string; senderId: string; content: string },
     isSystem?: boolean,
-    messageId?: string
+    messageId?: string,
+    timestamp?: Date
   ) => Promise<void>;
   log: (msg: string) => void;
 }) {
@@ -99,7 +100,8 @@ export async function replayConversationHistory(params: {
               contactName,
               undefined,
               false,
-              parsed.messageId || undefined
+              parsed.messageId || undefined,
+              new Date(msg.timestamp)
             );
             addedMsg++;
             mlsUpdated = true;
@@ -119,7 +121,8 @@ export async function replayConversationHistory(params: {
             contactName,
             undefined,
             false,
-            parsed.messageId || undefined
+            parsed.messageId || undefined,
+            new Date(msg.timestamp)
           );
           addedMsg++;
           mlsUpdated = true;
@@ -144,13 +147,52 @@ export async function replayConversationHistory(params: {
             contactName,
             undefined,
             false,
-            parsed.messageId || undefined
+            parsed.messageId || undefined,
+            new Date(msg.timestamp)
           );
           addedMsg++;
           mlsUpdated = true;
           continue;
-        } else if (parsed?.reaction || parsed?.system) {
-          // Control/reaction messages don't add chat entries in history replay
+        } else if (parsed?.reaction) {
+          // Reactions don't add chat entries in history replay
+          mlsUpdated = true;
+          continue;
+        } else if (parsed?.system) {
+          const senderNorm = msg.sender_id.toLowerCase();
+          let systemText: string | null = null;
+
+          try {
+            const data = parsed.system.data ? JSON.parse(parsed.system.data) : {};
+
+            if (parsed.system.event === 'groupRenamed' && data.newName) {
+              systemText = `${senderNorm} a renommé le groupe en "${data.newName}"`;
+            } else if (parsed.system.event === 'memberRemoved' && data.targetUser) {
+              systemText = `${senderNorm} a retiré ${data.targetUser} du groupe`;
+            } else if (parsed.system.event === 'memberAdded') {
+              const added =
+                data.newUsers && Array.isArray(data.newUsers)
+                  ? data.newUsers.join(', ')
+                  : data.newUser;
+              if (added) systemText = `${senderNorm} a ajouté ${added} au groupe`;
+            } else if (parsed.system.event === 'groupDeleted') {
+              systemText = `${senderNorm} a supprimé le groupe`;
+            }
+          } catch {
+            // Keep history replay robust even if a control payload is malformed.
+          }
+
+          if (systemText) {
+            await addMessageToChat(
+              'system',
+              systemText,
+              contactName,
+              undefined,
+              true,
+              parsed.messageId || undefined,
+              new Date(msg.timestamp)
+            );
+            addedMsg++;
+          }
           mlsUpdated = true;
           continue;
         } else {
@@ -159,7 +201,11 @@ export async function replayConversationHistory(params: {
           await addMessageToChat(
             msg.sender_id,
             serializeEnvelope(mkTextEnvelope(legacyText)),
-            contactName
+            contactName,
+            undefined,
+            false,
+            undefined,
+            new Date(msg.timestamp)
           );
           addedMsg++;
           mlsUpdated = true;

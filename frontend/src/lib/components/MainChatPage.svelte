@@ -459,7 +459,8 @@
     contactName: string,
     replyTo?: { id: string; senderId: string; content: string },
     isSystem = false,
-    messageId?: string
+    messageId?: string,
+    timestamp?: Date
   ) {
     const normalized = contactName.toLowerCase();
     const convo = conversations.get(normalized);
@@ -471,7 +472,7 @@
       id: messageId || crypto.randomUUID(),
       senderId: senderId.toLowerCase(),
       content,
-      timestamp: new Date(),
+      timestamp: timestamp ?? new Date(),
       isOwn,
       replyTo,
       isSystem,
@@ -799,12 +800,11 @@
     try {
       const mlsService = ensureMls();
       await deleteGroupAndBroadcast({ mlsService, groupId: convo.groupId });
-      if (storage) await storage.deleteConversation(selectedContact);
-      conversations.delete(selectedContact);
-      selectedContact = null;
-      mobileView = 'list';
+      await addSystemMessage(`${userId} a supprimé le groupe`, selectedContact);
+      conversations.set(selectedContact, { ...convo, isReady: false });
+      if (storage) await saveConversation(selectedContact);
       groupMembers = [];
-      log(`Groupe "${convo.name}" supprimé.`);
+      log(`Groupe "${convo.name}" supprime (archive localement).`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       log(`Erreur suppression groupe: ${msg}`);

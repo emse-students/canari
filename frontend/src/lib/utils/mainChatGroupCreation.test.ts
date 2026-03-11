@@ -268,7 +268,7 @@ describe('startNewConversation', () => {
     expect(saveConversation).toHaveBeenCalledWith('jolan2');
   });
 
-  it('log ✅ Canal sécurisé avec le nom du contact', async () => {
+  it('log [OK] Canal securise avec le nom du contact', async () => {
     const jolan2Device = { keyPackage: new Uint8Array([0x10]), deviceId: 'dev-jolan2-01' };
     const mls = makeMlsService({
       fetchUserDevices: vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([jolan2Device]),
@@ -276,10 +276,10 @@ describe('startNewConversation', () => {
     const convs = makeConversationMap();
     const log = vi.fn();
     await startNewConversation('jolan2', makeDeps(mls, convs, { log }));
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('✅ Canal sécurisé avec jolan2'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('[OK] Canal securise avec jolan2.'));
   });
 
-  it('BLOCAGE 1 : supprime la conversation et log ❌ si aucun device trouvé', async () => {
+  it('BLOCAGE 1 : supprime la conversation et log [ERREUR] si aucun device trouve', async () => {
     // fetchDevicesWithRetry épuise 6 tentatives avec délais → fake timers
     vi.useFakeTimers();
 
@@ -295,7 +295,7 @@ describe('startNewConversation', () => {
     await promise;
 
     expect(convs.has('jolan2')).toBe(false);
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('❌'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('[ERREUR] Appareils introuvables'));
   }, 15_000);
 
   it('sync les propres appareils de jolan dans le groupe', async () => {
@@ -402,12 +402,12 @@ describe('createNewGroup', () => {
     expect(saveConversation).toHaveBeenCalledWith('projet alpha');
   });
 
-  it('log ✅ Groupe créé', async () => {
+  it('log [OK] Groupe cree', async () => {
     const mls = makeMlsService({ fetchUserDevices: vi.fn().mockResolvedValue([]) });
     const convs = makeConversationMap();
     const log = vi.fn();
     await createNewGroup('Projet Alpha', makeDeps(mls, convs, { log }));
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('✅ Groupe "Projet Alpha" créé!'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('[OK] Groupe "Projet Alpha" cree.'));
   });
 
   it('sync les propres appareils de jolan dans le nouveau groupe', async () => {
@@ -504,7 +504,7 @@ describe('inviteMemberToGroup', () => {
     expect(mls.sendCommit).toHaveBeenCalledWith(new Uint8Array([0x01]), 'group-dev-team');
   });
 
-  it('log ✅ avec le nombre de devices ajoutés', async () => {
+  it('log [OK] avec le nombre de devices ajoutes', async () => {
     const devices = [
       { keyPackage: new Uint8Array([0x10]), deviceId: 'dev-j2-a' },
       { keyPackage: new Uint8Array([0x20]), deviceId: 'dev-j2-b' },
@@ -521,10 +521,10 @@ describe('inviteMemberToGroup', () => {
     const convs = makeConversationMap();
     await inviteMemberToGroup('jolan2', existingConvo, makeDeps(mls, convs, { log }));
 
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('✅ Ajoutés: jolan2 (2 appareils).'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('[OK] Ajoutes: jolan2 (2 appareils).'));
   });
 
-  it("BLOCAGE 1 : log ❌ si le membre cible n'a aucun device (jamais connecté)", async () => {
+  it("BLOCAGE 1 : log [ERREUR] si le membre cible n'a aucun device (jamais connecte)", async () => {
     vi.useFakeTimers();
     const mls = makeMlsService({
       fetchUserDevices: vi.fn().mockResolvedValue([]),
@@ -535,7 +535,9 @@ describe('inviteMemberToGroup', () => {
     await vi.runAllTimersAsync();
     await promise;
 
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('❌'));
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining('[ERREUR] Aucun appareil trouve pour les utilisateurs demandes.')
+    );
     expect(mls.addMembersBulk).not.toHaveBeenCalled();
   }, 15_000);
 

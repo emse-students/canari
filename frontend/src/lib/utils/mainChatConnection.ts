@@ -45,7 +45,8 @@ interface MessageHandlerDeps {
     contactName: string,
     replyTo?: ChatMessage['replyTo'],
     isSystem?: boolean,
-    messageId?: string
+    messageId?: string,
+    timestamp?: Date
   ) => Promise<void>;
   addSystemMessage: (content: string, contactName: string) => Promise<void>;
   loadHistoryForConversation: (contactName: string, groupId: string) => Promise<void>;
@@ -218,13 +219,10 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                 }
               }
               if (event === 'groupDeleted') {
-                log(`[INFO] Groupe supprime par ${senderNorm}`);
-                if (storage) await storage.deleteConversation(convoKey);
-                conversations.delete(convoKey);
-                if (selectedContact === convoKey) {
-                  setSelectedContact(null);
-                  setMobileView('list');
-                }
+                await addSystemMessage(`${senderNorm} a supprimé le groupe`, convoKey);
+                conversations.set(convoKey, { ...convo, isReady: false });
+                if (storage) await saveConversation(convoKey);
+                log(`[INFO] Groupe supprime par ${senderNorm} (archive localement)`);
                 return true;
               }
               if (event === 'read_receipt') {
