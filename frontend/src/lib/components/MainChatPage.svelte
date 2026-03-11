@@ -1189,15 +1189,17 @@
         {newGroupInput}
         onContactInputChange={(value) => (newContactInput = value)}
         onGroupInputChange={(value) => (newGroupInput = value)}
-        onAddContact={() => {
-          if (newContactInput.trim()) {
-            startNewConversation(newContactInput);
+        onAddContact={(value?: string) => {
+          const contact = (value ?? newContactInput).trim();
+          if (contact) {
+            startNewConversation(contact);
             newContactInput = '';
           }
         }}
-        onCreateGroup={() => {
-          if (newGroupInput.trim()) {
-            createNewGroup(newGroupInput);
+        onCreateGroup={(value?: string) => {
+          const group = (value ?? newGroupInput).trim();
+          if (group) {
+            createNewGroup(group);
             newGroupInput = '';
           }
         }}
@@ -1248,15 +1250,17 @@
           {newGroupInput}
           onContactInputChange={(value) => (newContactInput = value)}
           onGroupInputChange={(value) => (newGroupInput = value)}
-          onAddContact={() => {
-            if (newContactInput.trim()) {
-              startNewConversation(newContactInput);
+          onAddContact={(value?: string) => {
+            const contact = (value ?? newContactInput).trim();
+            if (contact) {
+              startNewConversation(contact);
               newContactInput = '';
             }
           }}
-          onCreateGroup={() => {
-            if (newGroupInput.trim()) {
-              createNewGroup(newGroupInput);
+          onCreateGroup={(value?: string) => {
+            const group = (value ?? newGroupInput).trim();
+            if (group) {
+              createNewGroup(group);
               newGroupInput = '';
             }
           }}
