@@ -26,6 +26,13 @@ if [ "$RUN_FRONTEND" -eq 1 ]; then
     echo "❌ Frontend lint failed. Use 'cd frontend && bun run lint:fix'."
     exit 1
   }
+  
+  (
+    cd frontend && bun run format:check
+  ) || {
+    echo "❌ Frontend format check failed. Use 'cd frontend && bun run format'."
+    exit 1
+  }
 fi
 
 if [ "$RUN_DELIVERY" -eq 1 ]; then

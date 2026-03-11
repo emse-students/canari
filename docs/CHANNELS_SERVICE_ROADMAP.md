@@ -337,34 +337,101 @@ Metriques:
 
 ## 10. Risques et mitigations
 
-Risque: duplication de logique entre MLS groups et channels
-- Mitigation: domaine explicite + API facade cote frontend
+### 10.1 Duplication de logique entre MLS groups et channels
+**Risque:** code duplique entre gestion de groups MLS et canaux (permissions, key mgmt)
+**Impact:** maintenance coûteuse, bugs de cohérence
+**Solutions:**
+- Créer une `EncryptionService` abstraite (interface commune KeyDerivation + Cipher)
+- MLS groups et canaux = deux impl distinctes de cette interface
+- Tests partagés contractuels pour les deux impl
+- Documentation explicite des différences sémantiques (MLS = O(N) keys, Channels = versioning)
 
-Risque: explosion ACL cost
-- Mitigation: cache + precompute permissions snapshots
+### 10.2 Explosion ACL cost en cache
+**Risque:** redis memory explosion si cache ACL = per(user, channel, role)
+**Impact:** OOM, latence dégradée
+**Solutions:**
+- Cache permissions COMPUTES (pas brutes) = `{user_id: [permission1, permission2, ...]}` compact
+- TTL court (5 min) + versioning par epoch (increment au layout change)
+- Snapshot precomputes : 1x/heure pour %95 users (batch job)
+- Eviction policy: LRU avec priority aux active channels
+- Monitoring: alert si redis memory > 70%
 
-Risque: migration de donnees confuse
-- Mitigation: scripts idempotents + feature flags + rollback plan
+### 10.3 Migration de données confuse
+**Risque:** pendant migration MLS→channels, états incohérents
+**Impact:** data loss, duplication, split-brain
+**Solutions:**
+- Dry-run migration sur replica DB avec validation
+- Feature flags: `channels.enabled=false` par défaut → whitelist workspaces d'abord
+- Scripts idempotents: chaque script check `migration_version` et skip si déjà appliqué
+- Rollback plan: DB snapshots 1/heure, restore = 15 min max (SLO)
+- Audit trail: log chaque migration step avec before/after checksums
 
-Risque: compromise du KMS root ⚠️ CRITIQUE
-- Impact: tous les canaux dechifyrable par l'attaquant
-- Mitigation: HSM physique ou secret manager (AWS KMS, Vault) avec audit trails ; MFA pour acces KMS ; key rotation schedule 90j ; offline backup recovery phrases
+### 10.4 Compromise du KMS root ⚠️ CRITIQUE
+**Risque:** attaquant obtient user_kms_root
+**Impact:** tous les canaux + DM du user = lisibles pour l'attaquant
+**Solutions (defense-in-depth):**
+- **Stockage:** HSM physique (Thales Luna) ou managed KMS (AWS KMS) = jamais en clair en mémoire
+- **Accès:** MFA + RBAC strict (audit-able) + session binding
+- **Rotation:** key_version 90j ; new_root = HKDF(old_root + timestamp)
+- **Backup:** recovery passphrase 256-bit offline (Shamir secret share 3-of-5, deposited)
+- **Detection:** monitoring: alert si KMS access spike, non-audit access, export tentative
+- **Remediation** : revoke old_root, re-derive all keys, force clients re-join (key-archive distribution)
 
-Risque: key version chaos (quand faire rotation ?)
-- Impact: des clients arrieres ne peuvent pas joindre canoniquement
-- Mitigation: versioning strict (increment seul) + client grace period (30j pour mettre a jour) + replay protection
+### 10.5 Key version chaos (quand faire rotation ?)
+**Risque:** clients déphasés = certains connaissent version N, d'autres N+1
+**Impact:** déchiffrement échoue, messages invisibles, UX broken
+**Solutions:**
+- **Strict versioning:** version = INT64, monotonе croissant (ne JAMAIS décroître)
+- **Grace period:** v ancien = lisible 30j apres rotation (pour clients offline)
+- **Soft rotation:** broadcast `key.v{N+1}.available` (clients debutent soft sync)
+- **Hard cutoff:** apres 30j, serveur stop envoyer messages en v{N-1} (kill vieux clients)
+- **Client logic:** maintain local cache de 3 dernieres versions ; if server sends v{N+5}, bulk-fetch missing
 
-Risque: ancien membre qui conserve local cache de messages
-- Impact: ne peut pas really "oublier" l'historique
-- Mitigation: transparent (tous les E2EE chats ont ce probleme) ; on accepte ; si sensitive: demander suppression client apres kick
+### 10.6 Ancien membre conserve local cache de messages
+**Risque:** membre kicked = still a les ciphertexts + cles d'historique en cache local
+**Impact:** ne peut pas "really forget" l'historique
+**Solutions (acceptation + traçabilité):**
+- **Document trade-off:** "Comme tous les chats E2EE (Signal, Matrix), on ne peut pas supprimer la mémoire du client"
+- **Pour sensitive:** workflow optionnel: admin peut marquer canal `sensitive_archive=true` → message `archive_deletion_required` post-kick
+- **Client pledge:** TOU incluent engagement de suppression vol volontaire
+- **Forensic:** si violation découverte, audit log capture le kick + timestamp proof
 
-Risque: moderation limitee (admins ne peuvent pas lire contenu flagged)
-- Impact: abuse hard a prouver
-- Mitigation: signature optionnelle des messages (phase 2) ; trust sur metadata ; rate-limiting + automoderation regles
+### 10.7 Modération limitée (admins ne peuvent pas lire)
+**Risque:** admin ne voit que metadata (sender, time, attachments) = impossible détecter spam/abuse dans contenu
+**Impact:** moderation inefficace
+**Solutions (phases):**
+- **MVP:** metadata-only + user reputation score (abuse reports count)
+- **Phase 2:** message signing optionnel (sender signe + hash) → admin vérifies signature, demande user reveal plaintext
+- **Phase 2+:** hash-based detection (SHA256(content) vs known-bad-hashes, crowd-sourced)
+- **Hybrid:** channels sensibles = TLS plain text (opt-in admin mode) pour moderation ; E2EE par défaut
+- **Workflow:** suspect message → admin request reveal → user consent (or auto-reveal si ToU violé)
 
-Risque: recherche imposible serveur-side
-- Impact: UX degrade pour gros canaux
-- Mitigation: client-side search OK pour MVP ; phase 2 explorer searchable encryption ou client-index sync
+### 10.8 Recherche impossible serveur-side
+**Risque:** serveur ne peut pas indexer contenu chiffré = no full-text search
+**Impact:** UX degrade pour gros canaux (pas de "find in chat")
+**Solutions (roadmap):**
+- **MVP:** client-side search (decrypt locally, regex/bloom filter)
+- **Phase 2:** searchable encryption (DPE/OPE, voir Arx, Vantage) = slow mais possible
+- **Interim:** admin peut index selective keywords (non-chiffres) = balanced
+- **BI:** plaintext logs (separate DB, gated, audit) pour analytics (opt-in)
+
+### 10.9 KMS throughput bottleneck
+**Risque:** key derivation HKDF = O(1) pour client, mais HSM peut saturer
+**Impact:** key-archive requests slow, join channel = latency spike
+**Solutions:**
+- **Caching:** Redis cache `(user_id, channel_id, version) → encrypted_key` TTL 1h
+- **Batching:** GET `/channels/{id}/key-archive?user_id=X,Y,Z` multi-user
+- **Async:** key distribution = non-blocking, queued si KMS slow
+- **Fallback:** if KMS unavailable, fail gracefully (user can retry, not fatal)
+
+### 10.10 Compliance & GDPR right-to-be-forgotten
+**Risque:** user requests droit à l'oubli = doivent supprimer ALL messages (even old)
+**Impact:** data retention liability
+**Solutions:**
+- **Protocol:** user request → archive all past keys → DELETE FROM channel_messages WHERE sender_id=X
+- **Async job:** rehash metadata references, purge blobs, clear audit
+- **Proof:** generate signed certificate "X deleted on 2026-03-12, verified by [auditor]"
+- **Note:** E2EE = honest-server assumption = on fait confiance au server ; si compromise, GDPR doesn't help anyway
 
 ## 11. Checklist pre-kickoff
 

@@ -240,7 +240,11 @@ export async function replayConversationHistory(params: {
                   setConversation(contactName, { ...convo, messages: newMsgs });
                 }
               }
-            } else if (parsed.system.event === 'edit_message' && data.messageId && data.newContent) {
+            } else if (
+              parsed.system.event === 'edit_message' &&
+              data.messageId &&
+              data.newContent
+            ) {
               const convo = getConversation(contactName);
               if (convo) {
                 const idx = convo.messages.findIndex((m) => m.id === data.messageId);
