@@ -64,7 +64,14 @@ export function getPreviewText(env: MessageEnvelope): string {
  * Falls back to a plain TextEnvelope for legacy messages that were stored as
  * raw strings before the envelope format was introduced.
  */
+const envelopeCache = new Map<string, MessageEnvelope>();
+
 export function parseEnvelope(content: string): MessageEnvelope {
+  const cached = envelopeCache.get(content);
+  if (cached) return cached;
+
+  let result: MessageEnvelope;
+
   if (content.startsWith('{')) {
     try {
       const obj = JSON.parse(content) as Record<string, unknown>;
@@ -114,13 +121,23 @@ export function parseEnvelope(content: string): MessageEnvelope {
         }
       }
 
-      return { kind: 'system', text: '[Message mal encapsule ignore]' };
+      // Fallthrough to legacy on valid JSON that isn't a known envelope
+      result = { kind: 'text', text: content };
     } catch {
-      // fall through to legacy
+      result = { kind: 'text', text: content };
     }
+  } else {
+    // Legacy plain-text or unknown — treat as text
+    result = { kind: 'text', text: content };
   }
-  // Legacy plain-text or unknown — treat as text
-  return { kind: 'text', text: content };
+
+  // Cache strict bounds. Use LRU if needed, but for typical session usage,
+  // 2000 items is reasonable.
+  if (envelopeCache.size > 2000) {
+    envelopeCache.clear();
+  }
+  envelopeCache.set(content, result);
+  return result;
 }
 
 // ---------------------------------------------------------------------------

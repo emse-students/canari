@@ -78,6 +78,7 @@
   let lastConversationKey = $state('');
   let lastMessageCount = $state(0);
   let renderedGroupCount = $state(INITIAL_RENDER_GROUPS);
+  let switchTime = $state(Date.now());
 
   function scrollToBottom(smooth = true) {
     if (!chatContainer) return;
@@ -138,6 +139,7 @@
     const hasNewMessage = messageCount > lastMessageCount;
 
     if (hasConversationChanged) {
+      switchTime = Date.now();
       renderedGroupCount = INITIAL_RENDER_GROUPS;
       tick().then(() => scrollToBottom(false));
       isNearBottom = true;
@@ -233,10 +235,7 @@
           {@const showSender = !msg.isOwn && groupPosition !== 'middle' && groupPosition !== 'end'}
 
           {#if msg.isSystem}
-            <div
-              class="flex justify-center my-2 animate-rise-in"
-              style={`animation-delay: ${Math.min(index * 18, 180)}ms`}
-            >
+            <div class="flex justify-center my-2">
               <MessageBubble
                 messageId={msg.id}
                 senderId={msg.senderId}
@@ -248,14 +247,12 @@
                 {reactions}
                 onReply={onReply ? () => onReply?.(msg) : undefined}
                 {onReact}
+                shouldAnimate={msg.timestamp.getTime() > switchTime}
                 {authToken}
               />
             </div>
           {:else}
-            <div
-              class="flex gap-2 {msg.isOwn ? 'justify-end' : 'justify-start'} animate-rise-in"
-              style={`animation-delay: ${Math.min(index * 18, 180)}ms`}
-            >
+            <div class="flex gap-2 {msg.isOwn ? 'justify-end' : 'justify-start'}">
               {#if !msg.isOwn}
                 <div class="flex flex-col items-center gap-1" style="width: 28px;">
                   {#if showSender}
@@ -296,6 +293,7 @@
                   {onReact}
                   {onDelete}
                   {onEdit}
+                  shouldAnimate={msg.timestamp.getTime() > switchTime}
                   {authToken}
                 />
               </div>

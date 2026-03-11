@@ -39,6 +39,7 @@ export interface IStorage {
 
   // Messages (content encrypted with user PIN)
   saveMessage(msg: StoredMessage, pin: string): Promise<void>;
+  saveMessages(msgs: StoredMessage[], pin: string): Promise<void>;
   getMessages(conversationId: string, pin: string): Promise<StoredMessage[]>;
 
   // Backup helpers – expose raw encrypted rows so backups don't require
@@ -156,18 +157,36 @@ export class IndexedDbStorage implements IStorage {
   // -- Messages ------------------------------------------------------------
 
   async saveMessage(msg: StoredMessage, pin: string): Promise<void> {
+    return this.saveMessages([msg], pin);
+  }
+
+  async saveMessages(msgs: StoredMessage[], pin: string): Promise<void> {
     const db = this.ensureDb();
-    const encrypted = await encryptData({ senderId: msg.senderId, content: msg.content }, pin);
+    const encryptedMessages = await Promise.all(
+      msgs.map(async (msg) => {
+        const encrypted = await encryptData(
+          { senderId: msg.senderId.trim().toLowerCase(), content: msg.content },
+          pin
+        );
+        return {
+          id: msg.id,
+          conversationId: msg.conversationId,
+          timestamp: msg.timestamp,
+          ...encrypted,
+        };
+      })
+    );
+
     return new Promise((resolve, reject) => {
       const tx = db.transaction('messages', 'readwrite');
-      tx.objectStore('messages').put({
-        id: msg.id,
-        conversationId: msg.conversationId,
-        timestamp: msg.timestamp,
-        ...encrypted,
-      });
+      const store = tx.objectStore('messages');
+
       tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
+      tx.onerror = () => reject('saveMessages error: ' + tx.error);
+
+      for (const row of encryptedMessages) {
+        store.put(row);
+      }
     });
   }
 
@@ -339,18 +358,34 @@ export class SqliteStorage implements IStorage {
   // -- Messages ------------------------------------------------------------
 
   async saveMessage(msg: StoredMessage, pin: string): Promise<void> {
-    const encrypted = await encryptData({ senderId: msg.senderId, content: msg.content }, pin);
-    await this.db.execute(
-      'INSERT OR REPLACE INTO messages (id, conversation_id, timestamp, iv, salt, cipher_text) VALUES ($1, $2, $3, $4, $5, $6)',
-      [
-        msg.id,
-        msg.conversationId,
-        msg.timestamp,
-        Array.from(encrypted.iv),
-        Array.from(encrypted.salt),
-        Array.from(encrypted.cipherText),
-      ]
+    return this.saveMessages([msg], pin);
+  }
+
+  async saveMessages(msgs: StoredMessage[], pin: string): Promise<void> {
+    const encryptedMessages = await Promise.all(
+      msgs.map(async (msg) => {
+        const encrypted = await encryptData(
+          { senderId: msg.senderId.trim().toLowerCase(), content: msg.content },
+          pin
+        );
+        return { msg, encrypted };
+      })
     );
+
+    // Tauri SQL plugin doesn't support bulk insert nicely, so we loop but parallelize encryption
+    for (const item of encryptedMessages) {
+      await this.db.execute(
+        'INSERT OR REPLACE INTO messages (id, conversation_id, timestamp, iv, salt, cipher_text) VALUES ($1, $2, $3, $4, $5, $6)',
+        [
+          item.msg.id,
+          item.msg.conversationId,
+          item.msg.timestamp,
+          Array.from(item.encrypted.iv),
+          Array.from(item.encrypted.salt),
+          Array.from(item.encrypted.cipherText),
+        ]
+      );
+    }
   }
 
   async getMessages(conversationId: string, pin: string): Promise<StoredMessage[]> {
