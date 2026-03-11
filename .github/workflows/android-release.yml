@@ -1,0 +1,101 @@
+name: Android Release
+
+on:
+  release:
+    types: [created]
+  workflow_dispatch:
+
+jobs:
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            frontend/node_modules
+            ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('frontend/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Install Rust Stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android,wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: |
+          bun install
+          bunx svelte-kit sync
+
+      - name: Build WASM
+        working-directory: frontend/mls-wasm
+        run: wasm-pack build --target web --out-dir ../src/lib/wasm
+
+      - name: Generate protobuf bindings
+        working-directory: frontend
+        run: bun run proto:gen
+
+      - name: Setup Android Signing
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+        run: |
+          echo "Decoding keystore..."
+          cd frontend/src-tauri/gen/android
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > release.jks
+
+          echo "Creating keystore.properties..."
+          echo "keyAlias=$ANDROID_KEY_ALIAS" > keystore.properties
+          echo "keyPassword=$ANDROID_KEY_PASSWORD" >> keystore.properties
+          echo "storePassword=$ANDROID_STORE_PASSWORD" >> keystore.properties
+          echo "storeFile=release.jks" >> keystore.properties
+
+      - name: Create frontend .env
+        working-directory: frontend
+        env:
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+        run: |
+          echo "VITE_JWT_SECRET=${JWT_SECRET}" > .env
+          # Use empty values for URLs to trigger fallback to window.location logic (or defaults)
+          # Or set specific production URLs here if desired.
+          echo "VITE_GATEWAY_URL=" >> .env
+          echo "VITE_HISTORY_URL=" >> .env
+          echo "VITE_MEDIA_URL=" >> .env
+
+      - name: Build Android APK
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: ./frontend
+          args: android build --apk --target aarch64-linux-android --target armv7-linux-androideabi
+
+      - name: Upload APK Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release
+          path: frontend/src-tauri/gen/android/app/build/outputs/apk/release/
