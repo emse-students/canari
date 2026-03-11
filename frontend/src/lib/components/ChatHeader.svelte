@@ -86,6 +86,17 @@
       closePanel();
     }
   }
+
+  function portal(node: HTMLElement) {
+    document.body.appendChild(node);
+    return {
+      destroy() {
+        if (node.parentNode) {
+          node.parentNode.removeChild(node);
+        }
+      },
+    };
+  }
 </script>
 
 <svelte:window onkeydown={handlePanelKeydown} />
@@ -150,128 +161,130 @@
   </button>
 
   {#if showPanel}
-    <button
-      type="button"
-      class="fixed inset-0 z-[210] bg-black/45 border-0"
-      aria-label="Fermer les parametres du groupe"
-      onclick={closePanel}
-    ></button>
+    <div use:portal class="fixed inset-0 z-[220] pointer-events-none">
+      <button
+        type="button"
+        class="absolute inset-0 bg-black/45 border-0 pointer-events-auto"
+        aria-label="Fermer les parametres du groupe"
+        onclick={closePanel}
+      ></button>
 
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label="Parametres du groupe"
-      class="fixed z-[220] inset-x-3 top-4 bottom-4 md:inset-x-auto md:right-8 md:top-20 md:bottom-auto md:w-[34rem] md:max-h-[85dvh] bg-[var(--cn-surface)] border border-cn-border rounded-2xl shadow-2xl flex flex-col overflow-hidden"
-    >
-      <div class="px-4 md:px-5 py-3 border-b border-cn-border flex items-center justify-between">
-        <h3 class="text-base font-semibold text-cn-dark">Parametres du groupe</h3>
-        <button
-          onclick={closePanel}
-          class="p-1.5 rounded-lg hover:bg-cn-bg transition-colors text-text-muted hover:text-cn-dark"
-          aria-label="Fermer"
-        >
-          <X size={16} />
-        </button>
-      </div>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Parametres du groupe"
+        class="absolute pointer-events-auto inset-x-3 top-4 bottom-4 md:inset-x-auto md:right-8 md:top-20 md:bottom-auto md:w-[34rem] md:max-h-[85dvh] bg-[var(--cn-surface)] border border-cn-border rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+      >
+        <div class="px-4 md:px-5 py-3 border-b border-cn-border flex items-center justify-between">
+          <h3 class="text-base font-semibold text-cn-dark">Parametres du groupe</h3>
+          <button
+            onclick={closePanel}
+            class="p-1.5 rounded-lg hover:bg-cn-bg transition-colors text-text-muted hover:text-cn-dark"
+            aria-label="Fermer"
+          >
+            <X size={16} />
+          </button>
+        </div>
 
-      <div class="flex-1 min-h-0 overflow-y-auto px-4 md:px-5 py-4 flex flex-col gap-4">
-        <div class="rounded-xl border border-cn-border bg-cn-bg p-3 flex flex-col gap-2">
-          <label for="group-rename-input" class="text-xs text-text-muted font-semibold">Nom du groupe</label>
-          <div class="flex gap-2">
-            <input
-              id="group-rename-input"
-              type="text"
-              bind:value={renameInput}
-              onkeydown={handleRenameKey}
-              class="flex-1 px-3 py-2 border border-cn-border rounded-xl text-sm outline-none bg-[var(--cn-surface)] text-cn-dark"
-            />
-            <button
-              onclick={submitRename}
-              class="p-2 bg-cn-dark text-white rounded-xl hover:bg-gray-800 transition-colors"
-              aria-label="Valider le renommage"
-            >
-              <Check size={14} />
-            </button>
+        <div class="flex-1 min-h-0 overflow-y-auto px-4 md:px-5 py-4 flex flex-col gap-4">
+          <div class="rounded-xl border border-cn-border bg-cn-bg p-3 flex flex-col gap-2">
+            <label for="group-rename-input" class="text-xs text-text-muted font-semibold">Nom du groupe</label>
+            <div class="flex gap-2">
+              <input
+                id="group-rename-input"
+                type="text"
+                bind:value={renameInput}
+                onkeydown={handleRenameKey}
+                class="flex-1 px-3 py-2 border border-cn-border rounded-xl text-sm outline-none bg-[var(--cn-surface)] text-cn-dark"
+              />
+              <button
+                onclick={submitRename}
+                class="p-2 bg-cn-dark text-white rounded-xl hover:bg-gray-800 transition-colors"
+                aria-label="Valider le renommage"
+              >
+                <Check size={14} />
+              </button>
+            </div>
+          </div>
+
+          <div class="flex flex-col gap-2">
+            <span class="text-xs text-text-muted font-semibold inline-flex items-center gap-1">
+              <Users size={12} /> Membres ({groupMembers.length})
+            </span>
+
+            {#if groupMembers.length > 0}
+              <ul class="flex flex-col gap-2 max-h-[38dvh] overflow-y-auto pr-1">
+                {#each groupMembers as member (member)}
+                  <li
+                    class="flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl bg-cn-bg border border-cn-border/70"
+                  >
+                    <div class="flex items-center gap-2 min-w-0">
+                      <Avatar userId={member} size="sm" />
+                      <span class="text-sm text-cn-dark truncate">{member}</span>
+                    </div>
+
+                    {#if onGroupRemoveMember}
+                      <button
+                        onclick={() => {
+                          onGroupRemoveMember?.(member);
+                        }}
+                        aria-label="Retirer {member}"
+                        class="px-2.5 py-1.5 text-xs rounded-lg bg-red-50 text-red-500 hover:bg-red-100 transition-colors flex-shrink-0"
+                      >
+                        <span class="inline-flex items-center gap-1">
+                          <UserMinus size={12} /> Retirer
+                        </span>
+                      </button>
+                    {/if}
+                  </li>
+                {/each}
+              </ul>
+            {:else}
+              <div class="rounded-xl border border-dashed border-cn-border px-3 py-4 text-sm text-text-muted">
+                Aucun membre a afficher.
+              </div>
+            {/if}
           </div>
         </div>
 
-        <div class="flex flex-col gap-2">
-          <span class="text-xs text-text-muted font-semibold inline-flex items-center gap-1">
-            <Users size={12} /> Membres ({groupMembers.length})
-          </span>
-
-          {#if groupMembers.length > 0}
-            <ul class="flex flex-col gap-2 max-h-[38dvh] overflow-y-auto pr-1">
-              {#each groupMembers as member (member)}
-                <li
-                  class="flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl bg-cn-bg border border-cn-border/70"
-                >
-                  <div class="flex items-center gap-2 min-w-0">
-                    <Avatar userId={member} size="sm" />
-                    <span class="text-sm text-cn-dark truncate">{member}</span>
-                  </div>
-
-                  {#if onGroupRemoveMember}
-                    <button
-                      onclick={() => {
-                        onGroupRemoveMember?.(member);
-                      }}
-                      aria-label="Retirer {member}"
-                      class="px-2.5 py-1.5 text-xs rounded-lg bg-red-50 text-red-500 hover:bg-red-100 transition-colors flex-shrink-0"
-                    >
-                      <span class="inline-flex items-center gap-1">
-                        <UserMinus size={12} /> Retirer
-                      </span>
-                    </button>
-                  {/if}
-                </li>
-              {/each}
-            </ul>
-          {:else}
-            <div class="rounded-xl border border-dashed border-cn-border px-3 py-4 text-sm text-text-muted">
-              Aucun membre a afficher.
-            </div>
-          {/if}
-        </div>
-      </div>
-
-      {#if onGroupDelete}
-        <div class="border-t border-cn-border px-4 md:px-5 py-3 bg-[var(--cn-surface)]">
-          {#if !confirmDelete}
-            <button
-              onclick={() => {
-                confirmDelete = true;
-              }}
-              class="w-full flex items-center justify-center gap-2 px-3 py-2 text-red-500 border border-red-200 rounded-xl text-sm hover:bg-red-50 transition-colors"
-            >
-              <Trash2 size={14} /> Supprimer le groupe
-            </button>
-          {:else}
-            <div class="flex flex-col gap-2">
-              <p class="text-xs text-red-600 text-center">Confirmer la suppression ?</p>
-              <div class="flex gap-2">
-                <button
-                  onclick={() => {
-                    confirmDelete = false;
-                  }}
-                  class="flex-1 px-3 py-2 border border-cn-border rounded-xl text-sm text-text-muted hover:bg-cn-bg"
-                >
-                  Annuler
-                </button>
-                <button
-                  onclick={() => {
-                    onGroupDelete?.();
-                    closePanel();
-                  }}
-                  class="flex-1 px-3 py-2 bg-red-500 text-white rounded-xl text-sm hover:bg-red-600 transition-colors"
-                >
-                  Supprimer
-                </button>
+        {#if onGroupDelete}
+          <div class="border-t border-cn-border px-4 md:px-5 py-3 bg-[var(--cn-surface)]">
+            {#if !confirmDelete}
+              <button
+                onclick={() => {
+                  confirmDelete = true;
+                }}
+                class="w-full flex items-center justify-center gap-2 px-3 py-2 text-red-500 border border-red-200 rounded-xl text-sm hover:bg-red-50 transition-colors"
+              >
+                <Trash2 size={14} /> Supprimer le groupe
+              </button>
+            {:else}
+              <div class="flex flex-col gap-2">
+                <p class="text-xs text-red-600 text-center">Confirmer la suppression ?</p>
+                <div class="flex gap-2">
+                  <button
+                    onclick={() => {
+                      confirmDelete = false;
+                    }}
+                    class="flex-1 px-3 py-2 border border-cn-border rounded-xl text-sm text-text-muted hover:bg-cn-bg"
+                  >
+                    Annuler
+                  </button>
+                  <button
+                    onclick={() => {
+                      onGroupDelete?.();
+                      closePanel();
+                    }}
+                    class="flex-1 px-3 py-2 bg-red-500 text-white rounded-xl text-sm hover:bg-red-600 transition-colors"
+                  >
+                    Supprimer
+                  </button>
+                </div>
               </div>
-            </div>
-          {/if}
-        </div>
-      {/if}
+            {/if}
+          </div>
+        {/if}
+      </div>
     </div>
   {/if}
 
