@@ -1,6 +1,7 @@
 <script lang="ts">
   import { User, Users, Hand, Download, Upload } from 'lucide-svelte';
   import ConversationTile from './ConversationTile.svelte';
+  import { parseEnvelope, getPreviewText } from '$lib/envelope';
 
   interface Conversation {
     contactName: string;
@@ -126,7 +127,7 @@
         contactName={name}
         displayName={convo.name}
         lastMessage={convo.messages.length > 0
-          ? convo.messages[convo.messages.length - 1].content
+          ? getPreviewText(parseEnvelope(convo.messages[convo.messages.length - 1].content))
           : undefined}
         isReady={convo.isReady}
         isSelected={selectedContact === name}

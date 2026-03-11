@@ -2,6 +2,7 @@
   import { Send, Paperclip, X, FileText } from 'lucide-svelte';
   import VoiceRecorder from './VoiceRecorder.svelte';
   import GifPicker from './GifPicker.svelte';
+  import { parseEnvelope, getPreviewText } from '$lib/envelope';
 
   interface ReplyTo {
     id: string;
@@ -113,7 +114,9 @@
       >
         <div class="flex-1 min-w-0 ml-2">
           <div class="text-xs font-bold text-gray-700">Réponse à {replyingTo.senderId}</div>
-          <div class="text-sm text-gray-500 truncate">{replyingTo.content}</div>
+          <div class="text-sm text-gray-500 truncate">
+            {getPreviewText(parseEnvelope(replyingTo.content))}
+          </div>
         </div>
         {#if onCancelReply}
           <button

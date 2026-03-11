@@ -6,7 +6,7 @@
   import { onDestroy } from 'svelte';
   import { MediaService } from '$lib/media';
   import type { MediaRef } from '$lib/media';
-  import { parseEnvelope } from '$lib/envelope';
+  import { parseEnvelope, getPreviewText } from '$lib/envelope';
   import 'emoji-picker-element';
   import Modal from './Modal.svelte';
 
@@ -236,7 +236,9 @@
       {#if resolvedReplyTo}
         <div class="mb-2 p-2 rounded-lg bg-black/5 text-xs">
           <div class="font-semibold opacity-75">{resolvedReplyTo.senderId}</div>
-          <div class="truncate opacity-60">{resolvedReplyTo.content}</div>
+          <div class="truncate opacity-60">
+            {getPreviewText(parseEnvelope(resolvedReplyTo.content))}
+          </div>
         </div>
       {/if}
 
@@ -330,6 +332,11 @@
                   <Download size={20} class="opacity-70 hover:opacity-100" />
                 </button>
               {/if}
+            </div>
+          {/if}
+          {#if displayText}
+            <div class="px-1 pt-1 pb-0.5 mt-1 text-sm break-words whitespace-pre-wrap">
+              {displayText}
             </div>
           {/if}
         </div>

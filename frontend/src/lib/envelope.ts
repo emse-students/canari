@@ -46,6 +46,20 @@ export function serializeEnvelope(env: MessageEnvelope): string {
 }
 
 /**
+ * Returns a short preview string suitable for lists or reply contexts.
+ */
+export function getPreviewText(env: MessageEnvelope): string {
+  switch (env.kind) {
+    case 'text':
+      return env.text;
+    case 'media':
+      return env.caption ? `📷 ${env.caption}` : '📷 [Média]';
+    case 'system':
+      return `ℹ️ ${env.text}`;
+  }
+}
+
+/**
  * Parse a stored content string back into a MessageEnvelope.
  * Falls back to a plain TextEnvelope for legacy messages that were stored as
  * raw strings before the envelope format was introduced.
