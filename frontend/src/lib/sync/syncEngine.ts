@@ -12,6 +12,10 @@ import type {
   UploadSyncChunksRequest,
 } from '$lib/sync/types';
 
+function normalizeConversationId(id: string): string {
+  return id.trim().toLowerCase();
+}
+
 function byTimestampThenId(a: StoredMessage, b: StoredMessage): number {
   if (a.timestamp === b.timestamp) return a.id.localeCompare(b.id);
   return a.timestamp - b.timestamp;
@@ -53,10 +57,11 @@ export async function buildLocalSyncManifest(
   const conversations = await storage.getConversations();
   const items = await Promise.all(
     conversations.map(async (conv) => {
-      const messages = await storage.getMessages(conv.id, pin);
+      const normalizedId = normalizeConversationId(conv.id);
+      const messages = await storage.getMessages(normalizedId, pin);
       messages.sort(byTimestampThenId);
       return {
-        conversationId: encodeConversationTransportId(conv.id),
+        conversationId: encodeConversationTransportId(normalizedId),
         groupId: conv.groupId,
         updatedAt: conv.updatedAt,
         messageIds: messages.map((m) => m.id),
@@ -88,6 +93,27 @@ export function diffLocalAndRemoteManifest(
   for (const conversationId of allConversationIds) {
     const localConv = localByConversation.get(conversationId);
     const remoteConv = remoteByConversation.get(conversationId);
+
+    // Ensure metadata-only conversations are still synchronized.
+    if (localConv && !remoteConv) {
+      missingOnPeer.push({
+        conversationId,
+        groupId: localConv.groupId,
+        updatedAt: localConv.updatedAt,
+        messageIds: [],
+      });
+      continue;
+    }
+
+    if (!localConv && remoteConv) {
+      missingOnRequester.push({
+        conversationId,
+        groupId: remoteConv.groupId,
+        updatedAt: remoteConv.updatedAt,
+        messageIds: [],
+      });
+      continue;
+    }
 
     const localIds = new Set(localConv?.messageIds ?? []);
     const remoteIds = new Set(remoteConv?.messageIds ?? []);
@@ -123,13 +149,13 @@ export async function buildTransferChunksForMissing(
 ): Promise<SyncTransferChunk[]> {
   const conversations = await storage.getConversations();
   const conversationByEncodedId = new Map(
-    conversations.map((c) => [encodeConversationTransportId(c.id), c])
+    conversations.map((c) => [encodeConversationTransportId(normalizeConversationId(c.id)), c])
   );
   const encryptedRows = await storage.getAllEncryptedRows();
   const rowById = new Map(encryptedRows.map((row) => [row.id, row]));
 
   const fallbackConversation = (conversationId: string): ConversationMeta => {
-    const decoded = decodeConversationTransportId(conversationId);
+    const decoded = normalizeConversationId(decodeConversationTransportId(conversationId));
     return {
       id: decoded,
       groupId: decoded,
@@ -144,7 +170,6 @@ export async function buildTransferChunksForMissing(
       const rows: EncryptedMessageRow[] = entry.messageIds
         .map((id) => rowById.get(id))
         .filter((row): row is EncryptedMessageRow => Boolean(row));
-      if (rows.length === 0) return null;
 
       const conversation =
         conversationByEncodedId.get(entry.conversationId) ??
@@ -170,11 +195,11 @@ function serializeChunks(chunks: SyncTransferChunk[]): SyncSerializedChunk[] {
   return chunks.map((chunk) => ({
     conversation: {
       ...chunk.conversation,
-      id: encodeConversationTransportId(chunk.conversation.id),
+      id: encodeConversationTransportId(normalizeConversationId(chunk.conversation.id)),
     },
     rows: chunk.rows.map((row) => ({
       id: row.id,
-      conversationId: encodeConversationTransportId(row.conversationId),
+      conversationId: encodeConversationTransportId(normalizeConversationId(row.conversationId)),
       timestamp: row.timestamp,
       iv: bytesToArray(row.iv),
       salt: bytesToArray(row.salt),
@@ -187,11 +212,11 @@ function deserializeChunks(chunks: SyncSerializedChunk[]): SyncTransferChunk[] {
   return chunks.map((chunk) => ({
     conversation: {
       ...chunk.conversation,
-      id: decodeConversationTransportId(chunk.conversation.id),
+      id: normalizeConversationId(decodeConversationTransportId(chunk.conversation.id)),
     },
     rows: chunk.rows.map((row) => ({
       id: row.id,
-      conversationId: decodeConversationTransportId(row.conversationId),
+      conversationId: normalizeConversationId(decodeConversationTransportId(row.conversationId)),
       timestamp: row.timestamp,
       iv: arrayToBytes(row.iv),
       salt: arrayToBytes(row.salt),
@@ -345,21 +370,33 @@ export async function applyIncomingSyncChunks(
   storage: IStorage,
   chunks: SyncTransferChunk[]
 ): Promise<{ importedConversationCount: number; importedMessageCount: number }> {
-  let importedConversations = 0;
+  const importedConversationIds = new Set<string>();
   let importedMessages = 0;
+  const importedMessageIds = new Set<string>();
 
   for (const chunk of chunks) {
-    await storage.mergeConversation(chunk.conversation);
-    importedConversations++;
+    const normalizedConversationId = normalizeConversationId(chunk.conversation.id);
+    await storage.mergeConversation({
+      ...chunk.conversation,
+      id: normalizedConversationId,
+    });
+    importedConversationIds.add(normalizedConversationId);
 
     for (const row of chunk.rows) {
-      await storage.importEncryptedRow(row);
-      importedMessages++;
+      const normalizedRow = {
+        ...row,
+        conversationId: normalizeConversationId(row.conversationId),
+      };
+      await storage.importEncryptedRow(normalizedRow);
+      if (!importedMessageIds.has(normalizedRow.id)) {
+        importedMessageIds.add(normalizedRow.id);
+        importedMessages++;
+      }
     }
   }
 
   return {
-    importedConversationCount: importedConversations,
+    importedConversationCount: importedConversationIds.size,
     importedMessageCount: importedMessages,
   };
 }

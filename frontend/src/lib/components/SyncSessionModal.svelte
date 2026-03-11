@@ -66,7 +66,7 @@
   }
 
   async function scanLoop() {
-    if (!isScanning || !videoEl || !detector) return;
+    if (!isScanning || !videoEl) return;
 
     try {
       if (videoEl.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
@@ -143,10 +143,6 @@
       };
     };
     const DetectorCtor = maybeWindow.BarcodeDetector;
-    if (!DetectorCtor) {
-      scanError = 'Scanner QR indisponible. Collez le payload manuellement.';
-      return;
-    }
 
     try {
       mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -163,6 +159,10 @@
       videoEl.srcObject = mediaStream;
       await videoEl.play();
       detector = DetectorCtor ? new DetectorCtor({ formats: ['qr_code'] }) : null;
+      if (!detector) {
+        scanError =
+          'Mode compatibilite active: scan logiciel (si instable, utilisez le collage manuel).';
+      }
       void scanLoop();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
