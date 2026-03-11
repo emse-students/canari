@@ -15,6 +15,7 @@
   import { onDestroy, onMount } from 'svelte';
   import { parseMediaMessage, MediaService } from '$lib/media';
   import type { MediaRef } from '$lib/media';
+  import { parseEnvelope } from '$lib/envelope';
   import 'emoji-picker-element';
   import Modal from './Modal.svelte';
   import LinkPreviewCard from './LinkPreviewCard.svelte';
@@ -75,12 +76,27 @@
   let showEditModal = $state(false);
   let showDeleteModal = $state(false);
   let editText = $state('');
-  let mediaRef = $derived(parseMediaMessage(content));
+  let envelope = $derived(parseEnvelope(content));
+  let effectiveSystem = $derived(isSystem || envelope.kind === 'system');
+  let textContent = $derived(
+    envelope.kind === 'text' || envelope.kind === 'system'
+      ? envelope.text
+      : (envelope.caption ?? '')
+  );
+  let effectiveReplyTo = $derived(
+    replyTo ??
+      (envelope.kind === 'text' || envelope.kind === 'media' ? envelope.replyTo : undefined)
+  );
+  let mediaRef = $derived(
+    envelope.kind === 'media'
+      ? envelope.media
+      : parseMediaMessage(content)
+  );
   let blobUrl = $state<string | null>(null);
   let loadError = $state(false);
   let supportsHover = $state(true);
   let longPressTimer: ReturnType<typeof setTimeout> | null = null;
-  let firstLink = $derived(!mediaRef && !isDeleted ? extractFirstUrl(content) : null);
+  let firstLink = $derived(!mediaRef && !isDeleted ? extractFirstUrl(textContent) : null);
 
   const groupedReactions = $derived(
     reactions.reduce(
@@ -240,9 +256,9 @@
   }
 </script>
 
-{#if isSystem}
+{#if effectiveSystem}
   <div class="px-4 py-1.5 bg-cn-bg rounded-full text-xs text-text-muted text-center max-w-md">
-    {content}
+    {textContent}
   </div>
 {:else}
   <!-- Outer wrapper: relative for absolute children (emoji picker, info tooltip) -->
@@ -287,10 +303,10 @@
         ? 'bg-cn-yellow text-cn-dark'
         : 'bg-[var(--cn-surface)] text-cn-dark border border-cn-border'}"
     >
-      {#if replyTo}
+      {#if effectiveReplyTo}
         <div class="mb-2 pb-2 border-l-4 border-gray-400 pl-3 text-xs opacity-70">
-          <div class="font-semibold">{replyTo.senderId}</div>
-          <div class="truncate">{replyTo.content}</div>
+          <div class="font-semibold">{effectiveReplyTo.senderId}</div>
+          <div class="truncate">{effectiveReplyTo.content}</div>
         </div>
       {/if}
 
@@ -414,7 +430,7 @@
             ? 'italic text-gray-500'
             : ''}"
         >
-          {content}
+          {textContent}
         </p>
         {#if firstLink}
           <LinkPreviewCard url={firstLink} />
@@ -469,7 +485,7 @@
         <button
           onclick={(e) => {
             e.stopPropagation();
-            editText = content;
+            editText = textContent;
             showEditModal = true;
           }}
           class="p-1.5 rounded-full hover:bg-gray-200 transition-colors text-gray-400 hover:text-gray-700"
@@ -584,7 +600,7 @@
         {#if !isDeleted && isOwn && !mediaRef && onEdit}
           <button
             onclick={() => {
-              editText = content;
+              editText = textContent;
               showEditModal = true;
               closeMobileActions();
             }}

@@ -1,5 +1,6 @@
 <script lang="ts">
   import Avatar from './Avatar.svelte';
+  import { getPreviewText, parseEnvelope } from '$lib/envelope';
 
   interface Props {
     contactName: string;
@@ -11,6 +12,7 @@
   }
 
   let { contactName, displayName, lastMessage, isReady, isSelected, onClick }: Props = $props();
+  let previewText = $derived(lastMessage ? getPreviewText(parseEnvelope(lastMessage)) : null);
 </script>
 
 <button
@@ -33,7 +35,7 @@
       {/if}
     </div>
     <div class="text-sm text-text-muted truncate">
-      {lastMessage || 'Canal E2E établi.'}
+      {previewText || 'Canal E2E établi.'}
     </div>
   </div>
 </button>
