@@ -190,39 +190,50 @@
   <div class="px-3 md:px-6 py-3 md:py-4 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
     {#if pendingFiles.length > 0}
       <div class="mb-2">
-        <div class="text-[0.7rem] text-text-muted mb-1">{pendingFiles.length} fichier(s) en attente</div>
+        <div class="text-[0.7rem] text-text-muted mb-1">
+          {pendingFiles.length} fichier(s) en attente
+        </div>
         <div class="flex flex-wrap gap-2">
-        {#each pendingFiles as file, index (`${file.name}-${index}`)}
-          {@const key = fileKey(file, index)}
-          <div class="relative rounded-2xl bg-cn-bg border border-cn-border overflow-hidden w-24 h-24">
-            {#if isImageFile(file) && previewUrls[key]}
-              <img src={previewUrls[key]} alt={file.name} class="w-full h-full object-cover" />
-            {:else if isPdfFile(file) && previewUrls[key]}
-              <div class="w-full h-full bg-[var(--cn-surface)]">
-                <embed src={previewUrls[key]} type="application/pdf" class="w-full h-full" />
-              </div>
-            {:else}
-              <div class="w-full h-full flex flex-col items-center justify-center gap-1 px-2 text-text-muted">
-                <FileText size={16} />
-                <span class="text-[0.6rem] text-center leading-tight line-clamp-2">{file.name}</span>
-              </div>
-            {/if}
+          {#each pendingFiles as file, index (`${file.name}-${index}`)}
+            {@const key = fileKey(file, index)}
+            <div
+              class="relative rounded-2xl bg-cn-bg border border-cn-border overflow-hidden w-24 h-24"
+            >
+              {#if isImageFile(file) && previewUrls[key]}
+                <img src={previewUrls[key]} alt={file.name} class="w-full h-full object-cover" />
+              {:else if isPdfFile(file) && previewUrls[key]}
+                <div class="w-full h-full bg-[var(--cn-surface)]">
+                  <embed src={previewUrls[key]} type="application/pdf" class="w-full h-full" />
+                </div>
+              {:else}
+                <div
+                  class="w-full h-full flex flex-col items-center justify-center gap-1 px-2 text-text-muted"
+                >
+                  <FileText size={16} />
+                  <span class="text-[0.6rem] text-center leading-tight line-clamp-2"
+                    >{file.name}</span
+                  >
+                </div>
+              {/if}
 
-            <div class="absolute inset-x-0 bottom-0 bg-black/55 text-white text-[0.55rem] px-1.5 py-1 truncate" title={file.name}>
-              {file.name}
-            </div>
-            {#if onRemovePendingFile}
-              <button
-                type="button"
-                class="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 hover:bg-black/75 inline-flex items-center justify-center text-white"
-                onclick={() => onRemovePendingFile(index)}
-                aria-label="Retirer le fichier"
+              <div
+                class="absolute inset-x-0 bottom-0 bg-black/55 text-white text-[0.55rem] px-1.5 py-1 truncate"
+                title={file.name}
               >
-                <X size={12} />
-              </button>
-            {/if}
-          </div>
-        {/each}
+                {file.name}
+              </div>
+              {#if onRemovePendingFile}
+                <button
+                  type="button"
+                  class="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 hover:bg-black/75 inline-flex items-center justify-center text-white"
+                  onclick={() => onRemovePendingFile(index)}
+                  aria-label="Retirer le fichier"
+                >
+                  <X size={12} />
+                </button>
+              {/if}
+            </div>
+          {/each}
         </div>
       </div>
     {/if}
@@ -238,7 +249,9 @@
       ondrop={handleDrop}
     >
       {#if isDragOver}
-        <div class="absolute left-1/2 -translate-x-1/2 -translate-y-11 px-3 py-1 rounded-full bg-cn-dark text-white text-xs pointer-events-none">
+        <div
+          class="absolute left-1/2 -translate-x-1/2 -translate-y-11 px-3 py-1 rounded-full bg-cn-dark text-white text-xs pointer-events-none"
+        >
           Deposez vos fichiers ici
         </div>
       {/if}

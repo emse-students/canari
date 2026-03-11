@@ -106,7 +106,9 @@
       {#each messageGroups as group, index (group.type === 'message' ? group.message.id : `${group.type}-${index}`)}
         {#if group.type === 'date_separator'}
           <div class="flex justify-center my-3">
-            <div class="px-3 py-1 bg-cn-bg rounded-full text-xs text-cn-muted font-medium border border-cn-border/70">
+            <div
+              class="px-3 py-1 bg-cn-bg rounded-full text-xs text-cn-muted font-medium border border-cn-border/70"
+            >
               {group.date}
             </div>
           </div>

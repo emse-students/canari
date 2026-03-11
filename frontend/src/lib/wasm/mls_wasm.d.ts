@@ -20,7 +20,7 @@ export class WasmMlsClient {
      * Returns the raw decrypted bytes of an MLS application message (proto-encoded AppMessage).
      */
     process_incoming_message_bytes(group_id: string, message_bytes: Uint8Array): Uint8Array | undefined;
-    process_welcome(welcome_bytes: Uint8Array): string;
+    process_welcome(welcome_bytes: Uint8Array, ratchet_tree_bytes?: Uint8Array | null): string;
     save_state(pin?: string | null): Uint8Array;
     send_message(group_id: string, message: string): Uint8Array;
     /**
@@ -51,7 +51,7 @@ export interface InitOutput {
     readonly wasmmlsclient_new: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly wasmmlsclient_process_incoming_message: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly wasmmlsclient_process_incoming_message_bytes: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
-    readonly wasmmlsclient_process_welcome: (a: number, b: number, c: number) => [number, number, number, number];
+    readonly wasmmlsclient_process_welcome: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly wasmmlsclient_save_state: (a: number, b: number, c: number) => [number, number, number, number];
     readonly wasmmlsclient_send_message: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly wasmmlsclient_send_message_bytes: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];

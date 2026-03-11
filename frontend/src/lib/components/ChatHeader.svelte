@@ -87,7 +87,6 @@
       closePanel();
     }
   }
-
 </script>
 
 <svelte:window onkeydown={handlePanelKeydown} />
@@ -179,7 +178,9 @@
 
         <div class="flex-1 min-h-0 overflow-y-auto px-4 md:px-5 py-4 flex flex-col gap-4">
           <div class="rounded-xl border border-cn-border bg-cn-bg p-3 flex flex-col gap-2">
-            <label for="group-rename-input" class="text-xs text-text-muted font-semibold">Nom du groupe</label>
+            <label for="group-rename-input" class="text-xs text-text-muted font-semibold"
+              >Nom du groupe</label
+            >
             <div class="flex gap-2">
               <input
                 id="group-rename-input"
@@ -231,7 +232,9 @@
                 {/each}
               </ul>
             {:else}
-              <div class="rounded-xl border border-dashed border-cn-border px-3 py-4 text-sm text-text-muted">
+              <div
+                class="rounded-xl border border-dashed border-cn-border px-3 py-4 text-sm text-text-muted"
+              >
                 Aucun membre a afficher.
               </div>
             {/if}

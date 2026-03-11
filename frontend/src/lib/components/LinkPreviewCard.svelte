@@ -73,9 +73,17 @@
   class="mt-2 flex items-center gap-3 p-3 rounded-2xl border border-cn-border bg-[color-mix(in_srgb,var(--cn-surface)_94%,transparent)] hover:bg-[var(--cn-surface)] transition-colors"
 >
   {#if preview?.image}
-    <img src={preview.image} alt="Apercu lien" class="w-12 h-12 rounded-lg object-cover bg-[var(--cn-surface)]" />
+    <img
+      src={preview.image}
+      alt="Apercu lien"
+      class="w-12 h-12 rounded-lg object-cover bg-[var(--cn-surface)]"
+    />
   {:else}
-    <img src={faviconUrl} alt="Apercu lien" class="w-8 h-8 rounded-lg object-cover bg-[var(--cn-surface)]" />
+    <img
+      src={faviconUrl}
+      alt="Apercu lien"
+      class="w-8 h-8 rounded-lg object-cover bg-[var(--cn-surface)]"
+    />
   {/if}
   <div class="min-w-0 flex-1">
     <p class="text-xs uppercase tracking-wide text-text-muted truncate">
