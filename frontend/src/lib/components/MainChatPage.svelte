@@ -201,6 +201,15 @@
   });
 
   onMount(() => {
+    if (routeMode === 'login') {
+      const savedUser = localStorage.getItem('canari_saved_user');
+      const savedPin = localStorage.getItem('canari_saved_pin');
+      if (savedUser && savedPin) {
+        void goto('/chat', { replaceState: true });
+      }
+      return;
+    }
+
     const w = window as Window & { wasm_bindings_log?: (level: string, msg: string) => void };
     w.wasm_bindings_log = (level: string, msg: string) => {
       log(`[RUST::${level}] ${msg}`);
@@ -262,6 +271,15 @@
     loginError = '';
     isLoggingIn = true;
     userId = userId.trim().toLowerCase();
+
+    if (routeMode === 'login') {
+      localStorage.setItem('canari_saved_user', userId);
+      localStorage.setItem('canari_saved_pin', pin);
+      isLoggingIn = false;
+      void goto('/chat', { replaceState: true });
+      return;
+    }
+
     hadLocalStateBeforeLogin = Boolean(localStorage.getItem('mls_autosave_' + userId));
 
     try {
@@ -317,10 +335,6 @@
       localStorage.setItem('canari_saved_pin', pin);
       await loadExistingConversations();
 
-      if (routeMode === 'login') {
-        void goto('/chat', { replaceState: true });
-      }
-
       const syncGuideKey = `canari_sync_guide_seen_${userId}`;
       if (!hadLocalStateBeforeLogin && localStorage.getItem(syncGuideKey) !== '1') {
         showSyncGuidePrompt = true;
@@ -363,6 +377,11 @@
       const msg = _e instanceof Error ? _e.message : String(_e);
       loginError = msg;
       log(`Erreur: ${loginError}`);
+      localStorage.removeItem('canari_saved_user');
+      localStorage.removeItem('canari_saved_pin');
+      if (routeMode === 'chat') {
+        void goto('/login', { replaceState: true });
+      }
     } finally {
       isLoggingIn = false;
     }
@@ -1209,7 +1228,8 @@
       }
     }
 
-    syncStatusText = 'Impossible de copier automatiquement. Utilisez le partage ou copiez le texte manuellement.';
+    syncStatusText =
+      'Impossible de copier automatiquement. Utilisez le partage ou copiez le texte manuellement.';
   }
 
   // --- Outils Dev ---
@@ -1404,7 +1424,11 @@
         }}
       />
 
-      <Modal open={showSyncGuidePrompt} onClose={() => (showSyncGuidePrompt = false)} title="Nouveau appareil détecté">
+      <Modal
+        open={showSyncGuidePrompt}
+        onClose={() => (showSyncGuidePrompt = false)}
+        title="Nouveau appareil détecté"
+      >
         <div class="space-y-3 text-sm text-text-main">
           <p>
             Pour recuperer vos conversations, lancez une synchronisation QR avec un appareil deja

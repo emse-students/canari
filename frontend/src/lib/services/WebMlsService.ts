@@ -553,6 +553,13 @@ export class WebMlsService implements IMlsService {
     try {
       const res = await fetch(`${this.historyUrl}/history/${groupId}`);
       if (!res.ok) return [];
+      const contentType = res.headers.get('content-type') ?? '';
+      if (!contentType.toLowerCase().includes('application/json')) {
+        console.warn(
+          `[History] Non-JSON response for group ${groupId}. Received content-type: ${contentType || 'unknown'}`
+        );
+        return [];
+      }
       const messages = await res.json();
       return messages;
     } catch (e) {

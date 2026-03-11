@@ -40,7 +40,6 @@
     filter: blur(52px);
     opacity: 0.68;
     mix-blend-mode: screen;
-    animation: drift 16s ease-in-out infinite;
   }
 
   .blob-a {
@@ -69,15 +68,4 @@
     animation-delay: -9s;
   }
 
-  @keyframes drift {
-    0% {
-      transform: translate3d(0, 0, 0) scale(1);
-    }
-    50% {
-      transform: translate3d(10px, -12px, 0) scale(1.04);
-    }
-    100% {
-      transform: translate3d(0, 0, 0) scale(1);
-    }
-  }
 </style>
