@@ -269,9 +269,12 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                   const newMsgs = [...c.messages];
                   const idx = newMsgs.findIndex((m) => m.id === data.messageId);
                   if (idx !== -1 && newMsgs[idx].senderId === senderNorm) {
+                    const editedAt =
+                      typeof data.editedAt === 'number' ? new Date(data.editedAt) : new Date();
                     newMsgs[idx] = {
                       ...newMsgs[idx],
                       isEdited: true,
+                      editedAt,
                       content: data.newContent,
                       readBy: [],
                     };

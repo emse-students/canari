@@ -10,6 +10,7 @@
     messages: any[];
     isReady: boolean;
     mlsStateHex: string | null;
+    unreadCount?: number;
   }
 
   interface Props {
@@ -160,6 +161,7 @@
           : undefined}
         isReady={convo.isReady}
         isSelected={selectedContact === name}
+        unreadCount={convo.unreadCount ?? 0}
         onClick={() => onSelectConversation(name)}
       />
     {/each}

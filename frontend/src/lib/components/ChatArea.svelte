@@ -1,5 +1,6 @@
 <script lang="ts">
   import { ShieldCheck, AlertTriangle } from 'lucide-svelte';
+  import { ArrowDown } from 'lucide-svelte';
   import { tick } from 'svelte';
   import ChatHeader from './ChatHeader.svelte';
   import MessageBubble from './MessageBubble.svelte';
@@ -67,23 +68,68 @@
     isUploading = false,
   }: Props = $props();
 
+  const INITIAL_RENDER_GROUPS = 180;
+  const RENDER_GROUPS_STEP = 140;
+
   let chatContainer = $state<HTMLDivElement>();
+  let isNearBottom = $state(true);
+  let lastConversationKey = $state('');
+  let lastMessageCount = $state(0);
+  let renderedGroupCount = $state(INITIAL_RENDER_GROUPS);
+
+  function scrollToBottom(smooth = true) {
+    if (!chatContainer) return;
+    chatContainer.scrollTo({
+      top: chatContainer.scrollHeight,
+      behavior: smooth ? 'smooth' : 'auto',
+    });
+  }
+
+  function handleScroll() {
+    if (!chatContainer) return;
+    const distanceFromBottom =
+      chatContainer.scrollHeight - (chatContainer.scrollTop + chatContainer.clientHeight);
+    isNearBottom = distanceFromBottom < 120;
+  }
 
   // Group messages by date and time gaps
   let messageGroups = $derived(conversation ? groupMessages(conversation.messages) : []);
+  let visibleMessageGroups = $derived(messageGroups.slice(-renderedGroupCount));
+  let hiddenGroupCount = $derived(Math.max(messageGroups.length - visibleMessageGroups.length, 0));
+
+  function loadOlderGroups() {
+    renderedGroupCount += RENDER_GROUPS_STEP;
+  }
 
   $effect(() => {
-    if (conversation?.messages) {
-      tick().then(() => {
-        if (chatContainer) {
-          chatContainer.scrollTop = chatContainer.scrollHeight;
-        }
-      });
+    const convoKey = conversation ? `${conversation.groupId}-${conversation.contactName}` : '';
+    const messageCount = conversation?.messages.length ?? 0;
+
+    if (!conversation) {
+      lastConversationKey = '';
+      lastMessageCount = 0;
+      return;
     }
+
+    const hasConversationChanged = convoKey !== lastConversationKey;
+    const hasNewMessage = messageCount > lastMessageCount;
+
+    if (hasConversationChanged) {
+      renderedGroupCount = INITIAL_RENDER_GROUPS;
+      tick().then(() => scrollToBottom(false));
+      isNearBottom = true;
+    } else if (hasNewMessage && isNearBottom) {
+      tick().then(() => scrollToBottom(true));
+    }
+
+    lastConversationKey = convoKey;
+    lastMessageCount = messageCount;
   });
 </script>
 
-<section class="flex-1 min-h-0 min-w-0 flex flex-col bg-cn-bg {isHidden ? 'hidden md:flex' : ''}">
+<section
+  class="relative flex-1 min-h-0 min-w-0 flex flex-col bg-cn-bg {isHidden ? 'hidden md:flex' : ''}"
+>
   {#if conversation}
     <ChatHeader
       contactName={conversation.contactName}
@@ -101,9 +147,22 @@
     <!-- Messages -->
     <div
       bind:this={chatContainer}
-      class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 py-3 md:px-6 md:py-6 flex flex-col gap-2"
+      onscroll={handleScroll}
+      class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 py-3 md:px-6 md:py-6 pb-32 md:pb-36 flex flex-col gap-2"
     >
-      {#each messageGroups as group, index (group.type === 'message' ? group.message.id : `${group.type}-${index}`)}
+      {#if hiddenGroupCount > 0}
+        <div class="sticky top-2 z-10 flex justify-center mb-1">
+          <button
+            type="button"
+            onclick={loadOlderGroups}
+            class="px-3 py-1 rounded-full bg-white/80 backdrop-blur border border-cn-border text-xs text-cn-dark hover:bg-white transition-colors shadow-sm"
+          >
+            Charger les messages precedents ({hiddenGroupCount})
+          </button>
+        </div>
+      {/if}
+
+      {#each visibleMessageGroups as group, index (group.type === 'message' ? group.message.id : `${group.type}-${index}`)}
         {#if group.type === 'date_separator'}
           <div class="flex justify-center my-3">
             <div
@@ -124,9 +183,10 @@
             messageReactions instanceof Map
               ? messageReactions.get(msg.id) || []
               : messageReactions?.[msg.id] || []}
-          {@const prevGroup = index > 0 ? messageGroups[index - 1] : null}
+          {@const prevGroup = index > 0 ? visibleMessageGroups[index - 1] : null}
           {@const prevMsg = prevGroup?.type === 'message' ? prevGroup.message : null}
-          {@const nextGroup = index < messageGroups.length - 1 ? messageGroups[index + 1] : null}
+          {@const nextGroup =
+            index < visibleMessageGroups.length - 1 ? visibleMessageGroups[index + 1] : null}
           {@const nextMsg = nextGroup?.type === 'message' ? nextGroup.message : null}
           {@const continuesFromPrev =
             !!prevMsg &&
@@ -205,6 +265,7 @@
                   {reactions}
                   readBy={msg.readBy}
                   isEdited={msg.isEdited}
+                  editedAt={msg.editedAt}
                   isDeleted={msg.isDeleted}
                   {groupPosition}
                   onReply={onReply ? () => onReply?.(msg) : undefined}
@@ -222,24 +283,40 @@
 
     {#if sendError}
       <div
-        class="px-3 md:px-6 py-2 bg-red-50 border-t border-red-200 text-sm text-red-600 flex items-center gap-2"
+        class="absolute bottom-24 left-3 right-3 md:left-6 md:right-6 px-3 py-2 bg-red-50/95 border border-red-200 rounded-lg text-sm text-red-600 flex items-center justify-center gap-2 shadow-sm z-10"
       >
         <AlertTriangle size={16} />
         <span>{sendError}</span>
       </div>
     {/if}
 
-    <ChatComposer
-      {messageText}
-      {onMessageChange}
-      {onSend}
-      {replyingTo}
-      {onCancelReply}
-      {onFilesSelected}
-      {pendingFiles}
-      {onRemovePendingFile}
-      {isUploading}
-    />
+    {#if !isNearBottom}
+      <button
+        type="button"
+        onclick={() => scrollToBottom(true)}
+        class="absolute right-4 md:right-8 bottom-28 md:bottom-32 w-10 h-10 rounded-full bg-cn-dark text-cn-yellow shadow-lg hover:shadow-xl transition-all hover:scale-105 z-20"
+        aria-label="Revenir en bas de la discussion"
+        title="Revenir en bas"
+      >
+        <span class="inline-flex items-center justify-center w-full h-full">
+          <ArrowDown size={18} />
+        </span>
+      </button>
+    {/if}
+
+    <div class="relative z-20">
+      <ChatComposer
+        {messageText}
+        {onMessageChange}
+        {onSend}
+        {replyingTo}
+        {onCancelReply}
+        {onFilesSelected}
+        {pendingFiles}
+        {onRemovePendingFile}
+        {isUploading}
+      />
+    </div>
   {:else}
     <EmptyState
       icon={ShieldCheck}

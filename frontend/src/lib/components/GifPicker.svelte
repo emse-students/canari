@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { SmilePlus, Search, X } from 'lucide-svelte';
+  import { Search, X } from 'lucide-svelte';
   import { clickOutside } from '$lib/actions/clickOutside';
 
   interface Props {
@@ -18,6 +18,24 @@
   const TENOR_API_KEY =
     import.meta.env.VITE_TENOR_API_KEY || 'AIzaSyAyimkuYQYF_FXVALexPuGQctUWRURdCYQ'; // Demo key
   const TENOR_LIMIT = 20;
+
+  function getGifUrl(gif: any): string | null {
+    return (
+      gif.media_formats?.gif?.url ||
+      gif.media_formats?.mediumgif?.url ||
+      gif.media_formats?.tinygif?.url ||
+      null
+    );
+  }
+
+  function getGifPreviewUrl(gif: any): string | null {
+    return (
+      gif.media_formats?.tinygif?.url ||
+      gif.media_formats?.nanogif?.url ||
+      gif.media_formats?.gif?.url ||
+      null
+    );
+  }
 
   async function searchGifs(query: string) {
     if (!query.trim()) {
@@ -68,8 +86,7 @@
   }
 
   function handleGifClick(gif: any) {
-    // Use the preview image URL for better performance
-    const gifUrl = gif.media_formats?.tinygif?.url || gif.media_formats?.gif?.url;
+    const gifUrl = getGifUrl(gif);
     if (gifUrl) {
       onGifSelected(gifUrl);
       showPicker = false;
@@ -95,11 +112,14 @@
 <div class="relative">
   <button
     onclick={togglePicker}
-    class="w-11 h-11 text-gray-400 rounded-full flex items-center justify-center flex-shrink-0 hover:text-cn-dark hover:bg-gray-200 transition-colors"
+    class="w-11 h-11 text-gray-500 rounded-full flex items-center justify-center flex-shrink-0 hover:text-cn-dark hover:bg-black/5 transition-colors"
     aria-label="Envoyer un GIF"
     title="Envoyer un GIF"
   >
-    <SmilePlus size={20} />
+    <span
+      class="inline-flex items-center justify-center min-w-7 h-7 px-1.5 rounded-md border border-current text-[0.65rem] font-extrabold tracking-wide"
+      >GIF</span
+    >
   </button>
 
   {#if showPicker}
@@ -147,16 +167,23 @@
         {:else}
           <div class="grid grid-cols-2 gap-2">
             {#each gifs as gif (gif.id)}
+              {@const previewUrl = getGifPreviewUrl(gif)}
               <button
                 onclick={() => handleGifClick(gif)}
                 class="aspect-square rounded-lg overflow-hidden hover:ring-2 hover:ring-cn-yellow transition-all bg-gray-100"
               >
-                <img
-                  src={gif.media_formats?.tinygif?.url || gif.media_formats?.gif?.url}
-                  alt={gif.content_description || 'GIF'}
-                  class="w-full h-full object-cover"
-                  loading="lazy"
-                />
+                {#if previewUrl}
+                  <img
+                    src={previewUrl}
+                    alt={gif.content_description || 'GIF'}
+                    class="w-full h-full object-cover"
+                    loading="lazy"
+                  />
+                {:else}
+                  <div class="w-full h-full flex items-center justify-center text-xs text-gray-500">
+                    GIF
+                  </div>
+                {/if}
               </button>
             {/each}
           </div>

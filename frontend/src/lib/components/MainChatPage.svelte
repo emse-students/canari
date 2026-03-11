@@ -144,6 +144,37 @@
   let pendingMediaFiles = $state<File[]>([]);
   let isUploadingMedia = $state(false);
 
+  let audioContext = $state<AudioContext | null>(null);
+  let lastNotificationAt = $state(0);
+
+  function playNotificationTone() {
+    if (typeof window === 'undefined') return;
+    const now = Date.now();
+    if (now - lastNotificationAt < 600) return;
+    lastNotificationAt = now;
+
+    try {
+      audioContext = audioContext ?? new AudioContext();
+      const ctx = audioContext;
+      const startAt = ctx.currentTime + 0.01;
+
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(920, startAt);
+      osc.frequency.exponentialRampToValueAtTime(680, startAt + 0.11);
+      gain.gain.setValueAtTime(0.0001, startAt);
+      gain.gain.exponentialRampToValueAtTime(0.08, startAt + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.14);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(startAt);
+      osc.stop(startAt + 0.16);
+    } catch {
+      // Silent fallback for browsers restricting autoplay/audio context.
+    }
+  }
+
   // Helper to ensure MLS service exists
   function ensureMls(): IMlsService {
     if (!mls) throw new Error('MLS Service not initialized');
@@ -438,6 +469,7 @@
         messages: [], // loaded asynchronously in phase 2
         isReady: meta.isReady,
         mlsStateHex: null,
+        unreadCount: 0,
       });
     }
 
@@ -541,10 +573,23 @@
       isSystem,
     };
 
+    const isConversationOpen = selectedContact === normalized;
+    const shouldMarkUnread = !isOwn && !isConversationOpen;
+    const nextUnreadCount = shouldMarkUnread
+      ? (convo.unreadCount ?? 0) + 1
+      : isConversationOpen
+        ? 0
+        : (convo.unreadCount ?? 0);
+
     conversations.set(normalized, {
       ...convo,
+      unreadCount: nextUnreadCount,
       messages: [...convo.messages, newMsg],
     });
+
+    if (shouldMarkUnread) {
+      playNotificationTone();
+    }
 
     // Persist message to DB (encrypted with PIN)
     // Persist the raw message envelope (skip system messages).
@@ -789,7 +834,13 @@
     const newMsgs = [...convo.messages];
     const idx = newMsgs.findIndex((m) => m.id === messageId);
     if (idx !== -1) {
-      newMsgs[idx] = { ...newMsgs[idx], isEdited: true, content: text, readBy: [] };
+      newMsgs[idx] = {
+        ...newMsgs[idx],
+        isEdited: true,
+        editedAt: new Date(),
+        content: text,
+        readBy: [],
+      };
       conversations.set(selectedContact, { ...convo, messages: newMsgs });
       // TODO: update in local storage if needed
     }
@@ -809,8 +860,13 @@
     mobileView = 'chat';
     isConversationDrawerOpen = false;
     sendError = '';
-    // Load member list for the selected group
+
     const convo = conversations.get(name);
+    if (convo) {
+      conversations.set(name, { ...convo, unreadCount: 0 });
+    }
+
+    // Load member list for the selected group
     if (convo?.groupId) {
       loadGroupMembers(convo.groupId);
       void verifyCurrentUserMembership(name);

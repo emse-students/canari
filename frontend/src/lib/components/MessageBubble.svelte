@@ -31,6 +31,7 @@
     senderId: string;
     content: string;
     timestamp: Date;
+    editedAt?: Date;
     isOwn: boolean;
     isSystem?: boolean;
     replyTo?: {
@@ -55,6 +56,7 @@
     senderId: _senderId,
     content,
     timestamp,
+    editedAt,
     isOwn,
     isSystem = false,
     replyTo,
@@ -70,12 +72,16 @@
     authToken = '',
   }: Props = $props();
 
+  const RECENT_EMOJIS_KEY = 'canari_recent_emojis';
+
   let showEmojiPicker = $state(false);
   let showInfo = $state(false);
   let showMobileActions = $state(false);
-  let showEditModal = $state(false);
   let showDeleteModal = $state(false);
+  let recentEmojis = $state<string[]>([]);
+  let isEditingInline = $state(false);
   let editText = $state('');
+  let editTextareaEl = $state<HTMLTextAreaElement>();
   let envelope = $derived(parseEnvelope(content));
   let effectiveSystem = $derived(isSystem || envelope.kind === 'system');
   let textContent = $derived(
@@ -106,16 +112,58 @@
     )
   );
 
+  function persistRecentEmoji(emoji: string) {
+    const next = [emoji, ...recentEmojis.filter((item) => item !== emoji)].slice(0, 12);
+    recentEmojis = next;
+    try {
+      localStorage.setItem(RECENT_EMOJIS_KEY, JSON.stringify(next));
+    } catch {
+      // Ignore storage errors.
+    }
+  }
+
   function handleEmojiClick(emoji: string) {
     onReact?.(messageId, emoji);
+    persistRecentEmoji(emoji);
     showEmojiPicker = false;
   }
 
   function confirmEdit() {
-    if (editText !== content) {
-      onEdit?.(messageId, editText);
+    const trimmed = editText.trim();
+    if (trimmed && trimmed !== textContent.trim()) {
+      onEdit?.(messageId, trimmed);
     }
-    showEditModal = false;
+    isEditingInline = false;
+    showInfo = false;
+  }
+
+  function startInlineEdit() {
+    editText = textContent;
+    isEditingInline = true;
+    showEmojiPicker = false;
+    showInfo = false;
+    showMobileActions = false;
+
+    queueMicrotask(() => {
+      if (editTextareaEl) {
+        editTextareaEl.focus();
+        editTextareaEl.selectionStart = editTextareaEl.value.length;
+        editTextareaEl.selectionEnd = editTextareaEl.value.length;
+      }
+    });
+  }
+
+  function cancelInlineEdit() {
+    isEditingInline = false;
+    editText = textContent;
+  }
+
+  function handleBubbleClick(e: MouseEvent) {
+    if (isEditingInline) {
+      e.stopPropagation();
+      return;
+    }
+    toggleInfo(e);
   }
 
   function confirmDelete() {
@@ -220,6 +268,16 @@
 
   onMount(() => {
     supportsHover = window.matchMedia('(hover: hover)').matches;
+    try {
+      const raw = localStorage.getItem(RECENT_EMOJIS_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        recentEmojis = parsed.filter((value): value is string => typeof value === 'string').slice(0, 12);
+      }
+    } catch {
+      recentEmojis = [];
+    }
   });
 
   function formatFileSize(bytes: number): string {
@@ -314,7 +372,7 @@
       in:fly={{ y: 5, duration: 200 }}
       role="button"
       tabindex="0"
-      onclick={toggleInfo}
+      onclick={handleBubbleClick}
       onpointerdown={beginLongPress}
       onpointerup={cancelLongPress}
       onpointerleave={cancelLongPress}
@@ -480,28 +538,66 @@
           </p>
         {/if}
       {:else}
-        <p
-          class="text-base leading-relaxed break-words whitespace-pre-wrap {isDeleted
-            ? 'italic text-gray-500'
-            : ''}"
-        >
-          {#each textSegments as segment, index (`${segment.type}-${segment.value}-${index}`)}
-            {#if segment.type === 'link'}
-              <a
-                href={segment.value}
-                target="_blank"
-                rel="noopener noreferrer"
-                class="underline underline-offset-2 decoration-current hover:opacity-80"
-                onclick={(e) => e.stopPropagation()}
+        {#if isEditingInline && !isDeleted && isOwn && !mediaRef && onEdit}
+          <div class="flex flex-col gap-2 min-w-[220px]">
+            <textarea
+              bind:this={editTextareaEl}
+              bind:value={editText}
+              rows="3"
+              class="w-full px-3 py-2 rounded-lg border border-black/15 bg-white/80 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-cn-yellow/50"
+              placeholder="Modifier le message..."
+              onkeydown={(e) => {
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  cancelInlineEdit();
+                }
+                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                  e.preventDefault();
+                  confirmEdit();
+                }
+              }}
+            ></textarea>
+            <div class="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onclick={cancelInlineEdit}
+                class="px-3 py-1.5 rounded-lg text-xs bg-black/5 hover:bg-black/10 transition-colors"
               >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onclick={confirmEdit}
+                class="px-3 py-1.5 rounded-lg text-xs bg-cn-dark text-cn-yellow hover:opacity-90 transition-opacity"
+              >
+                Enregistrer
+              </button>
+            </div>
+          </div>
+        {:else}
+          <p
+            class="text-base leading-relaxed break-words whitespace-pre-wrap {isDeleted
+              ? 'italic text-gray-500'
+              : ''}"
+          >
+            {#each textSegments as segment, index (`${segment.type}-${segment.value}-${index}`)}
+              {#if segment.type === 'link'}
+                <a
+                  href={segment.value}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="underline underline-offset-2 decoration-current hover:opacity-80"
+                  onclick={(e) => e.stopPropagation()}
+                >
+                  {segment.value}
+                </a>
+              {:else}
                 {segment.value}
-              </a>
-            {:else}
-              {segment.value}
-            {/if}
-          {/each}
-        </p>
-        {#if firstLink}
+              {/if}
+            {/each}
+          </p>
+        {/if}
+        {#if firstLink && !isEditingInline}
           <LinkPreviewCard url={firstLink} />
         {/if}
       {/if}
@@ -554,8 +650,7 @@
         <button
           onclick={(e) => {
             e.stopPropagation();
-            editText = textContent;
-            showEditModal = true;
+            startInlineEdit();
           }}
           class="p-1.5 rounded-full hover:bg-gray-200 transition-colors text-gray-400 hover:text-gray-700"
           aria-label="Modifier"
@@ -605,7 +700,22 @@
         >
           <Smile size={12} /> Reagir au message
         </div>
-        <emoji-picker use:attachEmojiPicker class="light w-full"></emoji-picker>
+        {#if recentEmojis.length > 0}
+          <div class="px-3 py-2 border-b border-cn-border flex items-center gap-1 flex-wrap">
+            <span class="text-[0.65rem] text-text-muted mr-1">Recents</span>
+            {#each recentEmojis as emoji (emoji)}
+              <button
+                type="button"
+                onclick={() => handleEmojiClick(emoji)}
+                class="w-7 h-7 rounded-md hover:bg-cn-bg transition-colors text-base inline-flex items-center justify-center"
+                aria-label={`Reagir avec ${emoji}`}
+              >
+                {emoji}
+              </button>
+            {/each}
+          </div>
+        {/if}
+        <emoji-picker use:attachEmojiPicker class="light w-full" locale="fr"></emoji-picker>
       </div>
     {/if}
 
@@ -617,7 +727,12 @@
           : 'left-0'} top-full mt-1 px-3 py-1.5 bg-gray-800 text-white text-[0.65rem] rounded-lg shadow-lg z-50 whitespace-nowrap flex flex-col gap-0.5 pointer-events-none"
         in:fly={{ y: -3, duration: 100 }}
       >
-        <span>Envoyé à {format(timestamp, 'HH:mm')}</span>
+        <span>
+          Envoyé à {format(timestamp, 'HH:mm')}{#if isEdited && editedAt}, Modifié à {format(
+              editedAt,
+              'HH:mm'
+            )}{:else if isEdited}, Modifié{/if}
+        </span>
         {#if readBy.length > 0}
           <span class="text-blue-300">Lu par {readBy.join(', ')}</span>
         {/if}
@@ -663,8 +778,7 @@
         {#if !isDeleted && isOwn && !mediaRef && onEdit}
           <button
             onclick={() => {
-              editText = textContent;
-              showEditModal = true;
+              startInlineEdit();
               closeMobileActions();
             }}
             class="px-3 py-2.5 rounded-xl bg-cn-bg text-sm font-medium flex items-center justify-center gap-2"
@@ -686,36 +800,6 @@
       </div>
     </div>
   {/if}
-
-  <!-- ── Modals (outside the relative div so z-index is clean) ── -->
-  <Modal open={showEditModal} title="Modifier le message" onClose={() => (showEditModal = false)}>
-    <textarea
-      bind:value={editText}
-      rows="3"
-      class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-cn-yellow/50"
-      placeholder="Nouveau texte…"
-      onkeydown={(e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-          e.preventDefault();
-          confirmEdit();
-        }
-      }}
-    ></textarea>
-    {#snippet footer()}
-      <button
-        onclick={() => (showEditModal = false)}
-        class="px-4 py-2 text-sm rounded-lg text-gray-600 hover:bg-gray-100 transition-colors"
-      >
-        Annuler
-      </button>
-      <button
-        onclick={confirmEdit}
-        class="px-4 py-2 text-sm rounded-lg bg-cn-yellow text-cn-dark font-medium hover:opacity-90 transition-opacity"
-      >
-        Enregistrer
-      </button>
-    {/snippet}
-  </Modal>
 
   <Modal
     open={showDeleteModal}

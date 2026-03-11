@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Send, Paperclip, X, FileText } from 'lucide-svelte';
+  import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import VoiceRecorder from './VoiceRecorder.svelte';
   import GifPicker from './GifPicker.svelte';
 
@@ -41,6 +42,9 @@
     typeof window !== 'undefined' &&
     typeof MediaRecorder !== 'undefined' &&
     !!navigator.mediaDevices?.getUserMedia;
+  let replyPreviewText = $derived(
+    replyingTo ? getPreviewText(parseEnvelope(replyingTo.content)) : ''
+  );
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -95,6 +99,27 @@
     return `${file.name}-${file.size}-${file.lastModified}-${index}`;
   }
 
+  function collectClipboardFiles(event: ClipboardEvent): File[] {
+    const dt = event.clipboardData;
+    if (!dt) return [];
+
+    const filesFromItems = Array.from(dt.items || [])
+      .filter((item) => item.kind === 'file')
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => !!file);
+
+    return filesFromItems;
+  }
+
+  function handlePaste(event: ClipboardEvent) {
+    if (!onFilesSelected) return;
+    const files = collectClipboardFiles(event);
+    if (files.length === 0) return;
+
+    event.preventDefault();
+    onFilesSelected(files);
+  }
+
   function isImageFile(file: File): boolean {
     return file.type.startsWith('image/');
   }
@@ -115,11 +140,18 @@
   }
 
   async function handleGifSelected(gifUrl: string) {
-    if (!onFilesSelected) return;
+    if (!onFilesSelected) {
+      const nextText = messageText.trim() ? `${messageText.trim()} ${gifUrl}` : gifUrl;
+      onMessageChange(nextText);
+      return;
+    }
 
     try {
       // Download the GIF and convert to File
       const res = await fetch(gifUrl);
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
       const blob = await res.blob();
       const gifFile = new File([blob], `gif_${Date.now()}.gif`, {
         type: 'image/gif',
@@ -128,6 +160,8 @@
       onFilesSelected([gifFile]);
     } catch (error) {
       console.error('Erreur téléchargement GIF:', error);
+      const nextText = messageText.trim() ? `${messageText.trim()} ${gifUrl}` : gifUrl;
+      onMessageChange(nextText);
     }
   }
 
@@ -162,17 +196,20 @@
   });
 </script>
 
-<footer class="bg-[var(--surface-elevated)] border-t border-cn-border">
+<footer
+  class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-[var(--surface-elevated)]/95 via-[var(--surface-elevated)]/70 to-transparent pb-[max(0.9rem,env(safe-area-inset-bottom))] pt-8 z-20 pointer-events-none"
+>
   {#if replyingTo}
     <div
-      class="px-3 md:px-6 py-2 bg-cn-bg border-b border-cn-border flex items-center justify-between"
+      class="mx-3 md:mx-6 mb-2 max-w-4xl md:max-w-[unset] flex items-center justify-between bg-white/85 backdrop-blur-md border border-white/60 rounded-xl p-3 shadow-lg pointer-events-auto relative overflow-hidden"
     >
+      <div class="absolute left-0 top-0 bottom-0 w-1 bg-cn-yellow"></div>
       <div class="flex-1 min-w-0">
         <div class="text-xs font-semibold text-text-main">
           Répondre à {replyingTo.senderId}
         </div>
         <div class="text-sm text-text-muted truncate">
-          {replyingTo.content}
+          {replyPreviewText}
         </div>
       </div>
       {#if onCancelReply}
@@ -187,7 +224,7 @@
     </div>
   {/if}
 
-  <div class="px-3 md:px-6 py-3 md:py-4 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+  <div class="px-3 md:px-6 pointer-events-auto">
     {#if pendingFiles.length > 0}
       <div class="mb-2">
         <div class="text-[0.7rem] text-text-muted mb-1">
@@ -197,7 +234,7 @@
           {#each pendingFiles as file, index (`${file.name}-${index}`)}
             {@const key = fileKey(file, index)}
             <div
-              class="relative rounded-2xl bg-cn-bg border border-cn-border overflow-hidden w-24 h-24"
+              class="relative rounded-2xl bg-white/80 backdrop-blur-sm border border-white/60 overflow-hidden w-24 h-24 shadow-sm"
             >
               {#if isImageFile(file) && previewUrls[key]}
                 <img src={previewUrls[key]} alt={file.name} class="w-full h-full object-cover" />
@@ -241,9 +278,9 @@
     <div
       role="group"
       aria-label="Zone de saisie et depot de fichiers"
-      class="relative max-w-full flex items-center gap-2 md:gap-3 bg-cn-bg p-2.5 md:p-3 rounded-3xl overflow-x-hidden border {isDragOver
+      class="relative max-w-full flex items-center gap-2 md:gap-3 bg-white/80 backdrop-blur-xl p-2.5 md:p-3 rounded-3xl overflow-x-hidden border shadow-[0_8px_30px_rgb(0,0,0,0.05)] transition-all {isDragOver
         ? 'border-cn-yellow'
-        : 'border-transparent'}"
+        : 'border-white/60'}"
       ondragover={handleDragOver}
       ondragleave={handleDragLeave}
       ondrop={handleDrop}
@@ -261,7 +298,7 @@
         disabled={isUploading}
         title="Envoyer une image, vidéo ou fichier"
         aria-label="Joindre un fichier"
-        class="w-10 h-10 md:w-11 md:h-11 text-text-muted rounded-full flex items-center justify-center flex-shrink-0 hover:text-cn-dark hover:bg-[color-mix(in_srgb,var(--cn-bg)_85%,var(--cn-dark)_15%)] transition-colors disabled:opacity-40"
+        class="w-10 h-10 md:w-11 md:h-11 text-text-muted rounded-full flex items-center justify-center flex-shrink-0 hover:text-cn-dark hover:bg-black/5 transition-colors disabled:opacity-40"
       >
         {#if isUploading}
           <svg class="animate-spin w-5 h-5" viewBox="0 0 24 24" fill="none">
@@ -300,15 +337,16 @@
         value={messageText}
         oninput={(e) => onMessageChange(e.currentTarget.value)}
         onkeydown={handleKeydown}
+        onpaste={handlePaste}
         placeholder="Message..."
         rows="1"
-        class="flex-1 min-w-0 bg-transparent border-none resize-none outline-none font-normal text-[0.95rem] md:text-base px-2 py-2 leading-6 max-h-32"
+        class="flex-1 min-w-0 bg-transparent border-none resize-none outline-none font-normal text-[0.95rem] md:text-base px-2 py-2 leading-6 max-h-32 text-gray-800 placeholder-gray-500"
       ></textarea>
       <button
         onclick={onSend}
         disabled={(!messageText.trim() && pendingFiles.length === 0) || isUploading}
         aria-label="Envoyer le message"
-        class="w-10 h-10 md:w-11 md:h-11 bg-cn-dark text-cn-yellow rounded-full flex items-center justify-center flex-shrink-0 transition-transform hover:scale-105 active:scale-100 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
+        class="w-10 h-10 md:w-11 md:h-11 bg-cn-dark text-cn-yellow rounded-full flex items-center justify-center flex-shrink-0 transition-transform hover:scale-105 active:scale-100 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100 bg-gradient-to-br from-cn-dark to-gray-800"
       >
         <Send size={20} />
       </button>

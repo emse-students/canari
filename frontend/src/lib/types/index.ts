@@ -8,6 +8,7 @@ export interface ChatMessage {
   senderId: string;
   content: string;
   timestamp: Date;
+  editedAt?: Date;
   isOwn: boolean;
   isSystem?: boolean;
   replyTo?: {
@@ -28,4 +29,5 @@ export interface Conversation {
   messages: ChatMessage[];
   isReady: boolean;
   mlsStateHex: string | null;
+  unreadCount?: number;
 }

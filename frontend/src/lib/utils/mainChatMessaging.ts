@@ -135,8 +135,9 @@ export async function editMessage(
   const { mlsService, userId, pin, conversation } = deps;
   if (!conversation.isReady) return;
   try {
+    const editedAt = Date.now();
     const payload = encodeAppMessage(
-      mkSystem('edit_message', JSON.stringify({ messageId, newContent }))
+      mkSystem('edit_message', JSON.stringify({ messageId, newContent, editedAt }))
     );
     await mlsService.sendMessage(conversation.groupId, payload);
     const stateBytes = await mlsService.saveState(pin);
