@@ -192,6 +192,147 @@ function buildLinkPreviewPayload(html: string, targetUrl: URL) {
 
 import { v4 as uuidv4 } from 'uuid';
 
+interface SyncConversationManifest {
+  conversationId: string;
+  groupId?: string;
+  updatedAt?: number;
+  messageIds: string[];
+}
+
+interface SyncManifestPayload {
+  generatedAt: number;
+  conversations: SyncConversationManifest[];
+}
+
+interface SyncSessionState {
+  sessionId: string;
+  userId: string;
+  offerDeviceId: string;
+  offerPublicKey: string;
+  answerDeviceId?: string;
+  answerPublicKey?: string;
+  joinTokenHash: string;
+  state: 'waiting_join' | 'joined';
+  createdAt: number;
+  expiresAt: number;
+}
+
+function hashJoinToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+function parsePositiveInt(value: unknown, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  const n = Math.floor(value);
+  if (n <= 0) return fallback;
+  return n;
+}
+
+function sanitizeMessageIdList(messageIds: unknown): string[] {
+  if (!Array.isArray(messageIds)) {
+    throw new BadRequestException('messageIds must be an array of strings');
+  }
+
+  const ids = messageIds.map((id) => sanitizeQueryValue(id, 'messageId'));
+  return [...new Set(ids)];
+}
+
+function sanitizeSyncManifest(payload: unknown): SyncManifestPayload {
+  if (!payload || typeof payload !== 'object') {
+    throw new BadRequestException('manifest is required');
+  }
+
+  const record = payload as Record<string, unknown>;
+  const generatedAt =
+    typeof record.generatedAt === 'number' &&
+    Number.isFinite(record.generatedAt)
+      ? Math.floor(record.generatedAt)
+      : Date.now();
+
+  if (!Array.isArray(record.conversations)) {
+    throw new BadRequestException('manifest.conversations must be an array');
+  }
+
+  const conversations: SyncConversationManifest[] = record.conversations.map(
+    (raw) => {
+      if (!raw || typeof raw !== 'object') {
+        throw new BadRequestException('manifest conversation entry is invalid');
+      }
+
+      const entry = raw as Record<string, unknown>;
+      const conversationId = sanitizeQueryValue(
+        entry.conversationId,
+        'conversationId',
+      );
+      const groupId = sanitizeOptionalQueryValue(entry.groupId, 'groupId');
+      const updatedAt =
+        typeof entry.updatedAt === 'number' && Number.isFinite(entry.updatedAt)
+          ? Math.floor(entry.updatedAt)
+          : undefined;
+      const messageIds = sanitizeMessageIdList(entry.messageIds);
+
+      return {
+        conversationId,
+        groupId,
+        updatedAt,
+        messageIds,
+      };
+    },
+  );
+
+  return { generatedAt, conversations };
+}
+
+function computeManifestDiff(
+  requester: SyncManifestPayload,
+  peer: SyncManifestPayload,
+) {
+  const requesterByConversation = new Map(
+    requester.conversations.map((c) => [c.conversationId, c]),
+  );
+  const peerByConversation = new Map(
+    peer.conversations.map((c) => [c.conversationId, c]),
+  );
+
+  const allConversationIds = new Set<string>([
+    ...requesterByConversation.keys(),
+    ...peerByConversation.keys(),
+  ]);
+
+  const missingOnRequester: SyncConversationManifest[] = [];
+  const missingOnPeer: SyncConversationManifest[] = [];
+
+  for (const conversationId of allConversationIds) {
+    const requesterConv = requesterByConversation.get(conversationId);
+    const peerConv = peerByConversation.get(conversationId);
+
+    const requesterIds = new Set(requesterConv?.messageIds ?? []);
+    const peerIds = new Set(peerConv?.messageIds ?? []);
+
+    const requesterMissing = [...peerIds].filter((id) => !requesterIds.has(id));
+    if (requesterMissing.length > 0) {
+      missingOnRequester.push({
+        conversationId,
+        groupId: requesterConv?.groupId ?? peerConv?.groupId,
+        updatedAt: requesterConv?.updatedAt ?? peerConv?.updatedAt,
+        messageIds: requesterMissing,
+      });
+    }
+
+    const peerMissing = [...requesterIds].filter((id) => !peerIds.has(id));
+    if (peerMissing.length > 0) {
+      missingOnPeer.push({
+        conversationId,
+        groupId: requesterConv?.groupId ?? peerConv?.groupId,
+        updatedAt: requesterConv?.updatedAt ?? peerConv?.updatedAt,
+        messageIds: peerMissing,
+      });
+    }
+  }
+
+  return { missingOnRequester, missingOnPeer };
+}
+
 @Controller()
 export class AppController {
   constructor(
@@ -205,6 +346,260 @@ export class AppController {
     @InjectModel(PinVerifier.name) private pinVerifierModel: Model<PinVerifier>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
   ) {}
+
+  @Post('mls-api/sync/session/start')
+  async startSyncSession(
+    @Body()
+    body: {
+      userId: string;
+      deviceId: string;
+      offerPublicKey: string;
+      ttlSeconds?: number;
+    },
+  ) {
+    const userId = sanitizeQueryValue(body.userId, 'userId');
+    const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
+    const offerPublicKey = sanitizeQueryValue(
+      body.offerPublicKey,
+      'offerPublicKey',
+    );
+
+    const ttlSeconds = Math.min(parsePositiveInt(body.ttlSeconds, 180), 900);
+    const createdAt = Date.now();
+    const expiresAt = createdAt + ttlSeconds * 1000;
+    const sessionId = uuidv4();
+    const joinToken = crypto.randomBytes(24).toString('base64url');
+
+    const session: SyncSessionState = {
+      sessionId,
+      userId,
+      offerDeviceId: deviceId,
+      offerPublicKey,
+      joinTokenHash: hashJoinToken(joinToken),
+      state: 'waiting_join',
+      createdAt,
+      expiresAt,
+    };
+
+    const baseKey = `sync:session:${sessionId}`;
+    await this.redis.set(baseKey, JSON.stringify(session), 'EX', ttlSeconds);
+
+    return {
+      sessionId,
+      joinToken,
+      expiresAt,
+      qrPayload: {
+        sessionId,
+        joinToken,
+        userId,
+      },
+    };
+  }
+
+  @Post('mls-api/sync/session/join')
+  async joinSyncSession(
+    @Body()
+    body: {
+      sessionId: string;
+      joinToken: string;
+      userId: string;
+      deviceId: string;
+      answerPublicKey: string;
+    },
+  ) {
+    const sessionId = sanitizeQueryValue(body.sessionId, 'sessionId');
+    const joinToken = sanitizeQueryValue(body.joinToken, 'joinToken');
+    const userId = sanitizeQueryValue(body.userId, 'userId');
+    const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
+    const answerPublicKey = sanitizeQueryValue(
+      body.answerPublicKey,
+      'answerPublicKey',
+    );
+
+    const baseKey = `sync:session:${sessionId}`;
+    const raw = await this.redis.get(baseKey);
+    if (!raw)
+      throw new BadRequestException('Sync session not found or expired');
+
+    const session = JSON.parse(raw) as SyncSessionState;
+    if (session.userId !== userId) {
+      throw new BadRequestException('Session user mismatch');
+    }
+    if (session.offerDeviceId === deviceId) {
+      throw new BadRequestException('Cannot join from the same device');
+    }
+    if (hashJoinToken(joinToken) !== session.joinTokenHash) {
+      throw new BadRequestException('Invalid join token');
+    }
+
+    session.answerDeviceId = deviceId;
+    session.answerPublicKey = answerPublicKey;
+    session.state = 'joined';
+
+    const ttlSeconds = Math.max(
+      Math.floor((session.expiresAt - Date.now()) / 1000),
+      30,
+    );
+    await this.redis.set(baseKey, JSON.stringify(session), 'EX', ttlSeconds);
+
+    return {
+      sessionId,
+      state: session.state,
+      offerDeviceId: session.offerDeviceId,
+      offerPublicKey: session.offerPublicKey,
+      expiresAt: session.expiresAt,
+    };
+  }
+
+  @Get('mls-api/sync/session/:sessionId')
+  async getSyncSessionState(
+    @Param('sessionId') sessionIdRaw: string,
+    @Query('userId') userIdRaw: string,
+  ) {
+    const sessionId = sanitizeQueryValue(sessionIdRaw, 'sessionId');
+    const userId = sanitizeQueryValue(userIdRaw, 'userId');
+    const raw = await this.redis.get(`sync:session:${sessionId}`);
+    if (!raw)
+      throw new BadRequestException('Sync session not found or expired');
+
+    const session = JSON.parse(raw) as SyncSessionState;
+    if (session.userId !== userId)
+      throw new BadRequestException('Session user mismatch');
+
+    return {
+      sessionId: session.sessionId,
+      state: session.state,
+      offerDeviceId: session.offerDeviceId,
+      answerDeviceId: session.answerDeviceId,
+      offerPublicKey: session.offerPublicKey,
+      answerPublicKey: session.answerPublicKey,
+      expiresAt: session.expiresAt,
+    };
+  }
+
+  @Post('mls-api/sync/session/manifest')
+  async uploadSyncManifest(
+    @Body()
+    body: {
+      sessionId: string;
+      userId: string;
+      deviceId: string;
+      manifest: SyncManifestPayload;
+    },
+  ) {
+    const sessionId = sanitizeQueryValue(body.sessionId, 'sessionId');
+    const userId = sanitizeQueryValue(body.userId, 'userId');
+    const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
+    const manifest = sanitizeSyncManifest(body.manifest);
+
+    const baseKey = `sync:session:${sessionId}`;
+    const raw = await this.redis.get(baseKey);
+    if (!raw)
+      throw new BadRequestException('Sync session not found or expired');
+    const session = JSON.parse(raw) as SyncSessionState;
+
+    if (session.userId !== userId)
+      throw new BadRequestException('Session user mismatch');
+    if (
+      deviceId !== session.offerDeviceId &&
+      deviceId !== session.answerDeviceId
+    ) {
+      throw new BadRequestException('Device is not part of this session');
+    }
+
+    const ttlSeconds = Math.max(
+      Math.floor((session.expiresAt - Date.now()) / 1000),
+      30,
+    );
+    const manifestKey = `sync:session:${sessionId}:manifest:${deviceId}`;
+    await this.redis.set(
+      manifestKey,
+      JSON.stringify(manifest),
+      'EX',
+      ttlSeconds,
+    );
+
+    return {
+      status: 'stored',
+      conversations: manifest.conversations.length,
+      generatedAt: manifest.generatedAt,
+    };
+  }
+
+  @Post('mls-api/sync/session/diff')
+  async computeSyncDiff(
+    @Body()
+    body: {
+      sessionId: string;
+      userId: string;
+      deviceId: string;
+    },
+  ) {
+    const sessionId = sanitizeQueryValue(body.sessionId, 'sessionId');
+    const userId = sanitizeQueryValue(body.userId, 'userId');
+    const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
+
+    const baseKey = `sync:session:${sessionId}`;
+    const raw = await this.redis.get(baseKey);
+    if (!raw)
+      throw new BadRequestException('Sync session not found or expired');
+    const session = JSON.parse(raw) as SyncSessionState;
+
+    if (session.userId !== userId)
+      throw new BadRequestException('Session user mismatch');
+    if (
+      deviceId !== session.offerDeviceId &&
+      deviceId !== session.answerDeviceId
+    ) {
+      throw new BadRequestException('Device is not part of this session');
+    }
+    if (!session.answerDeviceId) {
+      throw new BadRequestException('Second device has not joined yet');
+    }
+
+    const peerDeviceId =
+      deviceId === session.offerDeviceId
+        ? session.answerDeviceId
+        : session.offerDeviceId;
+    const requesterKey = `sync:session:${sessionId}:manifest:${deviceId}`;
+    const peerKey = `sync:session:${sessionId}:manifest:${peerDeviceId}`;
+
+    const requesterRaw = await this.redis.get(requesterKey);
+    const peerRaw = await this.redis.get(peerKey);
+    if (!requesterRaw || !peerRaw) {
+      throw new BadRequestException(
+        'Both manifests must be uploaded before diff computation',
+      );
+    }
+
+    const requesterManifest = sanitizeSyncManifest(JSON.parse(requesterRaw));
+    const peerManifest = sanitizeSyncManifest(JSON.parse(peerRaw));
+    const { missingOnRequester, missingOnPeer } = computeManifestDiff(
+      requesterManifest,
+      peerManifest,
+    );
+
+    return {
+      sessionId,
+      requesterDeviceId: deviceId,
+      peerDeviceId,
+      generatedAt: Date.now(),
+      missingOnRequester,
+      missingOnPeer,
+      stats: {
+        requesterConversationCount: requesterManifest.conversations.length,
+        peerConversationCount: peerManifest.conversations.length,
+        requesterMissingMessageCount: missingOnRequester.reduce(
+          (acc, conv) => acc + conv.messageIds.length,
+          0,
+        ),
+        peerMissingMessageCount: missingOnPeer.reduce(
+          (acc, conv) => acc + conv.messageIds.length,
+          0,
+        ),
+      },
+    };
+  }
 
   /**
    * Check (and register on first use) the PIN verifier for a user.
