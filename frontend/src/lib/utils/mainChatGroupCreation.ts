@@ -48,7 +48,9 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
   if (!name.trim()) return;
   const groupDisplayName = name.trim();
   const duplicateGroup = Array.from(conversations.values()).find(
-    (c) => (c.conversationType ?? 'group') === 'group' && c.name.toLowerCase() === groupDisplayName.toLowerCase()
+    (c) =>
+      (c.conversationType ?? 'group') === 'group' &&
+      c.name.toLowerCase() === groupDisplayName.toLowerCase()
   );
   if (duplicateGroup) return log(`Groupe "${groupDisplayName}" existe déjà.`);
 

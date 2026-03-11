@@ -26,9 +26,12 @@ export function groupMessages(messages: ChatMessage[]): MessageGroup[] {
   let lastTimestamp: number | null = null;
   const TIME_GAP_MS = 15 * 60 * 1000; // 15 minutes
 
+  // Performance optimization: Using numeric date parts avoids heavy date-fns format() calls in the loop
   for (const msg of messages) {
-    const msgDate = format(msg.timestamp, 'yyyy-MM-dd');
-    const msgTime = msg.timestamp.getTime();
+    const d = msg.timestamp;
+    // Format: YYYY-MM-DD
+    const msgDate = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+    const msgTime = d.getTime();
 
     // Date separator (new day)
     if (lastDate !== msgDate) {

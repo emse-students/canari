@@ -141,16 +141,21 @@ describe('startNewConversation', () => {
     const mls = makeMlsService();
     const convs = makeConversationMap();
     const selectConversation = vi.fn();
-    convs.set('jolan2', {
+    // Simulate an existing conversation stored with a UUID key
+    const existingKey = 'dm_existing_uuid';
+    convs.set(existingKey, {
       contactName: 'jolan2',
       name: 'jolan & jolan2',
       groupId: 'g-existing',
       messages: [],
       isReady: true,
       mlsStateHex: null,
+      conversationType: 'direct',
+      directPeerId: 'jolan2',
     });
+
     await startNewConversation('jolan2', makeDeps(mls, convs, { selectConversation }));
-    expect(selectConversation).toHaveBeenCalledWith('jolan2');
+    expect(selectConversation).toHaveBeenCalledWith(existingKey);
     expect(mls.createRemoteGroup).not.toHaveBeenCalled();
   });
 
@@ -164,10 +169,13 @@ describe('startNewConversation', () => {
     });
     const convs = makeConversationMap();
     await startNewConversation('JOLAN2', makeDeps(mls, convs));
-    // La clé doit être en minuscules
-    expect(convs.has('jolan2')).toBe(true);
-    // Le groupe doit être créé avec le nom normalisé
-    expect(mls.createRemoteGroup).toHaveBeenCalledWith('jolan & jolan2');
+
+    // Check if any conversation was created for 'jolan2'
+    const created = Array.from(convs.values()).find((c) => c.contactName === 'jolan2');
+    expect(created).toBeDefined();
+
+    // Le groupe doit être créé avec le nom normalisé et le format "userId::contact"
+    expect(mls.createRemoteGroup).toHaveBeenCalledWith('jolan::jolan2');
   });
 
   it('crée le groupe et ajoute jolan comme membre', async () => {
@@ -181,7 +189,7 @@ describe('startNewConversation', () => {
     const convs = makeConversationMap();
     await startNewConversation('jolan2', makeDeps(mls, convs));
 
-    expect(mls.createRemoteGroup).toHaveBeenCalledWith('jolan & jolan2');
+    expect(mls.createRemoteGroup).toHaveBeenCalledWith('jolan::jolan2');
     expect(mls.createGroup).toHaveBeenCalledWith('group-test-uuid');
     expect(mls.registerMember).toHaveBeenCalledWith('group-test-uuid', 'jolan', 'dev-jolan-01');
   });
@@ -260,12 +268,12 @@ describe('startNewConversation', () => {
     const saveConversation = vi.fn().mockResolvedValue(undefined);
     await startNewConversation('jolan2', makeDeps(mls, convs, { saveConversation }));
 
-    const convo = convs.get('jolan2');
+    const convo = Array.from(convs.values()).find((c) => c.contactName === 'jolan2');
     expect(convo).toBeDefined();
     expect(convo!.isReady).toBe(true);
     expect(convo!.groupId).toBe('group-test-uuid');
-    // saveConversation doit être appelé pour persistance
-    expect(saveConversation).toHaveBeenCalledWith('jolan2');
+    // saveConversation doit être appelé pour persistance avec la clé UUID
+    expect(saveConversation).toHaveBeenCalledWith(expect.stringMatching(/^dm_/));
   });
 
   it('log [OK] Canal securise avec le nom du contact', async () => {
@@ -294,7 +302,7 @@ describe('startNewConversation', () => {
     await vi.runAllTimersAsync();
     await promise;
 
-    expect(convs.has('jolan2')).toBe(false);
+    expect(convs.size).toBe(0);
     expect(log).toHaveBeenCalledWith(expect.stringContaining('[ERREUR] Appareils introuvables'));
   }, 15_000);
 
@@ -358,13 +366,14 @@ describe('createNewGroup', () => {
     const convs = makeConversationMap();
     const log = vi.fn();
     // La clé dans la map est normalisée en minuscules
-    convs.set('dev team', {
+    convs.set('grp_existing_uuid', {
       contactName: 'dev team',
       name: 'Dev Team',
       groupId: 'g-old',
       messages: [],
       isReady: true,
       mlsStateHex: null,
+      conversationType: 'group',
     });
     await createNewGroup('Dev Team', makeDeps(mls, convs, { log }));
     expect(mls.createRemoteGroup).not.toHaveBeenCalled();
@@ -392,14 +401,17 @@ describe('createNewGroup', () => {
       makeDeps(mls, convs, { selectConversation, saveConversation })
     );
 
-    // La clé dans la map est 'projet alpha' (normalisée), le nom d'affichage reste 'Projet Alpha'
-    const convo = convs.get('projet alpha');
+    // La clé dans la map est 'grp_' + UUID, le nom d'affichage est 'Projet Alpha'
+    const convo = Array.from(convs.values()).find((c) => c.name === 'Projet Alpha');
     expect(convo).toBeDefined();
     expect(convo!.isReady).toBe(true);
     expect(convo!.groupId).toBe('group-test-uuid');
     expect(convo!.name).toBe('Projet Alpha'); // nom d'affichage préservé
-    expect(selectConversation).toHaveBeenCalledWith('projet alpha');
-    expect(saveConversation).toHaveBeenCalledWith('projet alpha');
+
+    // Verif selectConversation appelé avec une clé UUID
+    const createdKey = Array.from(convs.keys())[0];
+    expect(selectConversation).toHaveBeenCalledWith(createdKey);
+    expect(saveConversation).toHaveBeenCalledWith(createdKey);
   });
 
   it('log [OK] Groupe cree', async () => {

@@ -50,6 +50,7 @@
     onDelete?: (messageId: string) => void;
     onEdit?: (messageId: string, newText: string) => void;
     authToken?: string;
+    shouldAnimate?: boolean;
   }
 
   let {
@@ -72,6 +73,7 @@
     onDelete,
     onEdit,
     authToken = '',
+    shouldAnimate = false,
   }: Props = $props();
 
   const RECENT_EMOJIS_KEY = 'canari_recent_emojis';
@@ -306,7 +308,9 @@
       if (!raw) return;
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        recentEmojis = parsed.filter((value): value is string => typeof value === 'string').slice(0, 12);
+        recentEmojis = parsed
+          .filter((value): value is string => typeof value === 'string')
+          .slice(0, 12);
       }
     } catch {
       recentEmojis = [];
@@ -378,17 +382,24 @@
 </script>
 
 {#if effectiveSystem}
-  <div class="px-4 py-1.5 bg-cn-bg rounded-full text-xs text-text-muted text-center max-w-md">
+  <div
+    class="px-4 py-1.5 bg-cn-bg rounded-full text-xs text-text-muted text-center max-w-md {shouldAnimate
+      ? 'animate-rise-in'
+      : ''}"
+  >
     {textContent}
   </div>
 {:else}
   <!-- Outer wrapper: relative for absolute children (emoji picker, info tooltip) -->
   <div
     id={`msg-${messageId}`}
-    use:clickOutside={() => {
-      showEmojiPicker = false;
-      showInfo = false;
-      showMobileActions = false;
+    use:clickOutside={{
+      enabled: showEmojiPicker || showInfo || showMobileActions,
+      callback: () => {
+        showEmojiPicker = false;
+        showInfo = false;
+        showMobileActions = false;
+      },
     }}
     class="relative group"
   >
@@ -405,7 +416,6 @@
 
     <!-- ── Bubble ── -->
     <div
-      in:fly={{ y: 5, duration: 200 }}
       role="button"
       tabindex="0"
       onclick={handleBubbleClick}
@@ -426,7 +436,9 @@
       }}
       class="px-4 py-2.5 cursor-pointer min-w-0 {getBubbleShapeClass(groupPosition)} {isOwn
         ? 'bg-cn-yellow text-[#1a1303]'
-        : 'bg-[var(--cn-surface)] text-cn-dark border border-cn-border'}"
+        : 'bg-[var(--cn-surface)] text-cn-dark border border-cn-border'} {shouldAnimate
+        ? 'animate-rise-in'
+        : ''}"
     >
       {#if effectiveReplyTo}
         <button
