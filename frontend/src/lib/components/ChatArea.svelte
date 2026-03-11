@@ -35,6 +35,8 @@
     onCancelReply?: () => void;
     authToken?: string;
     onFileSelected?: (file: File) => void;
+    pendingMediaFile?: File | null;
+    onCancelMedia?: () => void;
     isUploading?: boolean;
   }
 
@@ -62,6 +64,8 @@
     onCancelReply,
     authToken = '',
     onFileSelected,
+    pendingMediaFile = null,
+    onCancelMedia,
     isUploading = false,
   }: Props = $props();
 
@@ -98,19 +102,15 @@
     />
 
     <!-- Messages -->
-    <div bind:this={chatContainer} class="flex-1 overflow-y-auto px-6 py-6 flex flex-col gap-2">
+    <div bind:this={chatContainer} class="flex-1 overflow-y-auto px-6 py-6 flex flex-col gap-3">
       {#each messageGroups as group, index (group.type === 'message' ? group.message.id : `${group.type}-${index}`)}
         {#if group.type === 'date_separator'}
-          <div class="flex justify-center my-3">
-            <div class="px-3 py-1 bg-gray-100 rounded-full text-xs text-gray-500 font-medium">
-              {group.date}
-            </div>
+          <div class="flex items-center justify-center my-4">
+            <span class="text-xs font-medium text-gray-400 bg-cn-bg px-2">{group.date}</span>
           </div>
         {:else if group.type === 'time_separator'}
-          <div class="flex justify-center my-2">
-            <div class="px-2 py-0.5 text-[0.65rem] text-gray-400">
-              {group.time}
-            </div>
+          <div class="flex justify-center my-2 opacity-0 hover:opacity-100 transition-opacity">
+            <span class="text-[0.65rem] text-gray-300">{group.time}</span>
           </div>
         {:else if group.type === 'message'}
           {@const msg = group.message}
@@ -141,8 +141,7 @@
             : continuesToNext
               ? 'start'
               : 'single'}
-          {@const showSender =
-            !msg.isOwn && groupPosition !== 'middle' && groupPosition !== 'end'}
+          {@const showSender = !msg.isOwn && groupPosition !== 'middle' && groupPosition !== 'end'}
 
           {#if msg.isSystem}
             <div class="flex justify-center my-2">
@@ -220,6 +219,8 @@
       {replyingTo}
       {onCancelReply}
       {onFileSelected}
+      {pendingMediaFile}
+      {onCancelMedia}
       {isUploading}
     />
   {:else}

@@ -125,6 +125,7 @@ message MediaMsg {
   string    mime_type = 5;
   uint32    size      = 6; // plaintext file size in bytes
   string    file_name = 7; // optional display name
+  string    caption   = 8; // optional text caption shown alongside the media
 }
 
 // ── System / group-management events ────────────────────────────────────

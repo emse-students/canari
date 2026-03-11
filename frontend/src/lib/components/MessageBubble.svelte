@@ -4,8 +4,9 @@
   import { Reply, Smile, FileText, Download, Pencil, Trash2, CheckCheck } from 'lucide-svelte';
   import { clickOutside } from '$lib/actions/clickOutside';
   import { onDestroy } from 'svelte';
-  import { parseMediaMessage, MediaService } from '$lib/media';
+  import { MediaService } from '$lib/media';
   import type { MediaRef } from '$lib/media';
+  import { parseEnvelope } from '$lib/envelope';
   import 'emoji-picker-element';
   import Modal from './Modal.svelte';
 
@@ -63,7 +64,24 @@
   let showEditModal = $state(false);
   let showDeleteModal = $state(false);
   let editText = $state('');
-  let mediaRef = $derived(parseMediaMessage(content));
+  let envelope = $derived(parseEnvelope(content));
+  let mediaRef = $derived(envelope.kind === 'media' ? envelope.media : null);
+  // replyTo comes from the envelope for new messages; fall back to the prop for
+  // legacy messages delivered before the envelope format was introduced.
+  let resolvedReplyTo = $derived(
+    (envelope.kind === 'text' || envelope.kind === 'media') && envelope.replyTo
+      ? envelope.replyTo
+      : replyTo
+  );
+  let displayText = $derived(
+    envelope.kind === 'text'
+      ? envelope.text
+      : envelope.kind === 'system'
+        ? envelope.text
+        : envelope.kind === 'media' && envelope.caption
+          ? envelope.caption
+          : null
+  );
   let blobUrl = $state<string | null>(null);
   let loadError = $state(false);
 
@@ -170,23 +188,25 @@
   }
 
   function getBubbleShapeClass(position: 'single' | 'start' | 'middle' | 'end') {
-    if (position === 'single') return 'rounded-[1.25rem]';
+    const base = 'rounded-2xl';
+
+    if (position === 'single') return base;
 
     if (isOwn) {
-      if (position === 'start') return 'rounded-[1.25rem] rounded-br-md';
-      if (position === 'middle') return 'rounded-[1.25rem] rounded-tr-md rounded-br-md';
-      return 'rounded-[1.25rem] rounded-tr-md';
+      if (position === 'start') return `${base} rounded-br-sm`;
+      if (position === 'middle') return `${base} rounded-tr-sm rounded-br-sm`;
+      return `${base} rounded-tr-sm`;
     }
 
-    if (position === 'start') return 'rounded-[1.25rem] rounded-bl-md';
-    if (position === 'middle') return 'rounded-[1.25rem] rounded-tl-md rounded-bl-md';
-    return 'rounded-[1.25rem] rounded-tl-md';
+    if (position === 'start') return `${base} rounded-bl-sm`;
+    if (position === 'middle') return `${base} rounded-tl-sm rounded-bl-sm`;
+    return `${base} rounded-tl-sm`;
   }
 </script>
 
 {#if isSystem}
   <div class="px-4 py-1.5 bg-gray-100 rounded-full text-xs text-gray-600 text-center max-w-md">
-    {content}
+    {envelope.kind === 'system' ? envelope.text : content}
   </div>
 {:else}
   <!-- Outer wrapper: relative for absolute children (emoji picker, info tooltip) -->
@@ -209,133 +229,133 @@
           toggleInfo(e as unknown as MouseEvent);
         }
       }}
-      class="px-4 py-2.5 cursor-pointer min-w-0 {getBubbleShapeClass(groupPosition)} {isOwn
-        ? 'bg-cn-yellow text-cn-dark'
-        : 'bg-white text-cn-dark border border-cn-border'}"
+      class="relative px-4 py-3 min-w-[60px] cursor-pointer shadow-sm transition-shadow hover:shadow-md {getBubbleShapeClass(
+        groupPosition
+      )} {isOwn ? 'bg-cn-yellow text-cn-dark' : 'bg-white text-cn-dark'}"
     >
-        {#if replyTo}
-          <div class="mb-2 pb-2 border-l-4 border-gray-400 pl-3 text-xs opacity-70">
-            <div class="font-semibold">{replyTo.senderId}</div>
-            <div class="truncate">{replyTo.content}</div>
-          </div>
-        {/if}
+      {#if resolvedReplyTo}
+        <div class="mb-2 p-2 rounded-lg bg-black/5 text-xs">
+          <div class="font-semibold opacity-75">{resolvedReplyTo.senderId}</div>
+          <div class="truncate opacity-60">{resolvedReplyTo.content}</div>
+        </div>
+      {/if}
 
-        {#if mediaRef}
-          <div class="overflow-hidden rounded-xl">
-            {#if mediaRef.type === 'image'}
+      {#if mediaRef}
+        <div class="overflow-hidden rounded-xl">
+          {#if mediaRef.type === 'image'}
+            {#if blobUrl}
+              <button
+                type="button"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  openBlob(blobUrl!);
+                }}
+                aria-label="Ouvrir l'image en plein écran"
+                class="hover:opacity-90 transition-opacity"
+              >
+                <img
+                  src={blobUrl}
+                  alt={mediaRef.fileName ?? 'Image'}
+                  class="rounded-xl max-h-80 object-contain cursor-pointer"
+                />
+              </button>
+            {:else if loadError}
+              <div
+                class="w-48 h-32 rounded-xl bg-gray-100 flex items-center justify-center text-xs text-gray-400 px-3 text-center"
+              >
+                Impossible de charger l'image
+              </div>
+            {:else}
+              <div class="w-48 h-32 rounded-xl bg-gray-100 animate-pulse"></div>
+            {/if}
+          {:else if mediaRef.type === 'video'}
+            {#if blobUrl}
+              <!-- svelte-ignore a11y_media_has_caption -->
+              <video
+                src={blobUrl}
+                controls
+                onclick={(e) => e.stopPropagation()}
+                class="rounded-xl max-h-80 max-w-md"
+              ></video>
+            {:else if loadError}
+              <div
+                class="w-48 h-24 rounded-xl bg-gray-100 flex items-center justify-center text-xs text-gray-400"
+              >
+                Impossible de charger la vidéo
+              </div>
+            {:else}
+              <div class="w-48 h-24 rounded-xl bg-gray-100 animate-pulse"></div>
+            {/if}
+          {:else if mediaRef.type === 'audio'}
+            {#if blobUrl}
+              <div class="min-w-[280px] max-w-sm">
+                <audio
+                  src={blobUrl}
+                  controls
+                  onclick={(e) => e.stopPropagation()}
+                  class="w-full h-10"
+                ></audio>
+                {#if mediaRef.fileName}
+                  <p class="text-xs opacity-60 mt-1 truncate">{mediaRef.fileName}</p>
+                {/if}
+              </div>
+            {:else if loadError}
+              <div
+                class="w-48 h-12 rounded-xl bg-gray-100 flex items-center justify-center text-xs text-gray-400"
+              >
+                Impossible de charger l'audio
+              </div>
+            {:else}
+              <div class="w-48 h-12 rounded-xl bg-gray-100 animate-pulse"></div>
+            {/if}
+          {:else}
+            <div
+              class="flex items-center gap-3 px-4 py-3 min-w-[200px] bg-white/40 rounded-xl border border-white/50"
+            >
+              <FileText size={32} class="flex-shrink-0 opacity-60" />
+              <div class="flex-1 min-w-0">
+                <p class="text-sm font-medium truncate">{mediaRef.fileName ?? 'Fichier'}</p>
+                <p class="text-xs opacity-60">{formatFileSize(mediaRef.size)}</p>
+              </div>
               {#if blobUrl}
                 <button
                   type="button"
                   onclick={(e) => {
                     e.stopPropagation();
-                    openBlob(blobUrl!);
+                    downloadBlob(blobUrl!, mediaRef!.fileName ?? 'fichier');
                   }}
-                  aria-label="Ouvrir l'image en plein écran"
-                  class="hover:opacity-90 transition-opacity"
+                  aria-label="Télécharger"
+                  class="p-2 rounded-lg hover:bg-black/10 transition-colors"
                 >
-                  <img
-                    src={blobUrl}
-                    alt={mediaRef.fileName ?? 'Image'}
-                    class="rounded-xl max-h-80 object-contain cursor-pointer"
-                  />
+                  <Download size={20} class="opacity-70 hover:opacity-100" />
                 </button>
-              {:else if loadError}
-                <div
-                  class="w-48 h-32 rounded-xl bg-gray-100 flex items-center justify-center text-xs text-gray-400 px-3 text-center"
-                >
-                  Impossible de charger l'image
-                </div>
-              {:else}
-                <div class="w-48 h-32 rounded-xl bg-gray-100 animate-pulse"></div>
               {/if}
-            {:else if mediaRef.type === 'video'}
-              {#if blobUrl}
-                <!-- svelte-ignore a11y_media_has_caption -->
-                <video
-                  src={blobUrl}
-                  controls
-                  onclick={(e) => e.stopPropagation()}
-                  class="rounded-xl max-h-80 max-w-md"
-                ></video>
-              {:else if loadError}
-                <div
-                  class="w-48 h-24 rounded-xl bg-gray-100 flex items-center justify-center text-xs text-gray-400"
-                >
-                  Impossible de charger la vidéo
-                </div>
-              {:else}
-                <div class="w-48 h-24 rounded-xl bg-gray-100 animate-pulse"></div>
-              {/if}
-            {:else if mediaRef.type === 'audio'}
-              {#if blobUrl}
-                <div class="min-w-[280px] max-w-sm">
-                  <audio
-                    src={blobUrl}
-                    controls
-                    onclick={(e) => e.stopPropagation()}
-                    class="w-full h-10"
-                  ></audio>
-                  {#if mediaRef.fileName}
-                    <p class="text-xs opacity-60 mt-1 truncate">{mediaRef.fileName}</p>
-                  {/if}
-                </div>
-              {:else if loadError}
-                <div
-                  class="w-48 h-12 rounded-xl bg-gray-100 flex items-center justify-center text-xs text-gray-400"
-                >
-                  Impossible de charger l'audio
-                </div>
-              {:else}
-                <div class="w-48 h-12 rounded-xl bg-gray-100 animate-pulse"></div>
-              {/if}
-            {:else}
-              <div
-                class="flex items-center gap-3 px-4 py-3 min-w-[200px] bg-white/40 rounded-xl border border-white/50"
-              >
-                <FileText size={32} class="flex-shrink-0 opacity-60" />
-                <div class="flex-1 min-w-0">
-                  <p class="text-sm font-medium truncate">{mediaRef.fileName ?? 'Fichier'}</p>
-                  <p class="text-xs opacity-60">{formatFileSize(mediaRef.size)}</p>
-                </div>
-                {#if blobUrl}
-                  <button
-                    type="button"
-                    onclick={(e) => {
-                      e.stopPropagation();
-                      downloadBlob(blobUrl!, mediaRef!.fileName ?? 'fichier');
-                    }}
-                    aria-label="Télécharger"
-                    class="p-2 rounded-lg hover:bg-black/10 transition-colors"
-                  >
-                    <Download size={20} class="opacity-70 hover:opacity-100" />
-                  </button>
-                {/if}
-              </div>
-            {/if}
-          </div>
-        {:else}
-          <p
-            class="text-base leading-relaxed break-words whitespace-pre-wrap {isDeleted
-              ? 'italic text-gray-500'
-              : ''}"
-          >
-            {content}
-          </p>
-        {/if}
+            </div>
+          {/if}
+        </div>
+      {:else}
+        <p
+          class="text-base leading-relaxed break-words whitespace-pre-wrap {isDeleted
+            ? 'italic text-gray-500'
+            : ''}"
+        >
+          {displayText ?? content}
+        </p>
+      {/if}
 
-        <!-- Micro-footer: only (modifié) + read checkmark, no time -->
-        {#if isEdited || (isOwn && readBy.length > 0)}
-          <div class="flex items-center justify-end gap-1 mt-1">
-            {#if isEdited}
-              <span class="italic text-[0.6rem] opacity-60">(modifié)</span>
-            {/if}
-            {#if isOwn && readBy.length > 0}
-              <span class="text-blue-500" title="Lu par {readBy.join(', ')}">
-                <CheckCheck size={14} strokeWidth={2.25} />
-              </span>
-            {/if}
-          </div>
-        {/if}
+      <!-- Micro-footer: only (modifié) + read checkmark, no time -->
+      {#if isEdited || (isOwn && readBy.length > 0)}
+        <div class="flex items-center justify-end gap-1 mt-1">
+          {#if isEdited}
+            <span class="italic text-[0.6rem] opacity-60">(modifié)</span>
+          {/if}
+          {#if isOwn && readBy.length > 0}
+            <span class="text-blue-500" title="Lu par {readBy.join(', ')}">
+              <CheckCheck size={14} strokeWidth={2.25} />
+            </span>
+          {/if}
+        </div>
+      {/if}
     </div>
 
     <!-- ── Action bar (visible on hover) ── -->
@@ -371,7 +391,7 @@
         <button
           onclick={(e) => {
             e.stopPropagation();
-            editText = content;
+            editText = displayText ?? content;
             showEditModal = true;
           }}
           class="p-1.5 rounded-full hover:bg-gray-200 transition-colors text-gray-400 hover:text-gray-700"

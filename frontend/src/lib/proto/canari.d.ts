@@ -1227,6 +1227,9 @@ export namespace canari {
 
         /** MediaMsg fileName */
         fileName?: (string|null);
+
+        /** MediaMsg caption */
+        caption?: (string|null);
     }
 
     /** Represents a MediaMsg. */
@@ -1258,6 +1261,9 @@ export namespace canari {
 
         /** MediaMsg fileName. */
         public fileName: string;
+
+        /** MediaMsg caption. */
+        public caption: string;
 
         /**
          * Creates a new MediaMsg instance using the specified properties.

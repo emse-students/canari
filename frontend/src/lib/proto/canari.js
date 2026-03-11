@@ -2966,6 +2966,7 @@ export const canari = $root.canari = (() => {
          * @property {string|null} [mimeType] MediaMsg mimeType
          * @property {number|null} [size] MediaMsg size
          * @property {string|null} [fileName] MediaMsg fileName
+         * @property {string|null} [caption] MediaMsg caption
          */
 
         /**
@@ -3040,6 +3041,14 @@ export const canari = $root.canari = (() => {
         MediaMsg.prototype.fileName = "";
 
         /**
+         * MediaMsg caption.
+         * @member {string} caption
+         * @memberof canari.MediaMsg
+         * @instance
+         */
+        MediaMsg.prototype.caption = "";
+
+        /**
          * Creates a new MediaMsg instance using the specified properties.
          * @function create
          * @memberof canari.MediaMsg
@@ -3077,6 +3086,8 @@ export const canari = $root.canari = (() => {
                 writer.uint32(/* id 6, wireType 0 =*/48).uint32(message.size);
             if (message.fileName != null && Object.hasOwnProperty.call(message, "fileName"))
                 writer.uint32(/* id 7, wireType 2 =*/58).string(message.fileName);
+            if (message.caption != null && Object.hasOwnProperty.call(message, "caption"))
+                writer.uint32(/* id 8, wireType 2 =*/66).string(message.caption);
             return writer;
         };
 
@@ -3139,6 +3150,10 @@ export const canari = $root.canari = (() => {
                     }
                 case 7: {
                         message.fileName = reader.string();
+                        break;
+                    }
+                case 8: {
+                        message.caption = reader.string();
                         break;
                     }
                 default:
@@ -3204,6 +3219,9 @@ export const canari = $root.canari = (() => {
             if (message.fileName != null && message.hasOwnProperty("fileName"))
                 if (!$util.isString(message.fileName))
                     return "fileName: string expected";
+            if (message.caption != null && message.hasOwnProperty("caption"))
+                if (!$util.isString(message.caption))
+                    return "caption: string expected";
             return null;
         };
 
@@ -3261,6 +3279,8 @@ export const canari = $root.canari = (() => {
                 message.size = object.size >>> 0;
             if (object.fileName != null)
                 message.fileName = String(object.fileName);
+            if (object.caption != null)
+                message.caption = String(object.caption);
             return message;
         };
 
@@ -3297,6 +3317,7 @@ export const canari = $root.canari = (() => {
                 object.mimeType = "";
                 object.size = 0;
                 object.fileName = "";
+                object.caption = "";
             }
             if (message.kind != null && message.hasOwnProperty("kind"))
                 object.kind = options.enums === String ? $root.canari.MediaKind[message.kind] === undefined ? message.kind : $root.canari.MediaKind[message.kind] : message.kind;
@@ -3312,6 +3333,8 @@ export const canari = $root.canari = (() => {
                 object.size = message.size;
             if (message.fileName != null && message.hasOwnProperty("fileName"))
                 object.fileName = message.fileName;
+            if (message.caption != null && message.hasOwnProperty("caption"))
+                object.caption = message.caption;
             return object;
         };
 

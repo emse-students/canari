@@ -4,7 +4,8 @@ import type { ChatMessage, Conversation } from '$lib/types';
 import { toHex } from '$lib/utils/hex';
 import type { SvelteMap } from 'svelte/reactivity';
 import type { MessageReaction } from '$lib/types';
-import { decodeAppMessage } from '$lib/proto/codec';
+import { decodeAppMessage, MediaKind } from '$lib/proto/codec';
+import { serializeEnvelope, mkTextEnvelope, mkMediaEnvelope } from '$lib/envelope';
 
 interface MessageHandlerDeps {
   mlsService: IMlsService;
@@ -102,7 +103,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             if (msg?.text) {
               await addMessageToChat(
                 senderNorm,
-                msg.text.content ?? '',
+                serializeEnvelope(mkTextEnvelope(msg.text.content ?? '')),
                 convoKey,
                 undefined,
                 false,
@@ -112,17 +113,18 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             }
 
             if (msg?.reply) {
+              const replyTo = msg.reply.replyTo
+                ? {
+                    id: msg.reply.replyTo.id ?? '',
+                    senderId: msg.reply.replyTo.senderId ?? '',
+                    content: msg.reply.replyTo.preview ?? '',
+                  }
+                : undefined;
               await addMessageToChat(
                 senderNorm,
-                msg.reply.content ?? '',
+                serializeEnvelope(mkTextEnvelope(msg.reply.content ?? '', replyTo)),
                 convoKey,
-                msg.reply.replyTo
-                  ? {
-                      id: msg.reply.replyTo.id ?? '',
-                      senderId: msg.reply.replyTo.senderId ?? '',
-                      content: msg.reply.replyTo.preview ?? '',
-                    }
-                  : undefined,
+                undefined,
                 false,
                 msg.messageId || undefined
               );
@@ -139,17 +141,38 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             }
 
             if (msg?.media) {
-              // Media: store the serialised proto bytes as content (renderer handles it)
-              const mediaJson = JSON.stringify({
-                type: msg.media.kind,
-                mediaId: msg.media.mediaId,
-                mimeType: msg.media.mimeType,
-                size: msg.media.size,
-                fileName: msg.media.fileName,
-              });
+              const kindToType: Record<number, string> = {
+                [MediaKind.MEDIA_IMAGE]: 'image',
+                [MediaKind.MEDIA_VIDEO]: 'video',
+                [MediaKind.MEDIA_AUDIO]: 'audio',
+                [MediaKind.MEDIA_FILE]: 'file',
+              };
+              const keyHex = Array.from(msg.media.key ?? [])
+                .map((b) => b.toString(16).padStart(2, '0'))
+                .join('');
+              const ivHex = Array.from(msg.media.iv ?? [])
+                .map((b) => b.toString(16).padStart(2, '0'))
+                .join('');
               await addMessageToChat(
                 senderNorm,
-                mediaJson,
+                serializeEnvelope(
+                  mkMediaEnvelope(
+                    {
+                      type: (kindToType[msg.media.kind ?? 0] ?? 'file') as
+                        | 'image'
+                        | 'video'
+                        | 'audio'
+                        | 'file',
+                      mediaId: msg.media.mediaId ?? '',
+                      key: keyHex,
+                      iv: ivHex,
+                      mimeType: msg.media.mimeType ?? '',
+                      size: msg.media.size ?? 0,
+                      fileName: msg.media.fileName ?? undefined,
+                    },
+                    msg.media.caption || undefined
+                  )
+                ),
                 convoKey,
                 undefined,
                 false,
@@ -257,7 +280,11 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
 
             // Fallback: treat raw bytes as legacy plain text
             const legacyText = new TextDecoder().decode(decryptedBytes);
-            await addMessageToChat(senderNorm, legacyText, convoKey);
+            await addMessageToChat(
+              senderNorm,
+              serializeEnvelope(mkTextEnvelope(legacyText)),
+              convoKey
+            );
           }
           return true;
         } catch (_e) {

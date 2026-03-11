@@ -2,6 +2,7 @@ import type { IMlsService } from '$lib/mlsService';
 import type { ChatMessage, Conversation } from '$lib/types';
 import { toHex } from '$lib/utils/hex';
 import { encodeAppMessage, mkText, mkReply, mkReaction, mkSystem } from '$lib/proto/codec';
+import { serializeEnvelope, mkTextEnvelope, parseEnvelope } from '$lib/envelope';
 
 interface SendMessageDeps {
   mlsService: IMlsService;
@@ -42,18 +43,26 @@ export async function sendChatMessage(
     const messageId = crypto.randomUUID();
 
     if (replyingTo) {
+      // Extract the display text from the envelope for the reply preview.
+      const replyEnv = parseEnvelope(replyingTo.content);
+      const replyPreview =
+        replyEnv.kind === 'text'
+          ? replyEnv.text.slice(0, 100)
+          : replyEnv.kind === 'media'
+            ? (replyEnv.caption?.slice(0, 100) ?? '[media]')
+            : replyEnv.text.slice(0, 100);
       payload = encodeAppMessage({
         ...mkReply(text, {
           id: replyingTo.id,
           senderId: replyingTo.senderId,
-          preview: replyingTo.content.slice(0, 100),
+          preview: replyPreview,
         }),
         messageId,
       });
       replyToData = {
         id: replyingTo.id,
         senderId: replyingTo.senderId,
-        content: replyingTo.content.slice(0, 100),
+        content: replyPreview,
       };
     } else {
       payload = encodeAppMessage({ ...mkText(text), messageId });
@@ -62,7 +71,14 @@ export async function sendChatMessage(
     await mlsService.sendMessage(conversation.groupId, payload);
     const stateBytes = await mlsService.saveState(pin);
     localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
-    await addMessageToChat(userId, text, contactName, replyToData, false, messageId);
+    await addMessageToChat(
+      userId,
+      serializeEnvelope(mkTextEnvelope(text, replyToData)),
+      contactName,
+      undefined,
+      false,
+      messageId
+    );
 
     return { success: true };
   } catch (_e: unknown) {

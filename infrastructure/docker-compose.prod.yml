@@ -201,7 +201,7 @@ services:
     networks:
       - canari-network
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -223,7 +223,7 @@ services:
       PORT: "3002"
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
       MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio}
-      MINIO_PORT: "${MINIO_PORT:-9100}"
+      MINIO_PORT: "${MINIO_PORT:-9000}"
       MINIO_USE_SSL: "${MINIO_USE_SSL:-false}"
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-${MINIO_ROOT_USER:-minioadmin}}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-${MINIO_ROOT_PASSWORD:-minioadmin}}

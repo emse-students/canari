@@ -147,8 +147,6 @@ Services disponibles après `make run-services` :
 | Chat Gateway  | ws://localhost:3000/ws |
 | Chat Delivery | http://localhost:3001  |
 | Media Service | http://localhost:3002  |
-| MinIO API     | http://localhost:9100  |
-| MinIO Console | http://localhost:9001  |
 | PostgreSQL    | localhost:5432         |
 | MongoDB       | localhost:27017        |
 | Redis         | localhost:6379         |

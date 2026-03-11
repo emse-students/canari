@@ -42,6 +42,7 @@
   import { migrateFromLocalStorage } from '$lib/utils/migration';
   import { MediaService } from '$lib/media';
   import { encodeAppMessage, mkMedia, MediaKind } from '$lib/proto/codec';
+  import { serializeEnvelope, mkMediaEnvelope, mkSystemEnvelope } from '$lib/envelope';
   import LoginForm from './LoginForm.svelte';
   import Navbar from './Navbar.svelte';
   import Sidebar from './Sidebar.svelte';
@@ -479,11 +480,11 @@
       messages: [...convo.messages, newMsg],
     });
 
-    // Persist message to DB (encrypted with PIN)
-    // Store as JSON to preserve replyTo metadata (skip system messages)
+    // Persist message to DB (encrypted with PIN).
+    // content is already a serialized MessageEnvelope so store it directly.
     if (storage && !isSystem) {
       try {
-        const storageContent = JSON.stringify({ content, replyTo });
+        const storageContent = content;
         await storage.saveMessage(
           {
             id: newMsg.id,
@@ -506,7 +507,13 @@
   }
 
   async function addSystemMessage(content: string, contactName: string) {
-    await addMessageToChat('system', content, contactName, undefined, true);
+    await addMessageToChat(
+      'system',
+      serializeEnvelope(mkSystemEnvelope(content)),
+      contactName,
+      undefined,
+      true
+    );
   }
 
   async function handleSendChat() {
@@ -526,6 +533,9 @@
     const mlsService = ensureMls();
 
     if (fileToSend) {
+      // messageText is treated as the optional caption for the media.
+      const caption = text;
+      messageText = '';
       pendingMediaFile = null;
       isUploadingMedia = true;
       try {
@@ -560,23 +570,26 @@
             mimeType: mediaRef.mimeType,
             size: mediaRef.size,
             fileName: mediaRef.fileName ?? '',
+            caption: caption || '',
           }),
           messageId,
         });
         await mlsService.sendMessage(convo.groupId, protoBytes);
         const stateBytes = await mlsService.saveState(pin);
         localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
-        // Store as JSON locally for the media renderer
-        const payload = JSON.stringify({ ...mediaRef, id: messageId });
+        const payload = serializeEnvelope(mkMediaEnvelope(mediaRef, caption || undefined));
         await addMessageToChat(userId, payload, selectedContact, undefined, false, messageId);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         pendingMediaFile = fileToSend;
+        messageText = caption; // restore caption so user can retry
         sendError = `Échec de l'envoi du média : ${errorMessage}`;
         log(`Erreur envoi média: ${errorMessage}`);
       } finally {
         isUploadingMedia = false;
       }
+      // Media consumed all of messageText as caption — nothing left to send as text.
+      return;
     }
 
     if (!text) return;
@@ -624,7 +637,7 @@
     }
 
     pendingMediaFile = processedFile;
-    void handleSendChat();
+    // Don't auto-send: let the user optionally type a caption first.
   }
 
   async function handleAddReaction(messageId: string, emoji: string) {
@@ -1052,6 +1065,10 @@
         onCancelReply={cancelReply}
         {authToken}
         onFileSelected={handleFileSelected}
+        {pendingMediaFile}
+        onCancelMedia={() => {
+          pendingMediaFile = null;
+        }}
         isUploading={isUploadingMedia}
       />
 

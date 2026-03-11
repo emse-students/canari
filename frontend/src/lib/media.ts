@@ -165,7 +165,10 @@ export function parseMediaMessage(content: string): MediaRef | null {
   if (!content.startsWith('{')) return null;
   try {
     const obj = JSON.parse(content);
+    // __media sentinel is required to prevent crafted JSON text from being
+    // misinterpreted as a media attachment.
     if (
+      obj.__media === true &&
       (obj.type === 'image' ||
         obj.type === 'video' ||
         obj.type === 'audio' ||

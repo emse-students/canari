@@ -2,21 +2,26 @@ import { toHex } from '$lib/utils/hex';
 import type { StoredMessage } from '$lib/db';
 import type { ChatMessage } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
-import { decodeAppMessage } from '$lib/proto/codec';
+import { decodeAppMessage, MediaKind } from '$lib/proto/codec';
+import { serializeEnvelope, mkTextEnvelope, mkMediaEnvelope } from '$lib/envelope';
 
 export function mapStoredMessagesToChatMessages(storedMessages: StoredMessage[], userId: string) {
   return storedMessages.map((m) => {
+    // Content is a serialized MessageEnvelope (new) or legacy JSON/plain-text.
+    // parseEnvelope handles all three cases transparently.
     let content = m.content;
     let replyTo: ChatMessage['replyTo'] = undefined;
 
     try {
       const parsed = JSON.parse(m.content);
-      if (parsed.content) {
-        content = parsed.content;
+      // Legacy format: { content: string, replyTo?: ... }
+      if (parsed.content && !parsed.kind) {
+        content = serializeEnvelope(mkTextEnvelope(parsed.content, parsed.replyTo));
         replyTo = parsed.replyTo;
       }
+      // New envelope format — content stays as-is, replyTo is inside the envelope.
     } catch {
-      // Legacy plain text format
+      // Legacy plain text — leave content as-is; parseEnvelope will wrap it.
     }
 
     return {
@@ -70,7 +75,7 @@ export async function replayConversationHistory(params: {
           if (parsed.text.content) {
             await addMessageToChat(
               msg.sender_id,
-              parsed.text.content ?? '',
+              serializeEnvelope(mkTextEnvelope(parsed.text.content ?? '')),
               contactName,
               undefined,
               false,
@@ -81,17 +86,18 @@ export async function replayConversationHistory(params: {
             continue;
           }
         } else if (parsed?.reply) {
+          const replyTo = parsed.reply.replyTo
+            ? {
+                id: parsed.reply.replyTo.id ?? '',
+                senderId: parsed.reply.replyTo.senderId ?? '',
+                content: parsed.reply.replyTo.preview ?? '',
+              }
+            : undefined;
           await addMessageToChat(
             msg.sender_id,
-            parsed.reply.content ?? '',
+            serializeEnvelope(mkTextEnvelope(parsed.reply.content ?? '', replyTo)),
             contactName,
-            parsed.reply.replyTo
-              ? {
-                  id: parsed.reply.replyTo.id ?? '',
-                  senderId: parsed.reply.replyTo.senderId ?? '',
-                  content: parsed.reply.replyTo.preview ?? '',
-                }
-              : undefined,
+            undefined,
             false,
             parsed.messageId || undefined
           );
@@ -99,16 +105,38 @@ export async function replayConversationHistory(params: {
           mlsUpdated = true;
           continue;
         } else if (parsed?.media) {
-          const mediaJson = JSON.stringify({
-            type: parsed.media.kind,
-            mediaId: parsed.media.mediaId,
-            mimeType: parsed.media.mimeType,
-            size: parsed.media.size,
-            fileName: parsed.media.fileName,
-          });
+          const kindToType: Record<number, string> = {
+            [MediaKind.MEDIA_IMAGE]: 'image',
+            [MediaKind.MEDIA_VIDEO]: 'video',
+            [MediaKind.MEDIA_AUDIO]: 'audio',
+            [MediaKind.MEDIA_FILE]: 'file',
+          };
+          const keyHex = Array.from(parsed.media.key ?? [])
+            .map((b: number) => b.toString(16).padStart(2, '0'))
+            .join('');
+          const ivHex = Array.from(parsed.media.iv ?? [])
+            .map((b: number) => b.toString(16).padStart(2, '0'))
+            .join('');
           await addMessageToChat(
             msg.sender_id,
-            mediaJson,
+            serializeEnvelope(
+              mkMediaEnvelope(
+                {
+                  type: (kindToType[parsed.media.kind ?? 0] ?? 'file') as
+                    | 'image'
+                    | 'video'
+                    | 'audio'
+                    | 'file',
+                  mediaId: parsed.media.mediaId ?? '',
+                  key: keyHex,
+                  iv: ivHex,
+                  mimeType: parsed.media.mimeType ?? '',
+                  size: parsed.media.size ?? 0,
+                  fileName: parsed.media.fileName ?? undefined,
+                },
+                parsed.media.caption || undefined
+              )
+            ),
             contactName,
             undefined,
             false,
@@ -124,7 +152,11 @@ export async function replayConversationHistory(params: {
         } else {
           // Legacy plain text or unknown format
           const legacyText = new TextDecoder().decode(decryptedBytes);
-          await addMessageToChat(msg.sender_id, legacyText, contactName);
+          await addMessageToChat(
+            msg.sender_id,
+            serializeEnvelope(mkTextEnvelope(legacyText)),
+            contactName
+          );
           addedMsg++;
           mlsUpdated = true;
           continue;
