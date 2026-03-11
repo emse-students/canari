@@ -23,18 +23,28 @@ import {
   UseInterceptors,
   UploadedFile,
   NotFoundException,
+  GoneException,
   PayloadTooLargeException,
   UnauthorizedException,
   Logger,
-  Body,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Request, Response } from 'express';
 import * as crypto from 'crypto';
 import { MediaService } from './media.service';
 
+const POLICY_MAX_MEDIA_MB = 100;
+const CONFIGURED_MAX_MB = parseInt(process.env.MEDIA_MAX_SIZE_MB ?? '100', 10);
 const MAX_BYTES =
-  parseInt(process.env.MEDIA_MAX_SIZE_MB ?? '20', 10) * 1024 * 1024;
+  Math.min(
+    Number.isFinite(CONFIGURED_MAX_MB) && CONFIGURED_MAX_MB > 0
+      ? CONFIGURED_MAX_MB
+      : POLICY_MAX_MEDIA_MB,
+    POLICY_MAX_MEDIA_MB,
+  ) *
+  1024 *
+  1024;
+const CHUNK_MAX_BYTES = 50 * 1024 * 1024;
 
 @Controller('media')
 export class MediaController {
@@ -103,7 +113,7 @@ export class MediaController {
 
     if (!file) {
       throw new PayloadTooLargeException(
-        'No file provided or file exceeds size limit',
+        `No file provided or file exceeds size limit (${POLICY_MAX_MEDIA_MB} MB max)`,
       );
     }
 
@@ -128,7 +138,7 @@ export class MediaController {
   @Post('upload/chunk/:id')
   @UseInterceptors(
     FileInterceptor('chunk', {
-      limits: { fileSize: 50 * 1024 * 1024 }, // Max 50 MB per chunk
+      limits: { fileSize: CHUNK_MAX_BYTES }, // Max 50 MB per chunk
       storage: undefined,
     }),
   )
@@ -141,7 +151,7 @@ export class MediaController {
     if (!file) {
       throw new PayloadTooLargeException('No chunk provided');
     }
-    await this.mediaService.appendChunk(id, file.buffer);
+    await this.mediaService.appendChunk(id, file.buffer, MAX_BYTES);
     return { ok: true };
   }
 
@@ -154,7 +164,7 @@ export class MediaController {
     @Req() req: Request,
   ): Promise<{ mediaId: string }> {
     this.verifyToken(req);
-    const mediaId = await this.mediaService.completeChunkedUpload(id);
+    const mediaId = await this.mediaService.completeChunkedUpload(id, MAX_BYTES);
     this.logger.log(`Completed chunked upload: ${id} -> ${mediaId}`);
     return { mediaId };
   }
@@ -169,8 +179,16 @@ export class MediaController {
   ): Promise<void> {
     this.verifyToken(req);
 
-    const data = await this.mediaService.download(id);
-    if (!data) throw new NotFoundException('Media not found');
+    const result = await this.mediaService.download(id);
+    if (result.status === 'purged') {
+      throw new GoneException(
+        'Media supprime apres expiration de retention. Merci de demander un renvoi.',
+      );
+    }
+    if (result.status !== 'ok' || !result.data) {
+      throw new NotFoundException('Media not found');
+    }
+    const data = result.data;
 
     res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Length', data.length);

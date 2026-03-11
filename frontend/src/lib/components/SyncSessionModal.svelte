@@ -2,6 +2,7 @@
   import { onDestroy, tick } from 'svelte';
   import jsQR from 'jsqr';
   import { Camera, Copy, QrCode, Smartphone, Loader2, X } from 'lucide-svelte';
+  import { portal } from '$lib/actions/portal';
 
   interface Props {
     isOpen: boolean;
@@ -187,15 +188,16 @@
 </script>
 
 {#if isOpen}
-  <button
-    class="fixed inset-0 z-[180] bg-black/40 border-0"
-    aria-label="Fermer la fenêtre de synchronisation"
-    onclick={handleClose}
-  ></button>
+  <div use:portal class="fixed inset-0 z-[190] pointer-events-none">
+    <button
+      class="absolute inset-0 bg-black/40 border-0 pointer-events-auto"
+      aria-label="Fermer la fenêtre de synchronisation"
+      onclick={handleClose}
+    ></button>
 
-  <section
-    class="fixed z-[190] inset-x-3 top-4 md:inset-x-auto md:right-8 md:top-20 md:w-[34rem] max-h-[92dvh] overflow-y-auto bg-[var(--cn-surface)] border border-cn-border rounded-2xl shadow-2xl p-4 md:p-5 flex flex-col gap-3"
-  >
+    <section
+      class="absolute pointer-events-auto inset-x-3 top-4 md:inset-x-auto md:right-8 md:top-20 md:w-[34rem] max-h-[92dvh] overflow-y-auto bg-[var(--cn-surface)] border border-cn-border rounded-2xl shadow-2xl p-4 md:p-5 flex flex-col gap-3"
+    >
     <div class="flex items-center justify-between">
       <h3 class="text-base font-semibold text-cn-dark inline-flex items-center gap-2">
         {#if mode === 'offer'}
@@ -290,5 +292,6 @@
         {statusText}
       </div>
     {/if}
-  </section>
+    </section>
+  </div>
 {/if}

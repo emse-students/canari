@@ -90,6 +90,7 @@
   let mediaRef = $derived(envelope.kind === 'media' ? envelope.media : null);
   let blobUrl = $state<string | null>(null);
   let loadError = $state(false);
+  let mediaPurgedByRetention = $state(false);
   let supportsHover = $state(true);
   let longPressTimer: ReturnType<typeof setTimeout> | null = null;
   let firstLink = $derived(!mediaRef && !isDeleted ? extractFirstUrl(textContent) : null);
@@ -177,6 +178,7 @@
     let destroyed = false;
     let urlToRevoke: string | null = null;
     loadError = false;
+    mediaPurgedByRetention = false;
 
     const ref: MediaRef = mediaRef;
     const token: string = authToken;
@@ -191,9 +193,14 @@
           urlToRevoke = url;
         }
       })
-      .catch(() => {
+      .catch((error) => {
         if (!destroyed) {
-          loadError = true;
+          const message = error instanceof Error ? error.message : String(error);
+          if (message.includes('MEDIA_PURGED_BY_RETENTION')) {
+            mediaPurgedByRetention = true;
+          } else {
+            loadError = true;
+          }
         }
       });
 
@@ -369,7 +376,9 @@
               <div
                 class="w-48 h-32 rounded-xl bg-gray-100 flex items-center justify-center text-xs text-gray-400 px-3 text-center"
               >
-                Impossible de charger l'image
+                {mediaPurgedByRetention
+                  ? 'Media supprime (retention 30 jours). Demandez un renvoi.'
+                  : "Impossible de charger l'image"}
               </div>
             {:else}
               <div class="w-48 h-32 rounded-xl bg-gray-100 animate-pulse"></div>
@@ -400,7 +409,9 @@
               <div
                 class="w-48 h-24 rounded-xl bg-gray-100 flex items-center justify-center text-xs text-gray-400"
               >
-                Impossible de charger la vidéo
+                {mediaPurgedByRetention
+                  ? 'Media supprime (retention 30 jours). Demandez un renvoi.'
+                  : 'Impossible de charger la vidéo'}
               </div>
             {:else}
               <div class="w-48 h-24 rounded-xl bg-gray-100 animate-pulse"></div>
@@ -415,7 +426,9 @@
               <div
                 class="w-48 h-12 rounded-xl bg-gray-100 flex items-center justify-center text-xs text-gray-400"
               >
-                Impossible de charger l'audio
+                {mediaPurgedByRetention
+                  ? 'Media supprime (retention 30 jours). Demandez un renvoi.'
+                  : "Impossible de charger l'audio"}
               </div>
             {:else}
               <div class="w-48 h-12 rounded-xl bg-gray-100 animate-pulse"></div>
@@ -441,6 +454,8 @@
                 >
                   <Download size={20} class="opacity-70 hover:opacity-100" />
                 </button>
+              {:else if mediaPurgedByRetention}
+                <span class="text-xs text-red-600">Media supprime (retention 30 jours)</span>
               {/if}
             </div>
           {/if}

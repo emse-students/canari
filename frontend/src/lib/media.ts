@@ -371,6 +371,9 @@ export class MediaService {
     });
 
     if (!res.ok) {
+      if (res.status === 410) {
+        throw new Error('MEDIA_PURGED_BY_RETENTION');
+      }
       throw new Error(`Media download failed: ${res.status} ${res.statusText}`);
     }
 

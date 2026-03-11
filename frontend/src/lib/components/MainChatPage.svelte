@@ -128,7 +128,7 @@
 
   // Media
   const mediaService = new MediaService();
-  const mediaMaxSizeMb = Number.parseInt(import.meta.env.VITE_MEDIA_MAX_SIZE_MB ?? '50', 10);
+  const mediaMaxSizeMb = Number.parseInt(import.meta.env.VITE_MEDIA_MAX_SIZE_MB ?? '100', 10);
   const mediaMaxSizeBytes = mediaMaxSizeMb * 1024 * 1024;
   let authToken = $state('');
   let pendingMediaFiles = $state<File[]>([]);

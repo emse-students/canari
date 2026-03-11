@@ -15,6 +15,7 @@
   import Avatar from './Avatar.svelte';
   import Modal from './Modal.svelte';
   import MultiUserSelector from './MultiUserSelector.svelte';
+  import { portal } from '$lib/actions/portal';
 
   interface Props {
     contactName: string;
@@ -87,16 +88,6 @@
     }
   }
 
-  function portal(node: HTMLElement) {
-    document.body.appendChild(node);
-    return {
-      destroy() {
-        if (node.parentNode) {
-          node.parentNode.removeChild(node);
-        }
-      },
-    };
-  }
 </script>
 
 <svelte:window onkeydown={handlePanelKeydown} />
