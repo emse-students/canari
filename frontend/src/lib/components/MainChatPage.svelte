@@ -54,6 +54,7 @@
   import { encodeAppMessage, mkMedia, MediaKind } from '$lib/proto/codec';
   import { createSyncQrDataUrl } from '$lib/sync/qr';
   import LoginForm from './LoginForm.svelte';
+  import Modal from './Modal.svelte';
   import Navbar from './Navbar.svelte';
   import Sidebar from './Sidebar.svelte';
   import SyncSessionModal from './SyncSessionModal.svelte';
@@ -115,6 +116,8 @@
   let syncQrDataUrl = $state('');
   let syncStatusText = $state('');
   let isSyncSessionBusy = $state(false);
+  let showSyncGuidePrompt = $state(false);
+  let hadLocalStateBeforeLogin = $state(false);
 
   // Group management
   let groupMembers = $state<string[]>([]);
@@ -250,6 +253,7 @@
     loginError = '';
     isLoggingIn = true;
     userId = userId.trim().toLowerCase();
+    hadLocalStateBeforeLogin = Boolean(localStorage.getItem('mls_autosave_' + userId));
 
     try {
       const mlsService = ensureMls(); // Ensure MLS is initialized
@@ -303,6 +307,12 @@
       localStorage.setItem('canari_saved_user', userId);
       localStorage.setItem('canari_saved_pin', pin);
       await loadExistingConversations();
+
+      const syncGuideKey = `canari_sync_guide_seen_${userId}`;
+      if (!hadLocalStateBeforeLogin && localStorage.getItem(syncGuideKey) !== '1') {
+        showSyncGuidePrompt = true;
+        localStorage.setItem(syncGuideKey, '1');
+      }
 
       // Setup message handler
       setupMessageHandler({
@@ -1225,6 +1235,13 @@
       log(`Err ProcessWelcome: ${msg}`);
     }
   }
+
+  function openQrGuideSync() {
+    showSyncGuidePrompt = false;
+    openJoinSyncModal();
+    syncStatusText =
+      'Sur votre appareil principal: Menu + > Synchronisation > Afficher le QR, puis scannez-le ici.';
+  }
 </script>
 
 <!-- ==================== UI ==================== -->
@@ -1364,6 +1381,26 @@
         }}
       />
 
+      <Modal open={showSyncGuidePrompt} onClose={() => (showSyncGuidePrompt = false)} title="Nouveau appareil détecté">
+        <div class="space-y-3 text-sm text-text-main">
+          <p>
+            Pour recuperer vos conversations, lancez une synchronisation QR avec un appareil deja
+            connecte.
+          </p>
+          <ol class="list-decimal list-inside space-y-1 text-text-muted">
+            <li>Sur l'appareil principal: ouvrez la synchronisation QR.</li>
+            <li>Affichez le QR de transfert.</li>
+            <li>Sur ce nouvel appareil: scannez le QR ou collez le payload.</li>
+          </ol>
+          <button
+            onclick={openQrGuideSync}
+            class="w-full mt-2 px-3 py-2 rounded-xl bg-cn-dark text-white font-medium hover:bg-gray-800 transition-colors"
+          >
+            Ouvrir la synchronisation QR
+          </button>
+        </div>
+      </Modal>
+
       {#if showLogs}
         <!-- Sur mobile : overlay plein écran. Sur desktop : panneau latéral dans la flexrow. -->
         <div class="fixed inset-0 z-50 flex flex-col md:relative md:inset-auto md:z-auto md:block">
@@ -1394,19 +1431,6 @@
     overflow: hidden;
     position: relative;
     width: 100%;
-  }
-
-  .app-layout::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    background: radial-gradient(
-      circle at 80% 10%,
-      color-mix(in srgb, var(--cn-yellow) 16%, transparent),
-      transparent 35%
-    );
-    opacity: 0.9;
   }
 
   .main-content {
