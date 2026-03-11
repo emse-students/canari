@@ -29,7 +29,7 @@
   import { setupMessageHandler, initializeConnection } from '$lib/utils/mainChatConnection';
   import {
     createNewGroup as createGroup,
-    inviteMemberToGroup,
+    inviteMembersToGroup,
     startNewConversation as startConversation,
   } from '$lib/utils/mainChatGroupCreation';
   import {
@@ -63,9 +63,6 @@
   let selectedContact = $state<string | null>(null);
   let mobileView = $state<'list' | 'chat'>('list'); // Gestion responsive
 
-  let newContactInput = $state('');
-  let newGroupInput = $state('');
-  let inviteMemberInput = $state('');
   let messageText = $state('');
   let chatContainer = $state<HTMLElement>();
 
@@ -401,9 +398,9 @@
   }
 
   // --- Gestion Groupes & Membres ---
-  async function createNewGroup(nameRaw: string) {
+  async function createNewGroup(nameRaw: string, initialMembers: string[] = []) {
     const mlsService = ensureMls();
-    await createGroup(nameRaw, {
+    const commonDeps = {
       mlsService,
       storage,
       userId,
@@ -413,16 +410,26 @@
       selectConversation,
       saveConversation,
       log,
-    });
+    };
+
+    await createGroup(nameRaw, commonDeps);
+
+    if (initialMembers.length > 0) {
+      const groupName = nameRaw.trim().toLowerCase();
+      const convo = conversations.get(groupName);
+      if (convo) {
+        await inviteMembersToGroup(initialMembers, convo, commonDeps);
+      }
+    }
   }
 
-  async function inviteMemberToCurrentGroup(memberId: string) {
+  async function inviteMembersToCurrentGroup(memberIds: string[]) {
     if (!selectedContact) return;
     const mlsService = ensureMls();
     const convo = conversations.get(selectedContact);
     if (!convo) return;
 
-    await inviteMemberToGroup(memberId, convo, {
+    await inviteMembersToGroup(memberIds, convo, {
       mlsService,
       storage,
       userId,
@@ -1012,22 +1019,9 @@
       <Sidebar
         {conversations}
         {selectedContact}
-        {newContactInput}
-        {newGroupInput}
-        onContactInputChange={(value) => (newContactInput = value)}
-        onGroupInputChange={(value) => (newGroupInput = value)}
-        onAddContact={() => {
-          if (newContactInput.trim()) {
-            startNewConversation(newContactInput);
-            newContactInput = '';
-          }
-        }}
-        onCreateGroup={() => {
-          if (newGroupInput.trim()) {
-            createNewGroup(newGroupInput);
-            newGroupInput = '';
-          }
-        }}
+        userProfile={{ id: userId }}
+        onAddContact={(id) => startNewConversation(id)}
+        onCreateGroup={(name, members) => createNewGroup(name, members)}
         onSelectConversation={selectConversation}
         onExport={handleExport}
         onImport={handleImport}
@@ -1039,16 +1033,9 @@
       <ChatArea
         conversation={currentConvo}
         {messageText}
-        {inviteMemberInput}
         onMessageChange={(value) => (messageText = value)}
-        onInviteInputChange={(value) => (inviteMemberInput = value)}
         onSend={handleSendChat}
-        onInviteMember={() => {
-          if (inviteMemberInput.trim()) {
-            inviteMemberToCurrentGroup(inviteMemberInput);
-            inviteMemberInput = '';
-          }
-        }}
+        onInviteMembers={inviteMembersToCurrentGroup}
         onBack={goBackToMenu}
         isHidden={mobileView === 'list'}
         {groupMembers}

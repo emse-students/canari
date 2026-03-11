@@ -202,12 +202,16 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                 );
                 return true;
               }
-              if (event === 'memberAdded' && data.newUser) {
-                await addSystemMessage(
-                  `${senderNorm} a ajouté ${data.newUser} au groupe`,
-                  convoKey
-                );
-                return true;
+              if (event === 'memberAdded') {
+                const added =
+                  data.newUsers && Array.isArray(data.newUsers)
+                    ? data.newUsers.join(', ')
+                    : data.newUser;
+
+                if (added) {
+                  await addSystemMessage(`${senderNorm} a ajouté ${added} au groupe`, convoKey);
+                  return true;
+                }
               }
               if (event === 'groupDeleted') {
                 log(`🗑️ Groupe supprimé par ${senderNorm}`);

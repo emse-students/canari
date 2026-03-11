@@ -103,41 +103,56 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
   }
 }
 
-/**
- * Invite un nouveau membre dans le groupe actuellement sélectionné.
- * Ajoute tous les appareils du membre cible et diffuse une notification.
- */
-export async function inviteMemberToGroup(
-  memberId: string,
+// Helper function to process generic bulk addition logic
+async function processBulkAddition(
+  memberIds: string[],
   conversation: Conversation,
   deps: GroupCreationDeps
 ): Promise<void> {
   const { mlsService, userId, pin, historyBaseUrl, log } = deps;
+  if (memberIds.length === 0) return;
 
-  if (!memberId.trim()) return;
-  const targetUser = memberId.trim().toLowerCase();
+  const targetUsers = memberIds.map((m) => m.trim().toLowerCase()).filter(Boolean);
+  if (targetUsers.length === 0) return;
 
-  log(`Invitation de ${targetUser}...`);
+  log(`Invitation de ${targetUsers.length} membres: ${targetUsers.join(', ')}...`);
+
   try {
     await mlsService.registerMember(conversation.groupId, userId, mlsService.getDeviceId());
-    const devices = await fetchDevicesWithRetry(mlsService, targetUser, log);
-    if (devices.length === 0) {
-      return log(
-        `❌ Appareils introuvables pour ${targetUser}. Il/elle doit se connecter au moins une fois pour publier son KeyPackage.`
-      );
+
+    // Collect devices for ALL users
+    const allDevices: any[] = [];
+    const userMap = new Map<string, string>(); // deviceId -> userId
+
+    for (const targetUser of targetUsers) {
+      const devices = await fetchDevicesWithRetry(mlsService, targetUser, log);
+      if (devices.length === 0) {
+        log(`⚠️ Ignoré: Appareils introuvables pour ${targetUser}.`);
+        continue;
+      }
+      devices.forEach((d: any) => {
+        allDevices.push(d);
+        userMap.set(d.deviceId, targetUser);
+      });
     }
 
-    // Add all devices in bulk
-    const bulk = await mlsService.addMembersBulk(conversation.groupId, devices);
+    if (allDevices.length === 0) {
+      return log('❌ Aucun appareil trouvé pour les utilisateurs demandés.');
+    }
 
+    // Add all devices in bulk (single MLS commit)
+    const bulk = await mlsService.addMembersBulk(conversation.groupId, allDevices);
+
+    // Register mapping for all added devices
     for (const did of bulk.addedDeviceIds) {
-      await mlsService.registerMember(conversation.groupId, targetUser, did);
+      const u = userMap.get(did);
+      if (u) await mlsService.registerMember(conversation.groupId, u, did);
     }
 
     const stateBytes = await mlsService.saveState(pin);
     localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
 
-    // Send Welcome messages
+    // Send Welcomes
     if (bulk.welcome) {
       const welcomeB64 = btoa(
         Array.from(bulk.welcome)
@@ -151,30 +166,35 @@ export async function inviteMemberToGroup(
               .join('')
           )
         : undefined;
+
       for (const did of bulk.addedDeviceIds) {
-        await fetch(`${historyBaseUrl}/mls-api/welcome`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            targetDeviceId: did,
-            targetUserId: targetUser,
-            senderUserId: userId,
-            welcomePayload: welcomeB64,
-            ratchetTreePayload: ratchetTreeB64,
-            groupId: conversation.groupId,
-          }),
-        });
+        const tUser = userMap.get(did);
+        if (tUser) {
+          await fetch(`${historyBaseUrl}/mls-api/welcome`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              targetDeviceId: did,
+              targetUserId: tUser,
+              senderUserId: userId,
+              welcomePayload: welcomeB64,
+              ratchetTreePayload: ratchetTreeB64,
+              groupId: conversation.groupId,
+            }),
+          });
+        }
       }
     }
 
     if (bulk.commit) await mlsService.sendCommit(bulk.commit, conversation.groupId);
 
-    log(`✅ ${targetUser} invité (${bulk.addedDeviceIds.length}/${devices.length} appareils).`);
+    log(`✅ Ajoutés: ${targetUsers.join(', ')} (${bulk.addedDeviceIds.length} appareils).`);
 
-    // Broadcast member addition notification
+    // Broadcast member addition notification (one generic or multiple specific?)
+    // Let's send one generic message listing all new users
     try {
       const controlMsg = encodeAppMessage(
-        mkSystem('memberAdded', JSON.stringify({ newUser: targetUser }))
+        mkSystem('memberAdded', JSON.stringify({ newUsers: targetUsers }))
       );
       await mlsService.sendMessage(conversation.groupId, controlMsg);
       const st = await mlsService.saveState(pin);
@@ -182,9 +202,32 @@ export async function inviteMemberToGroup(
     } catch (e) {
       console.warn('Failed to broadcast member addition:', e);
     }
-  } catch (e) {
-    log(`Erreur invitation: ${e}`);
+  } catch (e: any) {
+    log(`Erreur invitation groupée: ${e?.message ?? e}`);
   }
+}
+
+/**
+ * Invite un ou plusieurs membres dans le groupe actuellement sélectionné.
+ */
+export async function inviteMembersToGroup(
+  memberIds: string[],
+  conversation: Conversation,
+  deps: GroupCreationDeps
+): Promise<void> {
+  return processBulkAddition(memberIds, conversation, deps);
+}
+
+/**
+ * Invite un nouveau membre dans le groupe actuellement sélectionné.
+ * Ajoute tous les appareils du membre cible et diffuse une notification.
+ */
+export async function inviteMemberToGroup(
+  memberId: string,
+  conversation: Conversation,
+  deps: GroupCreationDeps
+): Promise<void> {
+  return inviteMembersToGroup([memberId], conversation, deps);
 }
 
 /**
