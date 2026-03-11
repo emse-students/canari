@@ -160,6 +160,7 @@
       contactName={conversation.contactName}
       displayName={conversation.name}
       isReady={conversation.isReady}
+      isGroupConversation={(conversation.conversationType ?? 'group') === 'group'}
       {onInviteMembers}
       {onBack}
       {onOpenConversations}

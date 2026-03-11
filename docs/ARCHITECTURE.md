@@ -122,7 +122,18 @@ Le fichier `infrastructure/local/docker-compose.yml` doit provisionner :
 
 ---
 
-## 7. Diagramme Global
+## 7. Roadmap Canaux Communautaires
+
+Pour l'evolution vers un systeme de canaux type Discord (promotion, associations, communautes), voir:
+
+- `docs/CHANNELS_SERVICE_ROADMAP.md`
+
+La direction cible est un modele hybride:
+
+- DM/groupes prives: MLS E2E
+- Canaux communautaires: micro-service dedie (`channel-service`) avec ACL, historique persistant, join/leave dynamiques
+
+## 8. Diagramme Global
 
 ```mermaid
 graph TD

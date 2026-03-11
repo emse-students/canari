@@ -1,6 +1,6 @@
 import { toHex } from '$lib/utils/hex';
 import type { StoredMessage } from '$lib/db';
-import type { ChatMessage } from '$lib/types';
+import type { ChatMessage, Conversation, MessageReaction } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
 import { decodeAppMessage, MediaKind } from '$lib/proto/codec';
 import { serializeEnvelope, mkTextEnvelope, mkMediaEnvelope, parseEnvelope } from '$lib/envelope';
@@ -76,9 +76,23 @@ export async function replayConversationHistory(params: {
     messageId?: string,
     timestamp?: Date
   ) => Promise<void>;
+  getConversation: (contactName: string) => Conversation | undefined;
+  setConversation: (contactName: string, next: Conversation) => void;
+  messageReactions: Map<string, MessageReaction[]>;
   log: (msg: string) => void;
 }) {
-  const { mlsService, groupId, contactName, userId, pin, addMessageToChat, log } = params;
+  const {
+    mlsService,
+    groupId,
+    contactName,
+    userId,
+    pin,
+    addMessageToChat,
+    getConversation,
+    setConversation,
+    messageReactions,
+    log,
+  } = params;
 
   try {
     const history = await mlsService.fetchHistory(groupId);
@@ -160,7 +174,12 @@ export async function replayConversationHistory(params: {
           mlsUpdated = true;
           continue;
         } else if (parsed?.reaction) {
-          // Reactions don't add chat entries in history replay
+          const messageId = parsed.reaction.messageId ?? '';
+          const senderNorm = msg.sender_id.toLowerCase();
+          const reactions = messageReactions.get(messageId) || [];
+          const filtered = reactions.filter((r) => r.userId !== senderNorm);
+          filtered.push({ emoji: parsed.reaction.emoji ?? '', userId: senderNorm });
+          messageReactions.set(messageId, filtered);
           mlsUpdated = true;
           continue;
         } else if (parsed?.system) {
@@ -171,6 +190,10 @@ export async function replayConversationHistory(params: {
             const data = parsed.system.data ? JSON.parse(parsed.system.data) : {};
 
             if (parsed.system.event === 'groupRenamed' && data.newName) {
+              const convo = getConversation(contactName);
+              if (convo && convo.name !== data.newName) {
+                setConversation(contactName, { ...convo, name: data.newName });
+              }
               systemText = `${senderNorm} a renommé le groupe en "${data.newName}"`;
             } else if (parsed.system.event === 'memberRemoved' && data.targetUser) {
               systemText = `${senderNorm} a retiré ${data.targetUser} du groupe`;
@@ -182,6 +205,58 @@ export async function replayConversationHistory(params: {
               if (added) systemText = `${senderNorm} a ajouté ${added} au groupe`;
             } else if (parsed.system.event === 'groupDeleted') {
               systemText = `${senderNorm} a supprimé le groupe`;
+            } else if (parsed.system.event === 'read_receipt') {
+              const msgIds: string[] = data.messageIds ?? [];
+              const convo = getConversation(contactName);
+              if (convo && msgIds.length > 0) {
+                let updated = false;
+                const newMsgs = [...convo.messages];
+                for (const msgId of msgIds) {
+                  const idx = newMsgs.findIndex((m) => m.id === msgId);
+                  if (idx !== -1) {
+                    const current = newMsgs[idx];
+                    const readBy = current.readBy || [];
+                    if (!readBy.includes(senderNorm)) {
+                      newMsgs[idx] = { ...current, readBy: [...readBy, senderNorm] };
+                      updated = true;
+                    }
+                  }
+                }
+                if (updated) {
+                  setConversation(contactName, { ...convo, messages: newMsgs });
+                }
+              }
+            } else if (parsed.system.event === 'delete_message' && data.messageId) {
+              const convo = getConversation(contactName);
+              if (convo) {
+                const idx = convo.messages.findIndex((m) => m.id === data.messageId);
+                if (idx !== -1) {
+                  const newMsgs = [...convo.messages];
+                  newMsgs[idx] = {
+                    ...newMsgs[idx],
+                    isDeleted: true,
+                    content: 'Ce message a été supprimé.',
+                  };
+                  setConversation(contactName, { ...convo, messages: newMsgs });
+                }
+              }
+            } else if (parsed.system.event === 'edit_message' && data.messageId && data.newContent) {
+              const convo = getConversation(contactName);
+              if (convo) {
+                const idx = convo.messages.findIndex((m) => m.id === data.messageId);
+                if (idx !== -1) {
+                  const newMsgs = [...convo.messages];
+                  newMsgs[idx] = {
+                    ...newMsgs[idx],
+                    isEdited: true,
+                    editedAt:
+                      typeof data.editedAt === 'number' ? new Date(data.editedAt) : new Date(),
+                    content: data.newContent,
+                    readBy: [],
+                  };
+                  setConversation(contactName, { ...convo, messages: newMsgs });
+                }
+              }
             }
           } catch {
             // Keep history replay robust even if a control payload is malformed.

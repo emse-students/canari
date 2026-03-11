@@ -3,7 +3,7 @@
   import { TauriMlsService, WebMlsService } from '$lib/mlsService';
   import type { IMlsService } from '$lib/mlsService';
   import { getStorage } from '$lib/db';
-  import type { IStorage } from '$lib/db';
+  import type { IStorage, ConversationMeta, StoredMessage } from '$lib/db';
   import { onMount, tick, untrack } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { fade } from 'svelte/transition';
@@ -552,8 +552,78 @@
       userId,
       pin,
       addMessageToChat,
+      getConversation: (name) => conversations.get(name),
+      setConversation: (name, next) => {
+        conversations.set(name, next);
+      },
+      messageReactions,
       log,
     });
+  }
+
+  async function mergeDirectConversationDuplicates(
+    convMetas: ConversationMeta[]
+  ): Promise<ConversationMeta[]> {
+    if (!storage) return convMetas;
+
+    const canonicalByPeer = new SvelteMap<string, ConversationMeta>();
+    const duplicatesToMerge: Array<{ canonical: ConversationMeta; duplicate: ConversationMeta }> = [];
+
+    for (const meta of convMetas) {
+      const identity = deriveConversationIdentity(meta.name);
+      if (identity.conversationType !== 'direct' || !identity.directPeerId) {
+        continue;
+      }
+
+      const peer = identity.directPeerId.toLowerCase();
+      const existing = canonicalByPeer.get(peer);
+      if (!existing) {
+        canonicalByPeer.set(peer, meta);
+        continue;
+      }
+
+      const canonical = existing.updatedAt >= meta.updatedAt ? existing : meta;
+      const duplicate = canonical.id === existing.id ? meta : existing;
+      canonicalByPeer.set(peer, canonical);
+      duplicatesToMerge.push({ canonical, duplicate });
+    }
+
+    if (duplicatesToMerge.length === 0) {
+      return convMetas;
+    }
+
+    for (const pair of duplicatesToMerge) {
+      const { canonical, duplicate } = pair;
+      if (canonical.id === duplicate.id) continue;
+
+      try {
+        const canonicalMessages = await storage.getMessages(canonical.id, pin);
+        const duplicateMessages = await storage.getMessages(duplicate.id, pin);
+        const byId = new SvelteMap<string, StoredMessage>();
+
+        for (const message of canonicalMessages) {
+          byId.set(message.id, { ...message, conversationId: canonical.id });
+        }
+        for (const message of duplicateMessages) {
+          if (!byId.has(message.id)) {
+            byId.set(message.id, { ...message, conversationId: canonical.id });
+          }
+        }
+
+        const mergedMessages = Array.from(byId.values()).sort((a, b) => a.timestamp - b.timestamp);
+        if (mergedMessages.length > 0) {
+          await storage.saveMessages(mergedMessages, pin);
+        }
+        await storage.deleteConversation(duplicate.id);
+        log(`Fusion de discussions 1:1 en doublon: ${duplicate.name} -> ${canonical.name}`);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        log(`Erreur fusion discussions directes: ${msg}`);
+      }
+    }
+
+    const duplicateIds = new Set(duplicatesToMerge.map((item) => item.duplicate.id));
+    return convMetas.filter((meta) => !duplicateIds.has(meta.id));
   }
 
   async function loadExistingConversations() {
@@ -563,10 +633,14 @@
     await migrateFromLocalStorage(userId, pin, storage, log);
 
     const convMetas = await storage.getConversations();
+    const mergedConvMetas = await mergeDirectConversationDuplicates(convMetas);
+
+    conversations.clear();
+    messageReactions.clear();
 
     // Phase 1 (fast, blocking): populate the conversations map with metadata
     // only so the WS message handler can route messages immediately.
-    for (const meta of convMetas) {
+    for (const meta of mergedConvMetas) {
       const identity = deriveConversationIdentity(meta.name);
       conversations.set(meta.id, {
         contactName: identity.contactName,
@@ -584,19 +658,20 @@
     // Phase 2 (background, non-blocking): decrypt stored messages and replay
     // remote history. Run all conversations in parallel so decryption doesn't
     // serialize across conversations.
-    for (const meta of convMetas) {
-      storage
-        .getMessages(meta.id, pin)
-        .then((storedMessages) => {
+    for (const meta of mergedConvMetas) {
+      (async () => {
+        try {
+          const storedMessages = await storage.getMessages(meta.id, pin);
           const msgs = mapStoredMessagesToChatMessages(storedMessages, userId);
           const existing = conversations.get(meta.id);
-          // Only inject if no live messages arrived in the meantime
-          if (existing && existing.messages.length === 0 && msgs.length > 0) {
+          if (existing && msgs.length > 0) {
             conversations.set(meta.id, { ...existing, messages: msgs });
           }
-        })
-        .catch(() => {});
-      loadHistoryForConversation(meta.id, meta.groupId);
+          await loadHistoryForConversation(meta.id, meta.groupId);
+        } catch {
+          // Keep loading resilient even if one conversation fails.
+        }
+      })();
     }
   }
 
@@ -680,6 +755,10 @@
       replyTo,
       isSystem,
     };
+
+    if (convo.messages.some((message) => message.id === newMsg.id)) {
+      return;
+    }
 
     const isConversationOpen = selectedContact === normalized;
     const shouldMarkUnread = !isOwn && !isConversationOpen;

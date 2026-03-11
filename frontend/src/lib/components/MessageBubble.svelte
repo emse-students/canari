@@ -107,12 +107,15 @@
   let pointerStartY = $state(0);
   let swipeHandled = $state(false);
   let firstLink = $derived(!mediaRef && !isDeleted ? extractFirstUrl(textContent) : null);
-  let replyPreviewText = $derived(() => {
-    if (!effectiveReplyTo?.content) return '';
-    const normalized = effectiveReplyTo.content.replace(/\s+/g, ' ').trim();
+  function shortenReplyPreview(text: string): string {
+    const normalized = text.replace(/\s+/g, ' ').trim();
     if (normalized.length <= 84) return normalized;
     return `${normalized.slice(0, 81)}...`;
-  });
+  }
+
+  let replyPreviewText = $derived(
+    effectiveReplyTo?.content ? shortenReplyPreview(effectiveReplyTo.content) : ''
+  );
 
   const groupedReactions = $derived(
     reactions.reduce(
