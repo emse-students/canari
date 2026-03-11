@@ -521,7 +521,9 @@ describe('inviteMemberToGroup', () => {
     const convs = makeConversationMap();
     await inviteMemberToGroup('jolan2', existingConvo, makeDeps(mls, convs, { log }));
 
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('[OK] Ajoutes: jolan2 (2 appareils).'));
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining('[OK] Ajoutes: jolan2 (2 appareils).')
+    );
   });
 
   it("BLOCAGE 1 : log [ERREUR] si le membre cible n'a aucun device (jamais connecte)", async () => {
