@@ -206,7 +206,12 @@ function buildLinkPreviewPayload(html: string, targetUrl: URL) {
 
 function isYouTubeHost(hostname: string): boolean {
   const h = hostname.toLowerCase();
-  return h === 'youtube.com' || h === 'www.youtube.com' || h === 'm.youtube.com' || h === 'youtu.be';
+  return (
+    h === 'youtube.com' ||
+    h === 'www.youtube.com' ||
+    h === 'm.youtube.com' ||
+    h === 'youtu.be'
+  );
 }
 
 async function fetchYouTubeOEmbed(targetUrl: URL): Promise<{
