@@ -12,10 +12,13 @@
   interface Props {
     conversation: Conversation | null;
     messageText: string;
+    inviteMemberInput: string;
     onMessageChange: (value: string) => void;
+    onInviteInputChange: (value: string) => void;
     onSend: () => void;
-    onInviteMembers: (ids: string[]) => void;
+    onInviteMember: () => void;
     onBack?: () => void;
+    onOpenConversations?: () => void;
     isHidden?: boolean;
     // Group management
     groupMembers?: string[];
@@ -33,18 +36,19 @@
     onCancelReply?: () => void;
     authToken?: string;
     onFileSelected?: (file: File) => void;
-    pendingMediaFile?: File | null;
-    onCancelMedia?: () => void;
     isUploading?: boolean;
   }
 
   let {
     conversation,
     messageText,
+    inviteMemberInput,
     onMessageChange,
+    onInviteInputChange,
     onSend,
-    onInviteMembers,
+    onInviteMember,
     onBack,
+    onOpenConversations,
     isHidden = false,
     groupMembers = [],
     sendError = '',
@@ -60,8 +64,6 @@
     onCancelReply,
     authToken = '',
     onFileSelected,
-    pendingMediaFile = null,
-    onCancelMedia,
     isUploading = false,
   }: Props = $props();
 
@@ -87,27 +89,34 @@
       contactName={conversation.contactName}
       displayName={conversation.name}
       isReady={conversation.isReady}
+      {inviteMemberInput}
+      {onInviteInputChange}
+      {onInviteMember}
       {onBack}
+      {onOpenConversations}
       {groupMembers}
       {onGroupRename}
       {onGroupDelete}
       {onGroupRemoveMember}
-      {onInviteMembers}
     />
 
     <!-- Messages -->
     <div
       bind:this={chatContainer}
-      class="flex-1 overflow-y-auto px-6 py-6 pb-32 flex flex-col gap-3"
+      class="flex-1 overflow-y-auto px-3 py-3 md:px-6 md:py-6 flex flex-col gap-2"
     >
       {#each messageGroups as group, index (group.type === 'message' ? group.message.id : `${group.type}-${index}`)}
         {#if group.type === 'date_separator'}
-          <div class="flex items-center justify-center my-4">
-            <span class="text-xs font-medium text-gray-400 bg-cn-bg px-2">{group.date}</span>
+          <div class="flex justify-center my-3">
+            <div class="px-3 py-1 bg-gray-100 rounded-full text-xs text-gray-500 font-medium">
+              {group.date}
+            </div>
           </div>
         {:else if group.type === 'time_separator'}
-          <div class="flex justify-center my-2 opacity-0 hover:opacity-100 transition-opacity">
-            <span class="text-[0.65rem] text-gray-300">{group.time}</span>
+          <div class="flex justify-center my-2">
+            <div class="px-2 py-0.5 text-[0.65rem] text-gray-400">
+              {group.time}
+            </div>
           </div>
         {:else if group.type === 'message'}
           {@const msg = group.message}
@@ -141,7 +150,10 @@
           {@const showSender = !msg.isOwn && groupPosition !== 'middle' && groupPosition !== 'end'}
 
           {#if msg.isSystem}
-            <div class="flex justify-center my-2">
+            <div
+              class="flex justify-center my-2 animate-rise-in"
+              style={`animation-delay: ${Math.min(index * 18, 180)}ms`}
+            >
               <MessageBubble
                 messageId={msg.id}
                 senderId={msg.senderId}
@@ -157,9 +169,12 @@
               />
             </div>
           {:else}
-            <div class="flex gap-2 {msg.isOwn ? 'justify-end' : 'justify-start'}">
+            <div
+              class="flex gap-2 {msg.isOwn ? 'justify-end' : 'justify-start'} animate-rise-in"
+              style={`animation-delay: ${Math.min(index * 18, 180)}ms`}
+            >
               {#if !msg.isOwn}
-                <div class="flex flex-col items-center gap-1" style="width: 32px;">
+                <div class="flex flex-col items-center gap-1" style="width: 28px;">
                   {#if showSender}
                     <Avatar userId={msg.senderId} size="sm" />
                   {:else}
@@ -168,7 +183,9 @@
                 </div>
               {/if}
 
-              <div class="flex flex-col {msg.isOwn ? 'items-end' : 'items-start'} max-w-[75%]">
+              <div
+                class="flex flex-col {msg.isOwn ? 'items-end' : 'items-start'} max-w-[88%] md:max-w-[75%]"
+              >
                 {#if showSender}
                   <div class="text-xs text-gray-500 px-2 mb-1 font-medium">
                     {msg.senderId}
@@ -202,26 +219,20 @@
     </div>
 
     {#if sendError}
-      <div
-        class="absolute bottom-24 left-6 right-6 px-4 py-2 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600 flex items-center justify-center gap-2 shadow-sm z-10"
-      >
+      <div class="px-3 md:px-6 py-2 bg-red-50 border-t border-red-200 text-sm text-red-600 flex items-center gap-2">
         <span>⚠️ {sendError}</span>
       </div>
     {/if}
 
-    <div class="relative z-20">
-      <ChatComposer
-        {messageText}
-        {onMessageChange}
-        {onSend}
-        {replyingTo}
-        {onCancelReply}
-        {onFileSelected}
-        {pendingMediaFile}
-        {onCancelMedia}
-        {isUploading}
-      />
-    </div>
+    <ChatComposer
+      {messageText}
+      {onMessageChange}
+      {onSend}
+      {replyingTo}
+      {onCancelReply}
+      {onFileSelected}
+      {isUploading}
+    />
   {:else}
     <EmptyState
       icon={ShieldCheck}

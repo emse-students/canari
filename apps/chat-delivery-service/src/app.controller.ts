@@ -6,6 +6,7 @@ import {
   Delete,
   Body,
   Param,
+  Query,
   Inject,
   BadRequestException,
 } from '@nestjs/common';
@@ -19,6 +20,8 @@ import { Group } from './group.schema';
 import { PinVerifier } from './pin-verifier.schema';
 import Redis from 'ioredis';
 import * as crypto from 'crypto';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 import { encodeInboundMsgEnvelope } from '@mines-app/shared-ts';
 
 const SAFE_QUERY_VALUE_REGEX = /^[a-zA-Z0-9_.:@-]{1,128}$/;
@@ -65,6 +68,119 @@ function sanitizeObjectIdList(value: unknown): Types.ObjectId[] {
   }
 
   return objectIds;
+}
+
+function isPrivateIpAddress(ip: string): boolean {
+  if (ip.includes(':')) {
+    const normalized = ip.toLowerCase();
+    return (
+      normalized === '::1' ||
+      normalized.startsWith('fc') ||
+      normalized.startsWith('fd') ||
+      normalized.startsWith('fe80:')
+    );
+  }
+
+  const parts = ip.split('.').map((part) => Number.parseInt(part, 10));
+  if (parts.length !== 4 || parts.some((part) => Number.isNaN(part))) return true;
+
+  const [a, b] = parts;
+  return (
+    a === 10 ||
+    a === 127 ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168)
+  );
+}
+
+async function assertSafeExternalUrl(rawUrl: string): Promise<URL> {
+  let parsed: URL;
+
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new BadRequestException('Invalid URL');
+  }
+
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new BadRequestException('Only http/https URLs are allowed');
+  }
+
+  if (parsed.username || parsed.password) {
+    throw new BadRequestException('URL credentials are not allowed');
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  if (hostname === 'localhost' || hostname.endsWith('.localhost')) {
+    throw new BadRequestException('Localhost URLs are not allowed');
+  }
+
+  if (isIP(hostname) && isPrivateIpAddress(hostname)) {
+    throw new BadRequestException('Private network URLs are not allowed');
+  }
+
+  const resolved = await lookup(hostname, { all: true });
+  if (resolved.length === 0) {
+    throw new BadRequestException('Host cannot be resolved');
+  }
+
+  for (const entry of resolved) {
+    if (isPrivateIpAddress(entry.address)) {
+      throw new BadRequestException('Private network URLs are not allowed');
+    }
+  }
+
+  return parsed;
+}
+
+function decodeHtmlEntity(value: string): string {
+  return value
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
+}
+
+function extractMetaContent(html: string, key: string): string | null {
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(
+    `<meta[^>]+(?:property|name)=["']${escaped}["'][^>]+content=["']([^"']+)["'][^>]*>`,
+    'i',
+  );
+  const match = html.match(regex);
+  return match ? decodeHtmlEntity(match[1].trim()) : null;
+}
+
+function extractTitle(html: string): string | null {
+  const match = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+  return match ? decodeHtmlEntity(match[1].trim()) : null;
+}
+
+function buildLinkPreviewPayload(html: string, targetUrl: URL) {
+  const title = extractMetaContent(html, 'og:title') || extractTitle(html) || targetUrl.hostname;
+  const description =
+    extractMetaContent(html, 'og:description') || extractMetaContent(html, 'description') || '';
+  const siteName = extractMetaContent(html, 'og:site_name') || targetUrl.hostname;
+
+  const rawImage = extractMetaContent(html, 'og:image');
+  let image = '';
+  if (rawImage) {
+    try {
+      image = new URL(rawImage, targetUrl).toString();
+    } catch {
+      image = '';
+    }
+  }
+
+  return {
+    url: targetUrl.toString(),
+    title: title.slice(0, 180),
+    description: description.slice(0, 280),
+    image,
+    siteName: siteName.slice(0, 120),
+  };
 }
 
 import { v4 as uuidv4 } from 'uuid';
@@ -124,6 +240,54 @@ export class AppController {
       crypto.timingSafeEqual(stored, incoming);
 
     return { status: match ? 'ok' : 'mismatch' };
+  }
+
+  @Get('mls-api/link-preview')
+  async getLinkPreview(@Query('url') url: string) {
+    if (!url || typeof url !== 'string') {
+      throw new BadRequestException('url is required');
+    }
+
+    const targetUrl = await assertSafeExternalUrl(url);
+    const abortController = new AbortController();
+    const timeout = setTimeout(() => abortController.abort(), 4000);
+
+    try {
+      const response = await fetch(targetUrl.toString(), {
+        method: 'GET',
+        redirect: 'follow',
+        signal: abortController.signal,
+        headers: {
+          'user-agent': 'CanariLinkPreview/1.0',
+          accept: 'text/html,application/xhtml+xml',
+        },
+      });
+
+      if (!response.ok) {
+        throw new BadRequestException('Unable to fetch URL');
+      }
+
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.toLowerCase().includes('text/html')) {
+        throw new BadRequestException('URL is not an HTML page');
+      }
+
+      const contentLength = Number.parseInt(
+        response.headers.get('content-length') || '0',
+        10,
+      );
+      if (Number.isFinite(contentLength) && contentLength > 1_000_000) {
+        throw new BadRequestException('Page is too large to preview');
+      }
+
+      const html = (await response.text()).slice(0, 220_000);
+      return buildLinkPreviewPayload(html, targetUrl);
+    } catch (error) {
+      if (error instanceof BadRequestException) throw error;
+      throw new BadRequestException('Link preview failed');
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   @Post('mls-api/groups')

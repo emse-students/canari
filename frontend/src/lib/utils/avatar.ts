@@ -39,3 +39,27 @@ export function getInitials(name: string): string {
   // Take first letter of first two parts
   return (parts[0][0] + parts[1][0]).toUpperCase();
 }
+
+/**
+ * Generate a deterministic SVG avatar placeholder as data URI.
+ */
+export function generateAvatarPlaceholder(name: string): string {
+  const initials = getInitials(name);
+  const base = generateAvatarColor(name);
+  const accent = generateAvatarColor(`${name}-accent`);
+
+  const svg = `
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-label="Avatar ${initials}">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="${base}" />
+      <stop offset="100%" stop-color="${accent}" />
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="url(#g)" />
+  <circle cx="102" cy="26" r="14" fill="rgba(255,255,255,0.18)" />
+  <text x="64" y="72" text-anchor="middle" dominant-baseline="middle" fill="white" font-family="Segoe UI, Inter, sans-serif" font-size="44" font-weight="700">${initials}</text>
+</svg>`;
+
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}

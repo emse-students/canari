@@ -103,9 +103,15 @@
   </button>
 
   {#if showPicker}
+    <button
+      type="button"
+      class="fixed inset-0 z-40 bg-black/25 md:hidden"
+      onclick={closePicker}
+      aria-label="Fermer le selecteur de GIF"
+    ></button>
     <div
       use:clickOutside={closePicker}
-      class="absolute bottom-full left-0 mb-2 w-[320px] h-[400px] bg-white border border-cn-border rounded-2xl shadow-2xl overflow-hidden flex flex-col z-50"
+      class="fixed inset-x-2 bottom-2 h-[68vh] bg-white border border-cn-border rounded-2xl shadow-2xl overflow-hidden flex flex-col z-50 animate-panel-in md:absolute md:inset-auto md:bottom-full md:left-0 md:mb-2 md:w-[320px] md:h-[400px]"
     >
       <!-- Header -->
       <div class="px-4 py-3 border-b border-cn-border flex items-center justify-between">

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Terminal, LogOut } from 'lucide-svelte';
+  import { Terminal, LogOut, Moon, Sun } from 'lucide-svelte';
   import StatusPill from './StatusPill.svelte';
 
   interface Props {
@@ -9,9 +9,36 @@
   }
 
   let { isWsConnected, onToggleLogs, onLogout }: Props = $props();
+
+  let isDarkMode = $state(false);
+
+  function applyTheme(isDark: boolean) {
+    document.documentElement.dataset.theme = isDark ? 'dark' : 'light';
+    localStorage.setItem('canari-theme', isDark ? 'dark' : 'light');
+  }
+
+  function toggleTheme() {
+    isDarkMode = !isDarkMode;
+    applyTheme(isDarkMode);
+  }
+
+  if (typeof window !== 'undefined') {
+    const saved = localStorage.getItem('canari-theme');
+    if (saved === 'dark') {
+      isDarkMode = true;
+      applyTheme(true);
+    } else if (saved === 'light') {
+      isDarkMode = false;
+      applyTheme(false);
+    } else {
+      const initialDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      isDarkMode = initialDark;
+      applyTheme(initialDark);
+    }
+  }
 </script>
 
-<header class="h-16 bg-white border-b border-cn-border flex items-center justify-between px-6 z-20">
+<header class="h-16 bg-[var(--surface-elevated)] border-b border-cn-border flex items-center justify-between px-4 md:px-6 z-20 backdrop-blur-sm">
   <!-- Brand -->
   <div class="flex items-center gap-3">
     <div class="w-8 h-8 bg-cn-dark text-cn-yellow rounded-lg flex items-center justify-center">
@@ -25,6 +52,17 @@
 
   <!-- Actions -->
   <div class="flex gap-2">
+    <button
+      onclick={toggleTheme}
+      title="Basculer le mode sombre"
+      class="p-2 rounded-lg text-text-muted hover:bg-cn-bg hover:text-cn-dark transition-colors"
+    >
+      {#if isDarkMode}
+        <Sun size={20} />
+      {:else}
+        <Moon size={20} />
+      {/if}
+    </button>
     <button
       onclick={onToggleLogs}
       title="Console de logs"

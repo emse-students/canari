@@ -1,4 +1,6 @@
 <script lang="ts">
+  import Avatar from './Avatar.svelte';
+
   interface Props {
     contactName: string;
     displayName: string;
@@ -10,21 +12,15 @@
 
   let { contactName, displayName, lastMessage, isReady, isSelected, onClick }: Props = $props();
 
-  const avatarLetter = $derived(contactName[0]?.toUpperCase() || '?');
 </script>
 
 <button
   onclick={onClick}
   class="w-full p-3 flex items-center gap-4 rounded-2xl transition-colors text-left {isSelected
-    ? 'bg-yellow-50'
-    : 'hover:bg-cn-bg'}"
+    ? 'bg-[color-mix(in_srgb,var(--cn-yellow)_26%,transparent)]'
+    : 'hover:bg-cn-bg'} animate-rise-in"
 >
-  <!-- Avatar -->
-  <div
-    class="w-12 h-12 bg-cn-yellow text-cn-dark rounded-[1.2rem] flex items-center justify-center font-extrabold text-xl flex-shrink-0"
-  >
-    {avatarLetter}
-  </div>
+  <Avatar userId={contactName} size="lg" />
 
   <!-- Info -->
   <div class="flex-1 min-w-0">

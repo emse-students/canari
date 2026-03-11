@@ -1,14 +1,24 @@
 <script lang="ts">
   import { format } from 'date-fns';
   import { fly } from 'svelte/transition';
-  import { Reply, Smile, FileText, Download, Pencil, Trash2, CheckCheck } from 'lucide-svelte';
+  import {
+    Reply,
+    Smile,
+    FileText,
+    Download,
+    Pencil,
+    Trash2,
+    CheckCheck,
+    EllipsisVertical,
+  } from 'lucide-svelte';
   import { clickOutside } from '$lib/actions/clickOutside';
-  import { onDestroy } from 'svelte';
-  import { MediaService } from '$lib/media';
+  import { onDestroy, onMount } from 'svelte';
+  import { parseMediaMessage, MediaService } from '$lib/media';
   import type { MediaRef } from '$lib/media';
-  import { parseEnvelope, getPreviewText } from '$lib/envelope';
   import 'emoji-picker-element';
   import Modal from './Modal.svelte';
+  import LinkPreviewCard from './LinkPreviewCard.svelte';
+  import VoiceMessagePlayer from './VoiceMessagePlayer.svelte';
 
   interface MessageReaction {
     emoji: string;
@@ -61,29 +71,16 @@
 
   let showEmojiPicker = $state(false);
   let showInfo = $state(false);
+  let showMobileActions = $state(false);
   let showEditModal = $state(false);
   let showDeleteModal = $state(false);
   let editText = $state('');
-  let envelope = $derived(parseEnvelope(content));
-  let mediaRef = $derived(envelope.kind === 'media' ? envelope.media : null);
-  // replyTo comes from the envelope for new messages; fall back to the prop for
-  // legacy messages delivered before the envelope format was introduced.
-  let resolvedReplyTo = $derived(
-    (envelope.kind === 'text' || envelope.kind === 'media') && envelope.replyTo
-      ? envelope.replyTo
-      : replyTo
-  );
-  let displayText = $derived(
-    envelope.kind === 'text'
-      ? envelope.text
-      : envelope.kind === 'system'
-        ? envelope.text
-        : envelope.kind === 'media' && envelope.caption
-          ? envelope.caption
-          : null
-  );
+  let mediaRef = $derived(parseMediaMessage(content));
   let blobUrl = $state<string | null>(null);
   let loadError = $state(false);
+  let supportsHover = $state(true);
+  let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+  let firstLink = $derived(!mediaRef && !isDeleted ? extractFirstUrl(content) : null);
 
   const groupedReactions = $derived(
     reactions.reduce(
@@ -117,6 +114,37 @@
     e.stopPropagation();
     showEmojiPicker = false;
     showInfo = !showInfo;
+  }
+
+  function openMobileActions(e: MouseEvent) {
+    e.stopPropagation();
+    showEmojiPicker = false;
+    showInfo = false;
+    showMobileActions = true;
+  }
+
+  function closeMobileActions() {
+    showMobileActions = false;
+  }
+
+  function beginLongPress(e: PointerEvent) {
+    if (supportsHover || e.pointerType === 'mouse') return;
+    if (longPressTimer) clearTimeout(longPressTimer);
+    longPressTimer = setTimeout(() => {
+      showMobileActions = true;
+      showEmojiPicker = false;
+      showInfo = false;
+      if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+        navigator.vibrate(10);
+      }
+    }, 420);
+  }
+
+  function cancelLongPress() {
+    if (longPressTimer) {
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+    }
   }
 
   function attachEmojiPicker(node: HTMLElement) {
@@ -167,7 +195,12 @@
   });
 
   onDestroy(() => {
+    cancelLongPress();
     if (blobUrl) URL.revokeObjectURL(blobUrl);
+  });
+
+  onMount(() => {
+    supportsHover = window.matchMedia('(hover: hover)').matches;
   });
 
   function formatFileSize(bytes: number): string {
@@ -188,25 +221,28 @@
   }
 
   function getBubbleShapeClass(position: 'single' | 'start' | 'middle' | 'end') {
-    const base = 'rounded-2xl';
-
-    if (position === 'single') return base;
+    if (position === 'single') return 'rounded-[1.25rem]';
 
     if (isOwn) {
-      if (position === 'start') return `${base} rounded-br-sm`;
-      if (position === 'middle') return `${base} rounded-tr-sm rounded-br-sm`;
-      return `${base} rounded-tr-sm`;
+      if (position === 'start') return 'rounded-[1.25rem] rounded-br-md';
+      if (position === 'middle') return 'rounded-[1.25rem] rounded-tr-md rounded-br-md';
+      return 'rounded-[1.25rem] rounded-tr-md';
     }
 
-    if (position === 'start') return `${base} rounded-bl-sm`;
-    if (position === 'middle') return `${base} rounded-tl-sm rounded-bl-sm`;
-    return `${base} rounded-tl-sm`;
+    if (position === 'start') return 'rounded-[1.25rem] rounded-bl-md';
+    if (position === 'middle') return 'rounded-[1.25rem] rounded-tl-md rounded-bl-md';
+    return 'rounded-[1.25rem] rounded-tl-md';
+  }
+
+  function extractFirstUrl(text: string): string | null {
+    const match = text.match(/https?:\/\/[^\s]+/i);
+    return match?.[0] ?? null;
   }
 </script>
 
 {#if isSystem}
-  <div class="px-4 py-1.5 bg-gray-100 rounded-full text-xs text-gray-600 text-center max-w-md">
-    {envelope.kind === 'system' ? envelope.text : content}
+  <div class="px-4 py-1.5 bg-cn-bg rounded-full text-xs text-text-muted text-center max-w-md">
+    {content}
   </div>
 {:else}
   <!-- Outer wrapper: relative for absolute children (emoji picker, info tooltip) -->
@@ -214,31 +250,47 @@
     use:clickOutside={() => {
       showEmojiPicker = false;
       showInfo = false;
+      showMobileActions = false;
     }}
     class="relative group"
   >
+    <button
+      type="button"
+      onclick={openMobileActions}
+      class="absolute top-1 right-1 md:hidden z-10 p-1.5 rounded-full bg-white/90 border border-cn-border text-gray-500"
+      aria-label="Ouvrir les actions du message"
+    >
+      <EllipsisVertical size={14} />
+    </button>
+
     <!-- ── Bubble ── -->
     <div
       in:fly={{ y: 5, duration: 200 }}
       role="button"
       tabindex="0"
       onclick={toggleInfo}
+      onpointerdown={beginLongPress}
+      onpointerup={cancelLongPress}
+      onpointerleave={cancelLongPress}
+      onpointercancel={cancelLongPress}
+      oncontextmenu={(e) => {
+        e.preventDefault();
+        showMobileActions = true;
+      }}
       onkeydown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
           toggleInfo(e as unknown as MouseEvent);
         }
       }}
-      class="relative px-4 py-3 min-w-[60px] cursor-pointer shadow-sm transition-shadow hover:shadow-md {getBubbleShapeClass(
-        groupPosition
-      )} {isOwn ? 'bg-cn-yellow text-cn-dark' : 'bg-white text-cn-dark'}"
+      class="px-4 py-2.5 cursor-pointer min-w-0 {getBubbleShapeClass(groupPosition)} {isOwn
+        ? 'bg-cn-yellow text-cn-dark'
+        : 'bg-[var(--cn-surface)] text-cn-dark border border-cn-border'}"
     >
-      {#if resolvedReplyTo}
-        <div class="mb-2 p-2 rounded-lg bg-black/5 text-xs">
-          <div class="font-semibold opacity-75">{resolvedReplyTo.senderId}</div>
-          <div class="truncate opacity-60">
-            {getPreviewText(parseEnvelope(resolvedReplyTo.content))}
-          </div>
+      {#if replyTo}
+        <div class="mb-2 pb-2 border-l-4 border-gray-400 pl-3 text-xs opacity-70">
+          <div class="font-semibold">{replyTo.senderId}</div>
+          <div class="truncate">{replyTo.content}</div>
         </div>
       {/if}
 
@@ -246,21 +298,34 @@
         <div class="overflow-hidden rounded-xl">
           {#if mediaRef.type === 'image'}
             {#if blobUrl}
-              <button
-                type="button"
-                onclick={(e) => {
-                  e.stopPropagation();
-                  openBlob(blobUrl!);
-                }}
-                aria-label="Ouvrir l'image en plein écran"
-                class="hover:opacity-90 transition-opacity"
-              >
-                <img
-                  src={blobUrl}
-                  alt={mediaRef.fileName ?? 'Image'}
-                  class="rounded-xl max-h-80 object-contain cursor-pointer"
-                />
-              </button>
+              <div class="relative inline-block">
+                <button
+                  type="button"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    openBlob(blobUrl!);
+                  }}
+                  aria-label="Ouvrir l'image en plein écran"
+                  class="hover:opacity-90 transition-opacity"
+                >
+                  <img
+                    src={blobUrl}
+                    alt={mediaRef.fileName ?? 'Image'}
+                    class="rounded-xl max-h-80 object-contain cursor-pointer"
+                  />
+                </button>
+                <button
+                  type="button"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    downloadBlob(blobUrl!, mediaRef.fileName ?? 'image');
+                  }}
+                  class="absolute right-2 bottom-2 w-8 h-8 rounded-full bg-black/60 text-white inline-flex items-center justify-center"
+                  aria-label="Telecharger l'image"
+                >
+                  <Download size={15} />
+                </button>
+              </div>
             {:else if loadError}
               <div
                 class="w-48 h-32 rounded-xl bg-gray-100 flex items-center justify-center text-xs text-gray-400 px-3 text-center"
@@ -272,13 +337,26 @@
             {/if}
           {:else if mediaRef.type === 'video'}
             {#if blobUrl}
-              <!-- svelte-ignore a11y_media_has_caption -->
-              <video
-                src={blobUrl}
-                controls
-                onclick={(e) => e.stopPropagation()}
-                class="rounded-xl max-h-80 max-w-md"
-              ></video>
+              <div class="relative inline-block">
+                <!-- svelte-ignore a11y_media_has_caption -->
+                <video
+                  src={blobUrl}
+                  controls
+                  onclick={(e) => e.stopPropagation()}
+                  class="rounded-xl max-h-80 max-w-md"
+                ></video>
+                <button
+                  type="button"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    downloadBlob(blobUrl!, mediaRef.fileName ?? 'video');
+                  }}
+                  class="absolute right-2 bottom-2 w-8 h-8 rounded-full bg-black/60 text-white inline-flex items-center justify-center"
+                  aria-label="Telecharger la video"
+                >
+                  <Download size={15} />
+                </button>
+              </div>
             {:else if loadError}
               <div
                 class="w-48 h-24 rounded-xl bg-gray-100 flex items-center justify-center text-xs text-gray-400"
@@ -290,17 +368,12 @@
             {/if}
           {:else if mediaRef.type === 'audio'}
             {#if blobUrl}
-              <div class="min-w-[280px] max-w-sm">
-                <audio
-                  src={blobUrl}
-                  controls
-                  onclick={(e) => e.stopPropagation()}
-                  class="w-full h-10"
-                ></audio>
-                {#if mediaRef.fileName}
-                  <p class="text-xs opacity-60 mt-1 truncate">{mediaRef.fileName}</p>
-                {/if}
-              </div>
+              <VoiceMessagePlayer
+                src={blobUrl}
+                fileName={mediaRef.fileName ?? 'vocal.webm'}
+                sizeLabel={formatFileSize(mediaRef.size)}
+                onDownload={() => downloadBlob(blobUrl!, mediaRef.fileName ?? 'vocal.webm')}
+              />
             {:else if loadError}
               <div
                 class="w-48 h-12 rounded-xl bg-gray-100 flex items-center justify-center text-xs text-gray-400"
@@ -334,11 +407,6 @@
               {/if}
             </div>
           {/if}
-          {#if displayText}
-            <div class="px-1 pt-1 pb-0.5 mt-1 text-sm break-words whitespace-pre-wrap">
-              {displayText}
-            </div>
-          {/if}
         </div>
       {:else}
         <p
@@ -346,8 +414,11 @@
             ? 'italic text-gray-500'
             : ''}"
         >
-          {displayText ?? content}
+          {content}
         </p>
+        {#if firstLink}
+          <LinkPreviewCard url={firstLink} />
+        {/if}
       {/if}
 
       <!-- Micro-footer: only (modifié) + read checkmark, no time -->
@@ -371,7 +442,7 @@
         ? 'right-full mr-2'
         : 'left-full ml-2'} opacity-0 {showEmojiPicker
         ? 'opacity-100'
-        : 'group-hover:opacity-100'} transition-opacity flex flex-row items-center gap-1 rounded-full bg-white/95 border border-cn-border shadow-sm px-1.5 py-1 z-10"
+        : 'group-hover:opacity-100'} transition-opacity hidden md:flex flex-row items-center gap-1 rounded-full bg-[var(--cn-surface)]/95 border border-cn-border shadow-sm px-1.5 py-1 z-10"
     >
       {#if !isDeleted && onReply}
         <button
@@ -398,7 +469,7 @@
         <button
           onclick={(e) => {
             e.stopPropagation();
-            editText = displayText ?? content;
+            editText = content;
             showEditModal = true;
           }}
           class="p-1.5 rounded-full hover:bg-gray-200 transition-colors text-gray-400 hover:text-gray-700"
@@ -439,12 +510,21 @@
 
     <!-- ── Emoji picker ── -->
     {#if showEmojiPicker}
+      <button
+        type="button"
+        class="fixed inset-0 z-[95] bg-black/20"
+        aria-label="Fermer le selecteur d'emoji"
+        onclick={() => {
+          showEmojiPicker = false;
+        }}
+      ></button>
       <div
-        class="absolute bottom-full mb-1 {isOwn
-          ? 'right-0'
-          : 'left-0'} bg-white border border-cn-border rounded-lg shadow-xl z-[100] overflow-hidden"
+        class="fixed left-1/2 -translate-x-1/2 bottom-2 md:bottom-5 w-[min(94vw,380px)] bg-[var(--cn-surface)] border border-cn-border rounded-2xl shadow-2xl z-[100] overflow-hidden"
       >
-        <emoji-picker use:attachEmojiPicker class="light"></emoji-picker>
+        <div class="px-3 py-2 border-b border-cn-border text-xs text-text-muted flex items-center gap-1.5">
+          <Smile size={12} /> Reagir au message
+        </div>
+        <emoji-picker use:attachEmojiPicker class="light w-full"></emoji-picker>
       </div>
     {/if}
 
@@ -463,6 +543,68 @@
       </div>
     {/if}
   </div>
+
+  {#if showMobileActions}
+    <button
+      type="button"
+      class="fixed inset-0 z-40 bg-black/30 md:hidden"
+      aria-label="Fermer le menu des actions"
+      onclick={closeMobileActions}
+    ></button>
+    <div
+      class="fixed inset-x-0 bottom-0 z-50 md:hidden rounded-t-3xl bg-[var(--cn-surface)] border-t border-cn-border shadow-2xl p-4"
+      in:fly={{ y: 12, duration: 120 }}
+    >
+      <div class="w-12 h-1.5 rounded-full bg-gray-200 mx-auto mb-4"></div>
+      <div class="grid grid-cols-2 gap-2">
+        {#if !isDeleted && onReply}
+          <button
+            onclick={() => {
+              onReply?.(messageId);
+              closeMobileActions();
+            }}
+            class="px-3 py-2.5 rounded-xl bg-cn-bg text-sm font-medium flex items-center justify-center gap-2"
+          >
+            <Reply size={15} /> Repondre
+          </button>
+        {/if}
+        {#if onReact}
+          <button
+            onclick={() => {
+              showEmojiPicker = true;
+              closeMobileActions();
+            }}
+            class="px-3 py-2.5 rounded-xl bg-cn-bg text-sm font-medium flex items-center justify-center gap-2"
+          >
+            <Smile size={15} /> Reagir
+          </button>
+        {/if}
+        {#if !isDeleted && isOwn && !mediaRef && onEdit}
+          <button
+            onclick={() => {
+              editText = content;
+              showEditModal = true;
+              closeMobileActions();
+            }}
+            class="px-3 py-2.5 rounded-xl bg-cn-bg text-sm font-medium flex items-center justify-center gap-2"
+          >
+            <Pencil size={15} /> Modifier
+          </button>
+        {/if}
+        {#if !isDeleted && isOwn && onDelete}
+          <button
+            onclick={() => {
+              showDeleteModal = true;
+              closeMobileActions();
+            }}
+            class="px-3 py-2.5 rounded-xl bg-red-50 text-red-600 text-sm font-medium flex items-center justify-center gap-2"
+          >
+            <Trash2 size={15} /> Supprimer
+          </button>
+        {/if}
+      </div>
+    </div>
+  {/if}
 
   <!-- ── Modals (outside the relative div so z-index is clean) ── -->
   <Modal open={showEditModal} title="Modifier le message" onClose={() => (showEditModal = false)}>

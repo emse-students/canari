@@ -1,29 +1,26 @@
 <script lang="ts">
   import {
     ChevronLeft,
+    PanelLeft,
     LockKeyhole,
     Clock,
     Settings,
+    X,
     Trash2,
     UserMinus,
     Check,
-    UserPlus,
-    Users,
   } from 'lucide-svelte';
-  import Modal from './Modal.svelte';
-  import MultiUserSelector from './MultiUserSelector.svelte';
+  import Avatar from './Avatar.svelte';
 
   interface Props {
     contactName: string;
     displayName: string;
     isReady: boolean;
-    // inviteMemberInput is kept for compat interface but we use internal logic now
-    inviteMemberInput?: string;
-    onInviteInputChange?: (value: string) => void;
-    // Updated to accept multiple
-    onInviteMembers: (ids: string[]) => void;
-
+    inviteMemberInput: string;
+    onInviteInputChange: (value: string) => void;
+    onInviteMember: () => void;
     onBack?: () => void;
+    onOpenConversations?: () => void;
     // Group management
     groupMembers?: string[];
     onGroupRename?: (name: string) => void;
@@ -35,26 +32,26 @@
     contactName,
     displayName,
     isReady,
-    onInviteMembers,
+    inviteMemberInput,
+    onInviteInputChange,
+    onInviteMember,
     onBack,
+    onOpenConversations,
     groupMembers = [],
     onGroupRename,
     onGroupDelete,
     onGroupRemoveMember,
   }: Props = $props();
 
-  const avatarLetter = $derived(contactName[0]?.toUpperCase() || '?');
-
   let showPanel = $state(false);
-  let showInviteModal = $state(false);
-
-  // Rename state
   let renameInput = $state('');
-
-  // Invite state
-  let newMembers = $state<string[]>([]);
-
   let confirmDelete = $state(false);
+
+  function handleKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter' && inviteMemberInput.trim()) {
+      onInviteMember();
+    }
+  }
 
   function openPanel() {
     renameInput = displayName;
@@ -74,180 +71,209 @@
     if (e.key === 'Enter') submitRename();
     if (e.key === 'Escape') showPanel = false;
   }
-
-  function handleInvite() {
-    if (newMembers.length > 0) {
-      onInviteMembers(newMembers);
-      newMembers = [];
-      showInviteModal = false;
-    }
-  }
 </script>
 
-<header
-  class="bg-white/80 backdrop-blur-md px-6 py-3 border-b border-cn-border flex items-center gap-4 relative z-20"
->
-  <!-- Back button (mobile) -->
-  {#if onBack}
-    <button onclick={onBack} aria-label="Retour au menu" class="md:hidden p-1 text-cn-dark">
-      <ChevronLeft size={24} />
-    </button>
-  {/if}
+<header class="bg-[var(--surface-elevated)] px-3 md:px-6 py-3 border-b border-cn-border flex items-center gap-3 md:gap-4 relative backdrop-blur-sm">
+  <div class="flex items-center gap-1 md:hidden">
+    {#if onOpenConversations}
+      <button
+        onclick={onOpenConversations}
+        aria-label="Ouvrir les conversations"
+        class="p-1.5 text-cn-dark"
+      >
+        <PanelLeft size={20} />
+      </button>
+    {/if}
 
-  <!-- Avatar -->
-  <div
-    class="w-11 h-11 bg-cn-dark text-cn-yellow rounded-2xl flex items-center justify-center font-extrabold flex-shrink-0 shadow-sm"
-  >
-    {avatarLetter}
+    <!-- Back button (mobile) -->
+    {#if onBack}
+      <button onclick={onBack} aria-label="Retour au menu" class="p-1.5 text-cn-dark">
+        <ChevronLeft size={22} />
+      </button>
+    {/if}
   </div>
+
+  <Avatar userId={contactName} size="lg" />
 
   <!-- Meta -->
   <div class="flex-1 min-w-0">
-    <h2 class="text-lg font-semibold text-cn-dark mb-0.5 truncate">{displayName}</h2>
+    <h2 class="text-base md:text-lg font-semibold text-cn-dark mb-1 truncate">{displayName}</h2>
     <span
-      class="inline-flex items-center gap-1.5 text-xs font-semibold {isReady
-        ? 'text-green-600'
+      class="inline-flex items-center gap-1.5 text-[0.7rem] md:text-xs font-semibold {isReady
+        ? 'text-green-500'
         : 'text-amber-600'}"
     >
       {#if isReady}
-        <LockKeyhole size={12} /> Chiffré
+        <LockKeyhole size={14} /> Bout-en-bout vérifié
       {:else}
-        <Clock size={12} /> Initialisation...
+        <Clock size={14} /> Négociation cryptographique...
       {/if}
     </span>
   </div>
 
-  <!-- Actions -->
-  <div class="flex items-center gap-2">
-    <!-- Invite Member Button -->
-    <button
-      onclick={() => (showInviteModal = true)}
-      class="hidden sm:flex items-center gap-2 px-3 py-2 rounded-xl bg-cn-bg hover:bg-gray-200 text-sm font-medium transition-colors"
-    >
-      <UserPlus size={18} />
-      <span class="hidden md:inline">Ajouter</span>
-    </button>
-
-    <!-- Settings / Info -->
-    <button
-      onclick={openPanel}
-      class="p-2 rounded-xl hover:bg-gray-100 text-gray-600 transition-colors"
-    >
-      <Settings size={20} />
-    </button>
-  </div>
-</header>
-
-<!-- Invite Modal -->
-<Modal
-  open={showInviteModal}
-  onClose={() => (showInviteModal = false)}
-  title={`Ajouter des membres à ${displayName}`}
->
-  <div class="space-y-4">
-    <p class="text-sm text-gray-500">
-      Les nouveaux membres auront accès aux messages échangés à partir de maintenant.
-    </p>
-
-    <MultiUserSelector
-      users={newMembers}
-      onUsersChange={(u) => (newMembers = u)}
-      placeholder="Identifiant utilisateur..."
+  <!-- Invite -->
+  <div class="hidden lg:flex gap-2">
+    <input
+      type="text"
+      value={inviteMemberInput}
+      oninput={(e) => onInviteInputChange(e.currentTarget.value)}
+      onkeydown={handleKeydown}
+      placeholder="Ajouter au groupe..."
+      class="px-3 py-2 border border-cn-border rounded-xl text-sm w-40 outline-none bg-[var(--cn-surface)]"
     />
-
     <button
-      onclick={handleInvite}
-      disabled={newMembers.length === 0}
-      class="w-full py-2.5 bg-cn-dark text-cn-yellow font-semibold rounded-xl hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+      onclick={onInviteMember}
+      class="px-3 py-2 bg-cn-dark text-white rounded-xl text-sm font-semibold hover:bg-gray-800 transition-colors"
     >
-      Inviter {newMembers.length > 0 ? `(${newMembers.length})` : ''}
+      Inviter
     </button>
   </div>
-</Modal>
 
-<!-- Settings Modal (reusing the panel logic but in a Modal for consistency?)
-     The original code used a custom overlay. Let's stick closer to original "panel" behavior
-     but maybe distinct from the Invite modal.
-     Actually, let's just keep the original "Panel" as a Modal as well, it's cleaner.
--->
-<Modal open={showPanel} onClose={() => (showPanel = false)} title="Paramètres du groupe">
-  <div class="space-y-6">
-    <!-- Groupe Name -->
-    <div class="space-y-2">
-      <label class="text-sm font-medium text-gray-700">Nom du groupe</label>
-      <div class="flex gap-2">
-        <input
-          type="text"
-          bind:value={renameInput}
-          onkeydown={handleRenameKey}
-          class="flex-1 px-4 py-2 bg-cn-bg rounded-xl text-sm"
-        />
+  <!-- Group settings button -->
+  <button
+    onclick={openPanel}
+    aria-label="Paramètres du groupe"
+    class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 hover:text-cn-dark transition-colors"
+  >
+    <Settings size={18} />
+  </button>
+
+  <!-- Group management panel (dropdown) -->
+  {#if showPanel}
+    <!-- Backdrop -->
+    <button
+      class="fixed inset-0 z-30 cursor-default bg-transparent border-0"
+      onclick={() => {
+        showPanel = false;
+      }}
+      aria-label="Fermer le panneau"
+    ></button>
+
+    <div class="fixed inset-0 z-40 p-3 md:absolute md:inset-auto md:p-0 md:top-full md:right-0 md:mt-1 md:w-[24rem]">
+      <div
+        class="h-full md:h-auto bg-[var(--cn-surface)] border border-cn-border rounded-2xl shadow-lg p-4 md:p-5 flex flex-col gap-4 overflow-y-auto"
+      >
+      <!-- Close -->
+      <div class="flex items-center justify-between">
+        <span class="text-sm font-semibold text-cn-dark">Paramètres du groupe</span>
         <button
-          onclick={submitRename}
-          disabled={renameInput === displayName}
-          class="px-4 py-2 bg-gray-900 text-white rounded-xl text-sm disabled:opacity-50"
+          onclick={() => {
+            showPanel = false;
+          }}
+          class="text-gray-400 hover:text-cn-dark p-1 rounded-lg hover:bg-cn-bg"
         >
-          <Check size={18} />
+          <X size={16} />
         </button>
       </div>
-    </div>
 
-    <!-- Members List -->
-    {#if groupMembers.length > 0}
-      <div class="space-y-2">
-        <h3 class="text-sm font-medium text-gray-700 flex items-center gap-2">
-          <Users size={16} /> Membres ({groupMembers.length})
-        </h3>
-        <div class="max-h-48 overflow-y-auto bg-cn-bg rounded-xl p-2 space-y-1">
-          {#each groupMembers as member (member)}
-            <div class="flex items-center justify-between p-2 bg-white rounded-lg shadow-sm">
-              <span class="text-sm font-medium">{member}</span>
-              {#if onGroupRemoveMember && member.toLowerCase() !== contactName.toLowerCase()}
-                <!-- contactName is basically current user in some contexts? No wait. -->
-                <button
-                  onclick={() => onGroupRemoveMember(member)}
-                  class="text-red-500 hover:text-red-700 p-1"
-                  title="Retirer du groupe"
-                >
-                  <UserMinus size={16} />
-                </button>
-              {/if}
-            </div>
-          {/each}
+      <!-- Rename -->
+      <div class="flex flex-col gap-1">
+        <label for="group-rename-input" class="text-xs text-gray-500 font-medium"
+          >Nom du groupe</label
+        >
+        <div class="flex gap-2">
+          <input
+            id="group-rename-input"
+            type="text"
+            bind:value={renameInput}
+            onkeydown={handleRenameKey}
+            class="flex-1 px-3 py-2 border border-cn-border rounded-xl text-sm outline-none bg-[var(--cn-bg)]"
+          />
+          <button
+            onclick={submitRename}
+            class="p-2 bg-cn-dark text-white rounded-xl hover:bg-gray-800 transition-colors"
+            aria-label="Valider le renommage"
+          >
+            <Check size={14} />
+          </button>
         </div>
       </div>
-    {/if}
 
-    <!-- Danger Zone -->
-    <div class="pt-4 border-t border-gray-100">
-      {#if !confirmDelete}
-        <button
-          onclick={() => (confirmDelete = true)}
-          class="w-full flex items-center justify-center gap-2 p-3 text-red-600 hover:bg-red-50 rounded-xl transition-colors font-medium border border-red-100"
-        >
-          <Trash2 size={18} /> Supprimer le groupe
-        </button>
-      {:else}
-        <div class="space-y-2 text-center animation-fade-in">
-          <p class="text-sm text-red-600 font-medium">
-            Êtes-vous sûr ? Cette action est irréversible.
-          </p>
-          <div class="flex gap-2">
-            <button
-              onclick={() => (confirmDelete = false)}
-              class="flex-1 py-2 bg-gray-100 text-gray-700 rounded-xl font-medium"
-            >
-              Annuler
-            </button>
-            <button
-              onclick={onGroupDelete}
-              class="flex-1 py-2 bg-red-600 text-white rounded-xl font-medium hover:bg-red-700"
-            >
-              Confirmer
-            </button>
-          </div>
+      <!-- Members list -->
+      <div class="lg:hidden flex flex-col gap-2 border-t border-cn-border pt-3">
+        <span class="text-xs text-gray-500 font-medium">Inviter un membre</span>
+        <div class="flex gap-2">
+          <input
+            type="text"
+            value={inviteMemberInput}
+            oninput={(e) => onInviteInputChange(e.currentTarget.value)}
+            onkeydown={handleKeydown}
+            placeholder="Pseudo..."
+            class="flex-1 px-3 py-2 border border-cn-border rounded-xl text-sm outline-none bg-[var(--cn-bg)]"
+          />
+          <button
+            onclick={onInviteMember}
+            class="px-3 py-2 bg-cn-dark text-white rounded-xl text-sm font-semibold hover:bg-gray-800 transition-colors"
+          >
+            Inviter
+          </button>
+        </div>
+      </div>
+
+      {#if groupMembers.length > 0}
+        <div class="flex flex-col gap-1">
+          <span class="text-xs text-gray-500 font-medium">Membres ({groupMembers.length})</span>
+          <ul class="flex flex-col gap-1.5 max-h-52 overflow-y-auto">
+            {#each groupMembers as member (member)}
+              <li class="flex items-center justify-between px-2.5 py-2 rounded-xl bg-[var(--cn-bg)]">
+                <div class="flex items-center gap-2 min-w-0">
+                  <Avatar userId={member} size="sm" />
+                  <span class="text-sm text-cn-dark truncate">{member}</span>
+                </div>
+                {#if onGroupRemoveMember}
+                  <button
+                    onclick={() => {
+                      onGroupRemoveMember?.(member);
+                    }}
+                    aria-label="Retirer {member}"
+                    class="px-2.5 py-1.5 text-xs rounded-lg bg-red-50 text-red-500 hover:bg-red-100 transition-colors flex-shrink-0"
+                  >
+                    <span class="inline-flex items-center gap-1"><UserMinus size={12} /> Retirer</span>
+                  </button>
+                {/if}
+              </li>
+            {/each}
+          </ul>
         </div>
       {/if}
+
+      <!-- Delete group -->
+      {#if onGroupDelete}
+        <div class="border-t border-cn-border pt-3">
+          {#if !confirmDelete}
+            <button
+              onclick={() => {
+                confirmDelete = true;
+              }}
+              class="w-full flex items-center justify-center gap-2 px-3 py-2 text-red-500 border border-red-200 rounded-lg text-sm hover:bg-red-50 transition-colors"
+            >
+              <Trash2 size={14} /> Supprimer le groupe
+            </button>
+          {:else}
+            <div class="flex flex-col gap-2">
+              <p class="text-xs text-red-600 text-center">Confirmer la suppression ?</p>
+              <div class="flex gap-2">
+                <button
+                  onclick={() => {
+                    confirmDelete = false;
+                  }}
+                  class="flex-1 px-3 py-1.5 border border-cn-border rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+                  >Annuler</button
+                >
+                <button
+                  onclick={() => {
+                    onGroupDelete?.();
+                    showPanel = false;
+                  }}
+                  class="flex-1 px-3 py-1.5 bg-red-500 text-white rounded-lg text-sm hover:bg-red-600 transition-colors"
+                  >Supprimer</button
+                >
+              </div>
+            </div>
+          {/if}
+        </div>
+      {/if}
+      </div>
     </div>
-  </div>
-</Modal>
+  {/if}
+</header>

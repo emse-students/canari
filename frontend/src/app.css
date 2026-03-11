@@ -1,30 +1,108 @@
 @import 'tailwindcss';
 
 @theme {
-  /* Couleurs principales Canari */
-  --color-cn-dark: #111827;
-  --color-cn-yellow: #facc15;
-  --color-cn-yellow-hover: #eab308;
-  --color-cn-bg: #f9fafb;
-  --color-cn-border: #e5e7eb;
-
-  /* Couleurs texte */
-  --color-text-main: #111827;
-  --color-text-muted: #6b7280;
-
-  /* Couleurs état */
-  --color-green-ok: #10b981;
-  --color-red-err: #ef4444;
+  --color-cn-dark: var(--cn-dark);
+  --color-cn-yellow: var(--cn-yellow);
+  --color-cn-yellow-hover: var(--cn-yellow-hover);
+  --color-cn-bg: var(--cn-bg);
+  --color-cn-border: var(--cn-border);
+  --color-text-main: var(--text-main);
+  --color-text-muted: var(--text-muted);
+  --color-green-ok: var(--green-ok);
+  --color-red-err: var(--red-err);
 }
 
 :root {
-  --cn-dark: #111827;
-  --cn-yellow: #facc15;
-  --cn-yellow-hover: #eab308;
-  --cn-bg: #f9fafb;
-  --cn-border: #e5e7eb;
-  --text-main: #111827;
-  --text-muted: #6b7280;
-  --green-ok: #10b981;
-  --red-err: #ef4444;
+  --cn-dark: #122035;
+  --cn-yellow: #f6c232;
+  --cn-yellow-hover: #e4af1b;
+  --cn-bg: #f5f7fb;
+  --cn-surface: #ffffff;
+  --cn-border: #d9e0ea;
+  --text-main: #102136;
+  --text-muted: #607188;
+  --green-ok: #19b56a;
+  --red-err: #e04d4d;
+  --app-bg-gradient: radial-gradient(circle at 10% -10%, #ffe8a3 0%, transparent 30%),
+    radial-gradient(circle at 90% 0%, #cde7ff 0%, transparent 35%),
+    linear-gradient(180deg, #f9fbff 0%, #eef3fa 100%);
+  --surface-elevated: color-mix(in srgb, var(--cn-surface) 84%, #ffffff 16%);
+}
+
+:root[data-theme='dark'] {
+  --cn-dark: #f4f8ff;
+  --cn-yellow: #ffd45d;
+  --cn-yellow-hover: #ffe082;
+  --cn-bg: #0f1724;
+  --cn-surface: #172233;
+  --cn-border: #25354e;
+  --text-main: #f1f6ff;
+  --text-muted: #8ea2bf;
+  --green-ok: #2dd089;
+  --red-err: #f07474;
+  --app-bg-gradient: radial-gradient(circle at 20% -10%, #5f4a15 0%, transparent 35%),
+    radial-gradient(circle at 90% 0%, #1d3760 0%, transparent 40%),
+    linear-gradient(180deg, #0d1623 0%, #0a121d 100%);
+  --surface-elevated: color-mix(in srgb, var(--cn-surface) 90%, #ffffff 10%);
+}
+
+* {
+  transition: background-color 180ms ease, color 180ms ease, border-color 180ms ease;
+}
+
+html,
+body {
+  min-height: 100%;
+  background: var(--app-bg-gradient);
+  color: var(--text-main);
+}
+
+body {
+  font-family: 'Segoe UI', 'Inter', 'Avenir Next', sans-serif;
+}
+
+@keyframes riseIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-rise-in {
+  animation: riseIn 260ms ease;
+}
+
+@keyframes panelIn {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.animate-panel-in {
+  animation: panelIn 220ms ease;
+}
+
+@keyframes floatSoft {
+  0% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2px);
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+
+.animate-float-soft {
+  animation: floatSoft 2.6s ease-in-out infinite;
 }

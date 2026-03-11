@@ -29,7 +29,7 @@
   import { setupMessageHandler, initializeConnection } from '$lib/utils/mainChatConnection';
   import {
     createNewGroup as createGroup,
-    inviteMembersToGroup,
+    inviteMemberToGroup,
     startNewConversation as startConversation,
   } from '$lib/utils/mainChatGroupCreation';
   import {
@@ -42,7 +42,6 @@
   import { migrateFromLocalStorage } from '$lib/utils/migration';
   import { MediaService } from '$lib/media';
   import { encodeAppMessage, mkMedia, MediaKind } from '$lib/proto/codec';
-  import { serializeEnvelope, mkMediaEnvelope, mkSystemEnvelope } from '$lib/envelope';
   import LoginForm from './LoginForm.svelte';
   import Navbar from './Navbar.svelte';
   import Sidebar from './Sidebar.svelte';
@@ -62,7 +61,11 @@
   let conversations = new SvelteMap<string, Conversation>();
   let selectedContact = $state<string | null>(null);
   let mobileView = $state<'list' | 'chat'>('list'); // Gestion responsive
+  let isConversationDrawerOpen = $state(false);
 
+  let newContactInput = $state('');
+  let newGroupInput = $state('');
+  let inviteMemberInput = $state('');
   let messageText = $state('');
   let chatContainer = $state<HTMLElement>();
 
@@ -398,38 +401,9 @@
   }
 
   // --- Gestion Groupes & Membres ---
-  async function createNewGroup(nameRaw: string, initialMembers: string[] = []) {
+  async function createNewGroup(nameRaw: string) {
     const mlsService = ensureMls();
-    const commonDeps = {
-      mlsService,
-      storage,
-      userId,
-      pin,
-      historyBaseUrl,
-      conversations,
-      selectConversation,
-      saveConversation,
-      log,
-    };
-
-    await createGroup(nameRaw, commonDeps);
-
-    if (initialMembers.length > 0) {
-      const groupName = nameRaw.trim().toLowerCase();
-      const convo = conversations.get(groupName);
-      if (convo) {
-        await inviteMembersToGroup(initialMembers, convo, commonDeps);
-      }
-    }
-  }
-
-  async function inviteMembersToCurrentGroup(memberIds: string[]) {
-    if (!selectedContact) return;
-    const mlsService = ensureMls();
-    const convo = conversations.get(selectedContact);
-    if (!convo) return;
-
-    await inviteMembersToGroup(memberIds, convo, {
+    await createGroup(nameRaw, {
       mlsService,
       storage,
       userId,
@@ -440,6 +414,30 @@
       saveConversation,
       log,
     });
+  }
+
+  async function inviteMemberToCurrentGroup(memberId: string) {
+    if (!selectedContact) return;
+    const mlsService = ensureMls();
+    const convo = conversations.get(selectedContact);
+    if (!convo) return;
+
+    const result = await inviteMemberToGroup(memberId, convo, {
+      mlsService,
+      storage,
+      userId,
+      pin,
+      historyBaseUrl,
+      conversations,
+      selectConversation,
+      saveConversation,
+      log,
+    });
+
+    if (result.success) {
+      await addSystemMessage(`${userId} a ajouté ${result.targetUser} au groupe`, selectedContact);
+      await loadGroupMembers(convo.groupId);
+    }
   }
 
   async function startNewConversation(contactNameRaw: string) {
@@ -487,11 +485,11 @@
       messages: [...convo.messages, newMsg],
     });
 
-    // Persist message to DB (encrypted with PIN).
-    // content is already a serialized MessageEnvelope so store it directly.
+    // Persist message to DB (encrypted with PIN)
+    // Store as JSON to preserve replyTo metadata (skip system messages)
     if (storage && !isSystem) {
       try {
-        const storageContent = content;
+        const storageContent = JSON.stringify({ content, replyTo });
         await storage.saveMessage(
           {
             id: newMsg.id,
@@ -514,13 +512,7 @@
   }
 
   async function addSystemMessage(content: string, contactName: string) {
-    await addMessageToChat(
-      'system',
-      serializeEnvelope(mkSystemEnvelope(content)),
-      contactName,
-      undefined,
-      true
-    );
+    await addMessageToChat('system', content, contactName, undefined, true);
   }
 
   async function handleSendChat() {
@@ -532,6 +524,12 @@
     const convo = conversations.get(selectedContact);
     if (!convo) return;
 
+    const stillMember = await verifyCurrentUserMembership(selectedContact);
+    if (!stillMember || !convo.isReady) {
+      sendError = 'Vous avez été retiré de ce groupe. Vous ne pouvez plus envoyer de messages.';
+      return;
+    }
+
     const currentReplyingTo = replyingTo;
     if (text) messageText = '';
     replyingTo = null;
@@ -540,9 +538,6 @@
     const mlsService = ensureMls();
 
     if (fileToSend) {
-      // messageText is treated as the optional caption for the media.
-      const caption = text;
-      messageText = '';
       pendingMediaFile = null;
       isUploadingMedia = true;
       try {
@@ -577,26 +572,23 @@
             mimeType: mediaRef.mimeType,
             size: mediaRef.size,
             fileName: mediaRef.fileName ?? '',
-            caption: caption || '',
           }),
           messageId,
         });
         await mlsService.sendMessage(convo.groupId, protoBytes);
         const stateBytes = await mlsService.saveState(pin);
         localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
-        const payload = serializeEnvelope(mkMediaEnvelope(mediaRef, caption || undefined));
+        // Store as JSON locally for the media renderer
+        const payload = JSON.stringify({ ...mediaRef, id: messageId });
         await addMessageToChat(userId, payload, selectedContact, undefined, false, messageId);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         pendingMediaFile = fileToSend;
-        messageText = caption; // restore caption so user can retry
         sendError = `Échec de l'envoi du média : ${errorMessage}`;
         log(`Erreur envoi média: ${errorMessage}`);
       } finally {
         isUploadingMedia = false;
       }
-      // Media consumed all of messageText as caption — nothing left to send as text.
-      return;
     }
 
     if (!text) return;
@@ -644,7 +636,7 @@
     }
 
     pendingMediaFile = processedFile;
-    // Don't auto-send: let the user optionally type a caption first.
+    void handleSendChat();
   }
 
   async function handleAddReaction(messageId: string, emoji: string) {
@@ -728,10 +720,14 @@
   function selectConversation(name: string) {
     selectedContact = name;
     mobileView = 'chat';
+    isConversationDrawerOpen = false;
     sendError = '';
     // Load member list for the selected group
     const convo = conversations.get(name);
-    if (convo?.groupId) loadGroupMembers(convo.groupId);
+    if (convo?.groupId) {
+      loadGroupMembers(convo.groupId);
+      void verifyCurrentUserMembership(name);
+    }
   }
 
   async function loadGroupMembers(groupId: string) {
@@ -741,6 +737,38 @@
     } catch (e) {
       console.warn('[GroupMembers]', e);
       groupMembers = [];
+    }
+  }
+
+  async function verifyCurrentUserMembership(contactName: string): Promise<boolean> {
+    const convo = conversations.get(contactName);
+    if (!convo) return false;
+
+    try {
+      const mlsService = ensureMls();
+      const members = await fetchUniqueGroupMembers(mlsService, convo.groupId);
+      const stillMember = members.includes(userId.toLowerCase());
+
+      if (stillMember) return true;
+
+      if (convo.isReady) {
+        conversations.set(contactName, { ...convo, isReady: false });
+      }
+
+      const notice =
+        'Vous avez ete retire de ce groupe. Vous ne pouvez plus envoyer ni recevoir de nouveaux messages.';
+      const hasNotice = convo.messages.some((m) => m.isSystem && m.content === notice);
+      if (!hasNotice) {
+        await addSystemMessage(notice, contactName);
+      }
+
+      if (selectedContact === contactName) {
+        sendError = notice;
+      }
+
+      return false;
+    } catch {
+      return true;
     }
   }
 
@@ -759,6 +787,7 @@
       });
       conversations.set(selectedContact, { ...convo, name });
       if (storage) await saveConversation(selectedContact);
+      await addSystemMessage(`${userId} a renommé le groupe en "${name}"`, selectedContact);
       log(`Groupe renommé en "${name}"`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -799,6 +828,8 @@
         pin,
       });
       groupMembers = groupMembers.filter((m) => m !== memberId);
+      await addSystemMessage(`${userId} a retiré ${memberId} du groupe`, selectedContact);
+      await loadGroupMembers(convo.groupId);
       log(`${memberId} retiré du groupe.`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -808,6 +839,7 @@
 
   function goBackToMenu() {
     mobileView = 'list';
+    isConversationDrawerOpen = false;
   }
 
   function scheduleReconnect() {
@@ -871,7 +903,7 @@
     localStorage.removeItem('canari_saved_pin');
   }
 
-  async function resetAll() {
+  async function purgeLocalCaches() {
     if (storage) {
       await storage.clear();
       storage = null;
@@ -894,6 +926,10 @@
       );
     }
     localStorage.clear();
+  }
+
+  async function resetAll() {
+    await purgeLocalCaches();
     logout();
   }
 
@@ -1019,9 +1055,22 @@
       <Sidebar
         {conversations}
         {selectedContact}
-        userProfile={{ id: userId }}
-        onAddContact={(id) => startNewConversation(id)}
-        onCreateGroup={(name, members) => createNewGroup(name, members)}
+        {newContactInput}
+        {newGroupInput}
+        onContactInputChange={(value) => (newContactInput = value)}
+        onGroupInputChange={(value) => (newGroupInput = value)}
+        onAddContact={() => {
+          if (newContactInput.trim()) {
+            startNewConversation(newContactInput);
+            newContactInput = '';
+          }
+        }}
+        onCreateGroup={() => {
+          if (newGroupInput.trim()) {
+            createNewGroup(newGroupInput);
+            newGroupInput = '';
+          }
+        }}
         onSelectConversation={selectConversation}
         onExport={handleExport}
         onImport={handleImport}
@@ -1033,10 +1082,20 @@
       <ChatArea
         conversation={currentConvo}
         {messageText}
+        {inviteMemberInput}
         onMessageChange={(value) => (messageText = value)}
+        onInviteInputChange={(value) => (inviteMemberInput = value)}
         onSend={handleSendChat}
-        onInviteMembers={inviteMembersToCurrentGroup}
+        onInviteMember={() => {
+          if (inviteMemberInput.trim()) {
+            inviteMemberToCurrentGroup(inviteMemberInput);
+            inviteMemberInput = '';
+          }
+        }}
         onBack={goBackToMenu}
+        onOpenConversations={() => {
+          isConversationDrawerOpen = true;
+        }}
         isHidden={mobileView === 'list'}
         {groupMembers}
         {sendError}
@@ -1052,12 +1111,41 @@
         onCancelReply={cancelReply}
         {authToken}
         onFileSelected={handleFileSelected}
-        {pendingMediaFile}
-        onCancelMedia={() => {
-          pendingMediaFile = null;
-        }}
         isUploading={isUploadingMedia}
       />
+
+      {#if isConversationDrawerOpen}
+        <Sidebar
+          {conversations}
+          {selectedContact}
+          {newContactInput}
+          {newGroupInput}
+          onContactInputChange={(value) => (newContactInput = value)}
+          onGroupInputChange={(value) => (newGroupInput = value)}
+          onAddContact={() => {
+            if (newContactInput.trim()) {
+              startNewConversation(newContactInput);
+              newContactInput = '';
+            }
+          }}
+          onCreateGroup={() => {
+            if (newGroupInput.trim()) {
+              createNewGroup(newGroupInput);
+              newGroupInput = '';
+            }
+          }}
+          onSelectConversation={selectConversation}
+          onExport={handleExport}
+          onImport={handleImport}
+          {isExporting}
+          {isImporting}
+          isHidden={false}
+          drawerMode={true}
+          onCloseDrawer={() => {
+            isConversationDrawerOpen = false;
+          }}
+        />
+      {/if}
 
       {#if showLogs}
         <!-- Sur mobile : overlay plein écran. Sur desktop : panneau latéral dans la flexrow. -->
@@ -1086,11 +1174,24 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    position: relative;
+  }
+
+  .app-layout::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: radial-gradient(circle at 80% 10%, color-mix(in srgb, var(--cn-yellow) 16%, transparent), transparent 35%);
+    opacity: 0.9;
   }
 
   .main-content {
     display: flex;
     flex: 1;
     overflow: hidden;
+    position: relative;
+    z-index: 1;
+    backdrop-filter: saturate(1.02);
   }
 </style>
