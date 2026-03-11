@@ -102,7 +102,10 @@
     />
 
     <!-- Messages -->
-    <div bind:this={chatContainer} class="flex-1 overflow-y-auto px-6 py-6 flex flex-col gap-3">
+    <div
+      bind:this={chatContainer}
+      class="flex-1 overflow-y-auto px-6 py-6 pb-32 flex flex-col gap-3"
+    >
       {#each messageGroups as group, index (group.type === 'message' ? group.message.id : `${group.type}-${index}`)}
         {#if group.type === 'date_separator'}
           <div class="flex items-center justify-center my-4">
@@ -206,23 +209,25 @@
 
     {#if sendError}
       <div
-        class="px-6 py-2 bg-red-50 border-t border-red-200 text-sm text-red-600 flex items-center gap-2"
+        class="absolute bottom-24 left-6 right-6 px-4 py-2 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600 flex items-center justify-center gap-2 shadow-sm z-10"
       >
         <span>⚠️ {sendError}</span>
       </div>
     {/if}
 
-    <ChatComposer
-      {messageText}
-      {onMessageChange}
-      {onSend}
-      {replyingTo}
-      {onCancelReply}
-      {onFileSelected}
-      {pendingMediaFile}
-      {onCancelMedia}
-      {isUploading}
-    />
+    <div class="relative z-20">
+      <ChatComposer
+        {messageText}
+        {onMessageChange}
+        {onSend}
+        {replyingTo}
+        {onCancelReply}
+        {onFileSelected}
+        {pendingMediaFile}
+        {onCancelMedia}
+        {isUploading}
+      />
+    </div>
   {:else}
     <EmptyState
       icon={ShieldCheck}
