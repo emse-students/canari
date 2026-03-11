@@ -422,7 +422,7 @@
     const convo = conversations.get(selectedContact);
     if (!convo) return;
 
-    const result = await inviteMemberToGroup(memberId, convo, {
+    await inviteMemberToGroup(memberId, convo, {
       mlsService,
       storage,
       userId,
@@ -434,10 +434,7 @@
       log,
     });
 
-    if (result.success) {
-      await addSystemMessage(`${userId} a ajouté ${result.targetUser} au groupe`, selectedContact);
-      await loadGroupMembers(convo.groupId);
-    }
+    await loadGroupMembers(convo.groupId);
   }
 
   async function startNewConversation(contactNameRaw: string) {
