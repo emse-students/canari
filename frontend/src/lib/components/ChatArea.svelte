@@ -184,7 +184,9 @@
               {/if}
 
               <div
-                class="flex flex-col {msg.isOwn ? 'items-end' : 'items-start'} max-w-[88%] md:max-w-[75%]"
+                class="flex flex-col {msg.isOwn
+                  ? 'items-end'
+                  : 'items-start'} max-w-[88%] md:max-w-[75%]"
               >
                 {#if showSender}
                   <div class="text-xs text-gray-500 px-2 mb-1 font-medium">
@@ -219,7 +221,9 @@
     </div>
 
     {#if sendError}
-      <div class="px-3 md:px-6 py-2 bg-red-50 border-t border-red-200 text-sm text-red-600 flex items-center gap-2">
+      <div
+        class="px-3 md:px-6 py-2 bg-red-50 border-t border-red-200 text-sm text-red-600 flex items-center gap-2"
+      >
         <span>⚠️ {sendError}</span>
       </div>
     {/if}

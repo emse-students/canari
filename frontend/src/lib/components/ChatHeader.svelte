@@ -73,7 +73,9 @@
   }
 </script>
 
-<header class="bg-[var(--surface-elevated)] px-3 md:px-6 py-3 border-b border-cn-border flex items-center gap-3 md:gap-4 relative backdrop-blur-sm">
+<header
+  class="bg-[var(--surface-elevated)] px-3 md:px-6 py-3 border-b border-cn-border flex items-center gap-3 md:gap-4 relative backdrop-blur-sm"
+>
   <div class="flex items-center gap-1 md:hidden">
     {#if onOpenConversations}
       <button
@@ -149,130 +151,136 @@
       aria-label="Fermer le panneau"
     ></button>
 
-    <div class="fixed inset-0 z-40 p-3 md:absolute md:inset-auto md:p-0 md:top-full md:right-0 md:mt-1 md:w-[24rem]">
+    <div
+      class="fixed inset-0 z-40 p-3 md:absolute md:inset-auto md:p-0 md:top-full md:right-0 md:mt-1 md:w-[24rem]"
+    >
       <div
         class="h-full md:h-auto bg-[var(--cn-surface)] border border-cn-border rounded-2xl shadow-lg p-4 md:p-5 flex flex-col gap-4 overflow-y-auto"
       >
-      <!-- Close -->
-      <div class="flex items-center justify-between">
-        <span class="text-sm font-semibold text-cn-dark">Paramètres du groupe</span>
-        <button
-          onclick={() => {
-            showPanel = false;
-          }}
-          class="text-gray-400 hover:text-cn-dark p-1 rounded-lg hover:bg-cn-bg"
-        >
-          <X size={16} />
-        </button>
-      </div>
-
-      <!-- Rename -->
-      <div class="flex flex-col gap-1">
-        <label for="group-rename-input" class="text-xs text-gray-500 font-medium"
-          >Nom du groupe</label
-        >
-        <div class="flex gap-2">
-          <input
-            id="group-rename-input"
-            type="text"
-            bind:value={renameInput}
-            onkeydown={handleRenameKey}
-            class="flex-1 px-3 py-2 border border-cn-border rounded-xl text-sm outline-none bg-[var(--cn-bg)]"
-          />
+        <!-- Close -->
+        <div class="flex items-center justify-between">
+          <span class="text-sm font-semibold text-cn-dark">Paramètres du groupe</span>
           <button
-            onclick={submitRename}
-            class="p-2 bg-cn-dark text-white rounded-xl hover:bg-gray-800 transition-colors"
-            aria-label="Valider le renommage"
+            onclick={() => {
+              showPanel = false;
+            }}
+            class="text-gray-400 hover:text-cn-dark p-1 rounded-lg hover:bg-cn-bg"
           >
-            <Check size={14} />
+            <X size={16} />
           </button>
         </div>
-      </div>
 
-      <!-- Members list -->
-      <div class="lg:hidden flex flex-col gap-2 border-t border-cn-border pt-3">
-        <span class="text-xs text-gray-500 font-medium">Inviter un membre</span>
-        <div class="flex gap-2">
-          <input
-            type="text"
-            value={inviteMemberInput}
-            oninput={(e) => onInviteInputChange(e.currentTarget.value)}
-            onkeydown={handleKeydown}
-            placeholder="Pseudo..."
-            class="flex-1 px-3 py-2 border border-cn-border rounded-xl text-sm outline-none bg-[var(--cn-bg)]"
-          />
-          <button
-            onclick={onInviteMember}
-            class="px-3 py-2 bg-cn-dark text-white rounded-xl text-sm font-semibold hover:bg-gray-800 transition-colors"
-          >
-            Inviter
-          </button>
-        </div>
-      </div>
-
-      {#if groupMembers.length > 0}
+        <!-- Rename -->
         <div class="flex flex-col gap-1">
-          <span class="text-xs text-gray-500 font-medium">Membres ({groupMembers.length})</span>
-          <ul class="flex flex-col gap-1.5 max-h-52 overflow-y-auto">
-            {#each groupMembers as member (member)}
-              <li class="flex items-center justify-between px-2.5 py-2 rounded-xl bg-[var(--cn-bg)]">
-                <div class="flex items-center gap-2 min-w-0">
-                  <Avatar userId={member} size="sm" />
-                  <span class="text-sm text-cn-dark truncate">{member}</span>
-                </div>
-                {#if onGroupRemoveMember}
+          <label for="group-rename-input" class="text-xs text-gray-500 font-medium"
+            >Nom du groupe</label
+          >
+          <div class="flex gap-2">
+            <input
+              id="group-rename-input"
+              type="text"
+              bind:value={renameInput}
+              onkeydown={handleRenameKey}
+              class="flex-1 px-3 py-2 border border-cn-border rounded-xl text-sm outline-none bg-[var(--cn-bg)]"
+            />
+            <button
+              onclick={submitRename}
+              class="p-2 bg-cn-dark text-white rounded-xl hover:bg-gray-800 transition-colors"
+              aria-label="Valider le renommage"
+            >
+              <Check size={14} />
+            </button>
+          </div>
+        </div>
+
+        <!-- Members list -->
+        <div class="lg:hidden flex flex-col gap-2 border-t border-cn-border pt-3">
+          <span class="text-xs text-gray-500 font-medium">Inviter un membre</span>
+          <div class="flex gap-2">
+            <input
+              type="text"
+              value={inviteMemberInput}
+              oninput={(e) => onInviteInputChange(e.currentTarget.value)}
+              onkeydown={handleKeydown}
+              placeholder="Pseudo..."
+              class="flex-1 px-3 py-2 border border-cn-border rounded-xl text-sm outline-none bg-[var(--cn-bg)]"
+            />
+            <button
+              onclick={onInviteMember}
+              class="px-3 py-2 bg-cn-dark text-white rounded-xl text-sm font-semibold hover:bg-gray-800 transition-colors"
+            >
+              Inviter
+            </button>
+          </div>
+        </div>
+
+        {#if groupMembers.length > 0}
+          <div class="flex flex-col gap-1">
+            <span class="text-xs text-gray-500 font-medium">Membres ({groupMembers.length})</span>
+            <ul class="flex flex-col gap-1.5 max-h-52 overflow-y-auto">
+              {#each groupMembers as member (member)}
+                <li
+                  class="flex items-center justify-between px-2.5 py-2 rounded-xl bg-[var(--cn-bg)]"
+                >
+                  <div class="flex items-center gap-2 min-w-0">
+                    <Avatar userId={member} size="sm" />
+                    <span class="text-sm text-cn-dark truncate">{member}</span>
+                  </div>
+                  {#if onGroupRemoveMember}
+                    <button
+                      onclick={() => {
+                        onGroupRemoveMember?.(member);
+                      }}
+                      aria-label="Retirer {member}"
+                      class="px-2.5 py-1.5 text-xs rounded-lg bg-red-50 text-red-500 hover:bg-red-100 transition-colors flex-shrink-0"
+                    >
+                      <span class="inline-flex items-center gap-1"
+                        ><UserMinus size={12} /> Retirer</span
+                      >
+                    </button>
+                  {/if}
+                </li>
+              {/each}
+            </ul>
+          </div>
+        {/if}
+
+        <!-- Delete group -->
+        {#if onGroupDelete}
+          <div class="border-t border-cn-border pt-3">
+            {#if !confirmDelete}
+              <button
+                onclick={() => {
+                  confirmDelete = true;
+                }}
+                class="w-full flex items-center justify-center gap-2 px-3 py-2 text-red-500 border border-red-200 rounded-lg text-sm hover:bg-red-50 transition-colors"
+              >
+                <Trash2 size={14} /> Supprimer le groupe
+              </button>
+            {:else}
+              <div class="flex flex-col gap-2">
+                <p class="text-xs text-red-600 text-center">Confirmer la suppression ?</p>
+                <div class="flex gap-2">
                   <button
                     onclick={() => {
-                      onGroupRemoveMember?.(member);
+                      confirmDelete = false;
                     }}
-                    aria-label="Retirer {member}"
-                    class="px-2.5 py-1.5 text-xs rounded-lg bg-red-50 text-red-500 hover:bg-red-100 transition-colors flex-shrink-0"
+                    class="flex-1 px-3 py-1.5 border border-cn-border rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+                    >Annuler</button
                   >
-                    <span class="inline-flex items-center gap-1"><UserMinus size={12} /> Retirer</span>
-                  </button>
-                {/if}
-              </li>
-            {/each}
-          </ul>
-        </div>
-      {/if}
-
-      <!-- Delete group -->
-      {#if onGroupDelete}
-        <div class="border-t border-cn-border pt-3">
-          {#if !confirmDelete}
-            <button
-              onclick={() => {
-                confirmDelete = true;
-              }}
-              class="w-full flex items-center justify-center gap-2 px-3 py-2 text-red-500 border border-red-200 rounded-lg text-sm hover:bg-red-50 transition-colors"
-            >
-              <Trash2 size={14} /> Supprimer le groupe
-            </button>
-          {:else}
-            <div class="flex flex-col gap-2">
-              <p class="text-xs text-red-600 text-center">Confirmer la suppression ?</p>
-              <div class="flex gap-2">
-                <button
-                  onclick={() => {
-                    confirmDelete = false;
-                  }}
-                  class="flex-1 px-3 py-1.5 border border-cn-border rounded-lg text-sm text-gray-600 hover:bg-gray-50"
-                  >Annuler</button
-                >
-                <button
-                  onclick={() => {
-                    onGroupDelete?.();
-                    showPanel = false;
-                  }}
-                  class="flex-1 px-3 py-1.5 bg-red-500 text-white rounded-lg text-sm hover:bg-red-600 transition-colors"
-                  >Supprimer</button
-                >
+                  <button
+                    onclick={() => {
+                      onGroupDelete?.();
+                      showPanel = false;
+                    }}
+                    class="flex-1 px-3 py-1.5 bg-red-500 text-white rounded-lg text-sm hover:bg-red-600 transition-colors"
+                    >Supprimer</button
+                  >
+                </div>
               </div>
-            </div>
-          {/if}
-        </div>
-      {/if}
+            {/if}
+          </div>
+        {/if}
       </div>
     </div>
   {/if}

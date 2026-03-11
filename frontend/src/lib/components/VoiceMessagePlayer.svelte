@@ -51,10 +51,12 @@
   }
 </script>
 
-<div class="rounded-2xl border border-black/10 bg-white/70 px-3 py-2 min-w-[220px] max-w-[min(78vw,22rem)]">
+<div
+  class="rounded-2xl border border-black/10 bg-white/70 px-3 py-2 min-w-[220px] max-w-[min(78vw,22rem)]"
+>
   <audio
     bind:this={audioEl}
-    src={src}
+    {src}
     preload="metadata"
     onloadedmetadata={() => {
       duration = audioEl?.duration ?? 0;
@@ -135,6 +137,8 @@
   </div>
 
   <div class="mt-1 text-[0.68rem] opacity-70 truncate">
-    {sizeLabel}{#if sizeLabel && fileName} - {/if}{fileName}
+    {sizeLabel}{#if sizeLabel && fileName}
+      -
+    {/if}{fileName}
   </div>
 </div>

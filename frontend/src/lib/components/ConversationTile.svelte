@@ -11,7 +11,6 @@
   }
 
   let { contactName, displayName, lastMessage, isReady, isSelected, onClick }: Props = $props();
-
 </script>
 
 <button

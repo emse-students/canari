@@ -1179,7 +1179,11 @@
     position: absolute;
     inset: 0;
     pointer-events: none;
-    background: radial-gradient(circle at 80% 10%, color-mix(in srgb, var(--cn-yellow) 16%, transparent), transparent 35%);
+    background: radial-gradient(
+      circle at 80% 10%,
+      color-mix(in srgb, var(--cn-yellow) 16%, transparent),
+      transparent 35%
+    );
     opacity: 0.9;
   }
 

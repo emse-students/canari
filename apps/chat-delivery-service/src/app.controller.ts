@@ -82,7 +82,8 @@ function isPrivateIpAddress(ip: string): boolean {
   }
 
   const parts = ip.split('.').map((part) => Number.parseInt(part, 10));
-  if (parts.length !== 4 || parts.some((part) => Number.isNaN(part))) return true;
+  if (parts.length !== 4 || parts.some((part) => Number.isNaN(part)))
+    return true;
 
   const [a, b] = parts;
   return (
@@ -159,10 +160,16 @@ function extractTitle(html: string): string | null {
 }
 
 function buildLinkPreviewPayload(html: string, targetUrl: URL) {
-  const title = extractMetaContent(html, 'og:title') || extractTitle(html) || targetUrl.hostname;
+  const title =
+    extractMetaContent(html, 'og:title') ||
+    extractTitle(html) ||
+    targetUrl.hostname;
   const description =
-    extractMetaContent(html, 'og:description') || extractMetaContent(html, 'description') || '';
-  const siteName = extractMetaContent(html, 'og:site_name') || targetUrl.hostname;
+    extractMetaContent(html, 'og:description') ||
+    extractMetaContent(html, 'description') ||
+    '';
+  const siteName =
+    extractMetaContent(html, 'og:site_name') || targetUrl.hostname;
 
   const rawImage = extractMetaContent(html, 'og:image');
   let image = '';

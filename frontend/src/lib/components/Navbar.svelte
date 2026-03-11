@@ -38,7 +38,9 @@
   }
 </script>
 
-<header class="h-16 bg-[var(--surface-elevated)] border-b border-cn-border flex items-center justify-between px-4 md:px-6 z-20 backdrop-blur-sm">
+<header
+  class="h-16 bg-[var(--surface-elevated)] border-b border-cn-border flex items-center justify-between px-4 md:px-6 z-20 backdrop-blur-sm"
+>
   <!-- Brand -->
   <div class="flex items-center gap-3">
     <div class="w-8 h-8 bg-cn-dark text-cn-yellow rounded-lg flex items-center justify-center">

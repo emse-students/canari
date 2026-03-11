@@ -99,7 +99,9 @@
 
 <footer class="bg-[var(--surface-elevated)] border-t border-cn-border">
   {#if replyingTo}
-    <div class="px-3 md:px-6 py-2 bg-cn-bg border-b border-cn-border flex items-center justify-between">
+    <div
+      class="px-3 md:px-6 py-2 bg-cn-bg border-b border-cn-border flex items-center justify-between"
+    >
       <div class="flex-1 min-w-0">
         <div class="text-xs font-semibold text-gray-600">
           Répondre à {replyingTo.senderId}

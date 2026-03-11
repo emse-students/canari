@@ -521,7 +521,9 @@
       <div
         class="fixed left-1/2 -translate-x-1/2 bottom-2 md:bottom-5 w-[min(94vw,380px)] bg-[var(--cn-surface)] border border-cn-border rounded-2xl shadow-2xl z-[100] overflow-hidden"
       >
-        <div class="px-3 py-2 border-b border-cn-border text-xs text-text-muted flex items-center gap-1.5">
+        <div
+          class="px-3 py-2 border-b border-cn-border text-xs text-text-muted flex items-center gap-1.5"
+        >
           <Smile size={12} /> Reagir au message
         </div>
         <emoji-picker use:attachEmojiPicker class="light w-full"></emoji-picker>
