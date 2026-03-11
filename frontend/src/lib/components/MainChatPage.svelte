@@ -1061,7 +1061,7 @@
         await new Promise((resolve) => setTimeout(resolve, 1200));
       }
 
-      throw new Error('Timeout: aucun appareil n\'a rejoint la session');
+      throw new Error("Timeout: aucun appareil n'a rejoint la session");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       syncStatusText = `Erreur sync: ${msg}`;

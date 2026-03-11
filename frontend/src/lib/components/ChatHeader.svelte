@@ -144,7 +144,9 @@
   >
     <div class="flex flex-col gap-4">
       <div class="flex flex-col gap-1">
-        <label for="group-rename-input" class="text-xs text-gray-500 font-medium">Nom du groupe</label>
+        <label for="group-rename-input" class="text-xs text-gray-500 font-medium"
+          >Nom du groupe</label
+        >
         <div class="flex gap-2">
           <input
             id="group-rename-input"
@@ -170,7 +172,9 @@
           </span>
           <ul class="flex flex-col gap-1.5 max-h-52 overflow-y-auto">
             {#each groupMembers as member (member)}
-              <li class="flex items-center justify-between px-2.5 py-2 rounded-xl bg-[var(--cn-bg)]">
+              <li
+                class="flex items-center justify-between px-2.5 py-2 rounded-xl bg-[var(--cn-bg)]"
+              >
                 <div class="flex items-center gap-2 min-w-0">
                   <Avatar userId={member} size="sm" />
                   <span class="text-sm text-cn-dark truncate">{member}</span>
@@ -183,7 +187,9 @@
                     aria-label="Retirer {member}"
                     class="px-2.5 py-1.5 text-xs rounded-lg bg-red-50 text-red-500 hover:bg-red-100 transition-colors flex-shrink-0"
                   >
-                    <span class="inline-flex items-center gap-1"><UserMinus size={12} /> Retirer</span>
+                    <span class="inline-flex items-center gap-1"
+                      ><UserMinus size={12} /> Retirer</span
+                    >
                   </button>
                 {/if}
               </li>

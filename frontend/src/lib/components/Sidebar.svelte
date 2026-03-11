@@ -121,7 +121,9 @@
     ? 'fixed left-0 top-0 bottom-0 z-40 w-[88vw] max-w-sm md:hidden shadow-2xl animate-panel-in'
     : 'w-full md:w-80'} {isHidden && !drawerMode ? 'hidden md:flex' : ''}"
 >
-  <div class="px-4 py-4 border-b border-cn-bg flex items-center justify-between sticky top-0 bg-[var(--surface-elevated)]/90 backdrop-blur-md z-10">
+  <div
+    class="px-4 py-4 border-b border-cn-bg flex items-center justify-between sticky top-0 bg-[var(--surface-elevated)]/90 backdrop-blur-md z-10"
+  >
     <div class="flex items-center gap-2">
       <h2 class="text-sm font-semibold tracking-wide text-cn-dark">Discussions</h2>
     </div>

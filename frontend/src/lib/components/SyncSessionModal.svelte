@@ -36,8 +36,9 @@
 
   let mediaStream: MediaStream | null = null;
   let scanAnimationFrame: number | null = null;
-  let detector: { detect: (source: HTMLVideoElement) => Promise<Array<{ rawValue?: string }>> } | null =
-    null;
+  let detector: {
+    detect: (source: HTMLVideoElement) => Promise<Array<{ rawValue?: string }>>;
+  } | null = null;
 
   const hasScannerSupport = $derived.by(() => {
     if (typeof window === 'undefined') return false;
@@ -208,12 +209,20 @@
 
       {#if isScanning}
         <div class="rounded-xl border border-cn-border bg-black/90 p-2">
-          <video bind:this={videoEl} autoplay playsinline muted class="w-full h-56 object-cover rounded-lg"></video>
+          <video
+            bind:this={videoEl}
+            autoplay
+            playsinline
+            muted
+            class="w-full h-56 object-cover rounded-lg"
+          ></video>
         </div>
       {/if}
 
       {#if scanError}
-        <div class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+        <div
+          class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2"
+        >
           {scanError}
         </div>
       {/if}
