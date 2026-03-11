@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ShieldCheck } from 'lucide-svelte';
+  import { ShieldCheck, AlertTriangle } from 'lucide-svelte';
   import { tick } from 'svelte';
   import ChatHeader from './ChatHeader.svelte';
   import MessageBubble from './MessageBubble.svelte';
@@ -224,7 +224,8 @@
       <div
         class="px-3 md:px-6 py-2 bg-red-50 border-t border-red-200 text-sm text-red-600 flex items-center gap-2"
       >
-        <span>⚠️ {sendError}</span>
+        <AlertTriangle size={16} />
+        <span>{sendError}</span>
       </div>
     {/if}
 

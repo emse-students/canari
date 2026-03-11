@@ -870,7 +870,7 @@
       mlsService.onDisconnect(scheduleReconnect);
       isWsConnected = true;
       reconnectAttempts = 0;
-      log('✅ Reconnecté au réseau !');
+      log('[OK] Reconnecte au reseau.');
       syncOwnDevicesToGroupsLocally().catch(() => {});
     } catch {
       scheduleReconnect();

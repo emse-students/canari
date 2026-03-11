@@ -74,7 +74,7 @@ export async function syncOwnDevicesToGroups(params: {
   const newDevices = allOwnDevices.filter((d) => !knownIds.has(d.deviceId));
   if (newDevices.length === 0) return;
 
-  log(`🔄 Nouvel(s) appareil(s) détecté(s) : synchronisation en cours…`);
+  log(`[SYNC] Nouvel appareil detecte : synchronisation en cours...`);
   let totalWelcomes = 0;
 
   for (const device of newDevices) {
@@ -112,7 +112,7 @@ export async function syncOwnDevicesToGroups(params: {
   }
 
   if (totalWelcomes > 0) {
-    log(`✅ ${totalWelcomes} Welcome(s) envoyé(s) aux nouveaux appareils.`);
+    log(`[OK] ${totalWelcomes} Welcome(s) envoye(s) aux nouveaux appareils.`);
   }
 }
 
@@ -137,7 +137,7 @@ export async function exportUserBackup(params: {
   a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
-  log(`✅ Sauvegarde exportée : ${filename}`);
+  log(`[OK] Sauvegarde exportee : ${filename}`);
 }
 
 export async function importUserBackup(params: {
@@ -171,8 +171,8 @@ export async function importUserBackup(params: {
     }
   } else {
     log(
-      '⚠️ Nouvel appareil détecté. Les conversations sont importées en lecture seule. ' +
-        "Reconnectez l'appareil exportateur pour déclencher l'invitation automatique aux groupes."
+      '[ATTENTION] Nouvel appareil detecte. Les conversations sont importees en lecture seule. ' +
+        "Reconnectez l'appareil exportateur pour declencher l'invitation automatique aux groupes."
     );
   }
 
@@ -180,7 +180,7 @@ export async function importUserBackup(params: {
   await reloadConversations();
 
   log(
-    `✅ Sauvegarde importée : ${backup.conversations.length} conversation(s), ` +
+    `[OK] Sauvegarde importee : ${backup.conversations.length} conversation(s), ` +
       `${backup.messages.length} message(s).`
   );
 }

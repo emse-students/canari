@@ -54,5 +54,5 @@ export async function migrateFromLocalStorage(
 
     localStorage.removeItem(key);
   }
-  log('Migration terminée ✅');
+  log('Migration terminee [OK]');
 }

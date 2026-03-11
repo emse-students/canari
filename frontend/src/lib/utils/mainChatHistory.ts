@@ -176,7 +176,7 @@ export async function replayConversationHistory(params: {
     if (mlsUpdated) {
       const stateBytes = await mlsService.saveState(pin);
       localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
-      log(`✅ ${addedMsg} msg rattrapés pour ${contactName}.`);
+      log(`[OK] ${addedMsg} msg rattrapes pour ${contactName}.`);
     }
   } catch {
     // Silently ignore errors in loading history

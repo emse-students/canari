@@ -156,7 +156,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               const filtered = reactions.filter((r) => r.userId !== senderNorm);
               filtered.push({ emoji: msg.reaction.emoji ?? '', userId: senderNorm });
               messageReactions.set(msg.reaction.messageId ?? '', filtered);
-              log(`👍 ${senderNorm} a réagi avec ${msg.reaction.emoji}`);
+              log(`[REACTION] ${senderNorm} a reagi avec ${msg.reaction.emoji}`);
               return true;
             }
 
@@ -218,7 +218,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                 }
               }
               if (event === 'groupDeleted') {
-                log(`🗑️ Groupe supprimé par ${senderNorm}`);
+                log(`[INFO] Groupe supprime par ${senderNorm}`);
                 if (storage) await storage.deleteConversation(convoKey);
                 conversations.delete(convoKey);
                 if (selectedContact === convoKey) {
@@ -311,7 +311,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             const failures = (groupMlsFailures.get(convoKey) ?? 0) + 1;
             groupMlsFailures.set(convoKey, failures);
             log(
-              `⚠️ Groupe fantôme potentiel "${convoKey}" (échec ${failures}/${PHANTOM_THRESHOLD})`
+              `[WARN] Groupe fantome potentiel "${convoKey}" (echec ${failures}/${PHANTOM_THRESHOLD})`
             );
             if (failures >= PHANTOM_THRESHOLD) {
               log(
@@ -378,7 +378,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           // Silent fallback if autosave fails
         }
 
-        log(`✅ Handshake complété avec ${senderNorm}`);
+        log(`[OK] Handshake complete avec ${senderNorm}`);
         loadHistoryForConversation(newConvoKey, joinedGroupId);
         return true;
       } catch (_e) {

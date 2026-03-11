@@ -23,7 +23,8 @@
   --text-muted: #607188;
   --green-ok: #19b56a;
   --red-err: #e04d4d;
-  --app-bg-gradient: radial-gradient(circle at 10% -10%, #ffe8a3 0%, transparent 30%),
+  --app-bg-gradient:
+    radial-gradient(circle at 10% -10%, #ffe8a3 0%, transparent 30%),
     radial-gradient(circle at 90% 0%, #cde7ff 0%, transparent 35%),
     linear-gradient(180deg, #f9fbff 0%, #eef3fa 100%);
   --surface-elevated: color-mix(in srgb, var(--cn-surface) 84%, #ffffff 16%);
@@ -40,14 +41,18 @@
   --text-muted: #8ea2bf;
   --green-ok: #2dd089;
   --red-err: #f07474;
-  --app-bg-gradient: radial-gradient(circle at 20% -10%, #5f4a15 0%, transparent 35%),
+  --app-bg-gradient:
+    radial-gradient(circle at 20% -10%, #5f4a15 0%, transparent 35%),
     radial-gradient(circle at 90% 0%, #1d3760 0%, transparent 40%),
     linear-gradient(180deg, #0d1623 0%, #0a121d 100%);
   --surface-elevated: color-mix(in srgb, var(--cn-surface) 90%, #ffffff 10%);
 }
 
 * {
-  transition: background-color 180ms ease, color 180ms ease, border-color 180ms ease;
+  transition:
+    background-color 180ms ease,
+    color 180ms ease,
+    border-color 180ms ease;
 }
 
 html,

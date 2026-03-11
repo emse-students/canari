@@ -53,9 +53,9 @@ export function getPreviewText(env: MessageEnvelope): string {
     case 'text':
       return env.text;
     case 'media':
-      return env.caption ? `📷 ${env.caption}` : '📷 [Média]';
+      return env.caption ? `[Media] ${env.caption}` : '[Media]';
     case 'system':
-      return `ℹ️ ${env.text}`;
+      return `[Info] ${env.text}`;
   }
 }
 

@@ -29,7 +29,7 @@ async function fetchDevicesWithRetry(
     if (devices.length > 0) return devices;
     if (attempt < attempts) {
       log(
-        `⏳ Appareils introuvables pour ${userId} (tentative ${attempt}/${attempts}), nouvelle tentative dans ${delayMs / 1000}s...`
+        `[RETRY] Appareils introuvables pour ${userId} (tentative ${attempt}/${attempts}), nouvelle tentative dans ${delayMs / 1000}s...`
       );
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
@@ -97,7 +97,7 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
     });
     selectConversation(groupName);
     saveConversation(groupName);
-    log(`✅ Groupe "${groupDisplayName}" créé!`);
+    log(`[OK] Groupe "${groupDisplayName}" cree.`);
   } catch (e) {
     log(`Erreur création groupe: ${e}`);
   }
@@ -127,7 +127,7 @@ async function processBulkAddition(
     for (const targetUser of targetUsers) {
       const devices = await fetchDevicesWithRetry(mlsService, targetUser, log);
       if (devices.length === 0) {
-        log(`⚠️ Ignoré: Appareils introuvables pour ${targetUser}.`);
+        log(`[WARN] Ignore: Appareils introuvables pour ${targetUser}.`);
         continue;
       }
       devices.forEach((d: any) => {
@@ -137,7 +137,7 @@ async function processBulkAddition(
     }
 
     if (allDevices.length === 0) {
-      log('❌ Aucun appareil trouvé pour les utilisateurs demandés.');
+      log('[ERREUR] Aucun appareil trouve pour les utilisateurs demandes.');
       return;
     }
 
@@ -189,7 +189,7 @@ async function processBulkAddition(
 
     if (bulk.commit) await mlsService.sendCommit(bulk.commit, conversation.groupId);
 
-    log(`✅ Ajoutés: ${targetUsers.join(', ')} (${bulk.addedDeviceIds.length} appareils).`);
+    log(`[OK] Ajoutes: ${targetUsers.join(', ')} (${bulk.addedDeviceIds.length} appareils).`);
 
     // Broadcast member addition notification (one generic or multiple specific?)
     // Let's send one generic message listing all new users
@@ -349,10 +349,10 @@ export async function startNewConversation(
       const convo = conversations.get(contact)!;
       conversations.set(contact, { ...convo, isReady: true });
       saveConversation(contact);
-      log(`✅ Canal sécurisé avec ${contact}.`);
+      log(`[OK] Canal securise avec ${contact}.`);
     } else {
       log(
-        `❌ Appareils introuvables pour ${contact}. Le contact doit se connecter une première fois pour publier son KeyPackage.`
+        `[ERREUR] Appareils introuvables pour ${contact}. Le contact doit se connecter une premiere fois pour publier son KeyPackage.`
       );
       conversations.delete(contact);
     }
