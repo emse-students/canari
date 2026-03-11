@@ -13,6 +13,7 @@
   let duration = $state(0);
   let currentTime = $state(0);
   let speed = $state(1);
+  let lastDurationToken = 0;
   let playerWidth = $derived.by(() => {
     const seconds = Number.isFinite(duration) ? duration : 0;
     const clamped = Math.min(Math.max(seconds, 3), 75);
@@ -53,6 +54,39 @@
     speed = next;
     audioEl.playbackRate = next;
   }
+
+  async function decodeDurationFromSource(source: string, token: number) {
+    try {
+      const response = await fetch(source);
+      const buffer = await response.arrayBuffer();
+      const AudioContextCtor = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioContextCtor) return;
+
+      const audioContext = new AudioContextCtor();
+      try {
+        const decoded = await audioContext.decodeAudioData(buffer.slice(0));
+        if (token === lastDurationToken && Number.isFinite(decoded.duration) && decoded.duration > 0) {
+          duration = decoded.duration;
+          currentTime = Math.min(currentTime, decoded.duration);
+        }
+      } finally {
+        void audioContext.close();
+      }
+    } catch {
+      // Keep metadata duration if decode fails.
+    }
+  }
+
+  $effect(() => {
+    const source = src;
+    lastDurationToken += 1;
+    const token = lastDurationToken;
+    duration = 0;
+    currentTime = 0;
+    isPlaying = false;
+    if (!source) return;
+    void decodeDurationFromSource(source, token);
+  });
 </script>
 
 <div
@@ -64,7 +98,10 @@
     {src}
     preload="metadata"
     onloadedmetadata={() => {
-      duration = audioEl?.duration ?? 0;
+      const metadataDuration = audioEl?.duration ?? 0;
+      if (Number.isFinite(metadataDuration) && metadataDuration > 0 && metadataDuration < 60 * 60) {
+        duration = metadataDuration;
+      }
     }}
     ontimeupdate={() => {
       currentTime = audioEl?.currentTime ?? 0;
