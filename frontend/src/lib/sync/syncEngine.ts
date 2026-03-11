@@ -38,7 +38,10 @@ function encodeConversationTransportId(rawId: string): string {
 function decodeConversationTransportId(transportId: string): string {
   if (!transportId.startsWith('cid_')) return transportId;
   const body = transportId.slice(4);
-  const padded = body.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(body.length / 4) * 4, '=');
+  const padded = body
+    .replace(/-/g, '+')
+    .replace(/_/g, '/')
+    .padEnd(Math.ceil(body.length / 4) * 4, '=');
   const bytes = fromBase64(padded);
   return new TextDecoder().decode(bytes);
 }
@@ -131,8 +134,8 @@ export async function buildTransferChunksForMissing(
       id: decoded,
       groupId: decoded,
       name: decoded,
-    isReady: false,
-    updatedAt: Date.now(),
+      isReady: false,
+      updatedAt: Date.now(),
     };
   };
 
