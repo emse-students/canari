@@ -3,18 +3,22 @@
 
   interface Props {
     src: string;
-    fileName?: string;
-    sizeLabel?: string;
     onDownload?: () => void;
   }
 
-  let { src, fileName = 'vocal.webm', sizeLabel = '', onDownload }: Props = $props();
+  let { src, onDownload }: Props = $props();
 
   let audioEl = $state<HTMLAudioElement | null>(null);
   let isPlaying = $state(false);
   let duration = $state(0);
   let currentTime = $state(0);
   let speed = $state(1);
+  let playerWidth = $derived.by(() => {
+    const seconds = Number.isFinite(duration) ? duration : 0;
+    const clamped = Math.min(Math.max(seconds, 3), 75);
+    const rem = 11 + clamped * 0.17;
+    return `${Math.min(rem, 23)}rem`;
+  });
 
   function formatTime(seconds: number): string {
     if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
@@ -52,7 +56,8 @@
 </script>
 
 <div
-  class="rounded-2xl border border-black/10 bg-white/70 px-3 py-2 min-w-[220px] max-w-[min(78vw,22rem)]"
+  class="rounded-2xl border border-black/10 bg-white/70 px-3 py-2 max-w-[min(80vw,23rem)]"
+  style={`width:${playerWidth}`}
 >
   <audio
     bind:this={audioEl}
@@ -130,15 +135,9 @@
         onDownload?.();
       }}
       class="w-7 h-7 rounded-full bg-black/10 text-cn-dark inline-flex items-center justify-center"
-      aria-label={`Telecharger ${fileName}`}
+      aria-label="Telecharger le vocal"
     >
       <Download size={13} />
     </button>
-  </div>
-
-  <div class="mt-1 text-[0.68rem] opacity-70 truncate">
-    {sizeLabel}{#if sizeLabel && fileName}
-      -
-    {/if}{fileName}
   </div>
 </div>

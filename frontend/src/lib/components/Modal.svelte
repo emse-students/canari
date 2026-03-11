@@ -27,7 +27,7 @@
 {#if open}
   <div
     role="presentation"
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+    class="fixed inset-0 z-[180] flex items-center justify-center bg-black/40 backdrop-blur-sm"
     onclick={handleBackdropClick}
     in:fly={{ duration: 150, y: 8 }}
   >

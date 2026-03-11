@@ -386,8 +386,6 @@
             {#if blobUrl}
               <VoiceMessagePlayer
                 src={blobUrl}
-                fileName={mediaRef.fileName ?? 'vocal.webm'}
-                sizeLabel={formatFileSize(mediaRef.size)}
                 onDownload={() => downloadBlob(blobUrl!, mediaRef.fileName ?? 'vocal.webm')}
               />
             {:else if loadError}
@@ -526,16 +524,10 @@
 
     <!-- ── Emoji picker ── -->
     {#if showEmojiPicker}
-      <button
-        type="button"
-        class="fixed inset-0 z-[95] bg-black/20"
-        aria-label="Fermer le selecteur d'emoji"
-        onclick={() => {
-          showEmojiPicker = false;
-        }}
-      ></button>
       <div
-        class="fixed left-1/2 -translate-x-1/2 bottom-2 md:bottom-5 w-[min(94vw,380px)] bg-[var(--cn-surface)] border border-cn-border rounded-2xl shadow-2xl z-[100] overflow-hidden"
+        class="absolute top-full mt-2 {isOwn
+          ? 'right-0'
+          : 'left-0'} w-[min(92vw,22rem)] bg-[var(--cn-surface)] border border-cn-border rounded-2xl shadow-2xl z-[110] overflow-hidden"
       >
         <div
           class="px-3 py-2 border-b border-cn-border text-xs text-text-muted flex items-center gap-1.5"
