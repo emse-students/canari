@@ -137,7 +137,8 @@ async function processBulkAddition(
     }
 
     if (allDevices.length === 0) {
-      return log('❌ Aucun appareil trouvé pour les utilisateurs demandés.');
+      log('❌ Aucun appareil trouvé pour les utilisateurs demandés.');
+      return;
     }
 
     // Add all devices in bulk (single MLS commit)

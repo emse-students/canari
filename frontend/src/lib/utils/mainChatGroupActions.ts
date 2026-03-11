@@ -48,11 +48,11 @@ export async function removeMemberAndBroadcast(params: {
 }) {
   const { mlsService, groupId, memberId, userId, pin } = params;
 
-  await mlsService.removeMemberFromServer(groupId, memberId);
   const controlMsg = encodeAppMessage(
     mkSystem('memberRemoved', JSON.stringify({ targetUser: memberId }))
   );
   await mlsService.sendMessage(groupId, controlMsg);
+  await mlsService.removeMemberFromServer(groupId, memberId);
   const stBytes = await mlsService.saveState(pin);
   localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
 }

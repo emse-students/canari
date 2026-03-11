@@ -7,6 +7,26 @@ import type { MessageReaction } from '$lib/types';
 import { decodeAppMessage, MediaKind } from '$lib/proto/codec';
 import { serializeEnvelope, mkTextEnvelope, mkMediaEnvelope } from '$lib/envelope';
 
+function bytesToHex(bytes?: Uint8Array | null): string {
+  if (!bytes || bytes.length === 0) return '';
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function mediaKindToType(kind?: number | null): 'image' | 'video' | 'audio' | 'file' {
+  switch (kind) {
+    case MediaKind.MEDIA_IMAGE:
+      return 'image';
+    case MediaKind.MEDIA_VIDEO:
+      return 'video';
+    case MediaKind.MEDIA_AUDIO:
+      return 'audio';
+    default:
+      return 'file';
+  }
+}
+
 interface MessageHandlerDeps {
   mlsService: IMlsService;
   storage: IStorage | null;
@@ -141,31 +161,15 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             }
 
             if (msg?.media) {
-              const kindToType: Record<number, string> = {
-                [MediaKind.MEDIA_IMAGE]: 'image',
-                [MediaKind.MEDIA_VIDEO]: 'video',
-                [MediaKind.MEDIA_AUDIO]: 'audio',
-                [MediaKind.MEDIA_FILE]: 'file',
-              };
-              const keyHex = Array.from(msg.media.key ?? [])
-                .map((b) => b.toString(16).padStart(2, '0'))
-                .join('');
-              const ivHex = Array.from(msg.media.iv ?? [])
-                .map((b) => b.toString(16).padStart(2, '0'))
-                .join('');
               await addMessageToChat(
                 senderNorm,
                 serializeEnvelope(
                   mkMediaEnvelope(
                     {
-                      type: (kindToType[msg.media.kind ?? 0] ?? 'file') as
-                        | 'image'
-                        | 'video'
-                        | 'audio'
-                        | 'file',
+                      type: mediaKindToType(msg.media.kind),
                       mediaId: msg.media.mediaId ?? '',
-                      key: keyHex,
-                      iv: ivHex,
+                      key: bytesToHex(msg.media.key),
+                      iv: bytesToHex(msg.media.iv),
                       mimeType: msg.media.mimeType ?? '',
                       size: msg.media.size ?? 0,
                       fileName: msg.media.fileName ?? undefined,

@@ -114,6 +114,7 @@
             Traiter Welcome
           </button>
         {/if}
+
       </div>
     </details>
   {/if}
