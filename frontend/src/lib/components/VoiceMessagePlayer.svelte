@@ -14,12 +14,6 @@
   let currentTime = $state(0);
   let speed = $state(1);
   let lastDurationToken = 0;
-  let playerWidth = $derived.by(() => {
-    const seconds = Number.isFinite(duration) ? duration : 0;
-    const clamped = Math.min(Math.max(seconds, 3), 75);
-    const rem = 11 + clamped * 0.17;
-    return `${Math.min(rem, 23)}rem`;
-  });
 
   function formatTime(seconds: number): string {
     if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
@@ -59,13 +53,19 @@
     try {
       const response = await fetch(source);
       const buffer = await response.arrayBuffer();
-      const AudioContextCtor = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      const AudioContextCtor =
+        window.AudioContext ||
+        (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       if (!AudioContextCtor) return;
 
       const audioContext = new AudioContextCtor();
       try {
         const decoded = await audioContext.decodeAudioData(buffer.slice(0));
-        if (token === lastDurationToken && Number.isFinite(decoded.duration) && decoded.duration > 0) {
+        if (
+          token === lastDurationToken &&
+          Number.isFinite(decoded.duration) &&
+          decoded.duration > 0
+        ) {
           duration = decoded.duration;
           currentTime = Math.min(currentTime, decoded.duration);
         }
@@ -90,8 +90,7 @@
 </script>
 
 <div
-  class="rounded-2xl border border-black/10 bg-white/70 px-3 py-2 max-w-[min(80vw,23rem)]"
-  style={`width:${playerWidth}`}
+  class="rounded-2xl border border-black/10 bg-white/70 px-3 py-2 w-[min(80vw,23rem)]"
 >
   <audio
     bind:this={audioEl}

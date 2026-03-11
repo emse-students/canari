@@ -537,6 +537,8 @@
   async function handleSendChat() {
     const text = messageText.trim();
     const fileToSend = pendingMediaFile;
+    const mediaCaption = text || undefined;
+    let sentMediaMessage = false;
 
     if (!text && !fileToSend) return;
     if (!selectedContact) return;
@@ -591,6 +593,7 @@
             mimeType: mediaRef.mimeType,
             size: mediaRef.size,
             fileName: mediaRef.fileName ?? '',
+            caption: mediaCaption,
           }),
           messageId,
         });
@@ -598,17 +601,24 @@
         const stateBytes = await mlsService.saveState(pin);
         localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
         // Store as envelope locally for consistent rendering + legacy compatibility.
-        const payload = serializeEnvelope(mkMediaEnvelope({ ...mediaRef }));
+        const payload = serializeEnvelope(mkMediaEnvelope({ ...mediaRef }, mediaCaption));
         await addMessageToChat(userId, payload, selectedContact, undefined, false, messageId);
+        sentMediaMessage = true;
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         pendingMediaFile = fileToSend;
+        if (text) {
+          messageText = text;
+          replyingTo = currentReplyingTo;
+        }
         sendError = `Échec de l'envoi du média : ${errorMessage}`;
         log(`Erreur envoi média: ${errorMessage}`);
       } finally {
         isUploadingMedia = false;
       }
     }
+
+    if (sentMediaMessage) return;
 
     if (!text) return;
 
