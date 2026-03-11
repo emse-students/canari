@@ -135,8 +135,9 @@ async function assertSafeExternalUrl(rawUrl: string): Promise<URL> {
   return parsed;
 }
 
-function decodeHtmlEntity(value: string): string {
-  return value
+function decodeHtmlEntity(value: unknown): string {
+  const normalized = typeof value === 'string' ? value : '';
+  return normalized
     .replace(/&amp;/g, '&')
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
@@ -145,13 +146,16 @@ function decodeHtmlEntity(value: string): string {
 }
 
 function extractMetaTags(html: string): Array<Record<string, string>> {
-  const tags = html.match(/<meta\b[^>]*>/gi) ?? [];
+  const tags: string[] = html.match(/<meta\b[^>]*>/gi) ?? [];
   return tags.map((tag) => {
     const attrs: Record<string, string> = {};
     const attrRegex = /([a-zA-Z:-]+)\s*=\s*(["'])(.*?)\2/g;
     let match: RegExpExecArray | null;
     while ((match = attrRegex.exec(tag)) !== null) {
-      attrs[match[1].toLowerCase()] = decodeHtmlEntity(match[3].trim());
+      const rawKey = String(match[1] ?? '').toLowerCase();
+      const rawValue = String(match[3] ?? '').trim();
+      if (!rawKey) continue;
+      attrs[rawKey] = decodeHtmlEntity(rawValue);
     }
     return attrs;
   });

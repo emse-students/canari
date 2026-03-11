@@ -106,13 +106,13 @@
       {#each messageGroups as group, index (group.type === 'message' ? group.message.id : `${group.type}-${index}`)}
         {#if group.type === 'date_separator'}
           <div class="flex justify-center my-3">
-            <div class="px-3 py-1 bg-gray-100 rounded-full text-xs text-gray-500 font-medium">
+            <div class="px-3 py-1 bg-cn-bg rounded-full text-xs text-cn-muted font-medium border border-cn-border/70">
               {group.date}
             </div>
           </div>
         {:else if group.type === 'time_separator'}
           <div class="flex justify-center my-2">
-            <div class="px-2 py-0.5 text-[0.65rem] text-gray-400">
+            <div class="px-2 py-0.5 text-[0.65rem] text-cn-muted/80">
               {group.time}
             </div>
           </div>
@@ -187,7 +187,7 @@
                   : 'items-start'} max-w-[88%] md:max-w-[75%]"
               >
                 {#if showSender}
-                  <div class="text-xs text-gray-500 px-2 mb-1 font-medium">
+                  <div class="text-xs text-cn-muted px-2 mb-1 font-medium">
                     {msg.senderId}
                   </div>
                 {/if}

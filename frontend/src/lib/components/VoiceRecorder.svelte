@@ -94,7 +94,7 @@
 {#if !isRecording}
   <button
     onclick={startRecording}
-    class="w-11 h-11 text-gray-400 rounded-full flex items-center justify-center flex-shrink-0 hover:text-cn-dark hover:bg-gray-200 transition-colors"
+    class="w-11 h-11 text-cn-muted rounded-full flex items-center justify-center flex-shrink-0 hover:text-cn-dark hover:bg-cn-bg transition-colors"
     aria-label="Enregistrer un message vocal"
     title="Enregistrer un message vocal"
   >
@@ -118,7 +118,7 @@
 
     <button
       onclick={cancelRecording}
-      class="p-1.5 rounded-lg text-gray-500 hover:bg-gray-200 transition-colors"
+      class="p-1.5 rounded-lg text-cn-muted hover:bg-cn-bg transition-colors"
       aria-label="Annuler l'enregistrement"
       title="Annuler"
     >

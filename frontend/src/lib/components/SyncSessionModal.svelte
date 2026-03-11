@@ -205,7 +205,7 @@
         {/if}
       </h3>
       <button
-        class="p-1.5 rounded-lg text-gray-500 hover:bg-cn-bg"
+        class="p-1.5 rounded-lg text-cn-muted hover:bg-cn-bg"
         onclick={handleClose}
         aria-label="Fermer"
       >
@@ -214,7 +214,7 @@
     </div>
 
     {#if mode === 'offer'}
-      <p class="text-sm text-gray-600">
+      <p class="text-sm text-cn-muted">
         Scannez ce payload QR avec l'autre appareil, puis attendez la fin de la synchronisation.
       </p>
       {#if qrDataUrl}
@@ -235,7 +235,7 @@
         <Copy size={14} /> Copier le payload
       </button>
     {:else}
-      <p class="text-sm text-gray-600">
+      <p class="text-sm text-cn-muted">
         Collez ici le payload obtenu après scan du QR sur l'appareil source.
       </p>
       <button
@@ -286,7 +286,7 @@
     {/if}
 
     {#if statusText}
-      <div class="text-xs text-gray-600 bg-cn-bg border border-cn-border rounded-lg px-3 py-2">
+      <div class="text-xs text-cn-muted bg-cn-bg border border-cn-border rounded-lg px-3 py-2">
         {statusText}
       </div>
     {/if}
