@@ -14,16 +14,34 @@
   let mediaRecorder: MediaRecorder | null = null;
   let audioChunks: Blob[] = [];
   let intervalId: number | null = null;
+  let isCancelling = false;
+
+  const MIME_CANDIDATES = [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/mp4',
+    'audio/ogg;codecs=opus',
+    'audio/ogg',
+  ];
+
+  function pickRecorderMimeType(): string | undefined {
+    for (const mime of MIME_CANDIDATES) {
+      if (MediaRecorder.isTypeSupported(mime)) return mime;
+    }
+    return undefined;
+  }
 
   async function startRecording() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-      // WebM with Opus is widely supported and efficient
-      const options = { mimeType: 'audio/webm;codecs=opus' };
-      mediaRecorder = new MediaRecorder(stream, options);
+      const mimeType = pickRecorderMimeType();
+      mediaRecorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
 
       audioChunks = [];
+      isCancelling = false;
 
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
@@ -34,8 +52,11 @@
       mediaRecorder.onstop = () => {
         stream.getTracks().forEach((track) => track.stop());
 
-        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-        onRecordingComplete(audioBlob);
+        if (!isCancelling && audioChunks.length > 0) {
+          const finalType = mediaRecorder?.mimeType || audioChunks[0]?.type || 'audio/webm';
+          const audioBlob = new Blob(audioChunks, { type: finalType });
+          onRecordingComplete(audioBlob);
+        }
 
         cleanup();
       };
@@ -62,8 +83,8 @@
 
   function cancelRecording() {
     if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+      isCancelling = true;
       mediaRecorder.stop();
-      audioChunks = []; // Clear chunks so onstop doesn't call onRecordingComplete
     }
     cleanup();
     onCancel?.();
@@ -78,6 +99,7 @@
     recordingDuration = 0;
     mediaRecorder = null;
     audioChunks = [];
+    isCancelling = false;
   }
 
   function formatDuration(seconds: number): string {

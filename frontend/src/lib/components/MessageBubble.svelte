@@ -45,6 +45,7 @@
     isDeleted?: boolean;
     groupPosition?: 'single' | 'start' | 'middle' | 'end';
     onReply?: (messageId: string) => void;
+    onNavigateToMessage?: (messageId: string) => void;
     onReact?: (messageId: string, emoji: string) => void;
     onDelete?: (messageId: string) => void;
     onEdit?: (messageId: string, newText: string) => void;
@@ -66,6 +67,7 @@
     isDeleted = false,
     groupPosition = 'single',
     onReply,
+    onNavigateToMessage,
     onReact,
     onDelete,
     onEdit,
@@ -99,7 +101,16 @@
   let mediaPurgedByRetention = $state(false);
   let supportsHover = $state(true);
   let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+  let pointerStartX = $state(0);
+  let pointerStartY = $state(0);
+  let swipeHandled = $state(false);
   let firstLink = $derived(!mediaRef && !isDeleted ? extractFirstUrl(textContent) : null);
+  let replyPreviewText = $derived(() => {
+    if (!effectiveReplyTo?.content) return '';
+    const normalized = effectiveReplyTo.content.replace(/\s+/g, ' ').trim();
+    if (normalized.length <= 84) return normalized;
+    return `${normalized.slice(0, 81)}...`;
+  });
 
   const groupedReactions = $derived(
     reactions.reduce(
@@ -189,6 +200,10 @@
   }
 
   function beginLongPress(e: PointerEvent) {
+    pointerStartX = e.clientX;
+    pointerStartY = e.clientY;
+    swipeHandled = false;
+
     if (supportsHover || e.pointerType === 'mouse') return;
     if (longPressTimer) clearTimeout(longPressTimer);
     longPressTimer = setTimeout(() => {
@@ -199,6 +214,24 @@
         navigator.vibrate(10);
       }
     }, 420);
+  }
+
+  function handleSwipeReply(e: PointerEvent) {
+    if (supportsHover || e.pointerType === 'mouse' || swipeHandled) return;
+    if (isDeleted || !onReply) return;
+
+    const deltaX = e.clientX - pointerStartX;
+    const deltaY = Math.abs(e.clientY - pointerStartY);
+    const towardCenter = isOwn ? deltaX < -72 : deltaX > 72;
+
+    if (towardCenter && deltaY < 42) {
+      swipeHandled = true;
+      onReply(messageId);
+      if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+        navigator.vibrate(12);
+      }
+      cancelLongPress();
+    }
   }
 
   function cancelLongPress() {
@@ -351,6 +384,7 @@
 {:else}
   <!-- Outer wrapper: relative for absolute children (emoji picker, info tooltip) -->
   <div
+    id={`msg-${messageId}`}
     use:clickOutside={() => {
       showEmojiPicker = false;
       showInfo = false;
@@ -361,7 +395,9 @@
     <button
       type="button"
       onclick={openMobileActions}
-      class="absolute top-1 right-1 md:hidden z-10 p-1.5 rounded-full bg-white/90 border border-cn-border text-gray-500"
+      class="absolute top-1/2 -translate-y-1/2 {isOwn
+        ? 'right-full mr-2'
+        : 'left-full ml-2'} md:hidden z-10 p-1.5 rounded-full bg-white/90 border border-cn-border text-gray-500"
       aria-label="Ouvrir les actions du message"
     >
       <EllipsisVertical size={14} />
@@ -374,6 +410,7 @@
       tabindex="0"
       onclick={handleBubbleClick}
       onpointerdown={beginLongPress}
+      onpointermove={handleSwipeReply}
       onpointerup={cancelLongPress}
       onpointerleave={cancelLongPress}
       onpointercancel={cancelLongPress}
@@ -392,10 +429,21 @@
         : 'bg-[var(--cn-surface)] text-cn-dark border border-cn-border'}"
     >
       {#if effectiveReplyTo}
-        <div class="mb-2 pb-2 border-l-4 border-gray-400 pl-3 text-xs opacity-70">
-          <div class="font-semibold">{effectiveReplyTo.senderId}</div>
-          <div class="truncate">{effectiveReplyTo.content}</div>
-        </div>
+        <button
+          type="button"
+          class="mb-2 pb-2 border-l-4 border-gray-400 pl-3 text-xs opacity-80 text-left w-full hover:opacity-100 transition-opacity"
+          onclick={(e) => {
+            e.stopPropagation();
+            if (effectiveReplyTo.id) {
+              onNavigateToMessage?.(effectiveReplyTo.id);
+            }
+          }}
+          title="Aller au message cite"
+          aria-label="Aller au message cite"
+        >
+          <div class="font-semibold truncate">{effectiveReplyTo.senderId}</div>
+          <div class="truncate">{replyPreviewText}</div>
+        </button>
       {/if}
 
       {#if mediaRef}
@@ -576,8 +624,8 @@
           </div>
         {:else}
           <p
-            class="text-base leading-relaxed break-words whitespace-pre-wrap {isDeleted
-              ? 'italic text-gray-500'
+            class="text-base leading-relaxed break-words whitespace-pre-wrap [overflow-wrap:anywhere] {isDeleted
+              ? 'italic text-gray-500 [overflow-wrap:anywhere]'
               : ''}"
           >
             {#each textSegments as segment, index (`${segment.type}-${segment.value}-${index}`)}

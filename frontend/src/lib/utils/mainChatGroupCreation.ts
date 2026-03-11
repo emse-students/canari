@@ -47,8 +47,12 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
 
   if (!name.trim()) return;
   const groupDisplayName = name.trim();
-  const groupName = groupDisplayName.toLowerCase(); // clé normalisée utilisée dans la map et la DB
-  if (conversations.has(groupName)) return log(`Groupe "${groupDisplayName}" existe déjà.`);
+  const duplicateGroup = Array.from(conversations.values()).find(
+    (c) => (c.conversationType ?? 'group') === 'group' && c.name.toLowerCase() === groupDisplayName.toLowerCase()
+  );
+  if (duplicateGroup) return log(`Groupe "${groupDisplayName}" existe déjà.`);
+
+  const conversationKey = `grp_${crypto.randomUUID()}`;
 
   try {
     const groupId = await mlsService.createRemoteGroup(groupDisplayName);
@@ -87,16 +91,17 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
     const stateBytes = await mlsService.saveState(pin);
     localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
 
-    conversations.set(groupName, {
-      contactName: groupName,
+    conversations.set(conversationKey, {
+      contactName: groupDisplayName,
       name: groupDisplayName, // conserve la casse originale pour l'affichage
       groupId,
       messages: [],
       isReady: true,
       mlsStateHex: null,
+      conversationType: 'group',
     });
-    selectConversation(groupName);
-    saveConversation(groupName);
+    selectConversation(conversationKey);
+    saveConversation(conversationKey);
     log(`[OK] Groupe "${groupDisplayName}" cree.`);
   } catch (e) {
     log(`Erreur création groupe: ${e}`);
@@ -253,24 +258,32 @@ export async function startNewConversation(
   const contact = contactName.trim().toLowerCase();
   if (!contact || contact === userId) return;
 
-  if (conversations.has(contact)) {
-    selectConversation(contact);
+  const existingDirect = Array.from(conversations.entries()).find(([, convo]) => {
+    if ((convo.conversationType ?? 'group') !== 'direct') return false;
+    return (convo.directPeerId ?? convo.contactName).toLowerCase() === contact;
+  });
+
+  if (existingDirect) {
+    selectConversation(existingDirect[0]);
     return;
   }
 
-  const groupName = `${userId} & ${contact}`;
+  const conversationKey = `dm_${crypto.randomUUID()}`;
+  const groupName = `${userId}::${contact}`;
   try {
     const groupId = await mlsService.createRemoteGroup(groupName);
 
-    conversations.set(contact, {
+    conversations.set(conversationKey, {
       contactName: contact,
-      name: groupName,
+      name: contact,
       groupId,
       messages: [],
       isReady: false,
       mlsStateHex: null,
+      conversationType: 'direct',
+      directPeerId: contact,
     });
-    selectConversation(contact);
+    selectConversation(conversationKey);
 
     await mlsService.createGroup(groupId);
     await mlsService.registerMember(groupId, userId, mlsService.getDeviceId());
@@ -346,15 +359,15 @@ export async function startNewConversation(
       }
       if (bulk.commit) await mlsService.sendCommit(bulk.commit, groupId);
 
-      const convo = conversations.get(contact)!;
-      conversations.set(contact, { ...convo, isReady: true });
-      saveConversation(contact);
+      const convo = conversations.get(conversationKey)!;
+      conversations.set(conversationKey, { ...convo, isReady: true });
+      saveConversation(conversationKey);
       log(`[OK] Canal securise avec ${contact}.`);
     } else {
       log(
         `[ERREUR] Appareils introuvables pour ${contact}. Le contact doit se connecter une premiere fois pour publier son KeyPackage.`
       );
-      conversations.delete(contact);
+      conversations.delete(conversationKey);
     }
   } catch (_e: unknown) {
     const msg = _e instanceof Error ? _e.message : String(_e);

@@ -29,6 +29,7 @@
     messageReactions?: Record<string, MessageReaction[]> | Map<string, MessageReaction[]>;
     replyingTo?: ChatMessage | null;
     onReply?: (message: ChatMessage) => void;
+    onNavigateToMessage?: (messageId: string) => void;
     onReact?: (messageId: string, emoji: string) => void;
     onDelete?: (messageId: string) => void;
     onEdit?: (messageId: string, text: string) => void;
@@ -57,6 +58,7 @@
     messageReactions,
     replyingTo,
     onReply,
+    onNavigateToMessage,
     onReact,
     onDelete,
     onEdit,
@@ -99,6 +101,27 @@
 
   function loadOlderGroups() {
     renderedGroupCount += RENDER_GROUPS_STEP;
+  }
+
+  async function navigateToMessage(messageId: string) {
+    const targetIndex = messageGroups.findIndex(
+      (group) => group.type === 'message' && group.message.id === messageId
+    );
+    if (targetIndex === -1) {
+      onNavigateToMessage?.(messageId);
+      return;
+    }
+
+    const groupsFromEnd = messageGroups.length - targetIndex;
+    if (groupsFromEnd > renderedGroupCount) {
+      renderedGroupCount = groupsFromEnd + 8;
+      await tick();
+    }
+
+    const targetElement = document.getElementById(`msg-${messageId}`);
+    if (targetElement) {
+      targetElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
   }
 
   $effect(() => {
@@ -269,6 +292,7 @@
                   isDeleted={msg.isDeleted}
                   {groupPosition}
                   onReply={onReply ? () => onReply?.(msg) : undefined}
+                  onNavigateToMessage={navigateToMessage}
                   {onReact}
                   {onDelete}
                   {onEdit}

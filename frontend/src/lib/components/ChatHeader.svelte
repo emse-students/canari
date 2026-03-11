@@ -163,22 +163,28 @@
         role="dialog"
         aria-modal="true"
         aria-label="Parametres du groupe"
-        class="absolute pointer-events-auto inset-x-3 top-4 bottom-4 md:inset-x-auto md:right-8 md:top-20 md:bottom-auto md:w-[34rem] md:max-h-[85dvh] bg-[var(--cn-surface)] border border-cn-border rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+        class="absolute pointer-events-auto inset-x-3 top-4 bottom-4 md:inset-x-auto md:right-8 md:top-20 md:bottom-auto md:w-[28rem] md:max-h-[85dvh] bg-[#15171c] border border-white/10 rounded-3xl shadow-2xl flex flex-col overflow-hidden text-white"
       >
-        <div class="px-4 md:px-5 py-3 border-b border-cn-border flex items-center justify-between">
-          <h3 class="text-base font-semibold text-cn-dark">Parametres du groupe</h3>
+        <div class="px-4 md:px-5 py-3 border-b border-white/10 flex items-center justify-between">
+          <h3 class="text-base font-semibold text-white">Infos du groupe</h3>
           <button
             onclick={closePanel}
-            class="p-1.5 rounded-lg hover:bg-cn-bg transition-colors text-text-muted hover:text-cn-dark"
+            class="p-1.5 rounded-lg hover:bg-white/10 transition-colors text-white/70 hover:text-white"
             aria-label="Fermer"
           >
             <X size={16} />
           </button>
         </div>
 
-        <div class="flex-1 min-h-0 overflow-y-auto px-4 md:px-5 py-4 flex flex-col gap-4">
-          <div class="rounded-xl border border-cn-border bg-cn-bg p-3 flex flex-col gap-2">
-            <label for="group-rename-input" class="text-xs text-text-muted font-semibold"
+        <div class="flex-1 min-h-0 overflow-y-auto px-4 md:px-5 py-4 flex flex-col gap-5">
+          <div class="flex flex-col items-center text-center gap-2 pb-1">
+            <Avatar userId={contactName} size="lg" />
+            <div class="text-lg font-semibold truncate max-w-full">{displayName}</div>
+            <div class="text-xs text-white/60">{isReady ? 'En ligne' : 'Synchronisation en cours'}</div>
+          </div>
+
+          <div class="rounded-2xl border border-white/10 bg-white/5 p-3 flex flex-col gap-2">
+            <label for="group-rename-input" class="text-xs text-white/60 font-semibold"
               >Nom du groupe</label
             >
             <div class="flex gap-2">
@@ -187,11 +193,11 @@
                 type="text"
                 bind:value={renameInput}
                 onkeydown={handleRenameKey}
-                class="flex-1 px-3 py-2 border border-cn-border rounded-xl text-sm outline-none bg-[var(--cn-surface)] text-cn-dark"
+                class="flex-1 px-3 py-2 border border-white/15 rounded-xl text-sm outline-none bg-black/30 text-white"
               />
               <button
                 onclick={submitRename}
-                class="p-2 bg-cn-dark text-white rounded-xl hover:bg-gray-800 transition-colors"
+                class="p-2 bg-white text-[#15171c] rounded-xl hover:bg-white/90 transition-colors"
                 aria-label="Valider le renommage"
               >
                 <Check size={14} />
@@ -200,7 +206,7 @@
           </div>
 
           <div class="flex flex-col gap-2">
-            <span class="text-xs text-text-muted font-semibold inline-flex items-center gap-1">
+            <span class="text-xs text-white/60 font-semibold inline-flex items-center gap-1">
               <Users size={12} /> Membres ({groupMembers.length})
             </span>
 
@@ -208,11 +214,11 @@
               <ul class="flex flex-col gap-2 max-h-[38dvh] overflow-y-auto pr-1">
                 {#each groupMembers as member (member)}
                   <li
-                    class="flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl bg-cn-bg border border-cn-border/70"
+                    class="flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl bg-white/5 border border-white/10"
                   >
                     <div class="flex items-center gap-2 min-w-0">
                       <Avatar userId={member} size="sm" />
-                      <span class="text-sm text-cn-dark truncate">{member}</span>
+                      <span class="text-sm text-white truncate">{member}</span>
                     </div>
 
                     {#if onGroupRemoveMember}
@@ -221,7 +227,7 @@
                           onGroupRemoveMember?.(member);
                         }}
                         aria-label="Retirer {member}"
-                        class="px-2.5 py-1.5 text-xs rounded-lg bg-red-50 text-red-500 hover:bg-red-100 transition-colors flex-shrink-0"
+                        class="px-2.5 py-1.5 text-xs rounded-lg bg-red-500/15 text-red-300 hover:bg-red-500/25 transition-colors flex-shrink-0"
                       >
                         <span class="inline-flex items-center gap-1">
                           <UserMinus size={12} /> Retirer
@@ -233,7 +239,7 @@
               </ul>
             {:else}
               <div
-                class="rounded-xl border border-dashed border-cn-border px-3 py-4 text-sm text-text-muted"
+                class="rounded-xl border border-dashed border-white/20 px-3 py-4 text-sm text-white/60"
               >
                 Aucun membre a afficher.
               </div>
@@ -242,25 +248,25 @@
         </div>
 
         {#if onGroupDelete}
-          <div class="border-t border-cn-border px-4 md:px-5 py-3 bg-[var(--cn-surface)]">
+          <div class="border-t border-white/10 px-4 md:px-5 py-3 bg-black/25">
             {#if !confirmDelete}
               <button
                 onclick={() => {
                   confirmDelete = true;
                 }}
-                class="w-full flex items-center justify-center gap-2 px-3 py-2 text-red-500 border border-red-200 rounded-xl text-sm hover:bg-red-50 transition-colors"
+                class="w-full flex items-center justify-center gap-2 px-3 py-2 text-red-300 border border-red-500/30 rounded-xl text-sm hover:bg-red-500/10 transition-colors"
               >
                 <Trash2 size={14} /> Supprimer le groupe
               </button>
             {:else}
               <div class="flex flex-col gap-2">
-                <p class="text-xs text-red-600 text-center">Confirmer la suppression ?</p>
+                <p class="text-xs text-red-300 text-center">Confirmer la suppression ?</p>
                 <div class="flex gap-2">
                   <button
                     onclick={() => {
                       confirmDelete = false;
                     }}
-                    class="flex-1 px-3 py-2 border border-cn-border rounded-xl text-sm text-text-muted hover:bg-cn-bg"
+                    class="flex-1 px-3 py-2 border border-white/20 rounded-xl text-sm text-white/80 hover:bg-white/10"
                   >
                     Annuler
                   </button>

@@ -187,6 +187,50 @@
     return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3001';
   })();
 
+  function deriveConversationIdentity(metaName: string): {
+    conversationType: 'direct' | 'group';
+    contactName: string;
+    displayName: string;
+    directPeerId?: string;
+  } {
+    const normalizedName = metaName.trim();
+    const oldDirectSeparator = ' & ';
+    const compactDirectSeparator = '::';
+
+    if (normalizedName.includes(compactDirectSeparator)) {
+      const [a, b] = normalizedName.split(compactDirectSeparator).map((v) => v.trim().toLowerCase());
+      const peer = a === userId.toLowerCase() ? b : a;
+      return {
+        conversationType: 'direct',
+        contactName: peer,
+        displayName: peer,
+        directPeerId: peer,
+      };
+    }
+
+    if (normalizedName.includes(oldDirectSeparator)) {
+      const participants = normalizedName
+        .split(oldDirectSeparator)
+        .map((v) => v.trim().toLowerCase())
+        .filter(Boolean);
+      if (participants.length === 2 && participants.includes(userId.toLowerCase())) {
+        const peer = participants.find((p) => p !== userId.toLowerCase()) || participants[0];
+        return {
+          conversationType: 'direct',
+          contactName: peer,
+          displayName: peer,
+          directPeerId: peer,
+        };
+      }
+    }
+
+    return {
+      conversationType: 'group',
+      contactName: normalizedName,
+      displayName: normalizedName,
+    };
+  }
+
   // Read Receipts logic
   $effect(() => {
     if (!selectedContact || !isLoggedIn) return;
@@ -462,14 +506,17 @@
     // Phase 1 (fast, blocking): populate the conversations map with metadata
     // only so the WS message handler can route messages immediately.
     for (const meta of convMetas) {
+      const identity = deriveConversationIdentity(meta.name);
       conversations.set(meta.id, {
-        contactName: meta.id,
-        name: meta.name,
+        contactName: identity.contactName,
+        name: identity.displayName,
         groupId: meta.groupId,
         messages: [], // loaded asynchronously in phase 2
         isReady: meta.isReady,
         mlsStateHex: null,
         unreadCount: 0,
+        conversationType: identity.conversationType,
+        directPeerId: identity.directPeerId,
       });
     }
 

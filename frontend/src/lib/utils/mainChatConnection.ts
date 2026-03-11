@@ -102,7 +102,16 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       // Only fall back to sender-based routing when no groupId is provided.
       // If a groupId is present but unknown, it is likely a Welcome for a new group
       // — routing it to an existing 1-to-1 conversation would silently discard it.
-      if (!convoKey && !groupId && conversations.has(senderNorm)) convoKey = senderNorm;
+      if (!convoKey && !groupId) {
+        const directEntry = Array.from(conversations.entries()).find(([, convo]) => {
+          if ((convo.conversationType ?? 'group') !== 'direct') return false;
+          const peer = (convo.directPeerId ?? convo.contactName).toLowerCase();
+          return peer === senderNorm;
+        });
+        if (directEntry) {
+          convoKey = directEntry[0];
+        }
+      }
 
       // Process message for known conversation
       if (convoKey && !isWelcome) {
@@ -357,17 +366,16 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           // Silent fallback if group metadata fetch fails
         }
 
-        // Use the group name (lowercased) as key to avoid overwriting a 1-to-1
-        // conversation that might already be keyed under senderNorm.
-        const newConvoKey = groupName.toLowerCase();
+        const newConvoKey = `grp_${crypto.randomUUID()}`;
         // Create new conversation
         conversations.set(newConvoKey, {
-          contactName: newConvoKey,
+          contactName: groupName,
           name: groupName,
           groupId: joinedGroupId,
           messages: [],
           isReady: true,
           mlsStateHex: null,
+          conversationType: 'group',
         });
         saveConversation(newConvoKey);
 

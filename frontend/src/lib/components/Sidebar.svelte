@@ -176,53 +176,59 @@
     {/if}
   </div>
 
-  <div class="p-3 border-t border-cn-border space-y-2 text-xs text-text-muted">
-    <div class="flex items-center justify-between">
-      <span>Sauvegarde chiffree</span>
-      <div class="flex items-center gap-2">
-        <button
-          onclick={triggerImport}
-          disabled={isImporting}
-          class="inline-flex items-center gap-1 hover:text-cn-dark transition-colors disabled:opacity-50"
-          title="Importer une sauvegarde .canari"
-        >
-          <Upload size={13} />
-          {isImporting ? '...' : 'Importer'}
-        </button>
-        <span class="text-text-muted/40">|</span>
-        <button
-          onclick={onExport}
-          disabled={isExporting}
-          class="inline-flex items-center gap-1 hover:text-cn-dark transition-colors disabled:opacity-50"
-          title="Exporter les conversations vers un fichier .canari"
-        >
-          <Download size={13} />
-          {isExporting ? '...' : 'Exporter'}
-        </button>
+  <div class="p-3 border-t border-cn-border bg-[var(--surface-elevated)]/95 backdrop-blur-md">
+    <div class="rounded-2xl border border-cn-border bg-white/75 p-3 shadow-sm space-y-3">
+      <div class="space-y-2">
+        <div class="text-[0.65rem] uppercase tracking-wide font-semibold text-text-muted">
+          Sauvegarde chiffree
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <button
+            onclick={triggerImport}
+            disabled={isImporting}
+            class="inline-flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-xl bg-cn-bg hover:bg-[color-mix(in_srgb,var(--cn-bg)_80%,white)] text-xs font-semibold text-cn-dark transition-colors disabled:opacity-50"
+            title="Importer une sauvegarde .canari"
+          >
+            <Upload size={13} />
+            {isImporting ? 'Import...' : 'Importer'}
+          </button>
+          <button
+            onclick={onExport}
+            disabled={isExporting}
+            class="inline-flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-xl bg-cn-bg hover:bg-[color-mix(in_srgb,var(--cn-bg)_80%,white)] text-xs font-semibold text-cn-dark transition-colors disabled:opacity-50"
+            title="Exporter les conversations vers un fichier .canari"
+          >
+            <Download size={13} />
+            {isExporting ? 'Export...' : 'Exporter'}
+          </button>
+        </div>
       </div>
-    </div>
 
-    <div class="flex items-center justify-between">
-      <span>Sync appareils</span>
-      <button
-        onclick={onStartSync}
-        disabled={isSyncing}
-        class="inline-flex items-center gap-1 hover:text-cn-dark transition-colors disabled:opacity-50"
-        title="Démarrer une session de synchronisation QR"
-      >
-        <ScanLine size={13} />
-        Demarrer
-      </button>
-      <span class="text-text-muted/40">|</span>
-      <button
-        onclick={onJoinSync}
-        disabled={isSyncing}
-        class="inline-flex items-center gap-1 hover:text-cn-dark transition-colors disabled:opacity-50"
-        title="Rejoindre une session de synchronisation QR"
-      >
-        <Smartphone size={13} />
-        Joindre
-      </button>
+      <div class="space-y-2 pt-1 border-t border-cn-border/70">
+        <div class="text-[0.65rem] uppercase tracking-wide font-semibold text-text-muted">
+          Synchronisation appareils
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <button
+            onclick={onStartSync}
+            disabled={isSyncing}
+            class="inline-flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-xl bg-cn-bg hover:bg-[color-mix(in_srgb,var(--cn-bg)_80%,white)] text-xs font-semibold text-cn-dark transition-colors disabled:opacity-50"
+            title="Démarrer une session de synchronisation QR"
+          >
+            <ScanLine size={13} />
+            Demarrer
+          </button>
+          <button
+            onclick={onJoinSync}
+            disabled={isSyncing}
+            class="inline-flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-xl bg-cn-bg hover:bg-[color-mix(in_srgb,var(--cn-bg)_80%,white)] text-xs font-semibold text-cn-dark transition-colors disabled:opacity-50"
+            title="Rejoindre une session de synchronisation QR"
+          >
+            <Smartphone size={13} />
+            Joindre
+          </button>
+        </div>
+      </div>
     </div>
 
     <input

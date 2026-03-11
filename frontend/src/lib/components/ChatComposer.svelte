@@ -2,7 +2,6 @@
   import { Send, Paperclip, X, FileText } from 'lucide-svelte';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import VoiceRecorder from './VoiceRecorder.svelte';
-  import GifPicker from './GifPicker.svelte';
 
   interface ReplyTo {
     id: string;
@@ -38,12 +37,21 @@
   let fileInput: HTMLInputElement | undefined = $state();
   let isDragOver = $state(false);
   let previewUrls = $state<Record<string, string>>({});
-  const isVoiceRecordingSupported =
+  const hasMediaRecorder =
     typeof window !== 'undefined' &&
     typeof MediaRecorder !== 'undefined' &&
     !!navigator.mediaDevices?.getUserMedia;
+  let isMobileViewport = $state(false);
+  const isVoiceRecordingSupported = $derived(hasMediaRecorder && isMobileViewport);
+
+  function toReplyPreview(value: string): string {
+    const normalized = value.replace(/\s+/g, ' ').trim();
+    if (normalized.length <= 96) return normalized;
+    return `${normalized.slice(0, 93)}...`;
+  }
+
   let replyPreviewText = $derived(
-    replyingTo ? getPreviewText(parseEnvelope(replyingTo.content)) : ''
+    replyingTo ? toReplyPreview(getPreviewText(parseEnvelope(replyingTo.content))) : ''
   );
 
   function handleKeydown(e: KeyboardEvent) {
@@ -131,38 +139,20 @@
   function handleVoiceRecording(audioBlob: Blob) {
     if (!onFilesSelected) return;
 
-    // Convert Blob to File with explicit audio/webm type
-    const audioFile = new File([audioBlob], `vocal_${Date.now()}.webm`, {
-      type: 'audio/webm',
+    const mimeType = audioBlob.type || 'audio/webm';
+    const extension = mimeType.includes('mp4')
+      ? 'm4a'
+      : mimeType.includes('ogg')
+        ? 'ogg'
+        : mimeType.includes('wav')
+          ? 'wav'
+          : 'webm';
+
+    const audioFile = new File([audioBlob], `vocal_${Date.now()}.${extension}`, {
+      type: mimeType,
     });
 
     onFilesSelected([audioFile]);
-  }
-
-  async function handleGifSelected(gifUrl: string) {
-    if (!onFilesSelected) {
-      const nextText = messageText.trim() ? `${messageText.trim()} ${gifUrl}` : gifUrl;
-      onMessageChange(nextText);
-      return;
-    }
-
-    try {
-      // Download the GIF and convert to File
-      const res = await fetch(gifUrl);
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-      const blob = await res.blob();
-      const gifFile = new File([blob], `gif_${Date.now()}.gif`, {
-        type: 'image/gif',
-      });
-
-      onFilesSelected([gifFile]);
-    } catch (error) {
-      console.error('Erreur téléchargement GIF:', error);
-      const nextText = messageText.trim() ? `${messageText.trim()} ${gifUrl}` : gifUrl;
-      onMessageChange(nextText);
-    }
   }
 
   $effect(() => {
@@ -170,6 +160,21 @@
       textareaEl.style.height = '40px';
       textareaEl.style.height = `${Math.max(textareaEl.scrollHeight, 40)}px`;
     }
+  });
+
+  $effect(() => {
+    if (typeof window === 'undefined') return;
+
+    const query = window.matchMedia('(max-width: 768px), (pointer: coarse)');
+    const apply = () => {
+      isMobileViewport = query.matches;
+    };
+
+    apply();
+    query.addEventListener('change', apply);
+    return () => {
+      query.removeEventListener('change', apply);
+    };
   });
 
   $effect(() => {
@@ -320,8 +325,6 @@
       {#if isVoiceRecordingSupported}
         <VoiceRecorder onRecordingComplete={handleVoiceRecording} />
       {/if}
-
-      <GifPicker onGifSelected={handleGifSelected} />
 
       <input
         bind:this={fileInput}
