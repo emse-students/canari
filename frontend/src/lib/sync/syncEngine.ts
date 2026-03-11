@@ -17,6 +17,32 @@ function byTimestampThenId(a: StoredMessage, b: StoredMessage): number {
   return a.timestamp - b.timestamp;
 }
 
+function toBase64(bytes: Uint8Array): string {
+  let binary = '';
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary);
+}
+
+function fromBase64(b64: string): Uint8Array {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function encodeConversationTransportId(rawId: string): string {
+  const utf8 = new TextEncoder().encode(rawId);
+  return `cid_${toBase64(utf8).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')}`;
+}
+
+function decodeConversationTransportId(transportId: string): string {
+  if (!transportId.startsWith('cid_')) return transportId;
+  const body = transportId.slice(4);
+  const padded = body.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(body.length / 4) * 4, '=');
+  const bytes = fromBase64(padded);
+  return new TextDecoder().decode(bytes);
+}
+
 export async function buildLocalSyncManifest(
   storage: IStorage,
   pin: string
@@ -27,7 +53,7 @@ export async function buildLocalSyncManifest(
       const messages = await storage.getMessages(conv.id, pin);
       messages.sort(byTimestampThenId);
       return {
-        conversationId: conv.id,
+        conversationId: encodeConversationTransportId(conv.id),
         groupId: conv.groupId,
         updatedAt: conv.updatedAt,
         messageIds: messages.map((m) => m.id),
@@ -93,17 +119,22 @@ export async function buildTransferChunksForMissing(
   missingOnPeer: SyncDiffResponse['missingOnPeer']
 ): Promise<SyncTransferChunk[]> {
   const conversations = await storage.getConversations();
-  const conversationById = new Map(conversations.map((c) => [c.id, c]));
+  const conversationByEncodedId = new Map(
+    conversations.map((c) => [encodeConversationTransportId(c.id), c])
+  );
   const encryptedRows = await storage.getAllEncryptedRows();
   const rowById = new Map(encryptedRows.map((row) => [row.id, row]));
 
-  const fallbackConversation = (conversationId: string): ConversationMeta => ({
-    id: conversationId,
-    groupId: conversationId,
-    name: conversationId,
+  const fallbackConversation = (conversationId: string): ConversationMeta => {
+    const decoded = decodeConversationTransportId(conversationId);
+    return {
+      id: decoded,
+      groupId: decoded,
+      name: decoded,
     isReady: false,
     updatedAt: Date.now(),
-  });
+    };
+  };
 
   return missingOnPeer
     .map((entry) => {
@@ -113,7 +144,8 @@ export async function buildTransferChunksForMissing(
       if (rows.length === 0) return null;
 
       const conversation =
-        conversationById.get(entry.conversationId) ?? fallbackConversation(entry.conversationId);
+        conversationByEncodedId.get(entry.conversationId) ??
+        fallbackConversation(entry.conversationId);
 
       return {
         conversation,
@@ -133,10 +165,13 @@ function arrayToBytes(input: number[]): Uint8Array {
 
 function serializeChunks(chunks: SyncTransferChunk[]): SyncSerializedChunk[] {
   return chunks.map((chunk) => ({
-    conversation: chunk.conversation,
+    conversation: {
+      ...chunk.conversation,
+      id: encodeConversationTransportId(chunk.conversation.id),
+    },
     rows: chunk.rows.map((row) => ({
       id: row.id,
-      conversationId: row.conversationId,
+      conversationId: encodeConversationTransportId(row.conversationId),
       timestamp: row.timestamp,
       iv: bytesToArray(row.iv),
       salt: bytesToArray(row.salt),
@@ -147,10 +182,13 @@ function serializeChunks(chunks: SyncTransferChunk[]): SyncSerializedChunk[] {
 
 function deserializeChunks(chunks: SyncSerializedChunk[]): SyncTransferChunk[] {
   return chunks.map((chunk) => ({
-    conversation: chunk.conversation,
+    conversation: {
+      ...chunk.conversation,
+      id: decodeConversationTransportId(chunk.conversation.id),
+    },
     rows: chunk.rows.map((row) => ({
       id: row.id,
-      conversationId: row.conversationId,
+      conversationId: decodeConversationTransportId(row.conversationId),
       timestamp: row.timestamp,
       iv: arrayToBytes(row.iv),
       salt: arrayToBytes(row.salt),

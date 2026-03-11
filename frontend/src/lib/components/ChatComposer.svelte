@@ -35,6 +35,7 @@
 
   let textareaEl: HTMLTextAreaElement;
   let fileInput: HTMLInputElement | undefined = $state();
+  let isDragOver = $state(false);
   const isVoiceRecordingSupported =
     typeof window !== 'undefined' &&
     typeof MediaRecorder !== 'undefined' &&
@@ -56,6 +57,36 @@
     if (files.length > 0 && onFilesSelected) {
       onFilesSelected(files);
       input.value = '';
+    }
+  }
+
+  function collectDroppedFiles(event: DragEvent): File[] {
+    const dt = event.dataTransfer;
+    if (!dt) return [];
+    return Array.from(dt.files || []);
+  }
+
+  function handleDragOver(event: DragEvent) {
+    event.preventDefault();
+    isDragOver = true;
+  }
+
+  function handleDragLeave(event: DragEvent) {
+    event.preventDefault();
+    if (!event.currentTarget) return;
+    const currentTarget = event.currentTarget as HTMLElement;
+    const next = event.relatedTarget as Node | null;
+    if (!next || !currentTarget.contains(next)) {
+      isDragOver = false;
+    }
+  }
+
+  function handleDrop(event: DragEvent) {
+    event.preventDefault();
+    isDragOver = false;
+    const files = collectDroppedFiles(event);
+    if (files.length > 0 && onFilesSelected) {
+      onFilesSelected(files);
     }
   }
 
@@ -89,8 +120,8 @@
 
   $effect(() => {
     if (textareaEl) {
-      textareaEl.style.height = 'auto';
-      textareaEl.style.height = textareaEl.scrollHeight + 'px';
+      textareaEl.style.height = '40px';
+      textareaEl.style.height = `${Math.max(textareaEl.scrollHeight, 40)}px`;
     }
   });
 
@@ -147,7 +178,22 @@
       </div>
     {/if}
 
-    <div class="max-w-full flex items-center gap-2 md:gap-3 bg-cn-bg p-2.5 md:p-3 rounded-3xl overflow-x-hidden">
+    <div
+      role="group"
+      aria-label="Zone de saisie et depot de fichiers"
+      class="relative max-w-full flex items-center gap-2 md:gap-3 bg-cn-bg p-2.5 md:p-3 rounded-3xl overflow-x-hidden border {isDragOver
+        ? 'border-cn-yellow'
+        : 'border-transparent'}"
+      ondragover={handleDragOver}
+      ondragleave={handleDragLeave}
+      ondrop={handleDrop}
+    >
+      {#if isDragOver}
+        <div class="absolute left-1/2 -translate-x-1/2 -translate-y-11 px-3 py-1 rounded-full bg-cn-dark text-white text-xs pointer-events-none">
+          Deposez vos fichiers ici
+        </div>
+      {/if}
+
       <button
         onclick={() => fileInput?.click()}
         disabled={isUploading}
