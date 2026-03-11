@@ -144,14 +144,28 @@ function decodeHtmlEntity(value: string): string {
     .replace(/&gt;/g, '>');
 }
 
+function extractMetaTags(html: string): Array<Record<string, string>> {
+  const tags = html.match(/<meta\b[^>]*>/gi) ?? [];
+  return tags.map((tag) => {
+    const attrs: Record<string, string> = {};
+    const attrRegex = /([a-zA-Z:-]+)\s*=\s*(["'])(.*?)\2/g;
+    let match: RegExpExecArray | null;
+    while ((match = attrRegex.exec(tag)) !== null) {
+      attrs[match[1].toLowerCase()] = decodeHtmlEntity(match[3].trim());
+    }
+    return attrs;
+  });
+}
+
 function extractMetaContent(html: string, key: string): string | null {
-  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const regex = new RegExp(
-    `<meta[^>]+(?:property|name)=["']${escaped}["'][^>]+content=["']([^"']+)["'][^>]*>`,
-    'i',
-  );
-  const match = html.match(regex);
-  return match ? decodeHtmlEntity(match[1].trim()) : null;
+  const normalizedKey = key.toLowerCase();
+  for (const attrs of extractMetaTags(html)) {
+    const attrKey = attrs.property || attrs.name;
+    if (attrKey?.toLowerCase() === normalizedKey && attrs.content) {
+      return attrs.content;
+    }
+  }
+  return null;
 }
 
 function extractTitle(html: string): string | null {
@@ -187,6 +201,51 @@ function buildLinkPreviewPayload(html: string, targetUrl: URL) {
     description: description.slice(0, 280),
     image,
     siteName: siteName.slice(0, 120),
+  };
+}
+
+function isYouTubeHost(hostname: string): boolean {
+  const h = hostname.toLowerCase();
+  return h === 'youtube.com' || h === 'www.youtube.com' || h === 'm.youtube.com' || h === 'youtu.be';
+}
+
+async function fetchYouTubeOEmbed(targetUrl: URL): Promise<{
+  url: string;
+  title: string;
+  description: string;
+  image: string;
+  siteName: string;
+} | null> {
+  if (!isYouTubeHost(targetUrl.hostname)) return null;
+
+  const oembed = new URL('https://www.youtube.com/oembed');
+  oembed.searchParams.set('url', targetUrl.toString());
+  oembed.searchParams.set('format', 'json');
+
+  const response = await fetch(oembed.toString(), {
+    method: 'GET',
+    headers: {
+      'user-agent': 'CanariLinkPreview/1.0',
+      accept: 'application/json',
+    },
+  });
+
+  if (!response.ok) return null;
+
+  const data = (await response.json()) as {
+    title?: string;
+    author_name?: string;
+    thumbnail_url?: string;
+  };
+
+  if (!data.title) return null;
+
+  return {
+    url: targetUrl.toString(),
+    title: data.title.slice(0, 180),
+    description: data.author_name ? `YouTube • ${data.author_name}` : 'YouTube',
+    image: data.thumbnail_url ?? '',
+    siteName: 'YouTube',
   };
 }
 
@@ -861,6 +920,11 @@ export class AppController {
     const timeout = setTimeout(() => abortController.abort(), 4000);
 
     try {
+      const oembedPayload = await fetchYouTubeOEmbed(targetUrl);
+      if (oembedPayload) {
+        return oembedPayload;
+      }
+
       const response = await fetch(targetUrl.toString(), {
         method: 'GET',
         redirect: 'follow',

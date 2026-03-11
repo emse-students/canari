@@ -418,6 +418,9 @@
             </div>
           {/if}
         </div>
+        {#if textContent}
+          <p class="mt-2 text-sm leading-relaxed break-words whitespace-pre-wrap">{textContent}</p>
+        {/if}
       {:else}
         <p
           class="text-base leading-relaxed break-words whitespace-pre-wrap {isDeleted

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Send, Paperclip, X } from 'lucide-svelte';
+  import { Send, Paperclip, X, FileText } from 'lucide-svelte';
   import VoiceRecorder from './VoiceRecorder.svelte';
   import GifPicker from './GifPicker.svelte';
 
@@ -36,6 +36,7 @@
   let textareaEl: HTMLTextAreaElement;
   let fileInput: HTMLInputElement | undefined = $state();
   let isDragOver = $state(false);
+  let previewUrls = $state<Record<string, string>>({});
   const isVoiceRecordingSupported =
     typeof window !== 'undefined' &&
     typeof MediaRecorder !== 'undefined' &&
@@ -90,6 +91,18 @@
     }
   }
 
+  function fileKey(file: File, index: number): string {
+    return `${file.name}-${file.size}-${file.lastModified}-${index}`;
+  }
+
+  function isImageFile(file: File): boolean {
+    return file.type.startsWith('image/');
+  }
+
+  function isPdfFile(file: File): boolean {
+    return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+  }
+
   function handleVoiceRecording(audioBlob: Blob) {
     if (!onFilesSelected) return;
 
@@ -130,6 +143,23 @@
       textareaEl.focus();
     }
   });
+
+  $effect(() => {
+    const previous = previewUrls;
+    const next: Record<string, string> = {};
+
+    pendingFiles.forEach((file, index) => {
+      const key = fileKey(file, index);
+      if (!isImageFile(file) && !isPdfFile(file)) return;
+      next[key] = previous[key] ?? URL.createObjectURL(file);
+    });
+
+    for (const [key, url] of Object.entries(previous)) {
+      if (!next[key]) URL.revokeObjectURL(url);
+    }
+
+    previewUrls = next;
+  });
 </script>
 
 <footer class="bg-[var(--surface-elevated)] border-t border-cn-border">
@@ -159,14 +189,32 @@
 
   <div class="px-3 md:px-6 py-3 md:py-4 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
     {#if pendingFiles.length > 0}
-      <div class="mb-2 flex flex-wrap gap-1.5">
+      <div class="mb-2">
+        <div class="text-[0.7rem] text-gray-500 mb-1">{pendingFiles.length} fichier(s) en attente</div>
+        <div class="flex flex-wrap gap-2">
         {#each pendingFiles as file, index (`${file.name}-${index}`)}
-          <div class="inline-flex items-center gap-1.5 pl-2.5 pr-1 py-1 rounded-full bg-cn-bg border border-cn-border max-w-[80vw]">
-            <span class="text-xs text-text-main truncate max-w-[48vw]" title={file.name}>{file.name}</span>
+          {@const key = fileKey(file, index)}
+          <div class="relative rounded-2xl bg-cn-bg border border-cn-border overflow-hidden w-24 h-24">
+            {#if isImageFile(file) && previewUrls[key]}
+              <img src={previewUrls[key]} alt={file.name} class="w-full h-full object-cover" />
+            {:else if isPdfFile(file) && previewUrls[key]}
+              <div class="w-full h-full bg-white">
+                <embed src={previewUrls[key]} type="application/pdf" class="w-full h-full" />
+              </div>
+            {:else}
+              <div class="w-full h-full flex flex-col items-center justify-center gap-1 px-2 text-gray-500">
+                <FileText size={16} />
+                <span class="text-[0.6rem] text-center leading-tight line-clamp-2">{file.name}</span>
+              </div>
+            {/if}
+
+            <div class="absolute inset-x-0 bottom-0 bg-black/55 text-white text-[0.55rem] px-1.5 py-1 truncate" title={file.name}>
+              {file.name}
+            </div>
             {#if onRemovePendingFile}
               <button
                 type="button"
-                class="w-5 h-5 rounded-full hover:bg-gray-200 inline-flex items-center justify-center text-gray-500"
+                class="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 hover:bg-black/75 inline-flex items-center justify-center text-white"
                 onclick={() => onRemovePendingFile(index)}
                 aria-label="Retirer le fichier"
               >
@@ -175,6 +223,7 @@
             {/if}
           </div>
         {/each}
+        </div>
       </div>
     {/if}
 
