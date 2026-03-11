@@ -67,10 +67,54 @@ export function getPreviewText(env: MessageEnvelope): string {
 export function parseEnvelope(content: string): MessageEnvelope {
   if (content.startsWith('{')) {
     try {
-      const obj = JSON.parse(content);
-      if (obj.kind === 'text' || obj.kind === 'media' || obj.kind === 'system') {
-        return obj as MessageEnvelope;
+      const obj = JSON.parse(content) as Record<string, unknown>;
+      if (obj.kind === 'text' && typeof obj.text === 'string') {
+        return {
+          kind: 'text',
+          text: obj.text,
+          replyTo:
+            obj.replyTo && typeof obj.replyTo === 'object'
+              ? (obj.replyTo as { id: string; senderId: string; content: string })
+              : undefined,
+        };
       }
+
+      if (obj.kind === 'system' && typeof obj.text === 'string') {
+        return { kind: 'system', text: obj.text };
+      }
+
+      if (obj.kind === 'media' && typeof obj.media === 'object' && obj.media !== null) {
+        const media = obj.media as Record<string, unknown>;
+        if (
+          (media.type === 'image' ||
+            media.type === 'video' ||
+            media.type === 'audio' ||
+            media.type === 'file') &&
+          typeof media.mediaId === 'string' &&
+          typeof media.key === 'string' &&
+          typeof media.iv === 'string'
+        ) {
+          return {
+            kind: 'media',
+            media: {
+              type: media.type as MediaRef['type'],
+              mediaId: media.mediaId,
+              key: media.key,
+              iv: media.iv,
+              mimeType: typeof media.mimeType === 'string' ? media.mimeType : '',
+              size: typeof media.size === 'number' ? media.size : 0,
+              fileName: typeof media.fileName === 'string' ? media.fileName : undefined,
+            },
+            caption: typeof obj.caption === 'string' ? obj.caption : undefined,
+            replyTo:
+              obj.replyTo && typeof obj.replyTo === 'object'
+                ? (obj.replyTo as { id: string; senderId: string; content: string })
+                : undefined,
+          };
+        }
+      }
+
+      return { kind: 'system', text: '[Message mal encapsule ignore]' };
     } catch {
       // fall through to legacy
     }

@@ -13,7 +13,7 @@
   } from 'lucide-svelte';
   import { clickOutside } from '$lib/actions/clickOutside';
   import { onDestroy, onMount } from 'svelte';
-  import { parseMediaMessage, MediaService } from '$lib/media';
+  import { MediaService } from '$lib/media';
   import type { MediaRef } from '$lib/media';
   import { parseEnvelope } from '$lib/envelope';
   import 'emoji-picker-element';
@@ -87,11 +87,7 @@
     replyTo ??
       (envelope.kind === 'text' || envelope.kind === 'media' ? envelope.replyTo : undefined)
   );
-  let mediaRef = $derived(
-    envelope.kind === 'media'
-      ? envelope.media
-      : parseMediaMessage(content)
-  );
+  let mediaRef = $derived(envelope.kind === 'media' ? envelope.media : null);
   let blobUrl = $state<string | null>(null);
   let loadError = $state(false);
   let supportsHover = $state(true);
