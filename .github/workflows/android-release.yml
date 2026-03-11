@@ -78,13 +78,14 @@ jobs:
         working-directory: frontend
         env:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          BASE_URL: ${{ secrets.BASE_URL }}
         run: |
           echo "VITE_JWT_SECRET=${JWT_SECRET}" > .env
           # Use empty values for URLs to trigger fallback to window.location logic (or defaults)
           # Or set specific production URLs here if desired.
-          echo "VITE_GATEWAY_URL=" >> .env
-          echo "VITE_HISTORY_URL=" >> .env
-          echo "VITE_MEDIA_URL=" >> .env
+          echo "VITE_GATEWAY_URL=${BASE_URL}" >> .env
+          echo "VITE_HISTORY_URL=${BASE_URL}" >> .env
+          echo "VITE_MEDIA_URL=${BASE_URL}" >> .env
 
       - name: Build Android APK
         uses: tauri-apps/tauri-action@v0
