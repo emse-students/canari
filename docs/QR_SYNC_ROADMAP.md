@@ -45,8 +45,8 @@ Mettre en place une synchronisation bidirectionnelle des historiques entre deux 
 
 - UI complete:
   - Actions "Demarrer" / "Joindre" dans la sidebar
-  - Affichage payload QR cote initiateur
-  - Colle du payload cote second appareil (remplace temporairement le scan camera)
+  - Affichage QR visuel + payload texte cote initiateur
+  - Scan camera cote second appareil (avec fallback collage manuel du payload)
   - Progression et resume final dans une modal dediee
 - Verification croisee finale (hash par conversation).
 

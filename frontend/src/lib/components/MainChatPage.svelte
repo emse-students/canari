@@ -50,7 +50,9 @@
   } from '$lib/utils/mainChatMessaging';
   import { migrateFromLocalStorage } from '$lib/utils/migration';
   import { MediaService } from '$lib/media';
+  import { mkMediaEnvelope, serializeEnvelope } from '$lib/envelope';
   import { encodeAppMessage, mkMedia, MediaKind } from '$lib/proto/codec';
+  import { createSyncQrDataUrl } from '$lib/sync/qr';
   import LoginForm from './LoginForm.svelte';
   import Navbar from './Navbar.svelte';
   import Sidebar from './Sidebar.svelte';
@@ -110,6 +112,7 @@
   let syncMode = $state<'offer' | 'join'>('offer');
   let syncJoinPayload = $state('');
   let syncQrPayloadText = $state('');
+  let syncQrDataUrl = $state('');
   let syncStatusText = $state('');
   let isSyncSessionBusy = $state(false);
 
@@ -594,8 +597,8 @@
         await mlsService.sendMessage(convo.groupId, protoBytes);
         const stateBytes = await mlsService.saveState(pin);
         localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
-        // Store as JSON locally for the media renderer
-        const payload = JSON.stringify({ ...mediaRef, id: messageId });
+        // Store as envelope locally for consistent rendering + legacy compatibility.
+        const payload = serializeEnvelope(mkMediaEnvelope({ ...mediaRef }));
         await addMessageToChat(userId, payload, selectedContact, undefined, false, messageId);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -1040,6 +1043,7 @@
       });
 
       syncQrPayloadText = encodeSyncQrPayload(session.qrPayload);
+      syncQrDataUrl = await createSyncQrDataUrl(syncQrPayloadText);
       syncStatusText = 'Session creee. En attente de jonction du second appareil...';
 
       const waitUntil = Date.now() + 180_000;
@@ -1071,6 +1075,7 @@
     syncMode = 'join';
     syncJoinPayload = '';
     syncQrPayloadText = '';
+    syncQrDataUrl = '';
     syncStatusText = '';
     isSyncSessionOpen = true;
   }
@@ -1275,6 +1280,7 @@
         isOpen={isSyncSessionOpen}
         mode={syncMode}
         qrPayload={syncQrPayloadText}
+        qrDataUrl={syncQrDataUrl}
         joinPayload={syncJoinPayload}
         statusText={syncStatusText}
         isBusy={isSyncSessionBusy}
