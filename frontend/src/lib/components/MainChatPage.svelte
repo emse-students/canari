@@ -51,7 +51,7 @@
   } from '$lib/utils/mainChatMessaging';
   import { migrateFromLocalStorage } from '$lib/utils/migration';
   import { MediaService } from '$lib/media';
-  import { mkMediaEnvelope, serializeEnvelope } from '$lib/envelope';
+  import { getPreviewText, mkMediaEnvelope, parseEnvelope, serializeEnvelope } from '$lib/envelope';
   import { encodeAppMessage, mkMedia, MediaKind } from '$lib/proto/codec';
   import { createSyncQrDataUrl } from '$lib/sync/qr';
   import LoginForm from './LoginForm.svelte';
@@ -146,6 +146,7 @@
 
   let audioContext = $state<AudioContext | null>(null);
   let lastNotificationAt = $state(0);
+  let lastSystemNotificationAt = $state(0);
 
   function playNotificationTone() {
     if (typeof window === 'undefined') return;
@@ -172,6 +173,64 @@
       osc.stop(startAt + 0.16);
     } catch {
       // Silent fallback for browsers restricting autoplay/audio context.
+    }
+  }
+
+  async function requestSystemNotificationPermission() {
+    if (typeof window === 'undefined') return;
+
+    if (window.__TAURI_INTERNALS__) {
+      try {
+        const { isPermissionGranted, requestPermission } = await import(
+          '@tauri-apps/plugin-notification'
+        );
+        const granted = await isPermissionGranted();
+        if (!granted) {
+          await requestPermission();
+        }
+      } catch {
+        // Ignore if plugin is unavailable at runtime.
+      }
+      return;
+    }
+
+    if ('Notification' in window && Notification.permission === 'default') {
+      try {
+        await Notification.requestPermission();
+      } catch {
+        // Ignore browser permission errors.
+      }
+    }
+  }
+
+  async function sendSystemNotification(title: string, body: string) {
+    if (typeof window === 'undefined') return;
+
+    const now = Date.now();
+    if (now - lastSystemNotificationAt < 800) return;
+    lastSystemNotificationAt = now;
+
+    if (window.__TAURI_INTERNALS__) {
+      try {
+        const { isPermissionGranted, sendNotification } = await import(
+          '@tauri-apps/plugin-notification'
+        );
+        if (await isPermissionGranted()) {
+          await sendNotification({ title, body });
+        }
+        return;
+      } catch {
+        // Fallback to web notification below when possible.
+      }
+    }
+
+    if ('Notification' in window && Notification.permission === 'granted') {
+      try {
+        const notification = new Notification(title, { body, tag: 'canari-message' });
+        setTimeout(() => notification.close(), 5000);
+      } catch {
+        // Ignore browser notification construction errors.
+      }
     }
   }
 
@@ -284,6 +343,8 @@
       }
       return;
     }
+
+    void requestSystemNotificationPermission();
 
     const w = window as Window & { wasm_bindings_log?: (level: string, msg: string) => void };
     w.wasm_bindings_log = (level: string, msg: string) => {
@@ -636,6 +697,14 @@
 
     if (shouldMarkUnread) {
       playNotificationTone();
+      const preview = getPreviewText(parseEnvelope(content));
+      const shouldShowSystemNotification =
+        typeof document !== 'undefined' &&
+        (document.visibilityState !== 'visible' || !document.hasFocus());
+
+      if (shouldShowSystemNotification) {
+        void sendSystemNotification(convo.name, preview || 'Nouveau message');
+      }
     }
 
     // Persist message to DB (encrypted with PIN)
