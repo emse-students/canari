@@ -9,16 +9,18 @@
     Trash2,
     UserMinus,
     Check,
+    UserPlus,
+    Users,
   } from 'lucide-svelte';
   import Avatar from './Avatar.svelte';
+  import Modal from './Modal.svelte';
+  import MultiUserSelector from './MultiUserSelector.svelte';
 
   interface Props {
     contactName: string;
     displayName: string;
     isReady: boolean;
-    inviteMemberInput: string;
-    onInviteInputChange: (value: string) => void;
-    onInviteMember: () => void;
+    onInviteMembers: (ids: string[]) => void;
     onBack?: () => void;
     onOpenConversations?: () => void;
     // Group management
@@ -32,9 +34,7 @@
     contactName,
     displayName,
     isReady,
-    inviteMemberInput,
-    onInviteInputChange,
-    onInviteMember,
+    onInviteMembers,
     onBack,
     onOpenConversations,
     groupMembers = [],
@@ -44,12 +44,16 @@
   }: Props = $props();
 
   let showPanel = $state(false);
+  let showInviteModal = $state(false);
+  let newMembers = $state<string[]>([]);
   let renameInput = $state('');
   let confirmDelete = $state(false);
 
-  function handleKeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter' && inviteMemberInput.trim()) {
-      onInviteMember();
+  function handleInviteMembers() {
+    if (newMembers.length > 0) {
+      onInviteMembers(newMembers);
+      newMembers = [];
+      showInviteModal = false;
     }
   }
 
@@ -113,23 +117,15 @@
     </span>
   </div>
 
-  <!-- Invite -->
-  <div class="hidden lg:flex gap-2">
-    <input
-      type="text"
-      value={inviteMemberInput}
-      oninput={(e) => onInviteInputChange(e.currentTarget.value)}
-      onkeydown={handleKeydown}
-      placeholder="Ajouter au groupe..."
-      class="px-3 py-2 border border-cn-border rounded-xl text-sm w-40 outline-none bg-[var(--cn-surface)]"
-    />
-    <button
-      onclick={onInviteMember}
-      class="px-3 py-2 bg-cn-dark text-white rounded-xl text-sm font-semibold hover:bg-gray-800 transition-colors"
-    >
-      Inviter
-    </button>
-  </div>
+  <button
+    onclick={() => {
+      showInviteModal = true;
+    }}
+    class="hidden sm:flex items-center gap-2 px-3 py-2 rounded-xl bg-cn-bg hover:bg-gray-200 text-sm font-medium transition-colors"
+  >
+    <UserPlus size={16} />
+    <span class="hidden md:inline">Ajouter</span>
+  </button>
 
   <!-- Group settings button -->
   <button
@@ -193,30 +189,11 @@
           </div>
         </div>
 
-        <!-- Members list -->
-        <div class="lg:hidden flex flex-col gap-2 border-t border-cn-border pt-3">
-          <span class="text-xs text-gray-500 font-medium">Inviter un membre</span>
-          <div class="flex gap-2">
-            <input
-              type="text"
-              value={inviteMemberInput}
-              oninput={(e) => onInviteInputChange(e.currentTarget.value)}
-              onkeydown={handleKeydown}
-              placeholder="Pseudo..."
-              class="flex-1 px-3 py-2 border border-cn-border rounded-xl text-sm outline-none bg-[var(--cn-bg)]"
-            />
-            <button
-              onclick={onInviteMember}
-              class="px-3 py-2 bg-cn-dark text-white rounded-xl text-sm font-semibold hover:bg-gray-800 transition-colors"
-            >
-              Inviter
-            </button>
-          </div>
-        </div>
-
         {#if groupMembers.length > 0}
           <div class="flex flex-col gap-1">
-            <span class="text-xs text-gray-500 font-medium">Membres ({groupMembers.length})</span>
+            <span class="text-xs text-gray-500 font-medium inline-flex items-center gap-1">
+              <Users size={12} /> Membres ({groupMembers.length})
+            </span>
             <ul class="flex flex-col gap-1.5 max-h-52 overflow-y-auto">
               {#each groupMembers as member (member)}
                 <li
@@ -284,4 +261,35 @@
       </div>
     </div>
   {/if}
+
+  <Modal
+    open={showInviteModal}
+    onClose={() => {
+      showInviteModal = false;
+      newMembers = [];
+    }}
+    title={`Ajouter des membres a ${displayName}`}
+  >
+    <div class="space-y-4">
+      <p class="text-sm text-gray-500">
+        Selectionnez plusieurs utilisateurs a inviter en une seule operation.
+      </p>
+
+      <MultiUserSelector
+        users={newMembers}
+        onUsersChange={(users) => {
+          newMembers = users;
+        }}
+        placeholder="Identifiant utilisateur..."
+      />
+
+      <button
+        onclick={handleInviteMembers}
+        disabled={newMembers.length === 0}
+        class="w-full py-2.5 bg-cn-dark text-cn-yellow font-semibold rounded-xl hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        Inviter {newMembers.length > 0 ? `(${newMembers.length})` : ''}
+      </button>
+    </div>
+  </Modal>
 </header>

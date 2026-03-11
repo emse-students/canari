@@ -30,14 +30,29 @@ export function getInitials(name: string): string {
   // Remove @ if present (for @user format)
   const cleaned = name.replace(/^@/, '');
 
-  // Split by spaces, dots, underscores
-  const parts = cleaned.split(/[\s._-]+/).filter(Boolean);
+  // Keep only letters/digits so generated SVG is always valid.
+  const alnumParts = cleaned
+    .split(/[\s._-]+/)
+    .map((part) => part.replace(/[^\p{L}\p{N}]/gu, ''))
+    .filter(Boolean);
 
-  if (parts.length === 0) return cleaned[0]?.toUpperCase() || '?';
-  if (parts.length === 1) return parts[0].substring(0, 2).toUpperCase();
+  if (alnumParts.length === 0) {
+    const compact = cleaned.replace(/[^\p{L}\p{N}]/gu, '');
+    return compact.substring(0, 2).toUpperCase() || '?';
+  }
 
-  // Take first letter of first two parts
-  return (parts[0][0] + parts[1][0]).toUpperCase();
+  if (alnumParts.length === 1) return alnumParts[0].substring(0, 2).toUpperCase();
+
+  // Take first letter of first two valid parts.
+  return (alnumParts[0][0] + alnumParts[1][0]).toUpperCase();
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 /**
@@ -45,11 +60,12 @@ export function getInitials(name: string): string {
  */
 export function generateAvatarPlaceholder(name: string): string {
   const initials = getInitials(name);
+  const safeInitials = escapeXml(initials);
   const base = generateAvatarColor(name);
   const accent = generateAvatarColor(`${name}-accent`);
 
   const svg = `
-<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-label="Avatar ${initials}">
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-label="Avatar ${safeInitials}">
   <defs>
     <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0%" stop-color="${base}" />
@@ -58,7 +74,7 @@ export function generateAvatarPlaceholder(name: string): string {
   </defs>
   <rect width="128" height="128" rx="28" fill="url(#g)" />
   <circle cx="102" cy="26" r="14" fill="rgba(255,255,255,0.18)" />
-  <text x="64" y="72" text-anchor="middle" dominant-baseline="middle" fill="white" font-family="Segoe UI, Inter, sans-serif" font-size="44" font-weight="700">${initials}</text>
+  <text x="64" y="72" text-anchor="middle" dominant-baseline="middle" fill="white" font-family="Segoe UI, Inter, sans-serif" font-size="44" font-weight="700">${safeInitials}</text>
 </svg>`;
 
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;

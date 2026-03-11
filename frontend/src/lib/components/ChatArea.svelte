@@ -12,11 +12,9 @@
   interface Props {
     conversation: Conversation | null;
     messageText: string;
-    inviteMemberInput: string;
     onMessageChange: (value: string) => void;
-    onInviteInputChange: (value: string) => void;
     onSend: () => void;
-    onInviteMember: () => void;
+    onInviteMembers: (ids: string[]) => void;
     onBack?: () => void;
     onOpenConversations?: () => void;
     isHidden?: boolean;
@@ -42,11 +40,9 @@
   let {
     conversation,
     messageText,
-    inviteMemberInput,
     onMessageChange,
-    onInviteInputChange,
     onSend,
-    onInviteMember,
+    onInviteMembers,
     onBack,
     onOpenConversations,
     isHidden = false,
@@ -89,9 +85,7 @@
       contactName={conversation.contactName}
       displayName={conversation.name}
       isReady={conversation.isReady}
-      {inviteMemberInput}
-      {onInviteInputChange}
-      {onInviteMember}
+      {onInviteMembers}
       {onBack}
       {onOpenConversations}
       {groupMembers}

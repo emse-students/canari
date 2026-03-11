@@ -38,7 +38,7 @@
   import { setupMessageHandler, initializeConnection } from '$lib/utils/mainChatConnection';
   import {
     createNewGroup as createGroup,
-    inviteMemberToGroup,
+    inviteMembersToGroup,
     startNewConversation as startConversation,
   } from '$lib/utils/mainChatGroupCreation';
   import {
@@ -75,7 +75,6 @@
 
   let newContactInput = $state('');
   let newGroupInput = $state('');
-  let inviteMemberInput = $state('');
   let messageText = $state('');
   let chatContainer = $state<HTMLElement>();
 
@@ -432,13 +431,16 @@
     });
   }
 
-  async function inviteMemberToCurrentGroup(memberId: string) {
+  async function inviteMembersToCurrentGroup(memberIds: string[]) {
     if (!selectedContact) return;
     const mlsService = ensureMls();
     const convo = conversations.get(selectedContact);
     if (!convo) return;
 
-    await inviteMemberToGroup(memberId, convo, {
+    const normalized = [...new Set(memberIds.map((id) => id.trim().toLowerCase()).filter(Boolean))];
+    if (normalized.length === 0) return;
+
+    await inviteMembersToGroup(normalized, convo, {
       mlsService,
       storage,
       userId,
@@ -1208,16 +1210,9 @@
       <ChatArea
         conversation={currentConvo}
         {messageText}
-        {inviteMemberInput}
         onMessageChange={(value) => (messageText = value)}
-        onInviteInputChange={(value) => (inviteMemberInput = value)}
         onSend={handleSendChat}
-        onInviteMember={() => {
-          if (inviteMemberInput.trim()) {
-            inviteMemberToCurrentGroup(inviteMemberInput);
-            inviteMemberInput = '';
-          }
-        }}
+        onInviteMembers={inviteMembersToCurrentGroup}
         onBack={goBackToMenu}
         onOpenConversations={() => {
           isConversationDrawerOpen = true;
