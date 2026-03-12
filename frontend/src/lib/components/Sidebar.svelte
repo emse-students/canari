@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Hand } from 'lucide-svelte';
+  import { Hand, RotateCcw } from 'lucide-svelte';
   import ConversationTile from './ConversationTile.svelte';
   import SidebarHeaderControls from './SidebarHeaderControls.svelte';
   import SidebarChannelWorkspaces from './SidebarChannelWorkspaces.svelte';
@@ -18,6 +18,8 @@
 
   interface Props {
     conversations: Map<string, Conversation>;
+    archivedConversationIds?: string[];
+    showArchivedConversations?: boolean;
     selectedContact: string | null;
     newContactInput: string;
     newGroupInput: string;
@@ -26,6 +28,8 @@
     onAddContact: (contactId?: string) => void;
     onCreateGroup: (groupName?: string) => void;
     onSelectConversation: (name: string) => void;
+    onToggleArchivedView?: () => void;
+    onRestoreConversation?: (name: string) => void;
     onExport: () => void;
     onImport: (file: File) => void;
     onStartSync: () => void;
@@ -40,6 +44,8 @@
 
   let {
     conversations,
+    archivedConversationIds = [],
+    showArchivedConversations = false,
     selectedContact,
     newContactInput,
     newGroupInput,
@@ -48,6 +54,8 @@
     onAddContact,
     onCreateGroup,
     onSelectConversation,
+    onToggleArchivedView,
+    onRestoreConversation,
     onExport,
     onImport,
     onStartSync,
@@ -119,14 +127,21 @@
     },
   ];
 
-  let filteredConversationEntries = $derived(
-    Array.from(conversations.entries()).filter(([, convo]) => {
-      if (!searchQuery.trim()) return true;
-      const query = searchQuery.trim().toLowerCase();
+  let filteredConversationEntries = $derived.by(() => {
+    const archived = new Set(archivedConversationIds.map((id) => id.toLowerCase()));
+    const query = searchQuery.trim().toLowerCase();
+
+    return Array.from(conversations.entries()).filter(([id, convo]) => {
+      const isArchived = archived.has(id.toLowerCase());
+      if (showArchivedConversations ? !isArchived : isArchived) {
+        return false;
+      }
+
+      if (!query) return true;
       const lastContent = convo.messages.at(-1)?.content ?? '';
       return convo.name.toLowerCase().includes(query) || lastContent.toLowerCase().includes(query);
-    })
-  );
+    });
+  });
 
   let filteredChannelWorkspaces = $derived(
     channelWorkspaces
@@ -200,6 +215,7 @@
 >
   <SidebarHeaderControls
     {activeSidebarTab}
+    {showArchivedConversations}
     {searchQuery}
     {drawerMode}
     {onCloseDrawer}
@@ -209,6 +225,7 @@
     onSearchQueryChange={(value) => {
       searchQuery = value;
     }}
+    onToggleArchivedView={() => onToggleArchivedView?.()}
     onOpenNewChat={() => openNewChatModal(activeSidebarTab === 'channels' ? 'group' : 'contact')}
   />
 
@@ -216,17 +233,33 @@
   <div class="flex-1 overflow-y-auto p-2.5">
     {#if activeSidebarTab === 'discussions'}
       {#each filteredConversationEntries as [name, convo] (name)}
-        <ConversationTile
-          contactName={convo.contactName}
-          displayName={convo.name}
-          lastMessage={convo.messages.length > 0
-            ? convo.messages[convo.messages.length - 1].content
-            : undefined}
-          isReady={convo.isReady}
-          isSelected={selectedContact === name}
-          unreadCount={convo.unreadCount ?? 0}
-          onClick={() => onSelectConversation(name)}
-        />
+        <div class="relative">
+          <ConversationTile
+            contactName={convo.contactName}
+            displayName={convo.name}
+            lastMessage={convo.messages.length > 0
+              ? convo.messages[convo.messages.length - 1].content
+              : undefined}
+            isReady={convo.isReady}
+            isSelected={selectedContact === name}
+            unreadCount={convo.unreadCount ?? 0}
+            onClick={() => onSelectConversation(name)}
+          />
+          {#if showArchivedConversations}
+            <button
+              type="button"
+              class="absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white/75 dark:bg-black/45 border border-white/50 dark:border-white/10 text-text-main inline-flex items-center justify-center hover:bg-white dark:hover:bg-black/60 transition-colors"
+              aria-label="Restaurer la discussion"
+              title="Restaurer"
+              onclick={(event) => {
+                event.stopPropagation();
+                onRestoreConversation?.(name);
+              }}
+            >
+              <RotateCcw size={14} />
+            </button>
+          {/if}
+        </div>
       {/each}
 
       {#if filteredConversationEntries.length === 0}
@@ -237,7 +270,9 @@
           <p class="text-sm">
             {searchQuery.trim()
               ? 'Aucune discussion correspondante.'
-              : 'Votre messagerie est vide. Cliquez sur + pour demarrer.'}
+              : showArchivedConversations
+                ? 'Votre corbeille est vide.'
+                : 'Votre messagerie est vide. Cliquez sur + pour demarrer.'}
           </p>
         </div>
       {/if}

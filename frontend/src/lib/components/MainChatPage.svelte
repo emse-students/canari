@@ -18,7 +18,6 @@
     syncOwnDevicesToGroups,
   } from '$lib/utils/mainChatActions';
   import {
-    deleteGroupAndBroadcast,
     fetchUniqueGroupMembers,
     removeMemberAndBroadcast,
     renameGroupAndBroadcast,
@@ -87,6 +86,8 @@
   let newGroupInput = $state('');
   let messageText = $state('');
   let chatContainer = $state<HTMLElement>();
+  let archivedConversationIds = $state<string[]>([]);
+  let showArchivedConversations = $state(false);
 
   let isWsConnected = $state(false);
   let myDeviceId = $state('');
@@ -310,6 +311,48 @@
     };
   }
 
+  function archiveStorageKey(uid: string): string {
+    return `canari_archived_conversations_${uid.toLowerCase()}`;
+  }
+
+  function loadArchivedConversations(uid: string): string[] {
+    try {
+      const raw = localStorage.getItem(archiveStorageKey(uid));
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return [...new Set(parsed.map((id) => String(id).toLowerCase()).filter(Boolean))];
+    } catch {
+      return [];
+    }
+  }
+
+  function persistArchivedConversations(uid: string, ids: string[]) {
+    localStorage.setItem(archiveStorageKey(uid), JSON.stringify([...new Set(ids)]));
+  }
+
+  function archiveConversation(conversationId: string) {
+    const normalized = conversationId.toLowerCase();
+    if (archivedConversationIds.includes(normalized)) return;
+    archivedConversationIds = [...archivedConversationIds, normalized];
+    persistArchivedConversations(userId, archivedConversationIds);
+
+    if (selectedContact === normalized) {
+      selectedContact = null;
+      mobileView = 'list';
+      isConversationDrawerOpen = false;
+      sendError = '';
+      groupMembers = [];
+    }
+  }
+
+  function restoreConversation(conversationId: string) {
+    const normalized = conversationId.toLowerCase();
+    if (!archivedConversationIds.includes(normalized)) return;
+    archivedConversationIds = archivedConversationIds.filter((id) => id !== normalized);
+    persistArchivedConversations(userId, archivedConversationIds);
+  }
+
   // Read Receipts logic
   $effect(() => {
     if (!selectedContact || !isLoggedIn) return;
@@ -480,6 +523,8 @@
       );
 
       isLoggedIn = true;
+      archivedConversationIds = loadArchivedConversations(userId);
+      showArchivedConversations = false;
       // Mémoriser les identifiants pour auto-login au prochain chargement
       localStorage.setItem('canari_saved_user', userId);
       localStorage.setItem('canari_saved_pin', pin);
@@ -704,6 +749,13 @@
 
     const convMetas = await storage.getConversations();
     const mergedConvMetas = await mergeDirectConversationDuplicates(convMetas);
+
+    const validConversationIds = new Set(mergedConvMetas.map((meta) => meta.id.toLowerCase()));
+    const prunedArchivedIds = archivedConversationIds.filter((id) => validConversationIds.has(id));
+    if (prunedArchivedIds.length !== archivedConversationIds.length) {
+      archivedConversationIds = prunedArchivedIds;
+      persistArchivedConversations(userId, archivedConversationIds);
+    }
 
     conversations.clear();
     messageReactions.clear();
@@ -1207,18 +1259,8 @@
     if (!selectedContact) return;
     const convo = conversations.get(selectedContact);
     if (!convo) return;
-    try {
-      const mlsService = ensureMls();
-      await deleteGroupAndBroadcast({ mlsService, groupId: convo.groupId });
-      await addSystemMessage(`${userId} a supprimé le groupe`, selectedContact);
-      conversations.set(selectedContact, { ...convo, isReady: false });
-      if (storage) await saveConversation(selectedContact);
-      groupMembers = [];
-      log(`Groupe "${convo.name}" supprime (archive localement).`);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      log(`Erreur suppression groupe: ${msg}`);
-    }
+    archiveConversation(selectedContact);
+    log(`Discussion "${convo.name}" déplacée dans la corbeille.`);
   }
 
   async function handleRemoveMember(memberId: string) {
@@ -1643,6 +1685,8 @@
     <main class="main-content">
       <Sidebar
         {conversations}
+        {archivedConversationIds}
+        {showArchivedConversations}
         {selectedContact}
         {newContactInput}
         {newGroupInput}
@@ -1663,6 +1707,10 @@
           }
         }}
         onSelectConversation={selectConversation}
+        onToggleArchivedView={() => {
+          showArchivedConversations = !showArchivedConversations;
+        }}
+        onRestoreConversation={restoreConversation}
         onExport={handleExport}
         onImport={handleImport}
         onStartSync={handleStartSyncSession}
@@ -1706,6 +1754,8 @@
       {#if isConversationDrawerOpen}
         <Sidebar
           {conversations}
+          {archivedConversationIds}
+          {showArchivedConversations}
           {selectedContact}
           {newContactInput}
           {newGroupInput}
@@ -1726,6 +1776,10 @@
             }
           }}
           onSelectConversation={selectConversation}
+          onToggleArchivedView={() => {
+            showArchivedConversations = !showArchivedConversations;
+          }}
+          onRestoreConversation={restoreConversation}
           onExport={handleExport}
           onImport={handleImport}
           onStartSync={handleStartSyncSession}

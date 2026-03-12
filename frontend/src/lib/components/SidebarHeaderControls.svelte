@@ -1,23 +1,27 @@
 <script lang="ts">
-  import { Plus, X, Search } from 'lucide-svelte';
+  import { Plus, X, Search, Archive } from 'lucide-svelte';
 
   interface Props {
     activeSidebarTab: 'discussions' | 'channels';
+    showArchivedConversations?: boolean;
     searchQuery: string;
     drawerMode?: boolean;
     onCloseDrawer?: () => void;
     onTabChange: (tab: 'discussions' | 'channels') => void;
     onSearchQueryChange: (value: string) => void;
+    onToggleArchivedView?: () => void;
     onOpenNewChat: () => void;
   }
 
   let {
     activeSidebarTab,
+    showArchivedConversations = false,
     searchQuery,
     drawerMode = false,
     onCloseDrawer,
     onTabChange,
     onSearchQueryChange,
+    onToggleArchivedView,
     onOpenNewChat,
   }: Props = $props();
 </script>
@@ -74,6 +78,21 @@
     >
       <Plus size={16} />
     </button>
+    {#if activeSidebarTab === 'discussions'}
+      <button
+        type="button"
+        onclick={() => onToggleArchivedView?.()}
+        class="w-8 h-8 rounded-full border text-text-main transition-colors flex items-center justify-center {showArchivedConversations
+          ? 'bg-amber-100/90 dark:bg-amber-500/20 border-amber-300/70 dark:border-amber-300/30'
+          : 'bg-white/65 dark:bg-black/30 border-white/45 dark:border-white/10 hover:bg-white/80 dark:hover:bg-black/40'}"
+        aria-label={showArchivedConversations
+          ? 'Afficher les discussions actives'
+          : 'Afficher la corbeille'}
+        title={showArchivedConversations ? 'Discussions actives' : 'Corbeille'}
+      >
+        <Archive size={15} />
+      </button>
+    {/if}
     {#if drawerMode}
       <button
         type="button"
