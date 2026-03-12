@@ -42,7 +42,7 @@
 >
   <!-- Brand -->
   <div class="flex items-center gap-3">
-    <div class="w-8 h-8 bg-cn-dark text-cn-yellow rounded-lg flex items-center justify-center">
+    <div class="w-8 h-8 bg-[#122035] text-cn-yellow rounded-lg flex items-center justify-center">
       <img src="/favicon.png" alt="Canari" class="w-3/4 h-3/4 object-contain" />
     </div>
     <span class="font-black text-xl text-cn-dark">Canari</span>
