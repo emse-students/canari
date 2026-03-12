@@ -250,7 +250,7 @@
     return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3001';
   })();
 
-  function deriveConversationIdentity(metaName: string): {
+  function deriveConversationIdentity(metaName: string, metaId?: string): {
     conversationType: 'direct' | 'group';
     contactName: string;
     displayName: string;
@@ -280,6 +280,20 @@
         .filter(Boolean);
       if (participants.length === 2 && participants.includes(userId.toLowerCase())) {
         const peer = participants.find((p) => p !== userId.toLowerCase()) || participants[0];
+        return {
+          conversationType: 'direct',
+          contactName: peer,
+          displayName: peer,
+          directPeerId: peer,
+        };
+      }
+    }
+
+    // Legacy 1:1 conversations created with random `dm_` ids but plain peer
+    // names in metadata should still be treated as direct chats.
+    if (metaId?.startsWith('dm_')) {
+      const peer = normalizedName.toLowerCase();
+      if (peer && peer !== userId.toLowerCase()) {
         return {
           conversationType: 'direct',
           contactName: peer,
@@ -554,10 +568,15 @@
     const normalized = contactName.toLowerCase();
     const convo = conversations.get(normalized);
     if (!convo) return;
+    const persistedName =
+      (convo.conversationType ?? 'group') === 'direct'
+        ? `${userId.toLowerCase()}::${(convo.directPeerId ?? convo.contactName).toLowerCase()}`
+        : convo.name;
+
     await storage.saveConversation({
       id: normalized,
       groupId: convo.groupId,
-      name: convo.name,
+      name: persistedName,
       isReady: convo.isReady,
       updatedAt: Date.now(),
     });
@@ -594,7 +613,7 @@
       [];
 
     for (const meta of convMetas) {
-      const identity = deriveConversationIdentity(meta.name);
+      const identity = deriveConversationIdentity(meta.name, meta.id);
       if (identity.conversationType !== 'direct' || !identity.directPeerId) {
         continue;
       }
@@ -647,7 +666,34 @@
     }
 
     const duplicateIds = new Set(duplicatesToMerge.map((item) => item.duplicate.id));
-    return convMetas.filter((meta) => !duplicateIds.has(meta.id));
+    const merged = convMetas.filter((meta) => !duplicateIds.has(meta.id));
+
+    // Normalize direct-conversation metadata names so future loads/syncs can
+    // detect duplicates consistently, including after backup/QR sync.
+    const normalizedMetas: ConversationMeta[] = [];
+    for (const meta of merged) {
+      const identity = deriveConversationIdentity(meta.name, meta.id);
+      if (identity.conversationType !== 'direct' || !identity.directPeerId) {
+        normalizedMetas.push(meta);
+        continue;
+      }
+
+      const normalizedDirectName = `${userId.toLowerCase()}::${identity.directPeerId.toLowerCase()}`;
+      if (meta.name === normalizedDirectName) {
+        normalizedMetas.push(meta);
+        continue;
+      }
+
+      try {
+        const updatedMeta = { ...meta, name: normalizedDirectName, updatedAt: Date.now() };
+        await storage.saveConversation(updatedMeta);
+        normalizedMetas.push(updatedMeta);
+      } catch {
+        normalizedMetas.push(meta);
+      }
+    }
+
+    return normalizedMetas;
   }
 
   async function loadExistingConversations() {
@@ -665,7 +711,7 @@
     // Phase 1 (fast, blocking): populate the conversations map with metadata
     // only so the WS message handler can route messages immediately.
     for (const meta of mergedConvMetas) {
-      const identity = deriveConversationIdentity(meta.name);
+      const identity = deriveConversationIdentity(meta.name, meta.id);
       conversations.set(meta.id, {
         contactName: identity.contactName,
         name: identity.displayName,
