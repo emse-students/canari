@@ -471,6 +471,9 @@
       localStorage.setItem('canari_saved_pin', pin);
       await loadExistingConversations();
 
+      // Auto-rejoin groups where user may have lost membership after device sync
+      syncOwnDevicesToGroupsLocally().catch(() => {});
+
       const syncGuideKey = `canari_sync_guide_seen_${userId}`;
       if (!hadLocalStateBeforeLogin && localStorage.getItem(syncGuideKey) !== '1') {
         showSyncGuidePrompt = true;
