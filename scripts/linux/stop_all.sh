@@ -19,6 +19,7 @@ pkill -f "cargo run"
 pkill -f "chat-delivery-service"
 pkill -f "auth-service"
 pkill -f "user-service"
+pkill -f "channel-service"
 
 # Tuer le frontend (Vite & Tauri)
 pkill -f "tauri dev"

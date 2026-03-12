@@ -15,6 +15,15 @@ import {
 export class AppController {
   constructor(private readonly service: ChannelService) {}
 
+  @Get('health')
+  health() {
+    return {
+      service: 'channel-service',
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+    };
+  }
+
   @Post('workspaces')
   createWorkspace(@Body() body: CreateWorkspaceDto) {
     return this.service.createWorkspace(body);
@@ -56,10 +65,7 @@ export class AppController {
   }
 
   @Get(':channelId/messages')
-  listMessages(
-    @Param('channelId') channelId: string,
-    @Query() query: GetChannelMessagesQuery
-  ) {
+  listMessages(@Param('channelId') channelId: string, @Query() query: GetChannelMessagesQuery) {
     const limit = query.limit ? Number(query.limit) : 100;
     return this.service.listMessages(channelId, query.userId, limit);
   }

@@ -149,6 +149,24 @@ services:
       minio:
         condition: service_healthy
 
+  # ─────────────────────────────────────────────────────
+  # Channel Service (NestJS) — port 3005
+  # Permissions-first community channels with soft encryption.
+  # ─────────────────────────────────────────────────────
+  channel-service:
+    build:
+      context: ../../
+      dockerfile: infrastructure/local/Dockerfile.channel-service
+    ports:
+      - "3005:3005"
+    environment:
+      PORT: "3005"
+      CHANNELS_MONGO_URI: mongodb://mongo:27017/channel_db
+      CHANNELS_ENCRYPTION_SECRET: ${CHANNELS_ENCRYPTION_SECRET:-dev-channel-secret-change-me}
+    depends_on:
+      mongo:
+        condition: service_started
+
 volumes:
   mongo_data:
   postgres_data:

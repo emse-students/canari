@@ -7,8 +7,7 @@ export const CHANNEL_PERMISSIONS = {
   ROLE_MANAGE: 'role.manage',
 } as const;
 
-export type ChannelPermission =
-  (typeof CHANNEL_PERMISSIONS)[keyof typeof CHANNEL_PERMISSIONS];
+export type ChannelPermission = (typeof CHANNEL_PERMISSIONS)[keyof typeof CHANNEL_PERMISSIONS];
 
 export const DEFAULT_OWNER_PERMISSIONS: ChannelPermission[] = [
   CHANNEL_PERMISSIONS.CHANNEL_READ,

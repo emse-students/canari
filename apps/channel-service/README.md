@@ -32,7 +32,7 @@ Service NestJS pour canaux communautaires avec priorite aux permissions.
 
 ## Variables d'environnement
 
-- `PORT` (defaut `3004`)
+- `PORT` (defaut `3005`)
 - `CHANNELS_MONGO_URI` (defaut `mongodb://localhost:27017/channel_db`)
 - `CHANNELS_ENCRYPTION_SECRET` (obligatoire en prod)
 

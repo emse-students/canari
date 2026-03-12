@@ -129,7 +129,11 @@ export class ChannelService {
   async joinChannel(channelId: string, input: ChannelJoinDto) {
     const channel = await this.requireChannel(channelId);
 
-    const actorPerms = await this.getPermissions(channel.workspaceId, input.actorUserId, channel.id);
+    const actorPerms = await this.getPermissions(
+      channel.workspaceId,
+      input.actorUserId,
+      channel.id
+    );
     const isPublic = channel.visibility === 'public';
     const canInvite = actorPerms.has(CHANNEL_PERMISSIONS.MEMBER_INVITE);
 
@@ -236,22 +240,20 @@ export class ChannelService {
       .limit(Math.max(1, Math.min(limit, 200)))
       .lean();
 
-    return docs
-      .reverse()
-      .map((doc) => ({
-        id: String(doc._id),
-        senderId: doc.senderId,
+    return docs.reverse().map((doc) => ({
+      id: String(doc._id),
+      senderId: doc.senderId,
+      keyVersion: doc.keyVersion,
+      createdAt: doc.createdAt,
+      plaintext: decryptSoft({
+        secret: this.cryptoSecret,
+        workspaceId: channel.workspaceId,
+        channelId: channel.id,
         keyVersion: doc.keyVersion,
-        createdAt: doc.createdAt,
-        plaintext: decryptSoft({
-          secret: this.cryptoSecret,
-          workspaceId: channel.workspaceId,
-          channelId: channel.id,
-          keyVersion: doc.keyVersion,
-          ciphertext: doc.ciphertext,
-          nonce: doc.nonce,
-        }),
-      }));
+        ciphertext: doc.ciphertext,
+        nonce: doc.nonce,
+      }),
+    }));
   }
 
   async listChannelsForUser(workspaceId: string, userId: string) {
@@ -299,7 +301,7 @@ export class ChannelService {
       name: member.roleName.toLowerCase(),
     });
 
-    const base = (role?.permissions || []) as ChannelPermission[];
+    const base = role?.permissions || [];
     return new Set(base);
   }
 }

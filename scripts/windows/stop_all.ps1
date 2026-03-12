@@ -25,7 +25,7 @@ foreach ($proc in @('chat-gateway', 'cargo', 'node', 'canari')) {
 Get-Process -Name "java" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
 # Libérer les ports clés
-foreach ($port in @(3000, 8080, 8081)) {
+foreach ($port in @(3000, 3005, 8080, 8081)) {
     $pids = (netstat -ano | Select-String "LISTENING" | Select-String ":$port\s" | ForEach-Object {
             ($_.Line -split '\s+')[-1]
         } | Where-Object { $_ -match '^\d+$' } | Select-Object -Unique)
@@ -62,6 +62,7 @@ else {
         "Auth Service (Node)",
         "User Service (Node)",
         "Media Service (Node)",
+        "Channel Service (Node)",
         "Frontend (Tauri)"
     )
     foreach ($title in $titles) {

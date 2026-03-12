@@ -1,11 +1,23 @@
 import * as crypto from 'crypto';
 
-function deriveChannelKey(secret: string, workspaceId: string, channelId: string, version: number): Buffer {
+function deriveChannelKey(
+  secret: string,
+  workspaceId: string,
+  channelId: string,
+  version: number
+): Buffer {
   const salt = crypto
     .createHash('sha256')
     .update(`${workspaceId}:${channelId}:${version}`)
     .digest();
-  return crypto.hkdfSync('sha256', Buffer.from(secret), salt, Buffer.from('canari-channel-e2ee-v1'), 32);
+  const raw = crypto.hkdfSync(
+    'sha256',
+    Buffer.from(secret),
+    salt,
+    Buffer.from('canari-channel-e2ee-v1'),
+    32
+  );
+  return Buffer.from(raw);
 }
 
 export function encryptSoft(params: {
