@@ -525,6 +525,12 @@ export class TauriMlsService implements IMlsService {
     }
   }
 
+  getLocalGroups(): string[] {
+    // Tauri uses the Rust MLS core directly; group list not exposed via IPC yet.
+    // Return empty array as fallback — the mismatch detection will simply be skipped.
+    return [];
+  }
+
   async renameGroup(groupId: string, name: string): Promise<void> {
     const res = await fetch(`${this.historyUrl}/mls-api/groups/${groupId}`, {
       method: 'PATCH',

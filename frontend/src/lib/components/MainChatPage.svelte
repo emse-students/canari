@@ -471,6 +471,24 @@
       localStorage.setItem('canari_saved_pin', pin);
       await loadExistingConversations();
 
+      // Detect isReady conversations that have no matching MLS group state.
+      // This happens when the DB was synced via QR but the device never processed
+      // the MLS Welcome messages (e.g. first QR sync or after state loss). Clear
+      // those devices from the known-devices cache so syncOwnDevicesToGroupsLocally()
+      // will re-send Welcomes when it runs below.
+      try {
+        const localMlsGroups = new Set(mlsService.getLocalGroups());
+        const hasMissingGroups = [...conversations.values()].some(
+          (c) => c.isReady && !localMlsGroups.has(c.groupId)
+        );
+        if (hasMissingGroups) {
+          log('[WARN] Groupes sans état MLS détectés — réinitialisation du cache de synchronisation.');
+          localStorage.removeItem(`known_own_devices:${userId}`);
+        }
+      } catch {
+        /* ignore — non-blocking diagnostic */
+      }
+
       // Auto-rejoin groups where user may have lost membership after device sync
       syncOwnDevicesToGroupsLocally().catch(() => {});
 
@@ -1349,6 +1367,20 @@
     });
 
     await loadExistingConversations();
+
+    // After DB sync, force MLS re-invite for the peer: remove it from the
+    // known-devices cache so syncOwnDevicesToGroupsLocally() will send Welcome
+    // messages even if this device pair was already processed before.
+    try {
+      const cacheKey = `known_own_devices:${userId}`;
+      const known: string[] = JSON.parse(localStorage.getItem(cacheKey) ?? '[]');
+      localStorage.setItem(cacheKey, JSON.stringify(known.filter((id) => id !== peerDeviceId)));
+    } catch {
+      /* ignore */
+    }
+
+    // Re-send MLS Welcomes so the peer can decrypt messages in existing groups.
+    await syncOwnDevicesToGroupsLocally();
 
     log(
       `[SYNC] Terminee. Envoyes: ${result.uploadedMessageCount}, importes: ${result.importedMessageCount}.`

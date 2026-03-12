@@ -40,6 +40,7 @@ export interface IMlsService {
   getDeviceId(): string;
 
   // Group management
+  getLocalGroups(): string[];
   renameGroup(groupId: string, name: string): Promise<void>;
   deleteGroupOnServer(groupId: string): Promise<void>;
   removeMemberFromServer(groupId: string, userId: string): Promise<void>;

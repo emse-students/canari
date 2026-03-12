@@ -571,6 +571,11 @@ export class WebMlsService implements IMlsService {
     return this.deviceId;
   }
 
+  getLocalGroups(): string[] {
+    if (!this.client) return [];
+    return Array.from(this.client.get_groups() as Iterable<string>);
+  }
+
   async renameGroup(groupId: string, name: string): Promise<void> {
     const res = await fetch(`${this.historyUrl}/mls-api/groups/${groupId}`, {
       method: 'PATCH',
