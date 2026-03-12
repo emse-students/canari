@@ -93,8 +93,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: ./frontend
-          tauriScript: bun tauri
-          args: android build --apk
+          tauriScript: bun tauri android
+          args: --apk
 
       - name: Sign APK
         run: |
