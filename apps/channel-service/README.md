@@ -36,6 +36,26 @@ Service NestJS pour canaux communautaires avec priorite aux permissions.
 - `CHANNELS_MONGO_URI` (defaut `mongodb://localhost:27017/channel_db`)
 - `CHANNELS_ENCRYPTION_SECRET` (obligatoire en prod)
 
+## Demarrage local rapide
+
+1. Demarrer Mongo + channel-service:
+
+```bash
+docker compose -f infrastructure/local/docker-compose.yml up -d mongo channel-service
+```
+
+2. Verifier la sante:
+
+```bash
+curl http://localhost:3005/channels/health
+```
+
+3. Lancer un smoke test API (join/kick/rejoin/historique):
+
+```bash
+npm run smoke
+```
+
 ## Notes securite
 
 - Ce service n'utilise pas MLS.

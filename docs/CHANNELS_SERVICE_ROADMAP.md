@@ -1,5 +1,22 @@
 # CHANNELS_SERVICE_ROADMAP.md
 
+## Etat actuel (12/03/2026)
+
+- MVP channel-service demarre et repond sur `/channels/health` (port 3005).
+- Mode permissions-first actif: join/leave/kick et blocage d'acces apres exclusion.
+- Historique visible pour nouveaux membres (mode soft demande).
+- Chiffrement applicatif AES-256-GCM + derivation HKDF implemente cote service.
+- Integration locale faite:
+   - `infrastructure/local/docker-compose.yml` inclut `channel-service`
+   - scripts start/stop Windows et Linux mis a jour
+   - smoke test automatisable via `apps/channel-service/scripts/smoke-test.mjs`
+
+Prochaines priorites recommandees:
+
+- brancher chat-gateway/front sur les endpoints `channel-service`
+- ajouter tests e2e Nest dedies aux regles ACL critiques
+- externaliser/rotationner `CHANNELS_ENCRYPTION_SECRET` (secret manager)
+
 ## 1. But et contexte
 
 Objectif: ajouter un systeme de canaux type Discord/Slack pour les promotions, assos et communautes, sans casser les flux DM/groupes MLS existants.
