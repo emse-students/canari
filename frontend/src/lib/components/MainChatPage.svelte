@@ -234,7 +234,13 @@
 
   // Helper to ensure MLS service exists
   function ensureMls(): IMlsService {
-    if (!mls) throw new Error('MLS Service not initialized');
+    if (!mls) {
+      if (typeof window === 'undefined') {
+        throw new Error('MLS Service unavailable outside browser context');
+      }
+      const w = window as Window & { __TAURI_INTERNALS__?: unknown };
+      mls = w.__TAURI_INTERNALS__ ? new TauriMlsService() : new WebMlsService();
+    }
     return mls;
   }
 
@@ -352,12 +358,14 @@
     };
 
     const w2 = window as Window & { __TAURI_INTERNALS__?: unknown };
-    if (w2.__TAURI_INTERNALS__) {
-      mls = new TauriMlsService();
-      log('Initialisé en mode TAURI');
-    } else {
-      mls = new WebMlsService();
-      log('Initialisé en mode WEB (WASM)');
+    if (!mls) {
+      if (w2.__TAURI_INTERNALS__) {
+        mls = new TauriMlsService();
+        log('Initialisé en mode TAURI');
+      } else {
+        mls = new WebMlsService();
+        log('Initialisé en mode WEB (WASM)');
+      }
     }
 
     // Auto-login si des identifiants sont mémorisés
