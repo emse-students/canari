@@ -411,6 +411,14 @@ export class WebMlsService implements IMlsService {
 
       await initWasm.default();
 
+      const w = window as Window & { wasm_bindings_log?: (level: string, msg: string) => void };
+      if (typeof w.wasm_bindings_log !== 'function') {
+        // Defensive fallback: logger must exist before init_logger() is called.
+        w.wasm_bindings_log = (level: string, msg: string) => {
+          console.log(`[RUST::${level}] ${msg}`);
+        };
+      }
+
       // Initialize logger if available
       if (initWasm.init_logger) {
         initWasm.init_logger();
