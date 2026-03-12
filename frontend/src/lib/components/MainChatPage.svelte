@@ -251,7 +251,10 @@
     return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3001';
   })();
 
-  function deriveConversationIdentity(metaName: string, metaId?: string): {
+  function deriveConversationIdentity(
+    metaName: string,
+    metaId?: string
+  ): {
     conversationType: 'direct' | 'group';
     contactName: string;
     displayName: string;

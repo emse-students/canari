@@ -47,7 +47,7 @@ Phase 3:
 - Webhooks bots internes
 - Federation eventuelle inter-espaces
 
-Hors scope initial:
+Phase 4:
 
 - Canaux vocaux temps reel
 - E2EE de masse sur canaux communautaires

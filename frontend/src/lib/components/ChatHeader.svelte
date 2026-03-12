@@ -11,6 +11,8 @@
     UserPlus,
     Users,
     X,
+    PencilLine,
+    Shield,
   } from 'lucide-svelte';
   import Avatar from './Avatar.svelte';
   import Modal from './Modal.svelte';
@@ -89,6 +91,16 @@
       closePanel();
     }
   }
+
+  const panelTitle = $derived(
+    isGroupConversation ? 'Gestion du groupe' : 'Infos de la discussion'
+  );
+
+  const panelSubtitle = $derived(
+    isGroupConversation
+      ? 'Organisez les membres, le nom et la suppression dans un seul panneau.'
+      : 'Cette discussion est privee entre deux participants.'
+  );
 </script>
 
 <svelte:window onkeydown={handlePanelKeydown} />
@@ -143,10 +155,10 @@
   </button>
 
   {#if showPanel}
-    <div use:portal class="fixed inset-0 z-[220] pointer-events-none">
+    <div use:portal class="fixed inset-0 z-[260] pointer-events-none">
       <button
         type="button"
-        class="absolute inset-0 bg-black/45 border-0 pointer-events-auto"
+        class="absolute inset-0 bg-slate-950/45 backdrop-blur-sm border-0 pointer-events-auto"
         aria-label="Fermer les parametres du groupe"
         onclick={closePanel}
       ></button>
@@ -155,54 +167,67 @@
         role="dialog"
         aria-modal="true"
         aria-label="Parametres du groupe"
-        class="absolute pointer-events-auto inset-x-3 top-4 bottom-4 md:inset-x-auto md:right-8 md:top-20 md:bottom-auto md:w-[28rem] md:max-h-[85dvh] bg-[#15171c] border border-white/10 rounded-3xl shadow-2xl flex flex-col overflow-hidden text-white"
+        class="absolute pointer-events-auto inset-x-3 top-4 bottom-4 md:inset-x-auto md:right-8 md:top-20 md:bottom-auto md:w-[34rem] md:max-h-[85dvh] bg-white/70 dark:bg-slate-950/80 border border-white/55 dark:border-white/10 rounded-3xl shadow-[0_28px_90px_rgba(2,6,23,0.45)] backdrop-blur-xl flex flex-col overflow-hidden text-text-main"
       >
-        <div class="px-4 md:px-5 py-3 border-b border-white/10 flex items-center justify-between">
-          <h3 class="text-base font-semibold text-white">
-            {isGroupConversation ? 'Infos du groupe' : 'Infos de la discussion'}
-          </h3>
+        <div class="px-4 md:px-6 py-4 border-b border-white/60 dark:border-white/10 flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <h3 class="text-lg font-extrabold text-cn-dark truncate">{panelTitle}</h3>
+            <p class="text-xs text-text-muted mt-1">{panelSubtitle}</p>
+          </div>
           <button
             onclick={closePanel}
-            class="p-1.5 rounded-lg hover:bg-white/10 transition-colors text-white/70 hover:text-white"
+            class="p-2 rounded-xl bg-white/65 dark:bg-black/35 border border-white/60 dark:border-white/10 text-text-muted hover:text-cn-dark hover:bg-white/90 dark:hover:bg-black/55 transition-colors"
             aria-label="Fermer"
           >
             <X size={16} />
           </button>
         </div>
 
-        <div class="flex-1 min-h-0 overflow-y-auto px-4 md:px-5 py-4 flex flex-col gap-5">
-          <div class="flex flex-col items-center text-center gap-2 pb-1">
+        <div class="flex-1 min-h-0 overflow-y-auto px-4 md:px-6 py-5 flex flex-col gap-5">
+          <div class="rounded-2xl border border-white/60 dark:border-white/10 bg-white/65 dark:bg-black/25 px-4 py-3 flex items-center gap-3">
             <Avatar userId={contactName} size="lg" />
-            <div class="text-lg font-semibold truncate max-w-full">{displayName}</div>
-            <div class="text-xs text-white/60">
-              {isReady ? 'En ligne' : 'Synchronisation en cours'}
+            <div class="min-w-0 flex-1">
+              <div class="text-base font-bold text-cn-dark truncate">{displayName}</div>
+              <div class="text-xs text-text-muted mt-0.5 inline-flex items-center gap-1.5">
+                {#if isReady}
+                  <Shield size={12} class="text-emerald-500" />
+                  Groupe pret, securise et synchronise
+                {:else}
+                  <Clock size={12} class="text-amber-500" />
+                  Synchronisation en cours
+                {/if}
+              </div>
             </div>
           </div>
 
           {#if isGroupConversation}
-            <div class="rounded-2xl border border-white/10 bg-white/5 p-3 flex flex-col gap-2">
-              <label for="group-rename-input" class="text-xs text-white/60 font-semibold"
-                >Nom du groupe</label
+            <div class="rounded-2xl border border-white/60 dark:border-white/10 bg-white/55 dark:bg-black/25 p-4 flex flex-col gap-2">
+              <label
+                for="group-rename-input"
+                class="text-xs text-text-muted font-semibold inline-flex items-center gap-1.5"
               >
-              <div class="flex gap-2">
+                <PencilLine size={12} /> Renommer le groupe
+              </label>
+              <div class="flex gap-2.5">
                 <input
                   id="group-rename-input"
                   type="text"
                   bind:value={renameInput}
                   onkeydown={handleRenameKey}
-                  class="flex-1 px-3 py-2 border border-white/15 rounded-xl text-sm outline-none bg-black/30 text-white"
+                  class="flex-1 px-3 py-2.5 border border-white/65 dark:border-white/10 rounded-xl text-sm outline-none bg-white/70 dark:bg-black/35 text-text-main focus:ring-2 focus:ring-amber-400/40"
                 />
                 <button
                   onclick={submitRename}
-                  class="p-2 bg-cn-yellow text-cn-dark rounded-xl hover:bg-[#f4d26a] transition-colors"
+                  class="inline-flex items-center gap-1.5 px-3 py-2.5 bg-amber-500 text-white rounded-xl hover:bg-amber-400 transition-colors"
                   aria-label="Valider le renommage"
                 >
                   <Check size={14} />
+                  Valider
                 </button>
               </div>
             </div>
           {:else}
-            <div class="rounded-2xl border border-white/10 bg-white/5 p-3 text-sm text-white/75">
+            <div class="rounded-2xl border border-white/60 dark:border-white/10 bg-white/55 dark:bg-black/25 p-3 text-sm text-text-muted">
               Cette discussion privee est entre deux participants.
             </div>
           {/if}
@@ -210,7 +235,7 @@
           {#if isGroupConversation}
             <div class="flex flex-col gap-2">
               <div class="flex items-center justify-between gap-2">
-                <span class="text-xs text-white/60 font-semibold inline-flex items-center gap-1">
+                <span class="text-xs text-text-muted font-semibold inline-flex items-center gap-1">
                   <Users size={12} /> Membres ({groupMembers.length})
                 </span>
                 <button
@@ -218,7 +243,7 @@
                   onclick={() => {
                     showInviteModal = true;
                   }}
-                  class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cn-yellow text-cn-dark text-xs font-semibold hover:bg-[#f4d26a] transition-colors"
+                  class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-500 text-white text-xs font-semibold hover:bg-amber-400 transition-colors"
                 >
                   <UserPlus size={12} />
                   Ajouter
@@ -226,14 +251,14 @@
               </div>
 
               {#if groupMembers.length > 0}
-                <ul class="flex flex-col gap-2 max-h-[38dvh] overflow-y-auto pr-1">
+                <ul class="flex flex-col gap-2 max-h-[38dvh] overflow-y-auto pr-1.5">
                   {#each groupMembers as member (member)}
                     <li
-                      class="flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl bg-white/5 border border-white/10"
+                      class="flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl bg-white/70 dark:bg-black/30 border border-white/60 dark:border-white/10"
                     >
                       <div class="flex items-center gap-2 min-w-0">
                         <Avatar userId={member} size="sm" />
-                        <span class="text-sm text-white truncate">{member}</span>
+                        <span class="text-sm text-text-main truncate">{member}</span>
                       </div>
 
                       {#if onGroupRemoveMember}
@@ -242,7 +267,7 @@
                             onGroupRemoveMember?.(member);
                           }}
                           aria-label="Retirer {member}"
-                          class="px-2.5 py-1.5 text-xs rounded-lg bg-red-500/15 text-red-300 hover:bg-red-500/25 transition-colors flex-shrink-0"
+                          class="px-2.5 py-1.5 text-xs rounded-lg bg-red-500/10 text-red-500 hover:bg-red-500/20 transition-colors flex-shrink-0"
                         >
                           <span class="inline-flex items-center gap-1">
                             <UserMinus size={12} /> Retirer
@@ -254,7 +279,7 @@
                 </ul>
               {:else}
                 <div
-                  class="rounded-xl border border-dashed border-white/20 px-3 py-4 text-sm text-white/60"
+                  class="rounded-xl border border-dashed border-white/60 dark:border-white/20 px-3 py-4 text-sm text-text-muted"
                 >
                   Aucun membre a afficher.
                 </div>
@@ -264,26 +289,26 @@
         </div>
 
         {#if isGroupConversation && onGroupDelete}
-          <div class="border-t border-white/10 px-4 md:px-5 py-3 bg-black/25">
+          <div class="border-t border-white/60 dark:border-white/10 px-4 md:px-6 py-4 bg-white/45 dark:bg-black/30">
             {#if !confirmDelete}
               <button
                 onclick={() => {
                   confirmDelete = true;
                 }}
-                class="w-full flex items-center justify-center gap-2 px-3 py-2 text-red-300 border border-red-500/30 rounded-xl text-sm hover:bg-red-500/10 transition-colors"
+                class="w-full flex items-center justify-center gap-2 px-3 py-2.5 text-red-600 border border-red-400/45 rounded-xl text-sm hover:bg-red-500/10 transition-colors"
               >
                 <Trash2 size={14} />
                 Supprimer le groupe
               </button>
             {:else}
               <div class="flex flex-col gap-2">
-                <p class="text-xs text-red-300 text-center">Confirmer la suppression ?</p>
+                <p class="text-xs text-red-500 text-center">Confirmer la suppression ?</p>
                 <div class="flex gap-2">
                   <button
                     onclick={() => {
                       confirmDelete = false;
                     }}
-                    class="flex-1 px-3 py-2 border border-white/20 rounded-xl text-sm text-white/80 hover:bg-white/10"
+                    class="flex-1 px-3 py-2.5 border border-white/60 dark:border-white/20 rounded-xl text-sm text-text-main hover:bg-white/60 dark:hover:bg-white/10"
                   >
                     Annuler
                   </button>
@@ -292,7 +317,7 @@
                       onGroupDelete?.();
                       closePanel();
                     }}
-                    class="flex-1 px-3 py-2 bg-red-500 text-white rounded-xl text-sm hover:bg-red-600 transition-colors"
+                    class="flex-1 px-3 py-2.5 bg-red-500 text-white rounded-xl text-sm hover:bg-red-600 transition-colors"
                   >
                     Supprimer
                   </button>
@@ -329,7 +354,7 @@
       <button
         onclick={handleInviteMembers}
         disabled={newMembers.length === 0}
-        class="w-full py-2.5 bg-cn-dark text-cn-yellow font-semibold rounded-xl hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        class="w-full py-2.5 bg-amber-500 text-white font-semibold rounded-xl hover:bg-amber-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
         Inviter {newMembers.length > 0 ? `(${newMembers.length})` : ''}
       </button>

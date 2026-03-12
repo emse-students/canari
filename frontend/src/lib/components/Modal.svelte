@@ -26,7 +26,7 @@
 <svelte:window onkeydown={open ? handleKeydown : undefined} />
 
 {#if open}
-  <div use:portal class="fixed inset-0 z-[180] pointer-events-none">
+  <div use:portal class="fixed inset-0 z-[280] pointer-events-none">
     <div
       role="presentation"
       class="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm pointer-events-auto"
