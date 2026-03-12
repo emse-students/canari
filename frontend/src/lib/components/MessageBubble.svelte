@@ -431,6 +431,11 @@
           {#if isEdited}
             <span class="italic text-[0.6rem] opacity-60">(modifié)</span>
           {/if}
+          {#if isOwn && readBy.length > 0}
+            <span class="text-[0.62rem] font-medium opacity-75">
+              Lu{readBy.length > 1 ? ` (${readBy.length})` : ''}
+            </span>
+          {/if}
         </div>
       {/if}
     </div>
