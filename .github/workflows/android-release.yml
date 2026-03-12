@@ -99,5 +99,5 @@ jobs:
       - name: Upload APK Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: app-release
-          path: frontend/src-tauri/gen/android/app/build/outputs/apk/release/
+          name: app-universal-release
+          path: /home/runner/work/canari/canari/frontend/src-tauri/gen/android/app/build/outputs/apk/universal/release/
