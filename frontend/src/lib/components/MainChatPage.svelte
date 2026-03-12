@@ -567,7 +567,8 @@
     if (!storage) return convMetas;
 
     const canonicalByPeer = new SvelteMap<string, ConversationMeta>();
-    const duplicatesToMerge: Array<{ canonical: ConversationMeta; duplicate: ConversationMeta }> = [];
+    const duplicatesToMerge: Array<{ canonical: ConversationMeta; duplicate: ConversationMeta }> =
+      [];
 
     for (const meta of convMetas) {
       const identity = deriveConversationIdentity(meta.name);

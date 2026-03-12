@@ -7,6 +7,7 @@ Objectif: ajouter un systeme de canaux type Discord/Slack pour les promotions, a
 Contrainte cle: les canaux communautaires doivent pouvoir etre rejoints/quittes a tout moment, avec historique persistant, moderation et recherche. Cela est difficile a tenir avec MLS pur pour des groupes tres dynamiques.
 
 **Modele de securite CHOISI (Zero-Trust E2EE par derivation de cles):**
+
 - L'hypothese cle: un attaquant qui compromise le serveur channel-service ne doit PAS pouvoir lire les messages ou fichiers
 - Solution: chiffrement E2EE par derivation HKDF des cles utilisateur (jamais exposees en clair serveur)
 - Les messages sont AES-256-GCM ; les cles sont versionnees pour supporter expulsion/key rotation
@@ -14,12 +15,14 @@ Contrainte cle: les canaux communautaires doivent pouvoir etre rejoints/quittes 
 - Un ancien membre qui est expulse CAN'T lire les nouveaux messages post-kick (nouvelle version de cle qu'il ne reçoit pas)
 
 Decision:
+
 - DM + groupes prives sensibles: MLS E2E (existant)
 - Canaux communautaires: Zero-Trust E2EE (nouveau) par derivation de cles
 
 ## 2. Perimetre fonctionnel (Discord-like)
 
 MVP (phase 1):
+
 - Espaces (workspaces) pour promo/asso
 - Categories de canaux
 - Canaux texte publics/prives
@@ -31,6 +34,7 @@ MVP (phase 1):
 - **Zero-Trust: messages E2EE par derivation de cles, jamais en clair serveur**
 
 Phase 2:
+
 - Threads
 - Recherche plein texte
 - Reactions persistees
@@ -38,11 +42,13 @@ Phase 2:
 - Invitations par lien
 
 Phase 3:
+
 - Mod tools avances (mute, slowmode, audit log)
 - Webhooks bots internes
 - Federation eventuelle inter-espaces
 
 Hors scope initial:
+
 - Canaux vocaux temps reel
 - E2EE de masse sur canaux communautaires
 
@@ -51,6 +57,7 @@ Hors scope initial:
 Nom: channel-service
 
 Responsabilites:
+
 - Gestion des espaces (workspace)
 - Gestion des canaux, categories, roles, permissions
 - Gestion des memberships (join/leave/kick/ban)
@@ -58,14 +65,16 @@ Responsabilites:
 - Emission d'evenements de domaine sur Kafka
 
 Techno proposee:
+
 - NestJS (coherence avec services Node existants)
 - PostgreSQL (model relationnel ACL/roles/memberships)
 - Redis (cache ACL + presence canal + fanout hints)
-- Kafka (events: channel.*)
+- Kafka (events: channel.\*)
 
 ## 4. Modeles de donnees (minimum viable)
 
 Tables coeur:
+
 - workspaces(id, slug, name, visibility, created_by, created_at)
 - workspace_members(user_id, workspace_id, role_id, status, joined_at, left_at)
 - roles(id, workspace_id, name, priority)
@@ -79,6 +88,7 @@ Tables coeur:
 - audit_logs(id, workspace_id, actor_id, action, target_type, target_id, encrypted_payload, created_at)
 
 Index importants:
+
 - channel_messages(channel_id, created_at desc)
 - channel_members(user_id, joined_at desc)
 - workspace_members(user_id, workspace_id)
@@ -87,6 +97,7 @@ Index importants:
 ## 5. APIs et contrats
 
 REST (admin/config):
+
 - POST /workspaces
 - POST /workspaces/{id}/channels
 - PATCH /channels/{id}
@@ -95,6 +106,7 @@ REST (admin/config):
 - POST /channels/{id}/moderation/kick
 
 Realtime (gateway):
+
 - ws event channel.message.send
 - ws event channel.message.update
 - ws event channel.message.delete
@@ -102,6 +114,7 @@ Realtime (gateway):
 - ws event channel.read.update
 
 Kafka events (source of truth de domaine):
+
 - channel.workspace.created
 - channel.created
 - channel.member.joined
@@ -112,22 +125,26 @@ Kafka events (source of truth de domaine):
 - channel.role.updated
 
 Schema contracts:
+
 - Ajouter protobuf/avro dans libs/event-contracts/channel-events
 - Versionner les schemas (v1, v2...) pour compat backward
 
 ## 6. Securite - Architecture Zero-Trust E2EE
 
 ### Principe fondamental
+
 **Hypothèse d'adversaire:** un attaquant peut compromettre le serveur channel-service dans sa totalité (DB, API, Redis). **Objectif:** l'attaquant ne peut toujours pas lire les messages ou fichiers des canaux.
 
 ### Mécanisme de chiffrement par dérivation de clé
 
 **Clé maître utilisateur (KMS root):**
+
 - Stockée dans auth-service/KMS (HSM ou secret manager sécurisé)
 - Jamais exposée en clair ; dérivée = unique par user+workspace
 - Nécessite authentification forte (JWT + MFA) pour accès
 
 **Dérivation de clé de canal (client-side):**
+
 ```
 channel_key_version_N = HKDF(
   ikm=user_kms_root,
@@ -136,11 +153,13 @@ channel_key_version_N = HKDF(
   L=32 bytes (AES-256)
 )
 ```
+
 - **Chaque client calcule indépendamment** la même clé
 - **Serveur ne stocke jamais** la clé
 - Version = integer incrémenté à chaque rotation (join/leave de membres)
 
 **Chiffrement des messages:**
+
 - Plaintext: `{sender_id, timestamp, content, attachments}`
 - Cipher: `AES-256-GCM(plaintext, channel_key_version_N, nonce)` + AEAD authentification
 - Serveur stocke : `{ciphertext, version_number, nonce, sender_id, timestamp, message_id}`
@@ -174,6 +193,7 @@ channel_key_version_N = HKDF(
    - Client déchiffre localement avec les clés d'historique
 
 **Exemple:**
+
 - Messages 1-100: version=1 (original 10 membres)
 - Membre #3 quitte → key rotation
 - Messages 101-200: version=2 (9 membres)
@@ -209,6 +229,7 @@ channel_key_version_N = HKDF(
 ### Métadonnées accessibles au serveur
 
 Pour assurer la functonalité (unread badges, modération, audit):
+
 - **Visible serveur :** senteur, timestamp, message_id, reaction metadata (qui a cliqué), deleted_flag, edited_flag
 - **POST-kick :** le server voit le kick event ; ancien membre n'apparaît plus dans `channel_members`
 - **Moderation :** admin peut flaguer un message (non-readable) ou supprimer la trace (delete_flag=true) sans accès au contenu
@@ -218,6 +239,7 @@ Pour assurer la functonalité (unread badges, modération, audit):
 **Problème:** serveur ne peut pas indexer le contenu (il est chiffré).
 
 **Solutions envisagées:**
+
 - **Phase 1 MVP:** Recherche client-side uniquement (decrypt localement, regex sur contenu)
 - **Phase 2+:** Searchable encryption (DPE/order-preserving) = complexe, low priority
 - **Alternatif:** indexation sélective de mots clés choisis par l'admin (non chiffré) = dégrade privacy
@@ -225,12 +247,14 @@ Pour assurer la functonalité (unread badges, modération, audit):
 ### Audit et conformité
 
 **Trace d'audit (immutable, tamper-proof):**
+
 - Serveur enregistre : `audit_log.action = 'message.created', target_id, actor_id, timestamp`
 - N'enregistre PAS le contenu (chiffré)
 - Chiffre le log lui-même avec une clé d'audit (rotation rare = une par workspace)
 - Seulement les admins/auditeurs ont accès à la clé d'audit
 
 **Compliance (GDPR):**
+
 - User demande le droit à l'oubli : suppression de tous les messages (même passés)
 - Workflow: archive all keys locally, nuke DB rows, rehash passwords old references
 - Possible car contexte E2EE (contenu jamais exposé serveur)
@@ -244,18 +268,19 @@ Pour assurer la functonalité (unread badges, modération, audit):
 
 ### Trade-offs acceptés
 
-| Contrainte | Impact | Mitigation |
-|-----------|--------|----------|
-| Historique ≠ supprimable | Ancien membre conserve vue locale | Vrai pour tous les chats E2EE (Signal, Matrix) |
-| Résilience clés | Perte KMS root = messages non-lisibles | Backup HSM + recovery phrase 256-bit (offline) |
-| Key rotation cost | O(N) clients doivent dériver + fetch | Versioning incrément → O(1) calcul derive |
-| Modération limitée | Admin voit métadonnées, pas contenu | Modération par hashes/signatures optionnels phase 2 |
+| Contrainte               | Impact                                 | Mitigation                                          |
+| ------------------------ | -------------------------------------- | --------------------------------------------------- |
+| Historique ≠ supprimable | Ancien membre conserve vue locale      | Vrai pour tous les chats E2EE (Signal, Matrix)      |
+| Résilience clés          | Perte KMS root = messages non-lisibles | Backup HSM + recovery phrase 256-bit (offline)      |
+| Key rotation cost        | O(N) clients doivent dériver + fetch   | Versioning incrément → O(1) calcul derive           |
+| Modération limitée       | Admin voit métadonnées, pas contenu    | Modération par hashes/signatures optionnels phase 2 |
 
 **Posture sécurité:** compromise serveur = lecteur ne peut toujours pas accéder aux données. Zero-Trust sur le plan du chiffrement.
 
 ## 7. Integration avec systeme actuel
 
 Services impactes:
+
 - chat-gateway (routage ws canaux)
 - chat-delivery-service (persistance channel messages si mutualisee)
 - auth-service (claims roles/tenants)
@@ -263,6 +288,7 @@ Services impactes:
 - frontend (nouveau domaine canaux)
 
 Strategie recommandee:
+
 - Introduire channel-service sans casser le flux MLS existant
 - Garder deux plans:
   - Plan A: conversations MLS (DM/groupes prives)
@@ -271,11 +297,13 @@ Strategie recommandee:
 ## 8. Plan de migration (roadmap execution)
 
 Phase 0 - Cadrage (1 semaine)
+
 - RFC technique + ADR formel
 - Domain boundaries et ownership
 - Definition des KPIs MVP
 
 Phase 1 - Foundations backend (3 semaines)
+
 - Scaffold channel-service
 - DB schema v1 + migrations (y.c. channel_key_archive, key_version)
 - KMS integration avec auth-service (HSM ou secret manager)
@@ -289,27 +317,32 @@ Phase 1 - Foundations backend (3 semaines)
 - GET /channels/{id}/key-archive?user_id=X (secure key delivery, RSA/DH encrypted)
 
 Phase 2 - Realtime et persistence messages (2 semaines)
+
 - WS events canaux dans chat-gateway
 - Persistance messages canal
 - Read cursors et unread counters
 
 Phase 3 - Frontend MVP (2 semaines)
+
 - Sidebar Canaux data-driven (plus statique)
 - Ecran workspace/channel
 - Join/leave + lecture/ecriture
 - Badges non-lus fiables
 
 Phase 4 - Moderation et roles (1-2 semaines)
+
 - UI roles/permissions
 - Kicks/bans/archives
 - Audit logs
 
 Phase 5 - Search et qualite (2 semaines)
+
 - Recherche paginee
 - Tests charge + soak tests
 - SLO dashboards + alerting
 
 Phase 6 - Hardening prod (1 semaine)
+
 - Security review
 - Runbooks incident
 - Backups + restore drills
@@ -317,6 +350,7 @@ Phase 6 - Hardening prod (1 semaine)
 ## 9. Qualite et observabilite
 
 Tests obligatoires:
+
 - unit ACL
 - integration API + DB migrations
 - contract tests Kafka schemas
@@ -324,12 +358,14 @@ Tests obligatoires:
 - tests concurrence (messages burst)
 
 SLO initiaux:
+
 - p95 send message < 250 ms
 - p95 fetch history page < 300 ms
 - delivery success > 99.9%
 - event lag Kafka < 2 s
 
 Metriques:
+
 - joins/leaves per channel
 - unread lag
 - fanout queue depth
@@ -338,18 +374,22 @@ Metriques:
 ## 10. Risques et mitigations
 
 ### 10.1 Duplication de logique entre MLS groups et channels
+
 **Risque:** code duplique entre gestion de groups MLS et canaux (permissions, key mgmt)
 **Impact:** maintenance coûteuse, bugs de cohérence
 **Solutions:**
+
 - Créer une `EncryptionService` abstraite (interface commune KeyDerivation + Cipher)
 - MLS groups et canaux = deux impl distinctes de cette interface
 - Tests partagés contractuels pour les deux impl
 - Documentation explicite des différences sémantiques (MLS = O(N) keys, Channels = versioning)
 
 ### 10.2 Explosion ACL cost en cache
+
 **Risque:** redis memory explosion si cache ACL = per(user, channel, role)
 **Impact:** OOM, latence dégradée
 **Solutions:**
+
 - Cache permissions COMPUTES (pas brutes) = `{user_id: [permission1, permission2, ...]}` compact
 - TTL court (5 min) + versioning par epoch (increment au layout change)
 - Snapshot precomputes : 1x/heure pour %95 users (batch job)
@@ -357,9 +397,11 @@ Metriques:
 - Monitoring: alert si redis memory > 70%
 
 ### 10.3 Migration de données confuse
+
 **Risque:** pendant migration MLS→channels, états incohérents
 **Impact:** data loss, duplication, split-brain
 **Solutions:**
+
 - Dry-run migration sur replica DB avec validation
 - Feature flags: `channels.enabled=false` par défaut → whitelist workspaces d'abord
 - Scripts idempotents: chaque script check `migration_version` et skip si déjà appliqué
@@ -367,9 +409,11 @@ Metriques:
 - Audit trail: log chaque migration step avec before/after checksums
 
 ### 10.4 Compromise du KMS root ⚠️ CRITIQUE
+
 **Risque:** attaquant obtient user_kms_root
 **Impact:** tous les canaux + DM du user = lisibles pour l'attaquant
 **Solutions (defense-in-depth):**
+
 - **Stockage:** HSM physique (Thales Luna) ou managed KMS (AWS KMS) = jamais en clair en mémoire
 - **Accès:** MFA + RBAC strict (audit-able) + session binding
 - **Rotation:** key_version 90j ; new_root = HKDF(old_root + timestamp)
@@ -378,9 +422,11 @@ Metriques:
 - **Remediation** : revoke old_root, re-derive all keys, force clients re-join (key-archive distribution)
 
 ### 10.5 Key version chaos (quand faire rotation ?)
+
 **Risque:** clients déphasés = certains connaissent version N, d'autres N+1
 **Impact:** déchiffrement échoue, messages invisibles, UX broken
 **Solutions:**
+
 - **Strict versioning:** version = INT64, monotonе croissant (ne JAMAIS décroître)
 - **Grace period:** v ancien = lisible 30j apres rotation (pour clients offline)
 - **Soft rotation:** broadcast `key.v{N+1}.available` (clients debutent soft sync)
@@ -388,18 +434,22 @@ Metriques:
 - **Client logic:** maintain local cache de 3 dernieres versions ; if server sends v{N+5}, bulk-fetch missing
 
 ### 10.6 Ancien membre conserve local cache de messages
+
 **Risque:** membre kicked = still a les ciphertexts + cles d'historique en cache local
 **Impact:** ne peut pas "really forget" l'historique
 **Solutions (acceptation + traçabilité):**
+
 - **Document trade-off:** "Comme tous les chats E2EE (Signal, Matrix), on ne peut pas supprimer la mémoire du client"
 - **Pour sensitive:** workflow optionnel: admin peut marquer canal `sensitive_archive=true` → message `archive_deletion_required` post-kick
 - **Client pledge:** TOU incluent engagement de suppression vol volontaire
 - **Forensic:** si violation découverte, audit log capture le kick + timestamp proof
 
 ### 10.7 Modération limitée (admins ne peuvent pas lire)
+
 **Risque:** admin ne voit que metadata (sender, time, attachments) = impossible détecter spam/abuse dans contenu
 **Impact:** moderation inefficace
 **Solutions (phases):**
+
 - **MVP:** metadata-only + user reputation score (abuse reports count)
 - **Phase 2:** message signing optionnel (sender signe + hash) → admin vérifies signature, demande user reveal plaintext
 - **Phase 2+:** hash-based detection (SHA256(content) vs known-bad-hashes, crowd-sourced)
@@ -407,27 +457,33 @@ Metriques:
 - **Workflow:** suspect message → admin request reveal → user consent (or auto-reveal si ToU violé)
 
 ### 10.8 Recherche impossible serveur-side
+
 **Risque:** serveur ne peut pas indexer contenu chiffré = no full-text search
 **Impact:** UX degrade pour gros canaux (pas de "find in chat")
 **Solutions (roadmap):**
+
 - **MVP:** client-side search (decrypt locally, regex/bloom filter)
 - **Phase 2:** searchable encryption (DPE/OPE, voir Arx, Vantage) = slow mais possible
 - **Interim:** admin peut index selective keywords (non-chiffres) = balanced
 - **BI:** plaintext logs (separate DB, gated, audit) pour analytics (opt-in)
 
 ### 10.9 KMS throughput bottleneck
+
 **Risque:** key derivation HKDF = O(1) pour client, mais HSM peut saturer
 **Impact:** key-archive requests slow, join channel = latency spike
 **Solutions:**
+
 - **Caching:** Redis cache `(user_id, channel_id, version) → encrypted_key` TTL 1h
 - **Batching:** GET `/channels/{id}/key-archive?user_id=X,Y,Z` multi-user
 - **Async:** key distribution = non-blocking, queued si KMS slow
 - **Fallback:** if KMS unavailable, fail gracefully (user can retry, not fatal)
 
 ### 10.10 Compliance & GDPR right-to-be-forgotten
+
 **Risque:** user requests droit à l'oubli = doivent supprimer ALL messages (even old)
 **Impact:** data retention liability
 **Solutions:**
+
 - **Protocol:** user request → archive all past keys → DELETE FROM channel_messages WHERE sender_id=X
 - **Async job:** rehash metadata references, purge blobs, clear audit
 - **Proof:** generate signed certificate "X deleted on 2026-03-12, verified by [auditor]"
