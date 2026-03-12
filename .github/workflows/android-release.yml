@@ -93,11 +93,28 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: ./frontend
-          tauriScript: bun tauri android
-          args: --apk
+          tauriScript: bun tauri
+          args: android build --apk
+
+      - name: Sign APK
+        run: |
+          echo "Listing build outputs..."
+          find frontend/src-tauri/gen/android/app/build/outputs/apk -name "*.apk"
+
+      - name: Upload APK to Release
+        uses: softprops/action-gh-release@v1
+        if: github.event_name == 'release'
+        with:
+          files: |
+            frontend/src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk
+            frontend/src-tauri/gen/android/app/build/outputs/apk/*/release/*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload APK Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: app-universal-release
-          path: /home/runner/work/canari/canari/frontend/src-tauri/gen/android/app/build/outputs/apk/universal/release/
+          name: android-release-apk
+          path: |
+            frontend/src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk
+            frontend/src-tauri/gen/android/app/build/outputs/apk/*/release/*.apk
