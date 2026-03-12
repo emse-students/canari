@@ -1,25 +1,18 @@
 <script lang="ts">
-  import { format } from 'date-fns';
-  import { fly } from 'svelte/transition';
-  import {
-    Reply,
-    Smile,
-    FileText,
-    Download,
-    Pencil,
-    Trash2,
-    CheckCheck,
-    EllipsisVertical,
-  } from 'lucide-svelte';
-  import { clickOutside } from '$lib/actions/clickOutside';
-  import { onDestroy, onMount } from 'svelte';
+  import { Reply, Smile, Pencil, Trash2, EllipsisVertical } from 'lucide-svelte';
   import { MediaService } from '$lib/media';
   import type { MediaRef } from '$lib/media';
   import { parseEnvelope } from '$lib/envelope';
-  import 'emoji-picker-element';
   import Modal from './Modal.svelte';
   import LinkPreviewCard from './LinkPreviewCard.svelte';
-  import VoiceMessagePlayer from './VoiceMessagePlayer.svelte';
+  import MessageEmojiPicker from './MessageEmojiPicker.svelte';
+  import MessageMediaRenderer from './MessageMediaRenderer.svelte';
+  import MessageEditForm from './MessageEditForm.svelte';
+  import MessageReactions from './MessageReactions.svelte';
+  import MessageMobileActions from './MessageMobileActions.svelte';
+  import MessageInfoTooltip from './MessageInfoTooltip.svelte';
+  import { clickOutside } from '$lib/actions/clickOutside';
+  import { onDestroy } from 'svelte';
 
   interface MessageReaction {
     emoji: string;
@@ -76,16 +69,21 @@
     shouldAnimate = false,
   }: Props = $props();
 
-  const RECENT_EMOJIS_KEY = 'canari_recent_emojis';
-
   let showEmojiPicker = $state(false);
   let showInfo = $state(false);
   let showMobileActions = $state(false);
   let showDeleteModal = $state(false);
-  let recentEmojis = $state<string[]>([]);
   let isEditingInline = $state(false);
   let editText = $state('');
-  let editTextareaEl = $state<HTMLTextAreaElement>();
+  let blobUrl = $state<string | null>(null);
+  let loadError = $state(false);
+  let mediaPurgedByRetention = $state(false);
+  let supportsHover = $state(true);
+  let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+  let pointerStartX = $state(0);
+  let pointerStartY = $state(0);
+  let swipeHandled = $state(false);
+
   let envelope = $derived(parseEnvelope(content));
   let effectiveSystem = $derived(isSystem || envelope.kind === 'system');
   let textContent = $derived(
@@ -98,24 +96,10 @@
       (envelope.kind === 'text' || envelope.kind === 'media' ? envelope.replyTo : undefined)
   );
   let mediaRef = $derived(envelope.kind === 'media' ? envelope.media : null);
-  let blobUrl = $state<string | null>(null);
-  let loadError = $state(false);
-  let mediaPurgedByRetention = $state(false);
-  let supportsHover = $state(true);
-  let longPressTimer: ReturnType<typeof setTimeout> | null = null;
-  let pointerStartX = $state(0);
-  let pointerStartY = $state(0);
-  let swipeHandled = $state(false);
   let firstLink = $derived(!mediaRef && !isDeleted ? extractFirstUrl(textContent) : null);
-  function shortenReplyPreview(text: string): string {
-    const normalized = text.replace(/\s+/g, ' ').trim();
-    if (normalized.length <= 84) return normalized;
-    return `${normalized.slice(0, 81)}...`;
-  }
 
-  let replyPreviewText = $derived(
-    effectiveReplyTo?.content ? shortenReplyPreview(effectiveReplyTo.content) : ''
-  );
+  let replyPreviewText = $derived(shortenReplyPreview(effectiveReplyTo?.content ?? ''));
+  let textSegments = $derived(splitTextWithLinks(textContent));
 
   const groupedReactions = $derived(
     reactions.reduce(
@@ -128,20 +112,11 @@
     )
   );
 
-  function persistRecentEmoji(emoji: string) {
-    const next = [emoji, ...recentEmojis.filter((item) => item !== emoji)].slice(0, 12);
-    recentEmojis = next;
-    try {
-      localStorage.setItem(RECENT_EMOJIS_KEY, JSON.stringify(next));
-    } catch {
-      // Ignore storage errors.
-    }
-  }
-
-  function handleEmojiClick(emoji: string) {
-    onReact?.(messageId, emoji);
-    persistRecentEmoji(emoji);
-    showEmojiPicker = false;
+  function shortenReplyPreview(text: string): string {
+    if (!text) return '';
+    const normalized = text.replace(/\s+/g, ' ').trim();
+    if (normalized.length <= 84) return normalized;
+    return `${normalized.slice(0, 81)}...`;
   }
 
   function confirmEdit() {
@@ -159,14 +134,6 @@
     showEmojiPicker = false;
     showInfo = false;
     showMobileActions = false;
-
-    queueMicrotask(() => {
-      if (editTextareaEl) {
-        editTextareaEl.focus();
-        editTextareaEl.selectionStart = editTextareaEl.value.length;
-        editTextareaEl.selectionEnd = editTextareaEl.value.length;
-      }
-    });
   }
 
   function cancelInlineEdit() {
@@ -246,16 +213,48 @@
     }
   }
 
-  function attachEmojiPicker(node: HTMLElement) {
-    const handleEmoji = (event: any) => {
-      handleEmojiClick(event.detail.unicode);
-    };
-    node.addEventListener('emoji-click', handleEmoji);
-    return {
-      destroy() {
-        node.removeEventListener('emoji-click', handleEmoji);
-      },
-    };
+  function extractFirstUrl(text: string): string | null {
+    const match = text.match(/https?:\/\/[^\s]+/i);
+    return match?.[0] ?? null;
+  }
+
+  function splitTextWithLinks(text: string): Array<{ type: 'text' | 'link'; value: string }> {
+    const regex = /https?:\/\/[^\s]+/gi;
+    const segments: Array<{ type: 'text' | 'link'; value: string }> = [];
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+
+    while ((match = regex.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        segments.push({ type: 'text', value: text.slice(lastIndex, match.index) });
+      }
+      segments.push({ type: 'link', value: match[0] });
+      lastIndex = match.index + match[0].length;
+    }
+
+    if (lastIndex < text.length) {
+      segments.push({ type: 'text', value: text.slice(lastIndex) });
+    }
+
+    if (segments.length === 0) {
+      segments.push({ type: 'text', value: text });
+    }
+
+    return segments;
+  }
+
+  function getBubbleShapeClass(position: 'single' | 'start' | 'middle' | 'end') {
+    if (position === 'single') return 'rounded-[1.25rem]';
+
+    if (isOwn) {
+      if (position === 'start') return 'rounded-[1.25rem] rounded-br-md';
+      if (position === 'middle') return 'rounded-[1.25rem] rounded-tr-md rounded-br-md';
+      return 'rounded-[1.25rem] rounded-tr-md';
+    }
+
+    if (position === 'start') return 'rounded-[1.25rem] rounded-bl-md';
+    if (position === 'middle') return 'rounded-[1.25rem] rounded-tl-md rounded-bl-md';
+    return 'rounded-[1.25rem] rounded-tl-md';
   }
 
   $effect(() => {
@@ -303,85 +302,6 @@
     cancelLongPress();
     if (blobUrl) URL.revokeObjectURL(blobUrl);
   });
-
-  onMount(() => {
-    supportsHover = window.matchMedia('(hover: hover)').matches;
-    try {
-      const raw = localStorage.getItem(RECENT_EMOJIS_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        recentEmojis = parsed
-          .filter((value): value is string => typeof value === 'string')
-          .slice(0, 12);
-      }
-    } catch {
-      recentEmojis = [];
-    }
-  });
-
-  function formatFileSize(bytes: number): string {
-    if (bytes < 1024) return `${bytes} o`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} Ko`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
-  }
-
-  function openBlob(url: string) {
-    window.open(url, '_blank', 'noopener,noreferrer');
-  }
-
-  function downloadBlob(url: string, fileName: string) {
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = fileName;
-    link.click();
-  }
-
-  function getBubbleShapeClass(position: 'single' | 'start' | 'middle' | 'end') {
-    if (position === 'single') return 'rounded-[1.25rem]';
-
-    if (isOwn) {
-      if (position === 'start') return 'rounded-[1.25rem] rounded-br-md';
-      if (position === 'middle') return 'rounded-[1.25rem] rounded-tr-md rounded-br-md';
-      return 'rounded-[1.25rem] rounded-tr-md';
-    }
-
-    if (position === 'start') return 'rounded-[1.25rem] rounded-bl-md';
-    if (position === 'middle') return 'rounded-[1.25rem] rounded-tl-md rounded-bl-md';
-    return 'rounded-[1.25rem] rounded-tl-md';
-  }
-
-  function extractFirstUrl(text: string): string | null {
-    const match = text.match(/https?:\/\/[^\s]+/i);
-    return match?.[0] ?? null;
-  }
-
-  function splitTextWithLinks(text: string): Array<{ type: 'text' | 'link'; value: string }> {
-    const regex = /https?:\/\/[^\s]+/gi;
-    const segments: Array<{ type: 'text' | 'link'; value: string }> = [];
-    let lastIndex = 0;
-    let match: RegExpExecArray | null;
-
-    while ((match = regex.exec(text)) !== null) {
-      if (match.index > lastIndex) {
-        segments.push({ type: 'text', value: text.slice(lastIndex, match.index) });
-      }
-      segments.push({ type: 'link', value: match[0] });
-      lastIndex = match.index + match[0].length;
-    }
-
-    if (lastIndex < text.length) {
-      segments.push({ type: 'text', value: text.slice(lastIndex) });
-    }
-
-    if (segments.length === 0) {
-      segments.push({ type: 'text', value: text });
-    }
-
-    return segments;
-  }
-
-  let textSegments = $derived(splitTextWithLinks(textContent));
 </script>
 
 {#if effectiveSystem}
@@ -393,7 +313,6 @@
     {textContent}
   </div>
 {:else}
-  <!-- Outer wrapper: relative for absolute children (emoji picker, info tooltip) -->
   <div
     id={`msg-${messageId}`}
     use:clickOutside={{
@@ -417,7 +336,6 @@
       <EllipsisVertical size={14} />
     </button>
 
-    <!-- ── Bubble ── -->
     <div
       role="button"
       tabindex="0"
@@ -461,186 +379,29 @@
         </button>
       {/if}
 
-      {#if mediaRef}
-        <div class="overflow-hidden rounded-xl">
-          {#if mediaRef.type === 'image'}
-            {#if blobUrl}
-              <div class="relative inline-block">
-                <button
-                  type="button"
-                  onclick={(e) => {
-                    e.stopPropagation();
-                    openBlob(blobUrl!);
-                  }}
-                  aria-label="Ouvrir l'image en plein écran"
-                  class="hover:opacity-90 transition-opacity"
-                >
-                  <img
-                    src={blobUrl}
-                    alt={mediaRef.fileName ?? 'Image'}
-                    class="rounded-xl max-h-80 object-contain cursor-pointer"
-                  />
-                </button>
-                <button
-                  type="button"
-                  onclick={(e) => {
-                    e.stopPropagation();
-                    downloadBlob(blobUrl!, mediaRef.fileName ?? 'image');
-                  }}
-                  class="absolute right-2 bottom-2 w-8 h-8 rounded-full bg-black/60 text-white inline-flex items-center justify-center"
-                  aria-label="Telecharger l'image"
-                >
-                  <Download size={15} />
-                </button>
-              </div>
-            {:else if loadError}
-              <div
-                class="w-48 h-32 rounded-xl bg-gray-100 flex items-center justify-center text-xs text-gray-400 px-3 text-center"
-              >
-                {mediaPurgedByRetention
-                  ? 'Media supprime (retention 30 jours). Demandez un renvoi.'
-                  : "Impossible de charger l'image"}
-              </div>
-            {:else}
-              <div class="w-48 h-32 rounded-xl bg-gray-100 animate-pulse"></div>
-            {/if}
-          {:else if mediaRef.type === 'video'}
-            {#if blobUrl}
-              <div class="relative inline-block">
-                <!-- svelte-ignore a11y_media_has_caption -->
-                <video
-                  src={blobUrl}
-                  controls
-                  onclick={(e) => e.stopPropagation()}
-                  class="rounded-xl max-h-80 max-w-md"
-                ></video>
-                <button
-                  type="button"
-                  onclick={(e) => {
-                    e.stopPropagation();
-                    downloadBlob(blobUrl!, mediaRef.fileName ?? 'video');
-                  }}
-                  class="absolute right-2 bottom-2 w-8 h-8 rounded-full bg-black/60 text-white inline-flex items-center justify-center"
-                  aria-label="Telecharger la video"
-                >
-                  <Download size={15} />
-                </button>
-              </div>
-            {:else if loadError}
-              <div
-                class="w-48 h-24 rounded-xl bg-gray-100 flex items-center justify-center text-xs text-gray-400"
-              >
-                {mediaPurgedByRetention
-                  ? 'Media supprime (retention 30 jours). Demandez un renvoi.'
-                  : 'Impossible de charger la vidéo'}
-              </div>
-            {:else}
-              <div class="w-48 h-24 rounded-xl bg-gray-100 animate-pulse"></div>
-            {/if}
-          {:else if mediaRef.type === 'audio'}
-            {#if blobUrl}
-              <VoiceMessagePlayer
-                src={blobUrl}
-                onDownload={() => downloadBlob(blobUrl!, mediaRef.fileName ?? 'vocal.webm')}
-              />
-            {:else if loadError}
-              <div
-                class="w-48 h-12 rounded-xl bg-gray-100 flex items-center justify-center text-xs text-gray-400"
-              >
-                {mediaPurgedByRetention
-                  ? 'Media supprime (retention 30 jours). Demandez un renvoi.'
-                  : "Impossible de charger l'audio"}
-              </div>
-            {:else}
-              <div class="w-48 h-12 rounded-xl bg-gray-100 animate-pulse"></div>
-            {/if}
-          {:else}
-            <div
-              class="flex items-center gap-3 px-4 py-3 min-w-[200px] bg-white/40 rounded-xl border border-white/50"
-            >
-              <FileText size={32} class="flex-shrink-0 opacity-60" />
-              <div class="flex-1 min-w-0">
-                <p class="text-sm font-medium truncate">{mediaRef.fileName ?? 'Fichier'}</p>
-                <p class="text-xs opacity-60">{formatFileSize(mediaRef.size)}</p>
-              </div>
-              {#if blobUrl}
-                <button
-                  type="button"
-                  onclick={(e) => {
-                    e.stopPropagation();
-                    downloadBlob(blobUrl!, mediaRef!.fileName ?? 'fichier');
-                  }}
-                  aria-label="Télécharger"
-                  class="p-2 rounded-lg hover:bg-black/10 transition-colors"
-                >
-                  <Download size={20} class="opacity-70 hover:opacity-100" />
-                </button>
-              {:else if mediaPurgedByRetention}
-                <span class="text-xs text-red-600">Media supprime (retention 30 jours)</span>
-              {/if}
-            </div>
-          {/if}
-        </div>
-        {#if textContent}
-          <p class="mt-2 text-sm leading-relaxed break-words whitespace-pre-wrap">
-            {#each textSegments as segment, index (`${segment.type}-${segment.value}-${index}`)}
-              {#if segment.type === 'link'}
-                <a
-                  href={segment.value}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  class="underline underline-offset-2 decoration-current hover:opacity-80"
-                  onclick={(e) => e.stopPropagation()}
-                >
-                  {segment.value}
-                </a>
-              {:else}
-                {segment.value}
-              {/if}
-            {/each}
-          </p>
-        {/if}
-      {:else}
-        {#if isEditingInline && !isDeleted && isOwn && !mediaRef && onEdit}
-          <div class="flex flex-col gap-2 min-w-[220px]">
-            <textarea
-              bind:this={editTextareaEl}
-              bind:value={editText}
-              rows="3"
-              class="w-full px-3 py-2 rounded-lg border border-black/15 bg-white/80 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-cn-yellow/50"
-              placeholder="Modifier le message..."
-              onkeydown={(e) => {
-                if (e.key === 'Escape') {
-                  e.preventDefault();
-                  cancelInlineEdit();
-                }
-                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-                  e.preventDefault();
-                  confirmEdit();
-                }
-              }}
-            ></textarea>
-            <div class="flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onclick={cancelInlineEdit}
-                class="px-3 py-1.5 rounded-lg text-xs bg-black/5 hover:bg-black/10 transition-colors"
-              >
-                Annuler
-              </button>
-              <button
-                type="button"
-                onclick={confirmEdit}
-                class="px-3 py-1.5 rounded-lg text-xs bg-cn-dark text-cn-yellow hover:opacity-90 transition-opacity"
-              >
-                Enregistrer
-              </button>
-            </div>
-          </div>
-        {:else}
+      <MessageMediaRenderer
+        {mediaRef}
+        {blobUrl}
+        {loadError}
+        {mediaPurgedByRetention}
+        {textContent}
+        {isOwn}
+        {textSegments}
+      />
+
+      {#if !mediaRef}
+        <MessageEditForm
+          editing={!!(isEditingInline && !isDeleted && isOwn && !mediaRef && onEdit)}
+          {editText}
+          onEditChange={(text) => (editText = text)}
+          onConfirm={confirmEdit}
+          onCancel={cancelInlineEdit}
+        />
+
+        {#if !isEditingInline}
           <p
             class="text-base leading-relaxed break-words whitespace-pre-wrap [overflow-wrap:anywhere] {isDeleted
-              ? 'italic text-gray-500 [overflow-wrap:anywhere]'
+              ? 'italic text-gray-500'
               : ''}"
           >
             {#each textSegments as segment, index (`${segment.type}-${segment.value}-${index}`)}
@@ -659,28 +420,21 @@
               {/if}
             {/each}
           </p>
-        {/if}
-        {#if firstLink && !isEditingInline}
-          <LinkPreviewCard url={firstLink} />
+          {#if firstLink}
+            <LinkPreviewCard url={firstLink} />
+          {/if}
         {/if}
       {/if}
 
-      <!-- Micro-footer: only (modifié) + read checkmark, no time -->
       {#if isEdited || (isOwn && readBy.length > 0)}
         <div class="flex items-center justify-end gap-1 mt-1">
           {#if isEdited}
             <span class="italic text-[0.6rem] opacity-60">(modifié)</span>
           {/if}
-          {#if isOwn && readBy.length > 0}
-            <span class="text-blue-500" title="Lu par {readBy.join(', ')}">
-              <CheckCheck size={14} strokeWidth={2.25} />
-            </span>
-          {/if}
         </div>
       {/if}
     </div>
 
-    <!-- ── Action bar (visible on hover) ── -->
     <div
       class="absolute top-1/2 -translate-y-1/2 {isOwn
         ? 'right-full mr-2'
@@ -735,134 +489,39 @@
       {/if}
     </div>
 
-    <!-- ── Reactions (below bubble, aligned with it) ── -->
-    {#if Object.keys(groupedReactions).length > 0}
-      <div class="flex gap-1 flex-wrap mt-1 px-1 {isOwn ? 'justify-end' : 'justify-start'}">
-        {#each Object.entries(groupedReactions) as [emoji, users] (emoji)}
-          <button
-            class="flex items-center gap-1 px-2 py-0.5 bg-gray-100 hover:bg-gray-200 rounded-full text-xs transition-colors"
-            onclick={() => handleEmojiClick(emoji)}
-            title={users.join(', ')}
-          >
-            <span>{emoji}</span>
-            <span class="text-gray-600">{users.length}</span>
-          </button>
-        {/each}
-      </div>
-    {/if}
+    <MessageReactions
+      {groupedReactions}
+      {isOwn}
+      onReactionClick={(emoji) => onReact?.(messageId, emoji)}
+    />
 
-    <!-- ── Emoji picker ── -->
-    {#if showEmojiPicker}
-      <div
-        class="absolute top-full mt-2 {isOwn
-          ? 'right-0'
-          : 'left-0'} w-[min(92vw,22rem)] bg-[var(--cn-surface)] border border-cn-border rounded-2xl shadow-2xl z-[110] overflow-hidden"
-      >
-        <div
-          class="px-3 py-2 border-b border-cn-border text-xs text-text-muted flex items-center gap-1.5"
-        >
-          <Smile size={12} /> Reagir au message
-        </div>
-        {#if recentEmojis.length > 0}
-          <div class="px-3 py-2 border-b border-cn-border flex items-center gap-1 flex-wrap">
-            <span class="text-[0.65rem] text-text-muted mr-1">Recents</span>
-            {#each recentEmojis as emoji (emoji)}
-              <button
-                type="button"
-                onclick={() => handleEmojiClick(emoji)}
-                class="w-7 h-7 rounded-md hover:bg-cn-bg transition-colors text-base inline-flex items-center justify-center"
-                aria-label={`Reagir avec ${emoji}`}
-              >
-                {emoji}
-              </button>
-            {/each}
-          </div>
-        {/if}
-        <emoji-picker use:attachEmojiPicker class="light w-full" locale="fr"></emoji-picker>
-      </div>
-    {/if}
+    <MessageEmojiPicker
+      visible={showEmojiPicker}
+      {isOwn}
+      onEmojiSelect={(emoji) => onReact?.(messageId, emoji)}
+    />
 
-    <!-- ── Info tooltip (time sent + readBy) on bubble click ── -->
-    {#if showInfo}
-      <div
-        class="absolute {isOwn
-          ? 'right-0'
-          : 'left-0'} top-full mt-1 px-3 py-1.5 bg-gray-800 text-white text-[0.65rem] rounded-lg shadow-lg z-50 whitespace-nowrap flex flex-col gap-0.5 pointer-events-none"
-        in:fly={{ y: -3, duration: 100 }}
-      >
-        <span>
-          Envoyé à {format(timestamp, 'HH:mm')}{#if isEdited && editedAt}, Modifié à {format(
-              editedAt,
-              'HH:mm'
-            )}{:else if isEdited}, Modifié{/if}
-        </span>
-        {#if readBy.length > 0}
-          <span class="text-blue-300">Lu par {readBy.join(', ')}</span>
-        {/if}
-      </div>
-    {/if}
+    <MessageInfoTooltip
+      visible={showInfo}
+      {timestamp}
+      {editedAt}
+      {readBy}
+      {isOwn}
+      {isEdited}
+    />
+
+    <MessageMobileActions
+      visible={showMobileActions}
+      {isOwn}
+      {isDeleted}
+      hasMedia={!!mediaRef}
+      onReply={() => onReply?.(messageId)}
+      onReact={() => (showEmojiPicker = true)}
+      onEdit={startInlineEdit}
+      onDelete={() => (showDeleteModal = true)}
+      onClose={closeMobileActions}
+    />
   </div>
-
-  {#if showMobileActions}
-    <button
-      type="button"
-      class="fixed inset-0 z-40 bg-black/30 md:hidden"
-      aria-label="Fermer le menu des actions"
-      onclick={closeMobileActions}
-    ></button>
-    <div
-      class="fixed inset-x-0 bottom-0 z-50 md:hidden rounded-t-3xl bg-[var(--cn-surface)] border-t border-cn-border shadow-2xl p-4"
-      in:fly={{ y: 12, duration: 120 }}
-    >
-      <div class="w-12 h-1.5 rounded-full bg-gray-200 mx-auto mb-4"></div>
-      <div class="grid grid-cols-2 gap-2">
-        {#if !isDeleted && onReply}
-          <button
-            onclick={() => {
-              onReply?.(messageId);
-              closeMobileActions();
-            }}
-            class="px-3 py-2.5 rounded-xl bg-cn-bg text-sm font-medium flex items-center justify-center gap-2"
-          >
-            <Reply size={15} /> Repondre
-          </button>
-        {/if}
-        {#if onReact}
-          <button
-            onclick={() => {
-              showEmojiPicker = true;
-              closeMobileActions();
-            }}
-            class="px-3 py-2.5 rounded-xl bg-cn-bg text-sm font-medium flex items-center justify-center gap-2"
-          >
-            <Smile size={15} /> Reagir
-          </button>
-        {/if}
-        {#if !isDeleted && isOwn && !mediaRef && onEdit}
-          <button
-            onclick={() => {
-              startInlineEdit();
-              closeMobileActions();
-            }}
-            class="px-3 py-2.5 rounded-xl bg-cn-bg text-sm font-medium flex items-center justify-center gap-2"
-          >
-            <Pencil size={15} /> Modifier
-          </button>
-        {/if}
-        {#if !isDeleted && isOwn && onDelete}
-          <button
-            onclick={() => {
-              showDeleteModal = true;
-              closeMobileActions();
-            }}
-            class="px-3 py-2.5 rounded-xl bg-red-50 text-red-600 text-sm font-medium flex items-center justify-center gap-2"
-          >
-            <Trash2 size={15} /> Supprimer
-          </button>
-        {/if}
-      </div>
-    </div>
-  {/if}
 
   <Modal
     open={showDeleteModal}

@@ -3,10 +3,9 @@
   import { ArrowDown } from 'lucide-svelte';
   import { tick } from 'svelte';
   import ChatHeader from './ChatHeader.svelte';
-  import MessageBubble from './MessageBubble.svelte';
+  import ChatMessageGroups from './ChatMessageGroups.svelte';
   import ChatComposer from './ChatComposer.svelte';
   import EmptyState from './EmptyState.svelte';
-  import Avatar from './Avatar.svelte';
   import { groupMessages } from '$lib/utils/messageGrouping';
   import type { ChatMessage, MessageReaction, Conversation } from '$lib/types';
 
@@ -153,7 +152,9 @@
 </script>
 
 <section
-  class="relative flex-1 min-h-0 min-w-0 flex flex-col bg-cn-bg {isHidden ? 'hidden md:flex' : ''}"
+  class="relative flex-1 min-h-0 min-w-0 flex flex-col bg-transparent {isHidden
+    ? 'hidden md:flex'
+    : ''}"
 >
   {#if conversation}
     <ChatHeader
@@ -176,132 +177,19 @@
       onscroll={handleScroll}
       class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 py-3 md:px-6 md:py-6 pb-32 md:pb-36 flex flex-col gap-2"
     >
-      {#if hiddenGroupCount > 0}
-        <div class="sticky top-2 z-10 flex justify-center mb-1">
-          <button
-            type="button"
-            onclick={loadOlderGroups}
-            class="px-3 py-1 rounded-full bg-white/80 backdrop-blur border border-cn-border text-xs text-cn-dark hover:bg-white transition-colors shadow-sm"
-          >
-            Charger les messages precedents ({hiddenGroupCount})
-          </button>
-        </div>
-      {/if}
-
-      {#each visibleMessageGroups as group, index (group.type === 'message' ? group.message.id : `${group.type}-${index}`)}
-        {#if group.type === 'date_separator'}
-          <div class="flex justify-center my-3">
-            <div
-              class="px-3 py-1 bg-cn-bg rounded-full text-xs text-cn-muted font-medium border border-cn-border/70"
-            >
-              {group.date}
-            </div>
-          </div>
-        {:else if group.type === 'time_separator'}
-          <div class="flex justify-center my-2">
-            <div class="px-2 py-0.5 text-[0.65rem] text-cn-muted/80">
-              {group.time}
-            </div>
-          </div>
-        {:else if group.type === 'message'}
-          {@const msg = group.message}
-          {@const reactions =
-            messageReactions instanceof Map
-              ? messageReactions.get(msg.id) || []
-              : messageReactions?.[msg.id] || []}
-          {@const prevGroup = index > 0 ? visibleMessageGroups[index - 1] : null}
-          {@const prevMsg = prevGroup?.type === 'message' ? prevGroup.message : null}
-          {@const nextGroup =
-            index < visibleMessageGroups.length - 1 ? visibleMessageGroups[index + 1] : null}
-          {@const nextMsg = nextGroup?.type === 'message' ? nextGroup.message : null}
-          {@const continuesFromPrev =
-            !!prevMsg &&
-            !msg.isSystem &&
-            !prevMsg.isSystem &&
-            prevMsg.senderId === msg.senderId &&
-            prevMsg.isOwn === msg.isOwn}
-          {@const continuesToNext =
-            !!nextMsg &&
-            !msg.isSystem &&
-            !nextMsg.isSystem &&
-            nextMsg.senderId === msg.senderId &&
-            nextMsg.isOwn === msg.isOwn}
-          {@const groupPosition = continuesFromPrev
-            ? continuesToNext
-              ? 'middle'
-              : 'end'
-            : continuesToNext
-              ? 'start'
-              : 'single'}
-          {@const showSender = !msg.isOwn && groupPosition !== 'middle' && groupPosition !== 'end'}
-
-          {#if msg.isSystem}
-            <div class="flex justify-center my-2">
-              <MessageBubble
-                messageId={msg.id}
-                senderId={msg.senderId}
-                content={msg.content}
-                timestamp={msg.timestamp}
-                isOwn={msg.isOwn}
-                isSystem={msg.isSystem}
-                replyTo={msg.replyTo}
-                {reactions}
-                onReply={onReply ? () => onReply?.(msg) : undefined}
-                {onReact}
-                shouldAnimate={msg.timestamp.getTime() > switchTime}
-                {authToken}
-              />
-            </div>
-          {:else}
-            <div class="flex gap-2 {msg.isOwn ? 'justify-end' : 'justify-start'}">
-              {#if !msg.isOwn}
-                <div class="flex flex-col items-center gap-1" style="width: 28px;">
-                  {#if showSender}
-                    <Avatar userId={msg.senderId} size="sm" />
-                  {:else}
-                    <div class="w-6"></div>
-                  {/if}
-                </div>
-              {/if}
-
-              <div
-                class="flex flex-col {msg.isOwn
-                  ? 'items-end'
-                  : 'items-start'} max-w-[88%] md:max-w-[75%]"
-              >
-                {#if showSender}
-                  <div class="text-xs text-cn-muted px-2 mb-1 font-medium">
-                    {msg.senderId}
-                  </div>
-                {/if}
-
-                <MessageBubble
-                  messageId={msg.id}
-                  senderId={msg.senderId}
-                  content={msg.content}
-                  timestamp={msg.timestamp}
-                  isOwn={msg.isOwn}
-                  isSystem={msg.isSystem}
-                  replyTo={msg.replyTo}
-                  {reactions}
-                  readBy={msg.readBy}
-                  isEdited={msg.isEdited}
-                  editedAt={msg.editedAt}
-                  isDeleted={msg.isDeleted}
-                  {groupPosition}
-                  onReply={onReply ? () => onReply?.(msg) : undefined}
-                  onNavigateToMessage={navigateToMessage}
-                  {onReact}
-                  {onDelete}
-                  {onEdit}
-                  shouldAnimate={msg.timestamp.getTime() > switchTime}
-                  {authToken}
-                />
-              </div>
-            </div>
-          {/if}
-        {/if}
-      {/each}
+      <ChatMessageGroups
+        {visibleMessageGroups}
+        {hiddenGroupCount}
+        {loadOlderGroups}
+        {messageReactions}
+        {onReply}
+        onNavigateToMessage={navigateToMessage}
+        {onReact}
+        {onDelete}
+        {onEdit}
+        {switchTime}
+        {authToken}
+      />
     </div>
 
     {#if sendError}
