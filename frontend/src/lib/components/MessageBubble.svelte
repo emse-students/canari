@@ -330,7 +330,7 @@
       onclick={openMobileActions}
       class="absolute top-1/2 -translate-y-1/2 {isOwn
         ? 'right-full mr-2'
-        : 'left-full ml-2'} md:hidden z-10 p-1.5 rounded-full bg-white/90 border border-cn-border text-gray-500"
+        : 'left-full ml-2'} md:hidden z-10 p-1.5 rounded-full bg-white/85 dark:bg-black/40 border border-white/60 dark:border-white/10 text-gray-500 dark:text-gray-300"
       aria-label="Ouvrir les actions du message"
     >
       <EllipsisVertical size={14} />
@@ -356,8 +356,8 @@
         }
       }}
       class="px-4 py-2.5 cursor-pointer min-w-0 {getBubbleShapeClass(groupPosition)} {isOwn
-        ? 'bg-cn-yellow text-[#1a1303]'
-        : 'bg-[var(--cn-surface)] text-cn-dark border border-cn-border'} {shouldAnimate
+        ? 'bg-gradient-to-br from-amber-400 to-amber-500 text-white shadow-md shadow-amber-500/20'
+        : 'backdrop-blur-sm bg-white/80 dark:bg-gray-700/80 shadow-sm rounded-2xl text-cn-dark border border-white/55 dark:border-white/10'} {shouldAnimate
         ? 'animate-rise-in'
         : ''}"
     >
@@ -501,14 +501,7 @@
       onEmojiSelect={(emoji) => onReact?.(messageId, emoji)}
     />
 
-    <MessageInfoTooltip
-      visible={showInfo}
-      {timestamp}
-      {editedAt}
-      {readBy}
-      {isOwn}
-      {isEdited}
-    />
+    <MessageInfoTooltip visible={showInfo} {timestamp} {editedAt} {readBy} {isOwn} {isEdited} />
 
     <MessageMobileActions
       visible={showMobileActions}

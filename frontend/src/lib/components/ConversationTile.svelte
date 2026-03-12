@@ -27,10 +27,10 @@
 <button
   onclick={onClick}
   class="w-full p-3 flex items-center gap-4 rounded-2xl transition-colors text-left {isSelected
-    ? 'bg-[color-mix(in_srgb,var(--cn-yellow)_26%,transparent)]'
+    ? 'bg-white/55 dark:bg-black/35 border border-white/60 dark:border-white/10'
     : unreadCount > 0
-      ? 'bg-[color-mix(in_srgb,var(--cn-yellow)_10%,transparent)] hover:bg-[color-mix(in_srgb,var(--cn-yellow)_16%,transparent)]'
-      : 'hover:bg-cn-bg'} animate-rise-in"
+      ? 'bg-white/25 dark:bg-black/20 hover:bg-white/30 dark:hover:bg-black/30 border border-white/45 dark:border-white/10'
+      : 'hover:bg-white/30 dark:hover:bg-black/30 border border-transparent'} animate-rise-in"
 >
   <Avatar userId={contactName} size="lg" />
 
@@ -57,7 +57,9 @@
         {/if}
       </div>
     </div>
-    <div class="text-sm truncate {unreadCount > 0 ? 'text-cn-dark font-semibold' : 'text-text-muted'}">
+    <div
+      class="text-sm truncate {unreadCount > 0 ? 'text-cn-dark font-semibold' : 'text-text-muted'}"
+    >
       {previewText || 'Canal E2E établi.'}
     </div>
   </div>

@@ -1,5 +1,7 @@
 @import 'tailwindcss';
 
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
 @theme {
   --color-cn-dark: var(--cn-dark);
   --color-cn-yellow: var(--cn-yellow);
@@ -112,4 +114,52 @@ body {
 
 .animate-float-soft {
   animation: floatSoft 2.6s ease-in-out infinite;
+}
+
+@keyframes blobDriftA {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1.04);
+  }
+  50% {
+    transform: translate3d(2.5%, -2%, 0) scale(1.09);
+  }
+  100% {
+    transform: translate3d(0, 0, 0) scale(1.04);
+  }
+}
+
+@keyframes blobDriftB {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1.02);
+  }
+  50% {
+    transform: translate3d(-2%, 2.5%, 0) scale(1.08);
+  }
+  100% {
+    transform: translate3d(0, 0, 0) scale(1.02);
+  }
+}
+
+@keyframes blobDriftC {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1.03);
+  }
+  50% {
+    transform: translate3d(1.6%, 2.4%, 0) scale(1.07);
+  }
+  100% {
+    transform: translate3d(0, 0, 0) scale(1.03);
+  }
+}
+
+.animate-blob-a {
+  animation: blobDriftA 26s ease-in-out infinite;
+}
+
+.animate-blob-b {
+  animation: blobDriftB 32s ease-in-out infinite;
+}
+
+.animate-blob-c {
+  animation: blobDriftC 29s ease-in-out infinite;
 }

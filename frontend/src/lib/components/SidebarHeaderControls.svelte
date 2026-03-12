@@ -23,16 +23,18 @@
 </script>
 
 <div
-  class="px-4 py-3 border-b border-cn-bg sticky top-0 bg-[var(--surface-elevated)]/90 backdrop-blur-md z-10"
+  class="px-4 py-3 border-b border-white/50 dark:border-white/10 sticky top-0 bg-white/35 dark:bg-gray-900/45 backdrop-blur-md z-10"
 >
-  <div class="grid grid-cols-2 rounded-2xl bg-cn-bg p-1 gap-1 w-full">
+  <div
+    class="grid grid-cols-2 rounded-2xl bg-white/35 dark:bg-black/25 p-1 gap-1 w-full border border-white/40 dark:border-white/10"
+  >
     <button
       type="button"
       onclick={() => onTabChange('discussions')}
       class="px-3 py-2 rounded-xl text-sm font-semibold transition-colors {activeSidebarTab ===
       'discussions'
-        ? 'bg-[var(--surface-elevated)] text-text-main shadow-sm border border-cn-border'
-        : 'text-text-muted hover:text-text-main hover:bg-[color-mix(in_srgb,var(--surface-elevated)_70%,transparent)]'}"
+        ? 'bg-white/70 dark:bg-black/40 text-text-main shadow-sm border border-white/50 dark:border-white/10'
+        : 'text-text-muted hover:text-text-main hover:bg-white/35 dark:hover:bg-black/30'}"
     >
       Discussions
     </button>
@@ -41,15 +43,17 @@
       onclick={() => onTabChange('channels')}
       class="px-3 py-2 rounded-xl text-sm font-semibold transition-colors {activeSidebarTab ===
       'channels'
-        ? 'bg-[var(--surface-elevated)] text-text-main shadow-sm border border-cn-border'
-        : 'text-text-muted hover:text-text-main hover:bg-[color-mix(in_srgb,var(--surface-elevated)_70%,transparent)]'}"
+        ? 'bg-white/70 dark:bg-black/40 text-text-main shadow-sm border border-white/50 dark:border-white/10'
+        : 'text-text-muted hover:text-text-main hover:bg-white/35 dark:hover:bg-black/30'}"
     >
       Canaux
     </button>
   </div>
 </div>
 
-<div class="px-4 py-3 border-b border-cn-border bg-[var(--surface-elevated)]/80 backdrop-blur-sm">
+<div
+  class="px-4 py-3 border-b border-white/50 dark:border-white/10 bg-white/30 dark:bg-gray-900/40 backdrop-blur-sm"
+>
   <div class="flex items-center gap-2">
     <div class="flex-1 relative">
       <Search size={16} class="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
@@ -58,13 +62,13 @@
         value={searchQuery}
         oninput={(e) => onSearchQueryChange((e.target as HTMLInputElement).value)}
         placeholder="Rechercher..."
-        class="w-full rounded-2xl bg-cn-bg pl-10 pr-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-cn-yellow/40"
+        class="w-full rounded-2xl bg-white/60 dark:bg-black/30 border border-white/50 dark:border-white/10 pl-10 pr-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-amber-400/45"
       />
     </div>
 
     <button
       onclick={onOpenNewChat}
-      class="w-8 h-8 rounded-full bg-cn-bg hover:bg-[color-mix(in_srgb,var(--surface-elevated)_75%,transparent)] text-text-main transition-colors flex items-center justify-center"
+      class="w-8 h-8 rounded-full bg-white/65 dark:bg-black/30 hover:bg-white/80 dark:hover:bg-black/40 border border-white/45 dark:border-white/10 text-text-main transition-colors flex items-center justify-center"
       title={activeSidebarTab === 'channels' ? 'Nouveau groupe' : 'Nouvelle discussion'}
       aria-label={activeSidebarTab === 'channels' ? 'Nouveau groupe' : 'Nouvelle discussion'}
     >
@@ -74,7 +78,7 @@
       <button
         type="button"
         onclick={() => onCloseDrawer?.()}
-        class="p-2 rounded-lg text-text-muted bg-cn-bg"
+        class="p-2 rounded-lg text-text-muted bg-white/65 dark:bg-black/30 border border-white/45 dark:border-white/10"
         aria-label="Fermer"
       >
         <X size={16} />

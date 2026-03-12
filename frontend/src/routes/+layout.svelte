@@ -1,29 +1,16 @@
 <script lang="ts">
   import '../app.css';
-  import { page } from '$app/stores';
   import BackgroundBlobs from '$lib/components/BackgroundBlobs.svelte';
 </script>
 
-<div class="route-shell">
-  {#if $page.url.pathname.startsWith('/chat')}
+<div class="relative min-h-dvh overflow-hidden">
+  <div class="fixed inset-0 z-0 pointer-events-none">
     <BackgroundBlobs />
-  {/if}
-  <div class="route-content"><slot /></div>
+  </div>
+
+  <div
+    class="relative z-10 flex h-screen w-full pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]"
+  >
+    <slot />
+  </div>
 </div>
-
-<style>
-  .route-shell {
-    position: relative;
-    min-height: 100dvh;
-  }
-
-  .route-content {
-    position: relative;
-    z-index: 2;
-    min-height: 100dvh;
-    padding-top: env(safe-area-inset-top);
-    padding-bottom: env(safe-area-inset-bottom);
-    padding-left: env(safe-area-inset-left);
-    padding-right: env(safe-area-inset-right);
-  }
-</style>

@@ -1,9 +1,9 @@
 <div class="chat-blobs" aria-hidden="true">
-  <span class="blob blob-a"></span>
-  <span class="blob blob-b"></span>
-  <span class="blob blob-c"></span>
-  <span class="blob blob-d"></span>
-  <span class="blob blob-e"></span>
+  <span class="blob blob-a animate-blob-a"></span>
+  <span class="blob blob-b animate-blob-b"></span>
+  <span class="blob blob-c animate-blob-c"></span>
+  <span class="blob blob-d animate-blob-b"></span>
+  <span class="blob blob-e animate-blob-a"></span>
   <span class="noise-overlay"></span>
 </div>
 
@@ -11,7 +11,7 @@
   .chat-blobs {
     position: fixed;
     inset: 0;
-    z-index: 1;
+    z-index: 0;
     pointer-events: none;
     overflow: hidden;
     background-color: transparent;
@@ -24,6 +24,7 @@
     transform: scale(1.08);
     opacity: 0.56;
     mix-blend-mode: multiply;
+    will-change: transform;
   }
 
   .blob-a {

@@ -37,60 +37,49 @@
   }
 </script>
 
-<div class="p-3 border-t border-cn-border bg-[var(--surface-elevated)]/95 backdrop-blur-md">
+<div
+  class="p-3 border-t border-white/50 dark:border-white/10 bg-white/25 dark:bg-gray-900/40 backdrop-blur-md"
+>
   <div
-    class="rounded-2xl border border-cn-border bg-[var(--surface-elevated)] p-3 shadow-sm space-y-3"
+    class="rounded-2xl border border-white/50 dark:border-white/10 bg-white/35 dark:bg-black/30 p-2.5 shadow-sm"
   >
-    <div class="space-y-2">
-      <div class="text-[0.65rem] uppercase tracking-wide font-semibold text-text-muted">
-        Sauvegarde chiffree
-      </div>
-      <div class="grid grid-cols-2 gap-2">
-        <button
-          onclick={triggerImport}
-          disabled={isImporting}
-          class="inline-flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-xl bg-cn-bg hover:bg-[color-mix(in_srgb,var(--surface-elevated)_75%,transparent)] text-xs font-semibold text-text-main transition-colors disabled:opacity-50"
-          title="Importer une sauvegarde .canari"
-        >
-          <Upload size={13} />
-          {isImporting ? 'Import...' : 'Importer'}
-        </button>
-        <button
-          onclick={onExport}
-          disabled={isExporting}
-          class="inline-flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-xl bg-cn-bg hover:bg-[color-mix(in_srgb,var(--surface-elevated)_75%,transparent)] text-xs font-semibold text-text-main transition-colors disabled:opacity-50"
-          title="Exporter les conversations vers un fichier .canari"
-        >
-          <Download size={13} />
-          {isExporting ? 'Export...' : 'Exporter'}
-        </button>
-      </div>
-    </div>
-
-    <div class="space-y-2 pt-1 border-t border-cn-border/70">
-      <div class="text-[0.65rem] uppercase tracking-wide font-semibold text-text-muted">
-        Synchronisation appareils
-      </div>
-      <div class="grid grid-cols-2 gap-2">
-        <button
-          onclick={onStartSync}
-          disabled={isSyncing}
-          class="inline-flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-xl bg-cn-bg hover:bg-[color-mix(in_srgb,var(--surface-elevated)_75%,transparent)] text-xs font-semibold text-text-main transition-colors disabled:opacity-50"
-          title="Démarrer une session de synchronisation QR"
-        >
-          <ScanLine size={13} />
-          Demarrer
-        </button>
-        <button
-          onclick={onJoinSync}
-          disabled={isSyncing}
-          class="inline-flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-xl bg-cn-bg hover:bg-[color-mix(in_srgb,var(--surface-elevated)_75%,transparent)] text-xs font-semibold text-text-main transition-colors disabled:opacity-50"
-          title="Rejoindre une session de synchronisation QR"
-        >
-          <Smartphone size={13} />
-          Joindre
-        </button>
-      </div>
+    <div class="grid grid-cols-4 gap-2">
+      <button
+        onclick={triggerImport}
+        disabled={isImporting}
+        class="h-10 rounded-xl bg-white/60 dark:bg-black/30 border border-white/50 dark:border-white/10 text-text-main inline-flex items-center justify-center hover:bg-white/75 dark:hover:bg-black/45 transition-colors disabled:opacity-50"
+        title="Importer une sauvegarde"
+        aria-label="Importer une sauvegarde"
+      >
+        <Upload size={16} />
+      </button>
+      <button
+        onclick={onExport}
+        disabled={isExporting}
+        class="h-10 rounded-xl bg-white/60 dark:bg-black/30 border border-white/50 dark:border-white/10 text-text-main inline-flex items-center justify-center hover:bg-white/75 dark:hover:bg-black/45 transition-colors disabled:opacity-50"
+        title="Exporter les conversations"
+        aria-label="Exporter les conversations"
+      >
+        <Download size={16} />
+      </button>
+      <button
+        onclick={onStartSync}
+        disabled={isSyncing}
+        class="h-10 rounded-xl bg-white/60 dark:bg-black/30 border border-white/50 dark:border-white/10 text-text-main inline-flex items-center justify-center hover:bg-white/75 dark:hover:bg-black/45 transition-colors disabled:opacity-50"
+        title="Démarrer une synchronisation QR"
+        aria-label="Démarrer une synchronisation QR"
+      >
+        <ScanLine size={16} />
+      </button>
+      <button
+        onclick={onJoinSync}
+        disabled={isSyncing}
+        class="h-10 rounded-xl bg-white/60 dark:bg-black/30 border border-white/50 dark:border-white/10 text-text-main inline-flex items-center justify-center hover:bg-white/75 dark:hover:bg-black/45 transition-colors disabled:opacity-50"
+        title="Rejoindre une synchronisation QR"
+        aria-label="Rejoindre une synchronisation QR"
+      >
+        <Smartphone size={16} />
+      </button>
     </div>
   </div>
 

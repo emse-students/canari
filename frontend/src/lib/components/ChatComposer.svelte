@@ -202,7 +202,7 @@
 </script>
 
 <footer
-  class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-[var(--surface-elevated)]/95 via-[var(--surface-elevated)]/70 to-transparent pb-[max(0.9rem,env(safe-area-inset-bottom))] pt-8 z-20 pointer-events-none"
+  class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-white/55 dark:from-black/30 via-white/15 dark:via-black/10 to-transparent pb-[max(0.9rem,env(safe-area-inset-bottom))] pt-8 z-20 pointer-events-none"
 >
   {#if replyingTo}
     <div
@@ -283,9 +283,9 @@
     <div
       role="group"
       aria-label="Zone de saisie et depot de fichiers"
-      class="relative max-w-full flex items-center gap-2 md:gap-3 bg-white/80 backdrop-blur-xl p-2.5 md:p-3 rounded-3xl overflow-x-hidden border shadow-[0_8px_30px_rgb(0,0,0,0.05)] transition-all {isDragOver
-        ? 'border-cn-yellow'
-        : 'border-white/60'}"
+      class="relative max-w-full flex items-center gap-2 md:gap-3 backdrop-blur-md bg-white/50 dark:bg-gray-800/50 p-2.5 md:p-3 rounded-full overflow-x-hidden border border-white/50 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.05)] transition-all {isDragOver
+        ? 'ring-2 ring-amber-300/70'
+        : ''}"
       ondragover={handleDragOver}
       ondragleave={handleDragLeave}
       ondrop={handleDrop}
@@ -343,13 +343,13 @@
         onpaste={handlePaste}
         placeholder="Message..."
         rows="1"
-        class="flex-1 min-w-0 bg-transparent border-none resize-none outline-none font-normal text-[0.95rem] md:text-base px-2 py-2 leading-6 max-h-32 text-gray-800 placeholder-gray-500"
+        class="flex-1 min-w-0 bg-transparent border-none resize-none outline-none font-normal text-[0.95rem] md:text-base px-2 py-2 leading-6 max-h-32 text-gray-800 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-300"
       ></textarea>
       <button
         onclick={onSend}
         disabled={(!messageText.trim() && pendingFiles.length === 0) || isUploading}
         aria-label="Envoyer le message"
-        class="w-10 h-10 md:w-11 md:h-11 bg-cn-dark text-cn-yellow rounded-full flex items-center justify-center flex-shrink-0 transition-transform hover:scale-105 active:scale-100 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100 bg-gradient-to-br from-cn-dark to-gray-800"
+        class="w-10 h-10 md:w-11 md:h-11 bg-amber-500 text-white rounded-full flex items-center justify-center flex-shrink-0 transition-transform hover:scale-105 active:scale-100 hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
       >
         <Send size={20} />
       </button>

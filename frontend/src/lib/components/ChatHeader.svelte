@@ -94,7 +94,7 @@
 <svelte:window onkeydown={handlePanelKeydown} />
 
 <header
-  class="bg-[var(--surface-elevated)] px-3 md:px-6 py-3 border-b border-cn-border flex items-center gap-3 md:gap-4 relative backdrop-blur-sm"
+  class="bg-white/40 dark:bg-gray-900/50 px-3 md:px-6 py-3 border-b border-white/50 dark:border-white/10 flex items-center gap-3 md:gap-4 relative backdrop-blur-md"
 >
   <div class="flex items-center gap-1 md:hidden">
     {#if onOpenConversations}
@@ -137,7 +137,7 @@
   <button
     onclick={openPanel}
     aria-label={isGroupConversation ? 'Paramètres du groupe' : 'Paramètres de la discussion'}
-    class="p-2 rounded-lg text-text-muted hover:bg-cn-bg hover:text-cn-dark transition-colors"
+    class="p-2 rounded-lg text-text-muted hover:bg-white/40 dark:hover:bg-black/35 hover:text-cn-dark transition-colors"
   >
     <Settings size={18} />
   </button>

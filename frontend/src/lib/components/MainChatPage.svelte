@@ -474,7 +474,9 @@
           (c) => c.isReady && !localMlsGroups.has(c.groupId)
         );
         if (hasMissingGroups) {
-          log('[WARN] Groupes sans état MLS détectés — réinitialisation du cache de synchronisation.');
+          log(
+            '[WARN] Groupes sans état MLS détectés — réinitialisation du cache de synchronisation.'
+          );
           localStorage.removeItem(`known_own_devices:${userId}`);
         }
       } catch {

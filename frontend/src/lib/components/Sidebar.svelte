@@ -187,14 +187,14 @@
 {#if drawerMode}
   <button
     type="button"
-    class="fixed inset-0 z-30 bg-black/35 md:hidden"
+    class="fixed inset-0 z-30 bg-black/30 md:hidden"
     onclick={() => onCloseDrawer?.()}
     aria-label="Fermer le volet des conversations"
   ></button>
 {/if}
 
 <aside
-  class="bg-[var(--surface-elevated)] border-r border-cn-border flex flex-col {drawerMode
+  class="h-full backdrop-blur-md bg-white/40 dark:bg-gray-900/50 border-r border-white/50 dark:border-white/10 flex flex-col {drawerMode
     ? 'fixed left-0 top-0 bottom-0 z-40 w-[88vw] max-w-sm md:hidden shadow-2xl animate-panel-in'
     : 'w-full md:w-80'} {isHidden && !drawerMode ? 'hidden md:flex' : ''}"
 >
@@ -213,7 +213,7 @@
   />
 
   <!-- Conversation List -->
-  <div class="flex-1 overflow-y-auto p-2">
+  <div class="flex-1 overflow-y-auto p-2.5">
     {#if activeSidebarTab === 'discussions'}
       {#each filteredConversationEntries as [name, convo] (name)}
         <ConversationTile
