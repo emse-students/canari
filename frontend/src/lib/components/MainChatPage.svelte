@@ -408,14 +408,6 @@
     isLoggingIn = true;
     userId = userId.trim().toLowerCase();
 
-    if (routeMode === 'login') {
-      localStorage.setItem('canari_saved_user', userId);
-      localStorage.setItem('canari_saved_pin', pin);
-      isLoggingIn = false;
-      void goto('/chat', { replaceState: true });
-      return;
-    }
-
     hadLocalStateBeforeLogin = Boolean(localStorage.getItem('mls_autosave_' + userId));
 
     try {
