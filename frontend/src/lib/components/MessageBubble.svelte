@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Reply, Smile, Pencil, Trash2, EllipsisVertical } from 'lucide-svelte';
+  import { Reply, Smile, Pencil, Trash2, EllipsisVertical, CheckCheck } from 'lucide-svelte';
   import { MediaService } from '$lib/media';
   import type { MediaRef } from '$lib/media';
   import { parseEnvelope } from '$lib/envelope';
@@ -432,7 +432,8 @@
             <span class="italic text-[0.6rem] opacity-60">(modifié)</span>
           {/if}
           {#if isOwn && readBy.length > 0}
-            <span class="text-[0.62rem] font-medium opacity-75">
+            <span class="inline-flex items-center gap-1 text-[0.62rem] font-medium opacity-75">
+              <CheckCheck size={11} />
               Lu{readBy.length > 1 ? ` (${readBy.length})` : ''}
             </span>
           {/if}
