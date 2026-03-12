@@ -1,0 +1,305 @@
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import {
+  CHANNEL_PERMISSIONS,
+  DEFAULT_MEMBER_PERMISSIONS,
+  DEFAULT_OWNER_PERMISSIONS,
+  type ChannelPermission,
+} from './permissions';
+import { Workspace } from './schemas/workspace.schema';
+import { ChannelRole } from './schemas/channel-role.schema';
+import { Channel } from './schemas/channel.schema';
+import { ChannelMember } from './schemas/channel-member.schema';
+import { ChannelMessage } from './schemas/channel-message.schema';
+import {
+  type ChannelJoinDto,
+  type ChannelKickDto,
+  type ChannelLeaveDto,
+  type CreateChannelDto,
+  type CreateRoleDto,
+  type CreateWorkspaceDto,
+  type SendChannelMessageDto,
+} from './dto/channel.dto';
+import { decryptSoft, encryptSoft } from './soft-crypto';
+
+@Injectable()
+export class ChannelService {
+  private readonly cryptoSecret: string;
+
+  constructor(
+    @InjectModel(Workspace.name)
+    private readonly workspaceModel: Model<Workspace>,
+    @InjectModel(ChannelRole.name)
+    private readonly roleModel: Model<ChannelRole>,
+    @InjectModel(Channel.name)
+    private readonly channelModel: Model<Channel>,
+    @InjectModel(ChannelMember.name)
+    private readonly memberModel: Model<ChannelMember>,
+    @InjectModel(ChannelMessage.name)
+    private readonly messageModel: Model<ChannelMessage>
+  ) {
+    this.cryptoSecret = process.env.CHANNELS_ENCRYPTION_SECRET || 'change-me-in-prod';
+  }
+
+  async createWorkspace(input: CreateWorkspaceDto) {
+    const slug = input.slug.trim().toLowerCase();
+    const name = input.name.trim();
+    const owner = input.createdBy.trim().toLowerCase();
+    if (!slug || !name || !owner) {
+      throw new BadRequestException('slug, name and createdBy are required');
+    }
+
+    const workspace = await this.workspaceModel.create({
+      slug,
+      name,
+      createdBy: owner,
+    });
+
+    await this.roleModel.create([
+      {
+        workspaceId: workspace.id,
+        name: 'owner',
+        priority: 100,
+        permissions: DEFAULT_OWNER_PERMISSIONS,
+      },
+      {
+        workspaceId: workspace.id,
+        name: 'member',
+        priority: 10,
+        permissions: DEFAULT_MEMBER_PERMISSIONS,
+      },
+    ]);
+
+    return workspace;
+  }
+
+  async createRole(input: CreateRoleDto) {
+    await this.assertWorkspace(input.workspaceId);
+
+    const role = await this.roleModel.create({
+      workspaceId: input.workspaceId,
+      name: input.name.trim().toLowerCase(),
+      priority: input.priority,
+      permissions: input.permissions,
+    });
+
+    return role;
+  }
+
+  async createChannel(input: CreateChannelDto) {
+    await this.assertWorkspace(input.workspaceId);
+
+    const actor = input.actorUserId.trim().toLowerCase();
+    const ownerRole = await this.getRoleByName(input.workspaceId, 'owner');
+    if (!ownerRole) {
+      throw new BadRequestException('owner role missing in workspace');
+    }
+
+    const channel = await this.channelModel.create({
+      workspaceId: input.workspaceId,
+      name: input.name.trim(),
+      visibility: input.visibility ?? 'public',
+      keyVersion: 1,
+      archived: false,
+    });
+
+    await this.memberModel.updateOne(
+      { channelId: channel.id, userId: actor },
+      {
+        $set: {
+          channelId: channel.id,
+          workspaceId: input.workspaceId,
+          userId: actor,
+          roleName: ownerRole.name,
+          leftAt: null,
+        },
+      },
+      { upsert: true }
+    );
+
+    return channel;
+  }
+
+  async joinChannel(channelId: string, input: ChannelJoinDto) {
+    const channel = await this.requireChannel(channelId);
+
+    const actorPerms = await this.getPermissions(channel.workspaceId, input.actorUserId, channel.id);
+    const isPublic = channel.visibility === 'public';
+    const canInvite = actorPerms.has(CHANNEL_PERMISSIONS.MEMBER_INVITE);
+
+    if (!isPublic && !canInvite) {
+      throw new ForbiddenException('cannot join private channel without invite permission');
+    }
+
+    const roleName = (input.roleName || 'member').toLowerCase();
+    const role = await this.getRoleByName(channel.workspaceId, roleName);
+    if (!role) throw new BadRequestException(`unknown role ${roleName}`);
+
+    const userId = input.userId.trim().toLowerCase();
+    await this.memberModel.updateOne(
+      { channelId, userId },
+      {
+        $set: {
+          channelId,
+          workspaceId: channel.workspaceId,
+          userId,
+          roleName: role.name,
+          leftAt: null,
+          joinedAt: new Date(),
+        },
+      },
+      { upsert: true }
+    );
+
+    // Soft mode: keep old messages accessible for new members.
+    return { joined: true, historyVisible: true, keyVersion: channel.keyVersion };
+  }
+
+  async leaveChannel(channelId: string, input: ChannelLeaveDto) {
+    await this.requireChannel(channelId);
+    const userId = input.userId.trim().toLowerCase();
+
+    await this.memberModel.updateOne(
+      { channelId, userId, leftAt: null },
+      { $set: { leftAt: new Date() } }
+    );
+
+    return { left: true };
+  }
+
+  async kickMember(channelId: string, input: ChannelKickDto) {
+    const channel = await this.requireChannel(channelId);
+    const actorPerms = await this.getPermissions(
+      channel.workspaceId,
+      input.actorUserId,
+      channel.id
+    );
+
+    if (!actorPerms.has(CHANNEL_PERMISSIONS.MEMBER_KICK)) {
+      throw new ForbiddenException('missing member.kick permission');
+    }
+
+    const target = input.targetUserId.trim().toLowerCase();
+    await this.memberModel.updateOne(
+      { channelId, userId: target, leftAt: null },
+      { $set: { leftAt: new Date() } }
+    );
+
+    // Soft encryption policy: no mandatory key rotation on kick.
+    return { kicked: true, keyRotated: false };
+  }
+
+  async sendMessage(channelId: string, input: SendChannelMessageDto) {
+    const channel = await this.requireChannel(channelId);
+    const sender = input.senderId.trim().toLowerCase();
+
+    const perms = await this.getPermissions(channel.workspaceId, sender, channel.id);
+    if (!perms.has(CHANNEL_PERMISSIONS.CHANNEL_WRITE)) {
+      throw new ForbiddenException('missing channel.write permission');
+    }
+
+    const { ciphertext, nonce } = encryptSoft({
+      secret: this.cryptoSecret,
+      workspaceId: channel.workspaceId,
+      channelId: channel.id,
+      keyVersion: channel.keyVersion,
+      plaintext: input.plaintext,
+    });
+
+    return await this.messageModel.create({
+      channelId: channel.id,
+      workspaceId: channel.workspaceId,
+      senderId: sender,
+      ciphertext,
+      nonce,
+      keyVersion: channel.keyVersion,
+      createdAt: new Date(),
+    });
+  }
+
+  async listMessages(channelId: string, userId: string, limit = 100) {
+    const channel = await this.requireChannel(channelId);
+    const perms = await this.getPermissions(channel.workspaceId, userId, channel.id);
+    if (!perms.has(CHANNEL_PERMISSIONS.CHANNEL_READ)) {
+      throw new ForbiddenException('missing channel.read permission');
+    }
+
+    const docs = await this.messageModel
+      .find({ channelId: channel.id })
+      .sort({ createdAt: -1 })
+      .limit(Math.max(1, Math.min(limit, 200)))
+      .lean();
+
+    return docs
+      .reverse()
+      .map((doc) => ({
+        id: String(doc._id),
+        senderId: doc.senderId,
+        keyVersion: doc.keyVersion,
+        createdAt: doc.createdAt,
+        plaintext: decryptSoft({
+          secret: this.cryptoSecret,
+          workspaceId: channel.workspaceId,
+          channelId: channel.id,
+          keyVersion: doc.keyVersion,
+          ciphertext: doc.ciphertext,
+          nonce: doc.nonce,
+        }),
+      }));
+  }
+
+  async listChannelsForUser(workspaceId: string, userId: string) {
+    await this.assertWorkspace(workspaceId);
+    const memberships = await this.memberModel
+      .find({ workspaceId, userId: userId.toLowerCase(), leftAt: null })
+      .lean();
+
+    const ids = memberships.map((m) => m.channelId);
+    if (ids.length === 0) return [];
+
+    return await this.channelModel.find({ _id: { $in: ids } }).lean();
+  }
+
+  private async assertWorkspace(workspaceId: string) {
+    const ws = await this.workspaceModel.findById(workspaceId);
+    if (!ws) throw new NotFoundException('workspace not found');
+  }
+
+  private async requireChannel(channelId: string) {
+    const channel = await this.channelModel.findById(channelId);
+    if (!channel) throw new NotFoundException('channel not found');
+    return channel;
+  }
+
+  private async getRoleByName(workspaceId: string, roleName: string) {
+    return this.roleModel.findOne({ workspaceId, name: roleName.toLowerCase() });
+  }
+
+  private async getPermissions(
+    workspaceId: string,
+    userIdRaw: string,
+    channelId: string
+  ): Promise<Set<ChannelPermission>> {
+    const userId = userIdRaw.trim().toLowerCase();
+    const member = await this.memberModel.findOne({ channelId, userId, leftAt: null });
+
+    if (!member) {
+      // No membership means no UI access to this channel.
+      return new Set<ChannelPermission>();
+    }
+
+    const role = await this.roleModel.findOne({
+      workspaceId,
+      name: member.roleName.toLowerCase(),
+    });
+
+    const base = (role?.permissions || []) as ChannelPermission[];
+    return new Set(base);
+  }
+}
