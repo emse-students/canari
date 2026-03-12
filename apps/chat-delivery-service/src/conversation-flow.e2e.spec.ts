@@ -42,7 +42,7 @@ import { WelcomeMessage } from './welcome-message.schema';
 import { GroupMember } from './group-member.schema';
 import { Group } from './group.schema';
 import { PinVerifier } from './pin-verifier.schema';
-import { encodeInboundMsgEnvelope } from '@mines-app/shared-ts';
+import { encodeInboundMsgEnvelope } from '@canari/shared-ts';
 
 // ---- Fixtures de test -------------------------------------------------------
 

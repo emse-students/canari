@@ -22,7 +22,7 @@ import Redis from 'ioredis';
 import * as crypto from 'crypto';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
-import { encodeInboundMsgEnvelope } from '@mines-app/shared-ts';
+import { encodeInboundMsgEnvelope } from '@canari/shared-ts';
 
 const SAFE_QUERY_VALUE_REGEX = /^[a-zA-Z0-9_.:@-]{1,128}$/;
 

@@ -13,7 +13,7 @@ Pop-Location
 Write-Host "`n[2/3] Fermeture des services backend..." -ForegroundColor Yellow
 
 # Tuer par nom de processus connu
-foreach ($proc in @('chat-gateway', 'cargo', 'node', 'mines-app')) {
+foreach ($proc in @('chat-gateway', 'cargo', 'node', 'canari')) {
     $found = Get-Process -Name $proc -ErrorAction SilentlyContinue
     if ($found) {
         $found | Stop-Process -Force -ErrorAction SilentlyContinue

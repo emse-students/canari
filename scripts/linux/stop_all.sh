@@ -23,7 +23,7 @@ pkill -f "user-service"
 # Tuer le frontend (Vite & Tauri)
 pkill -f "tauri dev"
 pkill -f "vite dev"
-pkill -f "mines-app"
+pkill -f "canari"
 
 echo -e "\n\e[32m===================================================\e[0m"
 echo -e "\e[32m  Tous les services ont été arrêtés !              \e[0m"

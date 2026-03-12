@@ -9,7 +9,7 @@
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\""
   },
   "dependencies": {
-    "@mines-app/shared-ts": "file:../../libs/shared-ts",
+    "@canari/shared-ts": "file:../../libs/shared-ts",
     "@nestjs/common": "^11.1.16",
     "@nestjs/core": "^11.1.16",
     "@nestjs/microservices": "^11.1.16",
@@ -54,7 +54,7 @@
       "^.+\\.(t|j)s$": "ts-jest"
     },
     "moduleNameMapper": {
-      "@mines-app/shared-ts": "<rootDir>/../../../libs/shared-ts/src/index.ts"
+      "@canari/shared-ts": "<rootDir>/../../../libs/shared-ts/src/index.ts"
     },
     "transformIgnorePatterns": [
       "node_modules/(?!(uuid)/)"
