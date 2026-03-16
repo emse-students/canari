@@ -12,7 +12,7 @@
     "@canari/shared-ts": "file:../../libs/shared-ts",
     "@nestjs/common": "^11.1.16",
     "@nestjs/core": "^11.1.16",
-    "@nestjs/microservices": "^11.1.16",
+    "@nestjs/microservices": "^11.1.17",
     "@nestjs/mongoose": "^11.0.4",
     "@nestjs/platform-express": "^11.1.16",
     "ioredis": "^5.10.0",
