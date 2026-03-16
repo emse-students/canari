@@ -1,4 +1,4 @@
-package com.canari.app
+package fr.emse.canari
 
 import android.os.Bundle
 import androidx.activity.enableEdgeToEdge

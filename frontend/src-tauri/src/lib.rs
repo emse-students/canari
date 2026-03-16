@@ -1,6 +1,6 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use mls_core::MlsManager;
-use std::sync::Mutex; // Ensure mls_core is in dependencies
+use std::sync::Mutex;
 
 // State wrapper
 struct AppState {
@@ -170,10 +170,18 @@ fn recevoir_message_bytes(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_sql::Builder::default().build())
+        .plugin(tauri_plugin_sql::Builder::default().build());
+
+    #[cfg(mobile)]
+    let builder = builder.plugin(tauri_plugin_biometric::init());
+
+    #[cfg(mobile)]
+    let builder = builder.plugin(tauri_plugin_keystore::init());
+
+    builder
         .manage(AppState {
             mls_manager: Mutex::new(None),
         })

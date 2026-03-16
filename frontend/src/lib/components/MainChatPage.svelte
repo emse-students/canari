@@ -54,6 +54,7 @@
   import { encodeAppMessage, mkMedia, MediaKind } from '$lib/proto/codec';
   import { createSyncQrDataUrl } from '$lib/sync/qr';
   import LoginForm from './LoginForm.svelte';
+  import { BiometricService } from '$lib/services/biometric';
   import Modal from './Modal.svelte';
   import Navbar from './Navbar.svelte';
   import Sidebar from './Sidebar.svelte';
@@ -74,6 +75,9 @@
   let isLoggedIn = $state(false);
   let isLoggingIn = $state(false);
   let loginError = $state('');
+  // Biometric state — only meaningful on Tauri (mobile)
+  let biometricAvailable = $state(false);
+  let showBiometricEnrollPrompt = $state(false);
   let statusLog = $state<string[]>([]);
   let showLogs = $state(false);
 
@@ -402,10 +406,22 @@
 
   onMount(() => {
     if (routeMode === 'login') {
-      const savedUser = localStorage.getItem('canari_saved_user');
-      const savedPin = localStorage.getItem('canari_saved_pin');
-      if (savedUser && savedPin) {
-        void goto('/chat', { replaceState: true });
+      // On Tauri (mobile), try biometric auto-login first
+      const isTauri = !!(window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+      if (isTauri) {
+        void (async () => {
+          const configured = await BiometricService.isConfigured();
+          if (configured) {
+            biometricAvailable = true;
+            await handleBiometricLogin();
+          }
+        })();
+      } else {
+        const savedUser = localStorage.getItem('canari_saved_user');
+        const savedPin = localStorage.getItem('canari_saved_pin');
+        if (savedUser && savedPin) {
+          void goto('/chat', { replaceState: true });
+        }
       }
       return;
     }
@@ -428,15 +444,39 @@
       }
     }
 
-    // Auto-login si des identifiants sont mémorisés
-    const savedUser = localStorage.getItem('canari_saved_user');
-    const savedPin = localStorage.getItem('canari_saved_pin');
-    if (savedUser && savedPin) {
-      userId = savedUser;
-      pin = savedPin;
-      void handleLogin();
-    } else if (routeMode === 'chat') {
-      void goto('/login', { replaceState: true });
+    // On Tauri (mobile), prefer biometric auto-login
+    const isTauriChat = !!(window as Window & { __TAURI_INTERNALS__?: unknown })
+      .__TAURI_INTERNALS__;
+    if (isTauriChat) {
+      void (async () => {
+        const configured = await BiometricService.isConfigured();
+        if (configured) {
+          biometricAvailable = true;
+          await handleBiometricLogin();
+          return;
+        }
+        // Fallback to saved credentials
+        const savedUser = localStorage.getItem('canari_saved_user');
+        const savedPin = localStorage.getItem('canari_saved_pin');
+        if (savedUser && savedPin) {
+          userId = savedUser;
+          pin = savedPin;
+          void handleLogin();
+        } else {
+          void goto('/login', { replaceState: true });
+        }
+      })();
+    } else {
+      // Web fallback
+      const savedUser = localStorage.getItem('canari_saved_user');
+      const savedPin = localStorage.getItem('canari_saved_pin');
+      if (savedUser && savedPin) {
+        userId = savedUser;
+        pin = savedPin;
+        void handleLogin();
+      } else if (routeMode === 'chat') {
+        void goto('/login', { replaceState: true });
+      }
     }
 
     // Reconnexion automatique quand la page redevient visible (mobile/onglets)
@@ -594,6 +634,12 @@
         syncOwnDevicesToGroupsLocally,
         log,
       });
+
+      // Offer biometric enrollment on first successful login on Tauri
+      const isTauri = !!(window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+      if (isTauri && !(await BiometricService.isConfigured())) {
+        showBiometricEnrollPrompt = true;
+      }
     } catch (_e: unknown) {
       const msg = _e instanceof Error ? _e.message : String(_e);
       loginError = msg;
@@ -605,6 +651,47 @@
       }
     } finally {
       isLoggingIn = false;
+    }
+  }
+
+  // --- Persistance (DB) ---
+
+  /**
+   * Retrieves the saved user + PIN from the hardware-backed Android Keystore
+   * (requires OS biometric authentication) then logs in automatically.
+   */
+  async function handleBiometricLogin() {
+    loginError = '';
+    isLoggingIn = true;
+    try {
+      const savedUser = localStorage.getItem('canari_saved_user');
+      if (!savedUser) {
+        loginError = 'Aucun utilisateur enregistré pour la biométrie.';
+        return;
+      }
+      const retrieved = await BiometricService.authenticateAndGetSecret();
+      if (!retrieved) {
+        loginError = "L'authentification biométrique a échoué. Entrez votre PIN manuellement.";
+        return;
+      }
+      userId = savedUser;
+      pin = retrieved;
+      await handleLogin();
+    } catch (e) {
+      loginError = 'Échec de la biométrie. Entrez votre PIN manuellement.';
+      console.error(e);
+    } finally {
+      isLoggingIn = false;
+    }
+  }
+
+  async function enrollBiometric() {
+    try {
+      await BiometricService.enableBiometric(pin);
+      biometricAvailable = true;
+      showBiometricEnrollPrompt = false;
+    } catch (e) {
+      console.error('Biometric enrollment failed:', e);
     }
   }
 
@@ -1351,6 +1438,7 @@
     isUploadingMedia = false;
     groupMembers = [];
     sendError = '';
+    showBiometricEnrollPrompt = false;
     localStorage.removeItem('canari_saved_user');
     localStorage.removeItem('canari_saved_pin');
 
@@ -1670,9 +1758,11 @@
       {pin}
       {isLoggingIn}
       {loginError}
+      {biometricAvailable}
       onUserIdChange={(value) => (userId = value)}
       onPinChange={(value) => (pin = value)}
       onLogin={handleLogin}
+      onBiometricLogin={handleBiometricLogin}
       onReset={resetAll}
     />
   {:else}
@@ -1683,6 +1773,56 @@
 {:else}
   <div class="app-layout" in:fade>
     <Navbar {isWsConnected} onToggleLogs={() => (showLogs = !showLogs)} onLogout={logout} />
+
+    {#if showBiometricEnrollPrompt}
+      <div
+        class="fixed bottom-[env(safe-area-inset-bottom,0px)] left-0 right-0 z-50 mx-4 mb-4 p-4 rounded-2xl border border-cn-border shadow-lg flex items-center gap-3"
+        style="background: color-mix(in srgb, var(--cn-surface) 95%, transparent); backdrop-filter: blur(10px);"
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="24"
+          height="24"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          class="shrink-0 text-cn-yellow"
+        >
+          <path d="M12 10a2 2 0 0 0-2 2c0 1.02.5 1.93 1.27 2.49" />
+          <path d="M12 2a10 10 0 0 1 9.39 6.52" />
+          <path d="M12 22C6.48 22 2 17.52 2 12" />
+          <path d="M4.93 4.93a10 10 0 0 0-.93 3" />
+          <path d="M19.07 4.93A10 10 0 0 1 22 12" />
+          <path d="M15.36 17.12A5 5 0 0 1 7 14" />
+          <path d="M12 7a5 5 0 0 1 4.9 4" />
+        </svg>
+        <div class="flex-1 min-w-0">
+          <p class="text-sm font-semibold text-text-main">
+            Activer le déverrouillage par empreinte ?
+          </p>
+          <p class="text-xs text-text-muted">
+            Votre PIN sera stocké de façon sécurisée et récupérable uniquement par biométrie.
+          </p>
+        </div>
+        <div class="flex gap-2 shrink-0">
+          <button
+            onclick={() => (showBiometricEnrollPrompt = false)}
+            class="px-3 py-1.5 text-xs text-text-muted rounded-xl border border-cn-border hover:border-cn-yellow transition-colors"
+          >
+            Plus tard
+          </button>
+          <button
+            onclick={enrollBiometric}
+            class="px-3 py-1.5 text-xs font-bold text-cn-dark bg-cn-yellow rounded-xl hover:bg-cn-yellow-hover transition-colors"
+          >
+            Activer
+          </button>
+        </div>
+      </div>
+    {/if}
 
     <!-- CONTENT -->
     <main class="main-content">

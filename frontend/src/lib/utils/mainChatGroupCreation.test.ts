@@ -16,6 +16,8 @@ import { startNewConversation, createNewGroup, inviteMemberToGroup } from './mai
 import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
 
+type GroupCreationDeps = Parameters<typeof startNewConversation>[1];
+
 // ─── Mocks globaux ────────────────────────────────────────────────────────────
 
 // Mock du module codec pour éviter les dépendances protobuf dans le contexte de test
@@ -92,14 +94,10 @@ function makeConversationMap(): ConvMap {
 function makeDeps(
   mls: IMlsService,
   conversations: ConvMap,
-  overrides: {
-    userId?: string;
-    pin?: string;
-    log?: ReturnType<typeof vi.fn>;
-    selectConversation?: ReturnType<typeof vi.fn>;
-    saveConversation?: ReturnType<typeof vi.fn>;
-  } = {}
-) {
+  overrides: Partial<
+    Pick<GroupCreationDeps, 'userId' | 'pin' | 'log' | 'selectConversation' | 'saveConversation'>
+  > = {}
+): GroupCreationDeps {
   return {
     mlsService: mls,
     storage: null,
@@ -107,9 +105,13 @@ function makeDeps(
     pin: overrides.pin ?? 'pin-test',
     historyBaseUrl: 'http://localhost:3001',
     conversations: conversations as any,
-    selectConversation: overrides.selectConversation ?? vi.fn(),
-    saveConversation: overrides.saveConversation ?? vi.fn().mockResolvedValue(undefined),
-    log: overrides.log ?? vi.fn(),
+    selectConversation:
+      overrides.selectConversation ??
+      (vi.fn() as unknown as GroupCreationDeps['selectConversation']),
+    saveConversation:
+      overrides.saveConversation ??
+      (vi.fn().mockResolvedValue(undefined) as unknown as GroupCreationDeps['saveConversation']),
+    log: overrides.log ?? (vi.fn() as unknown as GroupCreationDeps['log']),
   };
 }
 

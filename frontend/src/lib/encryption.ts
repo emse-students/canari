@@ -23,7 +23,7 @@ export async function encryptData(
 
     return { iv, salt, cipherText };
   } catch (e) {
-    throw new Error(`WASM Encryption failed: ${e}`);
+    throw new Error(`WASM Encryption failed: ${e}`, { cause: e });
   }
 }
 
