@@ -101,6 +101,14 @@ jobs:
           echo "Listing build outputs..."
           find frontend/src-tauri/gen/android/app/build/outputs/apk -name "*.apk"
 
+      - name: Upload APK Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release-apk
+          path: |
+            frontend/src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk
+            frontend/src-tauri/gen/android/app/build/outputs/apk/*/release/*.apk
+
       - name: Upload APK to Release
         uses: softprops/action-gh-release@v1
         if: github.event_name == 'release'
@@ -111,10 +119,3 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload APK Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-release-apk
-          path: |
-            frontend/src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk
-            frontend/src-tauri/gen/android/app/build/outputs/apk/*/release/*.apk
