@@ -131,26 +131,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
 
       - name: Install frontend dependencies
         working-directory: frontend
-        run: npm install --ignore-scripts
+        run: bun install
 
       - name: Sync SvelteKit
         working-directory: frontend
-        run: npx svelte-kit sync
+        run: bun run sync
 
       - name: Run Vitest unit tests
         working-directory: frontend
-        run: npm test
+        run: bun run test
 
       - name: Run Vitest with coverage
         working-directory: frontend
-        run: npm run test:coverage
+        run: bun run test:coverage
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
