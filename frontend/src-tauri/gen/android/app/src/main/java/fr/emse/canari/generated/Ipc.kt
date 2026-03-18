@@ -6,7 +6,7 @@
 
 @file:Suppress("unused")
 
-package com.canari.app
+package fr.emse.canari
 
 import android.webkit.*
 

@@ -4,7 +4,7 @@
 
 /* THIS FILE IS AUTO-GENERATED. DO NOT MODIFY!! */
 
-package com.canari.app
+package fr.emse.canari
 
 import android.content.Intent
 import android.content.res.Configuration

@@ -50,9 +50,14 @@
     return `${normalized.slice(0, 93)}...`;
   }
 
-  let replyPreviewText = $derived(
-    replyingTo ? toReplyPreview(getPreviewText(parseEnvelope(replyingTo.content))) : ''
-  );
+  let replyPreviewText = $derived.by(() => {
+    if (!replyingTo || !replyingTo.content) return '';
+    try {
+      return toReplyPreview(getPreviewText(parseEnvelope(replyingTo.content)));
+    } catch {
+      return '';
+    }
+  });
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey) {

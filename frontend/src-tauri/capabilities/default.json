@@ -7,7 +7,9 @@
     "opener:default",
     "notification:default",
     "sql:default",
+    "sql:allow-execute",
     "biometric:default",
-    "keystore:default"
+    "keystore:default",
+    "http:default"
   ]
 }

@@ -4,7 +4,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
-package com.canari.app
+package fr.emse.canari
 
 import android.net.Uri
 import android.webkit.*

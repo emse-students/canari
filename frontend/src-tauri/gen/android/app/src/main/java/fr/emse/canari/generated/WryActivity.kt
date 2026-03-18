@@ -4,9 +4,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
-package com.canari.app
+package fr.emse.canari
 
-import com.canari.app.RustWebView
+import fr.emse.canari.RustWebView
 import android.annotation.SuppressLint
 import android.os.Build
 import android.os.Bundle

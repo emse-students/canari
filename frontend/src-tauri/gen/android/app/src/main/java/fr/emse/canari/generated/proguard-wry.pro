@@ -4,25 +4,25 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-License-Identifier: MIT
 
--keep class com.canari.app.* {
+-keep class fr.emse.canari.* {
   native <methods>;
 }
 
--keep class com.canari.app.WryActivity {
+-keep class fr.emse.canari.WryActivity {
   public <init>(...);
 
-  void setWebView(com.canari.app.RustWebView);
+  void setWebView(fr.emse.canari.RustWebView);
   java.lang.Class getAppClass(...);
   java.lang.String getVersion();
 }
 
--keep class com.canari.app.Ipc {
+-keep class fr.emse.canari.Ipc {
   public <init>(...);
 
   @android.webkit.JavascriptInterface public <methods>;
 }
 
--keep class com.canari.app.RustWebView {
+-keep class fr.emse.canari.RustWebView {
   public <init>(...);
 
   void loadUrlMainThread(...);
@@ -30,6 +30,6 @@
   void evalScript(...);
 }
 
--keep class com.canari.app.RustWebChromeClient,com.canari.app.RustWebViewClient {
+-keep class fr.emse.canari.RustWebChromeClient,fr.emse.canari.RustWebViewClient {
   public <init>(...);
 }

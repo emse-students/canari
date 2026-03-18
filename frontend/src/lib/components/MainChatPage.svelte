@@ -376,16 +376,15 @@
     const ids = unread.map((m) => m.id);
     const currentContact = selectedContact;
 
-    // Mark as read IMMEDIATELY (synchronously, untracked) so any subsequent
-    // re-run of this effect sees them as already read and doesn't re-send.
-    untrack(() => {
+    // Mark as read asynchronously to avoid synchronous reactivity loops (depth exceeded).
+    setTimeout(() => {
       const freshConvo = conversations.get(currentContact);
       if (!freshConvo) return;
       const newMsgs = freshConvo.messages.map((m) =>
         ids.includes(m.id) ? { ...m, readBy: [...(m.readBy || []), meNorm] } : m
       );
       conversations.set(currentContact, { ...freshConvo, messages: newMsgs });
-    });
+    }, 0);
 
     // Then send the receipt over the wire (best-effort, no retry needed
     // because the optimistic update already prevents duplicate sends).

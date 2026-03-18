@@ -6,7 +6,7 @@
 
 @file:Suppress("unused", "SetJavaScriptEnabled")
 
-package com.canari.app
+package fr.emse.canari
 
 import android.annotation.SuppressLint
 import android.webkit.*
