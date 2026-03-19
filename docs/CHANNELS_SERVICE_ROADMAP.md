@@ -13,7 +13,8 @@
 
 Prochaines priorites recommandees:
 
-- brancher chat-gateway/front sur les endpoints `channel-service`
+- [x] brancher front sur les endpoints channel-service (Proxy Vite + TS Service)
+- intégrer le proxy des WS channels dans chat-gateway (Pub/Sub)
 - ajouter tests e2e Nest dedies aux regles ACL critiques
 - externaliser/rotationner `CHANNELS_ENCRYPTION_SECRET` (secret manager)
 
@@ -157,11 +158,13 @@ Schema contracts:
 Contrairement à la dérivation de clé en direct calculée de manière dynamique, le système utilise désormais une clé de cryptage statique par canal pour assurer la compatibilité logicielle et fluidifier l'utilisation sur des groupes de plus grande envergure.
 
 **Clé de canal :**
+
 - Une clé de chiffrement symétrique (AES-256) par canal.
 - Dans ce MVP/concept actuel, la clé de canal **n'est pas rotative au cours du temps** (pas d'incrément de version). Elle est générée lors de la création du canal et reste statique.
 
 **Distribution de la clé (via MLS) :**
-- Le canal n'utilise plus le HKDF basé sur un secret maître d'utilisateur transmis lors de l'auth. 
+
+- Le canal n'utilise plus le HKDF basé sur un secret maître d'utilisateur transmis lors de l'auth.
 - Au lieu de ça, la gestion des accès et du secret du canal est couplée au protocole asynchrone sécurisé de l'application : **MLS** (Message Layer Security).
 - Lorsqu'un utilisateur rejoint un canal, un "Admin" ou un membre du canal qui possède déjà la clé l'ajoute. La clé privée du canal est **transmise au nouvel utilisateur via un message chiffré MLS** (soit via un groupe MLS dédié à la distribution, soit via un message direct MLS).
 - Ainsi, le serveur `channel-service` ne participe à aucun moment au routage du secret et n'est jamais exposé à la clé.
@@ -192,7 +195,7 @@ Contrairement à la dérivation de clé en direct calculée de manière dynamiqu
 
 ### Expulsion : Limites du MVP
 
-Dans cette itération, comme la clé n'est pas rotative, un utilisateur banni est seulement empêché de recevoir les nouveaux messages par l'ACL du serveur (un WebSocket ne propagera plus ses événements et le serveur rejettera ses appels API). Ce n'est qu'un blocage "soft" (soft expulse) car cryptographiquement, s'il accédait au ciphertext, il pourrait toujours le déchiffrer. La cryptographie asynchrone sans Perfect Forward Secrecy sur chaque évènement est un *"Trade-off"* assumé pour le MVP en raison de la complexité sur l'expérience type Discord à grand volume d'utilisateurs.
+Dans cette itération, comme la clé n'est pas rotative, un utilisateur banni est seulement empêché de recevoir les nouveaux messages par l'ACL du serveur (un WebSocket ne propagera plus ses événements et le serveur rejettera ses appels API). Ce n'est qu'un blocage "soft" (soft expulse) car cryptographiquement, s'il accédait au ciphertext, il pourrait toujours le déchiffrer. La cryptographie asynchrone sans Perfect Forward Secrecy sur chaque évènement est un _"Trade-off"_ assumé pour le MVP en raison de la complexité sur l'expérience type Discord à grand volume d'utilisateurs.
 
 ### Gestion des fichiers et blobs
 

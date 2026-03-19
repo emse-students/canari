@@ -3,6 +3,9 @@ import type { ChatMessage, Conversation } from '$lib/types';
 import { toHex } from '$lib/utils/hex';
 import { encodeAppMessage, mkText, mkReply, mkReaction, mkSystem } from '$lib/proto/codec';
 import { serializeEnvelope, mkTextEnvelope, parseEnvelope } from '$lib/envelope';
+import { ChannelService } from '$lib/services/ChannelService';
+
+const channelService = new ChannelService();
 
 interface SendMessageDeps {
   mlsService: IMlsService;
@@ -68,9 +71,19 @@ export async function sendChatMessage(
       payload = encodeAppMessage({ ...mkText(text), messageId });
     }
 
-    await mlsService.sendMessage(conversation.groupId, payload);
-    const stateBytes = await mlsService.saveState(pin);
-    localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
+    if (contactName.startsWith('channel_')) {
+      const actualChannelId = contactName.replace('channel_', ''); // extract the db id
+      await channelService.sendMessage(actualChannelId, {
+        senderId: userId,
+        nonce: Date.now().toString(), // Mock nonce for now since channels use MLS-based static keys which are WIP
+        ciphertext: btoa(String.fromCharCode(...payload)),
+      });
+    } else {
+      await mlsService.sendMessage(conversation.groupId, payload);
+      const stateBytes = await mlsService.saveState(pin);
+      localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
+    }
+
     await addMessageToChat(
       userId,
       serializeEnvelope(mkTextEnvelope(text, replyToData)),

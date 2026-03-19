@@ -34,4 +34,9 @@ Une fois l'environnement Android configure, Tauri genere le projet Android et pe
 
 ### Etat actuel sur cette machine
 
-L'initialisation Android a ete tentee mais a ete bloquee par l'absence de la toolchain Android complete (SDK/NDK installes localement).
+L'initialisation Android posait problème avec l'installation du NDK. Le `sdkmanager` a été déclenché pour installer `ndk-29.0.13846066` et les variables nécessaires ont été utilisées pour contourner l'erreur de version Java :
+
+- `$env:SKIP_JDK_VERSION_CHECK="true"`
+- `$env:NDK_HOME="<chemin...>\Sdk\ndk\29.0.13846066"`
+
+Le `npm run android:init` est désormais généré avec succès ! Le projet Android Studio se situe dans `frontend/src-tauri/gen/android/canari`.

@@ -47,6 +47,7 @@ export interface IMlsService {
   getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]>;
 
   // Callbacks
+  onChannelEvent?: (event: { type: string; data: any }) => void;
   onMessage(
     callback: (
       senderId: string,

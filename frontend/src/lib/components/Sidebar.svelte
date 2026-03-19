@@ -23,10 +23,13 @@
     selectedContact: string | null;
     newContactInput: string;
     newGroupInput: string;
+    newChannelInput?: string;
     onContactInputChange: (value: string) => void;
     onGroupInputChange: (value: string) => void;
+    onChannelInputChange?: (value: string) => void;
     onAddContact: (contactId?: string) => void;
     onCreateGroup: (groupName?: string) => void;
+    onCreateChannel?: (channelName?: string) => void;
     onSelectConversation: (name: string) => void;
     onToggleArchivedView?: () => void;
     onRestoreConversation?: (name: string) => void;
@@ -49,10 +52,13 @@
     selectedContact,
     newContactInput,
     newGroupInput,
+    newChannelInput = '',
     onContactInputChange,
     onGroupInputChange,
+    onChannelInputChange,
     onAddContact,
     onCreateGroup,
+    onCreateChannel,
     onSelectConversation,
     onToggleArchivedView,
     onRestoreConversation,
@@ -69,10 +75,11 @@
   }: Props = $props();
 
   let showNewChatModal = $state(false);
-  let activeTab = $state<'contact' | 'group'>('contact');
+  let activeTab = $state<'contact' | 'group' | 'channel'>('contact');
   let activeSidebarTab = $state<'discussions' | 'channels'>('discussions');
   let contactId = $state('');
   let groupName = $state('');
+  let channelName = $state('');
   let searchQuery = $state('');
   let expandedWorkspaceIds = $state<string[]>(['sports', 'bde']);
   let selectedChannelId = $state('sports-annonces');
@@ -167,10 +174,11 @@
       : [...expandedWorkspaceIds, workspaceId];
   }
 
-  function openNewChatModal(tab: 'contact' | 'group' = 'contact') {
+  function openNewChatModal(tab: 'contact' | 'group' | 'channel' = 'contact') {
     activeTab = tab;
     contactId = newContactInput;
     groupName = newGroupInput;
+    channelName = newChannelInput;
     showNewChatModal = true;
   }
 
@@ -195,6 +203,16 @@
     onCreateGroup(value);
     groupName = '';
     onGroupInputChange('');
+    closeNewChatModal();
+  }
+
+  function handleCreateChannel() {
+    const value = channelName.trim();
+    if (!value) return;
+    onChannelInputChange?.(value);
+    onCreateChannel?.(value);
+    channelName = '';
+    onChannelInputChange?.('');
     closeNewChatModal();
   }
 </script>
@@ -306,6 +324,7 @@
   {activeTab}
   {contactId}
   {groupName}
+  {channelName}
   onClose={closeNewChatModal}
   onTabChange={(tab) => {
     activeTab = tab;
@@ -316,6 +335,10 @@
   onGroupNameChange={(value) => {
     groupName = value;
   }}
+  onChannelNameChange={(value) => {
+    channelName = value;
+  }}
   onSubmitContact={handleAddContact}
   onSubmitGroup={handleCreateGroup}
+  onSubmitChannel={handleCreateChannel}
 />

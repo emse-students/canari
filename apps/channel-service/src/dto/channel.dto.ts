@@ -35,7 +35,8 @@ export interface ChannelKickDto {
 
 export interface SendChannelMessageDto {
   senderId: string;
-  plaintext: string;
+  ciphertext: string;
+  nonce: string;
 }
 
 export interface GetChannelMessagesQuery {

@@ -7,6 +7,7 @@ import type { IMlsService } from './IMlsService';
 
 export class TauriMlsService implements IMlsService {
   private ws: WebSocket | null = null;
+  public onChannelEvent?: (event: { type: string; data: any }) => void;
   private messageCallback:
     | ((
         senderId: string,
@@ -68,6 +69,15 @@ export class TauriMlsService implements IMlsService {
                 : new TextDecoder().decode(event.data as ArrayBuffer);
 
           const msg = JSON.parse(text);
+          if (msg.type && msg.type.startsWith('channel.')) {
+            if (this.onChannelEvent) {
+              console.log(`[WS RCV] Triggering onChannelEvent for ${msg.type}`);
+              this.onChannelEvent({ type: msg.type, data: msg.data });
+            } else {
+              console.warn(`[WS RCV] Received channel event but no onChannelEvent registered.`);
+            }
+            return;
+          }
           if (msg.proto && this.messageCallback) {
             const binaryString = atob(msg.proto as string);
             const ciphertext = new Uint8Array(binaryString.length);

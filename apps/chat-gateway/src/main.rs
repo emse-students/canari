@@ -122,74 +122,104 @@ async fn main() {
                     }
                 }
 
+                match pubsub.subscribe("chat:channel_events").await {
+                    Ok(_) => tracing::info!("Abonné au canal Redis 'chat:channel_events'"),
+                    Err(e) => {
+                        tracing::warn!("Echec abonnement Redis channel_events: {}. Retry dans 5s...", e);
+                        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                        continue;
+                    }
+                }
+
                 // Listen for direct messages from Backend or other Gateways
                 let mut stream = pubsub.on_message();
                 while let Some(msg) = stream.next().await {
+                    let channel_name = msg.get_channel_name();
                     if let Ok(payload_str) = msg.get_payload::<String>() {
-                        tracing::debug!("Received pub/sub message: {}", payload_str);
+                        tracing::debug!("Received pub/sub message on {}: {}", channel_name, payload_str);
                         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&payload_str) {
-                            let recipient_id =
-                                match json.get("recipientId").and_then(|v| v.as_str()) {
+                            if channel_name == "chat:messages" {
+                                let recipient_id =
+                                    match json.get("recipientId").and_then(|v| v.as_str()) {
+                                        Some(v) => v.to_string(),
+                                        None => continue,
+                                    };
+                                let device_id = match json.get("deviceId").and_then(|v| v.as_str()) {
                                     Some(v) => v.to_string(),
                                     None => continue,
                                 };
-                            let device_id = match json.get("deviceId").and_then(|v| v.as_str()) {
-                                Some(v) => v.to_string(),
-                                None => continue,
-                            };
 
-                            let proto_b64 = match json.get("proto").and_then(|v| v.as_str()) {
-                                Some(v) if !v.is_empty() => v,
-                                _ => {
-                                    tracing::warn!("Redis message missing 'proto' field, dropping");
-                                    continue;
+                                let proto_b64 = match json.get("proto").and_then(|v| v.as_str()) {
+                                    Some(v) if !v.is_empty() => v,
+                                    _ => {
+                                        tracing::warn!("Redis message missing 'proto' field, dropping");
+                                        continue;
+                                    }
+                                };
+
+                                // Forward flat JSON to the WS client — no proto decode needed.
+                                let json_frame = serde_json::json!({
+                                    "senderId": json.get("senderId").and_then(|v| v.as_str()).unwrap_or(""),
+                                    "senderDeviceId": json.get("senderDeviceId").and_then(|v| v.as_str()).unwrap_or(""),
+                                    "groupId": json.get("groupId").and_then(|v| v.as_str()).unwrap_or(""),
+                                    "isWelcome": json.get("isWelcome").and_then(|v| v.as_bool()).unwrap_or(false),
+                                    "ratchetTree": json.get("ratchetTree").cloned().unwrap_or(serde_json::Value::Null),
+                                    "proto": proto_b64
+                                })
+                                .to_string();
+
+                                let key = format!("{}:{}", recipient_id, device_id);
+
+                                tracing::info!("Looking for connected user: {}", key);
+
+                                // Send to ALL active connections for this key (multi-tab support)
+                                let senders = {
+                                    let map = connected_users.lock().unwrap();
+                                    map.get(&key).cloned()
+                                };
+
+                                if let Some(senders) = senders {
+                                    for tx in &senders {
+                                        if tx.send(json_frame.clone()).is_ok() {
+                                            tracing::info!(
+                                                "[Gateway] Message directly routed to {}, json_frame length: {} bytes",
+                                                key,
+                                                json_frame.len()
+                                            );
+                                        } else {
+                                            tracing::warn!("Failed to send to socket for {} (channel closed)", key);
+                                        }
+                                    }
+                                } else {
+                                    tracing::warn!("User {} not connected to this gateway instance.", key);
                                 }
-                            };
+                            } else if channel_name == "chat:channel_events" {
+                                // Expected payload format:
+                                // { "userIds": ["user1", "user2"], "type": "channel_event", "data": { ... } }
+                                let user_ids = match json.get("userIds").and_then(|v| v.as_array()) {
+                                    Some(arr) => arr.iter().filter_map(|v| v.as_str()).collect::<Vec<&str>>(),
+                                    None => continue,
+                                };
 
-                            // Forward flat JSON to the WS client — no proto decode needed.
-                            let json_frame = serde_json::json!({
-                                "senderId": json.get("senderId").and_then(|v| v.as_str()).unwrap_or(""),
-                                "senderDeviceId": json.get("senderDeviceId").and_then(|v| v.as_str()).unwrap_or(""),
-                                "groupId": json.get("groupId").and_then(|v| v.as_str()).unwrap_or(""),
-                                "isWelcome": json.get("isWelcome").and_then(|v| v.as_bool()).unwrap_or(false),
-                                "ratchetTree": json.get("ratchetTree").cloned().unwrap_or(serde_json::Value::Null),
-                                "proto": proto_b64
-                            })
-                            .to_string();
+                                let frame = serde_json::json!({
+                                    "type": json.get("type").unwrap_or(&serde_json::Value::Null),
+                                    "data": json.get("data").unwrap_or(&serde_json::Value::Null)
+                                }).to_string();
 
-                            let key = format!("{}:{}", recipient_id, device_id);
-
-                            tracing::info!("Looking for connected user: {}", key);
-
-                            // Send to ALL active connections for this key (multi-tab support)
-                            let senders = {
+                                // Find all map keys that start with the user ID
                                 let map = connected_users.lock().unwrap();
-                                map.get(&key).cloned()
-                            };
-
-                            if let Some(senders) = senders {
-                                for tx in &senders {
-                                    if tx.send(json_frame.clone()).is_ok() {
-                                        tracing::info!(
-                                            "[Gateway] Message directly routed to {}, json_frame length: {} bytes",
-                                            key,
-                                            json_frame.len()
-                                        );
-                                    } else {
-                                        tracing::warn!(
-                                            "Failed to send to socket for {} (channel closed)",
-                                            key
-                                        );
+                                for u_id in user_ids {
+                                    // Iterate all keys to find matches prefix (u_id + ":")
+                                    let prefix = format!("{}:", u_id);
+                                    for (key, senders) in map.iter() {
+                                        if key.starts_with(&prefix) {
+                                            for tx in senders {
+                                                let _ = tx.send(frame.clone());
+                                            }
+                                        }
                                     }
                                 }
-                            } else {
-                                let map = connected_users.lock().unwrap();
-                                let connected_keys: Vec<_> = map.keys().cloned().collect();
-                                tracing::warn!(
-                                    "User {} not connected to this gateway instance. Re-try? Connected keys: {:?}",
-                                    key,
-                                    connected_keys
-                                );
+                                tracing::info!("[Gateway] Channel event distributed to connected users.");
                             }
                         }
                     }

@@ -81,6 +81,43 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   const groupMlsFailures = new Map<string, number>();
   const PHANTOM_THRESHOLD = 3;
 
+  if ('onChannelEvent' in mlsService) {
+    (mlsService as any).onChannelEvent = (event: any) => {
+      log(`[Channel Event] ${event.type}`);
+      if (event.type === 'channel.message.created') {
+        const data = event.data;
+        const channelId = `channel_${data.channelId}`;
+        const sender = data.senderId;
+        // Check if we have this channel in our conversations list
+        let convoKey: string | undefined;
+        for (const [k, c] of conversations.entries()) {
+          if (c.groupId === channelId) {
+            convoKey = k;
+            break;
+          }
+        }
+
+        if (convoKey) {
+          // Add to chat (we ignore real crypto for the moment in this quick integration,
+          // usually we'd pass data.ciphertext to the crypto engine if needed, but this MVP routes it)
+          addMessageToChat(
+            sender,
+            data.ciphertext || data.plaintext || '[Message chiffré]',
+            convoKey,
+            undefined,
+            false,
+            data.id,
+            new Date(data.createdAt)
+          ).catch((e) => console.error(e));
+        } else {
+          // We might want to auto-create the conversation if not found, but we skip for now
+          // or add a system message log
+          log(`Canal inconnu reçu: ${channelId}`);
+        }
+      }
+    };
+  }
+
   mlsService.onMessage(
     async (sender, content, groupId, isWelcome, ratchetTreeBytes): Promise<boolean> => {
       log(

@@ -26,11 +26,11 @@ import {
   type CreateWorkspaceDto,
   type SendChannelMessageDto,
 } from './dto/channel.dto';
-import { decryptSoft, encryptSoft } from './soft-crypto';
+import Redis from 'ioredis';
 
 @Injectable()
 export class ChannelService {
-  private readonly cryptoSecret: string;
+  private readonly redis: Redis;
 
   constructor(
     @InjectModel(Workspace.name)
@@ -44,7 +44,7 @@ export class ChannelService {
     @InjectModel(ChannelMessage.name)
     private readonly messageModel: Model<ChannelMessage>
   ) {
-    this.cryptoSecret = process.env.CHANNELS_ENCRYPTION_SECRET || 'change-me-in-prod';
+    this.redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
   }
 
   async createWorkspace(input: CreateWorkspaceDto) {
@@ -208,23 +208,41 @@ export class ChannelService {
       throw new ForbiddenException('missing channel.write permission');
     }
 
-    const { ciphertext, nonce } = encryptSoft({
-      secret: this.cryptoSecret,
-      workspaceId: channel.workspaceId,
-      channelId: channel.id,
-      keyVersion: channel.keyVersion,
-      plaintext: input.plaintext,
-    });
-
-    return await this.messageModel.create({
+    const message = await this.messageModel.create({
       channelId: channel.id,
       workspaceId: channel.workspaceId,
       senderId: sender,
-      ciphertext,
-      nonce,
+      ciphertext: input.ciphertext,
+      nonce: input.nonce,
       keyVersion: channel.keyVersion,
       createdAt: new Date(),
     });
+
+    // Notify ALL currently active members
+    const members = await this.memberModel.find({ channelId: channel.id, leftAt: null }).lean();
+    const userIds = members.map((m) => m.userId);
+
+    if (userIds.length > 0) {
+      await this.redis.publish(
+        'chat:channel_events',
+        JSON.stringify({
+          userIds,
+          type: 'channel.message.created',
+          data: {
+            id: message._id.toString(),
+            channelId: message.channelId,
+            workspaceId: message.workspaceId,
+            senderId: message.senderId,
+            ciphertext: message.ciphertext,
+            nonce: message.nonce,
+            keyVersion: message.keyVersion,
+            createdAt: message.createdAt,
+          },
+        })
+      );
+    }
+
+    return message;
   }
 
   async listMessages(channelId: string, userId: string, limit = 100) {
@@ -242,17 +260,13 @@ export class ChannelService {
 
     return docs.reverse().map((doc) => ({
       id: String(doc._id),
+      channelId: doc.channelId,
+      workspaceId: doc.workspaceId,
       senderId: doc.senderId,
       keyVersion: doc.keyVersion,
       createdAt: doc.createdAt,
-      plaintext: decryptSoft({
-        secret: this.cryptoSecret,
-        workspaceId: channel.workspaceId,
-        channelId: channel.id,
-        keyVersion: doc.keyVersion,
-        ciphertext: doc.ciphertext,
-        nonce: doc.nonce,
-      }),
+      ciphertext: doc.ciphertext,
+      nonce: doc.nonce,
     }));
   }
 

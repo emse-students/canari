@@ -1,7 +1,7 @@
 <script lang="ts">
   import { ShieldCheck, AlertTriangle } from 'lucide-svelte';
   import { ArrowDown } from 'lucide-svelte';
-  import { tick } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import ChatHeader from './ChatHeader.svelte';
   import ChatMessageGroups from './ChatMessageGroups.svelte';
   import ChatComposer from './ChatComposer.svelte';
@@ -128,26 +128,28 @@
     const convoKey = conversation ? `${conversation.groupId}-${conversation.contactName}` : '';
     const messageCount = conversation?.messages.length ?? 0;
 
-    if (!conversation) {
-      lastConversationKey = '';
-      lastMessageCount = 0;
-      return;
-    }
+    untrack(() => {
+      if (!conversation) {
+        lastConversationKey = '';
+        lastMessageCount = 0;
+        return;
+      }
 
-    const hasConversationChanged = convoKey !== lastConversationKey;
-    const hasNewMessage = messageCount > lastMessageCount;
+      const hasConversationChanged = convoKey !== lastConversationKey;
+      const hasNewMessage = messageCount > lastMessageCount;
 
-    if (hasConversationChanged) {
-      switchTime = Date.now();
-      renderedGroupCount = INITIAL_RENDER_GROUPS;
-      tick().then(() => scrollToBottom(false));
-      isNearBottom = true;
-    } else if (hasNewMessage && isNearBottom) {
-      tick().then(() => scrollToBottom(true));
-    }
+      if (hasConversationChanged) {
+        switchTime = Date.now();
+        renderedGroupCount = INITIAL_RENDER_GROUPS;
+        tick().then(() => scrollToBottom(false));
+        isNearBottom = true;
+      } else if (hasNewMessage && isNearBottom) {
+        tick().then(() => scrollToBottom(true));
+      }
 
-    lastConversationKey = convoKey;
-    lastMessageCount = messageCount;
+      lastConversationKey = convoKey;
+      lastMessageCount = messageCount;
+    });
   });
 </script>
 

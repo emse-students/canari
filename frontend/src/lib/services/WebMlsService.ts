@@ -4,6 +4,7 @@ import type { IMlsService } from './IMlsService';
 export class WebMlsService implements IMlsService {
   private client: any;
   private ws: WebSocket | null = null;
+  public onChannelEvent?: (event: { type: string; data: any }) => void;
   private messageCallback:
     | ((
         senderId: string,
@@ -98,7 +99,15 @@ export class WebMlsService implements IMlsService {
           console.log(
             `[WS RCV] JSON frame: senderId=${msg.senderId}, groupId=${msg.groupId}, isWelcome=${msg.isWelcome}, protoLen=${(msg.proto as string)?.length}`
           );
-
+          if (msg.type && msg.type.startsWith('channel.')) {
+            if (this.onChannelEvent) {
+              console.log(`[WS RCV] Triggering onChannelEvent for ${msg.type}`);
+              this.onChannelEvent({ type: msg.type, data: msg.data });
+            } else {
+              console.warn(`[WS RCV] Received channel event but no onChannelEvent registered.`);
+            }
+            return;
+          }
           if (msg.proto && this.messageCallback) {
             const binaryString = atob(msg.proto as string);
             const ciphertext = new Uint8Array(binaryString.length);

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Send, Paperclip, X, FileText } from 'lucide-svelte';
+  import { untrack } from 'svelte';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import VoiceRecorder from './VoiceRecorder.svelte';
 
@@ -189,20 +190,23 @@
   });
 
   $effect(() => {
-    const previous = previewUrls;
-    const next: Record<string, string> = {};
+    const files = pendingFiles;
+    untrack(() => {
+      const previous = previewUrls;
+      const next: Record<string, string> = {};
 
-    pendingFiles.forEach((file, index) => {
-      const key = fileKey(file, index);
-      if (!isImageFile(file) && !isPdfFile(file)) return;
-      next[key] = previous[key] ?? URL.createObjectURL(file);
+      files.forEach((file, index) => {
+        const key = fileKey(file, index);
+        if (!isImageFile(file) && !isPdfFile(file)) return;
+        next[key] = previous[key] ?? URL.createObjectURL(file);
+      });
+
+      for (const [key, url] of Object.entries(previous)) {
+        if (!next[key]) URL.revokeObjectURL(url);
+      }
+
+      previewUrls = next;
     });
-
-    for (const [key, url] of Object.entries(previous)) {
-      if (!next[key]) URL.revokeObjectURL(url);
-    }
-
-    previewUrls = next;
   });
 </script>
 
