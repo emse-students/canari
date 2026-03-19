@@ -92,9 +92,7 @@
     }
   }
 
-  const panelTitle = $derived(
-    isGroupConversation ? 'Gestion du groupe' : 'Infos de la discussion'
-  );
+  const panelTitle = $derived(isGroupConversation ? 'Gestion du groupe' : 'Infos de la discussion');
 
   const panelSubtitle = $derived(
     isGroupConversation
@@ -169,7 +167,9 @@
         aria-label="Parametres du groupe"
         class="absolute pointer-events-auto inset-x-3 top-4 bottom-4 md:inset-x-auto md:right-8 md:top-20 md:bottom-auto md:w-[34rem] md:max-h-[85dvh] bg-white/70 dark:bg-slate-950/80 border border-white/55 dark:border-white/10 rounded-3xl shadow-[0_28px_90px_rgba(2,6,23,0.45)] backdrop-blur-xl flex flex-col overflow-hidden text-text-main"
       >
-        <div class="px-4 md:px-6 py-4 border-b border-white/60 dark:border-white/10 flex items-start justify-between gap-3">
+        <div
+          class="px-4 md:px-6 py-4 border-b border-white/60 dark:border-white/10 flex items-start justify-between gap-3"
+        >
           <div class="min-w-0">
             <h3 class="text-lg font-extrabold text-cn-dark truncate">{panelTitle}</h3>
             <p class="text-xs text-text-muted mt-1">{panelSubtitle}</p>
@@ -184,7 +184,9 @@
         </div>
 
         <div class="flex-1 min-h-0 overflow-y-auto px-4 md:px-6 py-5 flex flex-col gap-5">
-          <div class="rounded-2xl border border-white/60 dark:border-white/10 bg-white/65 dark:bg-black/25 px-4 py-3 flex items-center gap-3">
+          <div
+            class="rounded-2xl border border-white/60 dark:border-white/10 bg-white/65 dark:bg-black/25 px-4 py-3 flex items-center gap-3"
+          >
             <Avatar userId={contactName} size="lg" />
             <div class="min-w-0 flex-1">
               <div class="text-base font-bold text-cn-dark truncate">{displayName}</div>
@@ -201,7 +203,9 @@
           </div>
 
           {#if isGroupConversation}
-            <div class="rounded-2xl border border-white/60 dark:border-white/10 bg-white/55 dark:bg-black/25 p-4 flex flex-col gap-2">
+            <div
+              class="rounded-2xl border border-white/60 dark:border-white/10 bg-white/55 dark:bg-black/25 p-4 flex flex-col gap-2"
+            >
               <label
                 for="group-rename-input"
                 class="text-xs text-text-muted font-semibold inline-flex items-center gap-1.5"
@@ -227,7 +231,9 @@
               </div>
             </div>
           {:else}
-            <div class="rounded-2xl border border-white/60 dark:border-white/10 bg-white/55 dark:bg-black/25 p-3 text-sm text-text-muted">
+            <div
+              class="rounded-2xl border border-white/60 dark:border-white/10 bg-white/55 dark:bg-black/25 p-3 text-sm text-text-muted"
+            >
               Cette discussion privee est entre deux participants.
             </div>
           {/if}
@@ -289,7 +295,9 @@
         </div>
 
         {#if isGroupConversation && onGroupDelete}
-          <div class="border-t border-white/60 dark:border-white/10 px-4 md:px-6 py-4 bg-white/45 dark:bg-black/30">
+          <div
+            class="border-t border-white/60 dark:border-white/10 px-4 md:px-6 py-4 bg-white/45 dark:bg-black/30"
+          >
             {#if !confirmDelete}
               <button
                 onclick={() => {

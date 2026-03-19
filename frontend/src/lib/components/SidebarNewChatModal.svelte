@@ -29,7 +29,9 @@
 </script>
 
 <Modal {open} {onClose} title="Nouvelle discussion">
-  <div class="flex gap-2 rounded-2xl bg-white/45 dark:bg-black/25 border border-white/50 dark:border-white/10 p-1 mb-4">
+  <div
+    class="flex gap-2 rounded-2xl bg-white/45 dark:bg-black/25 border border-white/50 dark:border-white/10 p-1 mb-4"
+  >
     <button
       class="flex-1 px-3 py-2 text-sm font-semibold rounded-xl transition-colors {activeTab ===
       'contact'
