@@ -7,9 +7,9 @@
 - Historique visible pour nouveaux membres (mode soft demande).
 - Chiffrement applicatif AES-256-GCM + derivation HKDF implemente cote service.
 - Integration locale faite:
-   - `infrastructure/local/docker-compose.yml` inclut `channel-service`
-   - scripts start/stop Windows et Linux mis a jour
-   - smoke test automatisable via `apps/channel-service/scripts/smoke-test.mjs`
+  - `infrastructure/local/docker-compose.yml` inclut `channel-service`
+  - scripts start/stop Windows et Linux mis a jour
+  - smoke test automatisable via `apps/channel-service/scripts/smoke-test.mjs`
 
 Prochaines priorites recommandees:
 
@@ -152,93 +152,51 @@ Schema contracts:
 
 **Hypothèse d'adversaire:** un attaquant peut compromettre le serveur channel-service dans sa totalité (DB, API, Redis). **Objectif:** l'attaquant ne peut toujours pas lire les messages ou fichiers des canaux.
 
-### Mécanisme de chiffrement par dérivation de clé
+### Mécanisme de chiffrement (Clé de canal distribuée via MLS)
 
-**Clé maître utilisateur (KMS root):**
+Contrairement à la dérivation de clé en direct calculée de manière dynamique, le système utilise désormais une clé de cryptage statique par canal pour assurer la compatibilité logicielle et fluidifier l'utilisation sur des groupes de plus grande envergure.
 
-- Stockée dans auth-service/KMS (HSM ou secret manager sécurisé)
-- Jamais exposée en clair ; dérivée = unique par user+workspace
-- Nécessite authentification forte (JWT + MFA) pour accès
+**Clé de canal :**
+- Une clé de chiffrement symétrique (AES-256) par canal.
+- Dans ce MVP/concept actuel, la clé de canal **n'est pas rotative au cours du temps** (pas d'incrément de version). Elle est générée lors de la création du canal et reste statique.
 
-**Dérivation de clé de canal (client-side):**
-
-```
-channel_key_version_N = HKDF(
-  ikm=user_kms_root,
-  salt=SHA256(workspace_id || channel_id || version_number),
-  info="channel-encryption-v1",
-  L=32 bytes (AES-256)
-)
-```
-
-- **Chaque client calcule indépendamment** la même clé
-- **Serveur ne stocke jamais** la clé
-- Version = integer incrémenté à chaque rotation (join/leave de membres)
+**Distribution de la clé (via MLS) :**
+- Le canal n'utilise plus le HKDF basé sur un secret maître d'utilisateur transmis lors de l'auth. 
+- Au lieu de ça, la gestion des accès et du secret du canal est couplée au protocole asynchrone sécurisé de l'application : **MLS** (Message Layer Security).
+- Lorsqu'un utilisateur rejoint un canal, un "Admin" ou un membre du canal qui possède déjà la clé l'ajoute. La clé privée du canal est **transmise au nouvel utilisateur via un message chiffré MLS** (soit via un groupe MLS dédié à la distribution, soit via un message direct MLS).
+- Ainsi, le serveur `channel-service` ne participe à aucun moment au routage du secret et n'est jamais exposé à la clé.
 
 **Chiffrement des messages:**
 
 - Plaintext: `{sender_id, timestamp, content, attachments}`
-- Cipher: `AES-256-GCM(plaintext, channel_key_version_N, nonce)` + AEAD authentification
-- Serveur stocke : `{ciphertext, version_number, nonce, sender_id, timestamp, message_id}`
+- Cipher: `AES-256-GCM(plaintext, channel_key, nonce)` + AEAD authentification
+- Serveur stocke : `{ciphertext, nonce, sender_id, timestamp, message_id}`
 - Serveur NE peut PAS lire : contenu, fichiers, édits historiques
 
 ### Accès à l'historique pour nouveaux membres
 
 **Question critique:** un nouveau membre qui rejoint peut-il lire les anciens messages ?
-**Réponse:** OUI, via distribution de clés d'archives.
+**Réponse:** OUI, le fait d'avoir la clé unique lui permet de déchiffrer tous les messages chiffrés avec cette clé.
 
 **Workflow détaillé:**
 
 1. **Nouveau membre demande à rejoindre canal** (via join endpoint)
-   - ACL vérifie les permissions (public vs private)
-   - Channel-service valide l'accès
+   - L'ACL vérifie les permissions.
+2. **Transmission de la clé de canal par MLS**
+   - Un client avec les droits (ou le bot de gestion du groupe) transmet la clé privée du canal au nouvel arrivant de manière sécurisée et asynchrone via MLS.
+3. **Le nouveau client récupère la clé**
+   - Le client stocke la clé du canal localement.
+4. **L'historique devient lisible**
+   - Le client fait un fetch des messages du canal : `GET /channels/{id}/messages`
+   - Le client reçoit les ciphertexts et les déchiffre localement.
 
-2. **Serveur prépare le paquet de clés d'historique**
-   - Requête : `GET /channels/{id}/key-archive?user_id=X`
-   - Retour : liste de `(version_number, encrypted_key_for_user_X)`
-   - Les clés sont chiffrées avec la clé publique du nouvel utilisateur (RSA-4096, ou key transport via auth-service)
-   - OU : clés envoyées via secure forward-secrecy (OPAQUE/DH)
+### Expulsion : Limites du MVP
 
-3. **Client déchiffre les clés d'historique**
-   - Client a la clé privée correspondante
-   - Déchiffre la clé de chaque version
-   - Stocke localement (Tauri secret storage / browser localStorage chiffré)
-
-4. **Historique devient lisible**
-   - Client fetch messages par version: `GET /channels/{id}/messages?version=1,2,3`
-   - Client reçoit le ciphertext avec métadonnées
-   - Client déchiffre localement avec les clés d'historique
-
-**Exemple:**
-
-- Messages 1-100: version=1 (original 10 membres)
-- Membre #3 quitte → key rotation
-- Messages 101-200: version=2 (9 membres)
-- Nouveau membre rejoint → reçoit clé_v1 + clé_v2 → lit tout
-- Ancien membre #3 → ne reçoit PAS clé_v2 → ne peut lire que messages 1-100
-
-### Expulsion et rotation de clé
-
-**Scenario: Admin kick membre #3 du canal**
-
-1. Serveur delète `channel_members.channel_id={id}, user_id=3`
-2. Serveur envoie évènement Kafka: `channel.member.kicked` avec timestamp
-3. Serveur publie signal WebSocket: `{type: 'key.rotated', channel_id, new_version: 3}`
-4. **Tous les clients existants (sauf le kicked)**
-   - Dérivent la nouvelle clé: `channel_key_version_3 = HKDF(..., version_number=3)`
-   - Les anciens ciphertexts (v1, v2) restent lisibles (ont les clés)
-   - Les messages POST-kick (version_3+) sont sous une nouvelle clé
-5. **Ancien membre kicked**
-   - Reçoit le signal WebSocket mais ne peut pas dériver la v3
-   - Ne peut pas rejoindre (ACL le refuse)
-   - Ses anciennes messages (v1, v2) restent lisibles localement (cache)
-   - Les nouveaux messages (v3+) : ciphertext stocké localement, clé manquante = non-lisible
-
-**Implication:** suppression d'accès **immédiate** à la suite, mais l'historique passé reste chez ceux qui l'ont vu.
+Dans cette itération, comme la clé n'est pas rotative, un utilisateur banni est seulement empêché de recevoir les nouveaux messages par l'ACL du serveur (un WebSocket ne propagera plus ses événements et le serveur rejettera ses appels API). Ce n'est qu'un blocage "soft" (soft expulse) car cryptographiquement, s'il accédait au ciphertext, il pourrait toujours le déchiffrer. La cryptographie asynchrone sans Perfect Forward Secrecy sur chaque évènement est un *"Trade-off"* assumé pour le MVP en raison de la complexité sur l'expérience type Discord à grand volume d'utilisateurs.
 
 ### Gestion des fichiers et blobs
 
-- Fichiers uploadés = chiffrés avec la clé du canal (`channel_blob = AES-256-GCM(file, channel_key_version)`)
+- Fichiers uploadés = chiffrés avec la clé du canal (`channel_blob = AES-256-GCM(file, channel_key)`)
 - Stockage: S3/GCS avec bucket chiffré à repos (double-layer)
 - Métadonnées (filename, size, MIME) : stockées NON-chiffrées pour rendre le UI fonctionnel
 - Modération: admin peut voir filename/size mais pas contenu

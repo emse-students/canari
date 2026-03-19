@@ -27,7 +27,7 @@ launch_terminal() {
     local title=$1
     local dir=$2
     local cmd=$3
-    
+
     if command -v gnome-terminal &> /dev/null; then
         gnome-terminal --title="$title" -- bash -c "cd $dir && $cmd; exec bash"
     elif command -v konsole &> /dev/null; then
