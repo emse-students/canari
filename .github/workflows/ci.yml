@@ -125,6 +125,18 @@ jobs:
           npm install
           npm run build
 
+      - name: Build User Service
+        working-directory: apps/user-service
+        run: |
+          npm install
+          npm run build
+
+      - name: Build Post Service
+        working-directory: apps/post-service
+        run: |
+          npm install
+          npm run build
+
   test-frontend:
     name: Test Frontend Conversation Logic
     runs-on: ubuntu-latest

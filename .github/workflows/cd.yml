@@ -77,6 +77,7 @@ jobs:
           echo "VITE_GATEWAY_URL=${BASE_URL}" >> .env
           echo "VITE_HISTORY_URL=${BASE_URL}" >> .env
           echo "VITE_MEDIA_URL=${BASE_URL}" >> .env
+          echo "VITE_POSTS_URL=${BASE_URL}" >> .env
 
       - name: Build frontend
         working-directory: frontend
@@ -111,6 +112,12 @@ jobs:
           - name: media-service
             context: .
             dockerfile: ./infrastructure/local/Dockerfile.media-service
+          - name: post-service
+            context: .
+            dockerfile: ./infrastructure/local/Dockerfile.post-service
+          - name: user-service
+            context: .
+            dockerfile: ./infrastructure/local/Dockerfile.user-service
     steps:
       - uses: actions/checkout@v4
 
