@@ -365,47 +365,70 @@
   }
 
   // Read Receipts logic
-  $effect(() => {
-    if (!selectedContact || !isLoggedIn) return;
-    const convo = conversations.get(selectedContact);
-    if (!convo || !convo.isReady) return;
+  let pendingReadReceipts: string[] = [];
+  let readReceiptTimer: ReturnType<typeof setTimeout> | null = null;
 
-    // Find messages we haven't read
-    const meNorm = userId.toLowerCase();
-    const unread = convo.messages.filter(
-      (m) => !m.isOwn && !m.isSystem && !(m.readBy || []).includes(meNorm)
-    );
-    if (unread.length === 0) return;
+    $effect(() => {
+      if (!selectedContact || !isLoggedIn) return;
+      const convo = conversations.get(selectedContact);
+      if (!convo || !convo.isReady) return;
 
-    const ids = unread.map((m) => m.id);
-    const currentContact = selectedContact;
-
-    // Mark as read asynchronously to avoid synchronous reactivity loops (depth exceeded).
-    setTimeout(() => {
-      const freshConvo = conversations.get(currentContact);
-      if (!freshConvo) return;
-      const newMsgs = freshConvo.messages.map((m) =>
-        ids.includes(m.id) ? { ...m, readBy: [...(m.readBy || []), meNorm] } : m
+      // Find messages we haven't read
+      const meNorm = userId.toLowerCase();
+      const unread = convo.messages.filter(
+        (m) => !m.isOwn && !m.isSystem && !(m.readBy || []).includes(meNorm)
       );
-      conversations.set(currentContact, { ...freshConvo, messages: newMsgs });
-    }, 0);
+      if (unread.length === 0) return;
 
-    // Then send the receipt over the wire (best-effort, no retry needed
-    // because the optimistic update already prevents duplicate sends).
-    try {
-      const mlsService = ensureMls();
-      sendReadReceipt(ids, {
-        mlsService,
-        userId,
-        pin,
-        conversation: convo,
-      }).catch(() => {
-        // Silently ignore — the local state is already updated.
+      const ids = unread.map((m) => m.id);
+      const currentContact = selectedContact;
+
+      // Mark as read asynchronously to avoid synchronous reactivity loops (depth exceeded).
+      untrack(() => {
+        setTimeout(() => {
+          const freshConvo = conversations.get(currentContact);
+          if (!freshConvo) return;
+          const newMsgs = freshConvo.messages.map((m) =>
+            ids.includes(m.id) ? { ...m, readBy: [...(m.readBy || []), meNorm] } : m
+          );
+          conversations.set(currentContact, { ...freshConvo, messages: newMsgs });
+        }, 0);
       });
-    } catch {
-      // MLS not ready yet, will catch next time.
-    }
-  });
+
+      // Accumulate for batch sending to avoid flooding with MLS packets
+      ids.forEach((id) => {
+        if (!pendingReadReceipts.includes(id)) pendingReadReceipts.push(id);
+      });
+
+      if (!readReceiptTimer) {
+        readReceiptTimer = setTimeout(() => {
+          untrack(() => {
+            const toSend = [...pendingReadReceipts];
+            pendingReadReceipts = [];
+            readReceiptTimer = null;
+            
+            if (toSend.length === 0) return;
+
+            try {
+              const mlsService = ensureMls();
+              const freshConvo = conversations.get(currentContact);
+              if (!freshConvo) return;
+              
+              sendReadReceipt(toSend, {
+                mlsService,
+                userId,
+                pin,
+                conversation: freshConvo,
+              }).catch(() => {
+                // Silently ignore — the local state is already updated.
+              });
+            } catch {
+              // MLS not ready yet, will catch next time.
+            }
+          });
+        }, 2000); // 2-second debounce for batching history load reads
+      }
+    });
 
   onMount(() => {
     if (routeMode === 'login') {
