@@ -73,8 +73,8 @@
     <button
       onclick={onOpenNewChat}
       class="w-8 h-8 rounded-full bg-white/65 dark:bg-black/30 hover:bg-white/80 dark:hover:bg-black/40 border border-white/45 dark:border-white/10 text-text-main transition-colors flex items-center justify-center"
-      title={activeSidebarTab === 'channels' ? 'Nouveau groupe' : 'Nouvelle discussion'}
-      aria-label={activeSidebarTab === 'channels' ? 'Nouveau groupe' : 'Nouvelle discussion'}
+      title={activeSidebarTab === 'channels' ? 'Nouveau canal' : 'Nouvelle discussion'}
+      aria-label={activeSidebarTab === 'channels' ? 'Nouveau canal' : 'Nouvelle discussion'}
     >
       <Plus size={16} />
     </button>

@@ -3,18 +3,15 @@
 
   interface Props {
     open: boolean;
-    activeTab: 'contact' | 'group' | 'channel';
+    activeTab: 'contact' | 'group';
     contactId: string;
     groupName: string;
-    channelName?: string;
     onClose: () => void;
-    onTabChange: (tab: 'contact' | 'group' | 'channel') => void;
+    onTabChange: (tab: 'contact' | 'group') => void;
     onContactIdChange: (value: string) => void;
     onGroupNameChange: (value: string) => void;
-    onChannelNameChange?: (value: string) => void;
     onSubmitContact: () => void;
     onSubmitGroup: () => void;
-    onSubmitChannel?: () => void;
   }
 
   let {
@@ -22,15 +19,12 @@
     activeTab,
     contactId,
     groupName,
-    channelName = '',
     onClose,
     onTabChange,
     onContactIdChange,
     onGroupNameChange,
-    onChannelNameChange = () => {},
     onSubmitContact,
     onSubmitGroup,
-    onSubmitChannel = () => {},
   }: Props = $props();
 </script>
 
@@ -55,15 +49,6 @@
       onclick={() => onTabChange('group')}
     >
       Groupe
-    </button>
-    <button
-      class="flex-1 px-3 py-2 text-sm font-semibold rounded-xl transition-colors {activeTab ===
-      'channel'
-        ? 'bg-white/80 dark:bg-black/40 text-text-main border border-white/60 dark:border-white/10'
-        : 'text-text-muted hover:text-text-main hover:bg-white/35 dark:hover:bg-black/30'}"
-      onclick={() => onTabChange('channel')}
-    >
-      Canal
     </button>
   </div>
 
@@ -113,30 +98,6 @@
         class="w-full py-2.5 bg-amber-500 text-white font-semibold rounded-xl hover:bg-amber-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
         Creer le groupe
-      </button>
-    </div>
-  {:else}
-    <div class="space-y-4">
-      <div>
-        <label for="new-channel-name" class="block text-sm font-medium text-text-main mb-1"
-          >Nom du canal</label
-        >
-        <input
-          id="new-channel-name"
-          type="text"
-          value={channelName}
-          oninput={(e) => onChannelNameChange?.((e.target as HTMLInputElement).value)}
-          placeholder="ex: Général"
-          class="w-full px-4 py-2.5 bg-white/65 dark:bg-black/30 border border-white/60 dark:border-white/10 rounded-xl text-sm outline-none focus:ring-2 focus:ring-amber-400/45"
-          onkeydown={(e) => e.key === 'Enter' && onSubmitChannel?.()}
-        />
-      </div>
-      <button
-        onclick={onSubmitChannel}
-        disabled={!channelName.trim()}
-        class="w-full py-2.5 bg-amber-500 text-white font-semibold rounded-xl hover:bg-amber-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        Créer le canal
       </button>
     </div>
   {/if}

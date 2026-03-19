@@ -5,6 +5,7 @@
   import SidebarChannelWorkspaces from './SidebarChannelWorkspaces.svelte';
   import SidebarFooterTools from './SidebarFooterTools.svelte';
   import SidebarNewChatModal from './SidebarNewChatModal.svelte';
+  import SidebarNewChannelModal from './SidebarNewChannelModal.svelte';
 
   interface Conversation {
     contactName: string;
@@ -16,8 +17,23 @@
     unreadCount?: number;
   }
 
+  interface ChannelItem {
+    id: string;
+    name: string;
+    unreadCount?: number;
+    isPrivate?: boolean;
+  }
+
+  interface ChannelWorkspace {
+    id: string;
+    name: string;
+    avatarUserId: string;
+    channels: ChannelItem[];
+  }
+
   interface Props {
     conversations: Map<string, Conversation>;
+    channelWorkspaces?: ChannelWorkspace[];
     archivedConversationIds?: string[];
     showArchivedConversations?: boolean;
     selectedContact: string | null;
@@ -47,6 +63,7 @@
 
   let {
     conversations,
+    channelWorkspaces = [],
     archivedConversationIds = [],
     showArchivedConversations = false,
     selectedContact,
@@ -75,7 +92,8 @@
   }: Props = $props();
 
   let showNewChatModal = $state(false);
-  let activeTab = $state<'contact' | 'group' | 'channel'>('contact');
+  let showNewChannelModal = $state(false);
+  let activeTab = $state<'contact' | 'group'>('contact');
   let activeSidebarTab = $state<'discussions' | 'channels'>('discussions');
   let contactId = $state('');
   let groupName = $state('');
@@ -98,41 +116,7 @@
     channels: ChannelItem[];
   }
 
-  const channelWorkspaces: ChannelWorkspace[] = [
-    {
-      id: 'sports',
-      name: 'Bureau des Sports',
-      avatarUserId: 'bds-canari',
-      channels: [
-        { id: 'sports-annonces', name: 'annonces', unreadCount: 3 },
-        { id: 'sports-general', name: 'general' },
-        { id: 'sports-organisation', name: 'organisation', isPrivate: true, unreadCount: 1 },
-        { id: 'sports-tresorerie', name: 'tresorerie', isPrivate: true },
-      ],
-    },
-    {
-      id: 'bde',
-      name: 'Bureau des Eleves',
-      avatarUserId: 'bde-canari',
-      channels: [
-        { id: 'bde-annonces', name: 'annonces', unreadCount: 5 },
-        { id: 'bde-evenements', name: 'evenements', unreadCount: 2 },
-        { id: 'bde-general', name: 'general' },
-      ],
-    },
-    {
-      id: 'photo',
-      name: 'Club Photo',
-      avatarUserId: 'club-photo',
-      channels: [{ id: 'photo-general', name: 'general' }],
-    },
-    {
-      id: 'entreprises',
-      name: 'Forum Entreprises',
-      avatarUserId: 'forum-entreprises',
-      channels: [{ id: 'entreprises-general', name: 'general' }],
-    },
-  ];
+
 
   let filteredConversationEntries = $derived.by(() => {
     const archived = new Set(archivedConversationIds.map((id) => id.toLowerCase()));
@@ -175,15 +159,23 @@
   }
 
   function openNewChatModal(tab: 'contact' | 'group' | 'channel' = 'contact') {
-    activeTab = tab;
-    contactId = newContactInput;
-    groupName = newGroupInput;
-    channelName = newChannelInput;
-    showNewChatModal = true;
+    if (tab === 'channel') {
+      channelName = newChannelInput || '';
+      showNewChannelModal = true;
+    } else {
+      activeTab = tab;
+      contactId = newContactInput || '';
+      groupName = newGroupInput || '';
+      showNewChatModal = true;
+    }
   }
 
   function closeNewChatModal() {
     showNewChatModal = false;
+  }
+
+  function closeNewChannelModal() {
+    showNewChannelModal = false;
   }
 
   function handleAddContact() {
@@ -213,7 +205,7 @@
     onCreateChannel?.(value);
     channelName = '';
     onChannelInputChange?.('');
-    closeNewChatModal();
+    closeNewChannelModal();
   }
 </script>
 
@@ -244,7 +236,7 @@
       searchQuery = value;
     }}
     onToggleArchivedView={() => onToggleArchivedView?.()}
-    onOpenNewChat={() => openNewChatModal(activeSidebarTab === 'channels' ? 'group' : 'contact')}
+    onOpenNewChat={() => openNewChatModal(activeSidebarTab === 'channels' ? 'channel' : 'contact')}
   />
 
   <!-- Conversation List -->
@@ -300,7 +292,7 @@
         {expandedWorkspaceIds}
         {selectedChannelId}
         onToggleWorkspace={toggleWorkspace}
-        onOpenNewGroup={() => openNewChatModal('group')}
+        onOpenNewGroup={() => openNewChatModal('channel')}
         onSelectChannel={(channelId) => {
           selectedChannelId = channelId;
         }}
@@ -324,7 +316,6 @@
   {activeTab}
   {contactId}
   {groupName}
-  {channelName}
   onClose={closeNewChatModal}
   onTabChange={(tab) => {
     activeTab = tab;
@@ -335,10 +326,17 @@
   onGroupNameChange={(value) => {
     groupName = value;
   }}
+  onSubmitContact={handleAddContact}
+  onSubmitGroup={handleCreateGroup}
+/>
+
+<SidebarNewChannelModal
+  open={showNewChannelModal}
+  {channelName}
+  onClose={closeNewChannelModal}
   onChannelNameChange={(value) => {
     channelName = value;
   }}
-  onSubmitContact={handleAddContact}
-  onSubmitGroup={handleCreateGroup}
   onSubmitChannel={handleCreateChannel}
 />
+
