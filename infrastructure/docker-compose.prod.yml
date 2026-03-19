@@ -245,6 +245,67 @@ services:
         max_attempts: 3
 
   # ─────────────────────────────────────────────────────
+  # User Service (NestJS) — port 3004
+  # ─────────────────────────────────────────────────────
+  user-service:
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/user-service:${TAG:-latest}
+    restart: always
+    environment:
+      NODE_ENV: production
+      PORT: "3004"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USERNAME: ${POSTGRES_USER:-admin}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      DB_DATABASE: ${POSTGRES_DB:-auth_db}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - canari-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+
+  # ─────────────────────────────────────────────────────
+  # Post Service (NestJS) — port 3006
+  # ─────────────────────────────────────────────────────
+  post-service:
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/post-service:${TAG:-latest}
+    restart: always
+    environment:
+      NODE_ENV: production
+      PORT: "3006"
+      POSTS_MONGO_URI: mongodb://mongo:27017/post_db
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_SUCCESS_URL: ${STRIPE_SUCCESS_URL:-https://canari-emse.fr/posts?registration=success}
+      STRIPE_CANCEL_URL: ${STRIPE_CANCEL_URL:-https://canari-emse.fr/posts?registration=cancel}
+      USER_SERVICE_URL: http://user-service:3004
+    depends_on:
+      mongo:
+        condition: service_healthy
+      user-service:
+        condition: service_started
+    networks:
+      - canari-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+
+  # ─────────────────────────────────────────────────────
   # Frontend (Nginx + Svelte built) — port 80 interne Docker
   # ─────────────────────────────────────────────────────
   frontend:
@@ -256,6 +317,7 @@ services:
       - chat-gateway
       - chat-delivery-service
       - media-service
+      - post-service
     networks:
       - canari-network
     healthcheck:

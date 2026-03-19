@@ -167,6 +167,51 @@ services:
       mongo:
         condition: service_started
 
+  # ─────────────────────────────────────────────────────
+  # User Service (NestJS) — port 3004
+  # Handles user profiles and Stripe customer IDs.
+  # ─────────────────────────────────────────────────────
+  user-service:
+    build:
+      context: ../../
+      dockerfile: infrastructure/local/Dockerfile.user-service
+    ports:
+      - "3004:3004"
+    environment:
+      PORT: "3004"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USERNAME: admin
+      DB_PASSWORD: password
+      DB_DATABASE: auth_db
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_started
+
+  # ─────────────────────────────────────────────────────
+  # Post Service (NestJS) — port 3006
+  # Community posts: markdown, polls, event registration hooks.
+  # ─────────────────────────────────────────────────────
+  post-service:
+    build:
+      context: ../../
+      dockerfile: infrastructure/local/Dockerfile.post-service
+    ports:
+      - "3006:3006"
+    environment:
+      PORT: "3006"
+      POSTS_MONGO_URI: mongodb://mongo:27017/post_db
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_SUCCESS_URL: ${STRIPE_SUCCESS_URL:-http://localhost:5173/posts?registration=success}
+      STRIPE_CANCEL_URL: ${STRIPE_CANCEL_URL:-http://localhost:5173/posts?registration=cancel}
+      USER_SERVICE_URL: http://user-service:3004
+    depends_on:
+      mongo:
+        condition: service_started
+      user-service:
+        condition: service_started
+
 volumes:
   mongo_data:
   postgres_data:

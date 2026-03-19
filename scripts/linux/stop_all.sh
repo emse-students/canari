@@ -20,6 +20,7 @@ pkill -f "chat-delivery-service"
 pkill -f "auth-service"
 pkill -f "user-service"
 pkill -f "channel-service"
+pkill -f "post-service"
 
 # Tuer le frontend (Vite & Tauri)
 pkill -f "tauri dev"

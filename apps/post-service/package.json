@@ -1,0 +1,31 @@
+{
+  "name": "post-service",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "start": "ts-node src/main.ts",
+    "start:dev": "nest start --watch",
+    "build": "nest build"
+  },
+  "dependencies": {
+    "@nestjs/axios": "^4.0.1",
+    "@nestjs/common": "^11.1.16",
+    "@nestjs/config": "^4.0.3",
+    "@nestjs/core": "^11.1.16",
+    "@nestjs/mongoose": "^11.0.4",
+    "@nestjs/platform-express": "^11.1.16",
+    "axios": "^1.13.6",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.15.1",
+    "mongoose": "^9.2.4",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "stripe": "^18.2.1"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^11.0.16",
+    "@types/node": "^25.3.5",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}

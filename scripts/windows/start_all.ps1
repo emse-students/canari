@@ -59,7 +59,7 @@ function Wait-Port {
 Write-Host "`n[0/4] Nettoyage des processus existants..." -ForegroundColor Magenta
 
 # Tuer les processus occupant les ports clés
-foreach ($port in @(3000, 3001, 3002, 3003, 3004, 3005, 8080, 8081)) {
+foreach ($port in @(3000, 3001, 3002, 3003, 3004, 3005, 3006, 8080, 8081)) {
     $pids = (netstat -ano | Select-String "LISTENING" | Select-String ":$port\s" | ForEach-Object {
             ($_.Line -split '\s+')[-1]
         } | Where-Object { $_ -match '^\d+$' } | Select-Object -Unique)
@@ -153,6 +153,9 @@ Launch "Media Service (Node)" "Set-Location apps/media-service; `$env:PORT='3002
 
 # Channel Service (NestJS)
 Launch "Channel Service (Node)" "Set-Location apps/channel-service; `$env:PORT='3005'; `$env:CHANNELS_MONGO_URI='mongodb://localhost:27017/channel_db'; `$env:CHANNELS_ENCRYPTION_SECRET='dev-channel-secret-change-me'; npm install; npm run start:dev"
+
+# Post Service (NestJS)
+Launch "Post Service (Node)" "Set-Location apps/post-service; `$env:PORT='3006'; `$env:STRIPE_SECRET_KEY=''; `$env:USER_SERVICE_URL='http://localhost:3004'; npm install; npm run start:dev"
 
 # 4. Lancement du frontend (Tauri)
 Write-Host "`n[4/4] Lancement du Frontend (Application Desktop Tauri)..." -ForegroundColor Yellow
