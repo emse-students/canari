@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@canari/shared-ts": "file:../../libs/shared-ts",
-    "@nestjs/common": "^11.1.16",
+    "@nestjs/common": "^11.1.17",
     "@nestjs/core": "^11.1.16",
     "@nestjs/microservices": "^11.1.17",
     "@nestjs/mongoose": "^11.0.4",
