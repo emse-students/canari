@@ -178,7 +178,7 @@ async function processBulkAddition(
       for (const did of bulk.addedDeviceIds) {
         const tUser = userMap.get(did);
         if (tUser) {
-          await fetch(`${historyBaseUrl}/mls-api/welcome`, {
+          await fetch(`${historyBaseUrl}/api/mls-api/welcome`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -345,7 +345,7 @@ export async function startNewConversation(
             )
           : undefined;
         for (const did of bulk.addedDeviceIds) {
-          await fetch(`${historyBaseUrl}/mls-api/welcome`, {
+          await fetch(`${historyBaseUrl}/api/mls-api/welcome`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

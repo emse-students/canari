@@ -238,7 +238,7 @@ describe('startNewConversation', () => {
     await startNewConversation('jolan2', makeDeps(mls, convs));
 
     const welcomeCalls = mockFetch.mock.calls.filter(([url]: any[]) =>
-      (url as string).includes('/mls-api/welcome')
+      (url as string).includes('/api/mls-api/welcome')
     );
     // Un Welcome par device
     expect(welcomeCalls).toHaveLength(2);
@@ -497,7 +497,7 @@ describe('inviteMemberToGroup', () => {
     await inviteMemberToGroup('jolan2', existingConvo, makeDeps(mls, convs));
 
     const welcomeCalls = mockFetch.mock.calls.filter(([url]: any[]) =>
-      (url as string).includes('/mls-api/welcome')
+      (url as string).includes('/api/mls-api/welcome')
     );
     expect(welcomeCalls).toHaveLength(2);
     const bodies = welcomeCalls.map((call: any[]) =>
@@ -567,7 +567,7 @@ describe('inviteMemberToGroup', () => {
     await inviteMemberToGroup('JOLAN2', existingConvo, makeDeps(mls, convs));
 
     const welcomeCalls = mockFetch.mock.calls.filter(([url]: any[]) =>
-      (url as string).includes('/mls-api/welcome')
+      (url as string).includes('/api/mls-api/welcome')
     );
     const body = JSON.parse((welcomeCalls[0][1] as RequestInit).body as string);
     expect(body.targetUserId).toBe('jolan2');

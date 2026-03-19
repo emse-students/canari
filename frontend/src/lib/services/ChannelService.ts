@@ -26,12 +26,12 @@ export class ChannelService {
   }
 
   async healthCheck() {
-    const res = await fetch(`${this.baseUrl}/channels/health`);
+    const res = await fetch(`${this.baseUrl}/api/channels/health`);
     return res.json();
   }
 
   async createWorkspace(dto: CreateWorkspaceDto) {
-    const res = await fetch(`${this.baseUrl}/channels/workspaces`, {
+    const res = await fetch(`${this.baseUrl}/api/channels/workspaces`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(dto),
@@ -41,7 +41,7 @@ export class ChannelService {
   }
 
   async createChannel(dto: CreateChannelDto) {
-    const res = await fetch(`${this.baseUrl}/channels`, {
+    const res = await fetch(`${this.baseUrl}/api/channels`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(dto),
@@ -51,13 +51,13 @@ export class ChannelService {
   }
 
   async listChannels(workspaceId: string, userId: string) {
-    const res = await fetch(`${this.baseUrl}/channels/workspace/${workspaceId}/user/${userId}`);
+    const res = await fetch(`${this.baseUrl}/api/channels/workspace/${workspaceId}/user/${userId}`);
     if (!res.ok) throw new Error(await res.text());
     return res.json();
   }
 
   async joinChannel(channelId: string, userId: string) {
-    const res = await fetch(`${this.baseUrl}/channels/${channelId}/members/join`, {
+    const res = await fetch(`${this.baseUrl}/api/channels/${channelId}/members/join`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userId }),
@@ -67,7 +67,7 @@ export class ChannelService {
   }
 
   async sendMessage(channelId: string, dto: SendChannelMessageDto) {
-    const res = await fetch(`${this.baseUrl}/channels/${channelId}/messages`, {
+    const res = await fetch(`${this.baseUrl}/api/channels/${channelId}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(dto),
@@ -78,7 +78,7 @@ export class ChannelService {
 
   async listMessages(channelId: string, userId: string, limit = 100) {
     const res = await fetch(
-      `${this.baseUrl}/channels/${channelId}/messages?userId=${userId}&limit=${limit}`
+      `${this.baseUrl}/api/channels/${channelId}/messages?userId=${userId}&limit=${limit}`
     );
     if (!res.ok) throw new Error(await res.text());
     return res.json();

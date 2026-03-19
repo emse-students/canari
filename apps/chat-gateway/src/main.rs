@@ -281,11 +281,11 @@ async fn main() {
     };
 
     let app = Router::new()
-        .route("/health", get(health_check))
-        .route("/ws", get(ws_handler))
+        .route("/api/health", get(health_check))
+        .route("/api/ws", get(ws_handler))
         // MLS Specific Routes
         .route(
-            "/groups/{group_id}/tree",
+            "/api/groups/{group_id}/tree",
             get(get_ratchet_tree).post(post_ratchet_tree),
         )
         .layer(cors)

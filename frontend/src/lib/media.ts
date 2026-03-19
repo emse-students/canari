@@ -256,7 +256,7 @@ export class MediaService {
     if (ciphertext.byteLength > CHUNK_SIZE) {
       // Chunked upload for large files (>50MB) to bypass limits
       // 3.1 Initialize chunked upload
-      const initRes = await fetch(`${this.baseUrl}/media/upload/chunk/init`, {
+      const initRes = await fetch(`${this.baseUrl}/api/media/upload/chunk/init`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${authToken}` },
       });
@@ -278,7 +278,7 @@ export class MediaService {
           'chunk'
         );
 
-        const chunkRes = await fetch(`${this.baseUrl}/media/upload/chunk/${uploadId}`, {
+        const chunkRes = await fetch(`${this.baseUrl}/api/media/upload/chunk/${uploadId}`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${authToken}` },
           body: chunkFormData,
@@ -291,10 +291,13 @@ export class MediaService {
       }
 
       // 3.3 Complete chunked upload
-      const completeRes = await fetch(`${this.baseUrl}/media/upload/chunk/${uploadId}/complete`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${authToken}` },
-      });
+      const completeRes = await fetch(
+        `${this.baseUrl}/api/media/upload/chunk/${uploadId}/complete`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${authToken}` },
+        }
+      );
       if (!completeRes.ok) {
         throw new Error(`Chunked upload complete failed: ${completeRes.status}`);
       }
@@ -309,7 +312,7 @@ export class MediaService {
         'encrypted'
       );
 
-      const res = await fetch(`${this.baseUrl}/media/upload`, {
+      const res = await fetch(`${this.baseUrl}/api/media/upload`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${authToken}` },
         body: formData,
@@ -366,7 +369,7 @@ export class MediaService {
    *                   when the element is removed.
    */
   async downloadAndDecrypt(ref: MediaRef, authToken: string): Promise<string> {
-    const res = await fetch(`${this.baseUrl}/media/${ref.mediaId}`, {
+    const res = await fetch(`${this.baseUrl}/api/media/${ref.mediaId}`, {
       headers: { Authorization: `Bearer ${authToken}` },
     });
 

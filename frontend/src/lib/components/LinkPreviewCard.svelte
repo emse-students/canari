@@ -43,7 +43,7 @@
     isLoading = true;
     try {
       const baseUrl = import.meta.env.VITE_HISTORY_URL?.trim() || window.location.origin;
-      const endpoint = `${baseUrl}/mls-api/link-preview?url=${encodeURIComponent(targetHref)}`;
+      const endpoint = `${baseUrl}/api/mls-api/link-preview?url=${encodeURIComponent(targetHref)}`;
       const res = await fetch(endpoint);
       if (!res.ok) return;
       preview = (await res.json()) as PreviewPayload;

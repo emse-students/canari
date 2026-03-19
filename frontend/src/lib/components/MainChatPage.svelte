@@ -550,7 +550,7 @@
       // Verify PIN consistency across devices before doing anything else
       log('Vérification du PIN...');
       const verifier = await computePinVerifier(userId, pin);
-      const verifierRes = await fetch(`${historyBaseUrl}/mls-api/pin-verifier/check`, {
+      const verifierRes = await fetch(`${historyBaseUrl}/api/mls-api/pin-verifier/check`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId, verifier }),

@@ -89,11 +89,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export async function listPosts(limit = 30): Promise<PostEntity[]> {
-  return request<PostEntity[]>(`/posts?limit=${limit}`);
+  return request<PostEntity[]>(`/api/posts?limit=${limit}`);
 }
 
 export async function createPost(payload: CreatePostPayload): Promise<PostEntity> {
-  return request<PostEntity>('/posts', {
+  return request<PostEntity>('/api/posts', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
@@ -104,7 +104,7 @@ export async function votePoll(
   pollId: string,
   payload: { userId: string; optionIds: string[] }
 ): Promise<{ ok: boolean; poll: Poll }> {
-  return request<{ ok: boolean; poll: Poll }>(`/posts/${postId}/polls/${pollId}/vote`, {
+  return request<{ ok: boolean; poll: Poll }>(`/api/posts/${postId}/polls/${pollId}/vote`, {
     method: 'POST',
     body: JSON.stringify(payload),
   });
@@ -123,7 +123,7 @@ export async function registerEvent(
   checkoutUrl?: string;
   message?: string;
 }> {
-  return request(`/posts/${postId}/events/${buttonId}/register`, {
+  return request(`/api/posts/${postId}/events/${buttonId}/register`, {
     method: 'POST',
     body: JSON.stringify(payload),
   });

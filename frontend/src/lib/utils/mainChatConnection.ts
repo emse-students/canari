@@ -394,7 +394,9 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
 
         // Fetch group metadata
         try {
-          const gRes = await fetch(`${historyBaseUrl}/mls-api/groups/${groupId || joinedGroupId}`);
+          const gRes = await fetch(
+            `${historyBaseUrl}/api/mls-api/groups/${groupId || joinedGroupId}`
+          );
           if (gRes.ok) {
             const gData = await gRes.json();
             if (gData?.name) groupName = gData.name;
