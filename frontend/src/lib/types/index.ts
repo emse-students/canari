@@ -30,6 +30,6 @@ export interface Conversation {
   isReady: boolean;
   mlsStateHex: string | null;
   unreadCount?: number;
-  conversationType?: 'direct' | 'group';
+  conversationType?: 'direct' | 'group' | 'channel';
   directPeerId?: string;
 }
