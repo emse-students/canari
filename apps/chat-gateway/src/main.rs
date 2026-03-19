@@ -125,7 +125,10 @@ async fn main() {
                 match pubsub.subscribe("chat:channel_events").await {
                     Ok(_) => tracing::info!("Abonné au canal Redis 'chat:channel_events'"),
                     Err(e) => {
-                        tracing::warn!("Echec abonnement Redis channel_events: {}. Retry dans 5s...", e);
+                        tracing::warn!(
+                            "Echec abonnement Redis channel_events: {}. Retry dans 5s...",
+                            e
+                        );
                         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                         continue;
                     }
@@ -136,7 +139,11 @@ async fn main() {
                 while let Some(msg) = stream.next().await {
                     let channel_name = msg.get_channel_name();
                     if let Ok(payload_str) = msg.get_payload::<String>() {
-                        tracing::debug!("Received pub/sub message on {}: {}", channel_name, payload_str);
+                        tracing::debug!(
+                            "Received pub/sub message on {}: {}",
+                            channel_name,
+                            payload_str
+                        );
                         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&payload_str) {
                             if channel_name == "chat:messages" {
                                 let recipient_id =
@@ -144,7 +151,8 @@ async fn main() {
                                         Some(v) => v.to_string(),
                                         None => continue,
                                     };
-                                let device_id = match json.get("deviceId").and_then(|v| v.as_str()) {
+                                let device_id = match json.get("deviceId").and_then(|v| v.as_str())
+                                {
                                     Some(v) => v.to_string(),
                                     None => continue,
                                 };
@@ -152,7 +160,9 @@ async fn main() {
                                 let proto_b64 = match json.get("proto").and_then(|v| v.as_str()) {
                                     Some(v) if !v.is_empty() => v,
                                     _ => {
-                                        tracing::warn!("Redis message missing 'proto' field, dropping");
+                                        tracing::warn!(
+                                            "Redis message missing 'proto' field, dropping"
+                                        );
                                         continue;
                                     }
                                 };
@@ -187,24 +197,34 @@ async fn main() {
                                                 json_frame.len()
                                             );
                                         } else {
-                                            tracing::warn!("Failed to send to socket for {} (channel closed)", key);
+                                            tracing::warn!(
+                                                "Failed to send to socket for {} (channel closed)",
+                                                key
+                                            );
                                         }
                                     }
                                 } else {
-                                    tracing::warn!("User {} not connected to this gateway instance.", key);
+                                    tracing::warn!(
+                                        "User {} not connected to this gateway instance.",
+                                        key
+                                    );
                                 }
                             } else if channel_name == "chat:channel_events" {
                                 // Expected payload format:
                                 // { "userIds": ["user1", "user2"], "type": "channel_event", "data": { ... } }
-                                let user_ids = match json.get("userIds").and_then(|v| v.as_array()) {
-                                    Some(arr) => arr.iter().filter_map(|v| v.as_str()).collect::<Vec<&str>>(),
+                                let user_ids = match json.get("userIds").and_then(|v| v.as_array())
+                                {
+                                    Some(arr) => {
+                                        arr.iter().filter_map(|v| v.as_str()).collect::<Vec<&str>>()
+                                    }
                                     None => continue,
                                 };
 
                                 let frame = serde_json::json!({
                                     "type": json.get("type").unwrap_or(&serde_json::Value::Null),
                                     "data": json.get("data").unwrap_or(&serde_json::Value::Null)
-                                }).to_string();
+                                })
+                                .to_string();
 
                                 // Find all map keys that start with the user ID
                                 let map = connected_users.lock().unwrap();
@@ -219,7 +239,9 @@ async fn main() {
                                         }
                                     }
                                 }
-                                tracing::info!("[Gateway] Channel event distributed to connected users.");
+                                tracing::info!(
+                                    "[Gateway] Channel event distributed to connected users."
+                                );
                             }
                         }
                     }
