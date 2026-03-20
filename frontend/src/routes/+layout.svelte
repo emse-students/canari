@@ -1,11 +1,11 @@
 <script lang="ts">
   import '../app.css';
   import BackgroundBlobs from '$lib/components/BackgroundBlobs.svelte';
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
 
   let { children } = $props();
 
-  const pathname = $derived($page.url.pathname);
+  const pathname = $derived(page.url.pathname);
 
   function isActive(path: string): boolean {
     return pathname === path || pathname.startsWith(`${path}/`);
