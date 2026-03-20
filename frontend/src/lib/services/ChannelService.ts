@@ -60,6 +60,18 @@ export class ChannelService {
     this.baseUrl = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3005';
   }
 
+  private async handleError(res: Response) {
+    if (!res.ok) {
+      const text = await res.text();
+      if (text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html')) {
+        throw new Error(
+          `API Error ${res.status}: Le service est injoignable (Bad Gateway). Veuillez réessayer plus tard.`
+        );
+      }
+      throw new Error(text || `API Error ${res.status}`);
+    }
+  }
+
   async healthCheck() {
     const res = await fetch(`${this.baseUrl}/api/channels/health`);
     return res.json();
@@ -71,7 +83,7 @@ export class ChannelService {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(dto),
     });
-    if (!res.ok) throw new Error(await res.text());
+    await this.handleError(res);
     return res.json() as Promise<WorkspaceDto>;
   }
 
@@ -79,7 +91,7 @@ export class ChannelService {
     const res = await fetch(
       `${this.baseUrl}/api/channels/workspaces/by-slug/${encodeURIComponent(slug)}`
     );
-    if (!res.ok) throw new Error(await res.text());
+    await this.handleError(res);
     return res.json() as Promise<WorkspaceDto>;
   }
 
@@ -87,7 +99,7 @@ export class ChannelService {
     const res = await fetch(
       `${this.baseUrl}/api/channels/workspaces/user/${encodeURIComponent(userId)}`
     );
-    if (!res.ok) throw new Error(await res.text());
+    await this.handleError(res);
     return res.json() as Promise<WorkspaceDto[]>;
   }
 
@@ -97,7 +109,7 @@ export class ChannelService {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(dto),
     });
-    if (!res.ok) throw new Error(await res.text());
+    await this.handleError(res);
     return res.json();
   }
 
@@ -107,13 +119,13 @@ export class ChannelService {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(dto),
     });
-    if (!res.ok) throw new Error(await res.text());
+    await this.handleError(res);
     return res.json();
   }
 
   async listChannels(workspaceId: string, userId: string) {
     const res = await fetch(`${this.baseUrl}/api/channels/workspace/${workspaceId}/user/${userId}`);
-    if (!res.ok) throw new Error(await res.text());
+    await this.handleError(res);
     return res.json() as Promise<ChannelDto[]>;
   }
 
@@ -123,7 +135,7 @@ export class ChannelService {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(dto),
     });
-    if (!res.ok) throw new Error(await res.text());
+    await this.handleError(res);
     return res.json();
   }
 
@@ -133,7 +145,7 @@ export class ChannelService {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(dto),
     });
-    if (!res.ok) throw new Error(await res.text());
+    await this.handleError(res);
     return res.json();
   }
 
@@ -143,7 +155,7 @@ export class ChannelService {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(dto),
     });
-    if (!res.ok) throw new Error(await res.text());
+    await this.handleError(res);
     return res.json();
   }
 
@@ -151,7 +163,7 @@ export class ChannelService {
     const res = await fetch(
       `${this.baseUrl}/api/channels/${channelId}/messages?userId=${userId}&limit=${limit}`
     );
-    if (!res.ok) throw new Error(await res.text());
+    await this.handleError(res);
     return res.json();
   }
 }
