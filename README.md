@@ -40,29 +40,29 @@ Canari est une application de **messagerie instantanée sécurisée** avec chiff
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│   Frontend (SvelteKit + Tauri)                       │
+│   Frontend (SvelteKit + Tauri + Form Builder)        │
 │   Chiffrement MLS côté client                        │
 └────────────────────┬─────────────────────────────────┘
                      │
                 [WebSocket]
                      │
-      ┌──────────────▼──────────────┐
-      │ Chat Gateway (Rust - Axum)  │
-      │ • Routage temps réel        │
-      │ • WebSocket management      │
-      │ • Redis PubSub              │
-      └────┬──────────┬──────────┬──┘
-           │          │          │
-     ┌─────▼──┐ ┌────▼─────┐ ┌──▼───────────┐
-     │  Auth  │ │   User   │ │ Chat History │
-     │Service │ │ Service  │ │ (NestJS)     │
-     │(Spring)│ │(Spring)  │ │              │
-     └────┬───┘ └────┬─────┘ └──┬───────────┘
-          │         │          │
-     ┌────▼─────────▼──────────▼────┐
-     │ PostgreSQL • MongoDB • Redis  │
-     │ Kafka • ZooKeeper             │
-     └───────────────────────────────┘
+      ┌──────────────▼───────────┐
+      │ Chat Gateway (Rust - Axum) │
+      │ • Routage temps réel       │
+      │ • WebSocket management     │
+      │ • Redis PubSub             │
+      └────┬────────┬────────┬─────┘
+           │        │        │
+     ┌─────▼──┐ ┌───▼────┐ ┌─▼─────────┐ ┌──────────┐ ┌──────────┐
+     │  Auth  │ │  User  │ │ Chat Del. │ │  Forms   │ │  Posts   │
+     │Service │ │ Service│ │  Service  │ │ Service  │ │ Service  │
+     │(NestJS)│ │(NestJS)│ │ (NestJS)  │ │ (NestJS) │ │ (NestJS) │
+     └────┬───┘ └───┬────┘ └─┬─────────┘ └─┬────────┘ └──────────┘
+          │         │        │             │
+     ┌────▼─────────▼────────▼─────────────▼─────────┐
+     │ PostgreSQL • MongoDB • Redis • MinIO          │
+     │ Kafka • ZooKeeper • Stripe (API externe)      │
+     └───────────────────────────────────────────────┘
 ```
 
 ### 📦 Stack Technique
@@ -70,9 +70,10 @@ Canari est une application de **messagerie instantanée sécurisée** avec chiff
 | Couche       | Technologies                                       |
 | ------------ | -------------------------------------------------- |
 | **Frontend** | SvelteKit 2.9 • Svelte 5 • TailwindCSS 4 • Tauri 2 |
-| **Gateway**  | Rust (Axum) • Tokio • Tonic • Rdkafka         |
+| **Gateway**  | Rust (Axum) • Tokio • Tonic • Rdkafka              |
 | **Services** | NestJS • Node.js 20                                |
 | **Data**     | PostgreSQL • MongoDB • Redis • Kafka • MinIO       |
+| **Payment**  | Stripe (via Form Service)                          |
 | **DevOps**   | Docker • Docker Compose • GitHub Actions • Nginx   |
 | **Quality**  | ESLint • Prettier • Clippy • Husky • Pre-commit    |
 

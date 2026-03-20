@@ -2,6 +2,8 @@
   import { MediaService } from '$lib/media';
   import { generateDevToken } from '$lib/utils/mainChatAuth';
   import { createPost, type CreatePostPayload } from '$lib/posts/api';
+  import { getForms, type Form } from '$lib/forms/api';
+  import { onMount } from 'svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Card from '$lib/components/ui/Card.svelte';
   import Input from '$lib/components/ui/Input.svelte';
@@ -35,9 +37,14 @@
   let eventLabel = $state('Register now');
   let eventId = $state('event-2026');
   let eventRequiresPayment = $state(false);
-  let eventAmountCents = $state<number>(2500);
+  let eventAmount = $state<number>(25);
   let eventCurrency = $state('eur');
   let eventCapacity = $state<number>(100);
+
+  // Form referencing
+  let availableForms = $state<Form[]>([]);
+  let selectedFormId = $state('');
+  let includeForm = $state(false);
 
   let publishing = $state(false);
   let errorMessage = $state('');
@@ -45,6 +52,15 @@
 
   const mediaService = new MediaService();
   const jwtSecret = import.meta.env.VITE_JWT_SECRET as string | undefined;
+
+  onMount(async () => {
+    try {
+      // In real app, pass userId or fetch public forms
+      availableForms = await getForms();
+    } catch (e) {
+      console.error('Failed to load forms', e);
+    }
+  });
 
   async function createSessionToken() {
     actionMessage = '';
@@ -124,16 +140,24 @@
             label: eventLabel.trim(),
             eventId: eventId.trim(),
             requiresPayment: eventRequiresPayment,
-            amountCents: eventRequiresPayment ? Number(eventAmountCents) : undefined,
+            amountCents: eventRequiresPayment ? Math.round(Number(eventAmount) * 100) : undefined,
             currency: eventRequiresPayment ? eventCurrency.toLowerCase() : undefined,
             capacity: Number(eventCapacity),
           },
         ];
       }
 
+      if (includeForm) {
+        if (!selectedFormId) {
+          throw new Error('Please select a form to attach.');
+        }
+        payload.attachedFormId = selectedFormId;
+      }
+
       await createPost(payload);
       markdown = '';
       selectedFiles = [];
+      includeForm = false;
       includePoll = false;
       includeEventButton = false;
       actionMessage = 'Post published.';
@@ -229,13 +253,64 @@
             <div class="grid grid-cols-2 gap-3">
               <Input
                 type="number"
-                label="Amount (Cents)"
-                bind:value={eventAmountCents as unknown as string}
+                label="Amount"
+                bind:value={eventAmount as unknown as string}
+                step="0.01"
               />
               <Input label="Currency" bind:value={eventCurrency} />
             </div>
           {/if}
           <Input type="number" label="Capacity" bind:value={eventCapacity as unknown as string} />
+        </div>
+      {/if}
+    </div>
+
+    <!-- Form Section -->
+    <div class="rounded-2xl border border-cn-border p-4 bg-cn-surface/50">
+      <label class="flex items-center gap-2 font-bold text-sm cursor-pointer mb-2">
+        <input type="checkbox" bind:checked={includeForm} class="accent-cn-yellow w-4 h-4" />
+        Attach Registration Form
+      </label>
+
+      {#if includeForm}
+        <div class="space-y-4 mt-3 pl-2 border-l-2 border-cn-border">
+          <span class="block text-sm font-bold text-text-main mb-1">Select Form</span>
+          {#if availableForms.length === 0}
+            <div class="text-sm text-gray-500">
+              No forms available. <a href="/forms/create" class="text-blue-500 underline"
+                >Create one first</a
+              >
+            </div>
+          {:else}
+            <div class="relative">
+              <select
+                bind:value={selectedFormId}
+                class="w-full appearance-none rounded-xl border border-cn-border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cn-yellow transition-all pr-8"
+              >
+                <option value="">-- Select a Form --</option>
+                {#each availableForms as form (form._id)}
+                  <option value={form._id}>{form.title} ({form.items.length} items)</option>
+                {/each}
+              </select>
+              <div
+                class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-text-muted"
+              >
+                <svg
+                  class="fill-current h-4 w-4"
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 20 20"
+                  ><path
+                    d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"
+                  /></svg
+                >
+              </div>
+            </div>
+          {/if}
+          <div class="text-xs text-gray-500 mt-2">
+            Forms must be created in the <a href="/forms" class="underline hover:text-blue-600"
+              >Forms Manager</a
+            >.
+          </div>
         </div>
       {/if}
     </div>

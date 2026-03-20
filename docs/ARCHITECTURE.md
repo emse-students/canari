@@ -20,36 +20,47 @@ Le système combine des APIs REST classiques (CRUD) et des WebSockets (Temps ré
 /
 ├── apps/                          # Services déployables
 │   ├── auth-service/              # [Node/NestJS] Gestion Identité & JWT
-│   ├── user-service/              # [Node/NestJS] Gestion Profils Utilisateurs
-│   ├── api-gateway/               # [Kong/Nginx] Point d'entrée unique (REST + WebSocket)
-│   ├── notification-service/      # [Node/NestJS] Envoi Notifications Push
+│   ├── user-service/              # [Node/NestJS] Gestion Profils Utilisateurs (PG)
 │   ├── chat-gateway/              # [Rust/Axum] Serveur WebSocket (Stateless)
 │   ├── chat-delivery-service/      # [Node/NestJS] Consumer Kafka -> Sauvegarde messages (Mongo)
-│   ├── feed-worker/               # [Rust] Worker d'arrière-plan (Fan-out)
-│   ├── post-service/              # [Node/NestJS] Gestion Contenu & CRUD
-│   ├── graph-service/             # [Node/NestJS] Gestion Relations (Neo4j)
-│   └── media-service/             # [Node/NestJS] Gestion Uploads (S3 Pre-signed)
+│   ├── channel-service/           # [Node/NestJS] Gestion Canaux (Permissions)
+│   ├── post-service/              # [Node/NestJS] Gestion Posts & Events
+│   ├── form-service/              # [Node/NestJS] Gestion Formulaires Paiements
+│   └── media-service/             # [Node/NestJS] Gestion Uploads (MinIO / S3)
 │
 ├── libs/                          # Code partagé
-│   ├── event-contracts/           # [Protobuf/Avro] Définitions des événements Kafka (Universel)
+│   ├── event-contracts/           # [Protobuf] Définitions des événements Kafka (Universel)
 │   ├── shared-ts/                 # [TS] DTOs partagés entre Front et Node services
-│   └── shared-rust/               # [Rust] Crates utilitaires (Logger, config)
+│   ├── shared-rust/               # [Rust] Crates utilitaires (Logger, config)
+│
+├── frontend/                      # Code Client
+│   ├── src-tauri/                 # Wrapper Desktop
+│   ├── mls-wasm/                  # Module Chiffrement Rust/WASM
+│   └── src/                       # Application SvelteKit
 │
 ├── infrastructure/
-│   └── local/                     # Docker Compose (Kafka, Redis, DBs)
-│       └── docker-compose.yml
-└── tools/                         # Scripts de build/deploy
-
+│   ├── local/                     # Docker Compose (Redis, Mongo, Kafka, MinIO, Nginx)
+│   └── docker-compose.prod.yml    # Configuration Production
+│
+└── tools/                         # Scripts
 ```
 
 ---
 
 ## 3. Matrice Technologique
 
-| Service          | Langage / Framework     | Base de Données     | Rôle Principal                                                                           |
-| ---------------- | ----------------------- | ------------------- | ---------------------------------------------------------------------------------------- |
-| **Auth Service** | **Node.js** (NestJS)    | **PostgreSQL**      | Inscription, Login, OAuth2, Sécurité.                                                    |
-| **User Service** | **Node.js** (NestJS)    | **PostgreSQL**      | Gestion des profils utilisateurs.                                                        |
+| Service           | Langage / Framework | Base de Données | Rôle Principal                          |
+| ----------------- | ------------------- | --------------- | --------------------------------------- |
+| **Auth Service**  | NestJS (Node.js)    | PostgreSQL      | Auth JWT, Refresh, Reset Pwd            |
+| **User Service**  | NestJS (Node.js)    | PostgreSQL      | Profils, Gestion Stripe Customer        |
+| **Chat Gateway**  | Rust (Axum)         | Redis           | Websockets, Présence temps réel         |
+| **Chat Delivery** | NestJS (Node.js)    | MongoDB         | Persistance messages, Historique        |
+| **Form Service**  | NestJS (Node.js)    | MongoDB         | Formulaires dynamiques, Stripe Checkout |
+| **Post Service**  | NestJS (Node.js)    | MongoDB         | Fil d'actu, Events, Attach Formulaires  |
+| **Encryption**    | Rust (MLS) → WASM   | IndexedDB       | Chiffrement End-to-End côté client      |
+
+| **Auth Service** | **Node.js** (NestJS) | **PostgreSQL** | Inscription, Login, OAuth2, Sécurité. |
+| **User Service** | **Node.js** (NestJS) | **PostgreSQL** | Gestion des profils utilisateurs. |
 | **Chat Gateway** | **Rust** (Axum + Tokio) | **Redis** (Pub/Sub) | Gestion massive des connexions WebSockets (Pas de stockage) et chiffrement bout en bout. |
 
 | **Chat History** | **Node.js** (NestJS) | **MongoDB** | Consomme Kafka et archive les conversations. |

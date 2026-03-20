@@ -99,12 +99,14 @@ export class WebMlsService implements IMlsService {
           console.log(
             `[WS RCV] JSON frame: senderId=${msg.senderId}, groupId=${msg.groupId}, isWelcome=${msg.isWelcome}, protoLen=${(msg.proto as string)?.length}`
           );
-          if (msg.type && msg.type.startsWith('channel.')) {
+          if (msg.type && (msg.type.startsWith('channel.') || msg.type === 'post_created')) {
             if (this.onChannelEvent) {
               console.log(`[WS RCV] Triggering onChannelEvent for ${msg.type}`);
               this.onChannelEvent({ type: msg.type, data: msg.data });
             } else {
-              console.warn(`[WS RCV] Received channel event but no onChannelEvent registered.`);
+              console.warn(
+                `[WS RCV] Received channel/post event but no onChannelEvent registered.`
+              );
             }
             return;
           }

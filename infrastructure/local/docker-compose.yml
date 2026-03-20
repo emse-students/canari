@@ -212,6 +212,23 @@ services:
       user-service:
         condition: service_started
 
+  # ─────────────────────────────────────────────────────
+  # Form Service (NestJS) — port 3008
+  # ─────────────────────────────────────────────────────
+  form-service:
+    build:
+      context: ../../
+      dockerfile: infrastructure/local/Dockerfile.form-service
+    ports:
+      - "3008:3008"
+    environment:
+      PORT: "3008"
+      FORMS_MONGO_URI: mongodb://mongo:27017/form_db
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+    depends_on:
+      mongo:
+        condition: service_started
+
 volumes:
   mongo_data:
   postgres_data:

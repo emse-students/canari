@@ -137,6 +137,12 @@ jobs:
           npm install
           npm run build
 
+      - name: Build Form Service
+        working-directory: apps/form-service
+        run: |
+          npm install
+          npm run build
+
   test-frontend:
     name: Test Frontend Conversation Logic
     runs-on: ubuntu-latest

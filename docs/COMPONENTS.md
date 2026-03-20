@@ -4,30 +4,55 @@ Ce projet a été refactorisé en composants réutilisables avec TailwindCSS.
 
 ## Structure des composants
 
-### Composants de Base
+### 📄 Post System
 
-#### `LoginForm.svelte`
+#### `PostCard.svelte`
 
-Formulaire de connexion avec validation et styles Tailwind.
+Carte d'affichage d'un post. Gère :
 
-**Props:**
+- Le rendu Markdown
+- L'affichage des sondages (Polls)
+- L'affichage des événements (Boutons d'inscription/paiement)
+- **L'intégration des formulaires dynamiques** (affichage conditionnel si l'utilisateur n'a pas soumis).
 
-- `userId`: string
-- `pin`: string
-- `isLoggingIn`: boolean
-- `loginError`: string
-- `onUserIdChange`: (value: string) => void
-- `onPinChange`: (value: string) => void
-- `onLogin`: () => void
-- `onReset`: () => void
+#### `CreatePostForm.svelte`
 
-#### `Navbar.svelte`
+Module de création de post. Permet d'ajouter :
 
-Barre de navigation principale.
+- Titres, contenus Markdown
+- Images (upload via Media Service)
+- Sondages
+- Événements (avec prix Stripe optionnel)
+- **Formulaires attachés** (sélection parmi les formulaires existants).
 
-**Props:**
+### 📝 Form System (Nouveau)
 
-- `isWsConnected`: boolean
+#### `FormBuilder.svelte`
+
+Interface glisser-déposer (ou liste dynamique) pour construire des formulaires.
+
+- Ajout/Suppression de questions
+- Types : Texte, Choix Multiple, Matrice, Échelle.
+- Configuration des modificateurs de prix pour chaque option.
+
+#### `api.ts`
+
+Client HTTP dédié aux formulaires (`http://.../api/forms`).
+
+- `createForm`, `getForms`, `submitForm`, `checkSubmission`, `exportSubmissions`.
+
+### Composants UI Génériques
+
+#### `Button.svelte`
+
+#### `Input.svelte`
+
+#### `Card.svelte`
+
+#### `Modal.svelte`
+
+(Documentation détaillée à venir)
+
 - `onToggleLogs`: () => void
 - `onLogout`: () => void
 
@@ -224,15 +249,15 @@ Le projet utilise TailwindCSS avec une palette de couleurs personnalisée:
 ```js
 // tailwind.config.js
 export default {
-  content: ["./src/**/*.{html,js,svelte,ts}"],
+  content: ['./src/**/*.{html,js,svelte,ts}'],
   theme: {
     extend: {
       colors: {
-        "cn-dark": "#111827",
-        "cn-yellow": "#facc15",
-        "cn-yellow-hover": "#eab308",
-        "cn-bg": "#f9fafb",
-        "cn-border": "#e5e7eb",
+        'cn-dark': '#111827',
+        'cn-yellow': '#facc15',
+        'cn-yellow-hover': '#eab308',
+        'cn-bg': '#f9fafb',
+        'cn-border': '#e5e7eb',
       },
     },
   },

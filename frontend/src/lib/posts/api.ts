@@ -29,6 +29,32 @@ export interface EventButton {
   registrants: string[];
 }
 
+export interface FormOption {
+  id: string;
+  label: string;
+  priceModifier: number; // Amount in cents
+}
+
+export interface FormItem {
+  id: string;
+  label: string;
+  required: boolean;
+  type: string;
+  options?: FormOption[];
+  rows?: string[];
+  scale?: { min: number; max: number; minLabel?: string; maxLabel?: string };
+}
+
+export interface PostForm {
+  id: string;
+  title: string;
+  eventId: string;
+  basePrice: number;
+  currency: string;
+  submitLabel: string;
+  items: FormItem[];
+}
+
 export interface PostEntity {
   _id: string;
   authorId: string;
@@ -38,6 +64,8 @@ export interface PostEntity {
   images: PostImageRef[];
   polls: Poll[];
   eventButtons: EventButton[];
+  forms?: PostForm[];
+  attachedFormId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -61,6 +89,7 @@ export interface CreatePostPayload {
     stripePriceId?: string;
     capacity?: number;
   }>;
+  attachedFormId?: string;
 }
 
 function getPostsBaseUrl(): string {
@@ -124,6 +153,22 @@ export async function registerEvent(
   message?: string;
 }> {
   return request(`/api/posts/${postId}/events/${buttonId}/register`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function submitForm(
+  postId: string,
+  formId: string,
+  payload: { userId: string; selections: Record<string, string>; email?: string }
+): Promise<{
+  ok: boolean;
+  requiresPayment: boolean;
+  checkoutUrl?: string;
+  message: string;
+}> {
+  return request(`/api/posts/${postId}/forms/${formId}/submit`, {
     method: 'POST',
     body: JSON.stringify(payload),
   });

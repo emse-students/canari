@@ -27,7 +27,34 @@ Un script PowerShell `setup_environment.ps1` est fourni à la racine pour instal
   - Lancer: `npm run start:dev`
 - **Backend User (NestJS)**: `apps/user-service`
   - Lancer: `npm run start:dev`
-- **Backend Chat Delivery (NestJS)**: `apps/chat-delivery-service`
+- **Backend Post (NestJS)**: `apps/post-service`
+  - Lancer: `npm run start:dev`
+- **Backend Forms (NestJS)**: `apps/form-service`
+  - Lancer: `npm run start:dev`
+- **Frontend (SvelteKit)**: `frontend/`
+  - Lancer: `npm run dev`
+
+## Infrastructure Locale
+
+Utiliser le Makefile pour démarrer les services de base (Kafka, DBs) :
+
+```bash
+make infra-up
+```
+
+Ou Docker Compose directement :
+
+```bash
+docker compose -f infrastructure/local/docker-compose.yml up -d
+```
+
+Les services sont accessibles via Nginx (port 80) ou directement :
+
+- Frontend: http://localhost:5173 (dev) ou http://localhost (prod/docker)
+- Gateway: ws://localhost:3000
+- Auth Service: http://localhost:3003
+- Post Service: http://localhost:3006
+- Form Service: http://localhost:3008
   - Dépend de `libs/shared-ts`
   - Lancer: `npm run start:dev`
 - **Backend Chat Gateway (Rust)**: `apps/chat-gateway`

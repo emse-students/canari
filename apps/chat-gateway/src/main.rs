@@ -253,6 +253,77 @@ async fn main() {
         });
     }
 
+    // Spawn Kafka Consumer Task (Post Broadcast)
+    {
+        let kafka_brokers =
+            std::env::var("KAFKA_BROKERS").unwrap_or_else(|_| "localhost:9092".to_string());
+        let connected_users = app_state.connected_users.clone();
+
+        tokio::spawn(async move {
+            use rdkafka::ClientConfig;
+            use rdkafka::consumer::{CommitMode, Consumer, StreamConsumer};
+            use rdkafka::message::Message;
+
+            tracing::info!("Kafka Consumer connecting to {}", kafka_brokers);
+
+            let consumer: StreamConsumer = ClientConfig::new()
+                .set("group.id", "chat-gateway-broadcast")
+                .set("bootstrap.servers", &kafka_brokers)
+                .set("enable.partition.eof", "false")
+                .set("session.timeout.ms", "6000")
+                .set("enable.auto.commit", "true")
+                .create()
+                .expect("Consumer creation failed");
+
+            consumer
+                .subscribe(&["post.created"])
+                .expect("Can't subscribe to specified topic");
+
+            tracing::info!("Abonné au topic Kafka 'post.created'");
+
+            loop {
+                match consumer.recv().await {
+                    Err(e) => tracing::warn!("Kafka error: {}", e),
+                    Ok(m) => {
+                        let payload = match m.payload_view::<str>() {
+                            None => "",
+                            Some(Ok(s)) => s,
+                            Some(Err(e)) => {
+                                tracing::warn!(
+                                    "Error while deserializing message payload: {:?}",
+                                    e
+                                );
+                                ""
+                            }
+                        };
+
+                        tracing::info!("Received post.created broadcast: {}", payload);
+
+                        // Broadcast to ALL users
+                        let frame = serde_json::json!({
+                            "type": "post_created",
+                            "data": serde_json::from_str::<serde_json::Value>(payload).unwrap_or(serde_json::json!(null))
+                        }).to_string();
+
+                        let map = connected_users.lock().unwrap();
+                        let mut count = 0;
+                        for senders in map.values() {
+                            for tx in senders {
+                                let _ = tx.send(frame.clone());
+                                count += 1;
+                            }
+                        }
+                        tracing::info!("Broadcasted post to {} connections", count);
+
+                        if let Err(e) = consumer.commit_message(&m, CommitMode::Async) {
+                            tracing::warn!("Failed to commit offset: {}", e);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     let allow_origin = std::env::var("ALLOW_ORIGIN").unwrap_or_else(|_| "*".to_string());
     tracing::info!("CORS ALLOW_ORIGIN: {}", allow_origin);
     let cors = if allow_origin == "*" {

@@ -23,20 +23,6 @@ RUN printf 'server {\n\
     try_files $uri $uri/ /index.html;\n\
     }\n\
     \n\
-    location /ws {\n\
-    set $upstream_gateway chat-gateway:3000;\n\
-    rewrite ^/ws$ /api/ws break;\n\
-    proxy_pass http://$upstream_gateway;\n\
-    proxy_http_version 1.1;\n\
-    proxy_set_header Upgrade $http_upgrade;\n\
-    proxy_set_header Connection "upgrade";\n\
-    proxy_set_header Host $host;\n\
-    proxy_set_header X-Real-IP $remote_addr;\n\
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
-    proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
-    proxy_read_timeout 3600s;\n\
-    }\n\
-    \n\
     location /api/ws {\n\
     set $upstream_gateway chat-gateway:3000;\n\
     proxy_pass http://$upstream_gateway;\n\
@@ -50,19 +36,9 @@ RUN printf 'server {\n\
     proxy_read_timeout 3600s;\n\
     }\n\
     \n\
-    location /groups/ {\n\
+    location /api/groups/ {\n\
     set $upstream_gateway chat-gateway:3000;\n\
     proxy_pass http://$upstream_gateway;\n\
-    proxy_set_header Host $host;\n\
-    proxy_set_header X-Real-IP $remote_addr;\n\
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
-    proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
-    }\n\
-    \n\
-    location /mls-api/ {\n\
-    set $upstream_delivery chat-delivery-service:3001;\n\
-    rewrite ^/mls-api/(.*)$ /api/mls-api/$1 break;\n\
-    proxy_pass http://$upstream_delivery;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
@@ -94,7 +70,7 @@ RUN printf 'server {\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
     proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
     }\n\
-    location /media/ {\n\
+    location /api/media/ {\n\
     set $upstream_media media-service:3002;\n\
     proxy_pass http://$upstream_media;\n\
     proxy_set_header Host $host;\n\
@@ -112,7 +88,16 @@ RUN printf 'server {\n\
     proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
     }\n\
     \n\
-    location /channels/ {\n\
+    location /api/forms {\n\
+    set $upstream_form form-service:3008;\n\
+    proxy_pass http://$upstream_form;\n\
+    proxy_set_header Host $host;\n\
+    proxy_set_header X-Real-IP $remote_addr;\n\
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
+    proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
+    }\n\
+    \n\
+    location /api/channels/ {\n\
     set $upstream_channel channel-service:3005;\n\
     proxy_pass http://$upstream_channel;\n\
     proxy_set_header Host $host;\n\

@@ -1,11 +1,12 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, Inject } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import { ClientProxy } from '@nestjs/microservices';
 import Stripe from 'stripe';
 import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
-import { CreatePostDto, RegisterEventDto, VotePollDto } from './dto/post.dto';
+import { CreatePostDto, RegisterEventDto, VotePollDto, SubmitFormDto } from './dto/post.dto';
 import { Post } from './schemas/post.schema';
 
 const LINK_REGEX = /(https?:\/\/[^\s)\]]+)/gi;
@@ -23,6 +24,7 @@ export class PostsService {
 
   constructor(
     @InjectModel(Post.name) private readonly postModel: Model<Post>,
+    @Inject('KAFKA_CLIENT') private readonly kafkaClient: ClientProxy,
     private readonly configService: ConfigService,
     private readonly httpService: HttpService
   ) {
@@ -67,13 +69,35 @@ export class PostsService {
       registrants: [],
     }));
 
+    const forms = (input.forms ?? []).map((form) => ({
+      id: form.id?.trim() || makeId('form'),
+      title: form.title.trim(),
+      eventId: form.eventId.trim(),
+      basePrice: form.basePrice,
+      currency: (form.currency || 'eur').toLowerCase(),
+      submitLabel: form.submitLabel.trim(),
+      items: form.items.map((item) => ({
+        id: item.id?.trim() || makeId('item'),
+        label: item.label.trim(),
+        required: item.required,
+        type: item.type,
+        options: (item.options ?? []).map((opt) => ({
+          id: opt.id?.trim() || makeId('opt'),
+          label: opt.label.trim(),
+          priceModifier: opt.priceModifier,
+        })),
+        rows: item.rows,
+        scale: item.scale,
+      })),
+    }));
+
     for (const btn of eventButtons) {
       if (btn.requiresPayment && !btn.amountCents && !btn.stripePriceId) {
         throw new BadRequestException('paid event button requires amountCents or stripePriceId');
       }
     }
 
-    return await this.postModel.create({
+    const post = await this.postModel.create({
       authorId,
       markdown,
       mentions,
@@ -81,9 +105,14 @@ export class PostsService {
       images: input.images ?? [],
       polls,
       eventButtons,
+      forms,
+      attachedFormId: input.attachedFormId,
       createdAt: now,
       updatedAt: now,
     });
+
+    this.kafkaClient.emit('post.created', post).subscribe();
+    return post;
   }
 
   async listPosts(limit: number, offset: number = 0) {
@@ -305,6 +334,145 @@ export class PostsService {
       paymentPending: true,
       checkoutUrl: session.url,
       sessionId: session.id,
+    };
+  }
+
+  async submitForm(postId: string, formId: string, input: SubmitFormDto) {
+    const post = await this.postModel.findById(postId);
+    if (!post) throw new NotFoundException('post not found');
+
+    const form = (post.forms || []).find((f) => f.id === formId);
+    if (!form) throw new NotFoundException('form not found');
+
+    const userId = input.userId.trim();
+    let totalCents = form.basePrice;
+    const currency = form.currency.toLowerCase();
+
+    const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = [];
+
+    if (form.basePrice > 0) {
+      lineItems.push({
+        price_data: {
+          currency,
+          product_data: {
+            name: `${form.title} (Registration)`,
+          },
+          unit_amount: form.basePrice,
+        },
+        quantity: 1,
+      });
+    }
+
+    // Validate selections & modifiers
+    for (const item of form.items) {
+      const selectedValue = input.selections[item.id];
+
+      // Check required
+      if (item.required) {
+        let isPresent = false;
+        if (Array.isArray(selectedValue)) {
+          isPresent = selectedValue.length > 0;
+        } else if (selectedValue && typeof selectedValue === 'object') {
+          isPresent = Object.keys(selectedValue).length > 0;
+        } else {
+          isPresent = !!selectedValue;
+        }
+
+        if (!isPresent) {
+          throw new BadRequestException(`Missing required field: ${item.label}`);
+        }
+      }
+
+      // Calculate Price Modifiers
+      if (selectedValue && item.options && item.options.length > 0) {
+        const processOption = (optId: string) => {
+          const option = item.options?.find((o) => o.id === optId);
+          if (option && option.priceModifier !== 0) {
+            totalCents += option.priceModifier;
+            if (option.priceModifier > 0) {
+              lineItems.push({
+                price_data: {
+                  currency,
+                  product_data: {
+                    name: `${item.label}: ${option.label}`,
+                  },
+                  unit_amount: option.priceModifier,
+                },
+                quantity: 1,
+              });
+            }
+          }
+        };
+
+        if (Array.isArray(selectedValue)) {
+          (selectedValue as string[]).forEach(processOption);
+        } else if (typeof selectedValue === 'object') {
+          Object.values(selectedValue)
+            .flat()
+            .forEach((val: any) => {
+              if (typeof val === 'string') processOption(val);
+            });
+        } else if (typeof selectedValue === 'string') {
+          processOption(selectedValue);
+        }
+      }
+    }
+
+    if (totalCents <= 0) {
+      return { ok: true, requiresPayment: false, message: 'Free registration confirmed.' };
+    }
+
+    if (!this.stripe) {
+      return {
+        ok: false,
+        requiresPayment: true,
+        message: 'Stripe not configured on backend.',
+      };
+    }
+
+    // Stripe Customer Logic
+    let customerId: string | undefined;
+    try {
+      const userRes = await firstValueFrom(
+        this.httpService.get(`${this.userServiceUrl}/users/${userId}`)
+      );
+      customerId = userRes.data?.stripeCustomerId;
+    } catch (err) {
+      // ignore
+    }
+
+    if (!customerId) {
+      try {
+        const c = await this.stripe.customers.create({
+          email: input.email,
+          metadata: { userId },
+        });
+        customerId = c.id;
+        // Try update user service... (omitted for brevity here as it's best effort)
+      } catch (e) {
+        this.logger.warn('Failed to create stripe customer', e);
+      }
+    }
+
+    const session = await this.stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      customer: customerId,
+      line_items: lineItems,
+      mode: 'payment',
+      success_url: process.env.STRIPE_SUCCESS_URL || 'http://localhost:5173/posts?success=true',
+      cancel_url: process.env.STRIPE_CANCEL_URL || 'http://localhost:5173/posts?cancel=true',
+      metadata: {
+        userId,
+        postId,
+        formId,
+        type: 'form_submission',
+      },
+    });
+
+    return {
+      ok: true,
+      requiresPayment: true,
+      checkoutUrl: session.url,
     };
   }
 

@@ -19,7 +19,7 @@
   const currentRouteMode = $derived(pathname.startsWith('/communities') ? 'communities' : 'chat');
 </script>
 
-<div class="relative min-h-dvh overflow-hidden">
+<div class="relative min-h-dvh">
   <div class="fixed inset-0 z-0 pointer-events-none">
     <BackgroundBlobs />
   </div>

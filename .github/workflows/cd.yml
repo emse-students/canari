@@ -109,6 +109,9 @@ jobs:
           - name: frontend
             context: .
             dockerfile: ./infrastructure/local/Dockerfile.frontend
+          - name: form-service
+            context: .
+            dockerfile: ./infrastructure/local/Dockerfile.form-service
           - name: media-service
             context: .
             dockerfile: ./infrastructure/local/Dockerfile.media-service

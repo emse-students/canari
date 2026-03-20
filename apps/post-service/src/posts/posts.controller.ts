@@ -1,6 +1,12 @@
 import { Body, Controller, Get, Param, Post as HttpPost, Query } from '@nestjs/common';
 import { PostsService } from './posts.service';
-import { CreatePostDto, ListPostsQueryDto, RegisterEventDto, VotePollDto } from './dto/post.dto';
+import {
+  CreatePostDto,
+  ListPostsQueryDto,
+  RegisterEventDto,
+  VotePollDto,
+  SubmitFormDto,
+} from './dto/post.dto';
 
 @Controller('posts')
 export class PostsController {
@@ -43,5 +49,14 @@ export class PostsController {
     @Body() body: RegisterEventDto
   ) {
     return this.service.registerEvent(postId, buttonId, body);
+  }
+
+  @HttpPost(':postId/forms/:formId/submit')
+  submitForm(
+    @Param('postId') postId: string,
+    @Param('formId') formId: string,
+    @Body() body: SubmitFormDto
+  ) {
+    return this.service.submitForm(postId, formId, body);
   }
 }

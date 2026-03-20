@@ -43,6 +43,45 @@ export interface EventButton {
   registrants: string[];
 }
 
+export interface FormOption {
+  id: string;
+  label: string;
+  priceModifier: number; // in cents
+}
+
+export interface FormItem {
+  id: string;
+  label: string;
+  required: boolean;
+  type:
+    | 'short_text'
+    | 'long_text'
+    | 'dropdown'
+    | 'single_choice'
+    | 'multiple_choice'
+    | 'matrix_single'
+    | 'matrix_multiple'
+    | 'linear_scale';
+  options?: FormOption[]; // For dropdown, single_choice, multiple_choice, matrix (columns)
+  rows?: string[]; // For matrix types (rows)
+  scale?: {
+    min: number;
+    max: number;
+    minLabel?: string;
+    maxLabel?: string;
+  };
+}
+
+export interface PostForm {
+  id: string;
+  title: string;
+  eventId: string;
+  basePrice: number; // in cents
+  currency: string;
+  items: FormItem[];
+  submitLabel: string;
+}
+
 @Schema({ collection: 'posts' })
 export class Post {
   @Prop({ required: true })
@@ -59,6 +98,9 @@ export class Post {
     default: [],
   })
   links: LinkMeta[];
+
+  @Prop({ required: false })
+  attachedFormId?: string;
 
   @Prop({
     type: [
@@ -113,6 +155,46 @@ export class Post {
     default: [],
   })
   eventButtons: EventButton[];
+
+  @Prop({
+    type: [
+      {
+        id: { type: String, required: true },
+        title: { type: String, required: true },
+        eventId: { type: String, required: true },
+        basePrice: { type: Number, required: true },
+        currency: { type: String, required: true },
+        submitLabel: { type: String, required: true },
+        items: [
+          {
+            id: { type: String, required: true },
+            label: { type: String, required: true },
+            required: { type: Boolean, required: true },
+            type: { type: String, required: true },
+            options: [
+              {
+                id: { type: String, required: true },
+                label: { type: String, required: true },
+                priceModifier: { type: Number, required: true },
+              },
+            ],
+            rows: { type: [String], required: false },
+            scale: {
+              type: {
+                min: { type: Number, required: true },
+                max: { type: Number, required: true },
+                minLabel: { type: String },
+                maxLabel: { type: String },
+              },
+              required: false,
+            },
+          },
+        ],
+      },
+    ],
+    default: [],
+  })
+  forms: PostForm[];
 
   @Prop({ default: Date.now })
   createdAt: Date;

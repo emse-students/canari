@@ -6,7 +6,8 @@
     class?: string;
     onclick?: (e: MouseEvent) => void;
     children?: import('svelte').Snippet;
-    variant?: 'primary' | 'secondary' | 'outline' | 'ghost'; 
+    variant?: 'primary' | 'secondary' | 'outline' | 'ghost';
+    [key: string]: any;
   }
 
   let {
@@ -17,11 +18,12 @@
     onclick,
     children,
     variant = 'primary',
+    ...rest
   }: Props = $props();
 
   const baseStyles =
     'inline-flex items-center justify-center gap-2 px-6 py-3 rounded-2xl font-bold text-base transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed';
-  
+
   const variants = {
     primary: 'bg-cn-yellow text-cn-dark hover:bg-cn-yellow-hover hover:-translate-y-0.5 shadow-sm',
     secondary: 'bg-cn-surface text-text-main hover:bg-cn-border/50 border border-cn-border',
@@ -35,6 +37,7 @@
   disabled={disabled || loading}
   class="{baseStyles} {variants[variant]} {className}"
   {onclick}
+  {...rest}
 >
   {#if loading}
     <span

@@ -331,6 +331,28 @@ services:
           cpus: '0.5'
           memory: 256M
 
+  # ─────────────────────────────────────────────────────
+  # Form Service (NestJS) — port 3008
+  # ─────────────────────────────────────────────────────
+  form-service:
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/form-service:${TAG:-latest}
+    restart: always
+    environment:
+      NODE_ENV: production
+      PORT: "3008"
+      FORMS_MONGO_URI: mongodb://mongo:27017/form_db
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - canari-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
 networks:
   canari-network:
     driver: bridge

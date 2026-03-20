@@ -1,0 +1,28 @@
+# -- Build stage ---------------------------------------------------------------
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Copy deps
+COPY apps/form-service/package*.json ./apps/form-service/
+# Install deps
+RUN cd apps/form-service && npm install --legacy-peer-deps
+
+# Copy source
+COPY apps/form-service ./apps/form-service
+
+# Build
+RUN cd apps/form-service && npm run build
+
+# -- Runtime stage -------------------------------------------------------------
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY --from=builder /app/apps/form-service/dist ./dist
+COPY --from=builder /app/apps/form-service/node_modules ./node_modules
+COPY --from=builder /app/apps/form-service/package.json ./
+
+EXPOSE 3008
+
+CMD ["node", "dist/main.js"]

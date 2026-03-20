@@ -6,6 +6,7 @@ import {
   IsDateString,
   IsNotEmpty,
   IsNumber,
+  IsObject,
   IsOptional,
   IsString,
   Min,
@@ -104,6 +105,85 @@ export class EventButtonInputDto {
   capacity?: number;
 }
 
+export class FormOptionInputDto {
+  @IsString()
+  @IsOptional()
+  id?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  label: string;
+
+  @IsNumber()
+  priceModifier: number;
+}
+
+export class FormItemInputDto {
+  @IsString()
+  @IsOptional()
+  id?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  label: string;
+
+  @IsBoolean()
+  required: boolean;
+
+  @IsString()
+  @IsNotEmpty()
+  type: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => FormOptionInputDto)
+  @IsOptional()
+  options?: FormOptionInputDto[];
+
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  rows?: string[];
+
+  @IsOptional()
+  scale?: {
+    min: number;
+    max: number;
+    minLabel?: string;
+    maxLabel?: string;
+  };
+}
+
+export class FormInputDto {
+  @IsString()
+  @IsOptional()
+  id?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  title: string;
+
+  @IsString()
+  @IsNotEmpty()
+  eventId: string;
+
+  @IsNumber()
+  @Min(0)
+  basePrice: number;
+
+  @IsString()
+  currency: string;
+
+  @IsString()
+  @IsNotEmpty()
+  submitLabel: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => FormItemInputDto)
+  items: FormItemInputDto[];
+}
+
 export class CreatePostDto {
   @IsString()
   @IsNotEmpty()
@@ -119,6 +199,10 @@ export class CreatePostDto {
   @Type(() => PostImageDto)
   images?: PostImageDto[];
 
+  @IsString()
+  @IsOptional()
+  attachedFormId?: string;
+
   @IsArray()
   @IsOptional()
   @ValidateNested({ each: true })
@@ -130,6 +214,11 @@ export class CreatePostDto {
   @ValidateNested({ each: true })
   @Type(() => EventButtonInputDto)
   eventButtons?: EventButtonInputDto[];
+  @IsArray()
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => FormInputDto)
+  forms?: FormInputDto[];
 }
 
 export class ListPostsQueryDto {
@@ -165,4 +254,17 @@ export class RegisterEventDto {
   @IsString()
   @IsOptional()
   email?: string;
+}
+
+export class SubmitFormDto {
+  @IsString()
+  @IsNotEmpty()
+  userId: string;
+
+  @IsString()
+  @IsOptional()
+  email?: string;
+
+  @IsObject()
+  selections: Record<string, string | string[] | number | Record<string, any>>;
 }
