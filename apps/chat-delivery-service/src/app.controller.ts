@@ -1280,12 +1280,10 @@ export class AppController {
       if (typeof rawContent !== 'string' || rawContent.length === 0) {
         throw new BadRequestException('content is required');
       }
-      if (typeof rawType !== 'string' || rawType.length === 0) {
-        throw new BadRequestException('type is required');
-      }
 
       const safeContent: string = rawContent;
-      const safeType: string = rawType;
+      const safeType: string =
+        typeof rawType === 'string' && rawType.length > 0 ? rawType : 'message';
 
       let targetList: { userId: string; deviceId: string }[] = [];
 
