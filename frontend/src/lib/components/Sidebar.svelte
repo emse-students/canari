@@ -1,10 +1,10 @@
 <script lang="ts">
   import { SvelteMap } from 'svelte/reactivity';
-  import { Hand, RotateCcw, Hash, Lock, Plus, Settings, X } from 'lucide-svelte';
+  import { Hand, RotateCcw, Hash, Lock, Plus, } from 'lucide-svelte';
   import Avatar from './Avatar.svelte';
   import ConversationTile from './ConversationTile.svelte';
   import SidebarHeaderControls from './SidebarHeaderControls.svelte';
-  import SidebarChannelWorkspaces from './SidebarChannelWorkspaces.svelte';
+  
   import SidebarFooterTools from './SidebarFooterTools.svelte';
   import SidebarNewChatModal from './SidebarNewChatModal.svelte';
   import SidebarNewChannelModal from './SidebarNewChannelModal.svelte';
@@ -96,8 +96,8 @@
     onCreateGroup,
     onCreateChannel,
     onCreateWorkspace,
-    onInviteChannelMember,
-    onUpdateChannelMemberRole,
+    
+    
     onSelectConversation,
     onSelectChannelConversation,
     selectedChannelId = '',
@@ -127,11 +127,11 @@
   let groupName = $state('');
   let channelName = $state('');
   let communityName = $state('');
-  let communityMemberId = $state('');
-  let communityRole = $state<'member' | 'moderator' | 'admin'>('member');
+  
+  
   let selectedCommunityWorkspaceId = $state('');
   let searchQuery = $state('');
-  let expandedWorkspaceIds = $state<string[]>(['sports', 'bde']);
+  
 
   interface ChannelItem {
     id: string;
@@ -163,29 +163,9 @@
     });
   });
 
-  let filteredChannelWorkspaces = $derived(
-    channelWorkspaces
-      .map((workspace) => {
-        if (!searchQuery.trim()) return workspace;
-        const query = searchQuery.trim().toLowerCase();
-        const workspaceMatches = workspace.name.toLowerCase().includes(query);
-        const channels = workspace.channels.filter((channel) =>
-          channel.name.toLowerCase().includes(query)
-        );
-        if (!workspaceMatches && channels.length === 0) return null;
-        return {
-          ...workspace,
-          channels: workspaceMatches ? workspace.channels : channels,
-        };
-      })
-      .filter((workspace): workspace is ChannelWorkspace => workspace !== null)
-  );
+  
 
-  function toggleWorkspace(workspaceId: string) {
-    expandedWorkspaceIds = expandedWorkspaceIds.includes(workspaceId)
-      ? expandedWorkspaceIds.filter((id) => id !== workspaceId)
-      : [...expandedWorkspaceIds, workspaceId];
-  }
+  
 
   function openNewChatModal(tab: 'contact' | 'group' | 'channel' = 'contact') {
     if (tab === 'channel') {
@@ -253,19 +233,9 @@
     showNewCommunityModal = false;
   }
 
-  function handleInviteChannelMember() {
-    const memberId = communityMemberId.trim().toLowerCase();
-    const channelId = selectedChannelId;
-    if (!memberId || !channelId) return;
-    onInviteChannelMember?.(channelId, memberId, communityRole);
-  }
+  
 
-  function handleUpdateChannelMemberRole() {
-    const memberId = communityMemberId.trim().toLowerCase();
-    const channelId = selectedChannelId;
-    if (!memberId || !channelId) return;
-    onUpdateChannelMemberRole?.(channelId, memberId, communityRole);
-  }
+  
 </script>
 
 {#if drawerMode}
@@ -555,3 +525,11 @@
   }}
   onSubmit={handleCreateWorkspace}
 />
+
+
+
+
+
+
+
+

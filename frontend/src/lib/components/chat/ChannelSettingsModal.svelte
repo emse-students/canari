@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Shield, Settings, Users, Key, Trash2, X } from 'lucide-svelte';
+  import { Shield, Settings, Users, Key, Trash2 } from 'lucide-svelte';
   import Modal from '../Modal.svelte';
 
   interface ChannelSidebarItem {

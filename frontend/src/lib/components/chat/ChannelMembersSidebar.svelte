@@ -8,7 +8,7 @@
     onClose?: () => void;
   }
 
-  let { selectedChannelId, mode = 'desktop', onClose }: Props = $props();
+  let { mode = 'desktop', onClose }: Props = $props();
 
   // Mocks pour la démonstration (en attendant d'être alimentés par le store)
   const members = $derived([

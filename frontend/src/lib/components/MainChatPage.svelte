@@ -54,7 +54,7 @@
   import { encodeAppMessage, mkMedia, MediaKind } from '$lib/proto/codec';
   import { createSyncQrDataUrl } from '$lib/sync/qr';
   import LoginForm from './LoginForm.svelte';
-  import { Shield, Users } from 'lucide-svelte';
+  import { Users } from 'lucide-svelte';
   import { BiometricService } from '$lib/services/biometric';
   import Modal from './Modal.svelte';
   import Navbar from './Navbar.svelte';
