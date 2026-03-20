@@ -71,6 +71,7 @@ export default defineConfig(async () => ({
         target: 'ws://localhost:3000',
         ws: true,
         changeOrigin: true,
+        rewrite: () => '/api/ws',
       },
     },
     watch: {
