@@ -67,7 +67,17 @@ body {
 }
 
 body {
-  font-family: 'Segoe UI', 'Inter', 'Avenir Next', sans-serif;
+  font-family: 'Nunito', 'Segoe UI', 'Inter', 'Avenir Next', sans-serif;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+.font-brand {
+  font-family: 'Fredoka', 'Segoe UI', 'Inter', 'Avenir Next', sans-serif;
 }
 
 @keyframes riseIn {

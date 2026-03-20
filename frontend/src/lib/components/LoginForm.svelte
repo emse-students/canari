@@ -42,13 +42,12 @@
     <!-- Logo -->
     <div class="mb-10">
       <div
-        class="w-20 h-20 text-cn-yellow rounded-3xl flex items-center justify-center mx-auto mb-6"
-        style="background-color: #101827;"
+        class="w-24 h-24 rounded-[32px] bg-gradient-to-br from-cn-yellow to-cn-yellow-hover shadow-lg border border-black/10 dark:border-white/10 flex items-center justify-center mx-auto mb-6 transform hover:scale-105 transition-transform duration-300"
       >
-        <img src="/favicon.png" alt="Canari Logo" class="w-3/5 h-3/5 object-contain" />
+        <img src="/favicon.png" alt="Canari Logo" class="w-2/3 h-2/3 object-contain drop-shadow-md" />
       </div>
-      <h1 class="text-4xl font-black text-text-main tracking-tight">Canari</h1>
-      <p class="text-text-muted text-base mt-2">Mines Saint-Étienne</p>
+      <h1 class="text-5xl font-brand font-bold text-text-main tracking-wide">Canari</h1>
+      <p class="text-text-muted text-base mt-3 font-medium">Mines Saint-Étienne</p>
     </div>
 
     <!-- Form -->
