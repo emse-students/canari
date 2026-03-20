@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SvelteMap } from 'svelte/reactivity';
   import { Hand, RotateCcw, Hash, Lock, Plus, Settings, X } from 'lucide-svelte';
   import Avatar from './Avatar.svelte';
   import ConversationTile from './ConversationTile.svelte';
@@ -36,7 +37,7 @@
 
   interface Props {
     viewMode?: 'chat' | 'communities';
-    conversations: Map<string, Conversation>;
+    conversations: SvelteMap<string, Conversation>;
     channelWorkspaces?: ChannelWorkspace[];
     archivedConversationIds?: string[];
     showArchivedConversations?: boolean;
@@ -150,7 +151,7 @@
     const archived = new Set(archivedConversationIds.map((id) => id.toLowerCase()));
     const query = searchQuery.trim().toLowerCase();
 
-    return Array.from(conversations.entries()).filter(([id, convo]) => {
+    return [...conversations.entries()].filter(([id, convo]) => {
       const isArchived = archived.has(id.toLowerCase());
       if (showArchivedConversations ? !isArchived : isArchived) {
         return false;
