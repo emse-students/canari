@@ -77,7 +77,8 @@ jobs:
           echo "VITE_GATEWAY_URL=${BASE_URL}" >> .env
           echo "VITE_HISTORY_URL=${BASE_URL}" >> .env
           echo "VITE_MEDIA_URL=${BASE_URL}" >> .env
-          echo "VITE_POSTS_URL=${BASE_URL}" >> .env
+          echo "VITE_POST_URL=${BASE_URL}" >> .env
+          echo "VITE_FORM_URL=${BASE_URL}" >> .env
 
       - name: Build frontend
         working-directory: frontend

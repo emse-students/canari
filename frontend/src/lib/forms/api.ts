@@ -35,7 +35,7 @@ export interface Form extends CreateFormPayload {
   updatedAt: string;
 }
 
-const API_Base = import.meta.env.VITE_FORM_SERVICE_URL || 'http://localhost:3008/api';
+const API_Base = import.meta.env.VITE_FORM_URL || 'http://localhost:3008/api';
 
 export async function createForm(payload: CreateFormPayload): Promise<Form> {
   const res = await fetch(`${API_Base}/forms`, {
