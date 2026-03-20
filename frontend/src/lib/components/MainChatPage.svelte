@@ -674,7 +674,7 @@
         userId = savedUser;
         pin = savedPin;
         void handleLogin();
-      } else if (routeMode !== 'login') {
+      } else {
         void goto('/login', { replaceState: true });
       }
     }

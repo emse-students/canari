@@ -7,12 +7,13 @@
   interface Props {
     open?: boolean;
     title?: string;
+    maxWidth?: string;
     onClose: () => void;
     children?: Snippet;
     footer?: Snippet;
   }
 
-  let { open = false, title, onClose, children, footer }: Props = $props();
+  let { open = false, title, maxWidth = 'max-w-md', onClose, children, footer }: Props = $props();
 
   function handleBackdropClick(e: MouseEvent) {
     if (e.target === e.currentTarget) onClose();
@@ -34,7 +35,7 @@
       in:fly={{ duration: 150, y: 8 }}
     >
       <div
-        class="bg-[var(--cn-surface)] border border-cn-border rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden text-text-main"
+        class="bg-[var(--cn-surface)] border border-cn-border rounded-2xl shadow-2xl w-full {maxWidth} mx-4 overflow-hidden text-text-main"
       >
         {#if title}
           <div class="px-6 py-4 border-b border-cn-border flex items-center justify-between">

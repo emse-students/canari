@@ -1,3 +1,8 @@
+/* eslint-disable @typescript-eslint/no-unsafe-argument */
+/*
+eslint-disable
+@typescript-eslint/no-unsafe-argument
+*/
 import { INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import * as request from 'supertest';
@@ -61,7 +66,11 @@ describe('Channel API (e2e)', () => {
       roleName: 'member',
       actorUserId: 'owner',
     };
-    serviceMock.joinChannel.mockResolvedValue({ joined: true, historyVisible: true, keyVersion: 1 });
+    serviceMock.joinChannel.mockResolvedValue({
+      joined: true,
+      historyVisible: true,
+      keyVersion: 1,
+    });
 
     const response = await request(app.getHttpServer())
       .post(`/api/channels/${channelId}/members/join`)

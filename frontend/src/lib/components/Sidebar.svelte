@@ -119,7 +119,7 @@
   let showCommunityAdminModal = $state(false);
   let showNewCommunityModal = $state(false);
   let activeTab = $state<'contact' | 'group'>('contact');
-  let activeSidebarTab = $derived(viewMode === 'communities' ? 'channels' : 'discussions');
+  let activeSidebarTab = $derived((viewMode === 'communities' ? 'channels' : 'discussions') as 'channels' | 'discussions');
   let contactId = $state('');
   let groupName = $state('');
   let channelName = $state('');
@@ -543,8 +543,8 @@
   open={showNewCommunityModal}
   {communityName}
   onClose={() => (showNewCommunityModal = false)}
-  onCommunityNameChange={(value) => {
+  onNameChange={(value) => {
     communityName = value;
   }}
-  onCreateCommunity={handleCreateWorkspace}
+  onSubmit={handleCreateWorkspace}
 />
