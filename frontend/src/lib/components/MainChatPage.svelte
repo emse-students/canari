@@ -54,12 +54,13 @@
   import { encodeAppMessage, mkMedia, MediaKind } from '$lib/proto/codec';
   import { createSyncQrDataUrl } from '$lib/sync/qr';
   import LoginForm from './LoginForm.svelte';
-  import { Shield } from 'lucide-svelte';
+  import { Shield, Users } from 'lucide-svelte';
   import { BiometricService } from '$lib/services/biometric';
   import Modal from './Modal.svelte';
   import Navbar from './Navbar.svelte';
   import Sidebar from './Sidebar.svelte';
-  import ChannelPermissionsPanel from './chat/ChannelPermissionsPanel.svelte';
+  import ChannelMembersSidebar from './chat/ChannelMembersSidebar.svelte';
+  import ChannelSettingsModal from './chat/ChannelSettingsModal.svelte';
   import SyncSessionModal from './SyncSessionModal.svelte';
   import ChatArea from './ChatArea.svelte';
   import LogsPanel from './LogsPanel.svelte';
@@ -103,7 +104,8 @@
   let selectedContact = $state<string | null>(null);
   let mobileView = $state<'list' | 'chat'>('list'); // Gestion responsive
   let isConversationDrawerOpen = $state(false);
-  let isChannelPermissionsDrawerOpen = $state(false);
+  let isChannelMembersDrawerOpen = $state(false);
+  let isChannelSettingsModalOpen = $state(false);
 
   let newContactInput = $state('');
   let newGroupInput = $state('');
@@ -2347,6 +2349,7 @@
       <ChatArea
         conversation={currentConvo}
         {messageText}
+        isChannel={routeMode === 'communities'}
         onMessageChange={(value) => (messageText = value)}
         onSend={handleSendChat}
         onInviteMembers={inviteMembersToCurrentGroup}
@@ -2354,6 +2357,7 @@
         onOpenConversations={() => {
           isConversationDrawerOpen = true;
         }}
+        onOpenSettings={routeMode === 'communities' ? () => (isChannelSettingsModalOpen = true) : undefined}
         isHidden={mobileView === 'list'}
         {groupMembers}
         {sendError}
@@ -2374,58 +2378,46 @@
         isUploading={isUploadingMedia}
       />
 
-      <ChannelPermissionsPanel
-        selectedChannelId={selectedChannelConversationId}
-        {channelWorkspaces}
-        onInviteMember={(channelId, memberId, roleName) => {
-          inviteMemberToChannel(channelId, memberId, roleName);
-        }}
-        onUpdateMemberRole={(channelId, memberId, roleName) => {
-          updateChannelMemberRole(channelId, memberId, roleName);
-        }}
-      />
+      {#if routeMode === 'communities'}
+        <ChannelMembersSidebar
+          selectedChannelId={selectedChannelConversationId}
+        />
 
-      {#if selectedChannelConversationId}
-        <button
-          type="button"
-          onclick={() => {
-            isChannelPermissionsDrawerOpen = true;
-          }}
-          class="fixed bottom-24 right-4 z-30 inline-flex items-center gap-2 rounded-full border border-cn-border bg-white/90 px-3 py-2 text-sm font-semibold text-text-main shadow-md xl:hidden"
-          aria-label="Ouvrir les permissions du canal"
-        >
-          <Shield size={14} />
-          Permissions
-        </button>
-      {/if}
+        {#if selectedChannelConversationId}
+          <button
+            type="button"
+            onclick={() => {
+              isChannelMembersDrawerOpen = true;
+            }}
+            class="fixed bottom-24 right-4 z-30 inline-flex items-center gap-2 rounded-full border border-cn-border bg-white/90 px-3 py-2 text-sm font-semibold text-text-main shadow-md xl:hidden"
+            aria-label="Ouvrir les membres du canal"
+          >
+            <Users size={14} />
+            Membres
+          </button>
+        {/if}
 
-      {#if isChannelPermissionsDrawerOpen}
-        <button
-          type="button"
-          class="fixed inset-0 z-40 bg-black/30 xl:hidden"
-          aria-label="Fermer le panneau permissions"
-          onclick={() => {
-            isChannelPermissionsDrawerOpen = false;
-          }}
-        ></button>
-        <div
-          class="fixed right-0 top-0 bottom-0 z-50 w-[90vw] max-w-sm border-l border-cn-border bg-[color-mix(in_srgb,var(--cn-surface)_90%,white)] shadow-2xl xl:hidden"
-        >
-          <ChannelPermissionsPanel
-            mode="mobile"
-            onClose={() => {
-              isChannelPermissionsDrawerOpen = false;
+        {#if isChannelMembersDrawerOpen}
+          <button
+            type="button"
+            class="fixed inset-0 z-40 bg-black/30 xl:hidden"
+            aria-label="Fermer le panneau membres"
+            onclick={() => {
+              isChannelMembersDrawerOpen = false;
             }}
-            selectedChannelId={selectedChannelConversationId}
-            {channelWorkspaces}
-            onInviteMember={(channelId, memberId, roleName) => {
-              inviteMemberToChannel(channelId, memberId, roleName);
-            }}
-            onUpdateMemberRole={(channelId, memberId, roleName) => {
-              updateChannelMemberRole(channelId, memberId, roleName);
-            }}
-          />
-        </div>
+          ></button>
+          <div
+            class="fixed right-0 top-0 bottom-0 z-50 w-[90vw] max-w-sm border-l border-cn-border bg-[color-mix(in_srgb,var(--cn-surface)_90%,white)] shadow-2xl xl:hidden"
+          >
+            <ChannelMembersSidebar
+              mode="mobile"
+              onClose={() => {
+                isChannelMembersDrawerOpen = false;
+              }}
+              selectedChannelId={selectedChannelConversationId}
+            />
+          </div>
+        {/if}
       {/if}
 
       {#if isConversationDrawerOpen}
@@ -2499,6 +2491,19 @@
           }}
         />
       {/if}
+
+      <ChannelSettingsModal
+        open={isChannelSettingsModalOpen}
+        onClose={() => (isChannelSettingsModalOpen = false)}
+        selectedChannelId={selectedChannelConversationId}
+        {channelWorkspaces}
+        onInviteMember={(channelId, memberId, roleName) => {
+          inviteMemberToChannel(channelId, memberId, roleName);
+        }}
+        onUpdateMemberRole={(channelId, memberId, roleName) => {
+          updateChannelMemberRole(channelId, memberId, roleName);
+        }}
+      />
 
       <SyncSessionModal
         isOpen={isSyncSessionOpen}

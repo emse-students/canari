@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { Settings, Users, X, Trash2, ShieldCheck } from 'lucide-svelte';
   import Modal from './Modal.svelte';
 
   interface ChannelItem {
@@ -17,155 +17,105 @@
     open: boolean;
     workspaces: ChannelWorkspace[];
     selectedWorkspaceId: string;
-    selectedChannelId: string;
-    communityName: string;
-    memberId: string;
-    roleName: 'member' | 'moderator' | 'admin';
     onClose: () => void;
-    onWorkspaceChange: (value: string) => void;
-    onChannelChange: (value: string) => void;
-    onCommunityNameChange: (value: string) => void;
-    onMemberIdChange: (value: string) => void;
-    onRoleNameChange: (value: 'member' | 'moderator' | 'admin') => void;
-    onCreateCommunity: () => void;
-    onInviteMember: () => void;
-    onUpdateRole: () => void;
+    // Actions:
+    // This is a mockup for layout. Real actions like onLeaveWorkspace, onUpdateWorkspaceName, etc. would go here.
   }
 
   let {
     open,
     workspaces,
     selectedWorkspaceId,
-    selectedChannelId,
-    communityName,
-    memberId,
-    roleName,
     onClose,
-    onWorkspaceChange,
-    onChannelChange,
-    onCommunityNameChange,
-    onMemberIdChange,
-    onRoleNameChange,
-    onCreateCommunity,
-    onInviteMember,
-    onUpdateRole,
   }: Props = $props();
 
-  let communityInput: HTMLInputElement | undefined;
-
-  $effect(() => {
-    if (!open) return;
-    void tick().then(() => communityInput?.focus());
-  });
+  let activeTab = $state<'overview' | 'members'>('overview');
 
   let selectedWorkspace = $derived(
     workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? workspaces[0]
   );
 </script>
 
-<Modal {open} {onClose} title="Communautes & roles">
-  <div class="space-y-5 pt-1">
-    <section class="space-y-2 rounded-xl border border-cn-border bg-white/40 p-3">
-      <h3 class="text-sm font-semibold text-text-main">Creer une communaute</h3>
-      <div class="flex gap-2">
-        <input
-          bind:this={communityInput}
-          type="text"
-          value={communityName}
-          oninput={(e) => onCommunityNameChange((e.target as HTMLInputElement).value)}
-          placeholder="Ex: Asso Robotique"
-          class="w-full rounded-xl border border-white/55 bg-white/70 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-400/45"
-        />
+<Modal {open} {onClose} title="Paramètres de la communauté" maxWidth="max-w-4xl">
+  <div class="flex flex-col md:flex-row h-[70vh] min-h-[500px] border-t border-cn-border/40">
+    <!-- Barre de menu à gauche -->
+    <div class="w-full md:w-64 bg-[color-mix(in_srgb,var(--cn-surface)_60%,white)] border-r border-cn-border/40 flex flex-col p-4 space-y-1">
+      <h3 class="text-xs font-bold uppercase tracking-wider text-text-muted mb-2 px-2">{selectedWorkspace ? selectedWorkspace.name : 'Communauté'}</h3>
+      
+      <button
+        onclick={() => (activeTab = 'overview')}
+        class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-colors {activeTab === 'overview' ? 'bg-amber-100 text-amber-900' : 'text-text-main hover:bg-black/5'}"
+      >
+        <Settings size={18} />
+        Vue d'ensemble
+      </button>
+      <button
+        onclick={() => (activeTab = 'members')}
+        class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-colors {activeTab === 'members' ? 'bg-amber-100 text-amber-900' : 'text-text-main hover:bg-black/5'}"
+      >
+        <Users size={18} />
+        Membres
+      </button>
+
+      <div class="mt-auto pt-4 space-y-2">
         <button
-          type="button"
-          onclick={onCreateCommunity}
-          disabled={!communityName.trim()}
-          class="rounded-xl bg-cn-dark px-3 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+          class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-red-600 hover:bg-red-50 transition-colors w-full"
         >
-          Creer
+          <Trash2 size={18} />
+          Quitter la communauté
         </button>
       </div>
-    </section>
+    </div>
 
-    <section class="space-y-2 rounded-xl border border-cn-border bg-white/40 p-3">
-      <h3 class="text-sm font-semibold text-text-main">Membres & permissions</h3>
+    <!-- Contenu Principal -->
+    <div class="flex-1 bg-white/50 p-6 overflow-y-auto">
+      {#if activeTab === 'overview'}
+        <div class="space-y-6 max-w-2xl">
+          <h2 class="text-xl font-bold text-text-main">Vue d'ensemble</h2>
+          
+          <div class="flex items-center gap-6">
+            <div class="w-24 h-24 rounded-full bg-amber-500 flex items-center justify-center text-white text-3xl font-bold shadow-md">
+              {selectedWorkspace ? selectedWorkspace.name.charAt(0).toUpperCase() : '?'}
+            </div>
+            <div class="flex-1 space-y-2">
+              <label class="text-xs font-bold uppercase text-text-muted" for="server-name">Nom de la communauté</label>
+              <input
+                id="server-name"
+                class="w-full bg-white border border-cn-border rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-amber-500/50"
+                value={selectedWorkspace ? selectedWorkspace.name : ''}
+              />
+            </div>
+          </div>
 
-      <div class="grid grid-cols-1 gap-2">
-        <label class="text-xs font-medium text-text-muted" for="workspace-select">Communaute</label>
-        <select
-          id="workspace-select"
-          value={selectedWorkspace?.id ?? ''}
-          onchange={(e) => onWorkspaceChange((e.target as HTMLSelectElement).value)}
-          class="rounded-xl border border-white/55 bg-white/70 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-400/45"
-        >
-          {#each workspaces as workspace (workspace.id)}
-            <option value={workspace.id}>{workspace.name}</option>
-          {/each}
-        </select>
-      </div>
+          <div class="border border-cn-border bg-white rounded-xl p-4 shadow-sm text-sm text-text-main flex items-center gap-3">
+             <ShieldCheck size={24} class="text-green-500" />
+             <div class="flex-1">
+               <span class="font-bold block">Chiffrement E2E Actif</span>
+               <span class="text-xs text-text-muted">Les canaux de cette communauté utilisent Secure Group Messaging (MLS).</span>
+             </div>
+          </div>
+        </div>
+      {/if}
 
-      <div class="grid grid-cols-1 gap-2">
-        <label class="text-xs font-medium text-text-muted" for="channel-select">Canal</label>
-        <select
-          id="channel-select"
-          value={selectedChannelId}
-          onchange={(e) => onChannelChange((e.target as HTMLSelectElement).value)}
-          class="rounded-xl border border-white/55 bg-white/70 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-400/45"
-        >
-          {#if selectedWorkspace?.channels?.length}
-            {#each selectedWorkspace.channels as channel (channel.id)}
-              <option value={channel.id}>{channel.name}</option>
-            {/each}
-          {:else}
-            <option value="">Aucun canal</option>
-          {/if}
-        </select>
-      </div>
-
-      <div class="grid grid-cols-1 gap-2">
-        <label class="text-xs font-medium text-text-muted" for="member-id">Utilisateur</label>
-        <input
-          id="member-id"
-          type="text"
-          value={memberId}
-          oninput={(e) => onMemberIdChange((e.target as HTMLInputElement).value)}
-          placeholder="Ex: jolan"
-          class="rounded-xl border border-white/55 bg-white/70 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-400/45"
-        />
-      </div>
-
-      <div class="grid grid-cols-1 gap-2">
-        <label class="text-xs font-medium text-text-muted" for="role-select">Role</label>
-        <select
-          id="role-select"
-          value={roleName}
-          onchange={(e) => onRoleNameChange((e.target as HTMLSelectElement).value as 'member' | 'moderator' | 'admin')}
-          class="rounded-xl border border-white/55 bg-white/70 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-400/45"
-        >
-          <option value="member">Membre</option>
-          <option value="moderator">Moderateur</option>
-          <option value="admin">Admin</option>
-        </select>
-      </div>
-
-      <div class="grid grid-cols-2 gap-2 pt-1">
-        <button
-          type="button"
-          onclick={onInviteMember}
-          disabled={!memberId.trim() || !selectedChannelId}
-          class="rounded-xl bg-amber-500 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          Inviter
-        </button>
-        <button
-          type="button"
-          onclick={onUpdateRole}
-          disabled={!memberId.trim() || !selectedChannelId}
-          class="rounded-xl border border-cn-border bg-white/80 px-3 py-2 text-sm font-semibold text-text-main hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          Changer role
-        </button>
-      </div>
-    </section>
+      {#if activeTab === 'members'}
+        <div class="space-y-6 max-w-3xl">
+          <h2 class="text-xl font-bold text-text-main">Membres</h2>
+          <p class="text-sm text-text-muted">Gestion des membres de la communauté et de leurs rôles globaux.</p>
+          
+          <!-- Placer ici une liste factice ou une vraie table -->
+          <div class="border border-cn-border rounded-xl bg-white overflow-hidden text-sm">
+             <div class="p-4 flex items-center justify-between border-b border-cn-border bg-black/5">
+                <span class="font-semibold text-text-main">1 Membre(s)</span>
+                <button class="bg-amber-500 text-white rounded-lg px-3 py-1.5 text-xs font-bold hover:bg-amber-600 transition">
+                  Générer une invitation
+                </button>
+             </div>
+             <div class="p-6 text-center text-text-muted">
+                Aucun membre à afficher pour le moment.
+             </div>
+          </div>
+        </div>
+      {/if}
+    </div>
   </div>
 </Modal>

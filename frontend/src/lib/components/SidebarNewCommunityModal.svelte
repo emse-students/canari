@@ -37,7 +37,8 @@
       />
     </div>
     <p class="text-xs text-text-muted text-center px-4">
-      En créant une communauté, vous disposerez d'un espace privé pour organiser vos canaux et administrer vos membres.
+      En créant une communauté, vous disposerez d'un espace privé pour organiser vos canaux et
+      administrer vos membres.
     </p>
     <button
       onclick={onSubmit}

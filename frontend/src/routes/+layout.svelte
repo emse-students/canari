@@ -10,15 +10,13 @@
 
   const pathname = $derived(page.url.pathname);
   const isChatRoute = $derived(
-    pathname === '/chat' || 
-    pathname.startsWith('/chat/') || 
-    pathname === '/communities' || 
-    pathname.startsWith('/communities/')
+    pathname === '/chat' ||
+      pathname.startsWith('/chat/') ||
+      pathname === '/communities' ||
+      pathname.startsWith('/communities/')
   );
-  
-  const currentRouteMode = $derived(
-    pathname.startsWith('/communities') ? 'communities' : 'chat'
-  );
+
+  const currentRouteMode = $derived(pathname.startsWith('/communities') ? 'communities' : 'chat');
 </script>
 
 <div class="relative min-h-dvh overflow-hidden">

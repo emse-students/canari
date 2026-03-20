@@ -13,6 +13,7 @@
     X,
     PencilLine,
     Shield,
+    Hash,
   } from 'lucide-svelte';
   import Avatar from './Avatar.svelte';
   import Modal from './Modal.svelte';
@@ -24,9 +25,11 @@
     displayName: string;
     isReady: boolean;
     isGroupConversation?: boolean;
+    isChannel?: boolean;
     onInviteMembers?: (ids: string[]) => void;
     onBack?: () => void;
     onOpenConversations?: () => void;
+    onOpenSettings?: () => void;
     // Group management
     groupMembers?: string[];
     onGroupRename?: (name: string) => void;
@@ -38,14 +41,14 @@
     contactName,
     displayName,
     isReady,
-    isGroupConversation = true,
-    onInviteMembers,
+    isGroupConversation = true,    isChannel = false,    onInviteMembers,
     onBack,
     onOpenConversations,
     groupMembers = [],
     onGroupRename,
     onGroupDelete,
     onGroupRemoveMember,
+    onOpenSettings,
   }: Props = $props();
 
   let showPanel = $state(false);
@@ -125,28 +128,40 @@
     {/if}
   </div>
 
-  <Avatar userId={contactName} size="lg" />
+  {#if isChannel}
+    <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500 text-white shadow-sm">
+      <Hash size={24} />
+    </div>
+  {:else}
+    <Avatar userId={contactName} size="lg" />
+  {/if}
 
   <!-- Meta -->
   <div class="flex-1 min-w-0">
     <h2 class="text-base md:text-lg font-semibold text-cn-dark mb-1 truncate">{displayName}</h2>
-    <span
-      class="inline-flex items-center gap-1.5 text-[0.7rem] md:text-xs font-semibold {isReady
-        ? 'text-green-500'
-        : 'text-amber-600'}"
-    >
-      {#if isReady}
-        <LockKeyhole size={14} /> Bout-en-bout vérifié
-      {:else}
-        <Clock size={14} /> Négociation cryptographique...
-      {/if}
-    </span>
+    {#if isChannel}
+      <span class="inline-flex items-center gap-1.5 text-[0.7rem] md:text-xs font-semibold text-text-muted">
+        Discussion de communauté
+      </span>
+    {:else}
+      <span
+        class="inline-flex items-center gap-1.5 text-[0.7rem] md:text-xs font-semibold {isReady
+          ? 'text-green-500'
+          : 'text-amber-600'}"
+      >
+        {#if isReady}
+          <LockKeyhole size={14} /> Bout-en-bout vérifié
+        {:else}
+          <Clock size={14} /> Négociation cryptographique...
+        {/if}
+      </span>
+    {/if}
   </div>
 
   <!-- Group settings button -->
   <button
-    onclick={openPanel}
-    aria-label={isGroupConversation ? 'Paramètres du groupe' : 'Paramètres de la discussion'}
+    onclick={onOpenSettings ? onOpenSettings : openPanel}
+    aria-label={isChannel ? 'Paramètres du canal' : isGroupConversation ? 'Paramètres du groupe' : 'Paramètres de la discussion'}
     class="p-2 rounded-lg text-text-muted hover:bg-white/40 dark:hover:bg-black/35 hover:text-cn-dark transition-colors"
   >
     <Settings size={18} />

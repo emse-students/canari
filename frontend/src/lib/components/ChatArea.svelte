@@ -12,11 +12,13 @@
   interface Props {
     conversation: Conversation | null;
     messageText: string;
+    isChannel?: boolean;
     onMessageChange: (value: string) => void;
     onSend: () => void;
     onInviteMembers: (ids: string[]) => void;
     onBack?: () => void;
     onOpenConversations?: () => void;
+    onOpenSettings?: () => void;
     isHidden?: boolean;
     // Group management
     groupMembers?: string[];
@@ -43,11 +45,13 @@
   let {
     conversation,
     messageText,
+    isChannel = false,
     onMessageChange,
     onSend,
     onInviteMembers,
     onBack,
     onOpenConversations,
+    onOpenSettings,
     isHidden = false,
     groupMembers = [],
     sendError = '',
@@ -163,10 +167,12 @@
       contactName={conversation.contactName}
       displayName={conversation.name}
       isReady={conversation.isReady}
+      {isChannel}
       isGroupConversation={(conversation.conversationType ?? 'group') === 'group'}
       {onInviteMembers}
       {onBack}
       {onOpenConversations}
+      {onOpenSettings}
       {groupMembers}
       {onGroupRename}
       {onGroupDelete}
