@@ -41,7 +41,9 @@
     contactName,
     displayName,
     isReady,
-    isGroupConversation = true,    isChannel = false,    onInviteMembers,
+    isGroupConversation = true,
+    isChannel = false,
+    onInviteMembers,
     onBack,
     onOpenConversations,
     groupMembers = [],
@@ -129,7 +131,9 @@
   </div>
 
   {#if isChannel}
-    <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500 text-white shadow-sm">
+    <div
+      class="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500 text-white shadow-sm"
+    >
       <Hash size={24} />
     </div>
   {:else}
@@ -140,7 +144,9 @@
   <div class="flex-1 min-w-0">
     <h2 class="text-base md:text-lg font-semibold text-cn-dark mb-1 truncate">{displayName}</h2>
     {#if isChannel}
-      <span class="inline-flex items-center gap-1.5 text-[0.7rem] md:text-xs font-semibold text-text-muted">
+      <span
+        class="inline-flex items-center gap-1.5 text-[0.7rem] md:text-xs font-semibold text-text-muted"
+      >
         Discussion de communauté
       </span>
     {:else}
@@ -161,7 +167,11 @@
   <!-- Group settings button -->
   <button
     onclick={onOpenSettings ? onOpenSettings : openPanel}
-    aria-label={isChannel ? 'Paramètres du canal' : isGroupConversation ? 'Paramètres du groupe' : 'Paramètres de la discussion'}
+    aria-label={isChannel
+      ? 'Paramètres du canal'
+      : isGroupConversation
+        ? 'Paramètres du groupe'
+        : 'Paramètres de la discussion'}
     class="p-2 rounded-lg text-text-muted hover:bg-white/40 dark:hover:bg-black/35 hover:text-cn-dark transition-colors"
   >
     <Settings size={18} />

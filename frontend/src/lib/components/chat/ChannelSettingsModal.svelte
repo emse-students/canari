@@ -70,17 +70,38 @@
     {
       id: 'admin',
       label: 'Admin',
-      permissions: { read: true, write: true, channelManage: true, memberInvite: true, memberKick: true, roleManage: true },
+      permissions: {
+        read: true,
+        write: true,
+        channelManage: true,
+        memberInvite: true,
+        memberKick: true,
+        roleManage: true,
+      },
     },
     {
       id: 'moderator',
       label: 'Moderateur',
-      permissions: { read: true, write: true, channelManage: true, memberInvite: true, memberKick: true, roleManage: false },
+      permissions: {
+        read: true,
+        write: true,
+        channelManage: true,
+        memberInvite: true,
+        memberKick: true,
+        roleManage: false,
+      },
     },
     {
       id: 'member',
       label: 'Membre',
-      permissions: { read: true, write: true, channelManage: false, memberInvite: true, memberKick: false, roleManage: false },
+      permissions: {
+        read: true,
+        write: true,
+        channelManage: false,
+        memberInvite: true,
+        memberKick: false,
+        roleManage: false,
+      },
     },
   ];
 
@@ -108,26 +129,39 @@
 <Modal {open} {onClose} title="Paramètres du canal" maxWidth="max-w-4xl">
   <div class="flex flex-col md:flex-row h-[70vh] min-h-[500px] border-t border-cn-border/40">
     <!-- Barre de menu à gauche -->
-    <div class="w-full md:w-64 bg-[color-mix(in_srgb,var(--cn-surface)_60%,white)] border-r border-cn-border/40 flex flex-col p-4 space-y-1">
-      <h3 class="text-xs font-bold uppercase tracking-wider text-text-muted mb-2 px-2">#{selectedChannel ? selectedChannel.name : 'Canal'}</h3>
-      
+    <div
+      class="w-full md:w-64 bg-[color-mix(in_srgb,var(--cn-surface)_60%,white)] border-r border-cn-border/40 flex flex-col p-4 space-y-1"
+    >
+      <h3 class="text-xs font-bold uppercase tracking-wider text-text-muted mb-2 px-2">
+        #{selectedChannel ? selectedChannel.name : 'Canal'}
+      </h3>
+
       <button
         onclick={() => (activeTab = 'overview')}
-        class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-colors {activeTab === 'overview' ? 'bg-amber-100 text-amber-900' : 'text-text-main hover:bg-black/5'}"
+        class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-colors {activeTab ===
+        'overview'
+          ? 'bg-amber-100 text-amber-900'
+          : 'text-text-main hover:bg-black/5'}"
       >
         <Settings size={18} />
         Vue d'ensemble
       </button>
       <button
         onclick={() => (activeTab = 'permissions')}
-        class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-colors {activeTab === 'permissions' ? 'bg-amber-100 text-amber-900' : 'text-text-main hover:bg-black/5'}"
+        class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-colors {activeTab ===
+        'permissions'
+          ? 'bg-amber-100 text-amber-900'
+          : 'text-text-main hover:bg-black/5'}"
       >
         <Shield size={18} />
         Permissions
       </button>
       <button
         onclick={() => (activeTab = 'invites')}
-        class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-colors {activeTab === 'invites' ? 'bg-amber-100 text-amber-900' : 'text-text-main hover:bg-black/5'}"
+        class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-colors {activeTab ===
+        'invites'
+          ? 'bg-amber-100 text-amber-900'
+          : 'text-text-main hover:bg-black/5'}"
       >
         <Users size={18} />
         Invitations & Rôles
@@ -150,7 +184,9 @@
           <h2 class="text-xl font-bold text-text-main">Vue d'ensemble</h2>
           <div class="space-y-4">
             <div class="space-y-2">
-              <label class="text-xs font-bold uppercase text-text-muted" for="channel-name">Nom du canal</label>
+              <label class="text-xs font-bold uppercase text-text-muted" for="channel-name"
+                >Nom du canal</label
+              >
               <input
                 id="channel-name"
                 class="w-full bg-white border border-cn-border rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-amber-500/50"
@@ -158,7 +194,9 @@
               />
             </div>
             <div class="space-y-2">
-              <label class="text-xs font-bold uppercase text-text-muted" for="channel-desc">Description</label>
+              <label class="text-xs font-bold uppercase text-text-muted" for="channel-desc"
+                >Description</label
+              >
               <textarea
                 id="channel-desc"
                 rows="3"
@@ -173,8 +211,11 @@
       {#if activeTab === 'permissions'}
         <div class="space-y-6 max-w-3xl">
           <h2 class="text-xl font-bold text-text-main">Permissions</h2>
-          <p class="text-sm text-text-muted">Ajustez les privilèges des rôles pour ce canal spécifique. Les permissions définies ici écrasent celles du serveur.</p>
-          
+          <p class="text-sm text-text-muted">
+            Ajustez les privilèges des rôles pour ce canal spécifique. Les permissions définies ici
+            écrasent celles du serveur.
+          </p>
+
           <div class="border border-cn-border rounded-xl overflow-hidden bg-white">
             <table class="min-w-full text-sm">
               <thead class="bg-black/5 border-b border-cn-border">
@@ -192,9 +233,17 @@
                       <Key size={14} class="text-amber-500" />
                       {roleItem.label}
                     </td>
-                    <td class="px-4 py-3 text-center text-green-600 font-bold">{permissionMark(roleItem.permissions.read)}</td>
-                    <td class="px-4 py-3 text-center text-green-600 font-bold">{permissionMark(roleItem.permissions.write)}</td>
-                    <td class="px-4 py-3 text-center {roleItem.permissions.roleManage ? 'text-green-600 font-bold' : 'text-gray-400'}">
+                    <td class="px-4 py-3 text-center text-green-600 font-bold"
+                      >{permissionMark(roleItem.permissions.read)}</td
+                    >
+                    <td class="px-4 py-3 text-center text-green-600 font-bold"
+                      >{permissionMark(roleItem.permissions.write)}</td
+                    >
+                    <td
+                      class="px-4 py-3 text-center {roleItem.permissions.roleManage
+                        ? 'text-green-600 font-bold'
+                        : 'text-gray-400'}"
+                    >
                       {permissionMark(roleItem.permissions.roleManage)}
                     </td>
                   </tr>
@@ -212,7 +261,9 @@
 
           <div class="bg-white border border-cn-border rounded-xl p-5 space-y-4 shadow-sm">
             <div class="space-y-2">
-              <label class="text-xs font-bold uppercase text-text-muted" for="invite-id">Identifiant de l'utilisateur</label>
+              <label class="text-xs font-bold uppercase text-text-muted" for="invite-id"
+                >Identifiant de l'utilisateur</label
+              >
               <input
                 id="invite-id"
                 class="w-full bg-white border border-cn-border rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-amber-500/50"
@@ -220,9 +271,11 @@
                 bind:value={permissionMembersId}
               />
             </div>
-            
+
             <div class="space-y-2">
-              <label class="text-xs font-bold uppercase text-text-muted" for="role-select">Rôle à attribuer</label>
+              <label class="text-xs font-bold uppercase text-text-muted" for="role-select"
+                >Rôle à attribuer</label
+              >
               <select
                 id="role-select"
                 class="w-full bg-white border border-cn-border rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-amber-500/50"

@@ -119,14 +119,7 @@
   const DEFAULT_WORKSPACE_SLUG = 'asso';
   const DEFAULT_WORKSPACE_NAME = 'Asso';
   let selectedChannelConversationId = $state('');
-  let channelWorkspaces = $state<ChannelSidebarWorkspace[]>([
-    {
-      id: DEFAULT_WORKSPACE_SLUG,
-      name: DEFAULT_WORKSPACE_NAME,
-      avatarUserId: DEFAULT_WORKSPACE_SLUG,
-      channels: [],
-    },
-  ]);
+  let channelWorkspaces = $state<ChannelSidebarWorkspace[]>([]);
 
   function slugifyWorkspace(name: string) {
     return name
@@ -2357,7 +2350,9 @@
         onOpenConversations={() => {
           isConversationDrawerOpen = true;
         }}
-        onOpenSettings={routeMode === 'communities' ? () => (isChannelSettingsModalOpen = true) : undefined}
+        onOpenSettings={routeMode === 'communities'
+          ? () => (isChannelSettingsModalOpen = true)
+          : undefined}
         isHidden={mobileView === 'list'}
         {groupMembers}
         {sendError}
@@ -2379,9 +2374,7 @@
       />
 
       {#if routeMode === 'communities'}
-        <ChannelMembersSidebar
-          selectedChannelId={selectedChannelConversationId}
-        />
+        <ChannelMembersSidebar selectedChannelId={selectedChannelConversationId} />
 
         {#if selectedChannelConversationId}
           <button

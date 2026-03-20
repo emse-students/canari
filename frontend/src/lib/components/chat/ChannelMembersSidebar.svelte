@@ -14,11 +14,11 @@
   const members = $derived([
     { id: '1', name: 'Alice (Admin)', role: 'admin', status: 'online' },
     { id: '2', name: 'Bob', role: 'member', status: 'offline' },
-    { id: '3', name: 'Charlie', role: 'moderator', status: 'online' }
+    { id: '3', name: 'Charlie', role: 'moderator', status: 'online' },
   ]);
 
-  const admins = $derived(members.filter(m => m.role === 'admin' || m.role === 'moderator'));
-  const regulars = $derived(members.filter(m => m.role === 'member'));
+  const admins = $derived(members.filter((m) => m.role === 'admin' || m.role === 'moderator'));
+  const regulars = $derived(members.filter((m) => m.role === 'member'));
 </script>
 
 <div
@@ -54,7 +54,12 @@
             <div class="flex items-center gap-2.5">
               <div class="relative">
                 <Avatar userId={member.name} size="sm" />
-                <span class="absolute bottom-0 right-0 block h-2.5 w-2.5 rounded-full ring-2 ring-white {member.status === 'online' ? 'bg-green-500' : 'bg-gray-400'}"></span>
+                <span
+                  class="absolute bottom-0 right-0 block h-2.5 w-2.5 rounded-full ring-2 ring-white {member.status ===
+                  'online'
+                    ? 'bg-green-500'
+                    : 'bg-gray-400'}"
+                ></span>
               </div>
               <span class="text-sm font-medium text-text-main truncate">{member.name}</span>
             </div>
@@ -74,7 +79,12 @@
             <div class="flex items-center gap-2.5 opacity-80 hover:opacity-100 transition-opacity">
               <div class="relative">
                 <Avatar userId={member.name} size="sm" />
-                <span class="absolute bottom-0 right-0 block h-2.5 w-2.5 rounded-full ring-2 ring-white {member.status === 'online' ? 'bg-green-500' : 'bg-gray-400'}"></span>
+                <span
+                  class="absolute bottom-0 right-0 block h-2.5 w-2.5 rounded-full ring-2 ring-white {member.status ===
+                  'online'
+                    ? 'bg-green-500'
+                    : 'bg-gray-400'}"
+                ></span>
               </div>
               <span class="text-sm text-text-main truncate font-medium">{member.name}</span>
             </div>
