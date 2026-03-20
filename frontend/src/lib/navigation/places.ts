@@ -11,8 +11,8 @@ export interface AppPlace {
 export const APP_PLACES: AppPlace[] = [
   {
     id: 'chat',
-    label: 'Messagerie',
-    description: 'Discussions privees, groupes et canaux',
+    label: 'Discussions',
+    description: 'Messages directs et petits groupes',
     icon: 'message-circle',
     href: '/chat',
     enabled: true,
@@ -28,7 +28,7 @@ export const APP_PLACES: AppPlace[] = [
   {
     id: 'communities',
     label: 'Communautes',
-    description: 'Espaces et permissions globales',
+    description: "Espaces d'association et canaux",
     icon: 'users',
     href: '/communities',
     enabled: true,

@@ -7,7 +7,6 @@
     searchQuery: string;
     drawerMode?: boolean;
     onCloseDrawer?: () => void;
-    onTabChange: (tab: 'discussions' | 'channels') => void;
     onSearchQueryChange: (value: string) => void;
     onToggleArchivedView?: () => void;
     onOpenNewChat: () => void;
@@ -20,42 +19,12 @@
     searchQuery,
     drawerMode = false,
     onCloseDrawer,
-    onTabChange,
     onSearchQueryChange,
     onToggleArchivedView,
     onOpenNewChat,
     onOpenCommunityAdmin,
   }: Props = $props();
 </script>
-
-<div
-  class="px-4 py-3 border-b border-white/50 dark:border-white/10 sticky top-0 bg-white/35 dark:bg-gray-900/45 backdrop-blur-md z-10"
->
-  <div
-    class="grid grid-cols-2 rounded-2xl bg-white/35 dark:bg-black/25 p-1 gap-1 w-full border border-white/40 dark:border-white/10"
-  >
-    <button
-      type="button"
-      onclick={() => onTabChange('discussions')}
-      class="px-3 py-2 rounded-xl text-sm font-semibold transition-colors {activeSidebarTab ===
-      'discussions'
-        ? 'bg-white/70 dark:bg-black/40 text-text-main shadow-sm border border-white/50 dark:border-white/10'
-        : 'text-text-muted hover:text-text-main hover:bg-white/35 dark:hover:bg-black/30'}"
-    >
-      Discussions
-    </button>
-    <button
-      type="button"
-      onclick={() => onTabChange('channels')}
-      class="px-3 py-2 rounded-xl text-sm font-semibold transition-colors {activeSidebarTab ===
-      'channels'
-        ? 'bg-white/70 dark:bg-black/40 text-text-main shadow-sm border border-white/50 dark:border-white/10'
-        : 'text-text-muted hover:text-text-main hover:bg-white/35 dark:hover:bg-black/30'}"
-    >
-      Canaux
-    </button>
-  </div>
-</div>
 
 <div
   class="px-4 py-3 border-b border-white/50 dark:border-white/10 bg-white/30 dark:bg-gray-900/40 backdrop-blur-sm"

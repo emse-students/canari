@@ -82,7 +82,7 @@
   }
 
   interface Props {
-    routeMode?: 'chat' | 'login';
+    routeMode?: 'chat' | 'login' | 'communities';
   }
 
   let { routeMode = 'chat' }: Props = $props();
@@ -672,7 +672,7 @@
         userId = savedUser;
         pin = savedPin;
         void handleLogin();
-      } else if (routeMode === 'chat') {
+      } else if (routeMode !== 'login') {
         void goto('/login', { replaceState: true });
       }
     }
@@ -922,7 +922,7 @@
       log(`Erreur: ${loginError}`);
       localStorage.removeItem('canari_saved_user');
       localStorage.removeItem('canari_saved_pin');
-      if (routeMode === 'chat') {
+      if (routeMode !== 'login') {
         void goto('/login', { replaceState: true });
       }
     } finally {
@@ -1873,7 +1873,7 @@
     localStorage.removeItem('canari_saved_user');
     localStorage.removeItem('canari_saved_pin');
 
-    if (routeMode === 'chat') {
+    if (routeMode !== 'login') {
       void goto('/login', { replaceState: true });
     }
   }
@@ -2206,8 +2206,12 @@
     <Navbar {isWsConnected} onToggleLogs={() => (showLogs = !showLogs)} onLogout={logout} />
 
     {#if channelMembershipNotice}
-      <div class="pointer-events-none fixed left-1/2 top-[calc(env(safe-area-inset-top,0px)+4.5rem)] z-40 w-[min(92vw,42rem)] -translate-x-1/2">
-        <div class="pointer-events-auto flex items-center gap-3 rounded-2xl border border-cn-border bg-white/95 px-4 py-3 text-sm font-semibold text-text-main shadow-lg backdrop-blur">
+      <div
+        class="pointer-events-none fixed left-1/2 top-[calc(env(safe-area-inset-top,0px)+4.5rem)] z-40 w-[min(92vw,42rem)] -translate-x-1/2"
+      >
+        <div
+          class="pointer-events-auto flex items-center gap-3 rounded-2xl border border-cn-border bg-white/95 px-4 py-3 text-sm font-semibold text-text-main shadow-lg backdrop-blur"
+        >
           <p class="flex-1">{channelMembershipNotice}</p>
           {#if channelMembershipActionChannelId}
             <button
@@ -2275,6 +2279,7 @@
     <!-- CONTENT -->
     <main class="main-content">
       <Sidebar
+        viewMode={routeMode === 'communities' ? 'communities' : 'chat'}
         {conversations}
         {archivedConversationIds}
         {showArchivedConversations}
@@ -2425,6 +2430,7 @@
 
       {#if isConversationDrawerOpen}
         <Sidebar
+          viewMode={routeMode === 'communities' ? 'communities' : 'chat'}
           {conversations}
           {archivedConversationIds}
           {showArchivedConversations}
