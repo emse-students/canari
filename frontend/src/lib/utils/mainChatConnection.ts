@@ -390,8 +390,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           return true;
         } catch (_e) {
           const errMsg = String(_e);
-          if (errMsg.includes('CannotDecryptOwnMessage')) {
-            return false; // Silent ignore
+          if (errMsg.includes('CannotDecryptOwnMessage') || errMsg.includes('WrongEpoch')) {
+            return true; // ACK it so it isn't resent
           }
           log(`Erreur message (groupe connu): ${errMsg}`);
 

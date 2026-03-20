@@ -297,7 +297,7 @@ export async function replayConversationHistory(params: {
           continue;
         }
       } catch (err) {
-        if (String(err).includes('CannotDecryptOwnMessage')) {
+        if (String(err).includes('CannotDecryptOwnMessage') || String(err).includes('WrongEpoch')) {
           continue;
         }
         console.warn(`History msg error: ${err}`);
