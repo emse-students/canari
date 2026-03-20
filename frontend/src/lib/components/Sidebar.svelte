@@ -1,5 +1,6 @@
 <script lang="ts">
   import { SvelteMap } from 'svelte/reactivity';
+  import { SvelteMap } from 'svelte/reactivity';
   import { Hand, RotateCcw, Hash, Lock, Plus, } from 'lucide-svelte';
   import Avatar from './Avatar.svelte';
   import ConversationTile from './ConversationTile.svelte';
@@ -525,6 +526,8 @@
   }}
   onSubmit={handleCreateWorkspace}
 />
+
+
 
 
 
