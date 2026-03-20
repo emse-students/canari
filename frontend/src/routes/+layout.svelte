@@ -9,7 +9,6 @@
 
   const pathname = $derived(page.url.pathname);
   const isChatRoute = $derived(pathname === '/chat' || pathname.startsWith('/chat/'));
-
 </script>
 
 <div class="relative min-h-dvh overflow-hidden">

@@ -50,6 +50,22 @@ interface MessageHandlerDeps {
   ) => Promise<void>;
   addSystemMessage: (content: string, contactName: string) => Promise<void>;
   loadHistoryForConversation: (contactName: string, groupId: string) => Promise<void>;
+  onChannelMemberJoined?: (event: {
+    channelId: string;
+    channelName?: string;
+    workspaceId?: string;
+    workspaceSlug?: string;
+    workspaceName?: string;
+    visibility?: 'public' | 'private';
+    roleName?: string;
+    joinedBy?: string;
+  }) => void;
+  onChannelMemberKicked?: (event: {
+    channelId: string;
+    channelName?: string;
+    workspaceId?: string;
+    kickedBy?: string;
+  }) => void;
   log: (msg: string) => void;
 }
 
@@ -74,6 +90,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
     addMessageToChat,
     addSystemMessage,
     loadHistoryForConversation,
+    onChannelMemberJoined,
+    onChannelMemberKicked,
     log,
   } = deps;
 
@@ -84,16 +102,44 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   if ('onChannelEvent' in mlsService) {
     (mlsService as any).onChannelEvent = (event: any) => {
       log(`[Channel Event] ${event.type}`);
+      if (event.type === 'channel.member.joined') {
+        const data = event.data || {};
+        onChannelMemberJoined?.({
+          channelId: String(data.channelId || ''),
+          channelName: data.channelName,
+          workspaceId: data.workspaceId,
+          workspaceSlug: data.workspaceSlug,
+          workspaceName: data.workspaceName,
+          visibility: data.visibility,
+          roleName: data.roleName,
+          joinedBy: data.joinedBy,
+        });
+        return;
+      }
+
+      if (event.type === 'channel.member.kicked') {
+        const data = event.data || {};
+        onChannelMemberKicked?.({
+          channelId: String(data.channelId || ''),
+          channelName: data.channelName,
+          workspaceId: data.workspaceId,
+          kickedBy: data.kickedBy,
+        });
+        return;
+      }
+
       if (event.type === 'channel.message.created') {
         const data = event.data;
         const channelId = `channel_${data.channelId}`;
         const sender = data.senderId;
         // Check if we have this channel in our conversations list
-        let convoKey: string | undefined;
-        for (const [k, c] of conversations.entries()) {
-          if (c.groupId === channelId) {
-            convoKey = k;
-            break;
+        let convoKey: string | undefined = conversations.has(channelId) ? channelId : undefined;
+        if (!convoKey) {
+          for (const [k, c] of conversations.entries()) {
+            if (c.groupId === channelId) {
+              convoKey = k;
+              break;
+            }
           }
         }
 

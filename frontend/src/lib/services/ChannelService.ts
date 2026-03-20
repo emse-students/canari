@@ -19,6 +19,14 @@ export interface CreateChannelDto {
   actorUserId: string;
 }
 
+export interface ChannelDto {
+  _id?: string;
+  id?: string;
+  workspaceId: string;
+  name: string;
+  visibility?: 'public' | 'private';
+}
+
 export interface CreateRoleDto {
   workspaceId: string;
   name: string;
@@ -106,7 +114,7 @@ export class ChannelService {
   async listChannels(workspaceId: string, userId: string) {
     const res = await fetch(`${this.baseUrl}/api/channels/workspace/${workspaceId}/user/${userId}`);
     if (!res.ok) throw new Error(await res.text());
-    return res.json();
+    return res.json() as Promise<ChannelDto[]>;
   }
 
   async joinChannel(channelId: string, dto: ChannelJoinDto) {

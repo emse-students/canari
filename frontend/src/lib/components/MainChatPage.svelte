@@ -54,6 +54,7 @@
   import { encodeAppMessage, mkMedia, MediaKind } from '$lib/proto/codec';
   import { createSyncQrDataUrl } from '$lib/sync/qr';
   import LoginForm from './LoginForm.svelte';
+  import { Shield } from 'lucide-svelte';
   import { BiometricService } from '$lib/services/biometric';
   import Modal from './Modal.svelte';
   import Navbar from './Navbar.svelte';
@@ -102,6 +103,7 @@
   let selectedContact = $state<string | null>(null);
   let mobileView = $state<'list' | 'chat'>('list'); // Gestion responsive
   let isConversationDrawerOpen = $state(false);
+  let isChannelPermissionsDrawerOpen = $state(false);
 
   let newContactInput = $state('');
   let newGroupInput = $state('');
@@ -176,6 +178,46 @@
       updatedWorkspace,
       ...channelWorkspaces.slice(idx + 1),
     ];
+  }
+
+  function removeChannelFromWorkspaces(channelConversationId: string) {
+    channelWorkspaces = channelWorkspaces.map((workspace) => ({
+      ...workspace,
+      channels: workspace.channels.filter((channel) => channel.id !== channelConversationId),
+    }));
+  }
+
+  function ensureWorkspaceForChannelEvent(event: {
+    workspaceId?: string;
+    workspaceSlug?: string;
+    workspaceName?: string;
+  }): ChannelSidebarWorkspace {
+    const slugFromEvent = event.workspaceSlug?.trim().toLowerCase();
+    const workspaceId = event.workspaceId;
+    const workspaceName = event.workspaceName?.trim() || DEFAULT_WORKSPACE_NAME;
+
+    const existing = channelWorkspaces.find(
+      (workspace) =>
+        (workspaceId && workspace.workspaceDbId === workspaceId) ||
+        (slugFromEvent && workspace.id === slugFromEvent)
+    );
+
+    if (existing) {
+      if (!existing.workspaceDbId && workspaceId) existing.workspaceDbId = workspaceId;
+      if (workspaceName) existing.name = workspaceName;
+      channelWorkspaces = [...channelWorkspaces];
+      return existing;
+    }
+
+    const created: ChannelSidebarWorkspace = {
+      id: slugFromEvent || `workspace-${workspaceId || crypto.randomUUID().slice(0, 8)}`,
+      name: workspaceName,
+      workspaceDbId: workspaceId,
+      avatarUserId: userId || slugFromEvent || 'workspace',
+      channels: [],
+    };
+    channelWorkspaces = [...channelWorkspaces, created];
+    return created;
   }
 
   async function ensureWorkspaceByName(workspaceName: string) {
@@ -256,6 +298,36 @@
   let audioContext = $state<AudioContext | null>(null);
   let lastNotificationAt = $state(0);
   let lastSystemNotificationAt = $state(0);
+  let channelMembershipNotice = $state('');
+  let channelMembershipActionChannelId = $state<string | null>(null);
+  let channelMembershipNoticeTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function showChannelMembershipNotice(message: string, actionChannelId?: string) {
+    channelMembershipNotice = message;
+    channelMembershipActionChannelId = actionChannelId ?? null;
+    if (channelMembershipNoticeTimer) {
+      clearTimeout(channelMembershipNoticeTimer);
+    }
+    channelMembershipNoticeTimer = setTimeout(() => {
+      channelMembershipNotice = '';
+      channelMembershipActionChannelId = null;
+      channelMembershipNoticeTimer = null;
+    }, 5000);
+  }
+
+  function openJoinedChannelFromNotice() {
+    if (!channelMembershipActionChannelId) return;
+
+    selectedChannelConversationId = channelMembershipActionChannelId;
+    selectConversation(channelMembershipActionChannelId);
+    channelMembershipNotice = '';
+    channelMembershipActionChannelId = null;
+
+    if (channelMembershipNoticeTimer) {
+      clearTimeout(channelMembershipNoticeTimer);
+      channelMembershipNoticeTimer = null;
+    }
+  }
 
   function playNotificationTone() {
     if (typeof window === 'undefined') return;
@@ -706,6 +778,7 @@
       localStorage.setItem('canari_saved_user', userId);
       localStorage.setItem('canari_saved_pin', pin);
       await loadExistingConversations();
+      await loadChannelWorkspacesFromBackend();
 
       // Detect isReady conversations that have no matching MLS group state.
       // This happens when the DB was synced via QR but the device never processed
@@ -752,6 +825,75 @@
         addMessageToChat,
         addSystemMessage,
         loadHistoryForConversation,
+        onChannelMemberJoined: (event) => {
+          if (!event.channelId) return;
+          const channelConversationId = `channel_${event.channelId}`;
+          const workspace = ensureWorkspaceForChannelEvent(event);
+          const isPrivateChannel = event.visibility === 'private';
+
+          addChannelToWorkspace(workspace.id, {
+            id: channelConversationId,
+            name: (event.channelName || 'canal').toLowerCase(),
+            isPrivate: isPrivateChannel,
+          });
+
+          if (!conversations.has(channelConversationId)) {
+            conversations.set(channelConversationId, {
+              contactName: channelConversationId,
+              name: (event.channelName || 'canal').toLowerCase(),
+              groupId: channelConversationId,
+              messages: [],
+              isReady: true,
+              mlsStateHex: null,
+            });
+          }
+
+          if (isPrivateChannel) {
+            showChannelMembershipNotice(
+              `Vous avez ete ajoute au canal prive #${event.channelName || event.channelId}`,
+              channelConversationId
+            );
+          } else {
+            showChannelMembershipNotice(
+              `Vous avez ete ajoute au canal #${event.channelName || event.channelId}`
+            );
+          }
+          void sendSystemNotification(
+            'Canal rejoint',
+            `Vous avez ete ajoute au canal #${event.channelName || event.channelId}`
+          );
+          log(`Ajout au canal #${event.channelName || event.channelId}`);
+        },
+        onChannelMemberKicked: (event) => {
+          if (!event.channelId) return;
+          const channelConversationId = `channel_${event.channelId}`;
+
+          conversations.delete(channelConversationId);
+          removeChannelFromWorkspaces(channelConversationId);
+
+          if (selectedContact === channelConversationId) {
+            selectedContact = null;
+            mobileView = 'list';
+            sendError = '';
+          }
+
+          if (selectedChannelConversationId === channelConversationId) {
+            selectedChannelConversationId = '';
+          }
+
+          if (channelMembershipActionChannelId === channelConversationId) {
+            channelMembershipActionChannelId = null;
+          }
+
+          showChannelMembershipNotice(
+            `Vous avez ete retire du canal #${event.channelName || event.channelId}`
+          );
+          void sendSystemNotification(
+            'Canal quitte',
+            `Vous avez ete retire du canal #${event.channelName || event.channelId}`
+          );
+          log(`Retire du canal #${event.channelName || event.channelId}`);
+        },
         log,
       });
 
@@ -1021,6 +1163,45 @@
     }
   }
 
+  async function loadChannelWorkspacesFromBackend() {
+    try {
+      const backendWorkspaces = await channelService.listUserWorkspaces(userId.toLowerCase());
+
+      for (const workspace of backendWorkspaces) {
+        const sidebarWorkspace = upsertWorkspaceFromDto(workspace);
+        const workspaceId = sidebarWorkspace.workspaceDbId;
+        if (!workspaceId) continue;
+
+        const channels = await channelService.listChannels(workspaceId, userId.toLowerCase());
+        for (const channel of channels) {
+          const actualId = channel.id || channel._id;
+          if (!actualId) continue;
+
+          const channelConversationId = `channel_${actualId}`;
+          addChannelToWorkspace(sidebarWorkspace.id, {
+            id: channelConversationId,
+            name: channel.name,
+            isPrivate: channel.visibility === 'private',
+          });
+
+          if (!conversations.has(channelConversationId)) {
+            conversations.set(channelConversationId, {
+              contactName: channelConversationId,
+              name: channel.name,
+              groupId: channelConversationId,
+              messages: [],
+              isReady: true,
+              mlsStateHex: null,
+            });
+          }
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log(`Chargement des communautes/canaux impossible: ${message}`);
+    }
+  }
+
   // --- Gestion Groupes & Membres ---
   async function createNewGroup(nameRaw: string) {
     const mlsService = ensureMls();
@@ -1075,7 +1256,7 @@
         conversations.set(channelId, {
           contactName: channelId,
           name: normalizedChannelName,
-          groupId: '',
+          groupId: channelId,
           messages: [],
           isReady: true,
           mlsStateHex: null, // Zero-trust channel MLS key distribution pattern would load key here, for now it's null
@@ -1682,6 +1863,12 @@
     isUploadingMedia = false;
     groupMembers = [];
     sendError = '';
+    channelMembershipNotice = '';
+    channelMembershipActionChannelId = null;
+    if (channelMembershipNoticeTimer) {
+      clearTimeout(channelMembershipNoticeTimer);
+      channelMembershipNoticeTimer = null;
+    }
     showBiometricEnrollPrompt = false;
     localStorage.removeItem('canari_saved_user');
     localStorage.removeItem('canari_saved_pin');
@@ -2018,6 +2205,23 @@
   <div class="app-layout" in:fade>
     <Navbar {isWsConnected} onToggleLogs={() => (showLogs = !showLogs)} onLogout={logout} />
 
+    {#if channelMembershipNotice}
+      <div class="pointer-events-none fixed left-1/2 top-[calc(env(safe-area-inset-top,0px)+4.5rem)] z-40 w-[min(92vw,42rem)] -translate-x-1/2">
+        <div class="pointer-events-auto flex items-center gap-3 rounded-2xl border border-cn-border bg-white/95 px-4 py-3 text-sm font-semibold text-text-main shadow-lg backdrop-blur">
+          <p class="flex-1">{channelMembershipNotice}</p>
+          {#if channelMembershipActionChannelId}
+            <button
+              type="button"
+              class="rounded-lg border border-cn-border bg-white px-3 py-1.5 text-xs font-bold text-text-main hover:border-cn-yellow"
+              onclick={openJoinedChannelFromNotice}
+            >
+              Rejoindre
+            </button>
+          {/if}
+        </div>
+      </div>
+    {/if}
+
     {#if showBiometricEnrollPrompt}
       <div
         class="fixed bottom-[env(safe-area-inset-bottom,0px)] left-0 right-0 z-50 mx-4 mb-4 p-4 rounded-2xl border border-cn-border shadow-lg flex items-center gap-3"
@@ -2175,6 +2379,49 @@
           updateChannelMemberRole(channelId, memberId, roleName);
         }}
       />
+
+      {#if selectedChannelConversationId}
+        <button
+          type="button"
+          onclick={() => {
+            isChannelPermissionsDrawerOpen = true;
+          }}
+          class="fixed bottom-24 right-4 z-30 inline-flex items-center gap-2 rounded-full border border-cn-border bg-white/90 px-3 py-2 text-sm font-semibold text-text-main shadow-md xl:hidden"
+          aria-label="Ouvrir les permissions du canal"
+        >
+          <Shield size={14} />
+          Permissions
+        </button>
+      {/if}
+
+      {#if isChannelPermissionsDrawerOpen}
+        <button
+          type="button"
+          class="fixed inset-0 z-40 bg-black/30 xl:hidden"
+          aria-label="Fermer le panneau permissions"
+          onclick={() => {
+            isChannelPermissionsDrawerOpen = false;
+          }}
+        ></button>
+        <div
+          class="fixed right-0 top-0 bottom-0 z-50 w-[90vw] max-w-sm border-l border-cn-border bg-[color-mix(in_srgb,var(--cn-surface)_90%,white)] shadow-2xl xl:hidden"
+        >
+          <ChannelPermissionsPanel
+            mode="mobile"
+            onClose={() => {
+              isChannelPermissionsDrawerOpen = false;
+            }}
+            selectedChannelId={selectedChannelConversationId}
+            {channelWorkspaces}
+            onInviteMember={(channelId, memberId, roleName) => {
+              inviteMemberToChannel(channelId, memberId, roleName);
+            }}
+            onUpdateMemberRole={(channelId, memberId, roleName) => {
+              updateChannelMemberRole(channelId, memberId, roleName);
+            }}
+          />
+        </div>
+      {/if}
 
       {#if isConversationDrawerOpen}
         <Sidebar

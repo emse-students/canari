@@ -195,6 +195,25 @@ export class ChannelService {
       { upsert: true }
     );
 
+    const workspace = await this.workspaceModel.findById(channel.workspaceId).lean();
+    await this.redis.publish(
+      'chat:channel_events',
+      JSON.stringify({
+        userIds: [userId],
+        type: 'channel.member.joined',
+        data: {
+          channelId: channel.id,
+          workspaceId: channel.workspaceId,
+          workspaceSlug: workspace?.slug,
+          workspaceName: workspace?.name,
+          channelName: channel.name,
+          visibility: channel.visibility,
+          roleName: role.name,
+          joinedBy: input.actorUserId.trim().toLowerCase(),
+        },
+      })
+    );
+
     // Soft mode: keep old messages accessible for new members.
     return { joined: true, historyVisible: true, keyVersion: channel.keyVersion };
   }
@@ -227,6 +246,20 @@ export class ChannelService {
     await this.memberModel.updateOne(
       { channelId, userId: target, leftAt: null },
       { $set: { leftAt: new Date() } }
+    );
+
+    await this.redis.publish(
+      'chat:channel_events',
+      JSON.stringify({
+        userIds: [target],
+        type: 'channel.member.kicked',
+        data: {
+          channelId: channel.id,
+          workspaceId: channel.workspaceId,
+          channelName: channel.name,
+          kickedBy: input.actorUserId.trim().toLowerCase(),
+        },
+      })
     );
 
     // Soft encryption policy: no mandatory key rotation on kick.

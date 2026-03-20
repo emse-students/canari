@@ -31,8 +31,7 @@ export const APP_PLACES: AppPlace[] = [
     description: 'Espaces et permissions globales',
     icon: 'users',
     href: '/communities',
-    enabled: false,
-    badge: 'Bientot',
+    enabled: true,
   },
   {
     id: 'calls',

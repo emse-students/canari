@@ -48,8 +48,16 @@
     onCreateGroup: (groupName?: string) => void;
     onCreateChannel?: (channelName?: string) => void;
     onCreateWorkspace?: (workspaceName?: string) => void;
-    onInviteChannelMember?: (channelId: string, memberId: string, roleName: 'member' | 'moderator' | 'admin') => void;
-    onUpdateChannelMemberRole?: (channelId: string, memberId: string, roleName: 'member' | 'moderator' | 'admin') => void;
+    onInviteChannelMember?: (
+      channelId: string,
+      memberId: string,
+      roleName: 'member' | 'moderator' | 'admin'
+    ) => void;
+    onUpdateChannelMemberRole?: (
+      channelId: string,
+      memberId: string,
+      roleName: 'member' | 'moderator' | 'admin'
+    ) => void;
     onSelectConversation: (name: string) => void;
     onSelectChannelConversation?: (channelId: string) => void;
     selectedChannelId?: string;

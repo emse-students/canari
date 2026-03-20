@@ -54,7 +54,7 @@
 
   <!-- Actions -->
   <div class="flex gap-2">
-    <ThemeToggleButton isDarkMode={isDarkMode} onToggle={toggleTheme} />
+    <ThemeToggleButton {isDarkMode} onToggle={toggleTheme} />
     <SessionActionButtons {onToggleLogs} {onLogout} />
   </div>
 </header>
