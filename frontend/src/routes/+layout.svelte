@@ -3,7 +3,9 @@
   import BackgroundBlobs from '$lib/components/BackgroundBlobs.svelte';
   import { page } from '$app/stores';
 
-  $: pathname = $page.url.pathname;
+  let { children } = $props();
+
+  const pathname = $derived($page.url.pathname);
 
   function isActive(path: string): boolean {
     return pathname === path || pathname.startsWith(`${path}/`);
@@ -56,7 +58,7 @@
     class="relative z-10 mx-auto flex h-[calc(100dvh-4.5rem)] w-full max-w-[1180px] px-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]"
   >
     <div class="h-full w-full">
-      <slot />
+      {@render children?.()}
     </div>
   </div>
 </div>
