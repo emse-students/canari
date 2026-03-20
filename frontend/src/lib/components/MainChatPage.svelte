@@ -116,8 +116,6 @@
   let showArchivedConversations = $state(false);
 
   const channelService = new ChannelService();
-  const DEFAULT_WORKSPACE_SLUG = 'asso';
-  const DEFAULT_WORKSPACE_NAME = 'Asso';
   let selectedChannelConversationId = $state('');
   let channelWorkspaces = $state<ChannelSidebarWorkspace[]>([]);
 
@@ -132,10 +130,11 @@
   }
 
   function upsertWorkspaceFromDto(workspace: WorkspaceDto): ChannelSidebarWorkspace {
-    const workspaceSlug = workspace.slug?.trim().toLowerCase() || DEFAULT_WORKSPACE_SLUG;
+    const workspaceId = workspace.id ?? workspace._id;
+    const workspaceSlug = workspace.slug?.trim().toLowerCase() || `workspace-${workspaceId || crypto.randomUUID().slice(0, 8)}`;
     const existing = channelWorkspaces.find((item) => item.id === workspaceSlug);
     if (existing) {
-      existing.workspaceDbId = workspace.id ?? workspace._id;
+      existing.workspaceDbId = workspaceId;
       existing.name = workspace.name;
       if (!existing.avatarUserId) {
         existing.avatarUserId = userId || workspaceSlug;
@@ -189,7 +188,7 @@
   }): ChannelSidebarWorkspace {
     const slugFromEvent = event.workspaceSlug?.trim().toLowerCase();
     const workspaceId = event.workspaceId;
-    const workspaceName = event.workspaceName?.trim() || DEFAULT_WORKSPACE_NAME;
+    const workspaceName = event.workspaceName?.trim() || 'Communauté';
 
     const existing = channelWorkspaces.find(
       (workspace) =>
@@ -1213,18 +1212,13 @@
     });
   }
 
-  async function createNewChannel(nameRaw: string) {
+  async function createNewChannel(workspaceId: string, nameRaw: string) {
     try {
+      if (!workspaceId) {
+        throw new Error('Vous devez d\'abord sélectionner une communauté.');
+      }
       const normalizedChannelName = nameRaw.trim().toLowerCase();
       if (!normalizedChannelName) return;
-
-      // By default, channels are created inside the Asso community.
-      const sidebarWorkspace = await ensureWorkspaceByName(DEFAULT_WORKSPACE_NAME);
-      const workspaceId = sidebarWorkspace.workspaceDbId;
-
-      if (!workspaceId) {
-        throw new Error('workspaceId introuvable apres creation de la communaute.');
-      }
 
       const channelDto = {
         workspaceId,
@@ -1240,11 +1234,15 @@
         createdChannel?.id || createdChannel?._id || `${workspaceId}_${normalizedChannelName}`;
       const channelId = `channel_${actualId}`;
 
-      addChannelToWorkspace(sidebarWorkspace.id, {
-        id: channelId,
-        name: normalizedChannelName,
-        isPrivate: false,
-      });
+      const sidebarWorkspace = channelWorkspaces.find(w => w.workspaceDbId === workspaceId);
+      if (sidebarWorkspace) {
+        addChannelToWorkspace(sidebarWorkspace.id, {
+          id: channelId,
+          name: normalizedChannelName,
+          isPrivate: false,
+        });
+      }
+      
       selectedChannelConversationId = channelId;
 
       if (!conversations.has(channelId)) {
@@ -2299,10 +2297,10 @@
             newGroupInput = '';
           }
         }}
-        onCreateChannel={(value?: string) => {
+        onCreateChannel={(workspaceId: string, value?: string) => {
           const channel = (value ?? newChannelInput).trim();
           if (channel) {
-            createNewChannel(channel);
+            createNewChannel(workspaceId, channel);
             newChannelInput = '';
           }
         }}
@@ -2440,10 +2438,10 @@
               newGroupInput = '';
             }
           }}
-          onCreateChannel={(value?: string) => {
+          onCreateChannel={(workspaceId: string, value?: string) => {
             const channel = (value ?? newChannelInput).trim();
             if (channel) {
-              createNewChannel(channel);
+              createNewChannel(workspaceId, channel);
               newChannelInput = '';
             }
           }}

@@ -49,7 +49,7 @@
     onChannelInputChange?: (value: string) => void;
     onAddContact: (contactId?: string) => void;
     onCreateGroup: (groupName?: string) => void;
-    onCreateChannel?: (channelName?: string) => void;
+    onCreateChannel?: (workspaceId: string, channelName: string) => void;
     onCreateWorkspace?: (workspaceName?: string) => void;
     onInviteChannelMember?: (
       channelId: string,
@@ -233,8 +233,12 @@
   function handleCreateChannel() {
     const value = channelName.trim();
     if (!value) return;
+    if (!selectedCommunityWorkspaceId) {
+      alert("Veuillez sélectionner une communauté d'abord");
+      return;
+    }
     onChannelInputChange?.(value);
-    onCreateChannel?.(value);
+    onCreateChannel?.(selectedCommunityWorkspaceId, value);
     channelName = '';
     onChannelInputChange?.('');
     closeNewChannelModal();
