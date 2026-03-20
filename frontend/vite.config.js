@@ -53,6 +53,14 @@ export default defineConfig(async () => ({
         changeOrigin: true,
         rewrite: (/** @type {string} */ path) => `/api${path}`,
       },
+      '/api/mls-api': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+      },
+      '/api/history': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+      },
       // Proxy /channels API to channel-service
       '/channels': {
         target: 'http://localhost:3005',

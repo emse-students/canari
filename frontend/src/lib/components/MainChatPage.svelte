@@ -556,7 +556,7 @@
         headers: { 'Content-Type': 'application/json' },
         body: verifierPayload,
       });
-      if (verifierRes.status === 404) {
+      if (verifierRes.status === 404 || verifierRes.status === 405) {
         verifierRes = await fetch(`${historyBaseUrl}/mls-api/pin-verifier/check`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
