@@ -66,6 +66,11 @@ export default defineConfig(async () => ({
         target: 'http://localhost:3005',
         changeOrigin: true,
       },
+      // Proxy /api/posts API to post-service
+      '/api/posts': {
+        target: 'http://localhost:3006',
+        changeOrigin: true,
+      },
       // Proxy /ws WebSocket to the chat-gateway so VITE_GATEWAY_URL is not needed in local dev.
       '/ws': {
         target: 'ws://localhost:3000',
