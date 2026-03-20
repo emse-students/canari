@@ -116,8 +116,6 @@
     channels: ChannelItem[];
   }
 
-
-
   let filteredConversationEntries = $derived.by(() => {
     const archived = new Set(archivedConversationIds.map((id) => id.toLowerCase()));
     const query = searchQuery.trim().toLowerCase();
@@ -339,4 +337,3 @@
   }}
   onSubmitChannel={handleCreateChannel}
 />
-

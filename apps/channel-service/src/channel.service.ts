@@ -283,18 +283,21 @@ export class ChannelService {
   }
 
   private async assertWorkspace(workspaceId: string) {
-    const ws = await this.workspaceModel.findById(workspaceId);
+    const ws = await this.workspaceModel.findById(String(workspaceId));
     if (!ws) throw new NotFoundException('workspace not found');
   }
 
   private async requireChannel(channelId: string) {
-    const channel = await this.channelModel.findById(channelId);
+    const channel = await this.channelModel.findById(String(channelId));
     if (!channel) throw new NotFoundException('channel not found');
     return channel;
   }
 
   private async getRoleByName(workspaceId: string, roleName: string) {
-    return this.roleModel.findOne({ workspaceId, name: roleName.toLowerCase() });
+    return this.roleModel.findOne({ 
+      workspaceId: String(workspaceId), 
+      name: String(roleName).toLowerCase() 
+    });
   }
 
   private async getPermissions(

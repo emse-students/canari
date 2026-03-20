@@ -9,13 +9,7 @@
     onSubmitChannel: () => void;
   }
 
-  let {
-    open,
-    channelName,
-    onClose,
-    onChannelNameChange,
-    onSubmitChannel,
-  }: Props = $props();
+  let { open, channelName, onClose, onChannelNameChange, onSubmitChannel }: Props = $props();
 </script>
 
 <Modal {open} {onClose} title="Nouveau canal">

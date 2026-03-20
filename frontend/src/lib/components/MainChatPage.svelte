@@ -368,67 +368,67 @@
   let pendingReadReceipts: string[] = [];
   let readReceiptTimer: ReturnType<typeof setTimeout> | null = null;
 
-    $effect(() => {
-      if (!selectedContact || !isLoggedIn) return;
-      const convo = conversations.get(selectedContact);
-      if (!convo || !convo.isReady) return;
+  $effect(() => {
+    if (!selectedContact || !isLoggedIn) return;
+    const convo = conversations.get(selectedContact);
+    if (!convo || !convo.isReady) return;
 
-      // Find messages we haven't read
-      const meNorm = userId.toLowerCase();
-      const unread = convo.messages.filter(
-        (m) => !m.isOwn && !m.isSystem && !(m.readBy || []).includes(meNorm)
-      );
-      if (unread.length === 0) return;
+    // Find messages we haven't read
+    const meNorm = userId.toLowerCase();
+    const unread = convo.messages.filter(
+      (m) => !m.isOwn && !m.isSystem && !(m.readBy || []).includes(meNorm)
+    );
+    if (unread.length === 0) return;
 
-      const ids = unread.map((m) => m.id);
-      const currentContact = selectedContact;
+    const ids = unread.map((m) => m.id);
+    const currentContact = selectedContact;
 
-      // Mark as read asynchronously to avoid synchronous reactivity loops (depth exceeded).
-      untrack(() => {
-        setTimeout(() => {
-          const freshConvo = conversations.get(currentContact);
-          if (!freshConvo) return;
-          const newMsgs = freshConvo.messages.map((m) =>
-            ids.includes(m.id) ? { ...m, readBy: [...(m.readBy || []), meNorm] } : m
-          );
-          conversations.set(currentContact, { ...freshConvo, messages: newMsgs });
-        }, 0);
-      });
-
-      // Accumulate for batch sending to avoid flooding with MLS packets
-      ids.forEach((id) => {
-        if (!pendingReadReceipts.includes(id)) pendingReadReceipts.push(id);
-      });
-
-      if (!readReceiptTimer) {
-        readReceiptTimer = setTimeout(() => {
-          untrack(() => {
-            const toSend = [...pendingReadReceipts];
-            pendingReadReceipts = [];
-            readReceiptTimer = null;
-            
-            if (toSend.length === 0) return;
-
-            try {
-              const mlsService = ensureMls();
-              const freshConvo = conversations.get(currentContact);
-              if (!freshConvo) return;
-              
-              sendReadReceipt(toSend, {
-                mlsService,
-                userId,
-                pin,
-                conversation: freshConvo,
-              }).catch(() => {
-                // Silently ignore — the local state is already updated.
-              });
-            } catch {
-              // MLS not ready yet, will catch next time.
-            }
-          });
-        }, 2000); // 2-second debounce for batching history load reads
-      }
+    // Mark as read asynchronously to avoid synchronous reactivity loops (depth exceeded).
+    untrack(() => {
+      setTimeout(() => {
+        const freshConvo = conversations.get(currentContact);
+        if (!freshConvo) return;
+        const newMsgs = freshConvo.messages.map((m) =>
+          ids.includes(m.id) ? { ...m, readBy: [...(m.readBy || []), meNorm] } : m
+        );
+        conversations.set(currentContact, { ...freshConvo, messages: newMsgs });
+      }, 0);
     });
+
+    // Accumulate for batch sending to avoid flooding with MLS packets
+    ids.forEach((id) => {
+      if (!pendingReadReceipts.includes(id)) pendingReadReceipts.push(id);
+    });
+
+    if (!readReceiptTimer) {
+      readReceiptTimer = setTimeout(() => {
+        untrack(() => {
+          const toSend = [...pendingReadReceipts];
+          pendingReadReceipts = [];
+          readReceiptTimer = null;
+
+          if (toSend.length === 0) return;
+
+          try {
+            const mlsService = ensureMls();
+            const freshConvo = conversations.get(currentContact);
+            if (!freshConvo) return;
+
+            sendReadReceipt(toSend, {
+              mlsService,
+              userId,
+              pin,
+              conversation: freshConvo,
+            }).catch(() => {
+              // Silently ignore — the local state is already updated.
+            });
+          } catch {
+            // MLS not ready yet, will catch next time.
+          }
+        });
+      }, 2000); // 2-second debounce for batching history load reads
+    }
+  });
 
   onMount(() => {
     if (routeMode === 'login') {
@@ -550,7 +550,7 @@
       // Verify PIN consistency across devices before doing anything else
       log('Vérification du PIN...');
       const verifier = await computePinVerifier(userId, pin);
-      const verifierRes = await fetch(`${historyBaseUrl}/api/mls-api/pin-verifier/check`, {
+      const verifierRes = await fetch(`${historyBaseUrl}/mls-api/pin-verifier/check`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId, verifier }),

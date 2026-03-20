@@ -934,17 +934,37 @@ export class AppController {
         return oembedPayload;
       }
 
-      const response = await fetch(targetUrl.toString(), {
-        method: 'GET',
-        redirect: 'follow',
-        signal: abortController.signal,
-        headers: {
-          'user-agent': 'CanariLinkPreview/1.0',
-          accept: 'text/html,application/xhtml+xml',
-        },
-      });
+      let currentUrl = targetUrl;
+      let response: Response | null = null;
+      let redirectsCount = 0;
+      const MAX_REDIRECTS = 3;
 
-      if (!response.ok) {
+      while (redirectsCount <= MAX_REDIRECTS) {
+        response = await fetch(currentUrl.toString(), {
+          method: 'GET',
+          redirect: 'manual', // 🔒 Empêcher les redirections automatiques
+          signal: abortController.signal,
+          headers: {
+            'user-agent': 'CanariLinkPreview/1.0',
+            accept: 'text/html,application/xhtml+xml',
+          },
+        });
+
+        // Gérer manuellement les redirections
+        if (response.status >= 300 && response.status <= 399) {
+          const location = response.headers.get('location');
+          if (!location) break;
+          // 🔒 Valider la nouvelle URL cible contre les attaques SSRF (ex: redirection vers localhost)
+          currentUrl = await assertSafeExternalUrl(
+            new URL(location, currentUrl.href).toString(),
+          );
+          redirectsCount++;
+        } else {
+          break;
+        }
+      }
+
+      if (!response || !response.ok) {
         throw new BadRequestException('Unable to fetch URL');
       }
 
