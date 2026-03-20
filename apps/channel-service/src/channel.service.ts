@@ -8,7 +8,9 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import {
   CHANNEL_PERMISSIONS,
+  DEFAULT_ADMIN_PERMISSIONS,
   DEFAULT_MEMBER_PERMISSIONS,
+  DEFAULT_MODERATOR_PERMISSIONS,
   DEFAULT_OWNER_PERMISSIONS,
   type ChannelPermission,
 } from './permissions';
@@ -21,6 +23,7 @@ import {
   type ChannelJoinDto,
   type ChannelKickDto,
   type ChannelLeaveDto,
+  type ChannelUpdateRoleDto,
   type CreateChannelDto,
   type CreateRoleDto,
   type CreateWorkspaceDto,
@@ -55,28 +58,59 @@ export class ChannelService {
       throw new BadRequestException('slug, name and createdBy are required');
     }
 
+    const existingWorkspace = await this.workspaceModel.findOne({ slug });
+    if (existingWorkspace) {
+      await this.ensureDefaultRoles(existingWorkspace.id);
+      return existingWorkspace;
+    }
+
     const workspace = await this.workspaceModel.create({
       slug,
       name,
       createdBy: owner,
     });
 
-    await this.roleModel.create([
-      {
-        workspaceId: workspace.id,
-        name: 'owner',
-        priority: 100,
-        permissions: DEFAULT_OWNER_PERMISSIONS,
-      },
-      {
-        workspaceId: workspace.id,
-        name: 'member',
-        priority: 10,
-        permissions: DEFAULT_MEMBER_PERMISSIONS,
-      },
-    ]);
+    await this.ensureDefaultRoles(workspace.id);
 
     return workspace;
+  }
+
+  async getWorkspaceBySlug(slugRaw: string) {
+    const slug = slugRaw.trim().toLowerCase();
+    if (!slug) {
+      throw new BadRequestException('slug is required');
+    }
+
+    const workspace = await this.workspaceModel.findOne({ slug }).lean();
+    if (!workspace) {
+      throw new NotFoundException('workspace not found');
+    }
+
+    return workspace;
+  }
+
+  async listWorkspacesForUser(userIdRaw: string) {
+    const userId = userIdRaw.trim().toLowerCase();
+    if (!userId) {
+      throw new BadRequestException('userId is required');
+    }
+
+    const ownedWorkspaces = await this.workspaceModel.find({ createdBy: userId }).lean();
+    const memberWorkspaceIds = await this.memberModel.distinct('workspaceId', {
+      userId,
+      leftAt: null,
+    });
+    const membershipWorkspaces =
+      memberWorkspaceIds.length > 0
+        ? await this.workspaceModel.find({ _id: { $in: memberWorkspaceIds } }).lean()
+        : [];
+
+    const byId = new Map<string, (typeof ownedWorkspaces)[number]>();
+    for (const workspace of [...ownedWorkspaces, ...membershipWorkspaces]) {
+      byId.set(String(workspace._id), workspace);
+    }
+
+    return Array.from(byId.values());
   }
 
   async createRole(input: CreateRoleDto) {
@@ -199,6 +233,46 @@ export class ChannelService {
     return { kicked: true, keyRotated: false };
   }
 
+  async updateMemberRole(channelId: string, input: ChannelUpdateRoleDto) {
+    const channel = await this.requireChannel(channelId);
+    const actorPerms = await this.getPermissions(
+      channel.workspaceId,
+      input.actorUserId,
+      channel.id
+    );
+
+    if (!actorPerms.has(CHANNEL_PERMISSIONS.ROLE_MANAGE)) {
+      throw new ForbiddenException('missing role.manage permission');
+    }
+
+    const roleName = input.roleName.trim().toLowerCase();
+    const role = await this.getRoleByName(channel.workspaceId, roleName);
+    if (!role) {
+      throw new BadRequestException(`unknown role ${roleName}`);
+    }
+
+    const targetUserId = input.targetUserId.trim().toLowerCase();
+    const membership = await this.memberModel.findOne({
+      channelId: channel.id,
+      userId: targetUserId,
+      leftAt: null,
+    });
+
+    if (!membership) {
+      throw new NotFoundException('target user is not an active member of this channel');
+    }
+
+    membership.roleName = role.name;
+    await membership.save();
+
+    return {
+      updated: true,
+      channelId: channel.id,
+      userId: targetUserId,
+      roleName: role.name,
+    };
+  }
+
   async sendMessage(channelId: string, input: SendChannelMessageDto) {
     const channel = await this.requireChannel(channelId);
     const sender = input.senderId.trim().toLowerCase();
@@ -298,6 +372,30 @@ export class ChannelService {
       workspaceId: String(workspaceId),
       name: String(roleName).toLowerCase()
     });
+  }
+
+  private async ensureDefaultRoles(workspaceId: string) {
+    const defaults: Array<{ name: string; priority: number; permissions: ChannelPermission[] }> = [
+      { name: 'owner', priority: 100, permissions: DEFAULT_OWNER_PERMISSIONS },
+      { name: 'admin', priority: 80, permissions: DEFAULT_ADMIN_PERMISSIONS },
+      { name: 'moderator', priority: 50, permissions: DEFAULT_MODERATOR_PERMISSIONS },
+      { name: 'member', priority: 10, permissions: DEFAULT_MEMBER_PERMISSIONS },
+    ];
+
+    for (const role of defaults) {
+      await this.roleModel.updateOne(
+        { workspaceId, name: role.name },
+        {
+          $setOnInsert: {
+            workspaceId,
+            name: role.name,
+            priority: role.priority,
+            permissions: role.permissions,
+          },
+        },
+        { upsert: true }
+      );
+    }
   }
 
   private async getPermissions(

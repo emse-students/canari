@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Plus, X, Search, Archive } from 'lucide-svelte';
+  import { Plus, X, Search, Archive, Shield } from 'lucide-svelte';
 
   interface Props {
     activeSidebarTab: 'discussions' | 'channels';
@@ -11,6 +11,7 @@
     onSearchQueryChange: (value: string) => void;
     onToggleArchivedView?: () => void;
     onOpenNewChat: () => void;
+    onOpenCommunityAdmin?: () => void;
   }
 
   let {
@@ -23,6 +24,7 @@
     onSearchQueryChange,
     onToggleArchivedView,
     onOpenNewChat,
+    onOpenCommunityAdmin,
   }: Props = $props();
 </script>
 
@@ -78,6 +80,17 @@
     >
       <Plus size={16} />
     </button>
+    {#if activeSidebarTab === 'channels'}
+      <button
+        type="button"
+        onclick={() => onOpenCommunityAdmin?.()}
+        class="w-8 h-8 rounded-full border border-white/45 dark:border-white/10 bg-white/65 dark:bg-black/30 hover:bg-white/80 dark:hover:bg-black/40 text-text-main transition-colors flex items-center justify-center"
+        aria-label="Gerer les communautes et roles"
+        title="Gerer les communautes et roles"
+      >
+        <Shield size={15} />
+      </button>
+    {/if}
     {#if activeSidebarTab === 'discussions'}
       <button
         type="button"

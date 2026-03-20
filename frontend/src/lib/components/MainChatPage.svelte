@@ -58,11 +58,27 @@
   import Modal from './Modal.svelte';
   import Navbar from './Navbar.svelte';
   import Sidebar from './Sidebar.svelte';
+  import ChannelPermissionsPanel from './chat/ChannelPermissionsPanel.svelte';
   import SyncSessionModal from './SyncSessionModal.svelte';
   import ChatArea from './ChatArea.svelte';
   import LogsPanel from './LogsPanel.svelte';
   import type { ChatMessage, MessageReaction, Conversation } from '$lib/types';
-  import { ChannelService } from '$lib/services/ChannelService';
+  import { ChannelService, type WorkspaceDto } from '$lib/services/ChannelService';
+
+  interface ChannelSidebarItem {
+    id: string;
+    name: string;
+    unreadCount?: number;
+    isPrivate?: boolean;
+  }
+
+  interface ChannelSidebarWorkspace {
+    id: string;
+    name: string;
+    workspaceDbId?: string;
+    avatarUserId: string;
+    channels: ChannelSidebarItem[];
+  }
 
   interface Props {
     routeMode?: 'chat' | 'login';
@@ -96,6 +112,90 @@
   let showArchivedConversations = $state(false);
 
   const channelService = new ChannelService();
+  const DEFAULT_WORKSPACE_SLUG = 'asso';
+  const DEFAULT_WORKSPACE_NAME = 'Asso';
+  let selectedChannelConversationId = $state('');
+  let channelWorkspaces = $state<ChannelSidebarWorkspace[]>([
+    {
+      id: DEFAULT_WORKSPACE_SLUG,
+      name: DEFAULT_WORKSPACE_NAME,
+      avatarUserId: DEFAULT_WORKSPACE_SLUG,
+      channels: [],
+    },
+  ]);
+
+  function slugifyWorkspace(name: string) {
+    return name
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 48);
+  }
+
+  function upsertWorkspaceFromDto(workspace: WorkspaceDto): ChannelSidebarWorkspace {
+    const workspaceSlug = workspace.slug?.trim().toLowerCase() || DEFAULT_WORKSPACE_SLUG;
+    const existing = channelWorkspaces.find((item) => item.id === workspaceSlug);
+    if (existing) {
+      existing.workspaceDbId = workspace.id ?? workspace._id;
+      existing.name = workspace.name;
+      if (!existing.avatarUserId) {
+        existing.avatarUserId = userId || workspaceSlug;
+      }
+      channelWorkspaces = [...channelWorkspaces];
+      return existing;
+    }
+
+    const created: ChannelSidebarWorkspace = {
+      id: workspaceSlug,
+      name: workspace.name,
+      workspaceDbId: workspace.id ?? workspace._id,
+      avatarUserId: userId || workspaceSlug,
+      channels: [],
+    };
+    channelWorkspaces = [...channelWorkspaces, created];
+    return created;
+  }
+
+  function addChannelToWorkspace(workspaceSlug: string, channel: ChannelSidebarItem) {
+    const idx = channelWorkspaces.findIndex((item) => item.id === workspaceSlug);
+    if (idx === -1) return;
+
+    const workspace = channelWorkspaces[idx];
+    if (workspace.channels.some((item) => item.id === channel.id)) {
+      return;
+    }
+
+    const updatedWorkspace: ChannelSidebarWorkspace = {
+      ...workspace,
+      channels: [...workspace.channels, channel],
+    };
+    channelWorkspaces = [
+      ...channelWorkspaces.slice(0, idx),
+      updatedWorkspace,
+      ...channelWorkspaces.slice(idx + 1),
+    ];
+  }
+
+  async function ensureWorkspaceByName(workspaceName: string) {
+    const slug = slugifyWorkspace(workspaceName);
+    if (!slug) {
+      throw new Error('Nom de communaute invalide.');
+    }
+
+    const workspace = await channelService.createWorkspace({
+      slug,
+      name: workspaceName,
+      createdBy: userId.toLowerCase(),
+    });
+
+    const sidebarWorkspace = upsertWorkspaceFromDto(workspace);
+    if (sidebarWorkspace.channels.length > 0) {
+      selectedChannelConversationId = sidebarWorkspace.channels[0].id;
+    }
+    return sidebarWorkspace;
+  }
 
   let isWsConnected = $state(false);
   let myDeviceId = $state('');
@@ -940,21 +1040,15 @@
   async function createNewChannel(nameRaw: string) {
     try {
       const normalizedChannelName = nameRaw.trim().toLowerCase();
+      if (!normalizedChannelName) return;
 
-      // The workspace logic needs to be verified, but let's assume a default one for now or use the channelService
-      const workspaceId = 'default-workspace'; // You might want to handle this properly later
+      // By default, channels are created inside the Asso community.
+      const sidebarWorkspace = await ensureWorkspaceByName(DEFAULT_WORKSPACE_NAME);
+      const workspaceId = sidebarWorkspace.workspaceDbId;
 
-      // First create a workspace blindly (will conflict if duplicate but that's ok to get the feature running)
-      // or we just call createChannel assuming workspace exists. Let's just do createChannel for now
-      // wait, CreateChannel needs a workspaceId.
-
-      await channelService
-        .createWorkspace({
-          slug: workspaceId,
-          name: 'Default Workspace',
-          createdBy: userId.toLowerCase(),
-        })
-        .catch((e) => console.log('workspace creation failed (might already exist):', e));
+      if (!workspaceId) {
+        throw new Error('workspaceId introuvable apres creation de la communaute.');
+      }
 
       const channelDto = {
         workspaceId,
@@ -969,6 +1063,14 @@
       const actualId =
         createdChannel?.id || createdChannel?._id || `${workspaceId}_${normalizedChannelName}`;
       const channelId = `channel_${actualId}`;
+
+      addChannelToWorkspace(sidebarWorkspace.id, {
+        id: channelId,
+        name: normalizedChannelName,
+        isPrivate: false,
+      });
+      selectedChannelConversationId = channelId;
+
       if (!conversations.has(channelId)) {
         conversations.set(channelId, {
           contactName: channelId,
@@ -984,6 +1086,64 @@
     } catch (e) {
       console.error('Failed to create channel:', e);
       log(`Erreur creation canal : ${String(e)}`);
+    }
+  }
+
+  async function createNewCommunity(nameRaw: string) {
+    try {
+      const normalized = nameRaw.trim();
+      if (!normalized) return;
+      await ensureWorkspaceByName(normalized);
+      log(`Communaute creee : ${normalized}`);
+    } catch (e) {
+      console.error('Failed to create community:', e);
+      log(`Erreur creation communaute : ${String(e)}`);
+    }
+  }
+
+  async function inviteMemberToChannel(
+    channelConversationId: string,
+    memberIdRaw: string,
+    roleName: 'member' | 'moderator' | 'admin'
+  ) {
+    try {
+      const memberId = memberIdRaw.trim().toLowerCase();
+      const channelId = channelConversationId.replace(/^channel_/, '');
+      if (!memberId || !channelId) return;
+
+      await channelService.joinChannel(channelId, {
+        userId: memberId,
+        roleName,
+        actorUserId: userId.toLowerCase(),
+      });
+
+      log(`Membre invite dans le canal (${roleName}) : ${memberId}`);
+    } catch (e) {
+      console.error('Failed to invite channel member:', e);
+      log(`Erreur invitation membre canal : ${String(e)}`);
+    }
+  }
+
+  async function updateChannelMemberRole(
+    channelConversationId: string,
+    memberIdRaw: string,
+    roleName: 'member' | 'moderator' | 'admin'
+  ) {
+    try {
+      const memberId = memberIdRaw.trim().toLowerCase();
+      const channelId = channelConversationId.replace(/^channel_/, '');
+      if (!memberId || !channelId) return;
+
+      await channelService.updateMemberRole(channelId, {
+        targetUserId: memberId,
+        roleName,
+        actorUserId: userId.toLowerCase(),
+      });
+
+      log(`Role mis a jour (${roleName}) pour : ${memberId}`);
+    } catch (e) {
+      console.error('Failed to update channel member role:', e);
+      log(`Erreur mise a jour role canal : ${String(e)}`);
     }
   }
 
@@ -1942,7 +2102,25 @@
             newChannelInput = '';
           }
         }}
+        onCreateWorkspace={(value?: string) => {
+          const workspaceName = (value ?? '').trim();
+          if (workspaceName) {
+            createNewCommunity(workspaceName);
+          }
+        }}
+        onInviteChannelMember={(channelId, memberId, roleName) => {
+          inviteMemberToChannel(channelId, memberId, roleName);
+        }}
+        onUpdateChannelMemberRole={(channelId, memberId, roleName) => {
+          updateChannelMemberRole(channelId, memberId, roleName);
+        }}
         onSelectConversation={selectConversation}
+        onSelectChannelConversation={(channelId) => {
+          selectedChannelConversationId = channelId;
+          selectConversation(channelId);
+        }}
+        {channelWorkspaces}
+        selectedChannelId={selectedChannelConversationId}
         onToggleArchivedView={() => {
           showArchivedConversations = !showArchivedConversations;
         }}
@@ -1987,6 +2165,17 @@
         isUploading={isUploadingMedia}
       />
 
+      <ChannelPermissionsPanel
+        selectedChannelId={selectedChannelConversationId}
+        {channelWorkspaces}
+        onInviteMember={(channelId, memberId, roleName) => {
+          inviteMemberToChannel(channelId, memberId, roleName);
+        }}
+        onUpdateMemberRole={(channelId, memberId, roleName) => {
+          updateChannelMemberRole(channelId, memberId, roleName);
+        }}
+      />
+
       {#if isConversationDrawerOpen}
         <Sidebar
           {conversations}
@@ -2020,7 +2209,25 @@
               newChannelInput = '';
             }
           }}
+          onCreateWorkspace={(value?: string) => {
+            const workspaceName = (value ?? '').trim();
+            if (workspaceName) {
+              createNewCommunity(workspaceName);
+            }
+          }}
+          onInviteChannelMember={(channelId, memberId, roleName) => {
+            inviteMemberToChannel(channelId, memberId, roleName);
+          }}
+          onUpdateChannelMemberRole={(channelId, memberId, roleName) => {
+            updateChannelMemberRole(channelId, memberId, roleName);
+          }}
           onSelectConversation={selectConversation}
+          onSelectChannelConversation={(channelId) => {
+            selectedChannelConversationId = channelId;
+            selectConversation(channelId);
+          }}
+          {channelWorkspaces}
+          selectedChannelId={selectedChannelConversationId}
           onToggleArchivedView={() => {
             showArchivedConversations = !showArchivedConversations;
           }}
@@ -2105,8 +2312,8 @@
 
 <style>
   .app-layout {
-    height: 100dvh;
-    min-height: 100svh;
+    height: 100%;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     overflow: hidden;

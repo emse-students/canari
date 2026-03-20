@@ -6,6 +6,7 @@
   import SidebarFooterTools from './SidebarFooterTools.svelte';
   import SidebarNewChatModal from './SidebarNewChatModal.svelte';
   import SidebarNewChannelModal from './SidebarNewChannelModal.svelte';
+  import SidebarCommunityAdminModal from './SidebarCommunityAdminModal.svelte';
 
   interface Conversation {
     contactName: string;
@@ -46,7 +47,12 @@
     onAddContact: (contactId?: string) => void;
     onCreateGroup: (groupName?: string) => void;
     onCreateChannel?: (channelName?: string) => void;
+    onCreateWorkspace?: (workspaceName?: string) => void;
+    onInviteChannelMember?: (channelId: string, memberId: string, roleName: 'member' | 'moderator' | 'admin') => void;
+    onUpdateChannelMemberRole?: (channelId: string, memberId: string, roleName: 'member' | 'moderator' | 'admin') => void;
     onSelectConversation: (name: string) => void;
+    onSelectChannelConversation?: (channelId: string) => void;
+    selectedChannelId?: string;
     onToggleArchivedView?: () => void;
     onRestoreConversation?: (name: string) => void;
     onExport: () => void;
@@ -76,7 +82,12 @@
     onAddContact,
     onCreateGroup,
     onCreateChannel,
+    onCreateWorkspace,
+    onInviteChannelMember,
+    onUpdateChannelMemberRole,
     onSelectConversation,
+    onSelectChannelConversation,
+    selectedChannelId = '',
     onToggleArchivedView,
     onRestoreConversation,
     onExport,
@@ -93,14 +104,18 @@
 
   let showNewChatModal = $state(false);
   let showNewChannelModal = $state(false);
+  let showCommunityAdminModal = $state(false);
   let activeTab = $state<'contact' | 'group'>('contact');
   let activeSidebarTab = $state<'discussions' | 'channels'>('discussions');
   let contactId = $state('');
   let groupName = $state('');
   let channelName = $state('');
+  let communityName = $state('');
+  let communityMemberId = $state('');
+  let communityRole = $state<'member' | 'moderator' | 'admin'>('member');
+  let selectedCommunityWorkspaceId = $state('');
   let searchQuery = $state('');
   let expandedWorkspaceIds = $state<string[]>(['sports', 'bde']);
-  let selectedChannelId = $state('sports-annonces');
 
   interface ChannelItem {
     id: string;
@@ -176,6 +191,10 @@
     showNewChannelModal = false;
   }
 
+  function closeCommunityAdminModal() {
+    showCommunityAdminModal = false;
+  }
+
   function handleAddContact() {
     const value = contactId.trim();
     if (!value) return;
@@ -204,6 +223,27 @@
     channelName = '';
     onChannelInputChange?.('');
     closeNewChannelModal();
+  }
+
+  function handleCreateWorkspace() {
+    const value = communityName.trim();
+    if (!value) return;
+    onCreateWorkspace?.(value);
+    communityName = '';
+  }
+
+  function handleInviteChannelMember() {
+    const memberId = communityMemberId.trim().toLowerCase();
+    const channelId = selectedChannelId;
+    if (!memberId || !channelId) return;
+    onInviteChannelMember?.(channelId, memberId, communityRole);
+  }
+
+  function handleUpdateChannelMemberRole() {
+    const memberId = communityMemberId.trim().toLowerCase();
+    const channelId = selectedChannelId;
+    if (!memberId || !channelId) return;
+    onUpdateChannelMemberRole?.(channelId, memberId, communityRole);
   }
 </script>
 
@@ -235,6 +275,12 @@
     }}
     onToggleArchivedView={() => onToggleArchivedView?.()}
     onOpenNewChat={() => openNewChatModal(activeSidebarTab === 'channels' ? 'channel' : 'contact')}
+    onOpenCommunityAdmin={() => {
+      if (!selectedCommunityWorkspaceId && channelWorkspaces[0]) {
+        selectedCommunityWorkspaceId = channelWorkspaces[0].id;
+      }
+      showCommunityAdminModal = true;
+    }}
   />
 
   <!-- Conversation List -->
@@ -292,7 +338,7 @@
         onToggleWorkspace={toggleWorkspace}
         onOpenNewGroup={() => openNewChatModal('channel')}
         onSelectChannel={(channelId) => {
-          selectedChannelId = channelId;
+          onSelectChannelConversation?.(channelId);
         }}
       />
     {/if}
@@ -336,4 +382,33 @@
     channelName = value;
   }}
   onSubmitChannel={handleCreateChannel}
+/>
+
+<SidebarCommunityAdminModal
+  open={showCommunityAdminModal}
+  workspaces={channelWorkspaces}
+  selectedWorkspaceId={selectedCommunityWorkspaceId || channelWorkspaces[0]?.id || ''}
+  {selectedChannelId}
+  {communityName}
+  memberId={communityMemberId}
+  roleName={communityRole}
+  onClose={closeCommunityAdminModal}
+  onWorkspaceChange={(value) => {
+    selectedCommunityWorkspaceId = value;
+  }}
+  onChannelChange={(value) => {
+    onSelectChannelConversation?.(value);
+  }}
+  onCommunityNameChange={(value) => {
+    communityName = value;
+  }}
+  onMemberIdChange={(value) => {
+    communityMemberId = value;
+  }}
+  onRoleNameChange={(value) => {
+    communityRole = value;
+  }}
+  onCreateCommunity={handleCreateWorkspace}
+  onInviteMember={handleInviteChannelMember}
+  onUpdateRole={handleUpdateChannelMemberRole}
 />

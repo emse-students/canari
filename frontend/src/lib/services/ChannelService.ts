@@ -4,11 +4,38 @@ export interface CreateWorkspaceDto {
   createdBy: string;
 }
 
+export interface WorkspaceDto {
+  _id: string;
+  id?: string;
+  slug: string;
+  name: string;
+  createdBy: string;
+}
+
 export interface CreateChannelDto {
   workspaceId: string;
   name: string;
   visibility?: 'public' | 'private';
   actorUserId: string;
+}
+
+export interface CreateRoleDto {
+  workspaceId: string;
+  name: string;
+  priority: number;
+  permissions: string[];
+}
+
+export interface ChannelJoinDto {
+  userId: string;
+  roleName?: string;
+  actorUserId: string;
+}
+
+export interface ChannelUpdateRoleDto {
+  targetUserId: string;
+  actorUserId: string;
+  roleName: string;
 }
 
 export interface SendChannelMessageDto {
@@ -21,7 +48,7 @@ export class ChannelService {
   private baseUrl: string;
 
   constructor() {
-    // In browser, Vite will proxy /channels to the backend. Default fallback for others:
+    // In browser, API routes are proxied by Vite/nginx.
     this.baseUrl = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3005';
   }
 
@@ -37,11 +64,37 @@ export class ChannelService {
       body: JSON.stringify(dto),
     });
     if (!res.ok) throw new Error(await res.text());
-    return res.json();
+    return res.json() as Promise<WorkspaceDto>;
+  }
+
+  async getWorkspaceBySlug(slug: string) {
+    const res = await fetch(
+      `${this.baseUrl}/api/channels/workspaces/by-slug/${encodeURIComponent(slug)}`
+    );
+    if (!res.ok) throw new Error(await res.text());
+    return res.json() as Promise<WorkspaceDto>;
+  }
+
+  async listUserWorkspaces(userId: string) {
+    const res = await fetch(
+      `${this.baseUrl}/api/channels/workspaces/user/${encodeURIComponent(userId)}`
+    );
+    if (!res.ok) throw new Error(await res.text());
+    return res.json() as Promise<WorkspaceDto[]>;
   }
 
   async createChannel(dto: CreateChannelDto) {
     const res = await fetch(`${this.baseUrl}/api/channels`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(dto),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  }
+
+  async createRole(dto: CreateRoleDto) {
+    const res = await fetch(`${this.baseUrl}/api/channels/roles`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(dto),
@@ -56,11 +109,21 @@ export class ChannelService {
     return res.json();
   }
 
-  async joinChannel(channelId: string, userId: string) {
+  async joinChannel(channelId: string, dto: ChannelJoinDto) {
     const res = await fetch(`${this.baseUrl}/api/channels/${channelId}/members/join`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId }),
+      body: JSON.stringify(dto),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  }
+
+  async updateMemberRole(channelId: string, dto: ChannelUpdateRoleDto) {
+    const res = await fetch(`${this.baseUrl}/api/channels/${channelId}/members/role`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(dto),
     });
     if (!res.ok) throw new Error(await res.text());
     return res.json();

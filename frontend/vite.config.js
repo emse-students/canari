@@ -61,6 +61,10 @@ export default defineConfig(async () => ({
         target: 'http://localhost:3001',
         changeOrigin: true,
       },
+      '/api/channels': {
+        target: 'http://localhost:3005',
+        changeOrigin: true,
+      },
       // Proxy /channels API to channel-service
       '/channels': {
         target: 'http://localhost:3005',

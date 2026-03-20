@@ -4,6 +4,7 @@ import {
   type ChannelJoinDto,
   type ChannelKickDto,
   type ChannelLeaveDto,
+  type ChannelUpdateRoleDto,
   type CreateChannelDto,
   type CreateRoleDto,
   type CreateWorkspaceDto,
@@ -27,6 +28,16 @@ export class AppController {
   @Post('workspaces')
   createWorkspace(@Body() body: CreateWorkspaceDto) {
     return this.service.createWorkspace(body);
+  }
+
+  @Get('workspaces/by-slug/:slug')
+  getWorkspaceBySlug(@Param('slug') slug: string) {
+    return this.service.getWorkspaceBySlug(slug);
+  }
+
+  @Get('workspaces/user/:userId')
+  listWorkspaces(@Param('userId') userId: string) {
+    return this.service.listWorkspacesForUser(userId);
   }
 
   @Post('roles')
@@ -57,6 +68,11 @@ export class AppController {
   @Post(':channelId/members/kick')
   kick(@Param('channelId') channelId: string, @Body() body: ChannelKickDto) {
     return this.service.kickMember(channelId, body);
+  }
+
+  @Post(':channelId/members/role')
+  updateMemberRole(@Param('channelId') channelId: string, @Body() body: ChannelUpdateRoleDto) {
+    return this.service.updateMemberRole(channelId, body);
   }
 
   @Post(':channelId/messages')

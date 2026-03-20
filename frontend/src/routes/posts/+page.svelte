@@ -35,10 +35,8 @@
   });
 </script>
 
-<main
-  class="min-h-screen bg-[var(--cn-bg)] bg-fixed pt-[calc(env(safe-area-inset-top)+20px)] pb-20 px-4 md:px-8"
->
-  <div class="max-w-6xl mx-auto animate-rise-in">
+<main class="h-full overflow-y-auto bg-[var(--cn-bg)]/20 px-4 py-6 md:px-8 md:py-8">
+  <div class="mx-auto max-w-6xl animate-rise-in">
     <!-- Header -->
     <header class="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4">
       <div>

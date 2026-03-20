@@ -33,6 +33,12 @@ export interface ChannelKickDto {
   actorUserId: string;
 }
 
+export interface ChannelUpdateRoleDto {
+  targetUserId: string;
+  actorUserId: string;
+  roleName: string;
+}
+
 export interface SendChannelMessageDto {
   senderId: string;
   ciphertext: string;
