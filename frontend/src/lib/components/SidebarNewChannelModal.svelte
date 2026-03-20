@@ -1,5 +1,6 @@
 <script lang="ts">
   import Modal from './Modal.svelte';
+  import { tick } from 'svelte';
 
   interface Props {
     open: boolean;
@@ -10,6 +11,12 @@
   }
 
   let { open, channelName, onClose, onChannelNameChange, onSubmitChannel }: Props = $props();
+  let channelInput: HTMLInputElement | undefined;
+
+  $effect(() => {
+    if (!open) return;
+    void tick().then(() => channelInput?.focus());
+  });
 </script>
 
 <Modal {open} {onClose} title="Nouveau canal">
@@ -19,6 +26,7 @@
         >Nom du canal</label
       >
       <input
+        bind:this={channelInput}
         id="new-channel-name"
         type="text"
         value={channelName}
@@ -26,7 +34,6 @@
         placeholder="ex: Général"
         class="w-full px-4 py-2.5 bg-white/65 dark:bg-black/30 border border-white/60 dark:border-white/10 rounded-xl text-sm outline-none focus:ring-2 focus:ring-amber-400/45"
         onkeydown={(e) => e.key === 'Enter' && onSubmitChannel()}
-        autofocus
       />
     </div>
     <button

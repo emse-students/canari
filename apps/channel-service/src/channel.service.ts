@@ -294,9 +294,9 @@ export class ChannelService {
   }
 
   private async getRoleByName(workspaceId: string, roleName: string) {
-    return this.roleModel.findOne({ 
-      workspaceId: String(workspaceId), 
-      name: String(roleName).toLowerCase() 
+    return this.roleModel.findOne({
+      workspaceId: String(workspaceId),
+      name: String(roleName).toLowerCase()
     });
   }
 

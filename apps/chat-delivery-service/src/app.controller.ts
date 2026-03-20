@@ -908,6 +908,10 @@ export class AppController {
       return { status: 'registered' };
     }
 
+    if (typeof doc.verifier !== 'string') {
+      throw new BadRequestException('stored verifier format invalid');
+    }
+
     // Constant-time comparison to prevent timing-based inference.
     const stored = Buffer.from(doc.verifier, 'hex');
     const incoming = Buffer.from(safeVerifier, 'hex');
@@ -1270,7 +1274,18 @@ export class AppController {
         'senderDeviceId',
       );
       const groupId = sanitizeQueryValue(body.groupId, 'groupId');
-      const { content, type } = body;
+      const rawContent: unknown = body.content;
+      const rawType: unknown = body.type;
+
+      if (typeof rawContent !== 'string' || rawContent.length === 0) {
+        throw new BadRequestException('content is required');
+      }
+      if (typeof rawType !== 'string' || rawType.length === 0) {
+        throw new BadRequestException('type is required');
+      }
+
+      const safeContent: string = rawContent;
+      const safeType: string = rawType;
 
       let targetList: { userId: string; deviceId: string }[] = [];
 
@@ -1316,12 +1331,12 @@ export class AppController {
           `[DELIVERY] Checking presence for ${redisKey} -> ${isOnline}`,
         );
         if (isOnline) {
-          const ciphertext = Buffer.from(content, 'base64');
-          const isWelcome = type === 'mlsWelcome';
+          const ciphertext = Buffer.from(safeContent, 'base64');
+          const isWelcome = safeType === 'mlsWelcome';
           console.log(
             `[DELIVERY] Encoding message for ${redisKey}, isWelcome: ${isWelcome}`,
           );
-          const envelope = await Promise.resolve(
+          const envelopeRaw = await Promise.resolve(
             encodeInboundMsgEnvelope(r.userId, r.deviceId, {
               ciphertext,
               senderId,
@@ -1330,6 +1345,10 @@ export class AppController {
               isWelcome,
             }),
           );
+          if (typeof envelopeRaw !== 'string') {
+            throw new BadRequestException('Encoded envelope must be a string');
+          }
+          const envelope: string = envelopeRaw;
           console.log(
             `[DELIVERY] Publishing Message to ${redisKey}, envelope length: ${envelope.length}`,
           );
@@ -1344,8 +1363,8 @@ export class AppController {
                 senderId,
                 senderDeviceId,
                 groupId,
-                content: content,
-                type,
+                content: safeContent,
+                type: safeType,
                 createdAt: new Date(),
               },
             },

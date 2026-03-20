@@ -550,11 +550,19 @@
       // Verify PIN consistency across devices before doing anything else
       log('Vérification du PIN...');
       const verifier = await computePinVerifier(userId, pin);
-      const verifierRes = await fetch(`${historyBaseUrl}/mls-api/pin-verifier/check`, {
+      const verifierPayload = JSON.stringify({ userId, verifier });
+      let verifierRes = await fetch(`${historyBaseUrl}/api/mls-api/pin-verifier/check`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, verifier }),
+        body: verifierPayload,
       });
+      if (verifierRes.status === 404) {
+        verifierRes = await fetch(`${historyBaseUrl}/mls-api/pin-verifier/check`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: verifierPayload,
+        });
+      }
       if (!verifierRes.ok) throw new Error('Impossible de vérifier le PIN (serveur inaccessible).');
       const verifierData = await verifierRes.json();
       if (verifierData.status === 'mismatch') {

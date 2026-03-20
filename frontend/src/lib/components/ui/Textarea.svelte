@@ -23,7 +23,8 @@
     oninput,
   }: Props = $props();
 
-  const uniqueId = id || `textarea-${Math.random().toString(36).slice(2)}`;
+  const generatedId = `textarea-${Math.random().toString(36).slice(2)}`;
+  const uniqueId = $derived(id || generatedId);
 </script>
 
 <div class={className}>

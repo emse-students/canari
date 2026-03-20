@@ -47,6 +47,7 @@ RUN printf 'server {\n\
     \n\
     location /mls-api/ {\n\
     set $upstream_delivery chat-delivery-service:3001;\n\
+    rewrite ^/mls-api/(.*)$ /api/mls-api/$1 break;\n\
     proxy_pass http://$upstream_delivery;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\

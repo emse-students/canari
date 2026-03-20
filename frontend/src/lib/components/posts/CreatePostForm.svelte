@@ -30,6 +30,8 @@
   let pollMultipleChoice = $state(false);
 
   let includeEventButton = $state(false);
+
+  const imageInputId = 'create-post-images-input';
   let eventLabel = $state('Register now');
   let eventId = $state('event-2026');
   let eventRequiresPayment = $state(false);
@@ -167,8 +169,11 @@
     />
 
     <div>
-      <label class="block text-sm font-bold text-text-main mb-2 ml-1">Images</label>
+      <label for={imageInputId} class="block text-sm font-bold text-text-main mb-2 ml-1"
+        >Images</label
+      >
       <input
+        id={imageInputId}
         type="file"
         accept="image/*"
         multiple
