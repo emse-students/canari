@@ -350,9 +350,9 @@
     </div>
   {/if}
 
-  {#if post.forms && post.forms.length > 0}
+  {#if forms && forms.length > 0}
     <div class="mt-6 border-t border-cn-border pt-6 space-y-6">
-      {#each post.forms as form (form.id)}
+      {#each forms as form (form.id)}
         <div class="bg-cn-surface/30 p-4 rounded-xl border border-cn-border">
           <div class="flex justify-between items-center mb-4 pb-2 border-b border-cn-border/50">
             <h3 class="font-bold text-lg text-text-main">
