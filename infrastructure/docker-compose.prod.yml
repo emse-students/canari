@@ -353,6 +353,28 @@ services:
           cpus: '0.5'
           memory: 256M
 
+  # ─────────────────────────────────────────────────────
+  # Channel Service (NestJS) — port 3005
+  # ─────────────────────────────────────────────────────
+  channel-service:
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/channel-service:${TAG:-latest}
+    restart: always
+    environment:
+      NODE_ENV: production
+      PORT: "3005"
+      CHANNELS_MONGO_URI: mongodb://mongo:27017/channel_db
+      CHANNELS_ENCRYPTION_SECRET: ${CHANNELS_ENCRYPTION_SECRET:-dev-channel-secret-change-me}
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - canari-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
 networks:
   canari-network:
     driver: bridge

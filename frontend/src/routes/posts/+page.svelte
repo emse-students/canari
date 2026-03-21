@@ -47,8 +47,8 @@
     const host = import.meta.env.VITE_GATEWAY_URL
       ? new URL(import.meta.env.VITE_GATEWAY_URL).host
       : window.location.host;
-    // Use /ws/ proxy from Vite or Nginx
-    const wsUrl = `${protocol}//${host}/ws?token=${token}&device_id=${devId}`;
+    // Use /api/ws/ proxy from Vite or Nginx
+    const wsUrl = `${protocol}//${host}/api/ws?token=${token}&device_id=${devId}`;
 
     console.log('[Posts] Connecting to WS:', wsUrl);
     ws = new WebSocket(wsUrl);

@@ -52,7 +52,7 @@ export class WebMlsService implements IMlsService {
       const wsUrl = this.baseUrl.replace(/^https?:/, (match) =>
         match === 'https:' ? 'wss:' : 'ws:'
       );
-      const fullWsUrl = `${wsUrl}/ws?token=${token}&device_id=${this.deviceId}`;
+      const fullWsUrl = `${wsUrl}/api/ws?token=${token}&device_id=${this.deviceId}`;
 
       console.log(`Connecting to WebSocket: ${fullWsUrl.replace(/token=[^&]+/, 'token=***')}`);
       this.ws = new WebSocket(fullWsUrl);

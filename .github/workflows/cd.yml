@@ -113,6 +113,9 @@ jobs:
           - name: form-service
             context: .
             dockerfile: ./infrastructure/local/Dockerfile.form-service
+          - name: channel-service
+            context: .
+            dockerfile: ./infrastructure/local/Dockerfile.channel-service
           - name: media-service
             context: .
             dockerfile: ./infrastructure/local/Dockerfile.media-service
