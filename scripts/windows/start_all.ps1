@@ -131,7 +131,7 @@ function Launch {
 # Chat Gateway (Rust) - utilise le binaire release si dispo, sinon compile
 Write-Host "  -> Lancement de Chat Gateway (port 3000/WS)" -ForegroundColor DarkGray
 $gatewayBin = "apps\chat-gateway\target\release\chat-gateway.exe"
-$gatewayEnv = "`$env:JWT_SECRET='$JWT_SECRET'; `$env:REDIS_URL='redis://127.0.0.1:6379'; `$env:KAFKA_BROKERS='localhost:9092'; `$env:DELIVERY_SERVICE_URL='http://localhost:3001'"
+$gatewayEnv = "`$env:JWT_SECRET='$JWT_SECRET'; `$env:REDIS_URL='redis://127.0.0.1:6379'; `$env:KAFKA_BROKERS='localhost:9092'; `$env:DELIVERY_SERVICE_URL='http://localhost:3010'"
 if (Test-Path $gatewayBin) {
     Launch "Chat Gateway (Rust)" "$gatewayEnv; & '$((Resolve-Path $gatewayBin).Path)'"
 }
@@ -140,22 +140,25 @@ else {
 }
 
 # Chat Delivery Service (NestJS)
-Launch "Chat Delivery Service (Node)" "Set-Location apps/chat-delivery-service; `$env:KAFKA_BROKERS='localhost:9092'; `$env:REDIS_HOST='localhost'; `$env:REDIS_PORT='6379'; npm install; npm run start:dev"
+Launch "Chat Delivery Service (Node)" "Set-Location apps/chat-delivery-service; `$env:PORT='3010'; `$env:KAFKA_BROKERS='localhost:9092'; `$env:REDIS_HOST='localhost'; `$env:REDIS_PORT='6379'; npm install; npm run start:dev"
 
 # Auth Service (NestJS)
-Launch "Auth Service (Node)" "Set-Location apps/auth-service; `$env:PORT='3003'; npm install; npm run start:dev"
+Launch "Auth Service (Node)" "Set-Location apps/auth-service; `$env:PORT='3012'; npm install; npm run start:dev"
 
 # User Service (NestJS)
-Launch "User Service (Node)" "Set-Location apps/user-service; `$env:PORT='3004'; npm install; npm run start:dev"
+Launch "User Service (Node)" "Set-Location apps/user-service; `$env:PORT='3013'; npm install; npm run start:dev"
 
 # Media Service (NestJS)
-Launch "Media Service (Node)" "Set-Location apps/media-service; `$env:PORT='3002'; npm install; npm run start:dev"
+Launch "Media Service (Node)" "Set-Location apps/media-service; `$env:PORT='3011'; npm install; npm run start:dev"
 
 # Channel Service (NestJS)
-Launch "Channel Service (Node)" "Set-Location apps/channel-service; `$env:PORT='3005'; `$env:CHANNELS_MONGO_URI='mongodb://localhost:27017/channel_db'; `$env:CHANNELS_ENCRYPTION_SECRET='dev-channel-secret-change-me'; npm install; npm run start:dev"
+Launch "Channel Service (Node)" "Set-Location apps/channel-service; `$env:PORT='3014'; `$env:CHANNELS_MONGO_URI='mongodb://localhost:27017/channel_db'; `$env:CHANNELS_ENCRYPTION_SECRET='dev-channel-secret-change-me'; npm install; npm run start:dev"
 
 # Post Service (NestJS)
-Launch "Post Service (Node)" "Set-Location apps/post-service; `$env:PORT='3006'; `$env:STRIPE_SECRET_KEY=''; `$env:USER_SERVICE_URL='http://localhost:3004'; npm install; npm run start:dev"
+Launch "Post Service (Node)" "Set-Location apps/post-service; `$env:PORT='3015'; `$env:STRIPE_SECRET_KEY=''; `$env:USER_SERVICE_URL='http://localhost:3013'; npm install; npm run start:dev"
+
+# Form Service (NestJS)
+Launch "Form Service (Node)" "Set-Location apps/form-service; `$env:PORT='3016'; `$env:FORMS_MONGO_URI='mongodb://localhost:27017/form_db'; `$env:STRIPE_SECRET_KEY=''; npm install; npm run start:dev"
 
 # 4. Lancement du frontend (Tauri)
 Write-Host "`n[4/4] Lancement du Frontend (Application Desktop Tauri)..." -ForegroundColor Yellow

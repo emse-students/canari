@@ -54,9 +54,9 @@ if [[ "$PROD" == "false" ]]; then
         echo "VITE_JWT_SECRET=${JWT_SECRET}" >> "$FRONTEND_ENV"
     fi
     if grep -q '^VITE_MEDIA_URL=' "$FRONTEND_ENV"; then
-        sed -i.bak "s|^VITE_MEDIA_URL=.*|VITE_MEDIA_URL=http://localhost:3002|" "$FRONTEND_ENV" && rm -f "${FRONTEND_ENV}.bak"
+        sed -i.bak "s|^VITE_MEDIA_URL=.*|VITE_MEDIA_URL=http://localhost:3011|" "$FRONTEND_ENV" && rm -f "${FRONTEND_ENV}.bak"
     else
-        echo "VITE_MEDIA_URL=http://localhost:3002" >> "$FRONTEND_ENV"
+        echo "VITE_MEDIA_URL=http://localhost:3011" >> "$FRONTEND_ENV"
     fi
     if grep -q '^VITE_MEDIA_MAX_SIZE_MB=' "$FRONTEND_ENV"; then
         sed -i.bak "s|^VITE_MEDIA_MAX_SIZE_MB=.*|VITE_MEDIA_MAX_SIZE_MB=50|" "$FRONTEND_ENV" && rm -f "${FRONTEND_ENV}.bak"

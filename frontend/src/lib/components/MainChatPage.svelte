@@ -131,7 +131,9 @@
 
   function upsertWorkspaceFromDto(workspace: WorkspaceDto): ChannelSidebarWorkspace {
     const workspaceId = workspace.id ?? workspace._id;
-    const workspaceSlug = workspace.slug?.trim().toLowerCase() || `workspace-${workspaceId || crypto.randomUUID().slice(0, 8)}`;
+    const workspaceSlug =
+      workspace.slug?.trim().toLowerCase() ||
+      `workspace-${workspaceId || crypto.randomUUID().slice(0, 8)}`;
     const existing = channelWorkspaces.find((item) => item.id === workspaceSlug);
     if (existing) {
       existing.workspaceDbId = workspaceId;
@@ -422,7 +424,7 @@
   const historyBaseUrl = (() => {
     const env = import.meta.env.VITE_HISTORY_URL;
     if (env && env.trim()) return env;
-    return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3001';
+    return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3010';
   })();
 
   function deriveConversationIdentity(
@@ -1215,7 +1217,7 @@
   async function createNewChannel(workspaceId: string, nameRaw: string) {
     try {
       if (!workspaceId) {
-        throw new Error('Vous devez d\'abord sélectionner une communauté.');
+        throw new Error("Vous devez d'abord sélectionner une communauté.");
       }
       const normalizedChannelName = nameRaw.trim().toLowerCase();
       if (!normalizedChannelName) return;
@@ -1234,7 +1236,7 @@
         createdChannel?.id || createdChannel?._id || `${workspaceId}_${normalizedChannelName}`;
       const channelId = `channel_${actualId}`;
 
-      const sidebarWorkspace = channelWorkspaces.find(w => w.workspaceDbId === workspaceId);
+      const sidebarWorkspace = channelWorkspaces.find((w) => w.workspaceDbId === workspaceId);
       if (sidebarWorkspace) {
         addChannelToWorkspace(sidebarWorkspace.id, {
           id: channelId,
@@ -1242,7 +1244,7 @@
           isPrivate: false,
         });
       }
-      
+
       selectedChannelConversationId = channelId;
 
       if (!conversations.has(channelId)) {
@@ -2587,5 +2589,3 @@
     backdrop-filter: saturate(1.02);
   }
 </style>
-
-

@@ -62,8 +62,10 @@ services:
       - postgres_data:/var/lib/postgresql/data
 
   # ─────────────────────────────────────────────────────
-  # Chat Gateway (Rust / Axum) — port 3000
+  # RUST SERVICES (3000-3009 range)
   # ─────────────────────────────────────────────────────
+
+  # Chat Gateway (Rust / Axum) — port 3000
   chat-gateway:
     build:
       context: ../../
@@ -83,16 +85,36 @@ services:
       kafka:
         condition: service_healthy
 
+  # Call Service (Rust / Axum) — port 3001
+  call-service:
+    build:
+      context: ../../
+      dockerfile: infrastructure/local/Dockerfile.call-service
+    ports:
+      - "3001:3001"
+    environment:
+      PORT: "3001"
+      RUST_LOG: call_service=info,tower_http=info
+      # Same as Chat Gateway if needed
+    depends_on:
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+
   # ─────────────────────────────────────────────────────
-  # Chat Delivery Service (NestJS) — port 3001
+  # NODE.JS SERVICES (3010-3029 range)
   # ─────────────────────────────────────────────────────
+
+  # Chat Delivery Service (NestJS) — New port 3010
   chat-delivery-service:
     build:
       context: ../../
       dockerfile: infrastructure/local/Dockerfile.chat-delivery-service
     ports:
-      - "3001:3001"
+      - "3010:3010"
     environment:
+      PORT: "3010"
       MONGO_URI: mongodb://mongo:27017/chat_db
       REDIS_HOST: redis
       REDIS_PORT: "6379"
@@ -125,8 +147,7 @@ services:
       timeout: 5s
       retries: 10
 
-  # ─────────────────────────────────────────────────────
-  # Media Service (NestJS) — port 3002
+  # Media Service (NestJS) — New port 3011
   # Stores only opaque encrypted blobs; never sees decryption keys.
   # ─────────────────────────────────────────────────────
   media-service:
@@ -134,9 +155,9 @@ services:
       context: ../../
       dockerfile: infrastructure/local/Dockerfile.media-service
     ports:
-      - "3002:3002"
+      - "3011:3011"
     environment:
-      PORT: "3002"
+      PORT: "3011"
       JWT_SECRET: ${JWT_SECRET}
       MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio}
       MINIO_PORT: "${MINIO_PORT:-9000}"
@@ -150,7 +171,28 @@ services:
         condition: service_healthy
 
   # ─────────────────────────────────────────────────────
-  # Channel Service (NestJS) — port 3005
+  # Auth Service (NestJS) — New port 3012
+  # ─────────────────────────────────────────────────────
+  auth-service:
+    build:
+      context: ../../
+      dockerfile: infrastructure/local/Dockerfile.auth-service
+    ports:
+      - "3012:3012"
+    environment:
+      PORT: "3012"
+      JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-me}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USERNAME: admin
+      DB_PASSWORD: password
+      DB_DATABASE: auth_db
+    depends_on:
+      postgres:
+        condition: service_started
+
+  # ─────────────────────────────────────────────────────
+  # Channel Service (NestJS) — New port 3014
   # Permissions-first community channels with soft encryption.
   # ─────────────────────────────────────────────────────
   channel-service:
@@ -158,9 +200,9 @@ services:
       context: ../../
       dockerfile: infrastructure/local/Dockerfile.channel-service
     ports:
-      - "3005:3005"
+      - "3014:3014"
     environment:
-      PORT: "3005"
+      PORT: "3014"
       CHANNELS_MONGO_URI: mongodb://mongo:27017/channel_db
       CHANNELS_ENCRYPTION_SECRET: ${CHANNELS_ENCRYPTION_SECRET:-dev-channel-secret-change-me}
     depends_on:
@@ -168,7 +210,7 @@ services:
         condition: service_started
 
   # ─────────────────────────────────────────────────────
-  # User Service (NestJS) — port 3004
+  # User Service (NestJS) — New port 3013
   # Handles user profiles and Stripe customer IDs.
   # ─────────────────────────────────────────────────────
   user-service:
@@ -176,9 +218,9 @@ services:
       context: ../../
       dockerfile: infrastructure/local/Dockerfile.user-service
     ports:
-      - "3004:3004"
+      - "3013:3013"
     environment:
-      PORT: "3004"
+      PORT: "3013"
       DB_HOST: postgres
       DB_PORT: "5432"
       DB_USERNAME: admin
@@ -190,7 +232,7 @@ services:
         condition: service_started
 
   # ─────────────────────────────────────────────────────
-  # Post Service (NestJS) — port 3006
+  # Post Service (NestJS) — New port 3015
   # Community posts: markdown, polls, event registration hooks.
   # ─────────────────────────────────────────────────────
   post-service:
@@ -198,14 +240,14 @@ services:
       context: ../../
       dockerfile: infrastructure/local/Dockerfile.post-service
     ports:
-      - "3006:3006"
+      - "3015:3015"
     environment:
-      PORT: "3006"
+      PORT: "3015"
       POSTS_MONGO_URI: mongodb://mongo:27017/post_db
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_SUCCESS_URL: ${STRIPE_SUCCESS_URL:-http://localhost:5173/posts?registration=success}
       STRIPE_CANCEL_URL: ${STRIPE_CANCEL_URL:-http://localhost:5173/posts?registration=cancel}
-      USER_SERVICE_URL: http://user-service:3004
+      USER_SERVICE_URL: http://user-service:3013
     depends_on:
       mongo:
         condition: service_started
@@ -213,16 +255,16 @@ services:
         condition: service_started
 
   # ─────────────────────────────────────────────────────
-  # Form Service (NestJS) — port 3008
+  # Form Service (NestJS) — New port 3016
   # ─────────────────────────────────────────────────────
   form-service:
     build:
       context: ../../
       dockerfile: infrastructure/local/Dockerfile.form-service
     ports:
-      - "3008:3008"
+      - "3016:3016"
     environment:
-      PORT: "3008"
+      PORT: "3016"
       FORMS_MONGO_URI: mongodb://mongo:27017/form_db
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
     depends_on:

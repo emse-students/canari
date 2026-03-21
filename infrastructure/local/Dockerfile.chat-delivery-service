@@ -25,6 +25,6 @@ COPY --from=builder /app/apps/chat-delivery-service/dist ./dist
 COPY --from=builder /app/apps/chat-delivery-service/node_modules ./node_modules
 COPY --from=builder /app/apps/chat-delivery-service/package.json ./
 
-EXPOSE 3001
+EXPOSE 3010
 
 CMD ["node", "dist/main.js"]

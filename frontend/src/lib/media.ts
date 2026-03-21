@@ -224,7 +224,7 @@ export class MediaService {
   constructor(baseUrl?: string) {
     const env = typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_MEDIA_URL;
     const fallback =
-      typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3002';
+      typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3011';
     this.baseUrl = (baseUrl ?? env ?? '').replace(/\/$/, '') || fallback;
   }
 

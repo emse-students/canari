@@ -42,7 +42,7 @@ export class WebMlsService implements IMlsService {
         ? envHistory
         : typeof window !== 'undefined'
           ? window.location.origin
-          : 'http://localhost:3001';
+          : 'http://localhost:3010';
   }
 
   async connect(token: string): Promise<void> {

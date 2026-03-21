@@ -23,6 +23,6 @@ COPY --from=builder /app/apps/form-service/dist ./dist
 COPY --from=builder /app/apps/form-service/node_modules ./node_modules
 COPY --from=builder /app/apps/form-service/package.json ./
 
-EXPOSE 3008
+EXPOSE 3016
 
 CMD ["node", "dist/main.js"]

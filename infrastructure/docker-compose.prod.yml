@@ -114,6 +114,9 @@ services:
           memory: 512M
 
   # ─────────────────────────────────────────────────────
+  # RUST SERVICES (3000-3009 range)
+  # ─────────────────────────────────────────────────────
+
   # Chat Gateway (Rust / Axum) — port 3000
   # ─────────────────────────────────────────────────────
   chat-gateway:
@@ -149,14 +152,50 @@ services:
         delay: 5s
         max_attempts: 3
 
+  # Call Service (Rust / Axum) — port 3001
   # ─────────────────────────────────────────────────────
-  # Chat Delivery Service (NestJS) — port 3001
+  call-service:
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/call-service:${TAG:-latest}
+    restart: always
+    environment:
+      RUST_LOG: ${RUST_LOG:-call_service=info,tower_http=info}
+      PORT: "3001"
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      REDIS_URL: redis://redis:6379
+      KAFKA_BROKERS: kafka:9092
+      ALLOW_ORIGIN: ${ALLOW_ORIGIN:-https://canari-emse.fr}
+    depends_on:
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - canari-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+
+  # ─────────────────────────────────────────────────────
+  # NODE.JS SERVICES (3010-3029 range)
+  # ─────────────────────────────────────────────────────
+
+
+  # ─────────────────────────────────────────────────────
+  # Chat Delivery Service (NestJS) — port 3010
   # ─────────────────────────────────────────────────────
   chat-delivery-service:
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/chat-delivery-service:${TAG:-latest}
     restart: always
     environment:
       NODE_ENV: production
+      PORT: "3010"
       MONGO_URI: mongodb://mongo:27017/chat_db
       REDIS_HOST: redis
       REDIS_PORT: "6379"
@@ -171,7 +210,7 @@ services:
     networks:
       - canari-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3001/api/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:3010/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -213,14 +252,14 @@ services:
           memory: 512M
 
   # ─────────────────────────────────────────────────────
-  # Media Service (NestJS) — port 3002
+  # Media Service (NestJS) — port 3011
   # ─────────────────────────────────────────────────────
   media-service:
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/media-service:${TAG:-latest}
     restart: always
     environment:
       NODE_ENV: production
-      PORT: "3002"
+      PORT: "3011"
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
       MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio}
       MINIO_PORT: "${MINIO_PORT:-9000}"
@@ -245,14 +284,14 @@ services:
         max_attempts: 3
 
   # ─────────────────────────────────────────────────────
-  # User Service (NestJS) — port 3004
+  # User Service (NestJS) — port 3013
   # ─────────────────────────────────────────────────────
   user-service:
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/user-service:${TAG:-latest}
     restart: always
     environment:
       NODE_ENV: production
-      PORT: "3004"
+      PORT: "3013"
       DB_HOST: postgres
       DB_PORT: "5432"
       DB_USERNAME: ${POSTGRES_USER:-admin}
@@ -275,19 +314,19 @@ services:
         max_attempts: 3
 
   # ─────────────────────────────────────────────────────
-  # Post Service (NestJS) — port 3006
+  # Post Service (NestJS) — port 3015
   # ─────────────────────────────────────────────────────
   post-service:
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/post-service:${TAG:-latest}
     restart: always
     environment:
       NODE_ENV: production
-      PORT: "3006"
+      PORT: "3015"
       POSTS_MONGO_URI: mongodb://mongo:27017/post_db
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_SUCCESS_URL: ${STRIPE_SUCCESS_URL:-https://canari-emse.fr/posts?registration=success}
       STRIPE_CANCEL_URL: ${STRIPE_CANCEL_URL:-https://canari-emse.fr/posts?registration=cancel}
-      USER_SERVICE_URL: http://user-service:3004
+      USER_SERVICE_URL: http://user-service:3013
     depends_on:
       mongo:
         condition: service_healthy
@@ -318,6 +357,10 @@ services:
       - chat-delivery-service
       - media-service
       - post-service
+      - call-service
+      - channel-service
+      - user-service
+      - form-service
     networks:
       - canari-network
     healthcheck:
@@ -332,14 +375,14 @@ services:
           memory: 256M
 
   # ─────────────────────────────────────────────────────
-  # Form Service (NestJS) — port 3008
+  # Form Service (NestJS) — port 3016
   # ─────────────────────────────────────────────────────
   form-service:
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/form-service:${TAG:-latest}
     restart: always
     environment:
       NODE_ENV: production
-      PORT: "3008"
+      PORT: "3016"
       FORMS_MONGO_URI: mongodb://mongo:27017/form_db
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
     depends_on:
@@ -354,14 +397,14 @@ services:
           memory: 256M
 
   # ─────────────────────────────────────────────────────
-  # Channel Service (NestJS) — port 3005
+  # Channel Service (NestJS) — port 3014
   # ─────────────────────────────────────────────────────
   channel-service:
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/channel-service:${TAG:-latest}
     restart: always
     environment:
       NODE_ENV: production
-      PORT: "3005"
+      PORT: "3014"
       CHANNELS_MONGO_URI: mongodb://mongo:27017/channel_db
       CHANNELS_ENCRYPTION_SECRET: ${CHANNELS_ENCRYPTION_SECRET:-dev-channel-secret-change-me}
     depends_on:

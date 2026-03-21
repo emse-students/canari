@@ -57,7 +57,13 @@ export class ChannelService {
 
   constructor() {
     // In browser, API routes are proxied by Vite/nginx.
-    this.baseUrl = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3005';
+    const env = typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_CHANNEL_URL;
+    if (env) {
+      this.baseUrl = env;
+    } else {
+      this.baseUrl =
+        typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3014';
+    }
   }
 
   private async handleError(res: Response) {

@@ -13,9 +13,14 @@
         ↓
 [Services Docker]
   ├─ Chat Gateway :3000
-  ├─ Chat Delivery :3001
-  ├─ Auth Service :3002
-  └─ Media Service : 9000 (MinIO)
+  ├─ Call Service :3001
+  ├─ Chat Delivery :3010
+  ├─ Media Service :3011
+  ├─ Auth Service :3012
+  ├─ User Service :3013
+  ├─ Channel Svc :3014
+  ├─ Post Service :3015
+  └─ Form Service :3016
   
 ```
 

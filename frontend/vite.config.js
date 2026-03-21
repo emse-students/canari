@@ -44,39 +44,48 @@ export default defineConfig(async () => ({
       // Proxy the delivery-service API so VITE_HISTORY_URL is not needed in local dev.
       // Requests to /mls-api/* and /history/* are forwarded to the NestJS service.
       '/mls-api': {
-        target: 'http://localhost:3001',
+        target: 'http://localhost:3010',
         changeOrigin: true,
         rewrite: (/** @type {string} */ path) => `/api${path}`,
       },
       '/history': {
-        target: 'http://localhost:3001',
+        target: 'http://localhost:3010',
         changeOrigin: true,
         rewrite: (/** @type {string} */ path) => `/api${path}`,
       },
       '/api/mls-api': {
-        target: 'http://localhost:3001',
+        target: 'http://localhost:3010',
         changeOrigin: true,
       },
       '/api/history': {
-        target: 'http://localhost:3001',
+        target: 'http://localhost:3010',
         changeOrigin: true,
       },
       '/api/channels': {
-        target: 'http://localhost:3005',
+        target: 'http://localhost:3014',
         changeOrigin: true,
       },
       // Proxy /channels API to channel-service
       '/channels': {
-        target: 'http://localhost:3005',
+        target: 'http://localhost:3014',
         changeOrigin: true,
       },
       // Proxy /api/posts API to post-service
       '/api/posts': {
-        target: 'http://localhost:3006',
+        target: 'http://localhost:3015',
         changeOrigin: true,
       },
       // Proxy /ws WebSocket to the chat-gateway so VITE_GATEWAY_URL is not needed in local dev.
       '/api/presence': { target: 'http://localhost:3000', changeOrigin: true },
+
+      // Added proxies for other services:
+      '/api/auth': { target: 'http://localhost:3012', changeOrigin: true },
+      '/api/users': { target: 'http://localhost:3013', changeOrigin: true },
+      '/api/media': { target: 'http://localhost:3011', changeOrigin: true },
+      '/api/forms': { target: 'http://localhost:3016', changeOrigin: true },
+      // WebSocket for Call Service
+      '/api/call': { target: 'ws://localhost:3001', ws: true, changeOrigin: true },
+
       '/ws': {
         target: 'ws://localhost:3000',
         ws: true,

@@ -18,6 +18,6 @@ COPY --from=builder /app/apps/channel-service/dist ./dist
 COPY --from=builder /app/apps/channel-service/node_modules ./node_modules
 COPY --from=builder /app/apps/channel-service/package.json ./
 
-EXPOSE 3005
+EXPOSE 3014
 
 CMD ["node", "dist/main.js"]

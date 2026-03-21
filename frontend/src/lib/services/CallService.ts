@@ -122,8 +122,8 @@ export class CallService {
 
   private async connectToSfu(roomId: string) {
     return new Promise<void>((resolve, reject) => {
-      // Use config or env var for SFU URL (ws://localhost:3004/ws by default)
-      const wsUrl = import.meta.env?.VITE_CALL_SERVICE_URL || 'ws://localhost:3004/ws';
+      // Use config or env var for SFU URL (ws://localhost:3001/ws by default)
+      const wsUrl = import.meta.env?.VITE_CALL_SERVICE_URL || 'ws://localhost:3001/ws';
       this.signaledWs = new WebSocket(wsUrl);
 
       this.signaledWs.onopen = () => {

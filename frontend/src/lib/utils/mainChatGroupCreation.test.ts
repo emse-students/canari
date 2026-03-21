@@ -103,7 +103,7 @@ function makeDeps(
     storage: null,
     userId: overrides.userId ?? 'jolan',
     pin: overrides.pin ?? 'pin-test',
-    historyBaseUrl: 'http://localhost:3001',
+    historyBaseUrl: 'http://localhost:3010',
     conversations: conversations as any,
     selectConversation:
       overrides.selectConversation ??

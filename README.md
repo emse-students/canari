@@ -146,8 +146,14 @@ Services disponibles après `make run-services` :
 | ------------- | ---------------------- |
 | Frontend dev  | http://localhost:5173  |
 | Chat Gateway  | ws://localhost:3000/ws |
-| Chat Delivery | http://localhost:3001  |
-| Media Service | http://localhost:3002  |
+| Call Service  | ws://localhost:3001/ws |
+| Chat Delivery | http://localhost:3010  |
+| Media Service | http://localhost:3011  |
+| Auth Service  | http://localhost:3012  |
+| User Service  | http://localhost:3013  |
+| Channel Svc   | http://localhost:3014  |
+| Post Service  | http://localhost:3015  |
+| Form Service  | http://localhost:3016  |
 | PostgreSQL    | localhost:5432         |
 | MongoDB       | localhost:27017        |
 | Redis         | localhost:6379         |

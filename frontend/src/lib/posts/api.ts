@@ -97,7 +97,7 @@ function getPostsBaseUrl(): string {
   if (typeof env === 'string' && env.trim()) {
     return env.trim().replace(/\/$/, '');
   }
-  return 'http://localhost:3006';
+  return 'http://localhost:3015';
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {

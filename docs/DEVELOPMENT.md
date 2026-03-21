@@ -48,16 +48,33 @@ Ou Docker Compose directement :
 docker compose -f infrastructure/local/docker-compose.yml up -d
 ```
 
-Les services sont accessibles via Nginx (port 80) ou directement :
+Les services sont accessibles via Nginx (port 80) ou directement (nouveaux ports) :
 
-- Frontend: http://localhost:5173 (dev) ou http://localhost (prod/docker)
-- Gateway: ws://localhost:3000
-- Auth Service: http://localhost:3003
-- Post Service: http://localhost:3006
-- Form Service: http://localhost:3008
-  - Dépend de `libs/shared-ts`
-  - Lancer: `npm run start:dev`
+### Services Temps-Réel (Rust)
+
+- **Chat Gateway**: `ws://localhost:3000` (Port Interne: 3000)
+- **Call Service**: `ws://localhost:3001` (Port Interne: 3001)
+
+### Services Backend Core (NestJS - Ports 3010+)
+
+- **Delivery Service**: `http://localhost:3010` (Port Interne: 3010)
+- **Media Service**: `http://localhost:3011` (Port Interne: 3011)
+- **Auth Service**: `http://localhost:3012` (Port Interne: 3012)
+- **User Service**: `http://localhost:3013` (Port Interne: 3013)
+
+### Services Fonctionnels (NestJS - Ports 3014+)
+
+- **Channel Service**: `http://localhost:3014` (Port Interne: 3014)
+- **Post Service**: `http://localhost:3015` (Port Interne: 3015)
+- **Form Service**: `http://localhost:3016` (Port Interne: 3016)
+
+### Frontend
+
+- **Frontend**: http://localhost:5173 (dev) ou http://localhost (prod/docker)
+
 - **Backend Chat Gateway (Rust)**: `apps/chat-gateway`
+  - Lancer: `cargo run`
+- **Backend Call Service (Rust)**: `apps/call-service`
   - Lancer: `cargo run`
 - **Frontend (SvelteKit + Tauri)**: `frontend/`
   - Dépend de `libs/shared-ts` et `mls-wasm` (Rust)
