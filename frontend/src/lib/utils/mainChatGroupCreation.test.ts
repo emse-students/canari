@@ -79,6 +79,7 @@ function makeMlsService(overrides: Partial<IMlsService> = {}): IMlsService {
     deleteGroupOnServer: vi.fn().mockResolvedValue(undefined),
     removeMemberFromServer: vi.fn().mockResolvedValue(undefined),
     getGroupMembers: vi.fn().mockResolvedValue([]),
+    exportSecret: vi.fn().mockResolvedValue(new Uint8Array([0xde, 0xad, 0xbe, 0xef])),
     onMessage: vi.fn(),
     onDisconnect: vi.fn(),
     ...overrides,
