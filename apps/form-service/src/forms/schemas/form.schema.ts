@@ -52,6 +52,12 @@ export class Form {
   @Prop({ default: 'Submit' })
   submitLabel: string;
 
+  @Prop({ type: Number })
+  maxSubmissions?: number;
+
+  @Prop({ default: false })
+  requiresPayment: boolean;
+
   @Prop({
     type: [
       {

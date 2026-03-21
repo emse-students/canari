@@ -81,6 +81,15 @@ export class CreateFormDto {
   @IsNotEmpty()
   submitLabel: string;
 
+  @IsNumber()
+  @IsOptional()
+  @Min(1)
+  maxSubmissions?: number;
+
+  @IsBoolean()
+  @IsOptional()
+  requiresPayment?: boolean;
+
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => FormItemDto)

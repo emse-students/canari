@@ -269,16 +269,17 @@
     <div class="rounded-2xl border border-cn-border p-4 bg-cn-surface/50">
       <label class="flex items-center gap-2 font-bold text-sm cursor-pointer mb-2">
         <input type="checkbox" bind:checked={includeForm} class="accent-cn-yellow w-4 h-4" />
-        Attach Registration Form
+        Joindre un formulaire d'inscription
       </label>
 
       {#if includeForm}
         <div class="space-y-4 mt-3 pl-2 border-l-2 border-cn-border">
-          <span class="block text-sm font-bold text-text-main mb-1">Select Form</span>
+          <span class="block text-sm font-bold text-text-main mb-1">Sélectionner un formulaire</span
+          >
           {#if availableForms.length === 0}
             <div class="text-sm text-gray-500">
-              No forms available. <a href="/forms/create" class="text-blue-500 underline"
-                >Create one first</a
+              Aucun formulaire disponible. <a href="/forms/create" class="text-blue-500 underline"
+                >En créer un d'abord</a
               >
             </div>
           {:else}
@@ -287,9 +288,9 @@
                 bind:value={selectedFormId}
                 class="w-full appearance-none rounded-xl border border-cn-border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cn-yellow transition-all pr-8"
               >
-                <option value="">-- Select a Form --</option>
+                <option value="">-- Choisir un formulaire --</option>
                 {#each availableForms as form (form._id)}
-                  <option value={form._id}>{form.title} ({form.items.length} items)</option>
+                  <option value={form._id}>{form.title} ({form.items.length} questions)</option>
                 {/each}
               </select>
               <div
@@ -306,10 +307,31 @@
               </div>
             </div>
           {/if}
-          <div class="text-xs text-gray-500 mt-2">
-            Forms must be created in the <a href="/forms" class="underline hover:text-blue-600"
-              >Forms Manager</a
-            >.
+          <div class="text-xs text-gray-500 mt-2 flex items-center gap-2">
+            <span>Les formulaires doivent être créés dans le</span>
+            <a
+              href="/forms"
+              class="inline-flex items-center gap-1 font-semibold text-blue-600 hover:text-blue-800 bg-blue-50 px-2 py-0.5 rounded border border-blue-200"
+            >
+              <span>Gestionnaire de formulaires</span>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+                class="w-3 h-3"
+              >
+                <path
+                  fill-rule="evenodd"
+                  d="M4.25 5.5a.75.75 0 00-.75.75v8.5c0 .414.336.75.75.75h8.5a.75.75 0 00.75-.75v-4a.75.75 0 011.5 0v4A2.25 2.25 0 0112.75 17h-8.5A2.25 2.25 0 012 14.75v-8.5A2.25 2.25 0 014.25 4h5a.75.75 0 010 1.5h-5z"
+                  clip-rule="evenodd"
+                />
+                <path
+                  fill-rule="evenodd"
+                  d="M6.194 12.753a.75.75 0 001.06.053L16.5 4.44v2.81a.75.75 0 001.5 0v-4.5a.75.75 0 00-.75-.75h-4.5a.75.75 0 000 1.5h2.553l-9.056 8.194a.75.75 0 00-.053 1.06z"
+                  clip-rule="evenodd"
+                />
+              </svg>
+            </a>
           </div>
         </div>
       {/if}

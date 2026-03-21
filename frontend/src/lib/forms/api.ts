@@ -26,6 +26,8 @@ export interface CreateFormPayload {
   currency: string;
   submitLabel: string;
   items: FormItem[];
+  maxSubmissions?: number;
+  requiresPayment?: boolean;
   ownerId: string;
 }
 

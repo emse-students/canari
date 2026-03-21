@@ -19,7 +19,7 @@
 
   function addOption() {
     if (!item.options) item.options = [];
-    item.options = [...item.options, { label: 'New Option', priceModifier: 0 }];
+    item.options = [...item.options, { label: 'Nouvelle option', priceModifier: undefined }];
   }
 
   function removeOption(idx: number) {
@@ -158,11 +158,14 @@
     <!-- Options / Columns -->
     <div class="space-y-3">
       <div
-        class="text-xs font-bold text-gray-500 uppercase tracking-wider flex justify-between items-end"
+        class="text-xs font-bold text-text-muted uppercase tracking-wider flex justify-between items-end"
       >
         <span
-          >{['matrix_single', 'matrix_multiple'].includes(item.type) ? 'Columns' : 'Options'}</span
+          >{['matrix_single', 'matrix_multiple'].includes(item.type) ? 'Colonnes' : 'Options'}</span
         >
+        {#if !['matrix_single', 'matrix_multiple'].includes(item.type)}
+          <span class="text-xs normal-case text-gray-500 font-medium mr-14">Supplément (€)</span>
+        {/if}
       </div>
 
       <div class="space-y-2 pl-1">
@@ -175,17 +178,17 @@
             <div class="flex-1">
               <Input
                 placeholder={['matrix_single', 'matrix_multiple'].includes(item.type)
-                  ? 'Column Label'
-                  : 'Option Label'}
+                  ? 'Libellé de la colonne'
+                  : "Libellé de l'option"}
                 bind:value={opt.label}
               />
             </div>
 
             {#if !['matrix_single', 'matrix_multiple'].includes(item.type)}
-              <div class="w-24 relative group/price">
+              <div class="w-28 relative group/price">
                 <Input
                   type="number"
-                  placeholder="+Price"
+                  placeholder="0.00"
                   bind:value={opt.priceModifier}
                   step="0.01"
                 />
@@ -225,12 +228,12 @@
           onclick={addOption}
           type="button"
         >
-          <span class="text-lg leading-none">+</span> Add {[
+          <span class="text-lg leading-none">+</span> Ajouter {[
             'matrix_single',
             'matrix_multiple',
           ].includes(item.type)
-            ? 'Column'
-            : 'Option'}
+            ? 'une colonne'
+            : 'une option'}
         </button>
       </div>
     </div>
