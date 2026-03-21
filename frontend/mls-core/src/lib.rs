@@ -6,8 +6,8 @@ use openmls::prelude::*;
 use openmls::treesync::RatchetTreeIn;
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
-use openmls_traits::OpenMlsProvider;
 use openmls_traits::storage::StorageProvider; // Explicit import for write_key_package
+use openmls_traits::OpenMlsProvider;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
@@ -520,5 +520,24 @@ impl MlsManager {
         };
 
         Self::load_or_create(user_id, decrypted_state)
+    }
+
+    // --- G. EXPORT SECRET (WebRTC / Call) ---
+
+    pub fn export_secret(
+        &self,
+        group_id: &str,
+        label: &str,
+        context: &[u8],
+        key_len: usize,
+    ) -> Result<Vec<u8>, MlsError> {
+        let group = self
+            .groups
+            .get(group_id)
+            .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
+
+        group
+            .export_secret(&self.provider, label, context, key_len)
+            .map_err(|e| MlsError::OpenMls(format!("Export secret error: {:?}", e)))
     }
 }

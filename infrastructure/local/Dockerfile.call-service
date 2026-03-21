@@ -1,0 +1,25 @@
+# ── Build stage ──────────────────────────────────────────────────────────────
+FROM rust:slim-bookworm AS builder
+
+# System deps for webrtc (if needed)
+RUN apt-get update && apt-get install -y cmake pkg-config libssl-dev g++ libcurl4-openssl-dev && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Copy all sources in one shot
+COPY libs/shared-rust ./libs/shared-rust
+COPY libs/proto ./libs/proto
+COPY apps/call-service ./apps/call-service
+
+RUN cd apps/call-service && cargo build --release
+
+# ── Runtime stage ─────────────────────────────────────────────────────────────
+FROM debian:bookworm-slim
+
+WORKDIR /app
+COPY --from=builder /build/apps/call-service/target/release/call-service .
+
+ENV RUST_LOG=info
+EXPOSE 3004
+
+CMD ["./call-service"]

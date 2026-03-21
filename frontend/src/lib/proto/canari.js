@@ -1634,6 +1634,7 @@ export const canari = $root.canari = (() => {
          * @property {canari.IReactionMsg|null} [reaction] AppMessage reaction
          * @property {canari.IMediaMsg|null} [media] AppMessage media
          * @property {canari.ISystemMsg|null} [system] AppMessage system
+         * @property {canari.ICallMsg|null} [call] AppMessage call
          */
 
         /**
@@ -1699,17 +1700,25 @@ export const canari = $root.canari = (() => {
          */
         AppMessage.prototype.system = null;
 
+        /**
+         * AppMessage call.
+         * @member {canari.ICallMsg|null|undefined} call
+         * @memberof canari.AppMessage
+         * @instance
+         */
+        AppMessage.prototype.call = null;
+
         // OneOf field names bound to virtual getters and setters
         let $oneOfFields;
 
         /**
          * AppMessage kind.
-         * @member {"text"|"reply"|"reaction"|"media"|"system"|undefined} kind
+         * @member {"text"|"reply"|"reaction"|"media"|"system"|"call"|undefined} kind
          * @memberof canari.AppMessage
          * @instance
          */
         Object.defineProperty(AppMessage.prototype, "kind", {
-            get: $util.oneOfGetter($oneOfFields = ["text", "reply", "reaction", "media", "system"]),
+            get: $util.oneOfGetter($oneOfFields = ["text", "reply", "reaction", "media", "system", "call"]),
             set: $util.oneOfSetter($oneOfFields)
         });
 
@@ -1749,6 +1758,8 @@ export const canari = $root.canari = (() => {
                 $root.canari.SystemMsg.encode(message.system, writer.uint32(/* id 5, wireType 2 =*/42).fork()).ldelim();
             if (message.messageId != null && Object.hasOwnProperty.call(message, "messageId"))
                 writer.uint32(/* id 6, wireType 2 =*/50).string(message.messageId);
+            if (message.call != null && Object.hasOwnProperty.call(message, "call"))
+                $root.canari.CallMsg.encode(message.call, writer.uint32(/* id 7, wireType 2 =*/58).fork()).ldelim();
             return writer;
         };
 
@@ -1807,6 +1818,10 @@ export const canari = $root.canari = (() => {
                     }
                 case 5: {
                         message.system = $root.canari.SystemMsg.decode(reader, reader.uint32());
+                        break;
+                    }
+                case 7: {
+                        message.call = $root.canari.CallMsg.decode(reader, reader.uint32());
                         break;
                     }
                 default:
@@ -1896,6 +1911,16 @@ export const canari = $root.canari = (() => {
                         return "system." + error;
                 }
             }
+            if (message.call != null && message.hasOwnProperty("call")) {
+                if (properties.kind === 1)
+                    return "kind: multiple values";
+                properties.kind = 1;
+                {
+                    let error = $root.canari.CallMsg.verify(message.call);
+                    if (error)
+                        return "call." + error;
+                }
+            }
             return null;
         };
 
@@ -1937,6 +1962,11 @@ export const canari = $root.canari = (() => {
                 if (typeof object.system !== "object")
                     throw TypeError(".canari.AppMessage.system: object expected");
                 message.system = $root.canari.SystemMsg.fromObject(object.system);
+            }
+            if (object.call != null) {
+                if (typeof object.call !== "object")
+                    throw TypeError(".canari.AppMessage.call: object expected");
+                message.call = $root.canari.CallMsg.fromObject(object.call);
             }
             return message;
         };
@@ -1983,6 +2013,11 @@ export const canari = $root.canari = (() => {
             }
             if (message.messageId != null && message.hasOwnProperty("messageId"))
                 object.messageId = message.messageId;
+            if (message.call != null && message.hasOwnProperty("call")) {
+                object.call = $root.canari.CallMsg.toObject(message.call, options);
+                if (options.oneofs)
+                    object.kind = "call";
+            }
             return object;
         };
 
@@ -2013,6 +2048,340 @@ export const canari = $root.canari = (() => {
         };
 
         return AppMessage;
+    })();
+
+    canari.CallMsg = (function() {
+
+        /**
+         * Properties of a CallMsg.
+         * @memberof canari
+         * @interface ICallMsg
+         * @property {string|null} [callId] CallMsg callId
+         * @property {string|null} [offerSdp] CallMsg offerSdp
+         * @property {string|null} [answerSdp] CallMsg answerSdp
+         * @property {string|null} [iceCandidate] CallMsg iceCandidate
+         * @property {boolean|null} [hangup] CallMsg hangup
+         */
+
+        /**
+         * Constructs a new CallMsg.
+         * @memberof canari
+         * @classdesc Represents a CallMsg.
+         * @implements ICallMsg
+         * @constructor
+         * @param {canari.ICallMsg=} [properties] Properties to set
+         */
+        function CallMsg(properties) {
+            if (properties)
+                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
+                    if (properties[keys[i]] != null)
+                        this[keys[i]] = properties[keys[i]];
+        }
+
+        /**
+         * CallMsg callId.
+         * @member {string} callId
+         * @memberof canari.CallMsg
+         * @instance
+         */
+        CallMsg.prototype.callId = "";
+
+        /**
+         * CallMsg offerSdp.
+         * @member {string|null|undefined} offerSdp
+         * @memberof canari.CallMsg
+         * @instance
+         */
+        CallMsg.prototype.offerSdp = null;
+
+        /**
+         * CallMsg answerSdp.
+         * @member {string|null|undefined} answerSdp
+         * @memberof canari.CallMsg
+         * @instance
+         */
+        CallMsg.prototype.answerSdp = null;
+
+        /**
+         * CallMsg iceCandidate.
+         * @member {string|null|undefined} iceCandidate
+         * @memberof canari.CallMsg
+         * @instance
+         */
+        CallMsg.prototype.iceCandidate = null;
+
+        /**
+         * CallMsg hangup.
+         * @member {boolean|null|undefined} hangup
+         * @memberof canari.CallMsg
+         * @instance
+         */
+        CallMsg.prototype.hangup = null;
+
+        // OneOf field names bound to virtual getters and setters
+        let $oneOfFields;
+
+        /**
+         * CallMsg payload.
+         * @member {"offerSdp"|"answerSdp"|"iceCandidate"|"hangup"|undefined} payload
+         * @memberof canari.CallMsg
+         * @instance
+         */
+        Object.defineProperty(CallMsg.prototype, "payload", {
+            get: $util.oneOfGetter($oneOfFields = ["offerSdp", "answerSdp", "iceCandidate", "hangup"]),
+            set: $util.oneOfSetter($oneOfFields)
+        });
+
+        /**
+         * Creates a new CallMsg instance using the specified properties.
+         * @function create
+         * @memberof canari.CallMsg
+         * @static
+         * @param {canari.ICallMsg=} [properties] Properties to set
+         * @returns {canari.CallMsg} CallMsg instance
+         */
+        CallMsg.create = function create(properties) {
+            return new CallMsg(properties);
+        };
+
+        /**
+         * Encodes the specified CallMsg message. Does not implicitly {@link canari.CallMsg.verify|verify} messages.
+         * @function encode
+         * @memberof canari.CallMsg
+         * @static
+         * @param {canari.ICallMsg} message CallMsg message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        CallMsg.encode = function encode(message, writer) {
+            if (!writer)
+                writer = $Writer.create();
+            if (message.callId != null && Object.hasOwnProperty.call(message, "callId"))
+                writer.uint32(/* id 1, wireType 2 =*/10).string(message.callId);
+            if (message.offerSdp != null && Object.hasOwnProperty.call(message, "offerSdp"))
+                writer.uint32(/* id 2, wireType 2 =*/18).string(message.offerSdp);
+            if (message.answerSdp != null && Object.hasOwnProperty.call(message, "answerSdp"))
+                writer.uint32(/* id 3, wireType 2 =*/26).string(message.answerSdp);
+            if (message.iceCandidate != null && Object.hasOwnProperty.call(message, "iceCandidate"))
+                writer.uint32(/* id 4, wireType 2 =*/34).string(message.iceCandidate);
+            if (message.hangup != null && Object.hasOwnProperty.call(message, "hangup"))
+                writer.uint32(/* id 5, wireType 0 =*/40).bool(message.hangup);
+            return writer;
+        };
+
+        /**
+         * Encodes the specified CallMsg message, length delimited. Does not implicitly {@link canari.CallMsg.verify|verify} messages.
+         * @function encodeDelimited
+         * @memberof canari.CallMsg
+         * @static
+         * @param {canari.ICallMsg} message CallMsg message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        CallMsg.encodeDelimited = function encodeDelimited(message, writer) {
+            return this.encode(message, writer).ldelim();
+        };
+
+        /**
+         * Decodes a CallMsg message from the specified reader or buffer.
+         * @function decode
+         * @memberof canari.CallMsg
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @param {number} [length] Message length if known beforehand
+         * @returns {canari.CallMsg} CallMsg
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        CallMsg.decode = function decode(reader, length, error) {
+            if (!(reader instanceof $Reader))
+                reader = $Reader.create(reader);
+            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.canari.CallMsg();
+            while (reader.pos < end) {
+                let tag = reader.uint32();
+                if (tag === error)
+                    break;
+                switch (tag >>> 3) {
+                case 1: {
+                        message.callId = reader.string();
+                        break;
+                    }
+                case 2: {
+                        message.offerSdp = reader.string();
+                        break;
+                    }
+                case 3: {
+                        message.answerSdp = reader.string();
+                        break;
+                    }
+                case 4: {
+                        message.iceCandidate = reader.string();
+                        break;
+                    }
+                case 5: {
+                        message.hangup = reader.bool();
+                        break;
+                    }
+                default:
+                    reader.skipType(tag & 7);
+                    break;
+                }
+            }
+            return message;
+        };
+
+        /**
+         * Decodes a CallMsg message from the specified reader or buffer, length delimited.
+         * @function decodeDelimited
+         * @memberof canari.CallMsg
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @returns {canari.CallMsg} CallMsg
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        CallMsg.decodeDelimited = function decodeDelimited(reader) {
+            if (!(reader instanceof $Reader))
+                reader = new $Reader(reader);
+            return this.decode(reader, reader.uint32());
+        };
+
+        /**
+         * Verifies a CallMsg message.
+         * @function verify
+         * @memberof canari.CallMsg
+         * @static
+         * @param {Object.<string,*>} message Plain object to verify
+         * @returns {string|null} `null` if valid, otherwise the reason why it is not
+         */
+        CallMsg.verify = function verify(message) {
+            if (typeof message !== "object" || message === null)
+                return "object expected";
+            let properties = {};
+            if (message.callId != null && message.hasOwnProperty("callId"))
+                if (!$util.isString(message.callId))
+                    return "callId: string expected";
+            if (message.offerSdp != null && message.hasOwnProperty("offerSdp")) {
+                properties.payload = 1;
+                if (!$util.isString(message.offerSdp))
+                    return "offerSdp: string expected";
+            }
+            if (message.answerSdp != null && message.hasOwnProperty("answerSdp")) {
+                if (properties.payload === 1)
+                    return "payload: multiple values";
+                properties.payload = 1;
+                if (!$util.isString(message.answerSdp))
+                    return "answerSdp: string expected";
+            }
+            if (message.iceCandidate != null && message.hasOwnProperty("iceCandidate")) {
+                if (properties.payload === 1)
+                    return "payload: multiple values";
+                properties.payload = 1;
+                if (!$util.isString(message.iceCandidate))
+                    return "iceCandidate: string expected";
+            }
+            if (message.hangup != null && message.hasOwnProperty("hangup")) {
+                if (properties.payload === 1)
+                    return "payload: multiple values";
+                properties.payload = 1;
+                if (typeof message.hangup !== "boolean")
+                    return "hangup: boolean expected";
+            }
+            return null;
+        };
+
+        /**
+         * Creates a CallMsg message from a plain object. Also converts values to their respective internal types.
+         * @function fromObject
+         * @memberof canari.CallMsg
+         * @static
+         * @param {Object.<string,*>} object Plain object
+         * @returns {canari.CallMsg} CallMsg
+         */
+        CallMsg.fromObject = function fromObject(object) {
+            if (object instanceof $root.canari.CallMsg)
+                return object;
+            let message = new $root.canari.CallMsg();
+            if (object.callId != null)
+                message.callId = String(object.callId);
+            if (object.offerSdp != null)
+                message.offerSdp = String(object.offerSdp);
+            if (object.answerSdp != null)
+                message.answerSdp = String(object.answerSdp);
+            if (object.iceCandidate != null)
+                message.iceCandidate = String(object.iceCandidate);
+            if (object.hangup != null)
+                message.hangup = Boolean(object.hangup);
+            return message;
+        };
+
+        /**
+         * Creates a plain object from a CallMsg message. Also converts values to other types if specified.
+         * @function toObject
+         * @memberof canari.CallMsg
+         * @static
+         * @param {canari.CallMsg} message CallMsg
+         * @param {$protobuf.IConversionOptions} [options] Conversion options
+         * @returns {Object.<string,*>} Plain object
+         */
+        CallMsg.toObject = function toObject(message, options) {
+            if (!options)
+                options = {};
+            let object = {};
+            if (options.defaults)
+                object.callId = "";
+            if (message.callId != null && message.hasOwnProperty("callId"))
+                object.callId = message.callId;
+            if (message.offerSdp != null && message.hasOwnProperty("offerSdp")) {
+                object.offerSdp = message.offerSdp;
+                if (options.oneofs)
+                    object.payload = "offerSdp";
+            }
+            if (message.answerSdp != null && message.hasOwnProperty("answerSdp")) {
+                object.answerSdp = message.answerSdp;
+                if (options.oneofs)
+                    object.payload = "answerSdp";
+            }
+            if (message.iceCandidate != null && message.hasOwnProperty("iceCandidate")) {
+                object.iceCandidate = message.iceCandidate;
+                if (options.oneofs)
+                    object.payload = "iceCandidate";
+            }
+            if (message.hangup != null && message.hasOwnProperty("hangup")) {
+                object.hangup = message.hangup;
+                if (options.oneofs)
+                    object.payload = "hangup";
+            }
+            return object;
+        };
+
+        /**
+         * Converts this CallMsg to JSON.
+         * @function toJSON
+         * @memberof canari.CallMsg
+         * @instance
+         * @returns {Object.<string,*>} JSON object
+         */
+        CallMsg.prototype.toJSON = function toJSON() {
+            return this.constructor.toObject(this, $protobuf.util.toJSONOptions);
+        };
+
+        /**
+         * Gets the default type url for CallMsg
+         * @function getTypeUrl
+         * @memberof canari.CallMsg
+         * @static
+         * @param {string} [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns {string} The default type url
+         */
+        CallMsg.getTypeUrl = function getTypeUrl(typeUrlPrefix) {
+            if (typeUrlPrefix === undefined) {
+                typeUrlPrefix = "type.googleapis.com";
+            }
+            return typeUrlPrefix + "/canari.CallMsg";
+        };
+
+        return CallMsg;
     })();
 
     canari.TextMsg = (function() {

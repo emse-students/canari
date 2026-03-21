@@ -75,6 +75,20 @@ message AppMessage {
     ReactionMsg reaction = 3;
     MediaMsg    media    = 4;
     SystemMsg   system   = 5;
+    CallMsg     call     = 7;
+  }
+}
+
+// ── WebRTC Signaling ─────────────────────────────────────────────────────
+
+message CallMsg {
+  string call_id = 1; // Unique for the call session
+
+  oneof payload {
+    string offer_sdp     = 2; // SDP offer json string
+    string answer_sdp    = 3; // SDP answer json string
+    string ice_candidate = 4; // ICE candidate json string
+    bool   hangup        = 5; // End call
   }
 }
 

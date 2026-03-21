@@ -238,6 +238,26 @@ impl WasmMlsClient {
     }
 
     #[wasm_bindgen]
+    pub fn export_secret(
+        &self,
+        group_id: String,
+        label: String,
+        context: Option<Vec<u8>>,
+        key_len: usize,
+    ) -> Result<Vec<u8>, JsValue> {
+        log::info!(
+            "export_secret: {} label={} len={}",
+            group_id,
+            label,
+            key_len
+        );
+        let ctx = context.unwrap_or(vec![]);
+        self.manager
+            .export_secret(&group_id, &label, &ctx, key_len)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    #[wasm_bindgen]
     pub fn process_incoming_message(
         &mut self,
         group_id: String,

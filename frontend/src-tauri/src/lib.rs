@@ -168,6 +168,25 @@ fn recevoir_message_bytes(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn exporter_secret(
+    group_id: String,
+    label: String,
+    context: Option<Vec<u8>>,
+    key_len: usize,
+    state: tauri::State<AppState>,
+) -> Result<Vec<u8>, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+
+    manager
+        .export_secret(&group_id, &label, context.as_deref().unwrap_or(&[]), key_len)
+        .map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
@@ -196,7 +215,8 @@ pub fn run() {
             envoyer_message,
             envoyer_message_bytes,
             recevoir_message,
-            recevoir_message_bytes
+            recevoir_message_bytes,
+            exporter_secret
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

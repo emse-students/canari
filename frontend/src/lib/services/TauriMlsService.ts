@@ -515,6 +515,21 @@ export class TauriMlsService implements IMlsService {
     return res ? Uint8Array.from(res) : null;
   }
 
+  async exportSecret(
+    groupId: string,
+    label: string,
+    context: Uint8Array,
+    keyLen: number
+  ): Promise<Uint8Array> {
+    const res = await invoke<number[]>('exporter_secret', {
+      groupId,
+      label,
+      context: Array.from(context),
+      keyLen,
+    });
+    return new Uint8Array(res);
+  }
+
   async fetchHistory(
     groupId: string
   ): Promise<{ sender_id: string; content: string; timestamp: string }[]> {

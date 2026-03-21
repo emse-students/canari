@@ -9,9 +9,38 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # =================================================================================================
+  # RUST MATRIX
+  # =================================================================================================
   test-rust:
-    name: Test Rust Components
+    name: Test Rust (${{ matrix.component.name }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        component:
+          - name: Shared Rust Lib
+            path: libs/shared-rust
+            cmd: cargo test
+            check: true
+          - name: Chat Gateway
+            path: apps/chat-gateway
+            cmd: cargo test
+            check: true
+          - name: Call Service
+            path: apps/call-service
+            cmd: cargo test
+            check: true
+          - name: Frontend MLS Core
+            path: frontend/mls-core
+            cmd: cargo test --lib
+            check: true
+          - name: Frontend MLS WASM
+            path: frontend/mls-wasm
+            cmd: cargo build --target wasm32-unknown-unknown --release
+            wasm: true
+            check: true
+
     steps:
       - uses: actions/checkout@v4
 
@@ -45,59 +74,42 @@ jobs:
           sudo apt-get install -y libssl-dev cmake libcurl4-openssl-dev pkg-config
 
       - name: Install WASM target
+        if: matrix.component.wasm == true
         run: rustup target add wasm32-unknown-unknown
 
-      - name: Check Formatting - Shared Rust
-        working-directory: libs/shared-rust
+      - name: Check Formatting
+        if: matrix.component.check == true
+        working-directory: ${{ matrix.component.path }}
         run: cargo fmt -- --check
 
-      - name: Check Formatting - Chat Gateway
-        working-directory: apps/chat-gateway
-        run: cargo fmt -- --check
-
-      - name: Check Formatting - Frontend MLS Core
-        working-directory: frontend/mls-core
-        run: cargo fmt -- --check
-
-      - name: Check Formatting - Frontend MLS WASM
-        working-directory: frontend/mls-wasm
-        run: cargo fmt -- --check
-
-      - name: Lint with Clippy - Shared Rust
-        working-directory: libs/shared-rust
+      - name: Lint with Clippy
+        if: matrix.component.check == true
+        working-directory: ${{ matrix.component.path }}
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-      - name: Lint with Clippy - Chat Gateway
-        working-directory: apps/chat-gateway
-        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Run Component Task
+        working-directory: ${{ matrix.component.path }}
+        run: ${{ matrix.component.cmd }}
 
-      - name: Lint with Clippy - Frontend MLS Core
-        working-directory: frontend/mls-core
-        run: cargo clippy --all-targets --all-features -- -D warnings
-
-      - name: Lint with Clippy - Frontend MLS WASM
-        working-directory: frontend/mls-wasm
-        run: cargo clippy --all-targets --all-features -- -D warnings
-
-      - name: Test Shared Rust Lib
-        working-directory: libs/shared-rust
-        run: cargo test
-
-      - name: Test Chat Gateway
-        working-directory: apps/chat-gateway
-        run: cargo test
-
-      - name: Test Frontend MLS Core
-        working-directory: frontend/mls-core
-        run: cargo test --lib
-
-      - name: Build Frontend MLS WASM
-        working-directory: frontend/mls-wasm
-        run: cargo build --target wasm32-unknown-unknown --release
-
-  test-typescript:
-    name: Test TypeScript Components
+  # =================================================================================================
+  # TYPESCRIPT BACKEND MATRIX
+  # =================================================================================================
+  test-typescript-backend:
+    name: Test TS Backend (${{ matrix.service }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - libs/shared-ts
+          - apps/auth-service
+          - apps/chat-delivery-service
+          - apps/media-service
+          - apps/user-service
+          - apps/post-service
+          - apps/form-service
+          - apps/channel-service
+
     steps:
       - uses: actions/checkout@v4
 
@@ -106,45 +118,57 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Build shared-ts
+      # Build shared-ts first if it is not the current service
+      - name: Build shared-ts (dependency)
+        if: matrix.service != 'libs/shared-ts'
         working-directory: libs/shared-ts
         run: |
           npm ci
           npm run build
 
-      - name: Test Chat History Service
-        working-directory: apps/chat-delivery-service
-        run: |
-          npm ci
-          npm run lint
-          npm test
+      - name: Install Dependencies
+        working-directory: ${{ matrix.service }}
+        run: npm ci
 
-      - name: Build Media Service
-        working-directory: apps/media-service
+      - name: Check Lint Script
+        id: check_lint
+        working-directory: ${{ matrix.service }}
         run: |
-          npm install
-          npm run build
+          if node -e 'if(!require("./package.json").scripts || !require("./package.json").scripts.lint) process.exit(1)'; then
+            echo "has_lint=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_lint=false" >> $GITHUB_OUTPUT
+          fi
 
-      - name: Build User Service
-        working-directory: apps/user-service
+      - name: Run Lint
+        if: steps.check_lint.outputs.has_lint == 'true'
+        working-directory: ${{ matrix.service }}
+        run: npm run lint
+
+      - name: Build
+        working-directory: ${{ matrix.service }}
+        run: npm run build
+
+      - name: Check Test Script
+        id: check_test
+        working-directory: ${{ matrix.service }}
         run: |
-          npm install
-          npm run build
+          if node -e 'if(!require("./package.json").scripts || !require("./package.json").scripts.test) process.exit(1)'; then
+            echo "has_test=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_test=false" >> $GITHUB_OUTPUT
+          fi
 
-      - name: Build Post Service
-        working-directory: apps/post-service
-        run: |
-          npm install
-          npm run build
+      - name: Run Test
+        if: steps.check_test.outputs.has_test == 'true'
+        working-directory: ${{ matrix.service }}
+        run: npm test
 
-      - name: Build Form Service
-        working-directory: apps/form-service
-        run: |
-          npm install
-          npm run build
-
+  # =================================================================================================
+  # FRONTEND (SVELTE)
+  # =================================================================================================
   test-frontend:
-    name: Test Frontend Conversation Logic
+    name: Test Frontend (Svelte)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -160,6 +184,13 @@ jobs:
         working-directory: frontend
         run: bun run sync
 
+      - name: Lint Frontend
+        working-directory: frontend
+        run: |
+          bun run lint
+          bun run check
+          bun run format:check
+
       - name: Run Vitest unit tests
         working-directory: frontend
         run: bun run test
@@ -174,37 +205,3 @@ jobs:
         with:
           name: frontend-coverage
           path: frontend/coverage/
-
-  lint-typescript:
-    name: Lint TypeScript Components
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: Lint Frontend
-        working-directory: frontend
-        run: |
-          bun install
-          bun run lint
-          bun run check
-          bun run format:check
-
-      - name: Lint Auth Service
-        working-directory: apps/auth-service
-        run: |
-          npm ci
-          npm run lint
-
-      - name: Lint User Service
-        working-directory: apps/user-service
-        run: |
-          npm ci
-          npm run lint

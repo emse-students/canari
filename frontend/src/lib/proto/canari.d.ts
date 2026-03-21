@@ -674,6 +674,9 @@ export namespace canari {
 
         /** AppMessage system */
         system?: (canari.ISystemMsg|null);
+
+        /** AppMessage call */
+        call?: (canari.ICallMsg|null);
     }
 
     /** Represents an AppMessage. */
@@ -703,8 +706,11 @@ export namespace canari {
         /** AppMessage system. */
         public system?: (canari.ISystemMsg|null);
 
+        /** AppMessage call. */
+        public call?: (canari.ICallMsg|null);
+
         /** AppMessage kind. */
-        public kind?: ("text"|"reply"|"reaction"|"media"|"system");
+        public kind?: ("text"|"reply"|"reaction"|"media"|"system"|"call");
 
         /**
          * Creates a new AppMessage instance using the specified properties.
@@ -778,6 +784,130 @@ export namespace canari {
 
         /**
          * Gets the default type url for AppMessage
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
+         */
+        public static getTypeUrl(typeUrlPrefix?: string): string;
+    }
+
+    /** Properties of a CallMsg. */
+    interface ICallMsg {
+
+        /** CallMsg callId */
+        callId?: (string|null);
+
+        /** CallMsg offerSdp */
+        offerSdp?: (string|null);
+
+        /** CallMsg answerSdp */
+        answerSdp?: (string|null);
+
+        /** CallMsg iceCandidate */
+        iceCandidate?: (string|null);
+
+        /** CallMsg hangup */
+        hangup?: (boolean|null);
+    }
+
+    /** Represents a CallMsg. */
+    class CallMsg implements ICallMsg {
+
+        /**
+         * Constructs a new CallMsg.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: canari.ICallMsg);
+
+        /** CallMsg callId. */
+        public callId: string;
+
+        /** CallMsg offerSdp. */
+        public offerSdp?: (string|null);
+
+        /** CallMsg answerSdp. */
+        public answerSdp?: (string|null);
+
+        /** CallMsg iceCandidate. */
+        public iceCandidate?: (string|null);
+
+        /** CallMsg hangup. */
+        public hangup?: (boolean|null);
+
+        /** CallMsg payload. */
+        public payload?: ("offerSdp"|"answerSdp"|"iceCandidate"|"hangup");
+
+        /**
+         * Creates a new CallMsg instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns CallMsg instance
+         */
+        public static create(properties?: canari.ICallMsg): canari.CallMsg;
+
+        /**
+         * Encodes the specified CallMsg message. Does not implicitly {@link canari.CallMsg.verify|verify} messages.
+         * @param message CallMsg message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encode(message: canari.ICallMsg, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified CallMsg message, length delimited. Does not implicitly {@link canari.CallMsg.verify|verify} messages.
+         * @param message CallMsg message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encodeDelimited(message: canari.ICallMsg, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes a CallMsg message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns CallMsg
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.CallMsg;
+
+        /**
+         * Decodes a CallMsg message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns CallMsg
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.CallMsg;
+
+        /**
+         * Verifies a CallMsg message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        public static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates a CallMsg message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns CallMsg
+         */
+        public static fromObject(object: { [k: string]: any }): canari.CallMsg;
+
+        /**
+         * Creates a plain object from a CallMsg message. Also converts values to other types if specified.
+         * @param message CallMsg
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        public static toObject(message: canari.CallMsg, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this CallMsg to JSON.
+         * @returns JSON object
+         */
+        public toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the default type url for CallMsg
          * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
          * @returns The default type url
          */

@@ -29,6 +29,7 @@ export type IReplyRef = canari.IReplyRef;
 export type IReactionMsg = canari.IReactionMsg;
 export type IMediaMsg = canari.IMediaMsg;
 export type ISystemMsg = canari.ISystemMsg;
+export type ICallMsg = canari.ICallMsg;
 
 export const MediaKind = canari.MediaKind;
 

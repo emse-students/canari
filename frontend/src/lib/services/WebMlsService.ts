@@ -566,6 +566,16 @@ export class WebMlsService implements IMlsService {
     return result ?? null;
   }
 
+  async exportSecret(
+    groupId: string,
+    label: string,
+    context: Uint8Array,
+    keyLen: number
+  ): Promise<Uint8Array> {
+    if (!this.client) throw new Error('WC not initialized');
+    return this.client.export_secret(groupId, label, context, keyLen);
+  }
+
   async fetchHistory(
     groupId: string
   ): Promise<{ sender_id: string; content: string; timestamp: string }[]> {
