@@ -76,6 +76,7 @@ export default defineConfig(async () => ({
         changeOrigin: true,
       },
       // Proxy /ws WebSocket to the chat-gateway so VITE_GATEWAY_URL is not needed in local dev.
+      '/api/presence': { target: 'http://localhost:3000', changeOrigin: true },
       '/ws': {
         target: 'ws://localhost:3000',
         ws: true,

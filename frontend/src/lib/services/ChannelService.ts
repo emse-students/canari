@@ -104,7 +104,7 @@ export class ChannelService {
   }
 
   async createChannel(dto: CreateChannelDto) {
-    const res = await fetch(`${this.baseUrl}/api/channels`, {
+    const res = await fetch(`${this.baseUrl}/api/channels/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(dto),
@@ -114,7 +114,7 @@ export class ChannelService {
   }
 
   async createRole(dto: CreateRoleDto) {
-    const res = await fetch(`${this.baseUrl}/api/channels/roles`, {
+    const res = await fetch(`${this.baseUrl}/api/channels/roles/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(dto),

@@ -36,7 +36,7 @@ RUN printf 'server {\n\
     proxy_read_timeout 3600s;\n\
     }\n\
     \n\
-    location /api/groups/ {\n\
+    location /api/groups {\n\
     set $upstream_gateway chat-gateway:3000;\n\
     proxy_pass http://$upstream_gateway;\n\
     proxy_set_header Host $host;\n\
@@ -45,7 +45,7 @@ RUN printf 'server {\n\
     proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
     }\n\
     \n\
-    location /api/mls-api/ {\n\
+    location /api/mls-api {\n\
     set $upstream_delivery chat-delivery-service:3001;\n\
     proxy_pass http://$upstream_delivery;\n\
     proxy_set_header Host $host;\n\
@@ -54,7 +54,7 @@ RUN printf 'server {\n\
     proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
     }\n\
     \n\
-    location /api/history/ {\n\
+    location /api/history {\n\
     set $upstream_delivery chat-delivery-service:3001;\n\
     proxy_pass http://$upstream_delivery;\n\
     proxy_set_header Host $host;\n\
@@ -62,7 +62,7 @@ RUN printf 'server {\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
     proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
     }\n\
-    location /api/media/ {\n\
+    location /api/media {\n\
     set $upstream_media media-service:3002;\n\
     proxy_pass http://$upstream_media;\n\
     proxy_set_header Host $host;\n\
@@ -89,7 +89,7 @@ RUN printf 'server {\n\
     proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
     }\n\
     \n\
-    location /api/channels/ {\n\
+    location /api/channels {\n\
     set $upstream_channel channel-service:3005;\n\
     proxy_pass http://$upstream_channel;\n\
     proxy_set_header Host $host;\n\

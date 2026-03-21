@@ -529,3 +529,36 @@ async fn handle_socket(
         let _: Result<(), _> = con.del(&redis_key).await;
     }
 }
+#[derive(serde::Deserialize)]
+pub struct PresenceQuery {
+    pub users: String,
+}
+
+pub async fn get_presence(
+    Query(query): Query<PresenceQuery>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    use std::collections::HashMap;
+    let mut presence = HashMap::new();
+    let users_list: Vec<&str> = query.users.split(',').collect();
+
+    if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await {
+        for user in users_list {
+            if user.trim().is_empty() {
+                continue;
+            }
+            let pattern = format!("user:online:{}:*", user);
+            if let Ok(keys) = redis::cmd("KEYS")
+                .arg(&pattern)
+                .query_async::<Vec<String>>(&mut con)
+                .await
+            {
+                presence.insert(user.to_string(), !keys.is_empty());
+            } else {
+                presence.insert(user.to_string(), false);
+            }
+        }
+    }
+
+    (StatusCode::OK, Json(presence)).into_response()
+}

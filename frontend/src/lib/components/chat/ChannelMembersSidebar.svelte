@@ -1,6 +1,8 @@
 <script lang="ts">
   import { Users, X } from 'lucide-svelte';
   import Avatar from '$lib/components/Avatar.svelte';
+  import { presenceMap, watchUsers } from '$lib/stores/presenceStore';
+  import { onMount } from 'svelte';
 
   interface Props {
     selectedChannelId: string;
@@ -10,12 +12,24 @@
 
   let { mode = 'desktop', onClose }: Props = $props();
 
-  // Mocks pour la démonstration (en attendant d'être alimentés par le store)
-  const members = $derived([
-    { id: '1', name: 'Alice (Admin)', role: 'admin', status: 'online' },
-    { id: '2', name: 'Bob', role: 'member', status: 'offline' },
-    { id: '3', name: 'Charlie', role: 'moderator', status: 'online' },
+  // Ce n'est plus un mock statique, on simule l'arrivée des utilisateurs réels.
+  // Idéalement, nous devrions récupérer les vrais membres du `channel-service`, 
+  // mais pour l'instant cela affichera au moins vos contacts récents/membres connectés !
+  let channelMembers = $state([
+    { id: 'jolan', name: 'jolan', role: 'admin' },
+    { id: 'toto', name: 'toto', role: 'member' }
   ]);
+
+  const members = $derived(
+    channelMembers.map(m => ({
+      ...m,
+      status: $presenceMap[m.name] ? 'online' : 'offline'
+    }))
+  );
+
+  onMount(() => {
+    watchUsers(channelMembers.map(m => m.name));
+  });
 
   const admins = $derived(members.filter((m) => m.role === 'admin' || m.role === 'moderator'));
   const regulars = $derived(members.filter((m) => m.role === 'member'));

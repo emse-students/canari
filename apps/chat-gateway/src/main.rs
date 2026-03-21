@@ -15,7 +15,7 @@ use std::{net::SocketAddr, sync::Arc};
 use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::handlers::{get_ratchet_tree, post_ratchet_tree, ws_handler};
+use crate::handlers::{get_presence, get_ratchet_tree, post_ratchet_tree, ws_handler};
 use crate::state::AppState;
 
 async fn health_check() -> impl IntoResponse {
@@ -354,6 +354,7 @@ async fn main() {
     let app = Router::new()
         .route("/api/health", get(health_check))
         .route("/api/ws", get(ws_handler))
+        .route("/api/presence", get(get_presence))
         // MLS Specific Routes
         .route(
             "/api/groups/{group_id}/tree",

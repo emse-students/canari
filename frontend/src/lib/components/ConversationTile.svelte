@@ -1,6 +1,8 @@
 <script lang="ts">
   import Avatar from './Avatar.svelte';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
+  import { presenceMap, watchUsers } from '$lib/stores/presenceStore';
+  import { onMount } from 'svelte';
 
   interface Props {
     contactName: string;
@@ -22,6 +24,8 @@
     onClick,
   }: Props = $props();
   let previewText = $derived(lastMessage ? getPreviewText(parseEnvelope(lastMessage)) : null);
+  let isOnline = $derived($presenceMap[contactName] || false);
+  onMount(() => { watchUsers([contactName]); });
 </script>
 
 <button
@@ -32,7 +36,13 @@
       ? 'bg-white/25 dark:bg-black/20 hover:bg-white/30 dark:hover:bg-black/30 border border-white/45 dark:border-white/10'
       : 'hover:bg-white/30 dark:hover:bg-black/30 border border-transparent'} animate-rise-in"
 >
-  <Avatar userId={contactName} size="lg" />
+  
+  <div class="relative flex-shrink-0">
+    <Avatar userId={contactName} size="lg" />
+    {#if isOnline}
+      <span class="absolute bottom-0 right-0 block h-3.5 w-3.5 rounded-full ring-2 ring-white bg-green-500"></span>
+    {/if}
+  </div>
 
   <!-- Info -->
   <div class="flex-1 min-w-0">
