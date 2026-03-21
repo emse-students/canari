@@ -62,6 +62,12 @@ export async function getForm(id: string): Promise<Form> {
   return res.json();
 }
 
+export async function getSubmission(formId: string, userId: string): Promise<any> {
+  const res = await fetch(`${API_Base}/api/forms/${formId}/submission?userId=${userId}`);
+  if (!res.ok) throw new Error('Failed to fetch submission');
+  return res.json();
+}
+
 export async function checkSubmission(
   formId: string,
   userId: string

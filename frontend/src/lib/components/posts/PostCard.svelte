@@ -6,7 +6,12 @@
     type PostEntity,
     type PostForm,
   } from '$lib/posts/api';
-  import { getForm, submitForm as submitFormService, checkSubmission } from '$lib/forms/api';
+  import {
+    getForm,
+    submitForm as submitFormService,
+    checkSubmission,
+    getSubmission,
+  } from '$lib/forms/api';
   import SvelteMarkdown from 'svelte-markdown';
   import PostImage from '$lib/components/PostImage.svelte';
   import Button from '$lib/components/ui/Button.svelte';
@@ -61,9 +66,7 @@
   async function checkSubmissions(formsToCheck: PostForm[]) {
     if (!currentUserId) return;
     for (const f of formsToCheck) {
-      // Default behavior: collapse if "big" (more than 3 items)
-      // This runs before the async check to prevent layout jump if possible,
-      // though the async result might override it.
+      // Default: collapse if big
       if (formExpanded[f.id] === undefined) {
         formExpanded[f.id] = f.items.length <= 3;
       }
@@ -71,9 +74,17 @@
       try {
         const { hasSubmitted } = await checkSubmission(f.id, currentUserId);
         formSubmitted[f.id] = hasSubmitted;
-        // If submitted, always collapse by default
+
         if (hasSubmitted) {
           formExpanded[f.id] = false;
+          try {
+            const submission = await getSubmission(f.id, currentUserId);
+            if (submission && submission.answers) {
+              formSelections[f.id] = submission.answers;
+            }
+          } catch (e) {
+            console.error('Failed to load user submission', e);
+          }
         }
       } catch (error) {
         console.error('Failed to check submission status', error);
@@ -365,257 +376,300 @@
   {#if forms && forms.length > 0}
     <div class="mt-6 border-t border-cn-border pt-6 space-y-6">
       {#each forms as form (form.id)}
-        <div class="bg-cn-surface/30 p-4 rounded-xl border border-cn-border">
-          <button
-            class="w-full flex justify-between items-center mb-0 pb-2 border-b border-cn-border/50 hover:bg-black/5 rounded px-2 transition-colors cursor-pointer"
-            onclick={() => (formExpanded[form.id] = !formExpanded[form.id])}
-          >
-            <div class="flex items-center gap-2">
-              <h3 class="font-bold text-lg text-text-main text-left">
-                {form.title}
+        <div class="rounded-xl border border-cn-border overflow-hidden">
+          {#if formSubmitted[form.id] && !formExpanded[form.id]}
+            <!-- Submitted & Collapsed: "Voir ma réponse" Button -->
+            <div class="bg-cn-surface/30 p-4 flex flex-col items-center gap-3">
+              <h3 class="font-bold text-lg text-text-main text-center">
+                {form.title} ✓
               </h3>
-              {#if formSubmitted[form.id]}
-                <span class="px-2 py-0.5 text-xs text-white bg-green-500 rounded-full"
-                  >Submitted</span
-                >
-              {/if}
-            </div>
-            <div class="flex items-center gap-2">
-              {#if form.basePrice > 0}
-                <span
-                  class="text-sm font-mono bg-cn-yellow/20 px-2 py-1 rounded text-cn-dark font-medium"
-                >
-                  Base: {formatCurrency(form.basePrice, form.currency)}
-                </span>
-              {/if}
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                class="h-5 w-5 text-text-muted transition-transform duration-200 {formExpanded[
-                  form.id
-                ]
-                  ? 'rotate-180'
-                  : ''}"
-                viewBox="0 0 20 20"
-                fill="currentColor"
+              <button
+                class="px-4 py-2 bg-white border border-cn-border rounded-lg text-sm font-semibold hover:bg-gray-50 transition-colors shadow-sm text-center"
+                onclick={() => (formExpanded[form.id] = true)}
               >
-                <path
-                  fill-rule="evenodd"
-                  d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
-                  clip-rule="evenodd"
-                />
-              </svg>
+                Voir ma réponse
+              </button>
             </div>
-          </button>
-
-          {#if formExpanded[form.id]}
-            <div class="space-y-4 mt-4 origin-top transition-all duration-300">
-              {#each form.items as item (item.id)}
-                <div class="space-y-1">
-                  <!-- svelte-ignore a11y_label_has_associated_control -->
-                  <label class="block text-sm font-semibold text-text-main">
-                    {item.label}
-                    {#if item.required}<span class="text-red-500 ml-0.5">*</span>{/if}
-                  </label>
-
-                  {#if ['short_text', 'long_text'].includes(item.type)}
-                    {#if item.type === 'short_text'}
-                      <input
-                        type="text"
-                        class="w-full rounded-lg border-cn-border bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-cn-yellow focus:border-cn-yellow outline-none transition-all placeholder:text-gray-400"
-                        bind:value={formSelections[form.id][item.id]}
-                        placeholder="Your answer"
-                      />
-                    {:else}
-                      <textarea
-                        rows="3"
-                        class="w-full rounded-lg border-cn-border bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-cn-yellow focus:border-cn-yellow outline-none transition-all resize-y placeholder:text-gray-400"
-                        bind:value={formSelections[form.id][item.id]}
-                        placeholder="Your answer"
-                      ></textarea>
-                    {/if}
-                  {:else if item.type === 'dropdown' || item.type === 'single'}
-                    <select
-                      class="w-full rounded-lg border-cn-border bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-cn-yellow focus:border-cn-yellow outline-none transition-all appearance-none bg-[url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23131313%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E')] bg-no-repeat bg-[length:0.7em] bg-[right:0.7em_center] pr-8"
-                      bind:value={formSelections[form.id][item.id]}
-                    >
-                      <option value="" disabled selected>Select an option...</option>
-                      {#each item.options as opt (opt.id)}
-                        <option value={opt.id}>
-                          {opt.label}
-                          {#if opt.priceModifier > 0}
-                            (+{formatCurrency(opt.priceModifier, form.currency)})
-                          {:else if opt.priceModifier < 0}
-                            ({formatCurrency(opt.priceModifier, form.currency)})
-                          {/if}
-                        </option>
-                      {/each}
-                    </select>
-                  {:else if item.type === 'single_choice'}
-                    <div class="space-y-2 mt-2">
-                      {#each item.options as opt (opt.id)}
-                        <label
-                          class="flex items-start gap-3 cursor-pointer p-2 rounded-lg hover:bg-black/5 transition-colors group"
-                        >
-                          <input
-                            type="radio"
-                            name={`radio-${form.id}-${item.id}`}
-                            value={opt.id}
-                            bind:group={formSelections[form.id][item.id]}
-                            class="mt-0.5 appearance-none w-4 h-4 rounded-full border border-gray-400 checked:border-cn-dark checked:bg-cn-yellow checked:ring-2 checked:ring-offset-1 checked:ring-cn-yellow transition-all relative"
-                          />
-                          <div
-                            class="text-sm text-text-main group-hover:text-cn-dark transition-colors"
-                          >
-                            {opt.label}
-                            {#if opt.priceModifier !== 0}
-                              <span
-                                class="text-text-muted text-xs font-mono ml-1 font-medium bg-gray-100 px-1 rounded"
-                              >
-                                {opt.priceModifier > 0 ? '+' : ''}{formatCurrency(
-                                  opt.priceModifier,
-                                  form.currency
-                                )}
-                              </span>
-                            {/if}
-                          </div>
-                        </label>
-                      {/each}
-                    </div>
-                  {:else if item.type === 'multiple_choice'}
-                    <div class="space-y-2 mt-2">
-                      {#each item.options as opt (opt.id)}
-                        <label
-                          class="flex items-start gap-3 cursor-pointer p-2 rounded-lg hover:bg-black/5 transition-colors group"
-                        >
-                          <input
-                            type="checkbox"
-                            value={opt.id}
-                            bind:group={formSelections[form.id][item.id]}
-                            class="mt-0.5 appearance-none w-4 h-4 rounded border border-gray-400 checked:bg-cn-yellow checked:border-cn-dark checked:ring-2 checked:ring-offset-1 checked:ring-cn-yellow relative transition-all before:content-[''] before:absolute before:inset-0 before:m-auto before:w-2.5 before:h-1.5 before:border-l-2 before:border-b-2 before:border-cn-dark before:rotate-[-45deg] before:opacity-0 checked:before:opacity-100"
-                          />
-                          <div
-                            class="text-sm text-text-main group-hover:text-cn-dark transition-colors"
-                          >
-                            {opt.label}
-                            {#if opt.priceModifier !== 0}
-                              <span
-                                class="text-text-muted text-xs font-mono ml-1 font-medium bg-gray-100 px-1 rounded"
-                              >
-                                {opt.priceModifier > 0 ? '+' : ''}{formatCurrency(
-                                  opt.priceModifier,
-                                  form.currency
-                                )}
-                              </span>
-                            {/if}
-                          </div>
-                        </label>
-                      {/each}
-                    </div>
-                  {:else if item.type === 'linear_scale'}
-                    <div class="py-4 px-2">
-                      <div
-                        class="flex justify-between text-xs font-bold text-text-muted uppercase tracking-wider mb-2 px-1"
-                      >
-                        <span>{item.scale?.minLabel || item.scale?.min}</span>
-                        <span>{item.scale?.maxLabel || item.scale?.max}</span>
-                      </div>
-                      <div
-                        class="flex justify-between items-center gap-1 bg-white p-2 rounded-xl border border-cn-border"
-                      >
-                        {#each Array.from({ length: (item.scale?.max || 5) - (item.scale?.min || 1) + 1 }, (_, i) => (item.scale?.min || 1) + i) as val (val)}
-                          <label
-                            class="flex flex-col items-center gap-2 cursor-pointer flex-1 group"
-                          >
-                            <input
-                              type="radio"
-                              name={`scale-${form.id}-${item.id}`}
-                              value={val}
-                              bind:group={formSelections[form.id][item.id]}
-                              class="appearance-none w-5 h-5 rounded-full border border-gray-300 checked:border-cn-dark checked:bg-cn-yellow checked:ring-2 checked:ring-offset-1 checked:ring-cn-yellow transition-all"
-                            />
-                            <span
-                              class="text-xs font-bold text-text-muted group-hover:text-cn-dark transition-colors"
-                              >{val}</span
-                            >
-                          </label>
-                        {/each}
-                      </div>
-                    </div>
-                  {:else if ['matrix_single', 'matrix_multiple'].includes(item.type)}
-                    <div class="overflow-x-auto mt-2 -mx-2 md:mx-0">
-                      <table class="w-full text-sm border-separate border-spacing-0">
-                        <thead>
-                          <tr>
-                            <th class="w-1/3 min-w-[120px] sticky left-0 bg-cn-surface z-10"></th>
-                            {#each item.options as col (col.id)}
-                              <th
-                                class="px-2 py-2 text-center font-bold text-xs text-text-muted uppercase min-w-[80px]"
-                                >{col.label}</th
-                              >
-                            {/each}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {#each item.rows || [] as row (row)}
-                            <tr class="group hover:bg-white/50 transition-colors">
-                              <td
-                                class="py-3 pr-4 font-medium text-text-main sticky left-0 bg-cn-surface group-hover:bg-cn-surface/80 z-10 border-b border-dashed border-gray-100"
-                                >{row}</td
-                              >
-                              {#each item.options as col (col.id)}
-                                <td class="text-center py-3 border-b border-dashed border-gray-100">
-                                  <div class="flex justify-center">
-                                    {#if item.type === 'matrix_single'}
-                                      <input
-                                        type="radio"
-                                        name={`matrix-${form.id}-${item.id}-${row}`}
-                                        value={col.id}
-                                        bind:group={formSelections[form.id][item.id][row]}
-                                        class="appearance-none w-4 h-4 rounded-full border border-gray-400 checked:border-cn-dark checked:bg-cn-yellow checked:ring-2 checked:ring-offset-1 checked:ring-cn-yellow transition-all"
-                                      />
-                                    {:else}
-                                      <input
-                                        type="checkbox"
-                                        value={col.id}
-                                        bind:group={formSelections[form.id][item.id][row]}
-                                        class="appearance-none w-4 h-4 rounded border border-gray-400 checked:bg-cn-yellow checked:border-cn-dark checked:ring-2 checked:ring-offset-1 checked:ring-cn-yellow relative transition-all before:content-[''] before:absolute before:inset-0 before:m-auto before:w-2.5 before:h-1.5 before:border-l-2 before:border-b-2 before:border-cn-dark before:rotate-[-45deg] before:opacity-0 checked:before:opacity-100"
-                                      />
-                                    {/if}
-                                  </div>
-                                </td>
-                              {/each}
-                            </tr>
-                          {/each}
-                        </tbody>
-                      </table>
-                    </div>
-                  {:else}
-                    <div
-                      class="p-3 bg-red-50 text-red-600 text-xs rounded-lg border border-red-100"
-                    >
-                      Unsupported field type: <strong>{item.type}</strong>
-                    </div>
-                  {/if}
-                </div>
-              {/each}
-
-              <div class="pt-4 mt-2 border-t border-cn-border flex items-center justify-between">
-                <div class="font-bold text-lg text-cn-dark">
-                  Total: {formatCurrency(calculateFormTotal(form), form.currency)}
+          {:else}
+            <!-- Not Submitted OR Expanded: Normal Form Header + Content -->
+            <div class="bg-cn-surface/30 p-4">
+              <button
+                class="w-full flex justify-between items-center mb-0 pb-2 border-b border-cn-border/50 hover:bg-black/5 rounded px-2 transition-colors cursor-pointer"
+                onclick={() => (formExpanded[form.id] = !formExpanded[form.id])}
+              >
+                <div class="flex items-center gap-2">
+                  <h3 class="font-bold text-lg text-text-main text-left">
+                    {form.title}
+                  </h3>
                   {#if formSubmitted[form.id]}
-                    <span class="text-xs text-green-600 ml-2">(Already Submitted)</span>
+                    <span class="px-2 py-0.5 text-xs text-white bg-green-500 rounded-full"
+                      >Répondu</span
+                    >
                   {/if}
                 </div>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  class="px-6"
-                  disabled={formSubmitted[form.id]}
-                  onclick={() => handleFormSubmit(form)}
-                >
-                  {formSubmitted[form.id] ? 'Submitted' : form.submitLabel}
-                </Button>
-              </div>
+                <div class="flex items-center gap-2">
+                  {#if form.basePrice > 0}
+                    <span
+                      class="text-sm font-mono bg-cn-yellow/20 px-2 py-1 rounded text-cn-dark font-medium"
+                    >
+                      Base: {formatCurrency(form.basePrice, form.currency)}
+                    </span>
+                  {/if}
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    class="h-5 w-5 text-text-muted transition-transform duration-200 {formExpanded[
+                      form.id
+                    ]
+                      ? 'rotate-180'
+                      : ''}"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                  >
+                    <path
+                      fill-rule="evenodd"
+                      d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
+                      clip-rule="evenodd"
+                    />
+                  </svg>
+                </div>
+              </button>
+
+              {#if formExpanded[form.id]}
+                <div class="space-y-4 mt-4 origin-top transition-all duration-300">
+                  {#each form.items as item (item.id)}
+                    <div class="space-y-1">
+                      <!-- svelte-ignore a11y_label_has_associated_control -->
+                      <label class="block text-sm font-semibold text-text-main">
+                        {item.label}
+                        {#if item.required}<span class="text-red-500 ml-0.5">*</span>{/if}
+                      </label>
+
+                      {#if ['short_text', 'long_text'].includes(item.type)}
+                        {#if item.type === 'short_text'}
+                          <input
+                            type="text"
+                            class="w-full rounded-lg border-cn-border bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-cn-yellow focus:border-cn-yellow outline-none transition-all placeholder:text-gray-400 disabled:bg-gray-100 disabled:text-gray-500"
+                            bind:value={formSelections[form.id][item.id]}
+                            placeholder="Your answer"
+                            disabled={formSubmitted[form.id]}
+                          />
+                        {:else}
+                          <textarea
+                            rows="3"
+                            class="w-full rounded-lg border-cn-border bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-cn-yellow focus:border-cn-yellow outline-none transition-all resize-y placeholder:text-gray-400 disabled:bg-gray-100 disabled:text-gray-500"
+                            bind:value={formSelections[form.id][item.id]}
+                            placeholder="Your answer"
+                            disabled={formSubmitted[form.id]}
+                          ></textarea>
+                        {/if}
+                      {:else if item.type === 'dropdown' || item.type === 'single'}
+                        <select
+                          class="w-full rounded-lg border-cn-border bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-cn-yellow focus:border-cn-yellow outline-none transition-all appearance-none bg-[url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23131313%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E')] bg-no-repeat bg-[length:0.7em] bg-[right:0.7em_center] pr-8 disabled:bg-gray-100 disabled:text-gray-500"
+                          bind:value={formSelections[form.id][item.id]}
+                          disabled={formSubmitted[form.id]}
+                        >
+                          <option value="" disabled selected>Select an option...</option>
+                          {#each item.options as opt (opt.id)}
+                            <option value={opt.id}>
+                              {opt.label}
+                              {#if opt.priceModifier > 0}
+                                (+{formatCurrency(opt.priceModifier, form.currency)})
+                              {:else if opt.priceModifier < 0}
+                                ({formatCurrency(opt.priceModifier, form.currency)})
+                              {/if}
+                            </option>
+                          {/each}
+                        </select>
+                      {:else if item.type === 'single_choice'}
+                        <div class="space-y-2 mt-2">
+                          {#each item.options as opt (opt.id)}
+                            <label
+                              class="flex items-start gap-3 cursor-pointer p-2 rounded-lg hover:bg-black/5 transition-colors group {formSubmitted[
+                                form.id
+                              ]
+                                ? 'cursor-not-allowed opacity-75'
+                                : ''}"
+                            >
+                              <input
+                                type="radio"
+                                name={`radio-${form.id}-${item.id}`}
+                                value={opt.id}
+                                bind:group={formSelections[form.id][item.id]}
+                                class="mt-0.5 appearance-none w-4 h-4 rounded-full border border-gray-400 checked:border-cn-dark checked:bg-cn-yellow checked:ring-2 checked:ring-offset-1 checked:ring-cn-yellow transition-all relative disabled:bg-gray-200 disabled:border-gray-300"
+                                disabled={formSubmitted[form.id]}
+                              />
+                              <div
+                                class="text-sm text-text-main group-hover:text-cn-dark transition-colors"
+                              >
+                                {opt.label}
+                                {#if opt.priceModifier !== 0}
+                                  <span
+                                    class="text-text-muted text-xs font-mono ml-1 font-medium bg-gray-100 px-1 rounded"
+                                  >
+                                    {opt.priceModifier > 0 ? '+' : ''}{formatCurrency(
+                                      opt.priceModifier,
+                                      form.currency
+                                    )}
+                                  </span>
+                                {/if}
+                              </div>
+                            </label>
+                          {/each}
+                        </div>
+                      {:else if item.type === 'multiple_choice'}
+                        <div class="space-y-2 mt-2">
+                          {#each item.options as opt (opt.id)}
+                            <label
+                              class="flex items-start gap-3 cursor-pointer p-2 rounded-lg hover:bg-black/5 transition-colors group {formSubmitted[
+                                form.id
+                              ]
+                                ? 'cursor-not-allowed opacity-75'
+                                : ''}"
+                            >
+                              <input
+                                type="checkbox"
+                                value={opt.id}
+                                bind:group={formSelections[form.id][item.id]}
+                                class="mt-0.5 appearance-none w-4 h-4 rounded border border-gray-400 checked:bg-cn-yellow checked:border-cn-dark checked:ring-2 checked:ring-offset-1 checked:ring-cn-yellow relative transition-all before:content-[''] before:absolute before:inset-0 before:m-auto before:w-2.5 before:h-1.5 before:border-l-2 before:border-b-2 before:border-cn-dark before:rotate-[-45deg] before:opacity-0 checked:before:opacity-100 disabled:bg-gray-200 disabled:border-gray-300"
+                                disabled={formSubmitted[form.id]}
+                              />
+                              <div
+                                class="text-sm text-text-main group-hover:text-cn-dark transition-colors"
+                              >
+                                {opt.label}
+                                {#if opt.priceModifier !== 0}
+                                  <span
+                                    class="text-text-muted text-xs font-mono ml-1 font-medium bg-gray-100 px-1 rounded"
+                                  >
+                                    {opt.priceModifier > 0 ? '+' : ''}{formatCurrency(
+                                      opt.priceModifier,
+                                      form.currency
+                                    )}
+                                  </span>
+                                {/if}
+                              </div>
+                            </label>
+                          {/each}
+                        </div>
+                      {:else if item.type === 'linear_scale'}
+                        <div class="py-4 px-2">
+                          <div
+                            class="flex justify-between text-xs font-bold text-text-muted uppercase tracking-wider mb-2 px-1"
+                          >
+                            <span>{item.scale?.minLabel || item.scale?.min}</span>
+                            <span>{item.scale?.maxLabel || item.scale?.max}</span>
+                          </div>
+                          <div
+                            class="flex justify-between items-center gap-1 bg-white p-2 rounded-xl border border-cn-border"
+                          >
+                            {#each Array.from({ length: (item.scale?.max || 5) - (item.scale?.min || 1) + 1 }, (_, i) => (item.scale?.min || 1) + i) as val (val)}
+                              <label
+                                class="flex flex-col items-center gap-2 cursor-pointer flex-1 group {formSubmitted[
+                                  form.id
+                                ]
+                                  ? 'cursor-not-allowed opacity-75'
+                                  : ''}"
+                              >
+                                <input
+                                  type="radio"
+                                  name={`scale-${form.id}-${item.id}`}
+                                  value={val}
+                                  bind:group={formSelections[form.id][item.id]}
+                                  class="appearance-none w-5 h-5 rounded-full border border-gray-300 checked:border-cn-dark checked:bg-cn-yellow checked:ring-2 checked:ring-offset-1 checked:ring-cn-yellow transition-all disabled:bg-gray-200"
+                                  disabled={formSubmitted[form.id]}
+                                />
+                                <span
+                                  class="text-xs font-bold text-text-muted group-hover:text-cn-dark transition-colors"
+                                  >{val}</span
+                                >
+                              </label>
+                            {/each}
+                          </div>
+                        </div>
+                      {:else if ['matrix_single', 'matrix_multiple'].includes(item.type)}
+                        <div class="overflow-x-auto mt-2 -mx-2 md:mx-0">
+                          <table class="w-full text-sm border-separate border-spacing-0">
+                            <thead>
+                              <tr>
+                                <th class="w-1/3 min-w-[120px] sticky left-0 bg-cn-surface z-10"
+                                ></th>
+                                {#each item.options as col (col.id)}
+                                  <th
+                                    class="px-2 py-2 text-center font-bold text-xs text-text-muted uppercase min-w-[80px]"
+                                    >{col.label}</th
+                                  >
+                                {/each}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {#each item.rows || [] as row (row)}
+                                <tr class="group hover:bg-white/50 transition-colors">
+                                  <td
+                                    class="py-3 pr-4 font-medium text-text-main sticky left-0 bg-cn-surface group-hover:bg-cn-surface/80 z-10 border-b border-dashed border-gray-100"
+                                    >{row}</td
+                                  >
+                                  {#each item.options as col (col.id)}
+                                    <td
+                                      class="text-center py-3 border-b border-dashed border-gray-100"
+                                    >
+                                      <div class="flex justify-center">
+                                        {#if item.type === 'matrix_single'}
+                                          <input
+                                            type="radio"
+                                            name={`matrix-${form.id}-${item.id}-${row}`}
+                                            value={col.id}
+                                            bind:group={formSelections[form.id][item.id][row]}
+                                            class="appearance-none w-4 h-4 rounded-full border border-gray-400 checked:border-cn-dark checked:bg-cn-yellow checked:ring-2 checked:ring-offset-1 checked:ring-cn-yellow transition-all disabled:bg-gray-200"
+                                            disabled={formSubmitted[form.id]}
+                                          />
+                                        {:else}
+                                          <input
+                                            type="checkbox"
+                                            value={col.id}
+                                            bind:group={formSelections[form.id][item.id][row]}
+                                            class="appearance-none w-4 h-4 rounded border border-gray-400 checked:bg-cn-yellow checked:border-cn-dark checked:ring-2 checked:ring-offset-1 checked:ring-cn-yellow relative transition-all before:content-[''] before:absolute before:inset-0 before:m-auto before:w-2.5 before:h-1.5 before:border-l-2 before:border-b-2 before:border-cn-dark before:rotate-[-45deg] before:opacity-0 checked:before:opacity-100 disabled:bg-gray-200"
+                                            disabled={formSubmitted[form.id]}
+                                          />
+                                        {/if}
+                                      </div>
+                                    </td>
+                                  {/each}
+                                </tr>
+                              {/each}
+                            </tbody>
+                          </table>
+                        </div>
+                      {:else}
+                        <div
+                          class="p-3 bg-red-50 text-red-600 text-xs rounded-lg border border-red-100"
+                        >
+                          Unsupported field type: <strong>{item.type}</strong>
+                        </div>
+                      {/if}
+                    </div>
+                  {/each}
+
+                  <div
+                    class="pt-4 mt-2 border-t border-cn-border flex items-center justify-between"
+                  >
+                    <div class="font-bold text-lg text-cn-dark">
+                      Total: {formatCurrency(calculateFormTotal(form), form.currency)}
+                      {#if formSubmitted[form.id]}
+                        <span class="text-xs text-green-600 ml-2">(Already Submitted)</span>
+                      {/if}
+                    </div>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      class="px-6"
+                      disabled={formSubmitted[form.id]}
+                      onclick={() => handleFormSubmit(form)}
+                    >
+                      {formSubmitted[form.id] ? 'Submitted' : form.submitLabel}
+                    </Button>
+                  </div>
+                </div>
+              {/if}
             </div>
           {/if}
         </div>

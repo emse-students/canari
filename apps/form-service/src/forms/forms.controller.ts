@@ -22,6 +22,14 @@ export class FormsController {
     return this.service.get(id);
   }
 
+  @Get(':id/submission')
+  async getSubmission(@Param('id') id: string, @Query('userId') userId: string) {
+    if (!userId) {
+      throw new Error('UserId is required');
+    }
+    return this.service.getSubmission(id, userId);
+  }
+
   @Get(':id/check')
   async checkSubmission(@Param('id') id: string, @Query('userId') userId: string) {
     const hasSubmitted = await this.service.hasSubmission(id, userId);

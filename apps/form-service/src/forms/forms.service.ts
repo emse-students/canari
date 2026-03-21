@@ -49,6 +49,10 @@ export class FormsService {
     return this.formModel.findById(id);
   }
 
+  async getSubmission(formId: string, userId: string) {
+    return this.submissionModel.findOne({ formId, userId }).sort({ createdAt: -1 });
+  }
+
   async hasSubmission(formId: string, userId: string): Promise<boolean> {
     const count = await this.submissionModel.countDocuments({ formId, userId });
     return count > 0;
