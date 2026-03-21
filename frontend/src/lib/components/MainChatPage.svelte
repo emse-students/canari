@@ -2300,7 +2300,10 @@
         onCreateChannel={(workspaceId: string, value?: string) => {
           const channel = (value ?? newChannelInput).trim();
           if (channel) {
-            createNewChannel(workspaceId, channel);
+            const ws = channelWorkspaces.find(w => w.id === workspaceId);
+            if (ws && ws.workspaceDbId) {
+              createNewChannel(ws.workspaceDbId, channel);
+            }
             newChannelInput = '';
           }
         }}
@@ -2441,7 +2444,10 @@
           onCreateChannel={(workspaceId: string, value?: string) => {
             const channel = (value ?? newChannelInput).trim();
             if (channel) {
-              createNewChannel(workspaceId, channel);
+              const ws = channelWorkspaces.find(w => w.id === workspaceId);
+              if (ws && ws.workspaceDbId) {
+                createNewChannel(ws.workspaceDbId, channel);
+              }
               newChannelInput = '';
             }
           }}
