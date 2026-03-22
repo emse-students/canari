@@ -1747,21 +1747,21 @@
 
       if (stillMember) return true;
 
-        if (convo.conversationType === 'direct') {
-          // Auto-repair for 1v1 conversations
-          const repaired = await repairDirectConversation(contactName, {
-            mlsService,
-            storage,
-            userId,
-            pin,
-            historyBaseUrl,
-            conversations,
-            selectConversation,
-            saveConversation,
-            log
-          });
-          if (repaired) return true;
-        }
+      if (convo.conversationType === 'direct') {
+        // Auto-repair for 1v1 conversations
+        const repaired = await repairDirectConversation(contactName, {
+          mlsService,
+          storage,
+          userId,
+          pin,
+          historyBaseUrl,
+          conversations,
+          selectConversation,
+          saveConversation,
+          log,
+        });
+        if (repaired) return true;
+      }
 
       const notice =
         'Vous avez été retiré de ce groupe. Vous ne pouvez plus envoyer ni recevoir de nouveaux messages.';

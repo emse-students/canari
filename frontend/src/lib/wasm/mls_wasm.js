@@ -56,6 +56,28 @@ export class WasmMlsClient {
         }
     }
     /**
+     * @param {string} group_id
+     * @param {string} label
+     * @param {Uint8Array | null | undefined} context
+     * @param {number} key_len
+     * @returns {Uint8Array}
+     */
+    export_secret(group_id, label, context, key_len) {
+        const ptr0 = passStringToWasm0(group_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(label, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(context) ? 0 : passArray8ToWasm0(context, wasm.__wbindgen_malloc);
+        var len2 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmmlsclient_export_secret(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2, key_len);
+        if (ret[3]) {
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        var v4 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v4;
+    }
+    /**
      * @returns {Uint8Array}
      */
     generate_key_package() {

@@ -37,7 +37,7 @@ code = code.replace('// --- WebSocket Handler ---', '// --- WebSocket Handler --
 
 const setupGuard = `    // Register presence in Redis
     let redis_key = format!("user:online:{}", conn_key);
-    
+
     // Register the Guard struct to ensure that, upon any panic or early return in the stream, we cleanup Redis + HashMap
     let _guard = ConnectionGuard {
         state: state.clone(),

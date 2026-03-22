@@ -8,6 +8,7 @@ export const init_logger: () => void;
 export const wasmmlsclient_add_member: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
 export const wasmmlsclient_add_members_bulk: (a: number, b: number, c: number, d: any) => [number, number, number];
 export const wasmmlsclient_create_group: (a: number, b: number, c: number) => [number, number];
+export const wasmmlsclient_export_secret: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
 export const wasmmlsclient_generate_key_package: (a: number) => [number, number, number, number];
 export const wasmmlsclient_get_groups: (a: number) => any;
 export const wasmmlsclient_new: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];

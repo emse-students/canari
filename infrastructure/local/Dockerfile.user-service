@@ -7,7 +7,7 @@ COPY apps/user-service/package*.json ./apps/user-service/
 RUN cd apps/user-service && npm install --legacy-peer-deps
 
 COPY apps/user-service ./apps/user-service
-RUN cd apps/user-service && npx tsc -p tsconfig.json
+RUN cd apps/user-service && npx tsc -p tsconfig.build.json
 
 # -- Runtime stage -------------------------------------------------------------
 FROM node:20-alpine
