@@ -101,6 +101,9 @@ jobs:
     strategy:
       matrix:
         service:
+          - name: call-service
+            context: .
+            dockerfile: ./infrastructure/local/Dockerfile.call-service
           - name: chat-gateway
             context: .
             dockerfile: ./infrastructure/local/Dockerfile.chat-gateway
