@@ -1,10 +1,10 @@
 <script lang="ts">
   import { SvelteMap } from 'svelte/reactivity';
-  import { Hand, RotateCcw, Hash, Lock, Plus, } from 'lucide-svelte';
+  import { Hand, RotateCcw, Hash, Lock, Plus } from 'lucide-svelte';
   import Avatar from './Avatar.svelte';
   import ConversationTile from './ConversationTile.svelte';
   import SidebarHeaderControls from './SidebarHeaderControls.svelte';
-  
+
   import SidebarFooterTools from './SidebarFooterTools.svelte';
   import SidebarNewChatModal from './SidebarNewChatModal.svelte';
   import SidebarNewChannelModal from './SidebarNewChannelModal.svelte';
@@ -96,8 +96,7 @@
     onCreateGroup,
     onCreateChannel,
     onCreateWorkspace,
-    
-    
+
     onSelectConversation,
     onSelectChannelConversation,
     selectedChannelId = '',
@@ -127,11 +126,9 @@
   let groupName = $state('');
   let channelName = $state('');
   let communityName = $state('');
-  
-  
+
   let selectedCommunityWorkspaceId = $state('');
   let searchQuery = $state('');
-  
 
   interface ChannelItem {
     id: string;
@@ -167,10 +164,6 @@
       return convo.name.toLowerCase().includes(query) || lastContent.toLowerCase().includes(query);
     });
   });
-
-  
-
-  
 
   function openNewChatModal(tab: 'contact' | 'group' | 'channel' = 'contact') {
     if (tab === 'channel') {
@@ -237,10 +230,6 @@
     communityName = '';
     showNewCommunityModal = false;
   }
-
-  
-
-  
 </script>
 
 {#if drawerMode}
@@ -475,15 +464,15 @@
 
     {#if viewMode !== 'communities'}
       <SidebarFooterTools
-      {onImport}
-      {onExport}
-      {onStartSync}
-      {onJoinSync}
-      {isExporting}
-      {isImporting}
-      {isSyncing}
-    />
-      {/if}
+        {onImport}
+        {onExport}
+        {onStartSync}
+        {onJoinSync}
+        {isExporting}
+        {isImporting}
+        {isSyncing}
+      />
+    {/if}
   </div>
 </aside>
 
@@ -532,14 +521,3 @@
   }}
   onSubmit={handleCreateWorkspace}
 />
-
-
-
-
-
-
-
-
-
-
-

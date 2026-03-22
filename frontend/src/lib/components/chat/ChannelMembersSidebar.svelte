@@ -21,14 +21,14 @@
   );
 
   const members = $derived(
-    channelMembers.map(m => ({
+    channelMembers.map((m) => ({
       ...m,
-      status: $presenceMap[m.name] ? 'online' : 'offline'
+      status: $presenceMap[m.name] ? 'online' : 'offline',
     }))
   );
 
   onMount(() => {
-    watchUsers(channelMembers.map(m => m.name));
+    watchUsers(channelMembers.map((m) => m.name));
   });
 
   const admins = $derived(members.filter((m) => m.role === 'admin' || m.role === 'moderator'));
