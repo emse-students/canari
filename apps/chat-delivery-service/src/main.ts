@@ -20,7 +20,7 @@ async function bootstrap() {
   app.setGlobalPrefix('api');
   app.enableCors();
   await app.startAllMicroservices();
-  await app.listen(3001);
+  await app.listen(process.env.PORT || 3010);
 }
 
 void bootstrap().catch((err) => {
