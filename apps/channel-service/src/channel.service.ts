@@ -144,7 +144,7 @@ export class ChannelService {
     });
 
     await this.memberModel.updateOne(
-      { channelId: channel.id, userId: actor },
+      { channelId: channel.id || channel._id?.toString(), userId: actor },
       {
         $set: {
           channelId: channel.id,
@@ -321,7 +321,7 @@ export class ChannelService {
       senderId: sender,
       ciphertext: input.ciphertext,
       nonce: input.nonce,
-      keyVersion: channel.keyVersion,
+      keyVersion: channel.keyVersion || 1,
       createdAt: new Date(),
     });
 

@@ -468,7 +468,8 @@
       {/if}
     </div>
 
-    <SidebarFooterTools
+    {#if viewMode !== 'communities'}
+      <SidebarFooterTools
       {onImport}
       {onExport}
       {onStartSync}
@@ -477,6 +478,7 @@
       {isImporting}
       {isSyncing}
     />
+      {/if}
   </div>
 </aside>
 
