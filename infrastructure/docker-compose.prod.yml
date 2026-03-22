@@ -406,9 +406,12 @@ services:
       NODE_ENV: production
       PORT: "3014"
       CHANNELS_MONGO_URI: mongodb://mongo:27017/channel_db
+      REDIS_URL: redis://redis:6379
       CHANNELS_ENCRYPTION_SECRET: ${CHANNELS_ENCRYPTION_SECRET:-dev-channel-secret-change-me}
     depends_on:
       mongo:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     networks:
       - canari-network
