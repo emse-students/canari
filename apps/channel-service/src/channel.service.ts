@@ -331,7 +331,9 @@ export class ChannelService {
       console.log('message inserted:', message);
 
       // Notify ALL currently active members
-      const members = await this.memberModel.find({ channelId: String(channel._id), leftAt: null }).lean();
+      const members = await this.memberModel
+        .find({ channelId: String(channel._id), leftAt: null })
+        .lean();
       const userIds = members.map((m) => m.userId);
 
       if (userIds.length > 0) {
@@ -413,7 +415,7 @@ export class ChannelService {
   private async getRoleByName(workspaceId: string, roleName: string) {
     return this.roleModel.findOne({
       workspaceId: String(workspaceId),
-      name: String(roleName).toLowerCase()
+      name: String(roleName).toLowerCase(),
     });
   }
 
