@@ -307,49 +307,59 @@ export class ChannelService {
   }
 
   async sendMessage(channelId: string, input: SendChannelMessageDto) {
-    const channel = await this.requireChannel(channelId);
-    const sender = input.senderId.trim().toLowerCase();
+    try {
+      console.log('--- START SEND MESSAGE ---', { channelId, input });
+      const channel = await this.requireChannel(channelId);
+      console.log('channel loaded:', channel);
+      const sender = input.senderId.trim().toLowerCase();
 
-    const perms = await this.getPermissions(channel.workspaceId, sender, channel.id);
-    if (!perms.has(CHANNEL_PERMISSIONS.CHANNEL_WRITE)) {
-      throw new ForbiddenException('missing channel.write permission');
+      const perms = await this.getPermissions(channel.workspaceId, sender, String(channel._id));
+      if (!perms.has(CHANNEL_PERMISSIONS.CHANNEL_WRITE)) {
+        throw new ForbiddenException('missing channel.write permission');
+      }
+
+      console.log('creating message...');
+      const message = await this.messageModel.create({
+        channelId: String(channel._id),
+        workspaceId: channel.workspaceId,
+        senderId: sender,
+        ciphertext: input.ciphertext,
+        nonce: input.nonce,
+        keyVersion: channel.keyVersion || 1,
+        createdAt: new Date(),
+      });
+      console.log('message inserted:', message);
+
+      // Notify ALL currently active members
+      const members = await this.memberModel.find({ channelId: String(channel._id), leftAt: null }).lean();
+      const userIds = members.map((m) => m.userId);
+
+      if (userIds.length > 0) {
+        await this.redis.publish(
+          'chat:channel_events',
+          JSON.stringify({
+            userIds,
+            type: 'channel.message.created',
+            data: {
+              id: message._id.toString(),
+              channelId: message.channelId,
+              workspaceId: message.workspaceId,
+              senderId: message.senderId,
+              ciphertext: message.ciphertext,
+              nonce: message.nonce,
+              keyVersion: message.keyVersion,
+              createdAt: message.createdAt,
+            },
+          })
+        );
+        console.log('published to redis');
+      }
+
+      return message;
+    } catch (e: any) {
+      console.error('ERROR IN SENDMESSAGE:', e);
+      throw e;
     }
-
-    const message = await this.messageModel.create({
-      channelId: channel.id,
-      workspaceId: channel.workspaceId,
-      senderId: sender,
-      ciphertext: input.ciphertext,
-      nonce: input.nonce,
-      keyVersion: channel.keyVersion || 1,
-      createdAt: new Date(),
-    });
-
-    // Notify ALL currently active members
-    const members = await this.memberModel.find({ channelId: channel.id, leftAt: null }).lean();
-    const userIds = members.map((m) => m.userId);
-
-    if (userIds.length > 0) {
-      await this.redis.publish(
-        'chat:channel_events',
-        JSON.stringify({
-          userIds,
-          type: 'channel.message.created',
-          data: {
-            id: message._id.toString(),
-            channelId: message.channelId,
-            workspaceId: message.workspaceId,
-            senderId: message.senderId,
-            ciphertext: message.ciphertext,
-            nonce: message.nonce,
-            keyVersion: message.keyVersion,
-            createdAt: message.createdAt,
-          },
-        })
-      );
-    }
-
-    return message;
   }
 
   async listMessages(channelId: string, userId: string, limit = 100) {

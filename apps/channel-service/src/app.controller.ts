@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, Res } from '@nestjs/common';
 import { ChannelService } from './channel.service';
 import {
   type ChannelJoinDto,
@@ -76,8 +76,18 @@ export class AppController {
   }
 
   @Post(':channelId/messages')
-  sendMessage(@Param('channelId') channelId: string, @Body() body: SendChannelMessageDto) {
-    return this.service.sendMessage(channelId, body);
+  async sendMessage(
+    @Param('channelId') channelId: string,
+    @Body() body: SendChannelMessageDto,
+    @Res() res: any,
+  ) {
+    try {
+      const result = await this.service.sendMessage(channelId, body);
+      return res.json(result);
+    } catch (err: any) {
+      console.error('CONTROLLER SEND ERROR', err);
+      return res.status(err.status || 500).json({ statusCode: err.status || 500, message: err.message || 'Internal server error', stack: err.stack });
+    }
   }
 
   @Get(':channelId/messages')
