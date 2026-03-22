@@ -152,6 +152,11 @@
     const query = searchQuery.trim().toLowerCase();
 
     return [...conversations.entries()].filter(([id, convo]) => {
+      // Hide channels from the discussions tab
+      if (id.startsWith('channel_')) {
+        return false;
+      }
+
       const isArchived = archived.has(id.toLowerCase());
       if (showArchivedConversations ? !isArchived : isArchived) {
         return false;
