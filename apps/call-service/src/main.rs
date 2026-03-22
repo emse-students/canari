@@ -247,8 +247,9 @@ async fn handle_signal(
                             let other_ctx = peer_entry.value();
                             if let Err(e) = other_ctx
                                 .pc
-                                .add_track(Arc::clone(&local_track)
-                                    as Arc<dyn TrackLocal + Send + Sync>)
+                                .add_track(
+                                    Arc::clone(&local_track) as Arc<dyn TrackLocal + Send + Sync>
+                                )
                                 .await
                             {
                                 error!("Failed to add track to peer {}: {}", other_pid, e);
