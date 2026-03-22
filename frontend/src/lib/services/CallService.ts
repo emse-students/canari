@@ -172,7 +172,14 @@ export class CallService {
 
   private initPeerConnection() {
     this.pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        {
+          urls: 'turn:localhost:3478',
+          username: 'user',
+          credential: 'password',
+        },
+      ],
     });
 
     this.pc.onicecandidate = (e) => {
@@ -232,7 +239,19 @@ export class CallService {
   private setupSenderTransform(sender: RTCRtpSender) {
     if (!this.callKey) return;
 
-    // Use WebRTC Insertable Streams API
+    // Use WebRTC Encoded Transform (Standard)
+    if (window.RTCRtpScriptTransform) {
+      // Create worker if not exists (assume singleton for simplicity in this snippet)
+      // Ideally, manage worker lifecycle properly
+      const workerUrl = new URL('../../workers/encryption.worker.ts', import.meta.url);
+      const worker = new Worker(workerUrl, { type: 'module' });
+      worker.postMessage({ type: 'setKey', payload: this.callKey });
+
+      sender.transform = new RTCRtpScriptTransform(worker, { side: 'sender' });
+      return;
+    }
+
+    // Fallback: Use Chrome-specific createEncodedStreams (Main Thread)
     const s = sender as any;
     const streams = s.createEncodedStreams ? s.createEncodedStreams() : null;
 
@@ -251,7 +270,18 @@ export class CallService {
   private setupReceiverTransform(receiver: RTCRtpReceiver) {
     if (!this.callKey) return;
 
+    // Use WebRTC Encoded Transform (Standard)
+    if (window.RTCRtpScriptTransform) {
+      const workerUrl = new URL('../../workers/encryption.worker.ts', import.meta.url);
+      const worker = new Worker(workerUrl, { type: 'module' });
+      worker.postMessage({ type: 'setKey', payload: this.callKey });
+
+      receiver.transform = new RTCRtpScriptTransform(worker, { side: 'receiver' });
+      return;
+    }
+
     const r = receiver as any;
+
     const streams = r.createEncodedStreams ? r.createEncodedStreams() : null;
 
     if (streams) {

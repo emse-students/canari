@@ -31,6 +31,26 @@ services:
       timeout: 5s
       retries: 10
 
+  coturn:
+    image: coturn/coturn
+    ports:
+      - "3478:3478"
+      - "3478:3478/udp"
+      - "5349:5349"
+      - "5349:5349/udp"
+      - "49160-49200:49160-49200/udp"
+    command:
+      - -n
+      - --log-file=stdout
+      - --min-port=49160
+      - --max-port=49200
+      - --realm=localhost
+      - --user=user:password
+      - --lt-cred-mech
+      - --fingerprint
+      - --no-tls
+      - --no-dtls
+
   redis:
     image: redis:alpine
     ports:
