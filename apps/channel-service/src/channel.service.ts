@@ -47,7 +47,20 @@ export class ChannelService {
     @InjectModel(ChannelMessage.name)
     private readonly messageModel: Model<ChannelMessage>
   ) {
-    this.redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+    // Configuration de ioredis pour fail-fast si Redis est hors ligne
+    const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+    this.redis = new Redis(redisUrl, {
+      maxRetriesPerRequest: 1,
+      enableOfflineQueue: false, // Ne pas mettre les requêtes en attente si Redis est down
+      retryStrategy: (times) => {
+        if (times > 3) return null; // Arrête d'essayer après 3 tentatives
+        return Math.min(times * 200, 1000);
+      },
+    });
+
+    this.redis.on('error', (err) => {
+      console.warn('⚠️ Redis connection error:', err.message);
+    });
   }
 
   async createWorkspace(input: CreateWorkspaceDto) {
@@ -366,6 +379,9 @@ export class ChannelService {
           console.log('published to redis');
         } catch (e: any) {
           console.warn('Failed to publish channel.message.created event to Redis:', e.message);
+          // Rollback the DB insertion to guarantee consistency (no message shown if not broadcasted)
+          await this.messageModel.findByIdAndDelete(message._id);
+          throw new Error('Message sending failed: real-time broadcast is unreachable.');
         }
       }
 
