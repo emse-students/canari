@@ -6,19 +6,19 @@
 
   interface Props {
     selectedChannelId: string;
+    currentUserId?: string;
     mode?: 'desktop' | 'mobile';
     onClose?: () => void;
   }
 
-  let { mode = 'desktop', onClose }: Props = $props();
+  let { selectedChannelId, currentUserId, mode = 'desktop', onClose }: Props = $props();
 
   // Ce n'est plus un mock statique, on simule l'arrivée des utilisateurs réels.
-  // Idéalement, nous devrions récupérer les vrais membres du `channel-service`, 
+  // Idéalement, nous devrions récupérer les vrais membres du `channel-service`,
   // mais pour l'instant cela affichera au moins vos contacts récents/membres connectés !
-  let channelMembers = $state([
-    { id: 'jolan', name: 'jolan', role: 'admin' },
-    { id: 'toto', name: 'toto', role: 'member' }
-  ]);
+  let channelMembers = $derived(
+    currentUserId ? [{ id: currentUserId, name: currentUserId, role: 'admin' }] : []
+  );
 
   const members = $derived(
     channelMembers.map(m => ({

@@ -138,8 +138,8 @@
     if (existing) {
       existing.workspaceDbId = workspaceId;
       existing.name = workspace.name;
-      if (!existing.avatarUserId) {
-        existing.avatarUserId = userId || workspaceSlug;
+      if (!existing.avatarUserId || existing.avatarUserId === userId) {
+        existing.avatarUserId = workspace.name || workspaceSlug;
       }
       channelWorkspaces = [...channelWorkspaces];
       return existing;
@@ -149,7 +149,7 @@
       id: workspaceSlug,
       name: workspace.name,
       workspaceDbId: workspace.id ?? workspace._id,
-      avatarUserId: userId || workspaceSlug,
+      avatarUserId: workspace.name || workspaceSlug,
       channels: [],
     };
     channelWorkspaces = [...channelWorkspaces, created];
@@ -200,7 +200,12 @@
 
     if (existing) {
       if (!existing.workspaceDbId && workspaceId) existing.workspaceDbId = workspaceId;
-      if (workspaceName) existing.name = workspaceName;
+      if (workspaceName) {
+        existing.name = workspaceName;
+        if (!existing.avatarUserId || existing.avatarUserId === userId) {
+          existing.avatarUserId = workspaceName;
+        }
+      }
       channelWorkspaces = [...channelWorkspaces];
       return existing;
     }
@@ -209,7 +214,7 @@
       id: slugFromEvent || `workspace-${workspaceId || crypto.randomUUID().slice(0, 8)}`,
       name: workspaceName,
       workspaceDbId: workspaceId,
-      avatarUserId: userId || slugFromEvent || 'workspace',
+      avatarUserId: workspaceName || slugFromEvent || 'workspace',
       channels: [],
     };
     channelWorkspaces = [...channelWorkspaces, created];
@@ -1714,6 +1719,11 @@
     const convo = conversations.get(contactName);
     if (!convo) return false;
 
+    // TODO: Channels don't have local MLS state representation yet.
+    if (convo.groupId.startsWith('channel_')) {
+      return true;
+    }
+
     try {
       const mlsService = ensureMls();
       const members = await fetchUniqueGroupMembers(mlsService, convo.groupId);
@@ -2377,7 +2387,9 @@
       />
 
       {#if routeMode === 'communities'}
-        <ChannelMembersSidebar selectedChannelId={selectedChannelConversationId} />
+        {#if selectedChannelConversationId}
+          <ChannelMembersSidebar currentUserId={userId} selectedChannelId={selectedChannelConversationId} />
+        {/if}
 
         {#if selectedChannelConversationId}
           <button
@@ -2407,6 +2419,7 @@
           >
             <ChannelMembersSidebar
               mode="mobile"
+              currentUserId={userId}
               onClose={() => {
                 isChannelMembersDrawerOpen = false;
               }}
