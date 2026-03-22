@@ -14,6 +14,7 @@
     PencilLine,
     Shield,
     Hash,
+    Phone,
   } from 'lucide-svelte';
   import Avatar from './Avatar.svelte';
   import Modal from './Modal.svelte';
@@ -35,6 +36,7 @@
     onGroupRename?: (name: string) => void;
     onGroupDelete?: () => void;
     onGroupRemoveMember?: (userId: string) => void;
+    onStartCall?: () => void;
   }
 
   let {
@@ -51,6 +53,7 @@
     onGroupDelete,
     onGroupRemoveMember,
     onOpenSettings,
+    onStartCall,
   }: Props = $props();
 
   let showPanel = $state(false);
@@ -163,6 +166,16 @@
       </span>
     {/if}
   </div>
+
+  {#if onStartCall && !isChannel}
+    <button
+      onclick={onStartCall}
+      class="p-2 rounded-lg text-text-muted hover:bg-white/40 dark:hover:bg-black/35 hover:text-green-500 transition-colors"
+      title="Démarrer un appel"
+    >
+      <Phone size={18} />
+    </button>
+  {/if}
 
   <!-- Group settings button -->
   <button

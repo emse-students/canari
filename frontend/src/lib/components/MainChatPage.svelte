@@ -50,6 +50,8 @@
   } from '$lib/utils/mainChatMessaging';
   import { migrateFromLocalStorage } from '$lib/utils/migration';
   import { MediaService } from '$lib/media';
+  import { CallService } from '$lib/services/CallService';
+  import CallOverlay from '$lib/components/CallOverlay.svelte';
   import { getPreviewText, mkMediaEnvelope, parseEnvelope, serializeEnvelope } from '$lib/envelope';
   import { encodeAppMessage, mkMedia, MediaKind } from '$lib/proto/codec';
   import { createSyncQrDataUrl } from '$lib/sync/qr';
@@ -263,6 +265,8 @@
 
   // Service MLS
   let mls: IMlsService | null = $state(null);
+  let callService = $state<CallService | null>(null);
+  let callState: any = $state('idle'); // Helper for reactive UI
 
   // Persistent storage (IndexedDB on web, SQLite on Tauri)
   let storage: IStorage | null = $state(null);
@@ -641,6 +645,8 @@
         mls = new WebMlsService();
         log('Initialisé en mode WEB (WASM)');
       }
+      callService = new CallService(mls);
+      callService.callState.subscribe((s) => (callState = s));
     }
 
     // On Tauri (mobile), prefer biometric auto-login
@@ -894,6 +900,11 @@
             `Vous avez ete retire du canal #${event.channelName || event.channelId}`
           );
           log(`Retire du canal #${event.channelName || event.channelId}`);
+        },
+        onCallSignal: (senderId: string, callMsg: any) => {
+          if (callService) {
+            void callService.handleCallSignal(senderId, callMsg);
+          }
         },
         log,
       });
@@ -2231,6 +2242,10 @@
       </div>
     {/if}
 
+    {#if callService && callState !== 'idle'}
+      <CallOverlay {callService} remoteName={currentConvo?.name ?? 'Correspondant'} />
+    {/if}
+
     {#if showBiometricEnrollPrompt}
       <div
         class="fixed bottom-[env(safe-area-inset-bottom,0px)] left-0 right-0 z-50 mx-4 mb-4 p-4 rounded-2xl border border-cn-border shadow-lg flex items-center gap-3"
@@ -2312,7 +2327,7 @@
         onCreateChannel={(workspaceId: string, value?: string) => {
           const channel = (value ?? newChannelInput).trim();
           if (channel) {
-            const ws = channelWorkspaces.find(w => w.id === workspaceId);
+            const ws = channelWorkspaces.find((w) => w.id === workspaceId);
             if (ws && ws.workspaceDbId) {
               createNewChannel(ws.workspaceDbId, channel);
             }
@@ -2384,11 +2399,19 @@
         pendingFiles={pendingMediaFiles}
         onRemovePendingFile={removePendingMediaFile}
         isUploading={isUploadingMedia}
+        onStartCall={() => {
+          if (callService && selectedContact) {
+            void callService.startCall(selectedContact);
+          }
+        }}
       />
 
       {#if routeMode === 'communities'}
         {#if selectedChannelConversationId}
-          <ChannelMembersSidebar currentUserId={userId} selectedChannelId={selectedChannelConversationId} />
+          <ChannelMembersSidebar
+            currentUserId={userId}
+            selectedChannelId={selectedChannelConversationId}
+          />
         {/if}
 
         {#if selectedChannelConversationId}
@@ -2459,7 +2482,7 @@
           onCreateChannel={(workspaceId: string, value?: string) => {
             const channel = (value ?? newChannelInput).trim();
             if (channel) {
-              const ws = channelWorkspaces.find(w => w.id === workspaceId);
+              const ws = channelWorkspaces.find((w) => w.id === workspaceId);
               if (ws && ws.workspaceDbId) {
                 createNewChannel(ws.workspaceDbId, channel);
               }

@@ -66,6 +66,7 @@ interface MessageHandlerDeps {
     workspaceId?: string;
     kickedBy?: string;
   }) => void;
+  onCallSignal?: (senderId: string, callMsg: any) => void;
   log: (msg: string) => void;
 }
 
@@ -92,6 +93,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
     loadHistoryForConversation,
     onChannelMemberJoined,
     onChannelMemberKicked,
+    onCallSignal,
     log,
   } = deps;
 
@@ -275,6 +277,13 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                 false,
                 msg.messageId || undefined
               );
+              return true;
+            }
+
+            if (msg?.call) {
+              if (onCallSignal) {
+                onCallSignal(senderNorm, msg.call);
+              }
               return true;
             }
 

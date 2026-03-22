@@ -40,6 +40,7 @@
     pendingFiles?: File[];
     onRemovePendingFile?: (index: number) => void;
     isUploading?: boolean;
+    onStartCall?: () => void;
   }
 
   let {
@@ -71,6 +72,7 @@
     pendingFiles = [],
     onRemovePendingFile,
     isUploading = false,
+    onStartCall,
   }: Props = $props();
 
   const INITIAL_RENDER_GROUPS = 180;
@@ -177,6 +179,7 @@
       {onGroupRename}
       {onGroupDelete}
       {onGroupRemoveMember}
+      {onStartCall}
     />
 
     <!-- Messages -->

@@ -11,7 +11,7 @@
     onClose?: () => void;
   }
 
-  let { selectedChannelId, currentUserId, mode = 'desktop', onClose }: Props = $props();
+  let { currentUserId, mode = 'desktop', onClose }: Props = $props();
 
   // Ce n'est plus un mock statique, on simule l'arrivée des utilisateurs réels.
   // Idéalement, nous devrions récupérer les vrais membres du `channel-service`,

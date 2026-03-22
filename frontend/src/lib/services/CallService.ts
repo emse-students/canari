@@ -16,6 +16,7 @@ export class CallService {
   // Stores for UI
   public callState = writable<CallState>('idle');
   public remoteStream = writable<MediaStream | null>(null);
+  public localStreamStore = writable<MediaStream | null>(null);
   public isMuted = writable<boolean>(false);
   public isVideoOff = writable<boolean>(false);
 
@@ -107,6 +108,7 @@ export class CallService {
       this.localStream.getTracks().forEach((t) => t.stop());
       this.localStream = null;
     }
+    this.localStreamStore.set(null);
     if (this.pc) {
       this.pc.close();
       this.pc = null;
@@ -305,12 +307,18 @@ export class CallService {
   // --- Helpers ---
 
   private async setupMedia(video: boolean) {
-    this.localStream = await navigator.mediaDevices.getUserMedia({
-      audio: true,
-      video: video ? { facingMode: 'user' } : false,
-    });
-    this.isMuted.set(false);
-    this.isVideoOff.set(!video);
+    try {
+      this.localStream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: video ? { facingMode: 'user' } : false,
+      });
+      this.localStreamStore.set(this.localStream);
+      this.isMuted.set(false);
+      this.isVideoOff.set(!video);
+    } catch (e) {
+      console.error('Failed to get user media', e);
+      throw e;
+    }
   }
 
   private async sendMlsNotification(groupId: string, payload: any) {
