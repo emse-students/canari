@@ -72,6 +72,30 @@ export function parseEnvelope(content: string): MessageEnvelope {
 
   let result: MessageEnvelope;
 
+  // Fallback for leaked base64 protobuf payloads
+  if (content.startsWith('Cg')) {
+    try {
+      // Decode base64
+      const binStr =
+        typeof window !== 'undefined'
+          ? atob(content)
+          : Buffer.from(content, 'base64').toString('binary');
+      const bytes = new Uint8Array(binStr.length);
+      for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
+
+      // Dynamic import or use of codec to avoid circular dependencies
+      // We will parse the protobuf manually since it's simple or just return a fallback.
+      // A typical AppMessage text payload has: 0x0A (10), length, 0x0A (10), length, then text characters
+      if (bytes[0] === 10 && bytes[2] === 10) {
+        const textLen = bytes[3];
+        const textContent = new TextDecoder().decode(bytes.slice(4, 4 + textLen));
+        return { kind: 'text', text: textContent };
+      }
+    } catch (err) {
+      void err;
+    }
+  }
+
   if (content.startsWith('{')) {
     try {
       const obj = JSON.parse(content) as Record<string, unknown>;

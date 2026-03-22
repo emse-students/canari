@@ -190,7 +190,7 @@ async fn main() {
 
                                 if let Some(senders) = senders {
                                     for tx in &senders {
-                                        if tx.send(json_frame.clone()).is_ok() {
+                                        if tx.try_send(json_frame.clone()).is_ok() {
                                             tracing::info!(
                                                 "[Gateway] Message directly routed to {}, json_frame length: {} bytes",
                                                 key,

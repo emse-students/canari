@@ -90,7 +90,6 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
     saveConversation,
     addMessageToChat,
     addSystemMessage,
-    loadHistoryForConversation,
     onChannelMemberJoined,
     onChannelMemberKicked,
     onCallSignal,
@@ -134,6 +133,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         const data = event.data;
         const channelId = `channel_${data.channelId}`;
         const sender = data.senderId;
+
+        // We now rely on the backend echo for our own messages in channels
         // Check if we have this channel in our conversations list
         let convoKey: string | undefined = conversations.has(channelId) ? channelId : undefined;
         if (!convoKey) {
@@ -146,11 +147,37 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         }
 
         if (convoKey) {
-          // Add to chat (we ignore real crypto for the moment in this quick integration,
-          // usually we'd pass data.ciphertext to the crypto engine if needed, but this MVP routes it)
+          let content = '[Message chiffré]';
+          try {
+            // MVP soft cryptography: Decode the mock base64 we created during channel.sendMessage
+            if (data.ciphertext) {
+              const binStr = atob(data.ciphertext);
+              const bytes = new Uint8Array(binStr.length);
+              for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
+
+              const msg = decodeAppMessage(bytes);
+              if (msg?.text) {
+                content = serializeEnvelope(mkTextEnvelope(msg.text.content ?? ''));
+              } else if (msg?.reply) {
+                const replyTo = msg.reply.replyTo
+                  ? {
+                      id: msg.reply.replyTo.id || '',
+                      senderId: msg.reply.replyTo.senderId || '',
+                      content: msg.reply.replyTo.preview || '',
+                    }
+                  : undefined;
+                content = serializeEnvelope(mkTextEnvelope(msg.reply.content ?? '', replyTo));
+              }
+            } else if (data.plaintext) {
+              content = serializeEnvelope(mkTextEnvelope(data.plaintext));
+            }
+          } catch (e) {
+            console.error('Failed to parse channel message:', e);
+          }
+
           addMessageToChat(
             sender,
-            data.ciphertext || data.plaintext || '[Message chiffré]',
+            content,
             convoKey,
             undefined,
             false,
@@ -460,29 +487,59 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           // Silent fallback if group metadata fetch fails
         }
 
-        const newConvoKey = `grp_${crypto.randomUUID()}`;
-        // Create new conversation
-        conversations.set(newConvoKey, {
-          contactName: groupName,
-          name: groupName,
-          groupId: joinedGroupId,
-          messages: [],
-          isReady: true,
-          mlsStateHex: null,
-          conversationType: 'group',
-        });
-        saveConversation(newConvoKey);
-
-        // Auto-save MLS state
-        try {
-          const stBytes = await mlsService.saveState(pin);
-          localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
-        } catch {
-          // Silent fallback if autosave fails
+        let isDirect = false;
+        let directPeerId = '';
+        if (groupName.includes('::')) {
+          const parts = groupName.split('::');
+          if (
+            parts.length === 2 &&
+            (parts[0].toLowerCase() === userId.toLowerCase() ||
+              parts[1].toLowerCase() === userId.toLowerCase())
+          ) {
+            isDirect = true;
+            directPeerId =
+              parts[0].toLowerCase() === userId.toLowerCase()
+                ? parts[1].toLowerCase()
+                : parts[0].toLowerCase();
+          }
         }
 
-        log(`[OK] Handshake complete avec ${senderNorm}`);
-        loadHistoryForConversation(newConvoKey, joinedGroupId);
+        let newConvoKey = `grp_${crypto.randomUUID()}`;
+        let matchedExisting = false;
+
+        if (isDirect) {
+          const existingDirect = Array.from(conversations.entries()).find(([, convo]) => {
+            if ((convo.conversationType ?? 'group') !== 'direct') return false;
+            return (convo.directPeerId ?? convo.contactName).toLowerCase() === directPeerId;
+          });
+          if (existingDirect) {
+            newConvoKey = existingDirect[0];
+            matchedExisting = true;
+          } else {
+            newConvoKey = `dm_${crypto.randomUUID()}`;
+          }
+        }
+
+        if (matchedExisting) {
+          const convo = conversations.get(newConvoKey)!;
+          conversations.set(newConvoKey, {
+            ...convo,
+            groupId: joinedGroupId,
+            isReady: true,
+          });
+        } else {
+          // Create new conversation
+          conversations.set(newConvoKey, {
+            contactName: isDirect ? directPeerId : groupName,
+            name: isDirect ? directPeerId : groupName,
+            groupId: joinedGroupId,
+            messages: [],
+            isReady: true,
+            mlsStateHex: null,
+            conversationType: isDirect ? 'direct' : 'group',
+            ...(isDirect ? { directPeerId: directPeerId } : {}),
+          });
+        }
         return true;
       } catch (_e) {
         log(`Ignoré: pas un message pour un groupe existant ni un welcome. Erreur: ${String(_e)}`);

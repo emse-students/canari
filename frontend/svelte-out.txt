@@ -1,0 +1,156 @@
+
+> canari@0.1.0 check
+> svelte-kit sync && svelte-check --tsconfig ./tsconfig.json
+
+Loading svelte-check in workspace: d:\Documents\Programmation\EMSE\Canari\frontend
+Getting Svelte diagnostics...
+
+d:\Documents\Programmation\EMSE\Canari\frontend\[32msrc\lib\components\Sidebar.svelte[39m:481:3
+[31mError[39m: `</div>` attempted to close an element that was not open
+https://svelte.dev/e/element_invalid_closing_tag (svelte)
+[36m    />
+  [35m[36m</div>
+</aside>[39m
+
+d:\Documents\Programmation\EMSE\Canari\frontend\[32msrc\lib\components\Sidebar.svelte[39m:481:3
+[31mError[39m: `</div>` attempted to close an element that was not open
+https://svelte.dev/e/element_invalid_closing_tag (ts)
+[36m    />
+  [35m[36m</div>
+</aside>[39m
+
+d:\Documents\Programmation\EMSE\Canari\frontend\[32msrc\lib\components\MainChatPage.svelte[39m:61:10
+[31mError[39m: Module '"d:/Documents/Programmation/EMSE/Canari/frontend/src/lib/components/Sidebar.svelte"' has no default export. (ts)
+[36m  import Navbar from './Navbar.svelte';
+  import [35mSidebar[36m from './Sidebar.svelte';
+  import ChannelMembersSidebar from './chat/ChannelMembersSidebar.svelte';[39m
+
+d:\Documents\Programmation\EMSE\Canari\frontend\[32msrc\lib\components\MainChatPage.svelte[39m:2295:32
+[31mError[39m: Parameter 'value' implicitly has an 'any' type. (ts)
+[36m        {newChannelInput}
+        onContactInputChange={([35mvalue[36m) => (newContactInput = value)}
+        onGroupInputChange={(value) => (newGroupInput = value)}[39m
+
+d:\Documents\Programmation\EMSE\Canari\frontend\[32msrc\lib\components\MainChatPage.svelte[39m:2296:30
+[31mError[39m: Parameter 'value' implicitly has an 'any' type. (ts)
+[36m        onContactInputChange={(value) => (newContactInput = value)}
+        onGroupInputChange={([35mvalue[36m) => (newGroupInput = value)}
+        onChannelInputChange={(value) => (newChannelInput = value)}[39m
+
+d:\Documents\Programmation\EMSE\Canari\frontend\[32msrc\lib\components\MainChatPage.svelte[39m:2297:32
+[31mError[39m: Parameter 'value' implicitly has an 'any' type. (ts)
+[36m        onGroupInputChange={(value) => (newGroupInput = value)}
+        onChannelInputChange={([35mvalue[36m) => (newChannelInput = value)}
+        onAddContact={(value?: string) => {[39m
+
+d:\Documents\Programmation\EMSE\Canari\frontend\[32msrc\lib\components\MainChatPage.svelte[39m:2328:33
+[31mError[39m: Parameter 'channelId' implicitly has an 'any' type. (ts)
+[36m        }}
+        onInviteChannelMember={([35mchannelId[36m, memberId, roleName) => {
+          inviteMemberToChannel(channelId, memberId, roleName);[39m
+
+d:\Documents\Programmation\EMSE\Canari\frontend\[32msrc\lib\components\MainChatPage.svelte[39m:2328:44
+[31mError[39m: Parameter 'memberId' implicitly has an 'any' type. (ts)
+[36m        }}
+        onInviteChannelMember={(channelId, [35mmemberId[36m, roleName) => {
+          inviteMemberToChannel(channelId, memberId, roleName);[39m
+
+d:\Documents\Programmation\EMSE\Canari\frontend\[32msrc\lib\components\MainChatPage.svelte[39m:2328:54
+[31mError[39m: Parameter 'roleName' implicitly has an 'any' type. (ts)
+[36m        }}
+        onInviteChannelMember={(channelId, memberId, [35mroleName[36m) => {
+          inviteMemberToChannel(channelId, memberId, roleName);[39m
+
+d:\Documents\Programmation\EMSE\Canari\frontend\[32msrc\lib\components\MainChatPage.svelte[39m:2331:37
+[31mError[39m: Parameter 'channelId' implicitly has an 'any' type. (ts)
+[36m        }}
+        onUpdateChannelMemberRole={([35mchannelId[36m, memberId, roleName) => {
+          updateChannelMemberRole(channelId, memberId, roleName);[39m
+
+d:\Documents\Programmation\EMSE\Canari\frontend\[32msrc\lib\components\MainChatPage.svelte[39m:2331:48
+[31mError[39m: Parameter 'memberId' implicitly has an 'any' type. (ts)
+[36m        }}
+        onUpdateChannelMemberRole={(channelId, [35mmemberId[36m, roleName) => {
+          updateChannelMemberRole(channelId, memberId, roleName);[39m
+
+d:\Documents\Programmation\EMSE\Canari\frontend\[32msrc\lib\components\MainChatPage.svelte[39m:2331:58
+[31mError[39m: Parameter 'roleName' implicitly has an 'any' type. (ts)
+[36m        }}
+        onUpdateChannelMemberRole={(channelId, memberId, [35mroleName[36m) => {
+          updateChannelMemberRole(channelId, memberId, roleName);[39m
+
+d:\Documents\Programmation\EMSE\Canari\frontend\[32msrc\lib\components\MainChatPage.svelte[39m:2335:39
+[31mError[39m: Parameter 'channelId' implicitly has an 'any' type. (ts)
+[36m        onSelectConversation={selectConversation}
+        onSelectChannelConversation={([35mchannelId[36m) => {
+          selectedChannelConversationId = channelId;[39m
+
+d:\Documents\Programmation\EMSE\Canari\frontend\[32msrc\lib\components\MainChatPage.svelte[39m:2442:34
+[31mError[39m: Parameter 'value' implicitly has an 'any' type. (ts)
+[36m          {newChannelInput}
+          onContactInputChange={([35mvalue[36m) => (newContactInput = value)}
+          onGroupInputChange={(value) => (newGroupInput = value)}[39m
+
+d:\Documents\Programmation\EMSE\Canari\frontend\[32msrc\lib\components\MainChatPage.svelte[39m:2443:32
+[31mError[39m: Parameter 'value' implicitly has an 'any' type. (ts)
+[36m          onContactInputChange={(value) => (newContactInput = value)}
+          onGroupInputChange={([35mvalue[36m) => (newGroupInput = value)}
+          onChannelInputChange={(value) => (newChannelInput = value)}[39m
+
+d:\Documents\Programmation\EMSE\Canari\frontend\[32msrc\lib\components\MainChatPage.svelte[39m:2444:34
+[31mError[39m: Parameter 'value' implicitly has an 'any' type. (ts)
+[36m          onGroupInputChange={(value) => (newGroupInput = value)}
+          onChannelInputChange={([35mvalue[36m) => (newChannelInput = value)}
+          onAddContact={(value?: string) => {[39m
+
+d:\Documents\Programmation\EMSE\Canari\frontend\[32msrc\lib\components\MainChatPage.svelte[39m:2475:35
+[31mError[39m: Parameter 'channelId' implicitly has an 'any' type. (ts)
+[36m          }}
+          onInviteChannelMember={([35mchannelId[36m, memberId, roleName) => {
+            inviteMemberToChannel(channelId, memberId, roleName);[39m
+
+d:\Documents\Programmation\EMSE\Canari\frontend\[32msrc\lib\components\MainChatPage.svelte[39m:2475:46
+[31mError[39m: Parameter 'memberId' implicitly has an 'any' type. (ts)
+[36m          }}
+          onInviteChannelMember={(channelId, [35mmemberId[36m, roleName) => {
+            inviteMemberToChannel(channelId, memberId, roleName);[39m
+
+d:\Documents\Programmation\EMSE\Canari\frontend\[32msrc\lib\components\MainChatPage.svelte[39m:2475:56
+[31mError[39m: Parameter 'roleName' implicitly has an 'any' type. (ts)
+[36m          }}
+          onInviteChannelMember={(channelId, memberId, [35mroleName[36m) => {
+            inviteMemberToChannel(channelId, memberId, roleName);[39m
+
+d:\Documents\Programmation\EMSE\Canari\frontend\[32msrc\lib\components\MainChatPage.svelte[39m:2478:39
+[31mError[39m: Parameter 'channelId' implicitly has an 'any' type. (ts)
+[36m          }}
+          onUpdateChannelMemberRole={([35mchannelId[36m, memberId, roleName) => {
+            updateChannelMemberRole(channelId, memberId, roleName);[39m
+
+d:\Documents\Programmation\EMSE\Canari\frontend\[32msrc\lib\components\MainChatPage.svelte[39m:2478:50
+[31mError[39m: Parameter 'memberId' implicitly has an 'any' type. (ts)
+[36m          }}
+          onUpdateChannelMemberRole={(channelId, [35mmemberId[36m, roleName) => {
+            updateChannelMemberRole(channelId, memberId, roleName);[39m
+
+d:\Documents\Programmation\EMSE\Canari\frontend\[32msrc\lib\components\MainChatPage.svelte[39m:2478:60
+[31mError[39m: Parameter 'roleName' implicitly has an 'any' type. (ts)
+[36m          }}
+          onUpdateChannelMemberRole={(channelId, memberId, [35mroleName[36m) => {
+            updateChannelMemberRole(channelId, memberId, roleName);[39m
+
+d:\Documents\Programmation\EMSE\Canari\frontend\[32msrc\lib\components\MainChatPage.svelte[39m:2482:41
+[31mError[39m: Parameter 'channelId' implicitly has an 'any' type. (ts)
+[36m          onSelectConversation={selectConversation}
+          onSelectChannelConversation={([35mchannelId[36m) => {
+            selectedChannelConversationId = channelId;[39m
+
+d:\Documents\Programmation\EMSE\Canari\frontend\[32msrc\lib\components\index.ts[39m:5:10
+[31mError[39m: Module '"./Sidebar.svelte"' has no exported member 'default'. 
+[36mexport { default as EmptyState } from './EmptyState.svelte';
+export { [35mdefault[36m as Sidebar } from './Sidebar.svelte';
+export { default as ConversationTile } from './ConversationTile.svelte';[39m
+
+====================================
+[31msvelte-check found 24 errors and 0 warnings in 3 files
+[39m

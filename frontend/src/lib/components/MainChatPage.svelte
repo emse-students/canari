@@ -40,6 +40,7 @@
     createNewGroup as createGroup,
     inviteMembersToGroup,
     startNewConversation as startConversation,
+    repairDirectConversation,
   } from '$lib/utils/mainChatGroupCreation';
   import {
     sendChatMessage,
@@ -857,17 +858,17 @@
 
           if (isPrivateChannel) {
             showChannelMembershipNotice(
-              `Vous avez ete ajoute au canal prive #${event.channelName || event.channelId}`,
+              `Vous avez été ajouté au canal prive #${event.channelName || event.channelId}`,
               channelConversationId
             );
           } else {
             showChannelMembershipNotice(
-              `Vous avez ete ajoute au canal #${event.channelName || event.channelId}`
+              `Vous avez été ajouté au canal #${event.channelName || event.channelId}`
             );
           }
           void sendSystemNotification(
             'Canal rejoint',
-            `Vous avez ete ajoute au canal #${event.channelName || event.channelId}`
+            `Vous avez été ajouté au canal #${event.channelName || event.channelId}`
           );
           log(`Ajout au canal #${event.channelName || event.channelId}`);
         },
@@ -893,13 +894,13 @@
           }
 
           showChannelMembershipNotice(
-            `Vous avez ete retire du canal #${event.channelName || event.channelId}`
+            `Vous avez été retiré du canal #${event.channelName || event.channelId}`
           );
           void sendSystemNotification(
-            'Canal quitte',
-            `Vous avez ete retire du canal #${event.channelName || event.channelId}`
+            'Canal quitté',
+            `Vous avez été retiré du canal #${event.channelName || event.channelId}`
           );
-          log(`Retire du canal #${event.channelName || event.channelId}`);
+          log(`Retiré du canal #${event.channelName || event.channelId}`);
         },
         onCallSignal: (senderId: string, callMsg: any) => {
           if (callService) {
@@ -1210,7 +1211,7 @@
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      log(`Chargement des communautes/canaux impossible: ${message}`);
+      log(`Chargement des communautés/canaux impossible: ${message}`);
     }
   }
 
@@ -1738,16 +1739,32 @@
     try {
       const mlsService = ensureMls();
       const members = await fetchUniqueGroupMembers(mlsService, convo.groupId);
-      const stillMember = members.includes(userId.toLowerCase());
+
+      // If we couldn't fetch members (network issue or backend sync delay), don't falsely assume the user is removed.
+      if (members.length === 0) return true;
+
+      const stillMember = members.some((m) => m.toLowerCase() === userId.toLowerCase());
 
       if (stillMember) return true;
 
-      if (convo.isReady) {
-        conversations.set(contactName, { ...convo, isReady: false });
-      }
+        if (convo.conversationType === 'direct') {
+          // Auto-repair for 1v1 conversations
+          const repaired = await repairDirectConversation(contactName, {
+            mlsService,
+            storage,
+            userId,
+            pin,
+            historyBaseUrl,
+            conversations,
+            selectConversation,
+            saveConversation,
+            log
+          });
+          if (repaired) return true;
+        }
 
       const notice =
-        'Vous avez ete retire de ce groupe. Vous ne pouvez plus envoyer ni recevoir de nouveaux messages.';
+        'Vous avez été retiré de ce groupe. Vous ne pouvez plus envoyer ni recevoir de nouveaux messages.';
       const hasNotice = convo.messages.some((m) => m.isSystem && m.content === notice);
       if (!hasNotice) {
         await addSystemMessage(notice, contactName);

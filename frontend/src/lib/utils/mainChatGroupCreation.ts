@@ -377,3 +377,99 @@ export async function startNewConversation(
     conversations.delete(conversationKey);
   }
 }
+
+export async function repairDirectConversation(
+  conversationKey: string,
+  deps: GroupCreationDeps
+): Promise<boolean> {
+  const { mlsService, userId, pin, historyBaseUrl, conversations, saveConversation, log } = deps;
+  const convo = conversations.get(conversationKey);
+  if (!convo || convo.conversationType !== 'direct') return false;
+
+  const contact = (convo.directPeerId ?? convo.contactName).toLowerCase();
+  const groupName = `${userId}::${contact}`;
+  try {
+    log(`Réparation automatique de la connexion avec ${contact}...`);
+    const groupId = await mlsService.createRemoteGroup(groupName);
+
+    await mlsService.createGroup(groupId);
+    await mlsService.registerMember(groupId, userId, mlsService.getDeviceId());
+
+    const ownDevices = (await mlsService.fetchUserDevices(userId)).filter(
+      (d) => d.deviceId !== mlsService.getDeviceId()
+    );
+    for (const device of ownDevices) {
+      try {
+        const result = await mlsService.addMember(groupId, device.keyPackage);
+        await mlsService.registerMember(groupId, userId, device.deviceId);
+        if (result.welcome) {
+          if (result.ratchetTree)
+            await mlsService.sendWelcome(
+              result.welcome,
+              userId,
+              groupId,
+              device.deviceId,
+              result.ratchetTree
+            );
+          else await mlsService.sendWelcome(result.welcome, userId, groupId, device.deviceId);
+        }
+        if (result.commit) await mlsService.sendCommit(result.commit, groupId);
+      } catch (err) {
+        void err;
+      }
+    }
+
+    const stBytes = await mlsService.saveState(pin);
+    localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
+
+    const devices = await fetchDevicesWithRetry(mlsService, contact, log, 3, 1000);
+    if (devices.length > 0) {
+      const bulk = await mlsService.addMembersBulk(groupId, devices);
+      for (const did of bulk.addedDeviceIds) await mlsService.registerMember(groupId, contact, did);
+
+      const st2Bytes = await mlsService.saveState(pin);
+      localStorage.setItem('mls_autosave_' + userId, toHex(st2Bytes));
+
+      if (bulk.welcome) {
+        const welcomeB64 = btoa(
+          Array.from(bulk.welcome)
+            .map((b) => String.fromCharCode(b))
+            .join('')
+        );
+        const ratchetTreeB64 = bulk.ratchetTree
+          ? btoa(
+              Array.from(bulk.ratchetTree)
+                .map((b) => String.fromCharCode(b))
+                .join('')
+            )
+          : undefined;
+        for (const did of bulk.addedDeviceIds) {
+          await fetch(`${historyBaseUrl}/api/mls-api/welcome`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              targetDeviceId: did,
+              targetUserId: contact,
+              senderUserId: userId,
+              welcomePayload: welcomeB64,
+              ratchetTreePayload: ratchetTreeB64,
+              groupId,
+            }),
+          });
+        }
+      }
+      if (bulk.commit) await mlsService.sendCommit(bulk.commit, groupId);
+
+      conversations.set(conversationKey, { ...convo, groupId, isReady: true });
+      saveConversation(conversationKey);
+      log(`[OK] Connexion réparée avec ${contact}.`);
+      return true;
+    } else {
+      log(`Echec de la réparation : aucun appareil pour ${contact}`);
+      return false;
+    }
+  } catch (e) {
+    log(`Erreur de réparation : ${e}`);
+    return false;
+  }
+}

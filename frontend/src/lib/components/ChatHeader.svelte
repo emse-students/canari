@@ -20,6 +20,7 @@
   import Modal from './Modal.svelte';
   import MultiUserSelector from './MultiUserSelector.svelte';
   import { portal } from '$lib/actions/portal';
+  import { presenceMap, watchUsers } from '$lib/stores/presenceStore';
 
   interface Props {
     contactName: string;
@@ -61,6 +62,15 @@
   let newMembers = $state<string[]>([]);
   let renameInput = $state('');
   let confirmDelete = $state(false);
+
+  let isOnline = $derived($presenceMap[contactName] || false);
+
+  $effect(() => {
+    // We only poll presence for simple 1-1 conversations where the contactName represents an actual user
+    if (contactName && !isGroupConversation && !isChannel) {
+      watchUsers([contactName]);
+    }
+  });
 
   function handleInviteMembers() {
     if (newMembers.length > 0 && onInviteMembers) {
@@ -140,7 +150,14 @@
       <Hash size={24} />
     </div>
   {:else}
-    <Avatar userId={contactName} size="lg" />
+    <div class="relative">
+      <Avatar userId={contactName} size="lg" />
+      {#if !isGroupConversation && isOnline}
+        <span
+          class="absolute bottom-0 right-0 block h-3 w-3 rounded-full ring-2 ring-white bg-green-500"
+        ></span>
+      {/if}
+    </div>
   {/if}
 
   <!-- Meta -->
@@ -205,7 +222,7 @@
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="Parametres du groupe"
+        aria-label="Paramètres du groupe"
         class="absolute pointer-events-auto inset-x-3 top-4 bottom-4 md:inset-x-auto md:right-8 md:top-20 md:bottom-auto md:w-[34rem] md:max-h-[85dvh] bg-white/70 dark:bg-slate-950/80 border border-white/55 dark:border-white/10 rounded-3xl shadow-[0_28px_90px_rgba(2,6,23,0.45)] backdrop-blur-xl flex flex-col overflow-hidden text-text-main"
       >
         <div

@@ -33,7 +33,7 @@ export async function sendChatMessage(
   replyingTo: ChatMessage | null,
   deps: SendMessageDeps
 ): Promise<{ success: boolean; error?: string }> {
-  const { mlsService, userId, pin, conversation, addMessageToChat, log } = deps;
+  const { mlsService, userId, pin, conversation, addMessageToChat } = deps;
 
   if (!text.trim() || !conversation.isReady) {
     return { success: false };
@@ -78,27 +78,27 @@ export async function sendChatMessage(
         nonce: Date.now().toString(), // Mock nonce for now since channels use MLS-based static keys which are WIP
         ciphertext: btoa(String.fromCharCode(...payload)),
       });
+      // We do not add the message optimistically for channels:
+      // We wait for the 'channel.message.created' WebSocket event instead!
     } else {
       await mlsService.sendMessage(conversation.groupId, payload);
       const stateBytes = await mlsService.saveState(pin);
       localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
+
+      // Optimistic UI for direct messages and MLS groups (users cannot decrypt their own echo)
+      await addMessageToChat(
+        userId,
+        serializeEnvelope(mkTextEnvelope(text, replyToData)),
+        contactName,
+        undefined,
+        false,
+        messageId
+      );
     }
-
-    await addMessageToChat(
-      userId,
-      serializeEnvelope(mkTextEnvelope(text, replyToData)),
-      contactName,
-      undefined,
-      false,
-      messageId
-    );
-
     return { success: true };
-  } catch (_e: unknown) {
-    const msg = _e instanceof Error ? _e.message : String(_e);
-    log(`Erreur envoi: ${msg}`);
-
-    if (msg.includes('Groupe introuvable') || msg.includes('not found') || msg.includes('group')) {
+  } catch (error: any) {
+    const msg = error.message || String(error);
+    if (msg.includes('NotMember') || msg.includes('NotAMember')) {
       return {
         success: false,
         error: "Tu n'es plus membre de ce groupe. Supprime-le et demande une nouvelle invitation.",

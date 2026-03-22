@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
-type ConnectedUser = mpsc::UnboundedSender<String>; // Channel to send JSON-encoded delivery frames
+type ConnectedUser = mpsc::Sender<String>; // Channel to send JSON-encoded delivery frames
 
 pub struct AppState {
     pub redis_client: RedisClient,

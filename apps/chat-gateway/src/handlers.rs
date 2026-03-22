@@ -57,6 +57,44 @@ pub async fn post_ratchet_tree(
 
 // --- WebSocket Handler ---
 
+struct ConnectionGuard {
+    state: Arc<AppState>,
+    conn_key: String,
+    redis_key: String,
+}
+
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        tracing::info!(
+            "Executing guaranteed cleanup (Drop) for connection keys {} / {}",
+            self.conn_key,
+            self.redis_key
+        );
+        // Clean HashMap
+        {
+            let mut map = self.state.connected_users.lock().unwrap();
+            if let Some(senders) = map.get_mut(&self.conn_key) {
+                // Remove closed senders
+                senders.retain(|s| !s.is_closed());
+                if senders.is_empty() {
+                    map.remove(&self.conn_key);
+                }
+            }
+        }
+        // Background Redis Clean
+        let state = self.state.clone();
+        let redis_key = self.redis_key.clone();
+        tokio::spawn(async move {
+            if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await {
+                let _: Result<(), _> = redis::cmd("DEL")
+                    .arg(&redis_key)
+                    .query_async(&mut con)
+                    .await;
+            }
+        });
+    }
+}
+
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     Query(params): Query<AuthParams>,
@@ -92,7 +130,7 @@ async fn handle_socket(
     let (mut sender, mut receiver) = socket.split();
 
     // Create channel for this specific client
-    let (tx, mut rx) = mpsc::unbounded_channel();
+    let (tx, mut rx) = mpsc::channel(256);
     let conn_key = format!("{}:{}", user_id, device_id);
 
     // Register connection — push into the list for this key (supports multiple tabs)
@@ -108,6 +146,14 @@ async fn handle_socket(
 
     // Register presence in Redis
     let redis_key = format!("user:online:{}", conn_key);
+
+    // Guard struct ensures Drop cleans up map + redis even on panics/early returns
+    let _guard = ConnectionGuard {
+        state: state.clone(),
+        conn_key: conn_key.clone(),
+        redis_key: redis_key.clone(),
+    };
+
     if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await {
         let _: Result<(), _> = con.set_ex(&redis_key, "true", 3600).await;
 
@@ -515,19 +561,7 @@ async fn handle_socket(
         _ = (&mut recv_task) => send_task.abort(),
     };
 
-    // Cleanup — remove only dead senders for this key
-    {
-        let mut map = state.connected_users.lock().unwrap();
-        if let Some(senders) = map.get_mut(&conn_key) {
-            senders.retain(|s| !s.is_closed());
-            if senders.is_empty() {
-                map.remove(&conn_key);
-            }
-        }
-    }
-    if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await {
-        let _: Result<(), _> = con.del(&redis_key).await;
-    }
+    // Cleanup is now handled by ConnectionGuard's Drop.
 }
 #[derive(serde::Deserialize)]
 pub struct PresenceQuery {
