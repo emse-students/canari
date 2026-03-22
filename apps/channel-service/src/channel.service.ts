@@ -196,23 +196,27 @@ export class ChannelService {
     );
 
     const workspace = await this.workspaceModel.findById(channel.workspaceId).lean();
-    await this.redis.publish(
-      'chat:channel_events',
-      JSON.stringify({
-        userIds: [userId],
-        type: 'channel.member.joined',
-        data: {
-          channelId: channel.id,
-          workspaceId: channel.workspaceId,
-          workspaceSlug: workspace?.slug,
-          workspaceName: workspace?.name,
-          channelName: channel.name,
-          visibility: channel.visibility,
-          roleName: role.name,
-          joinedBy: input.actorUserId.trim().toLowerCase(),
-        },
-      })
-    );
+    try {
+      await this.redis.publish(
+        'chat:channel_events',
+        JSON.stringify({
+          userIds: [userId],
+          type: 'channel.member.joined',
+          data: {
+            channelId: channel.id,
+            workspaceId: channel.workspaceId,
+            workspaceSlug: workspace?.slug,
+            workspaceName: workspace?.name,
+            channelName: channel.name,
+            visibility: channel.visibility,
+            roleName: role.name,
+            joinedBy: input.actorUserId.trim().toLowerCase(),
+          },
+        })
+      );
+    } catch (e: any) {
+      console.warn('Failed to publish channel.member.joined event to Redis:', e.message);
+    }
 
     // Soft mode: keep old messages accessible for new members.
     return { joined: true, historyVisible: true, keyVersion: channel.keyVersion };
@@ -248,19 +252,23 @@ export class ChannelService {
       { $set: { leftAt: new Date() } }
     );
 
-    await this.redis.publish(
-      'chat:channel_events',
-      JSON.stringify({
-        userIds: [target],
-        type: 'channel.member.kicked',
-        data: {
-          channelId: channel.id,
-          workspaceId: channel.workspaceId,
-          channelName: channel.name,
-          kickedBy: input.actorUserId.trim().toLowerCase(),
-        },
-      })
-    );
+    try {
+      await this.redis.publish(
+        'chat:channel_events',
+        JSON.stringify({
+          userIds: [target],
+          type: 'channel.member.kicked',
+          data: {
+            channelId: channel.id,
+            workspaceId: channel.workspaceId,
+            channelName: channel.name,
+            kickedBy: input.actorUserId.trim().toLowerCase(),
+          },
+        })
+      );
+    } catch (e: any) {
+      console.warn('Failed to publish channel.member.kicked event to Redis:', e.message);
+    }
 
     // Soft encryption policy: no mandatory key rotation on kick.
     return { kicked: true, keyRotated: false };
@@ -337,24 +345,28 @@ export class ChannelService {
       const userIds = members.map((m) => m.userId);
 
       if (userIds.length > 0) {
-        await this.redis.publish(
-          'chat:channel_events',
-          JSON.stringify({
-            userIds,
-            type: 'channel.message.created',
-            data: {
-              id: message._id.toString(),
-              channelId: message.channelId,
-              workspaceId: message.workspaceId,
-              senderId: message.senderId,
-              ciphertext: message.ciphertext,
-              nonce: message.nonce,
-              keyVersion: message.keyVersion,
-              createdAt: message.createdAt,
-            },
-          })
-        );
-        console.log('published to redis');
+        try {
+          await this.redis.publish(
+            'chat:channel_events',
+            JSON.stringify({
+              userIds,
+              type: 'channel.message.created',
+              data: {
+                id: message._id.toString(),
+                channelId: message.channelId,
+                workspaceId: message.workspaceId,
+                senderId: message.senderId,
+                ciphertext: message.ciphertext,
+                nonce: message.nonce,
+                keyVersion: message.keyVersion,
+                createdAt: message.createdAt,
+              },
+            })
+          );
+          console.log('published to redis');
+        } catch (e: any) {
+          console.warn('Failed to publish channel.message.created event to Redis:', e.message);
+        }
       }
 
       return message;
