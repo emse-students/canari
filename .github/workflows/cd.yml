@@ -103,6 +103,9 @@ jobs:
     strategy:
       matrix:
         service:
+          - name: auth-service
+            context: .
+            dockerfile: ./infrastructure/local/Dockerfile.auth-service
           - name: call-service
             context: .
             dockerfile: ./infrastructure/local/Dockerfile.call-service

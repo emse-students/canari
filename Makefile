@@ -182,153 +182,29 @@ endif
 
 install-frontend:
 	@echo "${BLUE}📦 Installing frontend dependencies...${RESET}"
-ifeq ($(OS),Windows_NT)
-	@cd frontend && ($(CHECK_CMD) bun >$(NULL_DEV) 2>&1 && bun install || npm install --legacy-peer-deps)
-else
-	@cd frontend && ( \
-		if [ -x "$$HOME/.bun/bin/bun" ]; then \
-			$$HOME/.bun/bin/bun install; \
-		elif command -v bun >/dev/null 2>&1; then \
-			bun install; \
-		elif command -v npm >/dev/null 2>&1; then \
-			npm install --legacy-peer-deps; \
-		else \
-			export NVM_DIR="$$HOME/.nvm"; \
-			[ -s "$$NVM_DIR/nvm.sh" ] && \. "$$NVM_DIR/nvm.sh"; \
-			npm install --legacy-peer-deps; \
-		fi \
-	)
-endif
+	@cd frontend && npm install --legacy-peer-deps
 	@echo "${BLUE}🔄 Running svelte-kit sync...${RESET}"
-ifeq ($(OS),Windows_NT)
-	@cd frontend && ($(CHECK_CMD) bunx >$(NULL_DEV) 2>&1 && bunx svelte-kit sync || npx svelte-kit sync)
-else
-	@cd frontend && ( \
-		if [ -x "$$HOME/.bun/bin/bun" ]; then \
-			$$HOME/.bun/bin/bunx svelte-kit sync; \
-		elif command -v bunx >/dev/null 2>&1; then \
-			bunx svelte-kit sync; \
-		elif command -v npx >/dev/null 2>&1; then \
-			npx svelte-kit sync; \
-		else \
-			export NVM_DIR="$$HOME/.nvm"; \
-			[ -s "$$NVM_DIR/nvm.sh" ] && \. "$$NVM_DIR/nvm.sh"; \
-			npx svelte-kit sync; \
-		fi \
-	)
-endif
+	@cd frontend && npx svelte-kit sync
 	@echo "${GREEN}✅ Frontend prêt${RESET}"
 
 install-services:
-	@echo "${BLUE}📦 Installing shared-ts dependencies...${RESET}"
-ifeq ($(OS),Windows_NT)
+	@echo "📦 Installing shared-ts..."
 	@cd libs/shared-ts && npm install
-else
-	@cd libs/shared-ts && ( \
-		if [ -x "$$HOME/.bun/bin/bun" ]; then \
-			$$HOME/.bun/bin/bun install; \
-		elif command -v bun >/dev/null 2>&1; then \
-			bun install; \
-		elif command -v npm >/dev/null 2>&1; then \
-			npm install; \
-		else \
-			export NVM_DIR="$$HOME/.nvm"; \
-			[ -s "$$NVM_DIR/nvm.sh" ] && \. "$$NVM_DIR/nvm.sh"; \
-			npm install; \
-		fi \
-	)
-endif
-	@echo "${BLUE}📦 Installing auth-service dependencies...${RESET}"
-ifeq ($(OS),Windows_NT)
+	@echo "📦 Installing auth-service..."
 	@cd apps/auth-service && npm install
-else
-	@cd apps/auth-service && ( \
-		if [ -x "$$HOME/.bun/bin/bun" ]; then \
-			$$HOME/.bun/bin/bun install; \
-		elif command -v bun >/dev/null 2>&1; then \
-			bun install; \
-		elif command -v npm >/dev/null 2>&1; then \
-			npm install; \
-		else \
-			export NVM_DIR="$$HOME/.nvm"; \
-			[ -s "$$NVM_DIR/nvm.sh" ] && \. "$$NVM_DIR/nvm.sh"; \
-			npm install; \
-		fi \
-	)
-endif
-	@echo "${BLUE}📦 Installing user-service dependencies...${RESET}"
-ifeq ($(OS),Windows_NT)
-	@cd apps/user-service && npm install
-else
-	@cd apps/user-service && ( \
-		if [ -x "$$HOME/.bun/bin/bun" ]; then \
-			$$HOME/.bun/bin/bun install; \
-		elif command -v bun >/dev/null 2>&1; then \
-			bun install; \
-		elif command -v npm >/dev/null 2>&1; then \
-			npm install; \
-		else \
-			export NVM_DIR="$$HOME/.nvm"; \
-			[ -s "$$NVM_DIR/nvm.sh" ] && \. "$$NVM_DIR/nvm.sh"; \
-			npm install; \
-		fi \
-	)
-endif
-	@echo "${BLUE}📦 Installing chat-delivery-service dependencies...${RESET}"
-ifeq ($(OS),Windows_NT)
+	@echo "📦 Installing channel-service..."
+	@cd apps/channel-service && npm install
+	@echo "📦 Installing chat-delivery-service..."
 	@cd apps/chat-delivery-service && npm install
-else
-	@cd apps/chat-delivery-service && ( \
-		if [ -x "$$HOME/.bun/bin/bun" ]; then \
-			$$HOME/.bun/bin/bun install; \
-		elif command -v bun >/dev/null 2>&1; then \
-			bun install; \
-		elif command -v npm >/dev/null 2>&1; then \
-			npm install; \
-		else \
-			export NVM_DIR="$$HOME/.nvm"; \
-			[ -s "$$NVM_DIR/nvm.sh" ] && \. "$$NVM_DIR/nvm.sh"; \
-			npm install; \
-		fi \
-	)
-endif
-	@echo "${BLUE}📦 Installing media-service dependencies...${RESET}"
-ifeq ($(OS),Windows_NT)
+	@echo "📦 Installing form-service..."
+	@cd apps/form-service && npm install
+	@echo "📦 Installing media-service..."
 	@cd apps/media-service && npm install
-else
-	@cd apps/media-service && ( \
-		if [ -x "$$HOME/.bun/bin/bun" ]; then \
-			$$HOME/.bun/bin/bun install; \
-		elif command -v bun >/dev/null 2>&1; then \
-			bun install; \
-		elif command -v npm >/dev/null 2>&1; then \
-			npm install; \
-		else \
-			export NVM_DIR="$$HOME/.nvm"; \
-			[ -s "$$NVM_DIR/nvm.sh" ] && \. "$$NVM_DIR/nvm.sh"; \
-			npm install; \
-		fi \
-	)
-endif
-	@echo "${BLUE}📦 Installing post-service dependencies...${RESET}"
-ifeq ($(OS),Windows_NT)
+	@echo "📦 Installing post-service..."
 	@cd apps/post-service && npm install
-else
-	@cd apps/post-service && ( \
-		if [ -x "$$HOME/.bun/bin/bun" ]; then \
-			$$HOME/.bun/bin/bun install; \
-		elif command -v bun >/dev/null 2>&1; then \
-			bun install; \
-		elif command -v npm >/dev/null 2>&1; then \
-			npm install; \
-		else \
-			export NVM_DIR="$$HOME/.nvm"; \
-			[ -s "$$NVM_DIR/nvm.sh" ] && \. "$$NVM_DIR/nvm.sh"; \
-			npm install; \
-		fi \
-	)
-endif
-	@echo "${GREEN}✅ Services Node.js prêts${RESET}"
+	@echo "📦 Installing user-service..."
+	@cd apps/user-service && npm install
+	@echo "✅ Services Node.js prêts"
 
 install-hooks:
 	@echo "${BLUE}🪝 Installing Git hooks via Husky...${RESET}"
@@ -377,23 +253,7 @@ test: test-libs test-gateway test-history test-frontend
 # Tests frontend (Vitest — logique de création de conversations)
 test-frontend:
 	@echo "${BLUE}🧪 Testing Frontend conversation logic...${RESET}"
-ifeq ($(OS),Windows_NT)
-	@cd frontend && ($(CHECK_CMD) bun >$(NULL_DEV) 2>&1 && bun run test || npx vitest run)
-else
-	@cd frontend && ( \
-		if [ -x "$$HOME/.bun/bin/bun" ]; then \
-			$$HOME/.bun/bin/bun run test; \
-		elif command -v bun >/dev/null 2>&1; then \
-			bun run test; \
-		elif command -v npm >/dev/null 2>&1; then \
-			npm test; \
-		else \
-			export NVM_DIR="$$HOME/.nvm"; \
-			[ -s "$$NVM_DIR/nvm.sh" ] && \. "$$NVM_DIR/nvm.sh"; \
-			npm test; \
-		fi \
-	)
-endif
+	@cd frontend && npm test
 	@echo "${GREEN}✅ Frontend tests OK${RESET}"
 
 # Tests Libs Rust
@@ -413,47 +273,12 @@ test-history:
 
 build-frontend:
 	@echo "${BLUE}🚀 Building frontend...${RESET}"
-ifeq ($(OS),Windows_NT)
+	@echo "${BLUE}🔄 Building WASM...${RESET}"
 	@cd frontend/mls-wasm && wasm-pack build --target web --out-dir ../src/lib/wasm
-	@cd frontend && ($(CHECK_CMD) bun >$(NULL_DEV) 2>&1 && bun run proto:gen || npm run proto:gen)
-	@cd frontend && ($(CHECK_CMD) bun >$(NULL_DEV) 2>&1 && bun run build || npm run build)
-else
-	@cd frontend/mls-wasm && ( \
-		if command -v wasm-pack >/dev/null 2>&1; then \
-			wasm-pack build --target web --out-dir ../src/lib/wasm; \
-		else \
-			. "$$HOME/.cargo/env" 2>/dev/null || true; \
-			wasm-pack build --target web --out-dir ../src/lib/wasm; \
-		fi \
-	)
 	@echo "${BLUE}🔄 Generating protobuf bindings...${RESET}"
-	@cd frontend && ( \
-		if [ -x "$$HOME/.bun/bin/bun" ]; then \
-			$$HOME/.bun/bin/bun run proto:gen; \
-		elif command -v bun >/dev/null 2>&1; then \
-			bun run proto:gen; \
-		elif command -v npm >/dev/null 2>&1; then \
-			npm run proto:gen; \
-		else \
-			export NVM_DIR="$$HOME/.nvm"; \
-			[ -s "$$NVM_DIR/nvm.sh" ] && \. "$$NVM_DIR/nvm.sh"; \
-			npm run proto:gen; \
-		fi \
-	)
-	@cd frontend && ( \
-		if [ -x "$$HOME/.bun/bin/bun" ]; then \
-			$$HOME/.bun/bin/bun run build; \
-		elif command -v bun >/dev/null 2>&1; then \
-			bun run build; \
-		elif command -v npm >/dev/null 2>&1; then \
-			npm run build; \
-		else \
-			export NVM_DIR="$$HOME/.nvm"; \
-			[ -s "$$NVM_DIR/nvm.sh" ] && \. "$$NVM_DIR/nvm.sh"; \
-			npm run build; \
-		fi \
-	)
-endif
+	@cd frontend && npm run proto:gen
+	@echo "${BLUE}🔄 Building SvelteKit...${RESET}"
+	@cd frontend && npm run build
 	@echo "${GREEN}✅ Frontend buildé${RESET}"
 
 run-services:
@@ -490,18 +315,6 @@ run-ci: lint-frontend test
 
 lint-frontend:
 	@echo "${BLUE}🧹 Type-checking & linting frontend...${RESET}"
-	@cd frontend && ( \
-		if [ -x "$$HOME/.bun/bin/bun" ]; then \
-			$$HOME/.bun/bin/bun run check; \
-		elif command -v bun >/dev/null 2>&1; then \
-			bun run check; \
-		elif command -v npm >/dev/null 2>&1; then \
-			npm run check; \
-		else \
-			export NVM_DIR="$$HOME/.nvm"; \
-			[ -s "$$NVM_DIR/nvm.sh" ] && \. "$$NVM_DIR/nvm.sh"; \
-			npm run check; \
-		fi \
-	)
+	@cd frontend && npm run check
 	@echo "${GREEN}✅ Frontend type-check OK${RESET}"
 

@@ -284,6 +284,36 @@ services:
         max_attempts: 3
 
   # ─────────────────────────────────────────────────────
+  # Auth Service (NestJS) — port 3012
+  # ─────────────────────────────────────────────────────
+  auth-service:
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/auth-service:${TAG:-latest}
+    restart: always
+    environment:
+      NODE_ENV: production
+      PORT: "3012"
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USERNAME: ${POSTGRES_USER:-admin}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      DB_DATABASE: ${POSTGRES_DB:-auth_db}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - canari-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+
+  # ─────────────────────────────────────────────────────
   # User Service (NestJS) — port 3013
   # ─────────────────────────────────────────────────────
   user-service:
@@ -361,6 +391,7 @@ services:
       - channel-service
       - user-service
       - form-service
+      - auth-service
     networks:
       - canari-network
     healthcheck:
