@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Param, Post, Query, Res } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  HttpException,
+  HttpStatus,
+} from '@nestjs/common';
 import { ChannelService } from './channel.service';
 import {
   type ChannelJoinDto,
@@ -76,17 +85,19 @@ export class AppController {
   }
 
   @Post(':channelId/messages')
-  async sendMessage(
-    @Param('channelId') channelId: string,
-    @Body() body: SendChannelMessageDto,
-    @Res() res: any,
-  ) {
+  async sendMessage(@Param('channelId') channelId: string, @Body() body: SendChannelMessageDto) {
     try {
-      const result = await this.service.sendMessage(channelId, body);
-      return res.json(result);
+      return await this.service.sendMessage(channelId, body);
     } catch (err: any) {
       console.error('CONTROLLER SEND ERROR', err);
-      return res.status(err.status || 500).json({ statusCode: err.status || 500, message: err.message || 'Internal server error', stack: err.stack });
+      throw new HttpException(
+        {
+          statusCode: err.status || 500,
+          message: err.message || 'Internal server error',
+          stack: err.stack,
+        },
+        err.status ? Number(err.status) : HttpStatus.INTERNAL_SERVER_ERROR
+      );
     }
   }
 
