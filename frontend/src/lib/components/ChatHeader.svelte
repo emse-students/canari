@@ -170,8 +170,11 @@
   {#if onStartCall && !isChannel}
     <button
       onclick={onStartCall}
-      class="p-2 rounded-lg text-text-muted hover:bg-white/40 dark:hover:bg-black/35 hover:text-green-500 transition-colors"
-      title="Démarrer un appel"
+      class="p-2 rounded-lg transition-colors {isReady
+        ? 'text-text-muted hover:bg-white/40 dark:hover:bg-black/35 hover:text-green-500'
+        : 'text-text-muted/50 cursor-not-allowed opacity-50'}"
+      title={isReady ? 'Démarrer un appel' : 'En attente de connexion sécurisée...'}
+      disabled={!isReady}
     >
       <Phone size={18} />
     </button>

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { CallService } from '$lib/services/CallService';
-  import { Mic, MicOff, PhoneOff, Video, VideoOff } from 'lucide-svelte';
+  import { Mic, MicOff, PhoneOff, Video, VideoOff, Phone } from 'lucide-svelte';
   import { fade, scale } from 'svelte/transition';
 
   export let callService: CallService;
@@ -103,30 +103,49 @@
 
   <!-- Controls -->
   <div class="mt-8 flex items-center gap-6">
-    <button
-      class="p-4 rounded-full transition-colors {$isMuted
-        ? 'bg-red-500/20 text-red-500'
-        : 'bg-white/10 text-white hover:bg-white/20'}"
-      on:click={toggleMute}
-    >
-      {#if $isMuted}<MicOff size={24} />{:else}<Mic size={24} />{/if}
-    </button>
+    {#if $callState === 'incoming'}
+      <button
+        class="p-4 rounded-full bg-green-500 hover:bg-green-600 text-white transition-transform hover:scale-105 shadow-lg shadow-green-500/30"
+        on:click={() =>
+          callService.acceptCall(callService.currentGroupId ?? '', callService.currentCallId ?? '')}
+        title="Accepter l'appel"
+      >
+        <Phone size={32} />
+      </button>
 
-    <button
-      class="p-4 rounded-full bg-red-500 hover:bg-red-600 text-white transition-transform hover:scale-105 shadow-lg shadow-red-500/30"
-      on:click={endCall}
-    >
-      <PhoneOff size={32} />
-    </button>
+      <button
+        class="p-4 rounded-full bg-red-500 hover:bg-red-600 text-white transition-transform hover:scale-105 shadow-lg shadow-red-500/30"
+        on:click={endCall}
+        title="Refuser"
+      >
+        <PhoneOff size={32} />
+      </button>
+    {:else}
+      <button
+        class="p-4 rounded-full transition-colors {$isMuted
+          ? 'bg-red-500/20 text-red-500'
+          : 'bg-white/10 text-white hover:bg-white/20'}"
+        on:click={toggleMute}
+      >
+        {#if $isMuted}<MicOff size={24} />{:else}<Mic size={24} />{/if}
+      </button>
 
-    <button
-      class="p-4 rounded-full transition-colors {$isVideoOff
-        ? 'bg-red-500/20 text-red-500'
-        : 'bg-white/10 text-white hover:bg-white/20'}"
-      on:click={toggleVideo}
-    >
-      {#if $isVideoOff}<VideoOff size={24} />{:else}<Video size={24} />{/if}
-    </button>
+      <button
+        class="p-4 rounded-full bg-red-500 hover:bg-red-600 text-white transition-transform hover:scale-105 shadow-lg shadow-red-500/30"
+        on:click={endCall}
+      >
+        <PhoneOff size={32} />
+      </button>
+
+      <button
+        class="p-4 rounded-full transition-colors {$isVideoOff
+          ? 'bg-red-500/20 text-red-500'
+          : 'bg-white/10 text-white hover:bg-white/20'}"
+        on:click={toggleVideo}
+      >
+        {#if $isVideoOff}<VideoOff size={24} />{:else}<Video size={24} />{/if}
+      </button>
+    {/if}
   </div>
 </div>
 

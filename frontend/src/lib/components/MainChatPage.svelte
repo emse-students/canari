@@ -2401,7 +2401,19 @@
         isUploading={isUploadingMedia}
         onStartCall={() => {
           if (callService && selectedContact) {
-            void callService.startCall(selectedContact);
+            const convo = conversations.get(selectedContact);
+            if (convo) {
+              callService.startCall(convo.groupId).catch((e: unknown) => {
+                const msg = e instanceof Error ? e.message : String(e);
+                if (msg.includes('Groupe introuvable') || msg.includes('Group not found')) {
+                  alert(
+                    'Ce groupe est désynchronisé. Veuillez supprimer cette conversation et en recréer une nouvelle.'
+                  );
+                } else {
+                  alert(`Erreur appel: ${msg}`);
+                }
+              });
+            }
           }
         }}
       />

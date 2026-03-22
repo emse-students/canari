@@ -9,8 +9,8 @@ export class CallService {
   private signaledWs: WebSocket | null = null;
   private localStream: MediaStream | null = null;
 
-  private currentCallId: string | null = null;
-  private currentGroupId: string | null = null;
+  public currentCallId: string | null = null;
+  public currentGroupId: string | null = null;
   private callKey: CryptoKey | null = null;
 
   // Stores for UI
@@ -71,6 +71,7 @@ export class CallService {
     } catch (e) {
       console.error('Error starting call:', e);
       this.endCall();
+      throw e; // Re-throw so UI can handle it
     }
   }
 

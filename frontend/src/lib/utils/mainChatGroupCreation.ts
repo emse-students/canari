@@ -374,5 +374,6 @@ export async function startNewConversation(
   } catch (_e: unknown) {
     const msg = _e instanceof Error ? _e.message : String(_e);
     log(`Erreur création: ${msg}`);
+    conversations.delete(conversationKey);
   }
 }
