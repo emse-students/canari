@@ -6,8 +6,8 @@ use openmls::prelude::*;
 use openmls::treesync::RatchetTreeIn;
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
-use openmls_traits::storage::StorageProvider; // Explicit import for write_key_package
 use openmls_traits::OpenMlsProvider;
+use openmls_traits::storage::StorageProvider; // Explicit import for write_key_package
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
