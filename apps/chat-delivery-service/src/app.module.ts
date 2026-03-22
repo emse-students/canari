@@ -1,12 +1,12 @@
 import { Module, Provider } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { AppController } from './app.controller';
-import { QueuedMessage, QueuedMessageSchema } from './queued-message.schema';
-import { KeyPackage, KeyPackageSchema } from './key-package.schema';
-import { WelcomeMessage, WelcomeMessageSchema } from './welcome-message.schema';
-import { GroupMember, GroupMemberSchema } from './group-member.schema';
-import { Group, GroupSchema } from './group.schema';
-import { PinVerifier, PinVerifierSchema } from './pin-verifier.schema';
+import { QueuedMessage } from './entities/queued-message.entity';
+import { KeyPackage } from './entities/key-package.entity';
+import { WelcomeMessage } from './entities/welcome-message.entity';
+import { GroupMember } from './entities/group-member.entity';
+import { Group } from './entities/group.entity';
+import { PinVerifier } from './entities/pin-verifier.entity';
 import Redis from 'ioredis';
 
 const RedisProvider: Provider = {
@@ -21,16 +21,28 @@ const RedisProvider: Provider = {
 
 @Module({
   imports: [
-    MongooseModule.forRoot(
-      process.env.MONGO_URI || 'mongodb://localhost:27017/chat_db',
-    ),
-    MongooseModule.forFeature([
-      { name: QueuedMessage.name, schema: QueuedMessageSchema },
-      { name: KeyPackage.name, schema: KeyPackageSchema },
-      { name: WelcomeMessage.name, schema: WelcomeMessageSchema },
-      { name: GroupMember.name, schema: GroupMemberSchema },
-      { name: Group.name, schema: GroupSchema },
-      { name: PinVerifier.name, schema: PinVerifierSchema },
+    TypeOrmModule.forRoot({
+      type: 'postgres',
+      url:
+        process.env.POSTGRES_URL ||
+        'postgres://postgres:postgres@localhost:5432/canari_delivery',
+      entities: [
+        QueuedMessage,
+        KeyPackage,
+        WelcomeMessage,
+        GroupMember,
+        Group,
+        PinVerifier,
+      ],
+      synchronize: process.env.NODE_ENV !== 'production',
+    }),
+    TypeOrmModule.forFeature([
+      QueuedMessage,
+      KeyPackage,
+      WelcomeMessage,
+      GroupMember,
+      Group,
+      PinVerifier,
     ]),
   ],
   controllers: [AppController],

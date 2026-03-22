@@ -135,7 +135,7 @@ services:
       - "3010:3010"
     environment:
       PORT: "3010"
-      MONGO_URI: mongodb://mongo:27017/chat_db
+      POSTGRES_URL: postgres://admin:password@postgres:5432/auth_db
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       KAFKA_BROKERS: kafka:29092

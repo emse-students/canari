@@ -32,15 +32,15 @@
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { AppController } from './app.controller';
-import { getModelToken } from '@nestjs/mongoose';
+import { getRepositoryToken } from '@nestjs/typeorm';
 import { BadRequestException } from '@nestjs/common';
-import { Types } from 'mongoose';
-import { QueuedMessage } from './queued-message.schema';
-import { KeyPackage } from './key-package.schema';
-import { WelcomeMessage } from './welcome-message.schema';
-import { GroupMember } from './group-member.schema';
-import { Group } from './group.schema';
-import { PinVerifier } from './pin-verifier.schema';
+import { v4 as uuidv4 } from 'uuid';
+import { QueuedMessage } from './entities/queued-message.entity';
+import { KeyPackage } from './entities/key-package.entity';
+import { WelcomeMessage } from './entities/welcome-message.entity';
+import { GroupMember } from './entities/group-member.entity';
+import { Group } from './entities/group.entity';
+import { PinVerifier } from './entities/pin-verifier.entity';
 import { encodeInboundMsgEnvelope } from '@canari/shared-ts';
 
 // ---- Fixtures de test -------------------------------------------------------
@@ -110,9 +110,9 @@ function buildRedisMock() {
   };
 }
 
-/** Construit un ObjectId MongoDB valide pour les tests d'ACK. */
+/** Construit un identifiant UUID valide pour les tests d'ACK. */
 function fakeId(): string {
-  return new Types.ObjectId().toHexString();
+  return uuidv4();
 }
 
 interface TestEnv {
@@ -139,12 +139,12 @@ async function buildTestEnv(): Promise<TestEnv> {
   const moduleRef = await Test.createTestingModule({
     controllers: [AppController],
     providers: [
-      { provide: getModelToken(QueuedMessage.name), useValue: queueModel },
-      { provide: getModelToken(KeyPackage.name), useValue: kpModel },
-      { provide: getModelToken(WelcomeMessage.name), useValue: welcomeModel },
-      { provide: getModelToken(GroupMember.name), useValue: memberModel },
-      { provide: getModelToken(Group.name), useValue: groupModel },
-      { provide: getModelToken(PinVerifier.name), useValue: pinModel },
+      { provide: getRepositoryToken(QueuedMessage), useValue: queueModel },
+      { provide: getRepositoryToken(KeyPackage), useValue: kpModel },
+      { provide: getRepositoryToken(WelcomeMessage), useValue: welcomeModel },
+      { provide: getRepositoryToken(GroupMember), useValue: memberModel },
+      { provide: getRepositoryToken(Group), useValue: groupModel },
+      { provide: getRepositoryToken(PinVerifier), useValue: pinModel },
       { provide: 'REDIS_CLIENT', useValue: redis },
     ],
   }).compile();

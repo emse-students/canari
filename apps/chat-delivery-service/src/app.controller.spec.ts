@@ -1,12 +1,12 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { AppController } from './app.controller';
-import { getModelToken } from '@nestjs/mongoose';
-import { QueuedMessage } from './queued-message.schema';
-import { KeyPackage } from './key-package.schema';
-import { WelcomeMessage } from './welcome-message.schema';
-import { GroupMember } from './group-member.schema';
-import { Group } from './group.schema';
-import { PinVerifier } from './pin-verifier.schema';
+import { getRepositoryToken } from '@nestjs/typeorm';
+import { QueuedMessage } from './entities/queued-message.entity';
+import { KeyPackage } from './entities/key-package.entity';
+import { WelcomeMessage } from './entities/welcome-message.entity';
+import { GroupMember } from './entities/group-member.entity';
+import { Group } from './entities/group.entity';
+import { PinVerifier } from './entities/pin-verifier.entity';
 
 describe('AppController', () => {
   let appController: AppController;
@@ -64,27 +64,27 @@ describe('AppController', () => {
       controllers: [AppController],
       providers: [
         {
-          provide: getModelToken(QueuedMessage.name),
+          provide: getRepositoryToken(QueuedMessage),
           useValue: mockQueuedMessageModel,
         },
         {
-          provide: getModelToken(KeyPackage.name),
+          provide: getRepositoryToken(KeyPackage),
           useValue: mockKeyPackageModel,
         },
         {
-          provide: getModelToken(WelcomeMessage.name),
+          provide: getRepositoryToken(WelcomeMessage),
           useValue: mockWelcomeMessageModel,
         },
         {
-          provide: getModelToken(GroupMember.name),
+          provide: getRepositoryToken(GroupMember),
           useValue: mockGroupMemberModel,
         },
         {
-          provide: getModelToken(Group.name),
+          provide: getRepositoryToken(Group),
           useValue: mockGroupModel,
         },
         {
-          provide: getModelToken(PinVerifier.name),
+          provide: getRepositoryToken(PinVerifier),
           useValue: mockPinVerifierModel,
         },
         {

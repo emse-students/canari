@@ -10,14 +10,14 @@ import {
   Inject,
   BadRequestException,
 } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, AnyBulkWriteOperation, Types } from 'mongoose';
-import { QueuedMessage } from './queued-message.schema';
-import { KeyPackage } from './key-package.schema';
-import { WelcomeMessage } from './welcome-message.schema';
-import { GroupMember } from './group-member.schema';
-import { Group } from './group.schema';
-import { PinVerifier } from './pin-verifier.schema';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, In, MoreThanOrEqual } from 'typeorm';
+import { QueuedMessage } from './entities/queued-message.entity';
+import { KeyPackage } from './entities/key-package.entity';
+import { WelcomeMessage } from './entities/welcome-message.entity';
+import { GroupMember } from './entities/group-member.entity';
+import { Group } from './entities/group.entity';
+import { PinVerifier } from './entities/pin-verifier.entity';
 import Redis from 'ioredis';
 import * as crypto from 'crypto';
 import { lookup } from 'node:dns/promises';
@@ -54,20 +54,20 @@ function sanitizeOptionalQueryValue(
   return sanitizeQueryValue(value, fieldName);
 }
 
-function sanitizeObjectIdList(value: unknown): Types.ObjectId[] {
+function sanitizeStringIdList(value: unknown): string[] {
   if (!Array.isArray(value)) {
     throw new BadRequestException('messageIds must be an array');
   }
 
-  const objectIds: Types.ObjectId[] = [];
+  const ids: string[] = [];
   for (const id of value) {
-    if (typeof id !== 'string' || !Types.ObjectId.isValid(id)) {
-      throw new BadRequestException('messageIds contains invalid ObjectId');
+    if (typeof id !== 'string' || id.trim() === '') {
+      throw new BadRequestException('messageIds contains invalid ID');
     }
-    objectIds.push(new Types.ObjectId(id));
+    ids.push(id.trim());
   }
 
-  return objectIds;
+  return ids;
 }
 
 function isPrivateIpAddress(ip: string): boolean {
@@ -518,14 +518,17 @@ function computeManifestDiff(
 @Controller()
 export class AppController {
   constructor(
-    @InjectModel(QueuedMessage.name)
-    private queuedMessageModel: Model<QueuedMessage>,
-    @InjectModel(KeyPackage.name) private keyPackageModel: Model<KeyPackage>,
-    @InjectModel(WelcomeMessage.name)
-    private welcomeMessageModel: Model<WelcomeMessage>,
-    @InjectModel(GroupMember.name) private groupMemberModel: Model<GroupMember>,
-    @InjectModel(Group.name) private groupModel: Model<Group>,
-    @InjectModel(PinVerifier.name) private pinVerifierModel: Model<PinVerifier>,
+    @InjectRepository(QueuedMessage)
+    private queuedMessageRepo: Repository<QueuedMessage>,
+    @InjectRepository(KeyPackage)
+    private keyPackageRepo: Repository<KeyPackage>,
+    @InjectRepository(WelcomeMessage)
+    private welcomeMessageRepo: Repository<WelcomeMessage>,
+    @InjectRepository(GroupMember)
+    private groupMemberRepo: Repository<GroupMember>,
+    @InjectRepository(Group) private groupRepo: Repository<Group>,
+    @InjectRepository(PinVerifier)
+    private pinVerifierRepo: Repository<PinVerifier>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
   ) {}
 
@@ -896,15 +899,16 @@ export class AppController {
       throw new BadRequestException('verifier format invalid');
     }
 
-    const doc = await this.pinVerifierModel
-      .findOne({ userId: safeUserId })
-      .exec();
+    const doc = await this.pinVerifierRepo.findOne({
+      where: { userId: safeUserId },
+    });
 
     if (!doc) {
-      await this.pinVerifierModel.create({
+      const newDoc = this.pinVerifierRepo.create({
         userId: safeUserId,
         verifier: safeVerifier,
       });
+      await this.pinVerifierRepo.save(newDoc);
       return { status: 'registered' };
     }
 
@@ -998,18 +1002,19 @@ export class AppController {
   @Post('mls-api/groups')
   async createGroup(@Body() body: { name: string; createdBy: string }) {
     const groupId = uuidv4();
-    await this.groupModel.create({
-      groupId,
+    const newGroup = this.groupRepo.create({
+      id: groupId,
       name: body.name,
-      createdBy: body.createdBy,
-      createdAt: new Date(),
+      isGroup: true,
     });
-    return { groupId, name: body.name };
+    await this.groupRepo.save(newGroup);
+    return { groupId, name: body.name, createdBy: body.createdBy };
   }
 
   @Get('mls-api/groups/:groupId')
   async getGroup(@Param('groupId') groupId: string) {
-    return this.groupModel.findOne({ groupId }).exec();
+    const g = await this.groupRepo.findOne({ where: { id: groupId } });
+    return g ? { ...g, groupId: g.id } : null;
   }
 
   @Post('mls-api/groups/:groupId/members')
@@ -1021,11 +1026,20 @@ export class AppController {
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
 
-    await this.groupMemberModel.updateOne(
-      { groupId: safeGroupId, userId: safeUserId, deviceId: safeDeviceId },
-      { $set: { joinedAt: new Date() } },
-      { upsert: true },
-    );
+    let member = await this.groupMemberRepo.findOne({
+      where: { groupId: safeGroupId, userId: safeUserId },
+    });
+    if (!member) {
+      member = this.groupMemberRepo.create({
+        groupId: safeGroupId,
+        userId: safeUserId,
+        joinedAt: new Date(),
+      });
+    } else {
+      member.joinedAt = new Date();
+    }
+    await this.groupMemberRepo.save(member);
+
     // Sync to Redis for Gateway access
     await this.redis.sadd(
       `group:members:${safeGroupId}`,
@@ -1036,7 +1050,7 @@ export class AppController {
 
   @Get('mls-api/groups/:groupId/members')
   async getGroupMembers(@Param('groupId') groupId: string) {
-    return this.groupMemberModel.find({ groupId }).exec();
+    return this.groupMemberRepo.find({ where: { groupId } });
   }
 
   @Patch('mls-api/groups/:groupId')
@@ -1048,9 +1062,9 @@ export class AppController {
     if (typeof body.name !== 'string' || !body.name.trim()) {
       throw new BadRequestException('name is required');
     }
-    await this.groupModel.updateOne(
-      { groupId: safeGroupId },
-      { $set: { name: body.name.trim() } },
+    await this.groupRepo.update(
+      { id: safeGroupId },
+      { name: body.name.trim() },
     );
     return { status: 'renamed' };
   }
@@ -1062,7 +1076,7 @@ export class AppController {
   ) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     const safeUserId = sanitizeQueryValue(userId, 'userId');
-    await this.groupMemberModel.deleteMany({
+    await this.groupMemberRepo.delete({
       groupId: safeGroupId,
       userId: safeUserId,
     });
@@ -1078,8 +1092,8 @@ export class AppController {
   @Delete('mls-api/groups/:groupId')
   async deleteGroup(@Param('groupId') groupId: string) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
-    await this.groupModel.deleteOne({ groupId: safeGroupId });
-    await this.groupMemberModel.deleteMany({ groupId: safeGroupId });
+    await this.groupRepo.delete({ id: safeGroupId });
+    await this.groupMemberRepo.delete({ groupId: safeGroupId });
     await this.redis.del(`group:members:${safeGroupId}`);
     return { status: 'deleted' };
   }
@@ -1088,16 +1102,21 @@ export class AppController {
   async registerDevice(
     @Body() body: { userId: string; deviceId: string; keyPackage: string },
   ) {
-    await this.keyPackageModel.updateOne(
-      { userId: body.userId, deviceId: body.deviceId },
-      {
-        $set: {
-          keyPackage: body.keyPackage,
-          createdAt: new Date(),
-        },
-      },
-      { upsert: true },
-    );
+    let keyPackage = await this.keyPackageRepo.findOne({
+      where: { userId: body.userId, deviceId: body.deviceId },
+    });
+    if (!keyPackage) {
+      keyPackage = this.keyPackageRepo.create({
+        userId: body.userId,
+        deviceId: body.deviceId,
+        keyPackage: body.keyPackage,
+        createdAt: new Date(),
+      });
+    } else {
+      keyPackage.keyPackage = body.keyPackage;
+      keyPackage.createdAt = new Date();
+    }
+    await this.keyPackageRepo.save(keyPackage);
     return { status: 'registered' };
   }
 
@@ -1105,10 +1124,10 @@ export class AppController {
   async getUserDevices(@Param('userId') userId: string) {
     // Only return devices active in the last 30 days (avoids stale key packages)
     const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    return this.keyPackageModel
-      .find({ userId, createdAt: { $gte: cutoff } })
-      .sort({ createdAt: -1 })
-      .exec();
+    return this.keyPackageRepo.find({
+      where: { userId, createdAt: MoreThanOrEqual(cutoff) },
+      order: { createdAt: 'DESC' },
+    });
   }
 
   @Post('mls-api/welcome')
@@ -1142,7 +1161,7 @@ export class AppController {
     if (targetUserId) {
       query.userId = targetUserId;
     }
-    const deviceInfo = await this.keyPackageModel.findOne(query).exec();
+    const deviceInfo = await this.keyPackageRepo.findOne({ where: query });
 
     if (!deviceInfo) {
       throw new Error(
@@ -1150,7 +1169,7 @@ export class AppController {
       );
     }
 
-    await this.welcomeMessageModel.create({
+    const welcomeMsg = this.welcomeMessageRepo.create({
       deviceId: targetDeviceId,
       userId: deviceInfo.userId,
       senderUserId,
@@ -1159,6 +1178,7 @@ export class AppController {
       ratchetTree: body.ratchetTreePayload,
       createdAt: new Date(),
     });
+    await this.welcomeMessageRepo.save(welcomeMsg);
 
     // Real-time push via Gateway when the target device is currently online.
     const redisKey = `user:online:${deviceInfo.userId}:${targetDeviceId}`;
@@ -1189,11 +1209,13 @@ export class AppController {
 
   @Get('mls-api/welcome/:deviceId')
   async getWelcomeMessages(@Param('deviceId') deviceId: string) {
-    const messages = await this.welcomeMessageModel.find({ deviceId }).exec();
+    const messages = await this.welcomeMessageRepo.find({
+      where: { deviceId },
+    });
     // Delete immediately after reading: MLS init keys are ephemeral and can only be
     // consumed once. Re-processing the same welcome on reconnect would always fail.
     if (messages.length > 0) {
-      await this.welcomeMessageModel.deleteMany({ deviceId });
+      await this.welcomeMessageRepo.delete({ deviceId });
     }
     return messages;
   }
@@ -1213,7 +1235,7 @@ export class AppController {
       type?: string;
     },
   ) {
-    const ops: AnyBulkWriteOperation<QueuedMessage>[] = [];
+    const ops: QueuedMessage[] = [];
     let sentCount = 0;
 
     if (body.proto) {
@@ -1250,20 +1272,18 @@ export class AppController {
           await this.redis.publish('chat:messages', envelope);
           sentCount++;
         } else {
-          ops.push({
-            insertOne: {
-              document: {
-                recipientId: recipientUserId,
-                deviceId: recipientDeviceId,
-                senderId: body.senderId,
-                senderDeviceId: body.senderDeviceId,
-                groupId: body.groupId,
-                isWelcome: body.isWelcome,
-                proto,
-                createdAt: new Date(),
-              },
-            },
-          });
+          ops.push(
+            this.queuedMessageRepo.create({
+              recipientId: recipientUserId,
+              deviceId: recipientDeviceId,
+              senderId: body.senderId,
+              senderDeviceId: body.senderDeviceId,
+              groupId: body.groupId,
+              isWelcome: body.isWelcome,
+              proto,
+              createdAt: new Date(),
+            }),
+          );
         }
       }
     } else {
@@ -1285,20 +1305,22 @@ export class AppController {
       const safeType: string =
         typeof rawType === 'string' && rawType.length > 0 ? rawType : 'message';
 
-      let targetList: { userId: string; deviceId: string }[] = [];
+      const targetList: { userId: string; deviceId: string }[] = [];
 
       if (!body.recipients || body.recipients.length === 0) {
-        const members = await this.groupMemberModel
-          .find({ groupId })
-          .lean()
-          .exec();
-        targetList = members
-          .filter((m) => {
-            if (senderDeviceId)
-              return !(m.userId === senderId && m.deviceId === senderDeviceId);
-            return m.userId !== senderId;
-          })
-          .map((m) => ({ userId: m.userId, deviceId: m.deviceId }));
+        const members = await this.groupMemberRepo.find({ where: { groupId } });
+        const memberUserIds = members
+          .map((m) => m.userId)
+          .filter((id) => id !== senderId);
+
+        if (memberUserIds.length > 0) {
+          const devices = await this.keyPackageRepo.find({
+            where: { userId: In(memberUserIds) },
+          });
+          for (const d of devices) {
+            targetList.push({ userId: d.userId, deviceId: d.deviceId });
+          }
+        }
       } else {
         for (const r of body.recipients) {
           const recipientUserId = sanitizeQueryValue(
@@ -1353,26 +1375,24 @@ export class AppController {
           await this.redis.publish('chat:messages', envelope);
           sentCount++;
         } else {
-          ops.push({
-            insertOne: {
-              document: {
-                recipientId: r.userId,
-                deviceId: r.deviceId,
-                senderId,
-                senderDeviceId,
-                groupId,
-                content: safeContent,
-                type: safeType,
-                createdAt: new Date(),
-              },
-            },
-          });
+          ops.push(
+            this.queuedMessageRepo.create({
+              recipientId: r.userId,
+              deviceId: r.deviceId,
+              senderId,
+              senderDeviceId,
+              groupId,
+              content: safeContent,
+              type: safeType,
+              createdAt: new Date(),
+            }),
+          );
         }
       }
     }
 
     if (ops.length > 0) {
-      await this.queuedMessageModel.bulkWrite(ops);
+      await this.queuedMessageRepo.save(ops);
     }
 
     return { status: 'processed', queued: ops.length, sent: sentCount };
@@ -1408,14 +1428,10 @@ export class AppController {
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
 
     // On renvoie juste la liste
-    return this.queuedMessageModel
-      .find({
-        recipientId: safeUserId,
-        deviceId: safeDeviceId,
-      })
-      .sort({ createdAt: 1 })
-      .lean()
-      .exec();
+    return this.queuedMessageRepo.find({
+      where: { recipientId: safeUserId, deviceId: safeDeviceId },
+      order: { createdAt: 'ASC' },
+    });
   }
 
   // 2. Nouvelle route d'Acquittement (ACK)
@@ -1425,19 +1441,19 @@ export class AppController {
   ) {
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
-    const safeMessageIds = sanitizeObjectIdList(body.messageIds);
+    const safeMessageIds = sanitizeStringIdList(body.messageIds);
 
     if (safeMessageIds.length === 0) {
       return { status: 'ignored' };
     }
 
     // On supprime uniquement les messages que le client a confirmés
-    const result = (await this.queuedMessageModel.deleteMany({
-      _id: { $in: safeMessageIds },
+    const result = await this.queuedMessageRepo.delete({
+      id: In(safeMessageIds),
       recipientId: safeUserId,
       deviceId: safeDeviceId, // Sécurité pour éviter qu'un device supprime les messages d'un autre
-    })) as unknown as { deletedCount: number };
+    });
 
-    return { status: 'deleted', count: result.deletedCount };
+    return { status: 'deleted', count: result.affected || 0 };
   }
 }
