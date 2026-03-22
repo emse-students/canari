@@ -234,7 +234,7 @@ async fn main() {
                                     for (key, senders) in map.iter() {
                                         if key.starts_with(&prefix) {
                                             for tx in senders {
-                                                let _ = tx.send(frame.clone());
+                                                let _ = tx.send(frame.clone()).await;
                                             }
                                         }
                                     }
@@ -309,7 +309,7 @@ async fn main() {
                         let mut count = 0;
                         for senders in map.values() {
                             for tx in senders {
-                                let _ = tx.send(frame.clone());
+                                let _ = tx.send(frame.clone()).await;
                                 count += 1;
                             }
                         }
