@@ -75,7 +75,9 @@ jobs:
           # le code utilise window.location.origin comme fallback, ce qui fonctionne
           # derrière nginx (même domaine, /ws, /mls-api/ et /media/ routés par le reverse proxy).
           echo "VITE_GATEWAY_URL=${BASE_URL}" >> .env
-          echo "VITE_HISTORY_URL=${BASE_URL}" >> .env
+          echo "VITE_CALL_URL=${BASE_URL}" >> .env
+          echo "VITE_CHANNEL_URL=${BASE_URL}" >> .env
+          echo "VITE_DELIVERY_URL=${BASE_URL}" >> .env
           echo "VITE_MEDIA_URL=${BASE_URL}" >> .env
           echo "VITE_POST_URL=${BASE_URL}" >> .env
           echo "VITE_FORM_URL=${BASE_URL}" >> .env

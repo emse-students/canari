@@ -84,8 +84,11 @@ jobs:
           # Use empty values for URLs to trigger fallback to window.location logic (or defaults)
           # Or set specific production URLs here if desired.
           echo "VITE_GATEWAY_URL=${BASE_URL}" >> .env
-          echo "VITE_HISTORY_URL=${BASE_URL}" >> .env
+          echo "VITE_DELIVERY_URL=${BASE_URL}" >> .env
           echo "VITE_MEDIA_URL=${BASE_URL}" >> .env
+          echo "VITE_CALL_URL=${BASE_URL}" >> .env
+          echo "VITE_CHANNEL_URL=${BASE_URL}" >> .env
+          echo "VITE_FORM_URL=${BASE_URL}" >> .env
 
       - name: Build Android APK
         uses: tauri-apps/tauri-action@v0

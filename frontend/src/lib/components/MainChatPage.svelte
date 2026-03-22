@@ -431,7 +431,7 @@
   }
 
   const historyBaseUrl = (() => {
-    const env = import.meta.env.VITE_HISTORY_URL;
+    const env = import.meta.env.VITE_DELIVERY_URL;
     if (env && env.trim()) return env;
     return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3010';
   })();

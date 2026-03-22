@@ -30,7 +30,7 @@ export class TauriMlsService implements IMlsService {
     const envGateway = import.meta.env.VITE_GATEWAY_URL;
     this.baseUrl = envGateway && envGateway.trim() ? envGateway : 'http://localhost:3000';
 
-    const envHistory = import.meta.env.VITE_HISTORY_URL;
+    const envHistory = import.meta.env.VITE_DELIVERY_URL;
     this.historyUrl = envHistory && envHistory.trim() ? envHistory : 'http://localhost:3010';
   }
 

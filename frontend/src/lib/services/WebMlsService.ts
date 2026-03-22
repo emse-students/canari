@@ -36,7 +36,7 @@ export class WebMlsService implements IMlsService {
           ? window.location.origin
           : 'http://localhost:3000';
 
-    const envHistory = import.meta.env.VITE_HISTORY_URL;
+    const envHistory = import.meta.env.VITE_DELIVERY_URL;
     this.historyUrl =
       envHistory && envHistory.trim()
         ? envHistory

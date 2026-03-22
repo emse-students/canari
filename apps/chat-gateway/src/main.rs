@@ -85,7 +85,7 @@ async fn main() {
 
     let http_client = HttpClient::new();
     let delivery_service_url = std::env::var("DELIVERY_SERVICE_URL")
-        .unwrap_or_else(|_| "http://localhost:3001".to_string());
+        .unwrap_or_else(|_| "http://localhost:3010".to_string());
     tracing::info!("Delivery service URL: {}", delivery_service_url);
 
     let app_state = Arc::new(AppState::new(

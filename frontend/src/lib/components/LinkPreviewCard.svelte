@@ -42,7 +42,7 @@
   async function loadPreview(targetHref: string) {
     isLoading = true;
     try {
-      const baseUrl = import.meta.env.VITE_HISTORY_URL?.trim() || window.location.origin;
+      const baseUrl = import.meta.env.VITE_DELIVERY_URL?.trim() || window.location.origin;
       const endpoint = `${baseUrl}/api/mls-api/link-preview?url=${encodeURIComponent(targetHref)}`;
       const res = await fetch(endpoint);
       if (!res.ok) return;

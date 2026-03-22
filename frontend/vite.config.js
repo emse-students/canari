@@ -41,7 +41,7 @@ export default defineConfig(async () => ({
         }
       : undefined,
     proxy: {
-      // Proxy the delivery-service API so VITE_HISTORY_URL is not needed in local dev.
+      // Proxy the delivery-service API so VITE_DELIVERY_URL is not needed in local dev.
       // Requests to /mls-api/* and /history/* are forwarded to the NestJS service.
       '/mls-api': {
         target: 'http://localhost:3010',
