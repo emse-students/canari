@@ -2,6 +2,7 @@
   "name": "chat-delivery-service",
   "version": "0.0.1",
   "scripts": {
+    "build": "nest build",
     "start": "ts-node src/main.ts",
     "start:dev": "nest start --watch",
     "test": "jest",

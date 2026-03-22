@@ -537,7 +537,7 @@ impl MlsManager {
             .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
 
         group
-            .export_secret(&self.provider, label, context, key_len)
+            .export_secret(self.provider.crypto(), label, context, key_len)
             .map_err(|e| MlsError::OpenMls(format!("Export secret error: {:?}", e)))
     }
 }

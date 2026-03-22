@@ -51,7 +51,6 @@ pnpm-debug.log*
 .bun/
 
 # Lock files (using Bun)
-package-lock.json
 yarn.lock
 pnpm-lock.yaml
 
