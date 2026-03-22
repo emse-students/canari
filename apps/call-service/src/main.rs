@@ -9,19 +9,17 @@ use axum::{
 };
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
-use std::{net::SocketAddr, sync::Arc};
+use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{error, info, warn};
+use tracing::{error, info};
 use uuid::Uuid;
-use webrtc::api::media_engine::{MediaEngine, MIME_TYPE_OPUS, MIME_TYPE_VP8};
+use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::APIBuilder;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::configuration::RTCConfiguration;
-use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::peer_connection::RTCPeerConnection;
-use webrtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
 use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
 use webrtc::track::track_local::{TrackLocal, TrackLocalWriter};
@@ -36,7 +34,6 @@ struct AppState {
 }
 
 struct Room {
-    id: RoomId,
     // Store tracks to be added for new peers
     tracks: Mutex<Vec<Arc<TrackLocalStaticRTP>>>,
     // Store connected peers to notify/renegotiate
@@ -83,7 +80,7 @@ async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) ->
     ws.on_upgrade(|socket| handle_socket(socket, state))
 }
 
-async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
+async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     let peer_id = Uuid::new_v4().to_string();
     let mut current_room_id: Option<String> = None;
 
@@ -158,7 +155,6 @@ async fn handle_signal(
                 .entry(room_id.clone())
                 .or_insert_with(|| {
                     Arc::new(Room {
-                        id: room_id.clone(),
                         tracks: Mutex::new(Vec::new()),
                         peers: DashMap::new(),
                     })
@@ -172,13 +168,11 @@ async fn handle_signal(
             // Add existing tracks to this new PC
             let tracks = room.tracks.lock().await;
             for track in tracks.iter() {
-                let sender = pc
-                    .add_track(Arc::clone(track) as Arc<dyn TrackLocal + Send + Sync>)
+                pc.add_track(Arc::clone(track) as Arc<dyn TrackLocal + Send + Sync>)
                     .await
                     .unwrap();
                 // Spawn PLI requester for video
                 if track.kind() == RTPCodecType::Video {
-                    let media_ssrc = sender.get_parameters().await.encodings[0].ssrc;
                     tokio::spawn(async move {
                         // Simple PLI loop? Or handled by interceptor?
                         // Webrtc-rs creates interceptors by default.
@@ -207,76 +201,75 @@ async fn handle_signal(
             let room_clone = room.clone();
             let peer_id_clone = peer_id.clone();
             pc.on_track(Box::new(
-                move |track: Option<Arc<TrackRemote>>, _receiver, _transceiver| {
+                move |track: Arc<TrackRemote>, _receiver, _transceiver| {
                     let room_clone = room_clone.clone();
                     let peer_id_clone = peer_id_clone.clone();
 
                     Box::pin(async move {
-                        if let Some(remote_track) = track {
-                            info!(
-                                "Track received from {}: kind={}",
-                                peer_id_clone,
-                                remote_track.kind()
-                            );
+                        let remote_track = track;
+                        info!(
+                            "Track received from {}: kind={}",
+                            peer_id_clone,
+                            remote_track.kind()
+                        );
 
-                            // Create a LocalTrack to forward this RemoteTrack
-                            let local_track = Arc::new(TrackLocalStaticRTP::new(
-                                remote_track.codec().capability.clone(),
-                                format!("track-{}", Uuid::new_v4()),
-                                "webrtc-rs".to_owned(),
-                            ));
+                        // Create a LocalTrack to forward this RemoteTrack
+                        let local_track = Arc::new(TrackLocalStaticRTP::new(
+                            remote_track.codec().capability.clone(),
+                            format!("track-{}", Uuid::new_v4()),
+                            "webrtc-rs".to_owned(),
+                        ));
 
-                            // Store in room
-                            {
-                                let mut room_tracks = room_clone.tracks.lock().await;
-                                room_tracks.push(local_track.clone());
+                        // Store in room
+                        {
+                            let mut room_tracks = room_clone.tracks.lock().await;
+                            room_tracks.push(local_track.clone());
+                        }
+
+                        // Forward RTP packets
+                        let local_track_clone = local_track.clone();
+                        tokio::spawn(async move {
+                            let mut buf = vec![0u8; 1500];
+                            while let Ok((parsed, _)) = remote_track.read(&mut buf).await {
+                                if let Err(_e) = local_track_clone.write_rtp(&parsed).await {
+                                    // error sending
+                                }
+                            }
+                        });
+
+                        // Add this new local_track to ALL OTHER peers in the room
+                        for peer_entry in room_clone.peers.iter() {
+                            let other_pid = peer_entry.key();
+                            if other_pid == &peer_id_clone {
+                                continue;
                             }
 
-                            // Forward RTP packets
-                            let local_track_clone = local_track.clone();
-                            tokio::spawn(async move {
-                                let mut buf = vec![0u8; 1500];
-                                while let Ok((parsed, _)) = remote_track.read(&mut buf).await {
-                                    if let Err(e) = local_track_clone.write_rtp(&parsed).await {
-                                        // error sending
-                                    }
-                                }
-                            });
+                            let other_ctx = peer_entry.value();
+                            if let Err(e) = other_ctx
+                                .pc
+                                .add_track(Arc::clone(&local_track)
+                                    as Arc<dyn TrackLocal + Send + Sync>)
+                                .await
+                            {
+                                error!("Failed to add track to peer {}: {}", other_pid, e);
+                                continue;
+                            }
 
-                            // Add this new local_track to ALL OTHER peers in the room
-                            for peer_entry in room_clone.peers.iter() {
-                                let other_pid = peer_entry.key();
-                                if other_pid == &peer_id_clone {
-                                    continue;
-                                }
-
-                                let other_ctx = peer_entry.value();
-                                if let Err(e) = other_ctx
+                            // Renegotiate with other peer
+                            // Create Offer
+                            if let Ok(offer) = other_ctx.pc.create_offer(None).await {
+                                if other_ctx
                                     .pc
-                                    .add_track(Arc::clone(&local_track)
-                                        as Arc<dyn TrackLocal + Send + Sync>)
+                                    .set_local_description(offer.clone())
                                     .await
+                                    .is_ok()
                                 {
-                                    error!("Failed to add track to peer {}: {}", other_pid, e);
-                                    continue;
-                                }
-
-                                // Renegotiate with other peer
-                                // Create Offer
-                                if let Ok(offer) = other_ctx.pc.create_offer(None).await {
-                                    if other_ctx
-                                        .pc
-                                        .set_local_description(offer.clone())
-                                        .await
-                                        .is_ok()
-                                    {
-                                        let _ = other_ctx
-                                            .notify_tx
-                                            .send(SignalMessage::Offer {
-                                                sdp: serde_json::to_string(&offer).unwrap(),
-                                            })
-                                            .await;
-                                    }
+                                    let _ = other_ctx
+                                        .notify_tx
+                                        .send(SignalMessage::Offer {
+                                            sdp: serde_json::to_string(&offer).unwrap(),
+                                        })
+                                        .await;
                                 }
                             }
                         }
