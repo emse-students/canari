@@ -19,11 +19,23 @@ RUN printf 'server {\n\
     # Cela évite que nginx refuse de démarrer si un upstream est temporairement absent\n\
     resolver 127.0.0.11 valid=10s ipv6=off;\n\
     \n\
+    location = /internal/auth/verify {\n\
+    internal;\n\
+    set $upstream_auth auth-service:3012;\n\
+    proxy_pass http://$upstream_auth/api/auth/verify;\n\
+    proxy_pass_request_body off;\n\
+    proxy_set_header Content-Length "";\n\
+    proxy_set_header X-Original-URI $request_uri;\n\
+    }\n\
+    \n\
     location / {\n\
     try_files $uri $uri/ /index.html;\n\
     }\n\
     \n\
     location /api/ws {\n\
+    auth_request /internal/auth/verify;\n\
+    auth_request_set $user_id $upstream_http_x_user_id;\n\
+    proxy_set_header X-User-Id $user_id;\n\
     set $upstream_gateway chat-gateway:3000;\n\
     proxy_pass http://$upstream_gateway;\n\
     proxy_http_version 1.1;\n\
@@ -46,6 +58,9 @@ RUN printf 'server {\n\
     }\n\
     \n\
     location /api/mls-api {\n\
+    auth_request /internal/auth/verify;\n\
+    auth_request_set $user_id $upstream_http_x_user_id;\n\
+    proxy_set_header X-User-Id $user_id;\n\
     set $upstream_delivery chat-delivery-service:3010;\n\
     proxy_pass http://$upstream_delivery;\n\
     proxy_set_header Host $host;\n\
@@ -55,6 +70,9 @@ RUN printf 'server {\n\
     }\n\
     \n\
     location /api/history {\n\
+    auth_request /internal/auth/verify;\n\
+    auth_request_set $user_id $upstream_http_x_user_id;\n\
+    proxy_set_header X-User-Id $user_id;\n\
     set $upstream_delivery chat-delivery-service:3010;\n\
     proxy_pass http://$upstream_delivery;\n\
     proxy_set_header Host $host;\n\
@@ -72,6 +90,9 @@ RUN printf 'server {\n\
     }\n\
     \n\
     location /api/posts {\n\
+    auth_request /internal/auth/verify;\n\
+    auth_request_set $user_id $upstream_http_x_user_id;\n\
+    proxy_set_header X-User-Id $user_id;\n\
     set $upstream_post post-service:3015;\n\
     proxy_pass http://$upstream_post;\n\
     proxy_set_header Host $host;\n\
@@ -80,7 +101,22 @@ RUN printf 'server {\n\
     proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
     }\n\
     \n\
+    location /api/payments {\n\
+    auth_request /internal/auth/verify;\n\
+    auth_request_set $user_id $upstream_http_x_user_id;\n\
+    proxy_set_header X-User-Id $user_id;\n\
+    set $upstream_payment form-service:3016;\n\
+    proxy_pass http://$upstream_payment;\n\
+    proxy_set_header Host $host;\n\
+    proxy_set_header X-Real-IP $remote_addr;\n\
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
+    proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
+    }\n\
+    \n\
     location /api/forms {\n\
+    auth_request /internal/auth/verify;\n\
+    auth_request_set $user_id $upstream_http_x_user_id;\n\
+    proxy_set_header X-User-Id $user_id;\n\
     set $upstream_form form-service:3016;\n\
     proxy_pass http://$upstream_form;\n\
     proxy_set_header Host $host;\n\

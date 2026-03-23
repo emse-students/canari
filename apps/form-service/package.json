@@ -16,10 +16,12 @@
     "@nestjs/microservices": "^11.1.17",
     "@nestjs/mongoose": "^11.0.4",
     "@nestjs/platform-express": "^11.1.16",
+    "@types/jsonwebtoken": "^9.0.10",
     "axios": "^1.13.6",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
     "exceljs": "^4.4.0",
+    "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.2.4",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
@@ -27,18 +29,18 @@
   },
   "devDependencies": {
     "@nestjs/cli": "^11.0.16",
-    "@types/express": "^5.0.6",
-    "@types/node": "^25.3.5",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.9.3",
     "@nestjs/testing": "^11.0.0",
+    "@types/express": "^5.0.6",
     "@types/jest": "^29.5.2",
+    "@types/node": "^25.3.5",
     "jest": "^29.5.0",
-    "ts-jest": "^29.1.0",
     "source-map-support": "^0.5.21",
     "supertest": "^6.3.3",
+    "ts-jest": "^29.1.0",
     "ts-loader": "^9.4.3",
-    "tsconfig-paths": "^4.2.0"
+    "ts-node": "^10.9.2",
+    "tsconfig-paths": "^4.2.0",
+    "typescript": "^5.9.3"
   },
   "jest": {
     "moduleFileExtensions": [

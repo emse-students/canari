@@ -1,33 +1,35 @@
 <script lang="ts">
-  export let data: any; // data passé par le load SvelteKit
-  const eventId = data.eventId; 
+  let { data }: { data: any } = $props(); // data passé par le load SvelteKit
+  let eventId = $derived(data.eventId);
 
-  let options = {
+  let options = $state({
     isMemberBDE: false,
-    wantsMeal: false
-  };
-  
-  let isProcessing = false;
-  let paymentError = '';
+    wantsMeal: false,
+  });
+
+  let isProcessing = $state(false);
+  let paymentError = $state('');
 
   async function handlePayment() {
     isProcessing = true;
     paymentError = '';
 
     try {
-      const response = await fetch('http://localhost:3000/payments/create-checkout-session', {
+      const response = await fetch('/api/payments/create-checkout-session', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          Authorization: `Bearer ${localStorage.getItem('token')}`,
         },
-        body: JSON.stringify({ eventId, options })
+        body: JSON.stringify({ eventId, options }),
       });
 
       const result = await response.json();
 
       if (!response.ok) {
-        throw new Error(result.message || 'Une erreur est survenue lors de l\'initialisation du paiement');
+        throw new Error(
+          result.message || "Une erreur est survenue lors de l'initialisation du paiement"
+        );
       }
 
       // Redirection vers Stripe Hosted Checkout Page
@@ -63,8 +65,8 @@
     </div>
   {/if}
 
-  <button 
-    on:click={handlePayment} 
+  <button
+    onclick={handlePayment}
     disabled={isProcessing}
     class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded transition disabled:opacity-75"
   >

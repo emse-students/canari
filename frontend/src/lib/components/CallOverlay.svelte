@@ -3,25 +3,34 @@
   import { Mic, MicOff, PhoneOff, Video, VideoOff, Phone } from 'lucide-svelte';
   import { fade, scale } from 'svelte/transition';
 
-  export let callService: CallService;
-  export let remoteName: string = 'Utilisateur';
+  let {
+    callService,
+    remoteName = 'Utilisateur',
+  }: {
+    callService: CallService;
+    remoteName?: string;
+  } = $props();
 
-  let remoteVideo: HTMLVideoElement;
-  let localVideo: HTMLVideoElement;
+  let remoteVideo: HTMLVideoElement | undefined = $state();
+  let localVideo: HTMLVideoElement | undefined = $state();
 
-  const callState = callService.callState;
-  const remoteStream = callService.remoteStream;
-  const localStream = callService.localStreamStore;
-  const isMuted = callService.isMuted;
-  const isVideoOff = callService.isVideoOff;
+  let callState = $derived(callService.callState);
+  let remoteStream = $derived(callService.remoteStream);
+  let localStream = $derived(callService.localStreamStore);
+  let isMuted = $derived(callService.isMuted);
+  let isVideoOff = $derived(callService.isVideoOff);
 
-  $: if ($remoteStream && remoteVideo) {
-    remoteVideo.srcObject = $remoteStream;
-  }
+  $effect(() => {
+    if ($remoteStream && remoteVideo) {
+      remoteVideo.srcObject = $remoteStream;
+    }
+  });
 
-  $: if ($localStream && localVideo) {
-    localVideo.srcObject = $localStream;
-  }
+  $effect(() => {
+    if ($localStream && localVideo) {
+      localVideo.srcObject = $localStream;
+    }
+  });
 
   function toggleMute() {
     callService.isMuted.update((m) => !m);
@@ -106,7 +115,7 @@
     {#if $callState === 'incoming'}
       <button
         class="p-4 rounded-full bg-green-500 hover:bg-green-600 text-white transition-transform hover:scale-105 shadow-lg shadow-green-500/30"
-        on:click={() =>
+        onclick={() =>
           callService.acceptCall(callService.currentGroupId ?? '', callService.currentCallId ?? '')}
         title="Accepter l'appel"
       >
@@ -115,7 +124,7 @@
 
       <button
         class="p-4 rounded-full bg-red-500 hover:bg-red-600 text-white transition-transform hover:scale-105 shadow-lg shadow-red-500/30"
-        on:click={endCall}
+        onclick={endCall}
         title="Refuser"
       >
         <PhoneOff size={32} />
@@ -125,14 +134,14 @@
         class="p-4 rounded-full transition-colors {$isMuted
           ? 'bg-red-500/20 text-red-500'
           : 'bg-white/10 text-white hover:bg-white/20'}"
-        on:click={toggleMute}
+        onclick={toggleMute}
       >
         {#if $isMuted}<MicOff size={24} />{:else}<Mic size={24} />{/if}
       </button>
 
       <button
         class="p-4 rounded-full bg-red-500 hover:bg-red-600 text-white transition-transform hover:scale-105 shadow-lg shadow-red-500/30"
-        on:click={endCall}
+        onclick={endCall}
       >
         <PhoneOff size={32} />
       </button>
@@ -141,7 +150,7 @@
         class="p-4 rounded-full transition-colors {$isVideoOff
           ? 'bg-red-500/20 text-red-500'
           : 'bg-white/10 text-white hover:bg-white/20'}"
-        on:click={toggleVideo}
+        onclick={toggleVideo}
       >
         {#if $isVideoOff}<VideoOff size={24} />{:else}<Video size={24} />{/if}
       </button>
