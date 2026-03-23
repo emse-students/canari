@@ -3,7 +3,7 @@
   let errorMessage = '';
 
   // Identifiant de l'association (récupéré via les props ou le store d'auth)
-  export let data; 
+  export let data: any; 
   const associationId = data.associationId; 
 
   async function connectStripe() {

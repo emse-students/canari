@@ -1,5 +1,5 @@
 <script lang="ts">
-  export let data; // data passé par le load SvelteKit
+  export let data: any; // data passé par le load SvelteKit
   const eventId = data.eventId; 
 
   let options = {
