@@ -227,17 +227,24 @@ async fn main() {
                                 .to_string();
 
                                 // Find all map keys that start with the user ID
-                                let map = connected_users.lock().unwrap();
-                                for u_id in user_ids {
-                                    // Iterate all keys to find matches prefix (u_id + ":")
-                                    let prefix = format!("{}:", u_id);
-                                    for (key, senders) in map.iter() {
-                                        if key.starts_with(&prefix) {
-                                            for tx in senders {
-                                                let _ = tx.send(frame.clone()).await;
+                                let senders_to_notify: Vec<_> = {
+                                    let map = connected_users.lock().unwrap();
+                                    let mut temp = Vec::new();
+                                    for u_id in user_ids {
+                                        let prefix = format!("{}:", u_id);
+                                        for (key, senders) in map.iter() {
+                                            if key.starts_with(&prefix) {
+                                                for tx in senders {
+                                                    temp.push(tx.clone());
+                                                }
                                             }
                                         }
                                     }
+                                    temp
+                                };
+
+                                for tx in senders_to_notify {
+                                    let _ = tx.send(frame.clone()).await;
                                 }
                                 tracing::info!(
                                     "[Gateway] Channel event distributed to connected users."
@@ -305,13 +312,18 @@ async fn main() {
                             "data": serde_json::from_str::<serde_json::Value>(payload).unwrap_or(serde_json::json!(null))
                         }).to_string();
 
-                        let map = connected_users.lock().unwrap();
+                        let senders_to_notify: Vec<_> = {
+                            let map = connected_users.lock().unwrap();
+                            map.values()
+                                .flat_map(|senders| senders.iter().clone())
+                                .cloned()
+                                .collect()
+                        };
+
                         let mut count = 0;
-                        for senders in map.values() {
-                            for tx in senders {
-                                let _ = tx.send(frame.clone()).await;
-                                count += 1;
-                            }
+                        for tx in senders_to_notify {
+                            let _ = tx.send(frame.clone()).await;
+                            count += 1;
                         }
                         tracing::info!("Broadcasted post to {} connections", count);
 
