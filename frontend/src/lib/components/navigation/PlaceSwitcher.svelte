@@ -2,6 +2,8 @@
   import {
     CalendarDays,
     ChevronDown,
+    FileText,
+    LayoutDashboard,
     MessageCircle,
     Newspaper,
     Phone,
@@ -27,9 +29,13 @@
     users: Users,
     phone: Phone,
     'calendar-days': CalendarDays,
+    'layout-dashboard': LayoutDashboard,
+    'file-text': FileText,
   } as const;
 
-  let activePlace = $derived(APP_PLACES.find((place) => place.id === activePlaceId) ?? APP_PLACES[0]);
+  let activePlace = $derived(
+    APP_PLACES.find((place) => place.id === activePlaceId) ?? APP_PLACES[0]
+  );
   let ActiveIcon = $derived(getIcon(activePlace.icon));
 
   function getIcon(icon: keyof typeof ICONS) {
@@ -71,7 +77,10 @@
   >
     <ActiveIcon size={15} />
     <span>{activePlace.label}</span>
-    <ChevronDown size={14} class={isOpen ? 'rotate-180 transition-transform' : 'transition-transform'} />
+    <ChevronDown
+      size={14}
+      class={isOpen ? 'rotate-180 transition-transform' : 'transition-transform'}
+    />
   </button>
 
   {#if isOpen}
@@ -87,9 +96,12 @@
             role="menuitem"
             onclick={() => handleSelect(place.id)}
             disabled={!place.enabled}
-            class="mb-1 flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left last:mb-0 {place.id === activePlaceId
+            class="mb-1 flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left last:mb-0 {place.id ===
+            activePlaceId
               ? 'bg-[color-mix(in_srgb,var(--cn-yellow)_23%,white)]'
-              : 'hover:bg-white/80'} {place.enabled ? 'text-text-main' : 'text-text-muted opacity-70'}"
+              : 'hover:bg-white/80'} {place.enabled
+              ? 'text-text-main'
+              : 'text-text-muted opacity-70'}"
           >
             <span class="mt-[1px] rounded-lg border border-cn-border bg-white/70 p-1.5">
               <PlaceIcon size={14} />
@@ -98,7 +110,10 @@
               <span class="block text-sm font-semibold leading-4">
                 {place.label}
                 {#if place.badge}
-                  <span class="ml-2 rounded-full border border-cn-border bg-white/80 px-1.5 py-0.5 text-[0.63rem] font-bold uppercase tracking-wide">{place.badge}</span>
+                  <span
+                    class="ml-2 rounded-full border border-cn-border bg-white/80 px-1.5 py-0.5 text-[0.63rem] font-bold uppercase tracking-wide"
+                    >{place.badge}</span
+                  >
                 {/if}
               </span>
               <span class="mt-1 block text-xs leading-4 text-text-muted">{place.description}</span>

@@ -785,7 +785,9 @@
       // Mémoriser les identifiants pour auto-login au prochain chargement
       localStorage.setItem('canari_saved_user', userId);
       localStorage.setItem('canari_saved_pin', pin);
-      await loadExistingConversations();
+      localStorage.setItem('canari_authToken', authToken); // Set authToken for API calls
+
+      isLoggedIn = true;
       await loadChannelWorkspacesFromBackend();
 
       // Detect isReady conversations that have no matching MLS group state.

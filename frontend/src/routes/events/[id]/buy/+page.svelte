@@ -1,6 +1,6 @@
 <script lang="ts">
   let { data }: { data: any } = $props(); // data passé par le load SvelteKit
-  let eventId = $derived(data.eventId);
+  let eventId = $derived(data?.eventId || 'unknown-event');
 
   let options = $state({
     isMemberBDE: false,
@@ -19,7 +19,7 @@
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('token')}`,
+          Authorization: `Bearer ${localStorage.getItem('canari_authToken')}`,
         },
         body: JSON.stringify({ eventId, options }),
       });

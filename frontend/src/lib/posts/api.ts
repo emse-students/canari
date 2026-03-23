@@ -97,17 +97,31 @@ function getPostsBaseUrl(): string {
   if (typeof env === 'string' && env.trim()) {
     return env.trim().replace(/\/$/, '');
   }
-  return 'http://localhost:3015';
+  return '';
+}
+
+function getAuthToken() {
+  if (typeof localStorage !== 'undefined') {
+    return localStorage.getItem('canari_authToken') || '';
+  }
+  return '';
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const baseUrl = getPostsBaseUrl();
+  const token = getAuthToken();
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(init.headers as Record<string, string>),
+  };
+
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
   const res = await fetch(`${baseUrl}${path}`, {
     ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(init.headers ?? {}),
-    },
+    headers,
   });
 
   if (!res.ok) {

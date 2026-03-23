@@ -4,7 +4,7 @@
 
   // Identifiant de l'association (récupéré via les props ou le store d'auth)
   let { data }: { data: any } = $props();
-  let associationId = $derived(data.associationId);
+  let associationId = $derived(data?.associationId || 'asso-demo-123');
 
   async function connectStripe() {
     isLoading = true;
@@ -14,7 +14,7 @@
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('token')}`, // Adapté à votre auth
+          Authorization: `Bearer ${localStorage.getItem('canari_authToken')}`, // Adapté à votre auth
         },
         body: JSON.stringify({ associationId }),
       });

@@ -2,7 +2,14 @@ export interface AppPlace {
   id: string;
   label: string;
   description: string;
-  icon: 'message-circle' | 'newspaper' | 'users' | 'phone' | 'calendar-days';
+  icon:
+    | 'message-circle'
+    | 'newspaper'
+    | 'users'
+    | 'phone'
+    | 'calendar-days'
+    | 'layout-dashboard'
+    | 'file-text';
   href: string;
   enabled: boolean;
   badge?: string;
@@ -34,20 +41,35 @@ export const APP_PLACES: AppPlace[] = [
     enabled: true,
   },
   {
-    id: 'calls',
-    label: 'Appels',
-    description: 'Audio et video en temps reel',
-    icon: 'phone',
-    href: '/calls',
-    enabled: false,
-    badge: 'Bientot',
-  },
-  {
     id: 'events',
     label: 'Evenements',
     description: 'Calendrier, rendez-vous, annonces',
     icon: 'calendar-days',
     href: '/events',
+    enabled: true,
+  },
+  {
+    id: 'forms',
+    label: 'Formulaires',
+    description: 'Sondages et inscriptions',
+    icon: 'file-text',
+    href: '/forms',
+    enabled: true,
+  },
+  {
+    id: 'dashboard',
+    label: 'Tableau de bord',
+    description: "Gestion de l'association",
+    icon: 'layout-dashboard',
+    href: '/dashboard/association',
+    enabled: true,
+  },
+  {
+    id: 'calls',
+    label: 'Appels',
+    description: 'Audio et video en temps reel',
+    icon: 'phone',
+    href: '/calls',
     enabled: false,
     badge: 'Bientot',
   },

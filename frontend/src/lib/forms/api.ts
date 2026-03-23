@@ -37,12 +37,36 @@ export interface Form extends CreateFormPayload {
   updatedAt: string;
 }
 
-const API_Base = import.meta.env.VITE_FORM_URL || 'http://localhost:3016';
+const API_Base = import.meta.env.VITE_FORM_URL || '';
+
+function getAuthToken() {
+  if (typeof localStorage !== 'undefined') {
+    return localStorage.getItem('canari_authToken') || '';
+  }
+  return '';
+}
+
+async function request(url: string, init: RequestInit = {}) {
+  const token = getAuthToken();
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(init.headers as Record<string, string>),
+  } as Record<string, string>;
+
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const res = await fetch(url, {
+    ...init,
+    headers,
+  });
+  return res;
+}
 
 export async function createForm(payload: CreateFormPayload): Promise<Form> {
-  const res = await fetch(`${API_Base}/api/forms`, {
+  const res = await request(`${API_Base}/api/forms`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error('Failed to create form');
@@ -51,19 +75,19 @@ export async function createForm(payload: CreateFormPayload): Promise<Form> {
 
 export async function getForms(ownerId?: string): Promise<Form[]> {
   const url = ownerId ? `${API_Base}/api/forms?ownerId=${ownerId}` : `${API_Base}/api/forms`;
-  const res = await fetch(url);
+  const res = await request(url);
   if (!res.ok) throw new Error('Failed to fetch forms');
   return res.json();
 }
 
 export async function getForm(id: string): Promise<Form> {
-  const res = await fetch(`${API_Base}/api/forms/${id}`);
+  const res = await request(`${API_Base}/api/forms/${id}`);
   if (!res.ok) throw new Error('Failed to fetch form');
   return res.json();
 }
 
 export async function getSubmission(formId: string, userId: string): Promise<any> {
-  const res = await fetch(`${API_Base}/api/forms/${formId}/submission?userId=${userId}`);
+  const res = await request(`${API_Base}/api/forms/${formId}/submission?userId=${userId}`);
   if (!res.ok) throw new Error('Failed to fetch submission');
   return res.json();
 }
@@ -72,20 +96,19 @@ export async function checkSubmission(
   formId: string,
   userId: string
 ): Promise<{ hasSubmitted: boolean }> {
-  const res = await fetch(`${API_Base}/api/forms/${formId}/check?userId=${userId}`);
+  const res = await request(`${API_Base}/api/forms/${formId}/check?userId=${userId}`);
   if (!res.ok) throw new Error('Failed to check submission status');
   return res.json();
 }
 
 export async function exportSubmissions(id: string): Promise<Blob> {
-  const res = await fetch(`${API_Base}/api/forms/${id}/export`);
+  const res = await request(`${API_Base}/api/forms/${id}/export`);
   if (!res.ok) throw new Error('Failed to export submissions');
   return res.blob();
 }
 export async function submitForm(id: string, payload: any): Promise<any> {
-  const res = await fetch(`${API_Base}/api/forms/${id}/submit`, {
+  const res = await request(`${API_Base}/api/forms/${id}/submit`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
