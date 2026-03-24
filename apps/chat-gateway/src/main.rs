@@ -188,6 +188,7 @@ async fn main() {
                                     map.get(&key).cloned()
                                 };
 
+                                let mut to_remove = false;
                                 if let Some(senders) = senders {
                                     for tx in &senders {
                                         if tx.try_send(json_frame.clone()).is_ok() {
@@ -197,12 +198,15 @@ async fn main() {
                                                 json_frame.len()
                                             );
                                         } else {
-                                            tracing::warn!(
-                                                "Failed to send to socket for {} (channel closed)",
-                                                key
-                                            );
+                                            tracing::warn!("Backpressure/disconnected: dropping message for slow client {}", key);
+                                            to_remove = true;
                                         }
                                     }
+                                }
+
+                                if to_remove {
+                                    let mut map = connected_users.lock().unwrap();
+                                    map.remove(&key);
                                 } else {
                                     tracing::warn!(
                                         "User {} not connected to this gateway instance.",
@@ -227,7 +231,7 @@ async fn main() {
                                 .to_string();
 
                                 // Find all map keys that start with the user ID
-                                let senders_to_notify: Vec<_> = {
+                                let senders_to_notify: Vec<(String, _)> = {
                                     let map = connected_users.lock().unwrap();
                                     let mut temp = Vec::new();
                                     for u_id in user_ids {
@@ -235,7 +239,7 @@ async fn main() {
                                         for (key, senders) in map.iter() {
                                             if key.starts_with(&prefix) {
                                                 for tx in senders {
-                                                    temp.push(tx.clone());
+                                                    temp.push((key.clone(), tx.clone()));
                                                 }
                                             }
                                         }
@@ -243,9 +247,21 @@ async fn main() {
                                     temp
                                 };
 
-                                for tx in senders_to_notify {
-                                    let _ = tx.send(frame.clone()).await;
+                                let mut to_remove = Vec::new();
+                                for (key, tx) in senders_to_notify {
+                                    if let Err(e) = tx.try_send(frame.clone()) {
+                                        tracing::warn!("Backpressure: dropping channel event for slow client {}: {}", key, e);
+                                        to_remove.push(key);
+                                    }
                                 }
+                                
+                                if !to_remove.is_empty() {
+                                    let mut map = connected_users.lock().unwrap();
+                                    for key in to_remove {
+                                        map.remove(&key);
+                                    }
+                                }
+
                                 tracing::info!(
                                     "[Gateway] Channel event distributed to connected users."
                                 );
@@ -312,18 +328,33 @@ async fn main() {
                             "data": serde_json::from_str::<serde_json::Value>(payload).unwrap_or(serde_json::json!(null))
                         }).to_string();
 
-                        let senders_to_notify: Vec<_> = {
+                        let senders_to_notify: Vec<(String, _)> = {
                             let map = connected_users.lock().unwrap();
-                            map.values()
-                                .flat_map(|senders| senders.iter().clone())
-                                .cloned()
-                                .collect()
+                            let mut temp = Vec::new();
+                            for (key, senders) in map.iter() {
+                                for tx in senders {
+                                    temp.push((key.clone(), tx.clone()));
+                                }
+                            }
+                            temp
                         };
 
                         let mut count = 0;
-                        for tx in senders_to_notify {
-                            let _ = tx.send(frame.clone()).await;
-                            count += 1;
+                        let mut to_remove = Vec::new();
+                        for (key, tx) in senders_to_notify {
+                            if let Err(e) = tx.try_send(frame.clone()) {
+                                tracing::warn!("Backpressure: dropping broadcast frame for slow client {}: {}", key, e);
+                                to_remove.push(key);
+                            } else {
+                                count += 1;
+                            }
+                        }
+
+                        if !to_remove.is_empty() {
+                            let mut map = connected_users.lock().unwrap();
+                            for key in to_remove {
+                                map.remove(&key);
+                            }
                         }
                         tracing::info!("Broadcasted post to {} connections", count);
 

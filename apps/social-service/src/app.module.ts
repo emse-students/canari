@@ -8,11 +8,18 @@ import { FormsModule } from './forms/forms.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
-    TypeOrmModule.forRoot({
-      type: 'postgres',
-      url: process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/canari_social',
-      autoLoadEntities: true,
-      synchronize: true, // Only for dev
+    TypeOrmModule.forRootAsync({
+      useFactory: () => ({
+        type: 'postgres',
+        host: process.env.DB_HOST || 'localhost',
+        port: parseInt(process.env.DB_PORT || '5432', 10),
+        username: process.env.DB_USERNAME || 'postgres',
+        password: process.env.DB_PASSWORD || 'postgres',
+        database: process.env.DB_DATABASE || 'canari_social',
+        url: process.env.DATABASE_URL,
+        autoLoadEntities: true,
+        synchronize: true, // Only for dev
+      }),
     }),
     ChannelsModule,
     PostsModule,

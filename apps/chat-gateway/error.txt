@@ -1,0 +1,2 @@
+    Checking chat-gateway v0.1.0 (D:\Documents\Programmation\EMSE\Canari\apps\chat-gateway)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.70s
