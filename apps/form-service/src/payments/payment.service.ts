@@ -13,9 +13,14 @@ export class PaymentService {
   constructor(
     @InjectModel(Association.name) private associationModel: Model<Association>,
     @InjectModel(User.name) private userModel: Model<User>,
-    @InjectModel(Event.name) private eventModel: Model<Event>,
+    @InjectModel(Event.name) private eventModel: Model<Event>
   ) {
-    this.stripe = new Stripe(process.env.STRIPE_SECRET_KEY || 'sk_test_123', { apiVersion: '2025-01-27.acacia' as any });
+    this.stripe = new Stripe(process.env.STRIPE_SECRET_KEY || 'sk_test_123', {
+      apiVersion: '2025-01-27.acacia' as any,
+    });
+    console.log(
+      `Stripe initialized with key: ${process.env.STRIPE_SECRET_KEY ? '****' + process.env.STRIPE_SECRET_KEY.slice(-4) : 'not set'}`
+    );
   }
 
   // --- CREATION USER & STRIPE CUSTOMER ---
@@ -41,31 +46,47 @@ export class PaymentService {
     let accountId = association.stripeAccountId;
 
     if (!accountId) {
-      const account = await this.stripe.accounts.create({
-        type: 'express',
-        capabilities: {
-          transfers: { requested: true },
-        },
-      });
-      accountId = account.id;
-      association.stripeAccountId = accountId;
-      await association.save();
+      try {
+        const account = await this.stripe.accounts.create({
+          type: 'express',
+          capabilities: {
+            transfers: { requested: true },
+          },
+        });
+        accountId = account.id;
+        association.stripeAccountId = accountId;
+        await association.save();
+      } catch (error) {
+        console.error('Erreur lors de la création du compte Stripe:', error);
+        throw new BadRequestException("Impossible de créer le compte Stripe pour l'association");
+      }
     }
 
-    const accountLink = await this.stripe.accountLinks.create({
-      account: accountId,
-      refresh_url: process.env.STRIPE_REFRESH_URL || 'http://localhost:3000/refresh',
-      return_url: process.env.STRIPE_RETURN_URL || 'http://localhost:3000/return',
-      type: 'account_onboarding',
-    });
-
-    return { url: accountLink.url };
+    try {
+      const accountLink = await this.stripe.accountLinks.create({
+        account: accountId,
+        refresh_url: process.env.STRIPE_REFRESH_URL || 'http://localhost:3000/refresh',
+        return_url: process.env.STRIPE_RETURN_URL || 'http://localhost:3000/return',
+        type: 'account_onboarding',
+      });
+      return { url: accountLink.url };
+    } catch (error) {
+      console.error("Erreur lors de la création du lien d'onboarding Stripe:", error);
+      throw new BadRequestException(
+        "Impossible de créer le lien d'onboarding Stripe pour l'association"
+      );
+    }
   }
 
   // --- CHECKOUT SESSION ---
-  async createCheckoutSession(userId: string, eventId: string, options: { isMemberBDE: boolean; wantsMeal: boolean }) {
+  async createCheckoutSession(
+    userId: string,
+    eventId: string,
+    options: { isMemberBDE: boolean; wantsMeal: boolean }
+  ) {
     const user = await this.userModel.findById(userId);
-    if (!user || !user.stripeCustomerId) throw new BadRequestException('Utilisateur ou ID Client Stripe manquant');
+    if (!user || !user.stripeCustomerId)
+      throw new BadRequestException('Utilisateur ou ID Client Stripe manquant');
 
     // Replace populate logic with standard mongoose find to avoid typing issues from mongoose types
     const event = await this.eventModel.findById(eventId).populate('association').exec();
@@ -73,7 +94,7 @@ export class PaymentService {
 
     const association = event.association as unknown as Association;
     if (!association.stripeAccountId) {
-      throw new BadRequestException('L\'association organisatrice n\'est pas connectée à Stripe');
+      throw new BadRequestException("L'association organisatrice n'est pas connectée à Stripe");
     }
 
     let finalPriceCents = event.basePriceCents;
@@ -95,7 +116,7 @@ export class PaymentService {
       mode: 'payment',
       payment_method_types: ['card'],
       line_items: [
-         {
+        {
           price_data: {
             currency: 'eur',
             product_data: {

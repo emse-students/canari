@@ -50,11 +50,19 @@ export class FormsService {
   }
 
   async getSubmission(formId: string, userId: string) {
-    return this.submissionModel.findOne({ formId, userId }).sort({ createdAt: -1 });
+    // Only return confirmed submissions (paid or free)
+    return this.submissionModel
+      .findOne({ formId, userId, paymentStatus: { $in: ['paid', 'free'] } })
+      .sort({ createdAt: -1 });
   }
 
   async hasSubmission(formId: string, userId: string): Promise<boolean> {
-    const count = await this.submissionModel.countDocuments({ formId, userId });
+    // Consider only confirmed submissions as valid (paid or free)
+    const count = await this.submissionModel.countDocuments({
+      formId,
+      userId,
+      paymentStatus: { $in: ['paid', 'free'] },
+    });
     return count > 0;
   }
 

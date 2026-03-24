@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { FormsController } from './forms.controller';
+import { FormsWebhookController } from './webhook.controller';
 import { FormsService } from './forms.service';
 import { Form, FormSchema } from './schemas/form.schema';
 import { Submission, SubmissionSchema } from './schemas/submission.schema';
@@ -14,7 +15,7 @@ import { ConfigModule } from '@nestjs/config';
     ]),
     ConfigModule,
   ],
-  controllers: [FormsController],
+  controllers: [FormsController, FormsWebhookController],
   providers: [FormsService],
   exports: [FormsService],
 })
