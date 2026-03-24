@@ -2,6 +2,7 @@ import { Body, Controller, Get, Param, Post, Res, Query } from '@nestjs/common';
 import { Response } from 'express';
 import { CreateFormDto, SubmitFormDto } from './dto/form.dto';
 import { FormsService } from './forms.service';
+import { SanitizeMongoPipe } from '@canari/shared-ts';
 
 @Controller('forms')
 export class FormsController {
@@ -37,7 +38,7 @@ export class FormsController {
   }
 
   @Post(':id/submit')
-  submit(@Param('id') id: string, @Body() dto: SubmitFormDto) {
+  submit(@Param('id') id: string, @Body(new SanitizeMongoPipe()) dto: SubmitFormDto) {
     return this.service.submit(id, dto);
   }
 

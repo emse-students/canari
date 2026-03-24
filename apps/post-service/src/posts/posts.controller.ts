@@ -7,6 +7,7 @@ import {
   VotePollDto,
   SubmitFormDto,
 } from './dto/post.dto';
+import { SanitizeMongoPipe } from '@canari/shared-ts';
 
 @Controller('posts')
 export class PostsController {
@@ -55,7 +56,7 @@ export class PostsController {
   submitForm(
     @Param('postId') postId: string,
     @Param('formId') formId: string,
-    @Body() body: SubmitFormDto
+    @Body(new SanitizeMongoPipe()) body: SubmitFormDto
   ) {
     return this.service.submitForm(postId, formId, body);
   }

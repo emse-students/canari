@@ -935,6 +935,7 @@ export class AppController {
     }
 
     const targetUrl = await assertSafeExternalUrl(url);
+    // Assert the re
     const abortController = new AbortController();
     const timeout = setTimeout(() => abortController.abort(), 4000);
 
