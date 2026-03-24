@@ -16,13 +16,18 @@ export class AuthController {
 
   private check(req: Request, res: Response) {
     const rawHeaders = req.headers['authorization'];
+
+    // Default: not logged in
+    res.set('X-User-Logged-In', 'false');
+
     if (!rawHeaders) {
-      return res.status(401).send();
+      return res.status(200).send();
     }
 
-    const token = rawHeaders.split(' ')[1];
+    const parts = String(rawHeaders).split(' ');
+    const token = parts.length > 1 ? parts[1] : parts[0];
     if (!token) {
-      return res.status(401).send();
+      return res.status(200).send();
     }
 
     try {
@@ -31,11 +36,13 @@ export class AuthController {
         process.env.JWT_SECRET || 'change-me-in-production',
       ) as { sub: string };
 
-      // Set the X-User-Id header for Nginx to use
+      // Set the X-User-Id header for downstream services (e.g., Nginx)
       res.set('X-User-Id', payload.sub);
+      res.set('X-User-Logged-In', 'true');
       return res.status(200).send();
     } catch {
-      return res.status(401).send();
+      // Invalid token -> treat as anonymous, but do not return 401
+      return res.status(200).send();
     }
   }
 }

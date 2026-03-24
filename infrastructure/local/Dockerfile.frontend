@@ -18,6 +18,8 @@ RUN printf 'server {\n\
     # Utilise le resolver DNS interne de Docker pour la résolution des upstreams\n\
     # Cela évite que nginx refuse de démarrer si un upstream est temporairement absent\n\
     resolver 127.0.0.11 valid=10s ipv6=off;\n\
+    proxy_set_header X-User-Id "";\n\
+    proxy_set_header X-Logged-In "false";\n\
     \n\
     location = /internal/auth/verify {\n\
     internal;\n\

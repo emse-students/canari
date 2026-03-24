@@ -9,6 +9,7 @@ import {
   Query,
   Inject,
   BadRequestException,
+  UseGuards,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, MoreThanOrEqual } from 'typeorm';
@@ -259,6 +260,7 @@ async function fetchYouTubeOEmbed(targetUrl: URL): Promise<{
 }
 
 import { v4 as uuidv4 } from 'uuid';
+import { HeaderAuthGuard } from './guards/header-auth.guard';
 
 interface SyncConversationManifest {
   conversationId: string;
@@ -999,6 +1001,7 @@ export class AppController {
     }
   }
 
+  @UseGuards(HeaderAuthGuard)
   @Post('mls-api/groups')
   async createGroup(@Body() body: { name: string; createdBy: string }) {
     const groupId = uuidv4();
@@ -1011,6 +1014,7 @@ export class AppController {
     return { groupId, name: body.name, createdBy: body.createdBy };
   }
 
+  @UseGuards(HeaderAuthGuard)
   @Get('mls-api/groups/:groupId')
   async getGroup(@Param('groupId') groupId: string) {
     const g = await this.groupRepo.findOne({ where: { id: groupId } });
@@ -1048,11 +1052,14 @@ export class AppController {
     return { status: 'added' };
   }
 
+  @UseGuards(HeaderAuthGuard)
   @Get('mls-api/groups/:groupId/members')
   async getGroupMembers(@Param('groupId') groupId: string) {
-    return this.groupMemberRepo.find({ where: { groupId } });
+    const g = await this.groupMemberRepo.find({ where: { groupId } });
+    return g;
   }
 
+  @UseGuards(HeaderAuthGuard)
   @Patch('mls-api/groups/:groupId')
   async renameGroup(
     @Param('groupId') groupId: string,
@@ -1069,6 +1076,7 @@ export class AppController {
     return { status: 'renamed' };
   }
 
+  @UseGuards(HeaderAuthGuard)
   @Delete('mls-api/groups/:groupId/members/:userId')
   async removeGroupMember(
     @Param('groupId') groupId: string,
@@ -1089,6 +1097,7 @@ export class AppController {
     return { status: 'removed' };
   }
 
+  @UseGuards(HeaderAuthGuard)
   @Delete('mls-api/groups/:groupId')
   async deleteGroup(@Param('groupId') groupId: string) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
@@ -1098,6 +1107,7 @@ export class AppController {
     return { status: 'deleted' };
   }
 
+  @UseGuards(HeaderAuthGuard)
   @Post('mls-api/register-device')
   async registerDevice(
     @Body() body: { userId: string; deviceId: string; keyPackage: string },
@@ -1120,8 +1130,9 @@ export class AppController {
     return { status: 'registered' };
   }
 
+  @UseGuards(HeaderAuthGuard)
   @Get('mls-api/devices/:userId')
-  async getUserDevices(@Param('userId') userId: string) {
+  getUserDevices(@Param('userId') userId: string) {
     // Only return devices active in the last 30 days (avoids stale key packages)
     const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     return this.keyPackageRepo.find({
@@ -1130,6 +1141,7 @@ export class AppController {
     });
   }
 
+  @UseGuards(HeaderAuthGuard)
   @Post('mls-api/welcome')
   async sendWelcome(
     @Body()
@@ -1207,6 +1219,7 @@ export class AppController {
     return { status: 'queued' };
   }
 
+  @UseGuards(HeaderAuthGuard)
   @Get('mls-api/welcome/:deviceId')
   async getWelcomeMessages(@Param('deviceId') deviceId: string) {
     const messages = await this.welcomeMessageRepo.find({
@@ -1220,6 +1233,7 @@ export class AppController {
     return messages;
   }
 
+  @UseGuards(HeaderAuthGuard)
   @Post('mls-api/send')
   async sendMessage(
     @Body()
