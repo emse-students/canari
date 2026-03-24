@@ -198,7 +198,10 @@ async fn main() {
                                                 json_frame.len()
                                             );
                                         } else {
-                                            tracing::warn!("Backpressure/disconnected: dropping message for slow client {}", key);
+                                            tracing::warn!(
+                                                "Backpressure/disconnected: dropping message for slow client {}",
+                                                key
+                                            );
                                             to_remove = true;
                                         }
                                     }
@@ -250,11 +253,15 @@ async fn main() {
                                 let mut to_remove = Vec::new();
                                 for (key, tx) in senders_to_notify {
                                     if let Err(e) = tx.try_send(frame.clone()) {
-                                        tracing::warn!("Backpressure: dropping channel event for slow client {}: {}", key, e);
+                                        tracing::warn!(
+                                            "Backpressure: dropping channel event for slow client {}: {}",
+                                            key,
+                                            e
+                                        );
                                         to_remove.push(key);
                                     }
                                 }
-                                
+
                                 if !to_remove.is_empty() {
                                     let mut map = connected_users.lock().unwrap();
                                     for key in to_remove {
@@ -343,7 +350,11 @@ async fn main() {
                         let mut to_remove = Vec::new();
                         for (key, tx) in senders_to_notify {
                             if let Err(e) = tx.try_send(frame.clone()) {
-                                tracing::warn!("Backpressure: dropping broadcast frame for slow client {}: {}", key, e);
+                                tracing::warn!(
+                                    "Backpressure: dropping broadcast frame for slow client {}: {}",
+                                    key,
+                                    e
+                                );
                                 to_remove.push(key);
                             } else {
                                 count += 1;

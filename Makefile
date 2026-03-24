@@ -190,20 +190,14 @@ install-frontend:
 install-services:
 	@echo "📦 Installing shared-ts..."
 	@cd libs/shared-ts && npm install
-	@echo "📦 Installing auth-service..."
-	@cd apps/auth-service && npm install
-	@echo "📦 Installing channel-service..."
-	@cd apps/channel-service && npm install
+	@echo "📦 Installing core-service..."
+	@cd apps/core-service && npm install
+	@echo "📦 Installing social-service..."
+	@cd apps/social-service && npm install
 	@echo "📦 Installing chat-delivery-service..."
 	@cd apps/chat-delivery-service && npm install
-	@echo "📦 Installing form-service..."
-	@cd apps/form-service && npm install
 	@echo "📦 Installing media-service..."
 	@cd apps/media-service && npm install
-	@echo "📦 Installing post-service..."
-	@cd apps/post-service && npm install
-	@echo "📦 Installing user-service..."
-	@cd apps/user-service && npm install
 	@echo "✅ Services Node.js prêts"
 
 install-hooks:

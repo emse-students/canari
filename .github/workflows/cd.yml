@@ -103,9 +103,12 @@ jobs:
     strategy:
       matrix:
         service:
-          - name: auth-service
+          - name: core-service
             context: .
-            dockerfile: ./infrastructure/local/Dockerfile.auth-service
+            dockerfile: ./infrastructure/local/Dockerfile.core-service
+          - name: social-service
+            context: .
+            dockerfile: ./infrastructure/local/Dockerfile.social-service
           - name: call-service
             context: .
             dockerfile: ./infrastructure/local/Dockerfile.call-service
@@ -118,21 +121,9 @@ jobs:
           - name: frontend
             context: .
             dockerfile: ./infrastructure/local/Dockerfile.frontend
-          - name: form-service
-            context: .
-            dockerfile: ./infrastructure/local/Dockerfile.form-service
-          - name: channel-service
-            context: .
-            dockerfile: ./infrastructure/local/Dockerfile.channel-service
           - name: media-service
             context: .
             dockerfile: ./infrastructure/local/Dockerfile.media-service
-          - name: post-service
-            context: .
-            dockerfile: ./infrastructure/local/Dockerfile.post-service
-          - name: user-service
-            context: .
-            dockerfile: ./infrastructure/local/Dockerfile.user-service
     steps:
       - uses: actions/checkout@v4
 

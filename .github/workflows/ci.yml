@@ -102,16 +102,10 @@ jobs:
       matrix:
         service:
           - libs/shared-ts
-          - apps/auth-service
-          - apps/chat-delivery-service
-          - apps/media-service
-          - apps/user-service
-          - apps/post-service
-          - apps/form-service
-          - apps/channel-service
-
-    steps:
-      - uses: actions/checkout@v4
+            - apps/core-service
+            - apps/social-service
+            - apps/chat-delivery-service
+            - apps/media-service
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
