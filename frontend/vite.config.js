@@ -65,14 +65,14 @@ export default defineConfig(async () => ({
         target: 'http://localhost:3014',
         changeOrigin: true,
       },
-      // Proxy /channels API to channel-service
+      // Proxy /channels API to social-service
       '/channels': {
         target: 'http://localhost:3014',
         changeOrigin: true,
       },
-      // Proxy /api/posts API to post-service
+      // Proxy /api/posts API to social-service
       '/api/posts': {
-        target: 'http://localhost:3015',
+        target: 'http://localhost:3014',
         changeOrigin: true,
       },
       // Proxy /ws WebSocket to the chat-gateway so VITE_GATEWAY_URL is not needed in local dev.
@@ -80,9 +80,9 @@ export default defineConfig(async () => ({
 
       // Added proxies for other services:
       '/api/auth': { target: 'http://localhost:3012', changeOrigin: true },
-      '/api/users': { target: 'http://localhost:3013', changeOrigin: true },
+      '/api/users': { target: 'http://localhost:3012', changeOrigin: true },
       '/api/media': { target: 'http://localhost:3011', changeOrigin: true },
-      '/api/forms': { target: 'http://localhost:3016', changeOrigin: true },
+      '/api/forms': { target: 'http://localhost:3014', changeOrigin: true },
       // WebSocket for Call Service
       '/api/call': { target: 'ws://localhost:3001', ws: true, changeOrigin: true },
 

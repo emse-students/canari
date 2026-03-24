@@ -1,0 +1,23 @@
+# -- Build stage ---------------------------------------------------------------
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+COPY apps/core-service/package*.json ./apps/core-service/
+RUN cd apps/core-service && npm install --legacy-peer-deps
+
+COPY apps/core-service ./apps/core-service
+RUN cd apps/core-service && npx tsc -p tsconfig.build.json
+
+# -- Runtime stage -------------------------------------------------------------
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY --from=builder /app/apps/core-service/dist ./dist
+COPY --from=builder /app/apps/core-service/node_modules ./node_modules
+COPY --from=builder /app/apps/core-service/package.json ./
+
+EXPOSE 3013
+
+CMD ["node", "dist/main.js"]

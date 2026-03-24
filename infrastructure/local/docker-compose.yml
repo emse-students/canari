@@ -191,12 +191,13 @@ services:
         condition: service_healthy
 
   # ─────────────────────────────────────────────────────
-  # Auth Service (NestJS) — New port 3012
+  # Core Service (NestJS) — port 3012
+  # Handles Auth, Users, Payment
   # ─────────────────────────────────────────────────────
-  auth-service:
+  core-service:
     build:
       context: ../../
-      dockerfile: infrastructure/local/Dockerfile.auth-service
+      dockerfile: infrastructure/local/Dockerfile.core-service
     ports:
       - "3012:3012"
     environment:
@@ -207,89 +208,34 @@ services:
       DB_USERNAME: admin
       DB_PASSWORD: password
       DB_DATABASE: auth_db
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
     depends_on:
       postgres:
         condition: service_started
 
   # ─────────────────────────────────────────────────────
-  # Channel Service (NestJS) — New port 3014
-  # Permissions-first community channels with soft encryption.
+  # Social Service (NestJS) — port 3014
+  # Handles Channels, Posts, Forms
   # ─────────────────────────────────────────────────────
-  channel-service:
+  social-service:
     build:
       context: ../../
-      dockerfile: infrastructure/local/Dockerfile.channel-service
+      dockerfile: infrastructure/local/Dockerfile.social-service
     ports:
       - "3014:3014"
     environment:
       PORT: "3014"
-      CHANNELS_MONGO_URI: mongodb://mongo:27017/channel_db
+      SOCIAL_MONGO_URI: mongodb://mongo:27017/social_db
       CHANNELS_ENCRYPTION_SECRET: ${CHANNELS_ENCRYPTION_SECRET:-dev-channel-secret-change-me}
-    depends_on:
-      mongo:
-        condition: service_started
-
-  # ─────────────────────────────────────────────────────
-  # User Service (NestJS) — New port 3013
-  # Handles user profiles and Stripe customer IDs.
-  # ─────────────────────────────────────────────────────
-  user-service:
-    build:
-      context: ../../
-      dockerfile: infrastructure/local/Dockerfile.user-service
-    ports:
-      - "3013:3013"
-    environment:
-      PORT: "3013"
-      DB_HOST: postgres
-      DB_PORT: "5432"
-      DB_USERNAME: admin
-      DB_PASSWORD: password
-      DB_DATABASE: auth_db
-      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
-    depends_on:
-      postgres:
-        condition: service_started
-
-  # ─────────────────────────────────────────────────────
-  # Post Service (NestJS) — New port 3015
-  # Community posts: markdown, polls, event registration hooks.
-  # ─────────────────────────────────────────────────────
-  post-service:
-    build:
-      context: ../../
-      dockerfile: infrastructure/local/Dockerfile.post-service
-    ports:
-      - "3015:3015"
-    environment:
-      PORT: "3015"
-      POSTS_MONGO_URI: mongodb://mongo:27017/post_db
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_SUCCESS_URL: ${STRIPE_SUCCESS_URL:-http://localhost:5173/posts?registration=success}
       STRIPE_CANCEL_URL: ${STRIPE_CANCEL_URL:-http://localhost:5173/posts?registration=cancel}
-      USER_SERVICE_URL: http://user-service:3013
-    depends_on:
-      mongo:
-        condition: service_started
-      user-service:
-        condition: service_started
-
-  # ─────────────────────────────────────────────────────
-  # Form Service (NestJS) — New port 3016
-  # ─────────────────────────────────────────────────────
-  form-service:
-    build:
-      context: ../../
-      dockerfile: infrastructure/local/Dockerfile.form-service
-    ports:
-      - "3016:3016"
-    environment:
-      PORT: "3016"
-      FORMS_MONGO_URI: mongodb://mongo:27017/form_db
-      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      USER_SERVICE_URL: http://core-service:3012
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
     depends_on:
       mongo:
+        condition: service_started
+      core-service:
         condition: service_started
 
 volumes:
