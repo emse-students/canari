@@ -2,7 +2,7 @@ import { Body, Controller, Get, Param, Post, Res, Query } from '@nestjs/common';
 import { Response } from 'express';
 import { CreateFormDto, SubmitFormDto } from './dto/form.dto';
 import { FormsService } from './forms.service';
-import { SanitizeMongoPipe } from '@canari/shared-ts';
+import { SanitizeMongoPipe } from '../common/pipes/sanitize-mongo.pipe';
 
 @Controller('forms')
 export class FormsController {

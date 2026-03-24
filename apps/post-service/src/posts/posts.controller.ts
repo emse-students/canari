@@ -7,7 +7,7 @@ import {
   VotePollDto,
   SubmitFormDto,
 } from './dto/post.dto';
-import { SanitizeMongoPipe } from '@canari/shared-ts';
+import { SanitizeMongoPipe } from '../common/pipes/sanitize-mongo.pipe';
 
 @Controller('posts')
 export class PostsController {

@@ -1,7 +1,7 @@
 import { Controller, Post, Body, Req, UseGuards } from '@nestjs/common';
 import { PaymentService } from './payment.service';
 import { JwtAuthGuard } from '../common/guards/jwt.guard';
-import { SanitizeMongoPipe } from '@canari/shared-ts';
+import { SanitizeMongoPipe } from '../common/pipes/sanitize-mongo.pipe';
 
 @Controller('payments')
 @UseGuards(JwtAuthGuard)
