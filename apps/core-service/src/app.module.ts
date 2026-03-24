@@ -6,6 +6,7 @@ import { AuthModule } from './auth/auth.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { User } from './users/entities/user.entity';
+import { PaymentModule } from './payment/payment.module';
 
 @Module({
   imports: [
@@ -18,7 +19,7 @@ import { User } from './users/entities/user.entity';
         port: configService.get<number>('DB_PORT', 5432),
         username: configService.get<string>('DB_USERNAME', 'admin'),
         password: configService.get<string>('DB_PASSWORD', 'password'),
-        database: configService.get<string>('DB_DATABASE', 'auth_db'),  // Changed from users_db to auth_db globally
+        database: configService.get<string>('DB_DATABASE', 'auth_db'), // Changed from users_db to auth_db globally
         entities: [User],
         synchronize: true, // Only for development!
       }),
@@ -26,6 +27,7 @@ import { User } from './users/entities/user.entity';
     }),
     UsersModule,
     AuthModule,
+    PaymentModule,
   ],
   controllers: [AppController],
   providers: [AppService],

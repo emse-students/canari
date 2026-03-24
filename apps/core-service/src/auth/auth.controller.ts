@@ -18,7 +18,8 @@ export class AuthController {
     const rawHeaders = req.headers['authorization'];
 
     // Default: not logged in
-    res.set('X-User-Logged-In', 'false');
+    res.set('X-Logged-In', 'false');
+    res.set('X-User-Id', '');
 
     if (!rawHeaders) {
       return res.status(200).send();
@@ -38,7 +39,7 @@ export class AuthController {
 
       // Set the X-User-Id header for downstream services (e.g., Nginx)
       res.set('X-User-Id', payload.sub);
-      res.set('X-User-Logged-In', 'true');
+      res.set('X-Logged-In', 'true');
       return res.status(200).send();
     } catch {
       // Invalid token -> treat as anonymous, but do not return 401

@@ -50,9 +50,14 @@ export class FormsController {
   async export(@Param('id') id: string, @Res() res: Response) {
     const buffer = await this.service.exportSubmissions(id);
 
+    // Filename should be the form title
+
+    const form = await this.service.get(id);
+    const filename = form.title.replace(/[^a-zA-Z0-9]/g, '');
+
     res.set({
       'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'Content-Disposition': `attachment; filename="submissions_${id}.xlsx"`,
+      'Content-Disposition': `attachment; filename="${filename}.xlsx"`,
       'Content-Length': buffer.byteLength,
     });
 

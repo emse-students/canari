@@ -45,7 +45,7 @@ launch_terminal "Chat Delivery Service (Node)" "apps/chat-delivery-service" "npm
 launch_terminal "Auth Service (Node)" "apps/auth-service" "npm install && npm run start:dev"
 launch_terminal "User Service (Node)" "apps/user-service" "npm install && npm run start:dev"
 launch_terminal "Channel Service (Node)" "apps/channel-service" "PORT=3005 CHANNELS_MONGO_URI='mongodb://localhost:27017/channel_db' CHANNELS_ENCRYPTION_SECRET='dev-channel-secret-change-me' npm install && npm run start:dev"
-launch_terminal "Post Service (Node)" "apps/post-service" "PORT=3006 STRIPE_SECRET_KEY='' USER_SERVICE_URL='http://localhost:3004' POSTS_MONGO_URI='mongodb://localhost:27017/post_db' npm install && npm run start:dev"
+launch_terminal "Post Service (Node)" "apps/post-service" "PORT=3006 USER_SERVICE_URL='http://localhost:3004' POSTS_MONGO_URI='mongodb://localhost:27017/post_db' npm install && npm run start:dev"
 
 # 4. Lancement du frontend (Tauri)
 echo -e "\n\e[33m[4/4] Lancement du Frontend (Application Desktop Tauri)...\e[0m"

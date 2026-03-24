@@ -2,11 +2,11 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import Stripe from 'stripe';
 import { ConfigService } from '@nestjs/config';
 import { Form } from './entities/form.entity';
 import { Submission } from './entities/submission.entity';
 import { CreateFormDto, SubmitFormDto } from './dto/form.dto';
+import axios from 'axios';
 import * as ExcelJS from 'exceljs';
 
 function makeId(prefix: string): string {
@@ -15,19 +15,13 @@ function makeId(prefix: string): string {
 
 @Injectable()
 export class FormsService {
-  private readonly stripe: Stripe | null;
   private readonly logger = new Logger(FormsService.name);
 
   constructor(
     @InjectRepository(Form) private readonly formRepo: Repository<Form>,
     @InjectRepository(Submission) private readonly submissionRepo: Repository<Submission>,
     private readonly configService: ConfigService
-  ) {
-    const secretKey = this.configService.get<string>('STRIPE_SECRET_KEY');
-    this.stripe = secretKey
-      ? new Stripe(secretKey, { apiVersion: '2025-08-27.basil' as any })
-      : null;
-  }
+  ) {}
 
   async create(input: CreateFormDto) {
     const form = this.formRepo.create({
@@ -108,22 +102,52 @@ export class FormsService {
 
     const savedSubmission = await this.submissionRepo.save(submission);
 
-    if (totalCents > 0 && this.stripe) {
-      const session = await this.stripe.checkout.sessions.create({
-        mode: 'payment',
-        success_url: `${this.configService.get('FRONTEND_URL')}/forms/success?session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${this.configService.get('FRONTEND_URL')}/forms/cancel`,
-        line_items: lineItems,
-        metadata: {
-          submissionId: savedSubmission.id,
-          formId: id,
+    if (totalCents > 0) {
+      // Delegate checkout creation to the central payment service as a single consolidated item
+      const singleLineItem: any[] = [
+        {
+          price_data: {
+            currency,
+            product_data: { name: `${form.title} (Registration)` },
+            unit_amount: totalCents,
+          },
+          quantity: 1,
         },
-      });
+      ];
 
-      savedSubmission.stripeSessionId = session.id;
-      await this.submissionRepo.save(savedSubmission);
+      const paymentServiceBase =
+        this.configService.get<string>('PAYMENT_SERVICE_URL') || 'http://localhost:3004';
+      const url = `${paymentServiceBase.replace(/\/$/, '')}/api/payments/create-checkout-session`;
 
-      return { checkoutUrl: session.url };
+      try {
+        const res = await axios.post(url, {
+          lineItems: singleLineItem,
+          successUrl: `${this.configService.get('FRONTEND_URL')}/forms/success?session_id={CHECKOUT_SESSION_ID}`,
+          cancelUrl: `${this.configService.get('FRONTEND_URL')}/forms/cancel`,
+          metadata: { submissionId: savedSubmission.id, formId: id },
+        });
+
+        const data = res.data || {};
+        const sessionUrl = data.url || data.checkoutUrl || null;
+        const sessionId = data.id || data.sessionId || null;
+
+        if (!sessionUrl) {
+          return {
+            message: data.message || 'Payment service did not return a checkout URL',
+            submissionId: savedSubmission.id,
+          };
+        }
+
+        if (sessionId) {
+          savedSubmission.stripeSessionId = sessionId;
+          await this.submissionRepo.save(savedSubmission);
+        }
+
+        return { checkoutUrl: sessionUrl };
+      } catch (err: any) {
+        this.logger.error('Payment service error', err?.response?.data || err.message || err);
+        return { message: 'Failed to create checkout session', submissionId: savedSubmission.id };
+      }
     }
 
     return { message: 'Form submitted successfully', submissionId: savedSubmission.id };

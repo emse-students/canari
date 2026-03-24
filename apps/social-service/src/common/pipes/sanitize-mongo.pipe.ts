@@ -1,4 +1,4 @@
-import { Injectable, PipeTransform } from '@nestjs/common';
+import { BadRequestException, Injectable, PipeTransform } from '@nestjs/common';
 
 function isPlainObject(value: any): value is Record<string, any> {
   return Object.prototype.toString.call(value) === '[object Object]';
@@ -6,7 +6,8 @@ function isPlainObject(value: any): value is Record<string, any> {
 
 export function sanitizeMongoObject<T>(input: T): T {
   if (input == null) return input;
-  if (Array.isArray(input)) return input.map((v) => sanitizeMongoObject(v)) as unknown as T;
+  if (Array.isArray(input))
+    return input.map((v: unknown) => sanitizeMongoObject(v)) as unknown as T;
   if (!isPlainObject(input)) return input;
 
   const out: Record<string, any> = {};
@@ -15,7 +16,7 @@ export function sanitizeMongoObject<T>(input: T): T {
     if (k.includes('.')) continue;
 
     if (Array.isArray(v)) {
-      out[k] = v.map((item) => sanitizeMongoObject(item));
+      out[k] = v.map((item: unknown) => sanitizeMongoObject(item));
     } else if (isPlainObject(v)) {
       out[k] = sanitizeMongoObject(v);
     } else {
@@ -28,11 +29,11 @@ export function sanitizeMongoObject<T>(input: T): T {
 
 @Injectable()
 export class SanitizeMongoPipe implements PipeTransform {
-  transform(value: any) {
+  transform(value: unknown) {
     try {
       return sanitizeMongoObject(value);
-    } catch (err) {
-      return value;
+    } catch {
+      return new BadRequestException('Invalid input');
     }
   }
 }
