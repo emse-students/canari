@@ -6,6 +6,7 @@ import type { SvelteMap } from 'svelte/reactivity';
 import type { MessageReaction } from '$lib/types';
 import { decodeAppMessage, MediaKind } from '$lib/proto/codec';
 import { serializeEnvelope, mkTextEnvelope, mkMediaEnvelope } from '$lib/envelope';
+import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
 
 function bytesToHex(bytes?: Uint8Array | null): string {
   if (!bytes || bytes.length === 0) return '';
@@ -101,7 +102,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   const PHANTOM_THRESHOLD = 3;
 
   if ('onChannelEvent' in mlsService) {
-    (mlsService as any).onChannelEvent = (event: any) => {
+    (mlsService as any).onChannelEvent = async (event: any) => {
       log(`[Channel Event] ${event.type}`);
       if (event.type === 'channel.member.joined') {
         const data = event.data || {};
@@ -129,6 +130,28 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         return;
       }
 
+      if (event.type === 'channel.key.rotated') {
+        const data = event.data || {};
+        const channelId = String(data.channelId || '');
+        const newEpochBaseKey = data.newEpochBaseKey;
+        const keyVersion = data.keyVersion;
+        if (channelId && newEpochBaseKey && keyVersion !== undefined) {
+          try {
+            const vault = channelKeyManager.getVault(channelId);
+            const rawKeyMat = new Uint8Array(
+              atob(newEpochBaseKey)
+                .split('')
+                .map((c) => c.charCodeAt(0))
+            );
+            await vault.rotateKey(keyVersion, rawKeyMat);
+            log(`[Key Rotation] Epoch ${keyVersion} stored for Channel ${channelId}`);
+          } catch (e) {
+            console.error('[Key Rotation] failed for channel', channelId, e);
+          }
+        }
+        return;
+      }
+
       if (event.type === 'channel.message.created') {
         const data = event.data;
         const channelId = `channel_${data.channelId}`;
@@ -149,11 +172,23 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         if (convoKey) {
           let content = '[Message chiffré]';
           try {
-            // MVP soft cryptography: Decode the mock base64 we created during channel.sendMessage
             if (data.ciphertext) {
-              const binStr = atob(data.ciphertext);
-              const bytes = new Uint8Array(binStr.length);
-              for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
+              let bytes: Uint8Array;
+
+              if (data.nonce && data.keyVersion !== undefined) {
+                // Genuine AES-GCM encryption with rotated keys
+                bytes = await channelKeyManager.decryptMessage(
+                  data.channelId,
+                  data.ciphertext,
+                  data.nonce,
+                  data.keyVersion
+                );
+              } else {
+                // Fallback to legacy mock base64 for old messages
+                const binStr = atob(data.ciphertext);
+                bytes = new Uint8Array(binStr.length);
+                for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
+              }
 
               const msg = decodeAppMessage(bytes);
               if (msg?.text) {

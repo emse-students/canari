@@ -50,6 +50,7 @@ export interface SendChannelMessageDto {
   senderId: string;
   ciphertext: string;
   nonce: string;
+  keyVersion?: number;
 }
 
 export class ChannelService {

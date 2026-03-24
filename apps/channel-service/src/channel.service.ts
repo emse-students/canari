@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import * as crypto from 'crypto';
 import {
   CHANNEL_PERMISSIONS,
   DEFAULT_ADMIN_PERMISSIONS,
@@ -236,7 +237,7 @@ export class ChannelService {
   }
 
   async leaveChannel(channelId: string, input: ChannelLeaveDto) {
-    await this.requireChannel(channelId);
+    const channel = await this.requireChannel(channelId);
     const userId = input.userId.trim().toLowerCase();
 
     await this.memberModel.updateOne(
@@ -244,7 +245,52 @@ export class ChannelService {
       { $set: { leftAt: new Date() } }
     );
 
-    return { left: true };
+    // Get active members for key rotation
+    const activeMembers = await this.memberModel.find({ channelId, leftAt: null }).select('userId');
+    const activeUserIds = activeMembers.map((m) => m.userId);
+
+    // Key Rotation: Increment Key Version
+    const updatedChannel = await this.channelModel.findByIdAndUpdate(
+      channelId,
+      { $inc: { keyVersion: 1 } },
+      { new: true }
+    );
+    const newKeyVersion = updatedChannel?.keyVersion || channel.keyVersion + 1;
+
+    try {
+      // 1. Notify all that member left
+      await this.redis.publish(
+        'chat:channel_events',
+        JSON.stringify({
+          userIds: [...activeUserIds, userId],
+          type: 'channel.member.left',
+          data: {
+            channelId: channel.id,
+            workspaceId: channel.workspaceId,
+            channelName: channel.name,
+            targetUserId: userId,
+          },
+        })
+      );
+
+      // 2. Transmit new Epoch Base Key strictly to remaining active members
+      await this.redis.publish(
+        'chat:channel_events',
+        JSON.stringify({
+          userIds: activeUserIds,
+          type: 'channel.key.rotated',
+          data: {
+            channelId: channel.id,
+            keyVersion: newKeyVersion,
+            newEpochBaseKey: crypto.randomBytes(32).toString('base64'),
+          },
+        })
+      );
+    } catch (e: any) {
+      console.warn('Failed to publish channel events to Redis:', e.message);
+    }
+
+    return { left: true, keyRotated: true, newKeyVersion };
   }
 
   async kickMember(channelId: string, input: ChannelKickDto) {
@@ -265,26 +311,55 @@ export class ChannelService {
       { $set: { leftAt: new Date() } }
     );
 
+    // Get active members for key rotation
+    const activeMembers = await this.memberModel.find({ channelId, leftAt: null }).select('userId');
+    const activeUserIds = activeMembers.map((m) => m.userId);
+
+    // Key Rotation: Increment Key Version
+    const updatedChannel = await this.channelModel.findByIdAndUpdate(
+      channelId,
+      { $inc: { keyVersion: 1 } },
+      { new: true }
+    );
+    const newKeyVersion = updatedChannel?.keyVersion || channel.keyVersion + 1;
+
     try {
+      // 1. Notify all (including kicked member) that member was kicked
       await this.redis.publish(
         'chat:channel_events',
         JSON.stringify({
-          userIds: [target],
+          userIds: [...activeUserIds, target],
           type: 'channel.member.kicked',
           data: {
             channelId: channel.id,
             workspaceId: channel.workspaceId,
             channelName: channel.name,
             kickedBy: input.actorUserId.trim().toLowerCase(),
+            targetUserId: target,
+          },
+        })
+      );
+
+      // 2. Transmit new Epoch Base Key strictly to remaining active members
+      await this.redis.publish(
+        'chat:channel_events',
+        JSON.stringify({
+          userIds: activeUserIds,
+          type: 'channel.key.rotated',
+          data: {
+            channelId: channel.id,
+            keyVersion: newKeyVersion,
+            // Strict mode: generated key sent via infrastructure.
+            // Normally this will be encrypted via individually wrapped MLS KeyPackages.
+            newEpochBaseKey: crypto.randomBytes(32).toString('base64'),
           },
         })
       );
     } catch (e: any) {
-      console.warn('Failed to publish channel.member.kicked event to Redis:', e.message);
+      console.warn('Failed to publish channel events to Redis:', e.message);
     }
 
-    // Soft encryption policy: no mandatory key rotation on kick.
-    return { kicked: true, keyRotated: false };
+    return { kicked: true, keyRotated: true, newKeyVersion };
   }
 
   async updateMemberRole(channelId: string, input: ChannelUpdateRoleDto) {
@@ -346,7 +421,7 @@ export class ChannelService {
         senderId: sender,
         ciphertext: input.ciphertext,
         nonce: input.nonce,
-        keyVersion: channel.keyVersion || 1,
+        keyVersion: input.keyVersion ?? channel.keyVersion ?? 1,
         createdAt: new Date(),
       });
       console.log('message inserted:', message);

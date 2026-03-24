@@ -25,7 +25,7 @@ const RedisProvider: Provider = {
       type: 'postgres',
       url:
         process.env.POSTGRES_URL ||
-        'postgres://postgres:postgres@localhost:5432/canari_delivery',
+        'postgres://admin:password@localhost:5432/auth_db',
       entities: [
         QueuedMessage,
         KeyPackage,

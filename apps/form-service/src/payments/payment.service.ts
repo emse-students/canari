@@ -66,17 +66,17 @@ export class PaymentService {
   async createCheckoutSession(userId: string, eventId: string, options: { isMemberBDE: boolean; wantsMeal: boolean }) {
     const user = await this.userModel.findById(userId);
     if (!user || !user.stripeCustomerId) throw new BadRequestException('Utilisateur ou ID Client Stripe manquant');
-    
+
     // Replace populate logic with standard mongoose find to avoid typing issues from mongoose types
     const event = await this.eventModel.findById(eventId).populate('association').exec();
     if (!event) throw new NotFoundException('Événement introuvable');
-    
+
     const association = event.association as unknown as Association;
     if (!association.stripeAccountId) {
       throw new BadRequestException('L\'association organisatrice n\'est pas connectée à Stripe');
     }
 
-    let finalPriceCents = event.basePriceCents; 
+    let finalPriceCents = event.basePriceCents;
     let description = `Billet pour ${event.name}`;
 
     if (options.isMemberBDE) {

@@ -4,6 +4,7 @@ import { toHex } from '$lib/utils/hex';
 import { encodeAppMessage, mkText, mkReply, mkReaction, mkSystem } from '$lib/proto/codec';
 import { serializeEnvelope, mkTextEnvelope, parseEnvelope } from '$lib/envelope';
 import { ChannelService } from '$lib/services/ChannelService';
+import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
 
 const channelService = new ChannelService();
 
@@ -73,11 +74,22 @@ export async function sendChatMessage(
 
     if (contactName.startsWith('channel_')) {
       const actualChannelId = contactName.replace('channel_', ''); // extract the db id
-      await channelService.sendMessage(actualChannelId, {
-        senderId: userId,
-        nonce: Date.now().toString(), // Mock nonce for now since channels use MLS-based static keys which are WIP
-        ciphertext: btoa(String.fromCharCode(...payload)),
-      });
+      try {
+        const encryptedParams = await channelKeyManager.encryptMessage(actualChannelId, payload);
+        await channelService.sendMessage(actualChannelId, {
+          senderId: userId,
+          nonce: encryptedParams.nonce,
+          ciphertext: encryptedParams.ciphertext,
+          keyVersion: encryptedParams.keyVersion,
+        } as any);
+      } catch (err) {
+        console.warn('Crypto missing for channel via keyManager, falling back to legacy:', err);
+        await channelService.sendMessage(actualChannelId, {
+          senderId: userId,
+          nonce: Date.now().toString(), // Mock nonce for now
+          ciphertext: btoa(String.fromCharCode(...payload)),
+        });
+      }
       // We do not add the message optimistically for channels:
       // We wait for the 'channel.message.created' WebSocket event instead!
     } else {
