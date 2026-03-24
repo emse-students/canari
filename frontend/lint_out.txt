@@ -1,0 +1,1 @@
+$ eslint src --ext .ts,.tsx,.js,.jsx,.svelte --cache --no-cache --quiet

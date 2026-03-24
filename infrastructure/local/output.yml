@@ -1,0 +1,481 @@
+name: local
+services:
+  call-service:
+    build:
+      context: D:\Documents\Programmation\EMSE\Canari
+      dockerfile: infrastructure/local/Dockerfile.call-service
+    depends_on:
+      kafka:
+        condition: service_healthy
+        required: true
+      redis:
+        condition: service_healthy
+        required: true
+    environment:
+      PORT: "3001"
+      RUST_LOG: call_service=info,tower_http=info
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 3001
+        published: "3001"
+        protocol: tcp
+  chat-delivery-service:
+    build:
+      context: D:\Documents\Programmation\EMSE\Canari
+      dockerfile: infrastructure/local/Dockerfile.chat-delivery-service
+    depends_on:
+      kafka:
+        condition: service_healthy
+        required: true
+      mongo:
+        condition: service_started
+        required: true
+      redis:
+        condition: service_healthy
+        required: true
+    environment:
+      KAFKA_BROKERS: kafka:29092
+      PORT: "3010"
+      POSTGRES_URL: postgres://admin:password@postgres:5432/auth_db
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 3010
+        published: "3010"
+        protocol: tcp
+  chat-gateway:
+    build:
+      context: D:\Documents\Programmation\EMSE\Canari
+      dockerfile: infrastructure/local/Dockerfile.chat-gateway
+    depends_on:
+      kafka:
+        condition: service_healthy
+        required: true
+      redis:
+        condition: service_healthy
+        required: true
+    environment:
+      ALLOW_ORIGIN: '*'
+      DELIVERY_SERVICE_URL: http://chat-delivery-service:3001
+      JWT_SECRET: c2615897e20c207622e7eed16ac3b865ea5f8f5c1ca165f4bdcce11524be30b7
+      KAFKA_BROKERS: kafka:29092
+      REDIS_URL: redis://redis:6379
+      RUST_LOG: chat_gateway=info,tower_http=info
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 3000
+        published: "3000"
+        protocol: tcp
+  core-service:
+    build:
+      context: D:\Documents\Programmation\EMSE\Canari
+      dockerfile: infrastructure/local/Dockerfile.core-service
+    depends_on:
+      postgres:
+        condition: service_started
+        required: true
+    environment:
+      DB_DATABASE: auth_db
+      DB_HOST: postgres
+      DB_PASSWORD: password
+      DB_PORT: "5432"
+      DB_USERNAME: admin
+      JWT_SECRET: c2615897e20c207622e7eed16ac3b865ea5f8f5c1ca165f4bdcce11524be30b7
+      PORT: "3012"
+      STRIPE_SECRET_KEY: ""
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 3012
+        published: "3012"
+        protocol: tcp
+  coturn:
+    command:
+      - -n
+      - --log-file=stdout
+      - --min-port=49000
+      - --max-port=49040
+      - --realm=localhost
+      - --user=user:password
+      - --lt-cred-mech
+      - --fingerprint
+      - --no-tls
+      - --no-dtls
+    image: coturn/coturn
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 3478
+        published: "3478"
+        protocol: tcp
+      - mode: ingress
+        target: 3478
+        published: "3478"
+        protocol: udp
+      - mode: ingress
+        target: 5349
+        published: "5349"
+        protocol: tcp
+      - mode: ingress
+        target: 5349
+        published: "5349"
+        protocol: udp
+      - mode: ingress
+        target: 49000
+        published: "49000"
+        protocol: udp
+      - mode: ingress
+        target: 49001
+        published: "49001"
+        protocol: udp
+      - mode: ingress
+        target: 49002
+        published: "49002"
+        protocol: udp
+      - mode: ingress
+        target: 49003
+        published: "49003"
+        protocol: udp
+      - mode: ingress
+        target: 49004
+        published: "49004"
+        protocol: udp
+      - mode: ingress
+        target: 49005
+        published: "49005"
+        protocol: udp
+      - mode: ingress
+        target: 49006
+        published: "49006"
+        protocol: udp
+      - mode: ingress
+        target: 49007
+        published: "49007"
+        protocol: udp
+      - mode: ingress
+        target: 49008
+        published: "49008"
+        protocol: udp
+      - mode: ingress
+        target: 49009
+        published: "49009"
+        protocol: udp
+      - mode: ingress
+        target: 49010
+        published: "49010"
+        protocol: udp
+      - mode: ingress
+        target: 49011
+        published: "49011"
+        protocol: udp
+      - mode: ingress
+        target: 49012
+        published: "49012"
+        protocol: udp
+      - mode: ingress
+        target: 49013
+        published: "49013"
+        protocol: udp
+      - mode: ingress
+        target: 49014
+        published: "49014"
+        protocol: udp
+      - mode: ingress
+        target: 49015
+        published: "49015"
+        protocol: udp
+      - mode: ingress
+        target: 49016
+        published: "49016"
+        protocol: udp
+      - mode: ingress
+        target: 49017
+        published: "49017"
+        protocol: udp
+      - mode: ingress
+        target: 49018
+        published: "49018"
+        protocol: udp
+      - mode: ingress
+        target: 49019
+        published: "49019"
+        protocol: udp
+      - mode: ingress
+        target: 49020
+        published: "49020"
+        protocol: udp
+      - mode: ingress
+        target: 49021
+        published: "49021"
+        protocol: udp
+      - mode: ingress
+        target: 49022
+        published: "49022"
+        protocol: udp
+      - mode: ingress
+        target: 49023
+        published: "49023"
+        protocol: udp
+      - mode: ingress
+        target: 49024
+        published: "49024"
+        protocol: udp
+      - mode: ingress
+        target: 49025
+        published: "49025"
+        protocol: udp
+      - mode: ingress
+        target: 49026
+        published: "49026"
+        protocol: udp
+      - mode: ingress
+        target: 49027
+        published: "49027"
+        protocol: udp
+      - mode: ingress
+        target: 49028
+        published: "49028"
+        protocol: udp
+      - mode: ingress
+        target: 49029
+        published: "49029"
+        protocol: udp
+      - mode: ingress
+        target: 49030
+        published: "49030"
+        protocol: udp
+      - mode: ingress
+        target: 49031
+        published: "49031"
+        protocol: udp
+      - mode: ingress
+        target: 49032
+        published: "49032"
+        protocol: udp
+      - mode: ingress
+        target: 49033
+        published: "49033"
+        protocol: udp
+      - mode: ingress
+        target: 49034
+        published: "49034"
+        protocol: udp
+      - mode: ingress
+        target: 49035
+        published: "49035"
+        protocol: udp
+      - mode: ingress
+        target: 49036
+        published: "49036"
+        protocol: udp
+      - mode: ingress
+        target: 49037
+        published: "49037"
+        protocol: udp
+      - mode: ingress
+        target: 49038
+        published: "49038"
+        protocol: udp
+      - mode: ingress
+        target: 49039
+        published: "49039"
+        protocol: udp
+      - mode: ingress
+        target: 49040
+        published: "49040"
+        protocol: udp
+  kafka:
+    depends_on:
+      zookeeper:
+        condition: service_started
+        required: true
+    environment:
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_BROKER_ID: "1"
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+    healthcheck:
+      test:
+        - CMD
+        - kafka-broker-api-versions
+        - --bootstrap-server
+        - kafka:29092
+      timeout: 5s
+      interval: 10s
+      retries: 10
+    image: confluentinc/cp-kafka:7.5.0
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 9092
+        published: "9092"
+        protocol: tcp
+    restart: on-failure
+  media-service:
+    build:
+      context: D:\Documents\Programmation\EMSE\Canari
+      dockerfile: infrastructure/local/Dockerfile.media-service
+    depends_on:
+      minio:
+        condition: service_healthy
+        required: true
+    environment:
+      JWT_SECRET: c2615897e20c207622e7eed16ac3b865ea5f8f5c1ca165f4bdcce11524be30b7
+      MEDIA_MAX_SIZE_MB: "50"
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_BUCKET: canari-media
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: "9000"
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_USE_SSL: "false"
+      PORT: "3011"
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 3011
+        published: "3011"
+        protocol: tcp
+  minio:
+    command:
+      - server
+      - /data
+      - --console-address
+      - :9001
+    environment:
+      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: minioadmin
+    healthcheck:
+      test:
+        - CMD
+        - mc
+        - ready
+        - local
+      timeout: 5s
+      interval: 10s
+      retries: 10
+    image: minio/minio:latest
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 9000
+        published: "9000"
+        protocol: tcp
+      - mode: ingress
+        target: 9001
+        published: "9001"
+        protocol: tcp
+    volumes:
+      - type: volume
+        source: minio_data
+        target: /data
+        volume: {}
+  mongo:
+    environment:
+      MONGO_INITDB_DATABASE: chat_db
+    image: mongo:latest
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 27017
+        published: "27017"
+        protocol: tcp
+    volumes:
+      - type: volume
+        source: mongo_data
+        target: /data/db
+        volume: {}
+  postgres:
+    environment:
+      POSTGRES_DB: auth_db
+      POSTGRES_PASSWORD: password
+      POSTGRES_USER: admin
+    image: postgres:15-alpine
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 5432
+        published: "5432"
+        protocol: tcp
+    volumes:
+      - type: volume
+        source: postgres_data
+        target: /var/lib/postgresql/data
+        volume: {}
+  redis:
+    healthcheck:
+      test:
+        - CMD
+        - redis-cli
+        - ping
+      timeout: 3s
+      interval: 5s
+      retries: 10
+    image: redis:alpine
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 6379
+        published: "6379"
+        protocol: tcp
+  social-service:
+    build:
+      context: D:\Documents\Programmation\EMSE\Canari
+      dockerfile: infrastructure/local/Dockerfile.social-service
+    depends_on:
+      core-service:
+        condition: service_started
+        required: true
+      mongo:
+        condition: service_started
+        required: true
+    environment:
+      CHANNELS_ENCRYPTION_SECRET: dev-channel-secret-change-me
+      JWT_SECRET: c2615897e20c207622e7eed16ac3b865ea5f8f5c1ca165f4bdcce11524be30b7
+      PORT: "3014"
+      SOCIAL_MONGO_URI: mongodb://mongo:27017/social_db
+      STRIPE_CANCEL_URL: http://localhost:5173/posts?registration=cancel
+      STRIPE_SECRET_KEY: ""
+      STRIPE_SUCCESS_URL: http://localhost:5173/posts?registration=success
+      USER_SERVICE_URL: http://core-service:3012
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 3014
+        published: "3014"
+        protocol: tcp
+  zookeeper:
+    environment:
+      ZOOKEEPER_CLIENT_PORT: "2181"
+      ZOOKEEPER_TICK_TIME: "2000"
+    image: confluentinc/cp-zookeeper:7.5.0
+    networks:
+      default: null
+networks:
+  default:
+    name: local_default
+volumes:
+  minio_data:
+    name: local_minio_data
+  mongo_data:
+    name: local_mongo_data
+  postgres_data:
+    name: local_postgres_data

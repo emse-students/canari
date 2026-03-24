@@ -12,6 +12,8 @@ import { URL } from 'url';
 @Injectable()
 export class PostsService {
   private readonly logger = new Logger(PostsService.name);
+  private readonly userServiceUrl: string;
+  private readonly stripe: any;
 
   constructor(
     @InjectRepository(Post) private readonly postRepo: Repository<Post>,
@@ -87,8 +89,8 @@ export class PostsService {
             imageUrl: meta.image,
           });
         }
-      } catch {
-        this.logger.error(`Failed to parse URL: ${url}`, e);
+      } catch (err) {
+        this.logger.error(`Failed to parse URL: ${url}`, err);
       }
     }
 
@@ -195,13 +197,34 @@ export class PostsService {
   async registerEvent(postId: string, _buttonId: string, _data: any) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException();
-    // Logic for button registration
+
+    // Check user service (Phase 3.7)
+    try {
+      const userRes = await lastValueFrom(
+        this.httpService.get(`${this.userServiceUrl}/users/${_data.userId}`)
+      );
+      this.logger.log(`Successfully communicated with user-service for user ${_data.userId}`);
+    } catch (err: any) {
+      this.logger.error(`Failed inter-service communication with user-service for ${_data.userId}: ${err.message}`);
+    }
+
     return { success: true };
   }
 
   async submitForm(postId: string, _formId: string, _data: any) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException();
+
+    // Check user service (Phase 3.7)
+    try {
+      const userRes = await lastValueFrom(
+        this.httpService.get(`${this.userServiceUrl}/users/${_data.userId}`)
+      );
+      this.logger.log(`Successfully communicated with user-service for user ${_data.userId}`);
+    } catch (err: any) {
+      this.logger.error(`Failed inter-service communication with user-service for ${_data.userId}: ${err.message}`);
+    }
+
     return { success: true };
   }
 
