@@ -1,21 +1,14 @@
 import { Module } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
+import { ConfigModule } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { FormsController } from './forms.controller';
 import { FormsService } from './forms.service';
-import { Form, FormSchema } from './schemas/form.schema';
-import { Submission, SubmissionSchema } from './schemas/submission.schema';
-import { ConfigModule } from '@nestjs/config';
+import { Form } from './entities/form.entity';
+import { Submission } from './entities/submission.entity';
 
 @Module({
-  imports: [
-    MongooseModule.forFeature([
-      { name: Form.name, schema: FormSchema },
-      { name: Submission.name, schema: SubmissionSchema },
-    ]),
-    ConfigModule,
-  ],
+  imports: [TypeOrmModule.forFeature([Form, Submission]), ConfigModule],
   controllers: [FormsController],
   providers: [FormsService],
-  exports: [FormsService],
 })
 export class FormsModule {}

@@ -1,19 +1,23 @@
 import { Module } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
+import { ConfigModule } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { ChannelsModule } from './channels/channels.module';
 import { PostsModule } from './posts/posts.module';
 import { FormsModule } from './forms/forms.module';
 
 @Module({
   imports: [
-    MongooseModule.forRoot(
-      process.env.SOCIAL_MONGO_URI || 'mongodb://localhost:27017/social_db'
-    ),
+    ConfigModule.forRoot({ isGlobal: true }),
+    TypeOrmModule.forRoot({
+      type: 'postgres',
+      url: process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/canari_social',
+      autoLoadEntities: true,
+      synchronize: true, // Only for dev
+    }),
     ChannelsModule,
     PostsModule,
     FormsModule,
   ],
   controllers: [],
-  providers: [],
 })
 export class AppModule {}

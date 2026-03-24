@@ -225,7 +225,11 @@ services:
       - "3014:3014"
     environment:
       PORT: "3014"
-      SOCIAL_MONGO_URI: mongodb://mongo:27017/social_db
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USERNAME: admin
+      DB_PASSWORD: password
+      DB_DATABASE: auth_db
       CHANNELS_ENCRYPTION_SECRET: ${CHANNELS_ENCRYPTION_SECRET:-dev-channel-secret-change-me}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_SUCCESS_URL: ${STRIPE_SUCCESS_URL:-http://localhost:5173/posts?registration=success}
@@ -233,7 +237,7 @@ services:
       USER_SERVICE_URL: http://core-service:3012
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
     depends_on:
-      mongo:
+      postgres:
         condition: service_started
       core-service:
         condition: service_started

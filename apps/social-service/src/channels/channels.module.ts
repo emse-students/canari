@@ -1,23 +1,18 @@
 import { Module } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
+import { HttpModule } from '@nestjs/axios';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { ChannelsController } from './channels.controller';
 import { ChannelService } from './channel.service';
-
-import { Workspace, WorkspaceSchema } from './schemas/workspace.schema';
-import { ChannelRole, ChannelRoleSchema } from './schemas/channel-role.schema';
-import { Channel, ChannelSchema } from './schemas/channel.schema';
-import { ChannelMember, ChannelMemberSchema } from './schemas/channel-member.schema';
-import { ChannelMessage, ChannelMessageSchema } from './schemas/channel-message.schema';
+import { Channel } from './entities/channel.entity';
+import { ChannelRole } from './entities/channel-role.entity';
+import { ChannelMember } from './entities/channel-member.entity';
+import { ChannelMessage } from './entities/channel-message.entity';
+import { Workspace } from './entities/workspace.entity';
 
 @Module({
   imports: [
-    MongooseModule.forFeature([
-      { name: Workspace.name, schema: WorkspaceSchema },
-      { name: ChannelRole.name, schema: ChannelRoleSchema },
-      { name: Channel.name, schema: ChannelSchema },
-      { name: ChannelMember.name, schema: ChannelMemberSchema },
-      { name: ChannelMessage.name, schema: ChannelMessageSchema },
-    ]),
+    TypeOrmModule.forFeature([Workspace, Channel, ChannelRole, ChannelMember, ChannelMessage]),
+    HttpModule,
   ],
   controllers: [ChannelsController],
   providers: [ChannelService],

@@ -1,31 +1,13 @@
 import { Module } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
-import { HttpModule } from '@nestjs/axios';
-import { ClientsModule, Transport } from '@nestjs/microservices';
+import { ConfigModule } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { PostsController } from './posts.controller';
 import { PostsService } from './posts.service';
-import { Post, PostSchema } from './schemas/post.schema';
+import { Post } from './entities/post.entity';
+import { HttpModule } from '@nestjs/axios';
 
 @Module({
-  imports: [
-    MongooseModule.forFeature([{ name: Post.name, schema: PostSchema }]),
-    HttpModule,
-    ClientsModule.register([
-      {
-        name: 'KAFKA_CLIENT',
-        transport: Transport.KAFKA,
-        options: {
-          client: {
-            clientId: 'post-service',
-            brokers: (process.env.KAFKA_BROKERS || 'localhost:9092').split(','),
-          },
-          producer: {
-            allowAutoTopicCreation: true,
-          },
-        },
-      },
-    ]),
-  ],
+  imports: [TypeOrmModule.forFeature([Post]), HttpModule, ConfigModule],
   controllers: [PostsController],
   providers: [PostsService],
 })

@@ -1,570 +1,275 @@
+import { Injectable, NotFoundException, ForbiddenException, Logger } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, In } from 'typeorm';
+import { Workspace } from './entities/workspace.entity';
+import { Channel } from './entities/channel.entity';
+import { ChannelRole } from './entities/channel-role.entity';
+import { ChannelMember } from './entities/channel-member.entity';
+import { ChannelMessage } from './entities/channel-message.entity';
+
 import {
-  BadRequestException,
-  ForbiddenException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import * as crypto from 'crypto';
-import {
-  CHANNEL_PERMISSIONS,
-  DEFAULT_ADMIN_PERMISSIONS,
-  DEFAULT_MEMBER_PERMISSIONS,
-  DEFAULT_MODERATOR_PERMISSIONS,
-  DEFAULT_OWNER_PERMISSIONS,
-  type ChannelPermission,
-} from './permissions';
-import { Workspace } from './schemas/workspace.schema';
-import { ChannelRole } from './schemas/channel-role.schema';
-import { Channel } from './schemas/channel.schema';
-import { ChannelMember } from './schemas/channel-member.schema';
-import { ChannelMessage } from './schemas/channel-message.schema';
-import {
-  type ChannelJoinDto,
-  type ChannelKickDto,
-  type ChannelLeaveDto,
-  type ChannelUpdateRoleDto,
-  type CreateChannelDto,
-  type CreateRoleDto,
-  type CreateWorkspaceDto,
-  type SendChannelMessageDto,
+  CreateChannelDto,
+  CreateRoleDto,
+  CreateWorkspaceDto,
+  ChannelJoinDto,
+  ChannelLeaveDto,
+  ChannelKickDto,
+  ChannelUpdateRoleDto,
+  SendChannelMessageDto,
 } from './dto/channel.dto';
-import Redis from 'ioredis';
 
 @Injectable()
 export class ChannelService {
-  private readonly redis: Redis;
+  private readonly logger = new Logger(ChannelService.name);
 
   constructor(
-    @InjectModel(Workspace.name)
-    private readonly workspaceModel: Model<Workspace>,
-    @InjectModel(ChannelRole.name)
-    private readonly roleModel: Model<ChannelRole>,
-    @InjectModel(Channel.name)
-    private readonly channelModel: Model<Channel>,
-    @InjectModel(ChannelMember.name)
-    private readonly memberModel: Model<ChannelMember>,
-    @InjectModel(ChannelMessage.name)
-    private readonly messageModel: Model<ChannelMessage>
-  ) {
-    // Configuration de ioredis pour fail-fast si Redis est hors ligne
-    const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
-    this.redis = new Redis(redisUrl, {
-      maxRetriesPerRequest: 1,
-      enableOfflineQueue: false, // Ne pas mettre les requêtes en attente si Redis est down
-      retryStrategy: (times) => {
-        if (times > 3) return null; // Arrête d'essayer après 3 tentatives
-        return Math.min(times * 200, 1000);
-      },
-    });
+    @InjectRepository(Workspace) private readonly workspaceRepo: Repository<Workspace>,
+    @InjectRepository(Channel) private readonly channelRepo: Repository<Channel>,
+    @InjectRepository(ChannelRole) private readonly roleRepo: Repository<ChannelRole>,
+    @InjectRepository(ChannelMember) private readonly memberRepo: Repository<ChannelMember>,
+    @InjectRepository(ChannelMessage) private readonly messageRepo: Repository<ChannelMessage>
+  ) {}
 
-    this.redis.on('error', (err) => {
-      console.warn('⚠️ Redis connection error:', err.message);
-    });
-  }
+  // ================= WORKSPACES =================
 
   async createWorkspace(input: CreateWorkspaceDto) {
-    const slug = input.slug.trim().toLowerCase();
-    const name = input.name.trim();
-    const owner = input.createdBy.trim().toLowerCase();
-    if (!slug || !name || !owner) {
-      throw new BadRequestException('slug, name and createdBy are required');
-    }
-
-    const existingWorkspace = await this.workspaceModel.findOne({ slug });
-    if (existingWorkspace) {
-      await this.ensureDefaultRoles(existingWorkspace.id);
-      return existingWorkspace;
-    }
-
-    const workspace = await this.workspaceModel.create({
-      slug,
-      name,
-      createdBy: owner,
+    const ws = this.workspaceRepo.create({
+      name: input.name,
+      slug: input.slug,
+      createdBy: input.createdBy,
     });
+    const savedWs = await this.workspaceRepo.save(ws);
 
-    await this.ensureDefaultRoles(workspace.id);
-
-    return workspace;
-  }
-
-  async getWorkspaceBySlug(slugRaw: string) {
-    const slug = slugRaw.trim().toLowerCase();
-    if (!slug) {
-      throw new BadRequestException('slug is required');
-    }
-
-    const workspace = await this.workspaceModel.findOne({ slug }).lean();
-    if (!workspace) {
-      throw new NotFoundException('workspace not found');
-    }
-
-    return workspace;
-  }
-
-  async listWorkspacesForUser(userIdRaw: string) {
-    const userId = userIdRaw.trim().toLowerCase();
-    if (!userId) {
-      throw new BadRequestException('userId is required');
-    }
-
-    const ownedWorkspaces = await this.workspaceModel.find({ createdBy: userId }).lean();
-    const memberWorkspaceIds = await this.memberModel.distinct('workspaceId', {
-      userId,
-      leftAt: null,
+    const adminRole = this.roleRepo.create({
+      workspaceId: savedWs.id,
+      name: 'Admin',
+      permissions: [
+        'MANAGE_WORKSPACE',
+        'MANAGE_CHANNELS',
+        'MANAGE_ROLES',
+        'SEND_MESSAGES',
+        'MODERATE_MESSAGES',
+        'INVITE_USERS',
+      ],
     });
-    const membershipWorkspaces =
-      memberWorkspaceIds.length > 0
-        ? await this.workspaceModel.find({ _id: { $in: memberWorkspaceIds } }).lean()
-        : [];
+    const savedAdminRole = await this.roleRepo.save(adminRole);
 
-    const byId = new Map<string, (typeof ownedWorkspaces)[number]>();
-    for (const workspace of [...ownedWorkspaces, ...membershipWorkspaces]) {
-      byId.set(String(workspace._id), workspace);
-    }
-
-    return Array.from(byId.values());
-  }
-
-  async createRole(input: CreateRoleDto) {
-    await this.assertWorkspace(input.workspaceId);
-
-    const role = await this.roleModel.create({
-      workspaceId: input.workspaceId,
-      name: input.name.trim().toLowerCase(),
-      priority: input.priority,
-      permissions: input.permissions,
+    const memberRole = this.roleRepo.create({
+      workspaceId: savedWs.id,
+      name: 'Member',
+      permissions: ['SEND_MESSAGES', 'INVITE_USERS'],
     });
+    await this.roleRepo.save(memberRole);
 
-    return role;
-  }
-
-  async createChannel(input: CreateChannelDto) {
-    await this.assertWorkspace(input.workspaceId);
-
-    const actor = input.actorUserId.trim().toLowerCase();
-    const ownerRole = await this.getRoleByName(input.workspaceId, 'owner');
-    if (!ownerRole) {
-      throw new BadRequestException('owner role missing in workspace');
-    }
-
-    const channel = await this.channelModel.create({
-      workspaceId: input.workspaceId,
-      name: input.name.trim(),
-      visibility: input.visibility ?? 'public',
-      keyVersion: 1,
-      archived: false,
+    const adminMember = this.memberRepo.create({
+      workspaceId: savedWs.id,
+      userId: input.createdBy,
+      roleIds: [savedAdminRole.id],
     });
+    await this.memberRepo.save(adminMember);
 
-    await this.memberModel.updateOne(
-      { channelId: channel.id || channel._id?.toString(), userId: actor },
-      {
-        $set: {
-          channelId: channel.id,
-          workspaceId: input.workspaceId,
-          userId: actor,
-          roleName: ownerRole.name,
-          leftAt: null,
-        },
-      },
-      { upsert: true }
-    );
-
-    return channel;
-  }
-
-  async joinChannel(channelId: string, input: ChannelJoinDto) {
-    const channel = await this.requireChannel(channelId);
-
-    const actorPerms = await this.getPermissions(
-      channel.workspaceId,
-      input.actorUserId,
-      channel.id
-    );
-    const isPublic = channel.visibility === 'public';
-    const canInvite = actorPerms.has(CHANNEL_PERMISSIONS.MEMBER_INVITE);
-
-    if (!isPublic && !canInvite) {
-      throw new ForbiddenException('cannot join private channel without invite permission');
-    }
-
-    const roleName = (input.roleName || 'member').toLowerCase();
-    const role = await this.getRoleByName(channel.workspaceId, roleName);
-    if (!role) throw new BadRequestException(`unknown role ${roleName}`);
-
-    const userId = input.userId.trim().toLowerCase();
-    await this.memberModel.updateOne(
-      { channelId, userId },
-      {
-        $set: {
-          channelId,
-          workspaceId: channel.workspaceId,
-          userId,
-          roleName: role.name,
-          leftAt: null,
-          joinedAt: new Date(),
-        },
-      },
-      { upsert: true }
-    );
-
-    const workspace = await this.workspaceModel.findById(channel.workspaceId).lean();
-    try {
-      await this.redis.publish(
-        'chat:channel_events',
-        JSON.stringify({
-          userIds: [userId],
-          type: 'channel.member.joined',
-          data: {
-            channelId: channel.id,
-            workspaceId: channel.workspaceId,
-            workspaceSlug: workspace?.slug,
-            workspaceName: workspace?.name,
-            channelName: channel.name,
-            visibility: channel.visibility,
-            roleName: role.name,
-            joinedBy: input.actorUserId.trim().toLowerCase(),
-          },
-        })
-      );
-    } catch (e: any) {
-      console.warn('Failed to publish channel.member.joined event to Redis:', e.message);
-    }
-
-    // Soft mode: keep old messages accessible for new members.
-    return { joined: true, historyVisible: true, keyVersion: channel.keyVersion };
-  }
-
-  async leaveChannel(channelId: string, input: ChannelLeaveDto) {
-    const channel = await this.requireChannel(channelId);
-    const userId = input.userId.trim().toLowerCase();
-
-    await this.memberModel.updateOne(
-      { channelId, userId, leftAt: null },
-      { $set: { leftAt: new Date() } }
-    );
-
-    // Get active members for key rotation
-    const activeMembers = await this.memberModel.find({ channelId, leftAt: null }).select('userId');
-    const activeUserIds = activeMembers.map((m) => m.userId);
-
-    // Key Rotation: Increment Key Version
-    const updatedChannel = await this.channelModel.findByIdAndUpdate(
-      channelId,
-      { $inc: { keyVersion: 1 } },
-      { new: true }
-    );
-    const newKeyVersion = updatedChannel?.keyVersion || channel.keyVersion + 1;
-
-    try {
-      // 1. Notify all that member left
-      await this.redis.publish(
-        'chat:channel_events',
-        JSON.stringify({
-          userIds: [...activeUserIds, userId],
-          type: 'channel.member.left',
-          data: {
-            channelId: channel.id,
-            workspaceId: channel.workspaceId,
-            channelName: channel.name,
-            targetUserId: userId,
-          },
-        })
-      );
-
-      // 2. Transmit new Epoch Base Key strictly to remaining active members
-      await this.redis.publish(
-        'chat:channel_events',
-        JSON.stringify({
-          userIds: activeUserIds,
-          type: 'channel.key.rotated',
-          data: {
-            channelId: channel.id,
-            keyVersion: newKeyVersion,
-            newEpochBaseKey: crypto.randomBytes(32).toString('base64'),
-          },
-        })
-      );
-    } catch (e: any) {
-      console.warn('Failed to publish channel events to Redis:', e.message);
-    }
-
-    return { left: true, keyRotated: true, newKeyVersion };
-  }
-
-  async kickMember(channelId: string, input: ChannelKickDto) {
-    const channel = await this.requireChannel(channelId);
-    const actorPerms = await this.getPermissions(
-      channel.workspaceId,
-      input.actorUserId,
-      channel.id
-    );
-
-    if (!actorPerms.has(CHANNEL_PERMISSIONS.MEMBER_KICK)) {
-      throw new ForbiddenException('missing member.kick permission');
-    }
-
-    const target = input.targetUserId.trim().toLowerCase();
-    await this.memberModel.updateOne(
-      { channelId, userId: target, leftAt: null },
-      { $set: { leftAt: new Date() } }
-    );
-
-    // Get active members for key rotation
-    const activeMembers = await this.memberModel.find({ channelId, leftAt: null }).select('userId');
-    const activeUserIds = activeMembers.map((m) => m.userId);
-
-    // Key Rotation: Increment Key Version
-    const updatedChannel = await this.channelModel.findByIdAndUpdate(
-      channelId,
-      { $inc: { keyVersion: 1 } },
-      { new: true }
-    );
-    const newKeyVersion = updatedChannel?.keyVersion || channel.keyVersion + 1;
-
-    try {
-      // 1. Notify all (including kicked member) that member was kicked
-      await this.redis.publish(
-        'chat:channel_events',
-        JSON.stringify({
-          userIds: [...activeUserIds, target],
-          type: 'channel.member.kicked',
-          data: {
-            channelId: channel.id,
-            workspaceId: channel.workspaceId,
-            channelName: channel.name,
-            kickedBy: input.actorUserId.trim().toLowerCase(),
-            targetUserId: target,
-          },
-        })
-      );
-
-      // 2. Transmit new Epoch Base Key strictly to remaining active members
-      await this.redis.publish(
-        'chat:channel_events',
-        JSON.stringify({
-          userIds: activeUserIds,
-          type: 'channel.key.rotated',
-          data: {
-            channelId: channel.id,
-            keyVersion: newKeyVersion,
-            // Strict mode: generated key sent via infrastructure.
-            // Normally this will be encrypted via individually wrapped MLS KeyPackages.
-            newEpochBaseKey: crypto.randomBytes(32).toString('base64'),
-          },
-        })
-      );
-    } catch (e: any) {
-      console.warn('Failed to publish channel events to Redis:', e.message);
-    }
-
-    return { kicked: true, keyRotated: true, newKeyVersion };
-  }
-
-  async updateMemberRole(channelId: string, input: ChannelUpdateRoleDto) {
-    const channel = await this.requireChannel(channelId);
-    const actorPerms = await this.getPermissions(
-      channel.workspaceId,
-      input.actorUserId,
-      channel.id
-    );
-
-    if (!actorPerms.has(CHANNEL_PERMISSIONS.ROLE_MANAGE)) {
-      throw new ForbiddenException('missing role.manage permission');
-    }
-
-    const roleName = input.roleName.trim().toLowerCase();
-    const role = await this.getRoleByName(channel.workspaceId, roleName);
-    if (!role) {
-      throw new BadRequestException(`unknown role ${roleName}`);
-    }
-
-    const targetUserId = input.targetUserId.trim().toLowerCase();
-    const membership = await this.memberModel.findOne({
-      channelId: channel.id,
-      userId: targetUserId,
-      leftAt: null,
+    const generalChannel = this.channelRepo.create({
+      workspaceId: savedWs.id,
+      name: 'general',
+      isPrivate: false,
     });
+    await this.channelRepo.save(generalChannel);
 
-    if (!membership) {
-      throw new NotFoundException('target user is not an active member of this channel');
-    }
-
-    membership.roleName = role.name;
-    await membership.save();
-
-    return {
-      updated: true,
-      channelId: channel.id,
-      userId: targetUserId,
-      roleName: role.name,
-    };
+    return savedWs;
   }
 
-  async sendMessage(channelId: string, input: SendChannelMessageDto) {
-    try {
-      console.log('--- START SEND MESSAGE ---', { channelId, input });
-      const channel = await this.requireChannel(channelId);
-      console.log('channel loaded:', channel);
-      const sender = input.senderId.trim().toLowerCase();
+  async getWorkspaceBySlug(slug: string) {
+    const ws = await this.workspaceRepo.findOne({ where: { slug } });
+    if (!ws) throw new NotFoundException('Workspace not found');
 
-      const perms = await this.getPermissions(channel.workspaceId, sender, String(channel._id));
-      if (!perms.has(CHANNEL_PERMISSIONS.CHANNEL_WRITE)) {
-        throw new ForbiddenException('missing channel.write permission');
-      }
+    const channels = await this.channelRepo.find({ where: { workspaceId: ws.id } });
+    const members = await this.memberRepo.find({ where: { workspaceId: ws.id } });
+    const roles = await this.roleRepo.find({ where: { workspaceId: ws.id } });
 
-      console.log('creating message...');
-      const message = await this.messageModel.create({
-        channelId: String(channel._id),
-        workspaceId: channel.workspaceId,
-        senderId: sender,
-        ciphertext: input.ciphertext,
-        nonce: input.nonce,
-        keyVersion: input.keyVersion ?? channel.keyVersion ?? 1,
-        createdAt: new Date(),
-      });
-      console.log('message inserted:', message);
-
-      // Notify ALL currently active members
-      const members = await this.memberModel
-        .find({ channelId: String(channel._id), leftAt: null })
-        .lean();
-      const userIds = members.map((m) => m.userId);
-
-      if (userIds.length > 0) {
-        try {
-          await this.redis.publish(
-            'chat:channel_events',
-            JSON.stringify({
-              userIds,
-              type: 'channel.message.created',
-              data: {
-                id: message._id.toString(),
-                channelId: message.channelId,
-                workspaceId: message.workspaceId,
-                senderId: message.senderId,
-                ciphertext: message.ciphertext,
-                nonce: message.nonce,
-                keyVersion: message.keyVersion,
-                createdAt: message.createdAt,
-              },
-            })
-          );
-          console.log('published to redis');
-        } catch (e: any) {
-          console.warn('Failed to publish channel.message.created event to Redis:', e.message);
-          // Rollback the DB insertion to guarantee consistency (no message shown if not broadcasted)
-          await this.messageModel.findByIdAndDelete(message._id);
-          throw new Error('Message sending failed: real-time broadcast is unreachable.');
-        }
-      }
-
-      return message;
-    } catch (e: any) {
-      console.error('ERROR IN SENDMESSAGE:', e);
-      throw e;
-    }
+    return { workspace: ws, channels, members, roles };
   }
 
-  async listMessages(channelId: string, userId: string, limit = 100) {
-    const channel = await this.requireChannel(channelId);
-    const perms = await this.getPermissions(channel.workspaceId, userId, channel.id);
-    if (!perms.has(CHANNEL_PERMISSIONS.CHANNEL_READ)) {
-      throw new ForbiddenException('missing channel.read permission');
-    }
+  async listWorkspacesForUser(userId: string) {
+    const roles = await this.memberRepo.find({ where: { userId } });
+    if (roles.length === 0) return [];
 
-    const docs = await this.messageModel
-      .find({ channelId: channel.id })
-      .sort({ createdAt: -1 })
-      .limit(Math.max(1, Math.min(limit, 200)))
-      .lean();
+    const workspaceIds = [...new Set(roles.map((r) => r.workspaceId))];
+    const workspaces = await this.workspaceRepo.find({ where: { id: In(workspaceIds) } });
 
-    return docs.reverse().map((doc) => ({
-      id: String(doc._id),
-      channelId: doc.channelId,
-      workspaceId: doc.workspaceId,
-      senderId: doc.senderId,
-      keyVersion: doc.keyVersion,
-      createdAt: doc.createdAt,
-      ciphertext: doc.ciphertext,
-      nonce: doc.nonce,
+    return workspaces.map((w) => ({
+      ...w,
+      id: w.id,
     }));
   }
 
+  // ================= ROLES =================
+
+  async createRole(input: CreateRoleDto) {
+    const role = this.roleRepo.create({
+      workspaceId: input.workspaceId,
+      name: input.name,
+      permissions: input.permissions,
+    });
+    return this.roleRepo.save(role);
+  }
+
+  // ================= CHANNELS =================
+
+  async createChannel(input: CreateChannelDto) {
+    const channel = this.channelRepo.create({
+      workspaceId: input.workspaceId,
+      name: input.name,
+      isPrivate: input.visibility === 'private',
+      allowedRoles: [],
+    });
+    return this.channelRepo.save(channel);
+  }
+
   async listChannelsForUser(workspaceId: string, userId: string) {
-    await this.assertWorkspace(workspaceId);
-    const memberships = await this.memberModel
-      .find({ workspaceId, userId: userId.toLowerCase(), leftAt: null })
-      .lean();
+    const member = await this.memberRepo.findOne({ where: { workspaceId, userId } });
+    if (!member) throw new ForbiddenException('Not a member of this workspace');
 
-    const ids = memberships.map((m) => m.channelId);
-    if (ids.length === 0) return [];
-
-    return await this.channelModel.find({ _id: { $in: ids } }).lean();
-  }
-
-  private async assertWorkspace(workspaceId: string) {
-    const ws = await this.workspaceModel.findById(String(workspaceId));
-    if (!ws) throw new NotFoundException('workspace not found');
-  }
-
-  private async requireChannel(channelId: string) {
-    const channel = await this.channelModel.findById(String(channelId));
-    if (!channel) throw new NotFoundException('channel not found');
-    return channel;
-  }
-
-  private async getRoleByName(workspaceId: string, roleName: string) {
-    return this.roleModel.findOne({
-      workspaceId: String(workspaceId),
-      name: String(roleName).toLowerCase(),
+    const channels = await this.channelRepo.find({ where: { workspaceId } });
+    return channels.filter((ch) => {
+      if (!ch.isPrivate) return true;
+      return ch.allowedRoles?.some((rId) => member.roleIds?.includes(rId));
     });
   }
 
-  private async ensureDefaultRoles(workspaceId: string) {
-    const defaults: Array<{ name: string; priority: number; permissions: ChannelPermission[] }> = [
-      { name: 'owner', priority: 100, permissions: DEFAULT_OWNER_PERMISSIONS },
-      { name: 'admin', priority: 80, permissions: DEFAULT_ADMIN_PERMISSIONS },
-      { name: 'moderator', priority: 50, permissions: DEFAULT_MODERATOR_PERMISSIONS },
-      { name: 'member', priority: 10, permissions: DEFAULT_MEMBER_PERMISSIONS },
-    ];
+  async joinChannel(channelId: string, input: ChannelJoinDto) {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
 
-    for (const role of defaults) {
-      await this.roleModel.updateOne(
-        { workspaceId, name: role.name },
-        {
-          $setOnInsert: {
-            workspaceId,
-            name: role.name,
-            priority: role.priority,
-            permissions: role.permissions,
-          },
-        },
-        { upsert: true }
+    const member = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId: input.userId },
+    });
+    if (!member) {
+      const defaultRole = await this.roleRepo.findOne({
+        where: { workspaceId: channel.workspaceId, name: 'Member' },
+      });
+      const newMember = this.memberRepo.create({
+        workspaceId: channel.workspaceId,
+        userId: input.userId,
+        roleIds: defaultRole ? [defaultRole.id] : [],
+      });
+      await this.memberRepo.save(newMember);
+    }
+    return { success: true };
+  }
+
+  async leaveChannel(channelId: string, input: ChannelLeaveDto) {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
+
+    const member = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId: input.userId },
+    });
+    if (!member) throw new NotFoundException('Member not found');
+
+    if (channel.isPrivate) {
+      const remainingRoles = member.roleIds.filter((r) => !channel.allowedRoles?.includes(r));
+      member.roleIds = remainingRoles;
+      await this.memberRepo.save(member);
+    } else {
+      await this.memberRepo.delete({ workspaceId: channel.workspaceId, userId: input.userId });
+    }
+
+    return { success: true };
+  }
+
+  async kickMember(channelId: string, input: ChannelKickDto) {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
+
+    const adminMember = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId: input.actorUserId },
+    });
+    if (!adminMember) throw new ForbiddenException('Not an admin');
+
+    let hasPerm = false;
+    if (adminMember.roleIds?.length > 0) {
+      const roles = await this.roleRepo.find({ where: { id: In(adminMember.roleIds) } });
+      hasPerm = roles.some(
+        (r) =>
+          r.permissions.includes('MANAGE_WORKSPACE') || r.permissions.includes('MANAGE_CHANNELS')
       );
     }
+
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNELS permission');
+
+    await this.memberRepo.delete({ workspaceId: channel.workspaceId, userId: input.targetUserId });
+    return { success: true };
   }
 
-  private async getPermissions(
-    workspaceId: string,
-    userIdRaw: string,
-    channelId: string
-  ): Promise<Set<ChannelPermission>> {
-    const userId = userIdRaw.trim().toLowerCase();
-    const member = await this.memberModel.findOne({ channelId, userId, leftAt: null });
+  async updateMemberRole(channelId: string, input: ChannelUpdateRoleDto) {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
 
-    if (!member) {
-      // No membership means no UI access to this channel.
-      return new Set<ChannelPermission>();
+    const adminMember = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId: input.actorUserId },
+    });
+    if (!adminMember) throw new ForbiddenException('Not an admin');
+
+    let hasPerm = false;
+    if (adminMember.roleIds?.length > 0) {
+      const roles = await this.roleRepo.find({ where: { id: In(adminMember.roleIds) } });
+      hasPerm = roles.some(
+        (r) => r.permissions.includes('MANAGE_WORKSPACE') || r.permissions.includes('MANAGE_ROLES')
+      );
     }
 
-    const role = await this.roleModel.findOne({
-      workspaceId,
-      name: member.roleName.toLowerCase(),
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_ROLES permission');
+
+    const targetMember = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId: input.targetUserId },
+    });
+    if (!targetMember) throw new NotFoundException('Target member not found');
+
+    const role = await this.roleRepo.findOne({
+      where: { workspaceId: channel.workspaceId, name: input.roleName },
+    });
+    if (!role) throw new NotFoundException('Role not found');
+    const roleIds = [...new Set([...(targetMember.roleIds || []), role.id])];
+
+    targetMember.roleIds = roleIds;
+
+    await this.memberRepo.save(targetMember);
+    return { success: true };
+  }
+
+  // ================= MESSAGES =================
+
+  async sendMessage(channelId: string, input: SendChannelMessageDto) {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
+
+    const member = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId: input.senderId },
+    });
+    if (!member) throw new ForbiddenException('Not a member of this workspace');
+
+    const msg = this.messageRepo.create({
+      workspaceId: channel.workspaceId,
+      channelId,
+      authorId: input.senderId,
+      content: input.ciphertext,
+      replyTo: input.nonce,
+      metadata: { keyVersion: input.keyVersion },
     });
 
-    const base = role?.permissions || [];
-    return new Set(base);
+    const savedMsg = await this.messageRepo.save(msg);
+    return savedMsg;
+  }
+
+  async listMessages(channelId: string, userId: string, limit = 50) {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
+
+    const msgs = await this.messageRepo.find({
+      where: { channelId },
+      order: { createdAt: 'DESC' },
+      take: limit,
+    });
+    return msgs;
   }
 }
