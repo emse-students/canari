@@ -23,13 +23,13 @@ Un script PowerShell `setup_environment.ps1` est fourni à la racine pour instal
 
 ## Structure du Projet
 
-- **Backend Auth (NestJS)**: `apps/auth-service`
+- **Backend Core (NestJS)**: `apps/core-service` (remplace Auth, User)
   - Lancer: `npm run start:dev`
-- **Backend User (NestJS)**: `apps/user-service`
+- **Backend Social (NestJS)**: `apps/social-service` (remplace Post, Channel, Forms)
   - Lancer: `npm run start:dev`
-- **Backend Post (NestJS)**: `apps/post-service`
+- **Backend Delivery (NestJS)**: `apps/chat-delivery-service`
   - Lancer: `npm run start:dev`
-- **Backend Forms (NestJS)**: `apps/form-service`
+- **Backend Media (NestJS)**: `apps/media-service`
   - Lancer: `npm run start:dev`
 - **Frontend (SvelteKit)**: `frontend/`
   - Lancer: `npm run dev`
@@ -55,18 +55,12 @@ Les services sont accessibles via Nginx (port 80) ou directement (nouveaux ports
 - **Chat Gateway**: `ws://localhost:3000` (Port Interne: 3000)
 - **Call Service**: `ws://localhost:3001` (Port Interne: 3001)
 
-### Services Backend Core (NestJS - Ports 3010+)
+### Services Backend (NestJS - Ports 3010+)
 
 - **Delivery Service**: `http://localhost:3010` (Port Interne: 3010)
 - **Media Service**: `http://localhost:3011` (Port Interne: 3011)
-- **Auth Service**: `http://localhost:3012` (Port Interne: 3012)
-- **User Service**: `http://localhost:3013` (Port Interne: 3013)
-
-### Services Fonctionnels (NestJS - Ports 3014+)
-
-- **Channel Service**: `http://localhost:3014` (Port Interne: 3014)
-- **Post Service**: `http://localhost:3015` (Port Interne: 3015)
-- **Form Service**: `http://localhost:3016` (Port Interne: 3016)
+- **Core Service**: `http://localhost:3020` (Port Interne: 3020)
+- **Social Service**: `http://localhost:3021` (Port Interne: 3021)
 
 ### Frontend
 
