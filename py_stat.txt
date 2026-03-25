@@ -1,0 +1,10 @@
+commit ae9de8875c7e498bcfbe8d0ae03f2835ae8b0fd3
+Author: Jolan BOUDIN <jolan.boudin.jourdan@gmail.com>
+Date:   Wed Mar 25 00:38:48 2026 +0100
+
+    Resolve merge conflict
+
+ apps/core-service/src/main.ts   | 6 +-----
+ apps/social-service/src/main.ts | 4 ++--
+ 2 files changed, 3 insertions(+), 7 deletions(-)
+
