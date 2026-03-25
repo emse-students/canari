@@ -16,7 +16,7 @@
     "@nestjs/microservices": "^11.1.17",
     "@nestjs/platform-express": "^11.1.17",
     "@nestjs/typeorm": "^11.0.0",
-    "ioredis": "^5.10.0",
+    "ioredis": "^5.10.1",
     "kafkajs": "^2.2.4",
     "pg": "^8.20.0",
     "reflect-metadata": "^0.2.2",
