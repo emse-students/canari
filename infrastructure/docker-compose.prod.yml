@@ -1,266 +1,192 @@
 services:
+
   # ─────────────────────────────────────────────────────
   # Infrastructure (dépendances partagées)
   # ─────────────────────────────────────────────────────
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
-    restart: always
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
-    volumes:
-      - zookeeper_data:/var/lib/zookeeper/data
-      - zookeeper_logs:/var/lib/zookeeper/log
-    networks:
-      - canari-network
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 512M
 
   kafka:
     image: confluentinc/cp-kafka:7.5.0
-    restart: always
+    restart: on-failure
     depends_on:
       - zookeeper
+    ports:
+      - "9092:9092"
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
+      # Double listener : Docker interne + accès depuis l'hôte local
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-      KAFKA_LOG_RETENTION_HOURS: 168  # 7 jours
-    volumes:
-      - kafka_data:/var/lib/kafka/data
-    networks:
-      - canari-network
     healthcheck:
-      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "kafka:9092"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
-    deploy:
-      resources:
-        limits:
-          cpus: '1.0'
-          memory: 1G
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "kafka:29092"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  coturn:
+    image: coturn/coturn
+    ports:
+      - "3478:3478"
+      - "3478:3478/udp"
+      - "5349:5349"
+      - "5349:5349/udp"
+      - "49000-49040:49000-49040/udp"
+    command:
+      - -n
+      - --log-file=stdout
+      - --min-port=49000
+      - --max-port=49040
+      - --realm=localhost
+      - --user=user:password
+      - --lt-cred-mech
+      - --fingerprint
+      - --no-tls
+      - --no-dtls
 
   redis:
-    image: redis:7-alpine
-    restart: always
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
-    volumes:
-      - redis_data:/data
-    networks:
-      - canari-network
+    image: redis:alpine
+    ports:
+      - "6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
+      interval: 5s
       timeout: 3s
-      retries: 3
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 512M
+      retries: 10
 
   mongo:
-    image: mongo:7
-    restart: always
+    image: mongo:latest
+    ports:
+      - "27017:27017"
     environment:
       MONGO_INITDB_DATABASE: chat_db
     volumes:
       - mongo_data:/data/db
-      - mongo_config:/data/configdb
-    networks:
-      - canari-network
-    healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-    deploy:
-      resources:
-        limits:
-          cpus: '1.0'
-          memory: 1G
 
   postgres:
     image: postgres:15-alpine
-    restart: always
+    ports:
+      - "5432:5432"
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-admin}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
-      POSTGRES_DB: ${POSTGRES_DB:-auth_db}
-      PGDATA: /var/lib/postgresql/data/pgdata
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: auth_db
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    networks:
-      - canari-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-admin}"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 512M
 
   # ─────────────────────────────────────────────────────
   # RUST SERVICES (3000-3009 range)
   # ─────────────────────────────────────────────────────
 
   # Chat Gateway (Rust / Axum) — port 3000
-  # ─────────────────────────────────────────────────────
   chat-gateway:
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/chat-gateway:${TAG:-latest}
     restart: always
+    build:
+      context: ../../
+      dockerfile: infrastructure/local/Dockerfile.chat-gateway
+    ports:
+      - "3000:3000"
     environment:
-      RUST_LOG: ${RUST_LOG:-chat_gateway=info,tower_http=info}
-      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      RUST_LOG: chat_gateway=info,tower_http=info
+      JWT_SECRET: ${JWT_SECRET}
       REDIS_URL: redis://redis:6379
-      KAFKA_BROKERS: kafka:9092
+      KAFKA_BROKERS: kafka:29092
       DELIVERY_SERVICE_URL: http://chat-delivery-service:3001
-      ALLOW_ORIGIN: ${ALLOW_ORIGIN:-https://canari-emse.fr}
+      ALLOW_ORIGIN: "*"
     depends_on:
       redis:
         condition: service_healthy
       kafka:
         condition: service_healthy
-    networks:
-      - canari-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-    deploy:
-      resources:
-        limits:
-          cpus: '1.0'
-          memory: 512M
-      restart_policy:
-        condition: on-failure
-        delay: 5s
-        max_attempts: 3
 
   # Call Service (Rust / Axum) — port 3001
-  # ─────────────────────────────────────────────────────
   call-service:
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/call-service:${TAG:-latest}
     restart: always
+    build:
+      context: ../../
+      dockerfile: infrastructure/local/Dockerfile.call-service
+    ports:
+      - "3001:3001"
     environment:
-      RUST_LOG: ${RUST_LOG:-call_service=info,tower_http=info}
       PORT: "3001"
-      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
-      REDIS_URL: redis://redis:6379
-      KAFKA_BROKERS: kafka:9092
-      ALLOW_ORIGIN: ${ALLOW_ORIGIN:-https://canari-emse.fr}
+      RUST_LOG: call_service=info,tower_http=info
+      # Same as Chat Gateway if needed
     depends_on:
       redis:
         condition: service_healthy
       kafka:
         condition: service_healthy
-    networks:
-      - canari-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3001/api/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    deploy:
-      resources:
-        limits:
-          cpus: '1.0'
-          memory: 512M
 
   # ─────────────────────────────────────────────────────
   # NODE.JS SERVICES (3010-3029 range)
   # ─────────────────────────────────────────────────────
 
-
-  # ─────────────────────────────────────────────────────
-  # Chat Delivery Service (NestJS) — port 3010
-  # ─────────────────────────────────────────────────────
+  # Chat Delivery Service (NestJS) — New port 3010
   chat-delivery-service:
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/chat-delivery-service:${TAG:-latest}
     restart: always
+    build:
+      context: ../../
+      dockerfile: infrastructure/local/Dockerfile.chat-delivery-service
+    ports:
+      - "3010:3010"
     environment:
-      NODE_ENV: production
       PORT: "3010"
-      MONGO_URI: mongodb://mongo:27017/chat_db
+      POSTGRES_URL: postgres://admin:password@postgres:5432/auth_db
       REDIS_HOST: redis
       REDIS_PORT: "6379"
-      KAFKA_BROKERS: kafka:9092
+      KAFKA_BROKERS: kafka:29092
     depends_on:
       redis:
         condition: service_healthy
       kafka:
         condition: service_healthy
       mongo:
-        condition: service_healthy
-    networks:
-      - canari-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3010/api/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-    deploy:
-      resources:
-        limits:
-          cpus: '1.0'
-          memory: 512M
-      restart_policy:
-        condition: on-failure
-        delay: 5s
-        max_attempts: 3
+        condition: service_started
 
   # ─────────────────────────────────────────────────────
-  # MinIO – stockage objet S3-compatible pour médias chiffrés
+  # MinIO – S3-compatible object storage for encrypted media blobs
   # ─────────────────────────────────────────────────────
   minio:
     image: minio/minio:latest
-    restart: always
     command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Web console (http://localhost:9001)
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     volumes:
       - minio_data:/data
-    networks:
-      - canari-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 512M
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
-  # ─────────────────────────────────────────────────────
-  # Media Service (NestJS) — port 3011
+  # Media Service (NestJS) — New port 3011
+  # Stores only opaque encrypted blobs; never sees decryption keys.
   # ─────────────────────────────────────────────────────
   media-service:
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/media-service:${TAG:-latest}
     restart: always
+    build:
+      context: ../../
+      dockerfile: infrastructure/local/Dockerfile.media-service
+    ports:
+      - "3011:3011"
     environment:
-      NODE_ENV: production
       PORT: "3011"
-      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      JWT_SECRET: ${JWT_SECRET}
       MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio}
       MINIO_PORT: "${MINIO_PORT:-9000}"
       MINIO_USE_SSL: "${MINIO_USE_SSL:-false}"
@@ -271,197 +197,77 @@ services:
     depends_on:
       minio:
         condition: service_healthy
-    networks:
-      - canari-network
-    deploy:
-      resources:
-        limits:
-          cpus: '1.0'
-          memory: 512M
-      restart_policy:
-        condition: on-failure
-        delay: 5s
-        max_attempts: 3
 
   # ─────────────────────────────────────────────────────
-  # Auth Service (NestJS) — port 3012
+  # Core Service (NestJS) — port 3012
+  # Handles Auth, Users, Payment
   # ─────────────────────────────────────────────────────
-  auth-service:
-    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/auth-service:${TAG:-latest}
+  core-service:
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/core-service:${TAG:-latest}
     restart: always
+    build:
+      context: ../../
+      dockerfile: infrastructure/local/Dockerfile.core-service
+    ports:
+      - "3012:3012"
     environment:
-      NODE_ENV: production
       PORT: "3012"
-      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-me}
       DB_HOST: postgres
       DB_PORT: "5432"
-      DB_USERNAME: ${POSTGRES_USER:-admin}
-      DB_PASSWORD: ${POSTGRES_PASSWORD:-password}
-      DB_DATABASE: ${POSTGRES_DB:-auth_db}
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - canari-network
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 256M
-      restart_policy:
-        condition: on-failure
-        delay: 5s
-        max_attempts: 3
-
-  # ─────────────────────────────────────────────────────
-  # User Service (NestJS) — port 3013
-  # ─────────────────────────────────────────────────────
-  user-service:
-    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/user-service:${TAG:-latest}
-    restart: always
-    environment:
-      NODE_ENV: production
-      PORT: "3013"
-      DB_HOST: postgres
-      DB_PORT: "5432"
-      DB_USERNAME: ${POSTGRES_USER:-admin}
-      DB_PASSWORD: ${POSTGRES_PASSWORD:-password}
-      DB_DATABASE: ${POSTGRES_DB:-auth_db}
+      DB_USERNAME: admin
+      DB_PASSWORD: password
+      DB_DATABASE: auth_db
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
     depends_on:
       postgres:
-        condition: service_healthy
-    networks:
-      - canari-network
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 256M
-      restart_policy:
-        condition: on-failure
-        delay: 5s
-        max_attempts: 3
-
-  # ─────────────────────────────────────────────────────
-  # Post Service (NestJS) — port 3015
-  # ─────────────────────────────────────────────────────
-  post-service:
-    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/post-service:${TAG:-latest}
-    restart: always
-    environment:
-      NODE_ENV: production
-      PORT: "3015"
-      POSTS_MONGO_URI: mongodb://mongo:27017/post_db
-      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
-      STRIPE_SUCCESS_URL: ${STRIPE_SUCCESS_URL:-https://canari-emse.fr/posts?registration=success}
-      STRIPE_CANCEL_URL: ${STRIPE_CANCEL_URL:-https://canari-emse.fr/posts?registration=cancel}
-      USER_SERVICE_URL: http://user-service:3013
-    depends_on:
-      mongo:
-        condition: service_healthy
-      user-service:
         condition: service_started
-    networks:
-      - canari-network
-    deploy:
-      resources:
-        limits:
-          cpus: '1.0'
-          memory: 512M
-      restart_policy:
-        condition: on-failure
-        delay: 5s
-        max_attempts: 3
 
   # ─────────────────────────────────────────────────────
-  # Frontend (Nginx + Svelte built) — port 80 interne Docker
+  # Social Service (NestJS) — port 3014
+  # Handles Channels, Posts, Forms
   # ─────────────────────────────────────────────────────
+  social-service:
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/social-service:${TAG:-latest}
+    restart: always
+    build:
+      context: ../../
+      dockerfile: infrastructure/local/Dockerfile.social-service
+    ports:
+      - "3014:3014"
+    environment:
+      PORT: "3014"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USERNAME: admin
+      DB_PASSWORD: password
+      DB_DATABASE: auth_db
+      CHANNELS_ENCRYPTION_SECRET: ${CHANNELS_ENCRYPTION_SECRET:-dev-channel-secret-change-me}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_SUCCESS_URL: ${STRIPE_SUCCESS_URL:-http://localhost:5173/posts?registration=success}
+      STRIPE_CANCEL_URL: ${STRIPE_CANCEL_URL:-http://localhost:5173/posts?registration=cancel}
+      USER_SERVICE_URL: http://core-service:3012
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+    depends_on:
+      postgres:
+        condition: service_started
+      core-service:
+        condition: service_started
+
+
   frontend:
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/frontend:${TAG:-latest}
     restart: always
+    environment:
+      NODE_ENV: production
+      PORT: '3002'
+      ORIGIN: ${ALLOW_ORIGIN:-https://canari-emse.fr}
+      VITE_GATEWAY_URL: ${ALLOW_ORIGIN:-https://canari-emse.fr}
+      VITE_DELIVERY_URL: ${ALLOW_ORIGIN:-https://canari-emse.fr}
     ports:
-      - "${FRONTEND_HOST_PORT:-8080}:80"
-    depends_on:
-      - chat-gateway
-      - chat-delivery-service
-      - media-service
-      - post-service
-      - call-service
-      - channel-service
-      - user-service
-      - form-service
-      - auth-service
-    networks:
-      - canari-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 256M
-
-  # ─────────────────────────────────────────────────────
-  # Form Service (NestJS) — port 3016
-  # ─────────────────────────────────────────────────────
-  form-service:
-    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/form-service:${TAG:-latest}
-    restart: always
-    environment:
-      NODE_ENV: production
-      PORT: "3016"
-      FORMS_MONGO_URI: mongodb://mongo:27017/form_db
-      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
-    depends_on:
-      mongo:
-        condition: service_healthy
-    networks:
-      - canari-network
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 256M
-
-  # ─────────────────────────────────────────────────────
-  # Channel Service (NestJS) — port 3014
-  # ─────────────────────────────────────────────────────
-  channel-service:
-    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/channel-service:${TAG:-latest}
-    restart: always
-    environment:
-      NODE_ENV: production
-      PORT: "3014"
-      CHANNELS_MONGO_URI: mongodb://mongo:27017/channel_db
-      REDIS_URL: redis://redis:6379
-      CHANNELS_ENCRYPTION_SECRET: ${CHANNELS_ENCRYPTION_SECRET:-dev-channel-secret-change-me}
-    depends_on:
-      mongo:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - canari-network
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 256M
-
-networks:
-  canari-network:
-    driver: bridge
+      - '3002:3002'
 
 volumes:
-  zookeeper_data:
-  zookeeper_logs:
-  kafka_data:
-  redis_data:
   mongo_data:
-  mongo_config:
   postgres_data:
   minio_data:
