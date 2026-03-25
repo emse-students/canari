@@ -23,7 +23,7 @@ RUN printf 'server {\n\
     \n\
     location = /internal/auth/verify {\n\
     internal;\n\
-    set $upstream_auth auth-service:3012;\n\
+    set $upstream_auth core-service:3012;\n\
     proxy_pass http://$upstream_auth/api/auth/verify;\n\
     proxy_pass_request_body off;\n\
     proxy_set_header Content-Length "";\n\
@@ -95,7 +95,7 @@ RUN printf 'server {\n\
     auth_request /internal/auth/verify;\n\
     auth_request_set $user_id $upstream_http_x_user_id;\n\
     proxy_set_header X-User-Id $user_id;\n\
-    set $upstream_post post-service:3015;\n\
+    set $upstream_post social-service:3014;\n\
     proxy_pass http://$upstream_post;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
@@ -107,7 +107,7 @@ RUN printf 'server {\n\
     auth_request /internal/auth/verify;\n\
     auth_request_set $user_id $upstream_http_x_user_id;\n\
     proxy_set_header X-User-Id $user_id;\n\
-    set $upstream_payment form-service:3016;\n\
+    set $upstream_payment core-service:3012;\n\
     proxy_pass http://$upstream_payment;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
@@ -119,7 +119,7 @@ RUN printf 'server {\n\
     auth_request /internal/auth/verify;\n\
     auth_request_set $user_id $upstream_http_x_user_id;\n\
     proxy_set_header X-User-Id $user_id;\n\
-    set $upstream_form form-service:3016;\n\
+    set $upstream_form social-service:3014;\n\
     proxy_pass http://$upstream_form;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
@@ -128,7 +128,7 @@ RUN printf 'server {\n\
     }\n\
     \n\
     location /api/auth {\n\
-    set $upstream_auth auth-service:3012;\n\
+    set $upstream_auth core-service:3012;\n\
     proxy_pass http://$upstream_auth;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
@@ -137,7 +137,7 @@ RUN printf 'server {\n\
     }\n\
     \n\
     location /api/channels {\n\
-    set $upstream_channel channel-service:3014;\n\
+    set $upstream_channel social-service:3014;\n\
     proxy_pass http://$upstream_channel;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
@@ -147,7 +147,7 @@ RUN printf 'server {\n\
     \n\
     # User Service\n\
     location /api/users {\n\
-    set $upstream_user user-service:3013;\n\
+    set $upstream_user core-service:3012;\n\
     proxy_pass http://$upstream_user;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\

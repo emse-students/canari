@@ -239,12 +239,12 @@ services:
     restart: always
     environment:
       NODE_ENV: production
-      PORT: '3002'
+      PORT: '80'
       ORIGIN: ${ALLOW_ORIGIN:-https://canari-emse.fr}
       VITE_GATEWAY_URL: ${ALLOW_ORIGIN:-https://canari-emse.fr}
       VITE_DELIVERY_URL: ${ALLOW_ORIGIN:-https://canari-emse.fr}
     ports:
-      - '3002:3002'
+      - "${FRONTEND_HOST_PORT:-80}:80"
 
 volumes:
   mongo_data:
