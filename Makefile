@@ -19,8 +19,23 @@ production: production-check
 	@echo ""
 	@echo "${BOLD}${BLUE}🚀 DÉPLOIEMENT PRODUCTION${RESET}"
 	@echo "---------------------------------------------------"
+
+ifeq ($(OS),Windows_NT)
+	@powershell -NoProfile -Command "$$u=(Get-Content infrastructure/.env | Where-Object { $$_.ToString() -match '^GHCR_USERNAME=' } | Select-Object -First 1) -replace '^GHCR_USERNAME=', ''; $$t=(Get-Content infrastructure/.env | Where-Object { $$_.ToString() -match '^GHCR_TOKEN=' } | Select-Object -First 1) -replace '^GHCR_TOKEN=', ''; if (-not [string]::IsNullOrWhiteSpace($$u) -and -not [string]::IsNullOrWhiteSpace($$t)) { $$t | docker login ghcr.io -u $$u --password-stdin | Out-Null; Write-Host '${GREEN}✅ Auth GHCR OK${RESET}' } else { Write-Host '${YELLOW}⚠️  GHCR_USERNAME/GHCR_TOKEN absents dans infrastructure/.env (pull public/local only)${RESET}' }"
+else
+	@GHCR_U=$$(grep -E '^GHCR_USERNAME=' infrastructure/.env | cut -d= -f2 || true); \
+	GHCR_T=$$(grep -E '^GHCR_TOKEN=' infrastructure/.env | cut -d= -f2 || true); \
+	if [ -n "$$GHCR_U" ] && [ -n "$$GHCR_T" ]; then \
+		echo "$$GHCR_T" | docker login ghcr.io -u "$$GHCR_U" --password-stdin >/dev/null; \
+		echo "${GREEN}✅ Auth GHCR OK${RESET}"; \
+	else \
+		echo "${YELLOW}⚠️  GHCR_USERNAME/GHCR_TOKEN absents dans infrastructure/.env (pull public/local only)${RESET}"; \
+	fi
+endif
+
 	@echo "${BLUE}📥 Pulling Docker images from GHCR...${RESET}"
-	@docker compose -f infrastructure/docker-compose.prod.yml pull
+	@docker compose -f infrastructure/docker-compose.prod.yml pull || \
+		echo "${YELLOW}⚠️  Pull partiel/échoué — tentative de démarrage avec images locales disponibles${RESET}"
 	@echo "${BLUE}🛑 Stopping existing containers...${RESET}"
 	@docker compose -f infrastructure/docker-compose.prod.yml down --remove-orphans
 	@echo "${BLUE}🚀 Starting production services...${RESET}"
@@ -42,6 +57,19 @@ production: production-check
 
 production-check:
 	@echo "${BLUE}🔍 Vérification de la configuration production...${RESET}"
+
+ifeq ($(OS),Windows_NT)
+	@if not exist infrastructure\.env ( \
+		echo "${YELLOW}⚠️  infrastructure/.env manquant — création depuis le template${RESET}" & \
+		powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-env.ps1 -Prod & \
+		echo "${YELLOW}⚠️  Éditez infrastructure/.env (POSTGRES_PASSWORD, DOMAIN...) puis relancez.${RESET}" & \
+		exit /b 1 \
+	)
+	@powershell -NoProfile -Command "$$prefix = (Get-Content infrastructure/.env | Where-Object { $$_.ToString() -match '^IMAGE_PREFIX=' } | Select-Object -First 1) -replace '^IMAGE_PREFIX=', ''; if ([string]::IsNullOrWhiteSpace($$prefix) -or $$prefix -eq 'your-github-org/canari') { if (Select-String -Path infrastructure/.env -Pattern '^IMAGE_PREFIX=' -Quiet) { (Get-Content infrastructure/.env) -replace '^IMAGE_PREFIX=.*', 'IMAGE_PREFIX=emse-students/canari' | Set-Content infrastructure/.env } else { Add-Content infrastructure/.env 'IMAGE_PREFIX=emse-students/canari' }; Write-Host '${YELLOW}⚠️  IMAGE_PREFIX corrigé vers emse-students/canari${RESET}' }"
+	@powershell -NoProfile -Command "$$jwt = (Get-Content infrastructure/.env | Where-Object { $$_.ToString() -match '^JWT_SECRET=' } | Select-Object -First 1) -replace '^JWT_SECRET=', ''; if ([string]::IsNullOrWhiteSpace($$jwt) -or $$jwt -eq 'your-secret-jwt-key-here-change-me') { Write-Host '${RED}❌ JWT_SECRET non configuré dans infrastructure/.env${RESET}'; Write-Host '${BLUE}Générez-en un : openssl rand -hex 32${RESET}'; exit 1 }"
+	@powershell -NoProfile -Command "if (Select-String -Path infrastructure/.env -Pattern '^POSTGRES_PASSWORD=change-me-strong-password' -Quiet) { Write-Host '${YELLOW}⚠️  Changez POSTGRES_PASSWORD dans infrastructure/.env${RESET}' }"
+	@echo "${GREEN}✅ Configuration validée${RESET}"
+else
 	@if [ ! -f infrastructure/.env ]; then \
 		echo "${YELLOW}⚠️  infrastructure/.env manquant — création depuis le template${RESET}"; \
 		chmod +x scripts/setup-env.sh; \
@@ -49,6 +77,16 @@ production-check:
 		echo ""; \
 		echo "${YELLOW}⚠️  Éditez infrastructure/.env (POSTGRES_PASSWORD, DOMAIN...) puis relancez.${RESET}"; \
 		exit 1; \
+	fi
+	@PREFIX=$$(grep -E '^IMAGE_PREFIX=' infrastructure/.env | cut -d= -f2 || true); \
+	if [ -z "$$PREFIX" ] || [ "$$PREFIX" = "your-github-org/canari" ]; then \
+		if grep -q '^IMAGE_PREFIX=' infrastructure/.env; then \
+			sed -i.bak 's|^IMAGE_PREFIX=.*|IMAGE_PREFIX=emse-students/canari|' infrastructure/.env; \
+			rm -f infrastructure/.env.bak; \
+		else \
+			echo 'IMAGE_PREFIX=emse-students/canari' >> infrastructure/.env; \
+		fi; \
+		echo "${YELLOW}⚠️  IMAGE_PREFIX corrigé vers emse-students/canari${RESET}"; \
 	fi
 	@JWT=$$(grep -E '^JWT_SECRET=' infrastructure/.env | cut -d= -f2 || true); \
 	if [ -z "$$JWT" ] || [ "$$JWT" = "your-secret-jwt-key-here-change-me" ]; then \
@@ -60,6 +98,7 @@ production-check:
 		echo "${YELLOW}⚠️  Changez POSTGRES_PASSWORD dans infrastructure/.env${RESET}"; \
 	fi
 	@echo "${GREEN}✅ Configuration validée${RESET}"
+endif
 
 # Note: le frontend est servi par le container Docker nginx (infrastructure/local/Dockerfile.frontend)
 # HTTPS est géré par Cloudflare Tunnel. Pas de nginx externe.
@@ -293,10 +332,12 @@ reset-services:
 		docker compose -f infrastructure/local/docker-compose.yml --env-file infrastructure/.env up -d --build --remove-orphans
 	@echo "${GREEN}✅ Services reset${RESET}"
 
-reset-services-prod:
+reset-services-prod: production-check
 	@echo "${BLUE}🔄 Resetting services (stop + remove volumes)...${RESET}"
 	@docker compose -f infrastructure/docker-compose.prod.yml --env-file infrastructure/.env down -v --remove-orphans && \
-		docker compose -f infrastructure/docker-compose.prod.yml --env-file infrastructure/.env up -d --build --remove-orphans
+		( docker compose -f infrastructure/docker-compose.prod.yml --env-file infrastructure/.env pull || \
+		  echo "${YELLOW}⚠️  Pull partiel/échoué — tentative de démarrage avec images locales disponibles${RESET}" ) && \
+		docker compose -f infrastructure/docker-compose.prod.yml --env-file infrastructure/.env up -d --remove-orphans
 	@echo "${GREEN}✅ Services reset${RESET}"
 
 # ── CI Pipeline ──────────────────────────────────────────────────────────────
