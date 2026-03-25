@@ -36,7 +36,7 @@
     "date-fns": "^4.1.0",
     "emoji-picker-element": "^1.29.1",
     "jsqr": "^1.4.0",
-    "lucide-svelte": "^0.577.0",
+    "lucide-svelte": "^1.0.1",
     "qrcode": "^1.5.4",
     "svelte-markdown": "^0.4.1"
   },
