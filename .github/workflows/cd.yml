@@ -421,30 +421,49 @@ jobs:
       - name: Health Check
         run: |
           echo "🔍 Performing health checks..."
-          sleep 10
+          sleep 5
 
           FRONTEND_HOST_PORT="${FRONTEND_HOST_PORT:-8080}"
 
+          retry_http() {
+            local label="$1"
+            local expected_regex="$2"
+            local cmd="$3"
+            local attempts="${4:-12}"
+            local delay="${5:-3}"
+            local status="000"
+
+            for _ in $(seq 1 "$attempts"); do
+              status=$(eval "$cmd" || true)
+              if echo "$status" | grep -Eq "$expected_regex"; then
+                echo "✅ ${label} (HTTP ${status})"
+                return 0
+              fi
+              sleep "$delay"
+            done
+
+            echo "❌ ${label} failed after ${attempts} attempts (last HTTP ${status})"
+            return 1
+          }
+
           # Check frontend (local host port)
-          curl -fsS "http://localhost:${FRONTEND_HOST_PORT}/" >/dev/null
+          retry_http \
+            "frontend health check" \
+            "^(2|3)[0-9][0-9]$" \
+            "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:${FRONTEND_HOST_PORT}/"
 
           # Check chat-delivery-service reachability on MLS endpoint.
           # 400 is expected here because verifier format is intentionally invalid.
-          MLS_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X POST "http://localhost:3010/api/mls-api/pin-verifier/check" \
-            -H "Content-Type: application/json" \
-            -d '{"userId":"healthcheck","verifier":"invalid"}' || true)
-          if [ "$MLS_STATUS" != "400" ] && [ "$MLS_STATUS" != "200" ]; then
-            echo "❌ chat-delivery-service MLS health check failed (HTTP $MLS_STATUS)"
-            exit 1
-          fi
+          retry_http \
+            "chat-delivery-service MLS health check" \
+            "^(200|400)$" \
+            "curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:3010/api/mls-api/pin-verifier/check -H 'Content-Type: application/json' -d '{\"userId\":\"healthcheck\",\"verifier\":\"invalid\"}'"
 
           # Check media-service TCP/HTTP reachability (status may be 2xx/4xx depending on route).
-          MEDIA_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3011/api/media" || true)
-          if [ "$MEDIA_STATUS" = "000" ]; then
-            echo "❌ media-service health check failed (unreachable)"
-            exit 1
-          fi
+          retry_http \
+            "media-service reachability check" \
+            "^[1-5][0-9][0-9]$" \
+            "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3011/api/media"
 
           echo "✅ Health checks completed"
 
