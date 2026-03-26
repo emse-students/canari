@@ -6,9 +6,7 @@ import {
   Param,
   Post,
   Res,
-  Query,
   NotFoundException,
-  BadRequestException,
   UseGuards,
 } from '@nestjs/common';
 import { Response } from 'express';

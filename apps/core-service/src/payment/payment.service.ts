@@ -9,7 +9,7 @@ export class PaymentService {
   constructor() {
     const key = process.env.STRIPE_SECRET_KEY;
     this.stripe = key
-      ? new Stripe(key, { apiVersion: '2026-02-25.clover' })
+      ? new Stripe(key, { apiVersion: '2026-03-25.dahlia' })
       : null;
     this.logger.log(`Stripe configured: ${key ? 'yes' : 'no'}`);
   }

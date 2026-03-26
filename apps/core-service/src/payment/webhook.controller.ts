@@ -12,7 +12,7 @@ export class PaymentWebhookController {
   constructor(private readonly config: ConfigService) {
     const key = this.config.get<string>('STRIPE_SECRET_KEY');
     this.stripe = key
-      ? new Stripe(key, { apiVersion: '2026-02-25.clover' })
+      ? new Stripe(key, { apiVersion: '2026-03-25.dahlia' })
       : (null as unknown as Stripe);
   }
 

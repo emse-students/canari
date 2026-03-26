@@ -43,18 +43,20 @@
 </script>
 
 <header
-  class="h-16 bg-[var(--surface-elevated)] border-b border-cn-border flex items-center justify-between px-4 md:px-6 z-20 backdrop-blur-sm"
+  class="bg-[var(--surface-elevated)] border-b border-cn-border z-20 backdrop-blur-sm pt-[env(safe-area-inset-top)]"
 >
-  <CanariBrand compact={true} />
+  <div class="h-16 flex items-center justify-between px-4 md:px-6">
+    <CanariBrand compact={true} />
 
-  <div class="flex items-center gap-3 min-w-0">
-    <PlaceSwitcher {pathname} compact={true} />
-    <StatusPill isConnected={isWsConnected} />
-  </div>
+    <div class="flex items-center gap-3 min-w-0">
+      <PlaceSwitcher {pathname} compact={true} />
+      <StatusPill isConnected={isWsConnected} />
+    </div>
 
-  <!-- Actions -->
-  <div class="flex gap-2">
-    <ThemeToggleButton {isDarkMode} onToggle={toggleTheme} />
-    <SessionActionButtons {onToggleLogs} {onLogout} />
+    <!-- Actions -->
+    <div class="flex gap-2">
+      <ThemeToggleButton {isDarkMode} onToggle={toggleTheme} />
+      <SessionActionButtons {onToggleLogs} {onLogout} />
+    </div>
   </div>
 </header>

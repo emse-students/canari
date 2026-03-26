@@ -22,7 +22,9 @@
   </div>
 
   {#if !isChatRoute}
-    <header class="sticky top-0 z-20 border-b border-cn-border/70 bg-white/82 backdrop-blur-lg">
+    <header
+      class="sticky top-0 z-20 border-b border-cn-border/70 bg-white/82 backdrop-blur-lg pt-[env(safe-area-inset-top)]"
+    >
       <div
         class="mx-auto flex w-full max-w-[1180px] items-center justify-between gap-3 px-3 py-3 sm:px-5"
       >
@@ -33,9 +35,9 @@
   {/if}
 
   <div
-    class="relative z-10 mx-auto flex w-full px-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] {isChatRoute
+    class="relative z-10 mx-auto flex w-full pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] {isChatRoute
       ? 'h-dvh max-w-none'
-      : 'h-[calc(100dvh-4.5rem)] max-w-[1180px]'}"
+      : 'h-[calc(100dvh-4.5rem-env(safe-area-inset-top,0px))] max-w-[1180px]'}"
   >
     <div class="h-full w-full">
       {@render children?.()}

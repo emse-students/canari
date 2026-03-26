@@ -246,7 +246,7 @@
   'communities'
     ? 'flex-row'
     : 'flex-col'} {drawerMode
-    ? 'fixed left-0 top-0 bottom-0 z-40 md:hidden shadow-2xl animate-panel-in ' +
+    ? 'fixed left-0 top-0 bottom-0 z-40 md:hidden shadow-2xl animate-panel-in pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] ' +
       (viewMode === 'communities' ? 'w-[95vw] max-w-md' : 'w-[88vw] max-w-sm')
     : viewMode === 'communities'
       ? 'w-full md:w-96'
