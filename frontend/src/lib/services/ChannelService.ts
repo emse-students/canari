@@ -54,7 +54,7 @@ export class ChannelService {
 
   constructor() {
     // In browser, API routes are proxied by Vite/nginx.
-    const env = typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_CHANNEL_URL;
+    const env = typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_SOCIAL_URL;
     if (env) {
       this.baseUrl = env;
     } else {

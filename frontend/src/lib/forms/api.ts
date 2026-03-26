@@ -36,7 +36,7 @@ export interface Form extends CreateFormPayload {
   updatedAt: string;
 }
 
-const API_Base = import.meta.env.VITE_FORM_URL || '';
+const API_Base = import.meta.env.VITE_SOCIAL_URL || '';
 
 function getAuthToken() {
   if (typeof localStorage !== 'undefined') {

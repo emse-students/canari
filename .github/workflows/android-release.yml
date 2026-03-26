@@ -94,7 +94,6 @@ jobs:
           echo "Decoding keystore..."
           cd frontend/src-tauri/gen/android
           echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > release.jks
-
           echo "Creating keystore.properties..."
           echo "keyAlias=$ANDROID_KEY_ALIAS" > keystore.properties
           echo "keyPassword=$ANDROID_KEY_PASSWORD" >> keystore.properties
@@ -123,8 +122,8 @@ jobs:
           echo "VITE_DELIVERY_URL=${BASE_URL}" >> .env
           echo "VITE_MEDIA_URL=${BASE_URL}" >> .env
           echo "VITE_CALL_URL=${BASE_URL}" >> .env
-          echo "VITE_CHANNEL_URL=${BASE_URL}" >> .env
-          echo "VITE_FORM_URL=${BASE_URL}" >> .env
+          echo "VITE_SOCIAL_URL=${BASE_URL}" >> .env
+          echo "VITE_CORE_URL=${BASE_URL}" >> .env
 
       - name: Verify frontend env for Android build
         working-directory: frontend
@@ -132,6 +131,10 @@ jobs:
           grep -q '^VITE_JWT_SECRET=.' .env
           grep -q '^VITE_GATEWAY_URL=.' .env
           grep -q '^VITE_DELIVERY_URL=.' .env
+          grep -q '^VITE_MEDIA_URL=.' .env
+          grep -q '^VITE_CALL_URL=.' .env
+          grep -q '^VITE_SOCIAL_URL=.' .env
+          grep -q '^VITE_CORE_URL=.' .env
           echo "✅ Android frontend env prepared"
 
       - name: Build Android APK

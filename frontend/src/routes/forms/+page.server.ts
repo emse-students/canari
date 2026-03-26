@@ -2,7 +2,7 @@ import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async (event) => {
   // Fetch forms on the server so the client never receives the user id.
-  const API_Base = import.meta.env.VITE_FORM_URL || '';
+  const API_Base = import.meta.env.VITE_SOCIAL_URL || '';
   const url = `${API_Base}/api/forms`;
 
   const auth = event.request.headers.get('authorization') ?? '';

@@ -240,10 +240,6 @@ Write-Info "Synchronizing JWT secrets..."
 $FrontendSecret = ""
 $InfraSecret = ""
 
-if (Test-Path $FrontendEnv) {
-    $FrontendSecret = Read-EnvVar $FrontendEnv "VITE_JWT_SECRET"
-}
-
 if (Test-Path $InfraEnv) {
     $InfraSecret = Read-EnvVar $InfraEnv "JWT_SECRET"
 }

@@ -93,7 +93,7 @@ export interface CreatePostPayload {
 }
 
 function getPostsBaseUrl(): string {
-  const env = typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_POST_URL;
+  const env = typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_SOCIAL_URL;
   if (typeof env === 'string' && env.trim()) {
     return env.trim().replace(/\/$/, '');
   }
