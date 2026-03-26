@@ -1,64 +1,34 @@
-# channel-service
+# Social Service
 
-Service NestJS pour canaux communautaires avec priorite aux permissions.
+Ce microservice NestJS gère les fonctionnalités "sociales" de Canari. Il regroupe trois domaines principaux : les **Publications (Posts)**, les **Formulaires (Forms)**, et les **Canaux Communautaires (Channels)**.
 
-## Objectif MVP
+Il tourne sur le port **3014**.
 
-- ACL claire (roles + permissions) avant toute logique avancee
-- Chiffrement applicatif soft (AES-256-GCM, cle derivee)
-- Join/leave/kick avec acces UI immediatement coupe pour les exclus
-- Nouveaux membres: historique visible
+## 1. Canaux Communautaires (Channels)
+Gère les espaces de discussion asynchrones (workspaces/promos) avec une gestion avancée des rôles et des permissions (ACL).
 
-## Permissions prises en charge
+**Fonctionnalités :**
+- Mode permissions-first : join, leave, kick.
+- Chiffrement applicatif soft (AES-256-GCM, clé dérivée). L'historique des canaux est visible pour les nouveaux membres.
+- Les contenus des messages sont chiffrés/déchiffrés côté service (pas de pure E2EE MLS comme les DMs).
 
-- `channel.read`
-- `channel.write`
-- `channel.manage`
-- `member.invite`
-- `member.kick`
-- `role.manage`
+## 2. Formulaires (Forms)
+Gère la création, la validation, le paiement et l'exportation des formulaires dynamiques. Souvent rattachés à des posts.
 
-## Endpoints MVP
+**Fonctionnalités :**
+- Constructeur dynamique (Texte, Choix multiples, etc.) avec modificateurs de prix.
+- Intégration Stripe pour les paiements (ex: billetteries, goodies).
+- Export des données au format Excel.
 
-- `POST /channels/workspaces`
-- `POST /channels/roles`
-- `POST /channels`
-- `GET /channels/workspace/:workspaceId/user/:userId`
-- `POST /channels/:channelId/members/join`
-- `POST /channels/:channelId/members/leave`
-- `POST /channels/:channelId/members/kick`
-- `POST /channels/:channelId/messages`
-- `GET /channels/:channelId/messages?userId=...&limit=...`
+## 3. Publications (Posts)
+Gère le fil d'actualité. Les posts peuvent inclure :
+- Du texte (Markdown)
+- Des médias
+- Des sondages (Polls)
+- Des événements avec formulaires attachés.
 
-## Variables d'environnement
-
-- `PORT` (defaut `3005`)
-- `CHANNELS_MONGO_URI` (defaut `mongodb://localhost:27017/channel_db`)
-- `CHANNELS_ENCRYPTION_SECRET` (obligatoire en prod)
-
-## Demarrage local rapide
-
-1. Demarrer Mongo + channel-service:
-
+## Lancement
 ```bash
-docker compose -f infrastructure/local/docker-compose.yml up -d mongo channel-service
+cd apps/social-service
+npm run start:dev
 ```
-
-2. Verifier la sante:
-
-```bash
-curl http://localhost:3005/channels/health
-```
-
-3. Lancer un smoke test API (join/kick/rejoin/historique):
-
-```bash
-npm run smoke
-```
-
-## Notes securite
-
-- Ce service n'utilise pas MLS.
-- Le contenu message est chiffre/dechiffre cote service (soft E2EE pragmatique).
-- Le serveur ne stocke que `ciphertext`, `nonce`, `keyVersion`.
-- Policy demandee: pas de rotation obligatoire de cle a chaque kick.

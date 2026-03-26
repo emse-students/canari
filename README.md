@@ -142,18 +142,18 @@ cd frontend && bun run dev     # Frontend sur http://localhost:5173
 
 Services disponibles après `make run-services` :
 
-| Service       | URL                    |
-| ------------- | ---------------------- |
-| Frontend dev  | http://localhost:5173  |
-| Chat Gateway  | ws://localhost:3000/ws |
-| Chat Delivery | http://localhost:3010  |
-| Media Service | http://localhost:3011  |
-| Core Service  | http://localhost:3012  |
-| Social Service| http://localhost:3014  |
-| PostgreSQL    | localhost:5432         |
-| MongoDB       | localhost:27017        |
-| Redis         | localhost:6379         |
-| Kafka         | localhost:9092         |
+| Service        | URL                    |
+| -------------- | ---------------------- |
+| Frontend dev   | http://localhost:5173  |
+| Chat Gateway   | ws://localhost:3000/ws |
+| Chat Delivery  | http://localhost:3010  |
+| Media Service  | http://localhost:3011  |
+| Core Service   | http://localhost:3012  |
+| Social Service | http://localhost:3014  |
+| PostgreSQL     | localhost:5432         |
+| MongoDB        | localhost:27017        |
+| Redis          | localhost:6379         |
+| Kafka          | localhost:9092         |
 
 ### Déploiement production (premier déploiement)
 
@@ -449,8 +449,8 @@ canari/
 ├── docs/
 │   ├── ARCHITECTURE.md           # Architecture decisions
 │   ├── DEVELOPMENT.md            # Development guide
-│   ├── CHIFFREMENT.md            # Encryption details
-│   └── CLOUDFLARE_TUNNEL.md      # Configuration Cloudflare Tunnel
+│   ├── ROADMAP.md                  # Roadmap globale
+│   └── DEPLOIEMENT.md              # Guide de déploiement et d'infra
 │
 ├── Makefile                      # Build automation
 ├── .prettierrc                   # Prettier config
@@ -467,8 +467,8 @@ canari/
 
 - **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** - Décisions architecturales et patterns
 - **[DEVELOPMENT.md](docs/DEVELOPMENT.md)** - Guide de développement détaillé
-- **[CHIFFREMENT.md](docs/CHIFFREMENT.md)** - Protocole MLS et chiffrement E2E
-- **[CLOUDFLARE_TUNNEL.md](docs/CLOUDFLARE_TUNNEL.md)** - Configuration Cloudflare Tunnel
+- **[ROADMAP.md](docs/ROADMAP.md)** - Actions passées et futures
+- **[DEPLOIEMENT.md](docs/DEPLOIEMENT.md)** - Guide de déploiement CI/CD et Cloudflare Tunnel
 
 ---
 

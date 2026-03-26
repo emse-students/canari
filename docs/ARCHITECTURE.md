@@ -23,21 +23,21 @@ Canari est un monorepo microservices avec:
 
 ## 3. Services deployes
 
-| Service                         | Stack                       | Port interne                   | Exposition host (compose)                                                                                             | Role                                             |
-| ------------------------------- | --------------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| frontend (Nginx + build Svelte) | Nginx                       | 80                             | prod: `${FRONTEND_HOST_PORT:-80}:80`                                                                                  | Point d'entree HTTP unique + reverse proxy       |
-| chat-gateway                    | Rust/Axum                   | 3000                           | `3000:3000`                                                                                                           | WebSocket chat MLS, presence, routage temps reel |
-| chat-delivery-service           | NestJS + Kafka microservice | 3010                           | `3010:3010`                                                                                                           | API MLS, messages offline, historique            |
-| media-service                   | NestJS                      | 3011                           | `3011:3011`                                                                                                           | Upload/acces media chiffre via MinIO             |
-| core-service                    | NestJS                      | 3012                           | `3012:3012`                                                                                                           | Auth, users, paiement Stripe                     |
-| social-service                  | NestJS                      | 3014                           | `3014:3014`                                                                                                           | Posts, forms, channels                           |
-| redis                           | Redis                       | 6379                           | `6379:6379`                                                                                                           | Presence, Pub/Sub, streams                       |
-| kafka                           | Confluent Kafka             | 29092 (interne), 9092 (host)   | `9092:9092`                                                                                                           | Bus d'evenements                                 |
-| zookeeper                       | Confluent Zookeeper         | 2181                           | non expose                                                                                                            | Coordination Kafka                               |
-| postgres                        | PostgreSQL                  | 5432                           | `5432:5432`                                                                                                           | Donnees relationnelles                           |
-| mongo                           | MongoDB                     | 27017                          | `27017:27017`                                                                                                         | Donnees document                                 |
-| minio                           | MinIO                       | 9000 (API), 9001 (console)     | local: `9000:9000`, `9001:9001`; prod: `${MINIO_API_HOST_PORT:-19000}:9000`, `${MINIO_CONSOLE_HOST_PORT:-19001}:9001` | Stockage objet S3-compatible                     |
-| coturn (local uniquement)       | Coturn                      | 3478/5349 + range UDP          | `3478`, `5349`, `49000-49040/udp`                                                                                     | STUN/TURN pour appels                            |
+| Service                         | Stack                       | Port interne                 | Exposition host (compose)                                                                                             | Role                                             |
+| ------------------------------- | --------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| frontend (Nginx + build Svelte) | Nginx                       | 80                           | prod: `${FRONTEND_HOST_PORT:-80}:80`                                                                                  | Point d'entree HTTP unique + reverse proxy       |
+| chat-gateway                    | Rust/Axum                   | 3000                         | `3000:3000`                                                                                                           | WebSocket chat MLS, presence, routage temps reel |
+| chat-delivery-service           | NestJS + Kafka microservice | 3010                         | `3010:3010`                                                                                                           | API MLS, messages offline, historique            |
+| media-service                   | NestJS                      | 3011                         | `3011:3011`                                                                                                           | Upload/acces media chiffre via MinIO             |
+| core-service                    | NestJS                      | 3012                         | `3012:3012`                                                                                                           | Auth, users, paiement Stripe                     |
+| social-service                  | NestJS                      | 3014                         | `3014:3014`                                                                                                           | Posts, forms, channels                           |
+| redis                           | Redis                       | 6379                         | `6379:6379`                                                                                                           | Presence, Pub/Sub, streams                       |
+| kafka                           | Confluent Kafka             | 29092 (interne), 9092 (host) | `9092:9092`                                                                                                           | Bus d'evenements                                 |
+| zookeeper                       | Confluent Zookeeper         | 2181                         | non expose                                                                                                            | Coordination Kafka                               |
+| postgres                        | PostgreSQL                  | 5432                         | `5432:5432`                                                                                                           | Donnees relationnelles                           |
+| mongo                           | MongoDB                     | 27017                        | `27017:27017`                                                                                                         | Donnees document                                 |
+| minio                           | MinIO                       | 9000 (API), 9001 (console)   | local: `9000:9000`, `9001:9001`; prod: `${MINIO_API_HOST_PORT:-19000}:9000`, `${MINIO_CONSOLE_HOST_PORT:-19001}:9001` | Stockage objet S3-compatible                     |
+| coturn (local uniquement)       | Coturn                      | 3478/5349 + range UDP        | `3478`, `5349`, `49000-49040/udp`                                                                                     | STUN/TURN pour appels                            |
 
 ## 4. Ports detailes
 
@@ -219,3 +219,39 @@ graph LR
     SOC --> P
     MED --> MIN[(MinIO :9000)]
 ```
+# Chiffrement
+
+La messagerie utilise un chiffrement de bout en bout (E2EE) pour garantir la confidentialité des messages dans toutes les conversations. Voici les détails techniques des mécanismes de chiffrement utilisés selon le type de discussion :
+
+## 1. Discussions Directes et Petits Groupes (DMs)
+
+- **Protocole de Chiffrement :** Utilisation de **Message Layer Security (MLS)** pour la gestion des clés et le chiffrement de groupe. (cf. [RFC 9420](https://datatracker.ietf.org/doc/html/rfc9420)).
+- **Perfect Forward Secrecy (PFS) et Post-Compromise Security (PCS) :** Le protocole MLS assure la rotation continue des clés, empêchant la lecture des anciens messages si une clé est compromise, et garantissant l'impossibilité de lire les nouveaux si un membre est expulsé.
+
+## 2. Canaux Communautaires (Espaces / Workspaces)
+
+Pour les espaces communautaires à fort volume impliquant de fréquents mouvements de membres (ex: promotions, associations), le maintien exclusif de la rotation MLS pure peut s'avérer trop coûteux en performances. Un modèle hybride est ainsi appliqué :
+
+- **Clé par Canal :** Une clé privée symétrique unique (AES-256) est générée pour chaque canal. Actuellement (au stade de MVP), cette clé est statique et n'est pas modifiée au cours du temps.
+- **Distribution via MLS :** La clé privée du canal n'est **jamais** transmise en clair au serveur. Lorsqu'un nouveau membre rejoint le canal, un bot ou un administrateur ayant déjà accès transmet la clé privée du canal de manière asynchrone au nouvel arrivant via un message chiffré MLS (en utilisant l'infrastructure sécurisée de la partie DMs/Groupes de l'application).
+- **Chiffrement des messages :** Les messages envoyés dans le canal sont chiffrés en AES-256-GCM à l'aide de la clé statique du canal.
+- **Accès à l'historique :** Ce paradigme permet intrinsèquement à un nouveau venu, une fois la clé reçue, de déchiffrer sans complexité l'intégralité de l'historique du canal.
+- **Gestion des expulsions :** Dans la version actuelle, une exclusion repose sur une interdiction serveur ("soft block") : le serveur coupe l'accès de la cible aux flux de la WebSocket et de l'API. La clé n'étant pas rotative, la cryptographie seule ne prévient pas un membre expulsé de déchiffrer les requêtes futures s'il parvenait à écouter le réseau en contournant l'ACL. C'est un compromis assumé sur ce volet MVP.
+# Chiffrement
+
+La messagerie utilise un chiffrement de bout en bout (E2EE) pour garantir la confidentialité des messages dans toutes les conversations. Voici les détails techniques des mécanismes de chiffrement utilisés selon le type de discussion :
+
+## 1. Discussions Directes et Petits Groupes (DMs)
+
+- **Protocole de Chiffrement :** Utilisation de **Message Layer Security (MLS)** pour la gestion des clés et le chiffrement de groupe. (cf. [RFC 9420](https://datatracker.ietf.org/doc/html/rfc9420)).
+- **Perfect Forward Secrecy (PFS) et Post-Compromise Security (PCS) :** Le protocole MLS assure la rotation continue des clés, empêchant la lecture des anciens messages si une clé est compromise, et garantissant l'impossibilité de lire les nouveaux si un membre est expulsé.
+
+## 2. Canaux Communautaires (Espaces / Workspaces)
+
+Pour les espaces communautaires à fort volume impliquant de fréquents mouvements de membres (ex: promotions, associations), le maintien exclusif de la rotation MLS pure peut s'avérer trop coûteux en performances. Un modèle hybride est ainsi appliqué :
+
+- **Clé par Canal :** Une clé privée symétrique unique (AES-256) est générée pour chaque canal. Actuellement (au stade de MVP), cette clé est statique et n'est pas modifiée au cours du temps.
+- **Distribution via MLS :** La clé privée du canal n'est **jamais** transmise en clair au serveur. Lorsqu'un nouveau membre rejoint le canal, un bot ou un administrateur ayant déjà accès transmet la clé privée du canal de manière asynchrone au nouvel arrivant via un message chiffré MLS (en utilisant l'infrastructure sécurisée de la partie DMs/Groupes de l'application).
+- **Chiffrement des messages :** Les messages envoyés dans le canal sont chiffrés en AES-256-GCM à l'aide de la clé statique du canal.
+- **Accès à l'historique :** Ce paradigme permet intrinsèquement à un nouveau venu, une fois la clé reçue, de déchiffrer sans complexité l'intégralité de l'historique du canal.
+- **Gestion des expulsions :** Dans la version actuelle, une exclusion repose sur une interdiction serveur ("soft block") : le serveur coupe l'accès de la cible aux flux de la WebSocket et de l'API. La clé n'étant pas rotative, la cryptographie seule ne prévient pas un membre expulsé de déchiffrer les requêtes futures s'il parvenait à écouter le réseau en contournant l'ACL. C'est un compromis assumé sur ce volet MVP.

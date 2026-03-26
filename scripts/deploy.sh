@@ -28,7 +28,7 @@ case "$ENV" in
   production|prod)
     COMPOSE_FILE="infrastructure/docker-compose.prod.yml"
     echo -e "${BLUE}🚀 Deploying to PRODUCTION environment${RESET}"
-    
+
     # Check if .env exists
     if [ ! -f "infrastructure/.env" ]; then
       echo -e "${YELLOW}⚠️  No .env file found. Creating from template...${RESET}"
@@ -36,7 +36,7 @@ case "$ENV" in
       echo -e "${RED}❌ Please configure infrastructure/.env before deploying to production!${RESET}"
       exit 1
     fi
-    
+
     # Load environment variables
     export $(cat infrastructure/.env | grep -v '^#' | xargs)
     ;;

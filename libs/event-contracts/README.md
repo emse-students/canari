@@ -21,13 +21,13 @@ schemas/
 
 ## Utilisation et Cohérence
 
-Pour garantir la cohérence entre les services (Java, Rust, Node), vous avez deux approches :
+Pour garantir la cohérence entre les services (Rust, NestJS), vous avez deux approches :
 
 ### 1. Génération de Code (Recommandé)
 
 Utilisez des outils pour générer vos classes/types à partir de ces schémas JSON.
 
-*   **Java** : Utiliser `jsonschema2pojo` (Plugin Gradle/Maven).
+
 *   **TypeScript** : Utiliser `json-schema-to-typescript`.
 *   **Rust** : Utiliser `typify` ou `serde_json`.
 
