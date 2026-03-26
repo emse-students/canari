@@ -64,6 +64,20 @@ jobs:
         working-directory: frontend
         run: bun run proto:gen
 
+      - name: Validate frontend build secrets
+        env:
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          BASE_URL: ${{ secrets.BASE_URL }}
+        run: |
+          if [ -z "$JWT_SECRET" ]; then
+            echo "::error::Missing required GitHub secret: JWT_SECRET"
+            exit 1
+          fi
+          if [ -z "$BASE_URL" ]; then
+            echo "::error::Missing required GitHub secret: BASE_URL"
+            exit 1
+          fi
+
       - name: Create frontend .env with JWT_SECRET
         working-directory: frontend
         env:
@@ -239,6 +253,48 @@ jobs:
           git fetch origin
           git reset --hard origin/main
           echo "✅ Code updated to $(git rev-parse --short HEAD)"
+
+      - name: Sync runtime secrets into infrastructure/.env
+        working-directory: ${{ env.DEPLOY_PATH }}
+        env:
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+        run: |
+          if [ -z "$JWT_SECRET" ]; then
+            echo "::error::Missing required GitHub secret: JWT_SECRET"
+            exit 1
+          fi
+
+          if [ ! -f infrastructure/.env ]; then
+            if [ -f infrastructure/.env.example ]; then
+              cp infrastructure/.env.example infrastructure/.env
+            else
+              echo "::error::infrastructure/.env and infrastructure/.env.example are both missing"
+              exit 1
+            fi
+          fi
+
+          upsert_env_var() {
+            key="$1"
+            value="$2"
+            escaped_value=$(printf '%s' "$value" | sed -e 's/[\\/&]/\\\\&/g')
+
+            if grep -q "^${key}=" infrastructure/.env; then
+              sed -i "s/^${key}=.*/${key}=${escaped_value}/" infrastructure/.env
+            else
+              printf "\n%s=%s\n" "$key" "$value" >> infrastructure/.env
+            fi
+          }
+
+          upsert_env_var "JWT_SECRET" "$JWT_SECRET"
+
+          if [ -n "$STRIPE_SECRET_KEY" ]; then
+            upsert_env_var "STRIPE_SECRET_KEY" "$STRIPE_SECRET_KEY"
+          else
+            echo "⚠️ STRIPE_SECRET_KEY is not set in GitHub secrets (payments features may be disabled)"
+          fi
+
+          echo "✅ Runtime secrets synced to infrastructure/.env"
 
       - name: Check environment configuration
         working-directory: ${{ env.DEPLOY_PATH }}
