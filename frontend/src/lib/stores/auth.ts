@@ -24,7 +24,7 @@ function coreUrl(): string {
  * service to unlock the local MLS key package.
  */
 export async function login(userId: string): Promise<string> {
-  const res = await fetch(`${coreUrl()}/auth/login`, {
+  const res = await fetch(`${coreUrl()}/api/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ userId }),
@@ -46,7 +46,7 @@ export async function refresh(): Promise<string> {
   const rt = localStorage.getItem(REFRESH_KEY);
   if (!rt) throw new Error('No refresh token — please log in again');
 
-  const res = await fetch(`${coreUrl()}/auth/refresh`, {
+  const res = await fetch(`${coreUrl()}/api/auth/refresh`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ refresh_token: rt }),
