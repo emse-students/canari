@@ -4,46 +4,6 @@ import type { IStorage } from '$lib/db';
 import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
 
-export async function generateDevToken(uid: string, jwtSecret: string | undefined, isDev: boolean) {
-  const secret = jwtSecret;
-  if (!secret) {
-    throw new Error(
-      isDev
-        ? 'VITE_JWT_SECRET non configuré dans frontend/.env (développement)'
-        : 'VITE_JWT_SECRET absent du bundle — vérifier le GitHub Secret JWT_SECRET dans Settings → Secrets → Actions'
-    );
-  }
-  if (typeof crypto === 'undefined' || !crypto.subtle) {
-    throw new Error(
-      'Erreur de sécurité : crypto.subtle indisponible.\n\n' +
-        "Cause probable : l'application n'est pas accédée via HTTPS.\n" +
-        'Vérifiez que Cloudflare Tunnel est actif et que vous accédez via https://canari-emse.fr'
-    );
-  }
-
-  const header = JSON.stringify({ alg: 'HS256', typ: 'JWT' });
-  const payload = JSON.stringify({
-    sub: uid,
-    exp: Math.floor(Date.now() / 1000) + 3600 * 24,
-  });
-
-  const b64url = (str: string) =>
-    btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-
-  const unsignedToken = `${b64url(header)}.${b64url(payload)}`;
-  const enc = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    'raw',
-    enc.encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign']
-  );
-  const signature = await crypto.subtle.sign('HMAC', key, enc.encode(unsignedToken));
-  const sigB64 = b64url(String.fromCharCode(...new Uint8Array(signature)));
-  return `${unsignedToken}.${sigB64}`;
-}
-
 export async function syncOwnDevicesToGroups(params: {
   mlsService: IMlsService;
   userId: string;

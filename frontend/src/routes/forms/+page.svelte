@@ -1,17 +1,10 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { getForms, exportSubmissions, type Form } from '$lib/forms/api';
+  import { exportSubmissions, type Form } from '$lib/forms/api';
+  import type { PageProps } from './$types';
 
-  let forms = $state<Form[]>([]);
-  let userId = 'user-123'; // Hardcoded for now, should come from auth store
-
-  onMount(async () => {
-    try {
-      forms = await getForms(userId);
-    } catch (e) {
-      console.error(e);
-    }
-  });
+  let { data }: PageProps = $props();
+  // Forms are fetched server-side so the client never receives the user id.
+  let forms = $derived<Form[]>(data?.forms ?? []);
 
   async function handleExport(id: string) {
     try {

@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { startNewConversation, createNewGroup, inviteMemberToGroup } from './mainChatGroupCreation';
+import { startNewConversation, createNewGroup, inviteMemberToGroup } from './groupCreation';
 import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
 

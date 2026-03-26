@@ -296,6 +296,10 @@ async fn handle_socket(
                                     .collect()
                             })
                             .unwrap_or_default();
+                        let ratchet_tree = json
+                            .get("ratchetTree")
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null);
 
                         match msg_type {
                             "mls" => {
@@ -462,7 +466,8 @@ async fn handle_socket(
                                             "senderDeviceId": device_id,
                                             "groupId": group_id,
                                             "isWelcome": true,
-                                            "proto": B64.encode(&ciphertext)
+                                            "proto": B64.encode(&ciphertext),
+                                            "ratchetTree": ratchet_tree.clone()
                                         });
                                         let _ = state
                                             .http_client
@@ -494,7 +499,8 @@ async fn handle_socket(
                                                 "senderDeviceId": device_id,
                                                 "groupId": group_id,
                                                 "isWelcome": true,
-                                                "proto": B64.encode(&ciphertext)
+                                                "proto": B64.encode(&ciphertext),
+                                                "ratchetTree": ratchet_tree.clone()
                                             })
                                             .to_string();
                                             let _: Result<(), _> =
@@ -510,7 +516,8 @@ async fn handle_socket(
                                             "senderDeviceId": device_id,
                                             "groupId": group_id,
                                             "isWelcome": true,
-                                            "proto": B64.encode(&ciphertext)
+                                            "proto": B64.encode(&ciphertext),
+                                            "ratchetTree": ratchet_tree.clone()
                                         });
                                         let _ = state
                                             .http_client

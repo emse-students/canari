@@ -1,6 +1,6 @@
 <script lang="ts">
   import { MediaService } from '$lib/media';
-  import { generateDevToken } from '$lib/utils/mainChatAuth';
+  import { getToken } from '$lib/stores/auth';
   import { createPost, type CreatePostPayload } from '$lib/posts/api';
   import { getForms, type Form } from '$lib/forms/api';
   import { onMount } from 'svelte';
@@ -51,7 +51,6 @@
   let actionMessage = $state('');
 
   const mediaService = new MediaService();
-  const jwtSecret = import.meta.env.VITE_JWT_SECRET as string | undefined;
 
   onMount(async () => {
     try {
@@ -66,7 +65,7 @@
     actionMessage = '';
     errorMessage = '';
     try {
-      authToken = await generateDevToken(userId, jwtSecret, import.meta.env.DEV);
+      authToken = await getToken();
       actionMessage = 'Token generated for media-service operations.';
     } catch (err) {
       errorMessage = err instanceof Error ? err.message : 'Unable to generate token';

@@ -13,7 +13,7 @@
     getSubmission,
   } from '$lib/forms/api';
   import SvelteMarkdown from 'svelte-markdown';
-  import PostImage from '$lib/components/PostImage.svelte';
+  import PostImage from './PostImage.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Card from '$lib/components/ui/Card.svelte';
 
@@ -64,7 +64,7 @@
   });
 
   async function checkSubmissions(formsToCheck: PostForm[]) {
-    if (!currentUserId) return;
+    // Don't rely on client-held user id; server derives identity from the JWT.
     for (const f of formsToCheck) {
       // Default: collapse if big
       if (formExpanded[f.id] === undefined) {
@@ -72,13 +72,13 @@
       }
 
       try {
-        const { hasSubmitted } = await checkSubmission(f.id, currentUserId);
+        const { hasSubmitted } = await checkSubmission(f.id);
         formSubmitted[f.id] = hasSubmitted;
 
         if (hasSubmitted) {
           formExpanded[f.id] = false;
           try {
-            const submission = await getSubmission(f.id, currentUserId);
+            const submission = await getSubmission(f.id);
             if (submission && submission.answers) {
               formSelections[f.id] = submission.answers;
             }

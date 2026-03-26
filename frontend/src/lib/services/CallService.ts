@@ -1,6 +1,7 @@
 import { writable, get } from 'svelte/store';
 import type { IMlsService } from './IMlsService';
 import { canari } from '../proto/canari.js';
+import EncryptionWorker from '../workers/encryption.worker?worker';
 
 export type CallState = 'idle' | 'calling' | 'incoming' | 'incall' | 'ended';
 
@@ -246,8 +247,7 @@ export class CallService {
     if (window.RTCRtpScriptTransform) {
       // Create worker if not exists (assume singleton for simplicity in this snippet)
       // Ideally, manage worker lifecycle properly
-      const workerUrl = new URL('../../workers/encryption.worker.ts', import.meta.url);
-      const worker = new Worker(workerUrl, { type: 'module' });
+      const worker = new EncryptionWorker();
       worker.postMessage({ type: 'setKey', payload: this.callKey });
 
       sender.transform = new RTCRtpScriptTransform(worker, { side: 'sender' });
@@ -275,8 +275,7 @@ export class CallService {
 
     // Use WebRTC Encoded Transform (Standard)
     if (window.RTCRtpScriptTransform) {
-      const workerUrl = new URL('../../workers/encryption.worker.ts', import.meta.url);
-      const worker = new Worker(workerUrl, { type: 'module' });
+      const worker = new EncryptionWorker();
       worker.postMessage({ type: 'setKey', payload: this.callKey });
 
       receiver.transform = new RTCRtpScriptTransform(worker, { side: 'receiver' });

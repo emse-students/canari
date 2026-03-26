@@ -77,16 +77,17 @@ export async function sendChatMessage(
       try {
         const encryptedParams = await channelKeyManager.encryptMessage(actualChannelId, payload);
         await channelService.sendMessage(actualChannelId, {
-          senderId: userId,
           nonce: encryptedParams.nonce,
           ciphertext: encryptedParams.ciphertext,
           keyVersion: encryptedParams.keyVersion,
-        } as any);
+        });
       } catch (err) {
         console.warn('Crypto missing for channel via keyManager, falling back to legacy:', err);
+        const nonce = Array.from(crypto.getRandomValues(new Uint8Array(12)))
+          .map((b) => b.toString(16).padStart(2, '0'))
+          .join('');
         await channelService.sendMessage(actualChannelId, {
-          senderId: userId,
-          nonce: Date.now().toString(), // Mock nonce for now
+          nonce,
           ciphertext: btoa(String.fromCharCode(...payload)),
         });
       }

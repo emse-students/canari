@@ -1,5 +1,5 @@
 <script lang="ts">
-  import MainChatPage from '$lib/components/MainChatPage.svelte';
+  import LoginPage from '$lib/components/auth/LoginPage.svelte';
 </script>
 
-<MainChatPage routeMode="login" />
+<LoginPage />

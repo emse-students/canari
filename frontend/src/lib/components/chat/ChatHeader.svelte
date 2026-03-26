@@ -16,9 +16,9 @@
     Hash,
     Phone,
   } from 'lucide-svelte';
-  import Avatar from './Avatar.svelte';
-  import Modal from './Modal.svelte';
-  import MultiUserSelector from './MultiUserSelector.svelte';
+  import Avatar from '../shared/Avatar.svelte';
+  import Modal from '../shared/Modal.svelte';
+  import MultiUserSelector from '../shared/MultiUserSelector.svelte';
   import { portal } from '$lib/actions/portal';
   import { presenceMap, watchUsers } from '$lib/stores/presenceStore';
 

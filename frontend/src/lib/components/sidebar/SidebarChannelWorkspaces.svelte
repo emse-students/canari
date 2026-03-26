@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Plus, ChevronDown, ChevronRight, Hash, Lock } from 'lucide-svelte';
-  import Avatar from './Avatar.svelte';
+  import Avatar from '../shared/Avatar.svelte';
 
   interface ChannelItem {
     id: string;

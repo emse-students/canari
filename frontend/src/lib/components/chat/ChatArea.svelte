@@ -5,7 +5,7 @@
   import ChatHeader from './ChatHeader.svelte';
   import ChatMessageGroups from './ChatMessageGroups.svelte';
   import ChatComposer from './ChatComposer.svelte';
-  import EmptyState from './EmptyState.svelte';
+  import EmptyState from '../shared/EmptyState.svelte';
   import { groupMessages } from '$lib/utils/messageGrouping';
   import type { ChatMessage, MessageReaction, Conversation } from '$lib/types';
 

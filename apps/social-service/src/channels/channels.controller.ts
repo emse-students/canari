@@ -2,12 +2,15 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   Param,
   Post,
   Query,
   HttpException,
   HttpStatus,
+  UseGuards,
 } from '@nestjs/common';
+import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { ChannelService } from './channel.service';
 import {
   type ChannelJoinDto,
@@ -34,9 +37,10 @@ export class ChannelsController {
     };
   }
 
+  @UseGuards(NginxAuthGuard)
   @Post('workspaces')
-  createWorkspace(@Body() body: CreateWorkspaceDto) {
-    return this.service.createWorkspace(body);
+  createWorkspace(@Headers('x-user-id') xUserId: string, @Body() body: CreateWorkspaceDto) {
+    return this.service.createWorkspace({ ...body, createdBy: xUserId.trim().toLowerCase() });
   }
 
   @Get('workspaces/by-slug/:slug')
@@ -44,9 +48,10 @@ export class ChannelsController {
     return this.service.getWorkspaceBySlug(slug);
   }
 
-  @Get('workspaces/user/:userId')
-  listWorkspaces(@Param('userId') userId: string) {
-    return this.service.listWorkspacesForUser(userId);
+  @UseGuards(NginxAuthGuard)
+  @Get('workspaces/user/me')
+  listWorkspaces(@Headers('x-user-id') xUserId: string) {
+    return this.service.listWorkspacesForUser(xUserId.trim().toLowerCase());
   }
 
   @Post('roles')
@@ -54,40 +59,78 @@ export class ChannelsController {
     return this.service.createRole(body);
   }
 
+  @UseGuards(NginxAuthGuard)
   @Post()
-  createChannel(@Body() body: CreateChannelDto) {
-    return this.service.createChannel(body);
+  createChannel(@Headers('x-user-id') xUserId: string, @Body() body: CreateChannelDto) {
+    return this.service.createChannel({ ...body, actorUserId: xUserId.trim().toLowerCase() });
   }
 
-  @Get('workspace/:workspaceId/user/:userId')
-  listChannels(@Param('workspaceId') workspaceId: string, @Param('userId') userId: string) {
-    return this.service.listChannelsForUser(workspaceId, userId);
+  @UseGuards(NginxAuthGuard)
+  @Get('workspace/:workspaceId/user/me')
+  listChannels(@Headers('x-user-id') xUserId: string, @Param('workspaceId') workspaceId: string) {
+    return this.service.listChannelsForUser(workspaceId, xUserId.trim().toLowerCase());
   }
 
+  @UseGuards(NginxAuthGuard)
   @Post(':channelId/members/join')
-  join(@Param('channelId') channelId: string, @Body() body: ChannelJoinDto) {
-    return this.service.joinChannel(channelId, body);
+  join(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string,
+    @Body() body: ChannelJoinDto
+  ) {
+    const userId = xUserId.trim().toLowerCase();
+    return this.service.joinChannel(channelId, { ...body, userId, actorUserId: userId });
   }
 
+  @UseGuards(NginxAuthGuard)
   @Post(':channelId/members/leave')
-  leave(@Param('channelId') channelId: string, @Body() body: ChannelLeaveDto) {
-    return this.service.leaveChannel(channelId, body);
+  leave(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string,
+    @Body() body: ChannelLeaveDto
+  ) {
+    return this.service.leaveChannel(channelId, {
+      ...body,
+      userId: xUserId.trim().toLowerCase(),
+    });
   }
 
+  @UseGuards(NginxAuthGuard)
   @Post(':channelId/members/kick')
-  kick(@Param('channelId') channelId: string, @Body() body: ChannelKickDto) {
-    return this.service.kickMember(channelId, body);
+  kick(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string,
+    @Body() body: ChannelKickDto
+  ) {
+    return this.service.kickMember(channelId, {
+      ...body,
+      actorUserId: xUserId.trim().toLowerCase(),
+    });
   }
 
+  @UseGuards(NginxAuthGuard)
   @Post(':channelId/members/role')
-  updateMemberRole(@Param('channelId') channelId: string, @Body() body: ChannelUpdateRoleDto) {
-    return this.service.updateMemberRole(channelId, body);
+  updateMemberRole(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string,
+    @Body() body: ChannelUpdateRoleDto
+  ) {
+    return this.service.updateMemberRole(channelId, {
+      ...body,
+      actorUserId: xUserId.trim().toLowerCase(),
+    });
   }
 
+  @UseGuards(NginxAuthGuard)
   @Post(':channelId/messages')
-  async sendMessage(@Param('channelId') channelId: string, @Body() body: SendChannelMessageDto) {
+  async sendMessage(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string,
+    @Body() body: SendChannelMessageDto
+  ) {
+    const userId = xUserId.trim().toLowerCase();
     try {
-      return await this.service.sendMessage(channelId, body);
+      return await this.service.sendMessage(channelId, { ...body, senderId: userId });
     } catch (err: any) {
       console.error('CONTROLLER SEND ERROR', err);
       throw new HttpException(
@@ -101,9 +144,14 @@ export class ChannelsController {
     }
   }
 
+  @UseGuards(NginxAuthGuard)
   @Get(':channelId/messages')
-  listMessages(@Param('channelId') channelId: string, @Query() query: GetChannelMessagesQuery) {
+  listMessages(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string,
+    @Query() query: GetChannelMessagesQuery
+  ) {
     const limit = query.limit ? Number(query.limit) : 100;
-    return this.service.listMessages(channelId, query.userId, limit);
+    return this.service.listMessages(channelId, xUserId.trim().toLowerCase(), limit);
   }
 }

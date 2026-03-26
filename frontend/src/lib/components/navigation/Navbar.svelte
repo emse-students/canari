@@ -1,9 +1,9 @@
 <script lang="ts">
-  import StatusPill from './StatusPill.svelte';
-  import CanariBrand from './navigation/CanariBrand.svelte';
-  import PlaceSwitcher from './navigation/PlaceSwitcher.svelte';
-  import ThemeToggleButton from './navigation/ThemeToggleButton.svelte';
-  import SessionActionButtons from './navigation/SessionActionButtons.svelte';
+  import StatusPill from '../shared/StatusPill.svelte';
+  import CanariBrand from './CanariBrand.svelte';
+  import PlaceSwitcher from './PlaceSwitcher.svelte';
+  import ThemeToggleButton from './ThemeToggleButton.svelte';
+  import SessionActionButtons from './SessionActionButtons.svelte';
   import { page } from '$app/stores';
 
   interface Props {

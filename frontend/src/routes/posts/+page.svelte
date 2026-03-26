@@ -4,8 +4,8 @@
   import CreatePostForm from '$lib/components/posts/CreatePostForm.svelte';
   import PostCard from '$lib/components/posts/PostCard.svelte';
   import Button from '$lib/components/ui/Button.svelte';
-  import Modal from '$lib/components/Modal.svelte';
-  import { generateDevToken } from '$lib/utils/mainChatAuth';
+  import Modal from '$lib/components/shared/Modal.svelte';
+  import { getToken } from '$lib/stores/auth';
 
   // Global user state (could be moved to a store/context later)
   let userId = $state('');
@@ -91,15 +91,12 @@
         localStorage.setItem(deviceKey, deviceId);
       }
 
-      const jwtSecret = import.meta.env.VITE_JWT_SECRET;
-      if (jwtSecret) {
-        try {
-          const token = await generateDevToken(savedUser, jwtSecret, true);
-          authToken = token;
-          setupWebSocket(savedUser, token, deviceId);
-        } catch (e) {
-          console.error('[Posts] Failed to generate token', e);
-        }
+      try {
+        const token = await getToken();
+        authToken = token;
+        setupWebSocket(savedUser, token, deviceId);
+      } catch (e) {
+        console.error('[Posts] Failed to get token', e);
       }
     }
   });

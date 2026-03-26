@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Settings, Users, Trash2, ShieldCheck } from 'lucide-svelte';
-  import Modal from './Modal.svelte';
+  import Modal from '../shared/Modal.svelte';
 
   interface ChannelItem {
     id: string;

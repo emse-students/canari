@@ -1,9 +1,8 @@
 <script lang="ts">
   import '../app.css';
-  import BackgroundBlobs from '$lib/components/BackgroundBlobs.svelte';
+  import BackgroundBlobs from '$lib/components/shared/BackgroundBlobs.svelte';
   import CanariBrand from '$lib/components/navigation/CanariBrand.svelte';
   import PlaceSwitcher from '$lib/components/navigation/PlaceSwitcher.svelte';
-  import MainChatPage from '$lib/components/MainChatPage.svelte';
   import { page } from '$app/state';
 
   let { children } = $props();
@@ -15,8 +14,6 @@
       pathname === '/communities' ||
       pathname.startsWith('/communities/')
   );
-
-  const currentRouteMode = $derived(pathname.startsWith('/communities') ? 'communities' : 'chat');
 </script>
 
 <div class="relative min-h-dvh">
@@ -41,11 +38,7 @@
       : 'h-[calc(100dvh-4.5rem)] max-w-[1180px]'}"
   >
     <div class="h-full w-full">
-      {#if isChatRoute}
-        <MainChatPage routeMode={currentRouteMode} />
-      {:else}
-        {@render children?.()}
-      {/if}
+      {@render children?.()}
     </div>
   </div>
 </div>

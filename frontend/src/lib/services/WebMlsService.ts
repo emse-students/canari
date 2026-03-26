@@ -207,8 +207,8 @@ export class WebMlsService implements IMlsService {
 
           for (const msg of messages) {
             const success = await this.simulateMessageReceive(msg);
-            if (success && msg._id) {
-              successfullyProcessedIds.push(msg._id);
+            if (success && msg.id) {
+              successfullyProcessedIds.push(msg.id);
             }
           }
 
@@ -361,26 +361,45 @@ export class WebMlsService implements IMlsService {
         }),
       });
     } else if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      // WS path: we need a deviceId for the gateway to route properly.
+      // If caller didn't provide one, resolve it from the delivery service.
+      let resolvedDeviceId = targetDeviceId;
+      if (!resolvedDeviceId) {
+        const devices = await this.fetchUserDevices(targetUserId);
+        resolvedDeviceId = devices[0]?.deviceId;
+      }
+      if (!resolvedDeviceId) {
+        throw new Error(`Cannot send Welcome to ${targetUserId}: no registered device found`);
+      }
       this.ws.send(
         JSON.stringify({
           type: 'welcome',
           groupId,
           proto: btoa(String.fromCharCode(...welcomeBytes)),
           ratchetTree: ratchetTreeBase64,
-          recipients: [{ userId: targetUserId, deviceId: targetDeviceId ?? '' }],
+          recipients: [{ userId: targetUserId, deviceId: resolvedDeviceId }],
         })
       );
     } else {
-      await fetch(`${this.historyUrl}/api/mls-api/send`, {
+      // WS closed fallback: resolve deviceId and use the dedicated REST endpoint.
+      let resolvedDeviceId = targetDeviceId;
+      if (!resolvedDeviceId) {
+        const devices = await this.fetchUserDevices(targetUserId);
+        resolvedDeviceId = devices[0]?.deviceId;
+      }
+      if (!resolvedDeviceId) {
+        throw new Error(`Cannot send Welcome to ${targetUserId}: no registered device found`);
+      }
+      await fetch(`${this.historyUrl}/api/mls-api/welcome`, {
         method: 'POST',
         headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
-          senderId: this.userId,
-          recipients: [{ userId: targetUserId }],
-          content: base64,
+          targetDeviceId: resolvedDeviceId,
+          targetUserId,
+          senderUserId: this.userId,
+          welcomePayload: base64,
+          ratchetTreePayload: ratchetTreeBase64,
           groupId,
-          ratchetTree: ratchetTreeBase64,
-          type: 'mlsWelcome',
         }),
       });
     }

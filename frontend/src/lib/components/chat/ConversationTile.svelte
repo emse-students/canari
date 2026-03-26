@@ -1,5 +1,5 @@
 <script lang="ts">
-  import Avatar from './Avatar.svelte';
+  import Avatar from '../shared/Avatar.svelte';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import { presenceMap, watchUsers } from '$lib/stores/presenceStore';
   import { onMount } from 'svelte';

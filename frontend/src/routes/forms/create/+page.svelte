@@ -11,7 +11,6 @@
   let submitLabel = $state('Pay & Register');
   let maxSubmissions = $state<number | undefined>(undefined);
   let requiresPayment = $state(false);
-  let ownerId = 'user-123'; // Replace with real auth
 
   let items = $state<any[]>([
     {
@@ -45,7 +44,7 @@
               priceModifier: opt.priceModifier ?? 0,
             })) || [],
         })),
-        ownerId,
+        // ownerId must not be provided by the client; server derives owner from JWT
         maxSubmissions,
         requiresPayment,
       };

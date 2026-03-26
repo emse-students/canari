@@ -1,7 +1,6 @@
 export interface CreateWorkspaceDto {
   slug: string;
   name: string;
-  createdBy: string;
 }
 
 export interface WorkspaceDto {
@@ -16,7 +15,6 @@ export interface CreateChannelDto {
   workspaceId: string;
   name: string;
   visibility?: 'public' | 'private';
-  actorUserId: string;
 }
 
 export interface ChannelDto {
@@ -35,23 +33,21 @@ export interface CreateRoleDto {
 }
 
 export interface ChannelJoinDto {
-  userId: string;
   roleName?: string;
-  actorUserId: string;
 }
 
 export interface ChannelUpdateRoleDto {
   targetUserId: string;
-  actorUserId: string;
   roleName: string;
 }
 
 export interface SendChannelMessageDto {
-  senderId: string;
   ciphertext: string;
   nonce: string;
   keyVersion?: number;
 }
+
+import { getToken, refresh, clearAuth } from '$lib/stores/auth';
 
 export class ChannelService {
   private baseUrl: string;
@@ -66,14 +62,28 @@ export class ChannelService {
     }
   }
 
-  private getAuthHeaders(init: HeadersInit = {}): HeadersInit {
-    const headers = { 'Content-Type': 'application/json', ...init } as Record<string, string>;
-    const token =
-      typeof localStorage !== 'undefined' ? localStorage.getItem('canari_authToken') : '';
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
+  private async fetchWithAuth(url: string, init: RequestInit = {}): Promise<Response> {
+    const token = await getToken();
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(init.headers as Record<string, string>),
+      Authorization: `Bearer ${token}`,
+    };
+
+    let res = await fetch(url, { ...init, headers });
+
+    if (res.status === 401) {
+      try {
+        const newToken = await refresh();
+        headers['Authorization'] = `Bearer ${newToken}`;
+        res = await fetch(url, { ...init, headers });
+      } catch {
+        clearAuth();
+        throw new Error('Session expired — please log in again');
+      }
     }
-    return headers;
+
+    return res;
   }
 
   private async handleError(res: Response) {
@@ -94,9 +104,8 @@ export class ChannelService {
   }
 
   async createWorkspace(dto: CreateWorkspaceDto) {
-    const res = await fetch(`${this.baseUrl}/api/channels/workspaces`, {
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/workspaces`, {
       method: 'POST',
-      headers: this.getAuthHeaders(),
       body: JSON.stringify(dto),
     });
     await this.handleError(res);
@@ -104,31 +113,22 @@ export class ChannelService {
   }
 
   async getWorkspaceBySlug(slug: string) {
-    const res = await fetch(
-      `${this.baseUrl}/api/channels/workspaces/by-slug/${encodeURIComponent(slug)}`,
-      {
-        headers: this.getAuthHeaders(),
-      }
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/workspaces/by-slug/${encodeURIComponent(slug)}`
     );
     await this.handleError(res);
     return res.json() as Promise<WorkspaceDto>;
   }
 
-  async listUserWorkspaces(userId: string) {
-    const res = await fetch(
-      `${this.baseUrl}/api/channels/workspaces/user/${encodeURIComponent(userId)}`,
-      {
-        headers: this.getAuthHeaders(),
-      }
-    );
+  async listUserWorkspaces() {
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/workspaces/user/me`);
     await this.handleError(res);
     return res.json() as Promise<WorkspaceDto[]>;
   }
 
   async createChannel(dto: CreateChannelDto) {
-    const res = await fetch(`${this.baseUrl}/api/channels/`, {
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/`, {
       method: 'POST',
-      headers: this.getAuthHeaders(),
       body: JSON.stringify(dto),
     });
     await this.handleError(res);
@@ -136,30 +136,25 @@ export class ChannelService {
   }
 
   async createRole(dto: CreateRoleDto) {
-    const res = await fetch(`${this.baseUrl}/api/channels/roles/`, {
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/roles/`, {
       method: 'POST',
-      headers: this.getAuthHeaders(),
       body: JSON.stringify(dto),
     });
     await this.handleError(res);
     return res.json();
   }
 
-  async listChannels(workspaceId: string, userId: string) {
-    const res = await fetch(
-      `${this.baseUrl}/api/channels/workspace/${workspaceId}/user/${userId}`,
-      {
-        headers: this.getAuthHeaders(),
-      }
+  async listChannels(workspaceId: string) {
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/workspace/${workspaceId}/user/me`
     );
     await this.handleError(res);
     return res.json() as Promise<ChannelDto[]>;
   }
 
   async joinChannel(channelId: string, dto: ChannelJoinDto) {
-    const res = await fetch(`${this.baseUrl}/api/channels/${channelId}/members/join`, {
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${channelId}/members/join`, {
       method: 'POST',
-      headers: this.getAuthHeaders(),
       body: JSON.stringify(dto),
     });
     await this.handleError(res);
@@ -167,9 +162,8 @@ export class ChannelService {
   }
 
   async updateMemberRole(channelId: string, dto: ChannelUpdateRoleDto) {
-    const res = await fetch(`${this.baseUrl}/api/channels/${channelId}/members/role`, {
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${channelId}/members/role`, {
       method: 'POST',
-      headers: this.getAuthHeaders(),
       body: JSON.stringify(dto),
     });
     await this.handleError(res);
@@ -177,21 +171,17 @@ export class ChannelService {
   }
 
   async sendMessage(channelId: string, dto: SendChannelMessageDto) {
-    const res = await fetch(`${this.baseUrl}/api/channels/${channelId}/messages`, {
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${channelId}/messages`, {
       method: 'POST',
-      headers: this.getAuthHeaders(),
       body: JSON.stringify(dto),
     });
     await this.handleError(res);
     return res.json();
   }
 
-  async listMessages(channelId: string, userId: string, limit = 100) {
-    const res = await fetch(
-      `${this.baseUrl}/api/channels/${channelId}/messages?userId=${userId}&limit=${limit}`,
-      {
-        headers: this.getAuthHeaders(),
-      }
+  async listMessages(channelId: string, limit = 100) {
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/${channelId}/messages?limit=${limit}`
     );
     await this.handleError(res);
     return res.json();

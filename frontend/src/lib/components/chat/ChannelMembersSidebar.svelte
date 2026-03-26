@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Users, X } from 'lucide-svelte';
-  import Avatar from '$lib/components/Avatar.svelte';
+  import Avatar from '$lib/components/shared/Avatar.svelte';
   import { presenceMap, watchUsers } from '$lib/stores/presenceStore';
   import { onMount } from 'svelte';
 

@@ -588,8 +588,6 @@ interface ConnectionDeps {
   mlsService: IMlsService;
   userId: string;
   pin: string;
-  jwtSecret: string;
-  isDev: boolean;
   scheduleReconnect: () => void;
   setIsWsConnected: (value: boolean) => void;
   setReconnectAttempts: (value: number) => void;
@@ -604,10 +602,8 @@ interface ConnectionDeps {
 export async function initializeConnection(deps: ConnectionDeps): Promise<void> {
   const {
     mlsService,
-    userId,
+    userId: _userId,
     pin,
-    jwtSecret,
-    isDev,
     scheduleReconnect,
     setIsWsConnected,
     setReconnectAttempts,
@@ -617,8 +613,8 @@ export async function initializeConnection(deps: ConnectionDeps): Promise<void> 
 
   log('Connexion Gateway...');
   try {
-    const { generateDevToken } = await import('$lib/utils/mainChatAuth');
-    const token = await generateDevToken(userId, jwtSecret, isDev);
+    const { getToken } = await import('$lib/stores/auth');
+    const token = await getToken();
     await mlsService.connect(token);
     setIsWsConnected(true);
     setReconnectAttempts(0);

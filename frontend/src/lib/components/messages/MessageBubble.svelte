@@ -3,7 +3,7 @@
   import { MediaService } from '$lib/media';
   import type { MediaRef } from '$lib/media';
   import { parseEnvelope } from '$lib/envelope';
-  import Modal from './Modal.svelte';
+  import Modal from '../shared/Modal.svelte';
   import LinkPreviewCard from './LinkPreviewCard.svelte';
   import MessageEmojiPicker from './MessageEmojiPicker.svelte';
   import MessageMediaRenderer from './MessageMediaRenderer.svelte';

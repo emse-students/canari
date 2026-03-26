@@ -28,7 +28,6 @@ export interface CreateFormPayload {
   items: FormItem[];
   maxSubmissions?: number;
   requiresPayment?: boolean;
-  ownerId: string;
 }
 
 export interface Form extends CreateFormPayload {
@@ -73,8 +72,8 @@ export async function createForm(payload: CreateFormPayload): Promise<Form> {
   return res.json();
 }
 
-export async function getForms(ownerId?: string): Promise<Form[]> {
-  const url = ownerId ? `${API_Base}/api/forms?ownerId=${ownerId}` : `${API_Base}/api/forms`;
+export async function getForms(): Promise<Form[]> {
+  const url = `${API_Base}/api/forms`;
   const res = await request(url);
   if (!res.ok) throw new Error('Failed to fetch forms');
   return res.json();
@@ -86,17 +85,14 @@ export async function getForm(id: string): Promise<Form> {
   return res.json();
 }
 
-export async function getSubmission(formId: string, userId: string): Promise<any> {
-  const res = await request(`${API_Base}/api/forms/${formId}/submission?userId=${userId}`);
+export async function getSubmission(formId: string): Promise<any> {
+  const res = await request(`${API_Base}/api/forms/${formId}/submission`);
   if (!res.ok) throw new Error('Failed to fetch submission');
   return res.json();
 }
 
-export async function checkSubmission(
-  formId: string,
-  userId: string
-): Promise<{ hasSubmitted: boolean }> {
-  const res = await request(`${API_Base}/api/forms/${formId}/check?userId=${userId}`);
+export async function checkSubmission(formId: string): Promise<{ hasSubmitted: boolean }> {
+  const res = await request(`${API_Base}/api/forms/${formId}/check`);
   if (!res.ok) throw new Error('Failed to check submission status');
   return res.json();
 }

@@ -1,8 +1,8 @@
 <script lang="ts">
   import { SvelteMap } from 'svelte/reactivity';
   import { Hand, RotateCcw, Hash, Lock, Plus } from 'lucide-svelte';
-  import Avatar from './Avatar.svelte';
-  import ConversationTile from './ConversationTile.svelte';
+  import Avatar from '../shared/Avatar.svelte';
+  import ConversationTile from '../chat/ConversationTile.svelte';
   import SidebarHeaderControls from './SidebarHeaderControls.svelte';
 
   import SidebarFooterTools from './SidebarFooterTools.svelte';

@@ -31,6 +31,13 @@ export default [
     },
   },
   {
+    files: ['src/**/*.svelte.ts'],
+    languageOptions: {
+      parser: ts.parser,
+      globals: globals.browser,
+    },
+  },
+  {
     files: ['src/**/*.{svelte,ts,tsx,js,jsx}'],
     languageOptions: {
       globals: {
