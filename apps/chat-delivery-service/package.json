@@ -16,6 +16,8 @@
     "@nestjs/microservices": "^11.1.17",
     "@nestjs/platform-express": "^11.1.17",
     "@nestjs/typeorm": "^11.0.0",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.2",
     "ioredis": "^5.10.1",
     "kafkajs": "^2.2.4",
     "pg": "^8.20.0",
