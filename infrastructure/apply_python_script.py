@@ -5,7 +5,7 @@ with open("infrastructure/local/docker-compose.yml", "r", encoding="utf-8") as f
 
 c = re.sub(r'(\s+)build:\n\s+context: \.\./\.\.\n\s+dockerfile: .*\n', r'\n', c)
 
-services = ['chat-gateway', 'call-service', 'chat-delivery-service', 'media-service', 'core-service', 'social-service']
+services = ['chat-gateway', 'chat-delivery-service', 'media-service', 'core-service', 'social-service']
 
 for s in services:
     # Match EXACTLY ^  service_name:\n

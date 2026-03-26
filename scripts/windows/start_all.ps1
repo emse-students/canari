@@ -59,7 +59,7 @@ function Wait-Port {
 Write-Host "`n[0/4] Nettoyage des processus existants..." -ForegroundColor Magenta
 
 # Tuer les processus occupant les ports clés
-foreach ($port in @(3000, 3001, 3002, 3003, 3004, 3005, 3006, 8080, 8081)) {
+foreach ($port in @(3000, 3002, 3003, 3004, 3005, 3006, 8080, 8081)) {
     $pids = (netstat -ano | Select-String "LISTENING" | Select-String ":$port\s" | ForEach-Object {
             ($_.Line -split '\s+')[-1]
         } | Where-Object { $_ -match '^\d+$' } | Select-Object -Unique)

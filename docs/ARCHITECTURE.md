@@ -1,179 +1,221 @@
-# ARCHITECTURE.md - Social Network Project
+# ARCHITECTURE.md - Canari (etat reel du code)
 
-## 1. Vue d'ensemble
+## 1. Objectif et perimetre
 
-Architecture microservices polyglotte orientée événements (Event-Driven).
-Le système combine des APIs REST classiques (CRUD) et des WebSockets (Temps réel) orchestrés autour d'un bus d'événements Kafka.
+Ce document decrit l'architecture actuelle telle qu'elle est implementee dans le code.
+Source de verite utilisee:
 
-### Principes Clés
+- `infrastructure/docker-compose.prod.yml`
+- `infrastructure/local/docker-compose.yml`
+- `infrastructure/local/Dockerfile.frontend` (config Nginx runtime)
+- points d'entree des services dans `apps/*/src/main.*`
+- liaisons inter-services visibles dans le code applicatif
 
-- **Monorepo :** Tout le code réside dans un seul dépôt.
-- **Polyglot Persistence :** Chaque service utilise la base de données la plus adaptée à son besoin.
-- **Best Tool for the Job :** Rust pour la perf, Java pour la sécu, Node pour l'I/O.
-- **Async First :** Les services communiquent principalement via Kafka pour le découplage.
+## 2. Vue d'ensemble
 
----
+Canari est un monorepo microservices avec:
 
-## 2. Structure du Projet (Monorepo)
+- Frontend SvelteKit servi par Nginx en production
+- Services backend Rust + NestJS
+- Transport temps reel via WebSocket
+- Coordination/eventing via Redis Pub/Sub et Kafka
+- Stockage relationnel/objet/document (PostgreSQL, MongoDB, MinIO)
 
-```text
-/
-├── apps/                          # Services déployables
-│   ├── auth-service/              # [Node/NestJS] Gestion Identité & JWT
-│   ├── user-service/              # [Node/NestJS] Gestion Profils Utilisateurs (PG)
-│   ├── chat-gateway/              # [Rust/Axum] Serveur WebSocket (Stateless)
-│   ├── chat-delivery-service/      # [Node/NestJS] Consumer Kafka -> Sauvegarde messages (Mongo)
-│   ├── channel-service/           # [Node/NestJS] Gestion Canaux (Permissions)
-│   ├── post-service/              # [Node/NestJS] Gestion Posts & Events
-│   ├── form-service/              # [Node/NestJS] Gestion Formulaires Paiements
-│   └── media-service/             # [Node/NestJS] Gestion Uploads (MinIO / S3)
-│
-├── libs/                          # Code partagé
-│   ├── event-contracts/           # [Protobuf] Définitions des événements Kafka (Universel)
-│   ├── shared-ts/                 # [TS] DTOs partagés entre Front et Node services
-│   ├── shared-rust/               # [Rust] Crates utilitaires (Logger, config)
-│
-├── frontend/                      # Code Client
-│   ├── src-tauri/                 # Wrapper Desktop
-│   ├── mls-wasm/                  # Module Chiffrement Rust/WASM
-│   └── src/                       # Application SvelteKit
-│
-├── infrastructure/
-│   ├── local/                     # Docker Compose (Redis, Mongo, Kafka, MinIO, Nginx)
-│   └── docker-compose.prod.yml    # Configuration Production
-│
-└── tools/                         # Scripts
-```
+## 3. Services deployes
 
----
+| Service                         | Stack                       | Port interne                   | Exposition host (compose)                                                                                             | Role                                             |
+| ------------------------------- | --------------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| frontend (Nginx + build Svelte) | Nginx                       | 80                             | prod: `${FRONTEND_HOST_PORT:-80}:80`                                                                                  | Point d'entree HTTP unique + reverse proxy       |
+| chat-gateway                    | Rust/Axum                   | 3000                           | `3000:3000`                                                                                                           | WebSocket chat MLS, presence, routage temps reel |
+| chat-delivery-service           | NestJS + Kafka microservice | 3010                           | `3010:3010`                                                                                                           | API MLS, messages offline, historique            |
+| media-service                   | NestJS                      | 3011                           | `3011:3011`                                                                                                           | Upload/acces media chiffre via MinIO             |
+| core-service                    | NestJS                      | 3012                           | `3012:3012`                                                                                                           | Auth, users, paiement Stripe                     |
+| social-service                  | NestJS                      | 3014                           | `3014:3014`                                                                                                           | Posts, forms, channels                           |
+| redis                           | Redis                       | 6379                           | `6379:6379`                                                                                                           | Presence, Pub/Sub, streams                       |
+| kafka                           | Confluent Kafka             | 29092 (interne), 9092 (host)   | `9092:9092`                                                                                                           | Bus d'evenements                                 |
+| zookeeper                       | Confluent Zookeeper         | 2181                           | non expose                                                                                                            | Coordination Kafka                               |
+| postgres                        | PostgreSQL                  | 5432                           | `5432:5432`                                                                                                           | Donnees relationnelles                           |
+| mongo                           | MongoDB                     | 27017                          | `27017:27017`                                                                                                         | Donnees document                                 |
+| minio                           | MinIO                       | 9000 (API), 9001 (console)     | local: `9000:9000`, `9001:9001`; prod: `${MINIO_API_HOST_PORT:-19000}:9000`, `${MINIO_CONSOLE_HOST_PORT:-19001}:9001` | Stockage objet S3-compatible                     |
+| coturn (local uniquement)       | Coturn                      | 3478/5349 + range UDP          | `3478`, `5349`, `49000-49040/udp`                                                                                     | STUN/TURN pour appels                            |
 
-## 3. Matrice Technologique
+## 4. Ports detailes
 
-| Service           | Langage / Framework | Base de Données | Rôle Principal                          |
-| ----------------- | ------------------- | --------------- | --------------------------------------- |
-| **Auth Service**  | NestJS (Node.js)    | PostgreSQL      | Auth JWT, Refresh, Reset Pwd            |
-| **User Service**  | NestJS (Node.js)    | PostgreSQL      | Profils, Gestion Stripe Customer        |
-| **Chat Gateway**  | Rust (Axum)         | Redis           | Websockets, Présence temps réel         |
-| **Chat Delivery** | NestJS (Node.js)    | MongoDB         | Persistance messages, Historique        |
-| **Form Service**  | NestJS (Node.js)    | MongoDB         | Formulaires dynamiques, Stripe Checkout |
-| **Post Service**  | NestJS (Node.js)    | MongoDB         | Fil d'actu, Events, Attach Formulaires  |
-| **Encryption**    | Rust (MLS) → WASM   | IndexedDB       | Chiffrement End-to-End côté client      |
+### 4.1 Ports applicatifs backend
 
-| **Auth Service** | **Node.js** (NestJS) | **PostgreSQL** | Inscription, Login, OAuth2, Sécurité. |
-| **User Service** | **Node.js** (NestJS) | **PostgreSQL** | Gestion des profils utilisateurs. |
-| **Chat Gateway** | **Rust** (Axum + Tokio) | **Redis** (Pub/Sub) | Gestion massive des connexions WebSockets (Pas de stockage) et chiffrement bout en bout. |
+- `3000`: chat-gateway
+- `3010`: chat-delivery-service
+- `3011`: media-service
+- `3012`: core-service
+- `3014`: social-service
 
-| **Chat History** | **Node.js** (NestJS) | **MongoDB** | Consomme Kafka et archive les conversations. |
-| **Feed Worker** | **Rust** | **Redis** (Cache) | Consomme Kafka et construit les Timelines (une timeline suivis et une timeline générale). |
-| **Post Service** | **Node.js** (NestJS) | **MongoDB** | Stockage flexible des posts/commentaires. |
-| **Graph Service** | **Node.js** (NestJS) | **Neo4j** | Gestion du graphe social (Amis, Follow). |
-| **Media Service** | **Node.js** (NestJS) | **S3 / MinIO** | Orchestration uploads (Pre-signed URLs). |
-| **API Service** | **Kong / Nginx** | N/A | Point d'entrée unique (Rate Limiting, Auth). |
-| **Notification Service** | **Node.js** (NestJS) | N/A | Envoi de notifications push (Firebase, APNs). |
-**Infrastructure Commune :**
+Le service appels `call-service` est archive et n'est plus expose ni deploie dans les stacks activees.
 
-- **Event Bus :** Apache Kafka (Zookeeper pour coordination).
-- **Cache & PubSub :** Redis.
-- **Gateway :** API Gateway (ex: Kong ou Nginx) en front.
+### 4.2 Ports infra
 
----
+- `6379`: Redis
+- `9092`: Kafka expose host
+- `29092`: Kafka listener inter-container (`kafka:29092`)
+- `2181`: Zookeeper interne
+- `5432`: PostgreSQL
+- `27017`: MongoDB
+- `9000`: MinIO API S3 (ou host 19000 en prod)
+- `9001`: MinIO console (ou host 19001 en prod)
+- `3478`, `5349`, `49000-49040/udp`: Coturn local
 
-## 4. Flux de Données & Communication
+### 4.3 Frontend et dev
 
-### A. Flux "Post Created" (Exemple Asynchrone)
+- `80`: frontend Nginx en prod
+- `1420`: Vite dev server (`frontend/vite.config.js`)
+- `1421`: HMR websocket en mode Tauri host
 
-1. **Client** -> POST /posts -> **Post Service** (Sauvegarde MongoDB).
-2. **Post Service** -> Produit event `POST_CREATED` -> **Kafka**.
-3. **Feed Worker** (Consumer) :
+## 5. Ingress HTTP: mapping Nginx -> services
 
-- Lit `POST_CREATED`.
-- Appelle **Graph Service** (gRPC/HTTP) -> Récupère liste Amis.
-- Ecrit l'ID du post dans les Timelines **Redis** des amis (Fan-out).
+Le frontend Nginx fait office de gateway applicative. Routes configurees dans `infrastructure/local/Dockerfile.frontend`:
 
-4. **Notification Service** (Consumer) -> Envoie Push Notif.
+| Route publique  | Upstream interne             | Notes                                  |
+| --------------- | ---------------------------- | -------------------------------------- |
+| `/api/ws`       | `chat-gateway:3000`          | WS chat, protege via `auth_request`    |
+| `/api/groups`   | `chat-gateway:3000`          | routes groupes cote gateway            |
+| `/api/mls-api`  | `chat-delivery-service:3010` | API MLS, protege via `auth_request`    |
+| `/api/history`  | `chat-delivery-service:3010` | historique, protege via `auth_request` |
+| `/api/media`    | `media-service:3011`         | media blobs                            |
+| `/api/posts`    | `social-service:3014`        | posts, protege via `auth_request`      |
+| `/api/forms`    | `social-service:3014`        | forms, protege via `auth_request`      |
+| `/api/channels` | `social-service:3014`        | channels                               |
+| `/api/auth`     | `core-service:3012`          | auth                                   |
+| `/api/users`    | `core-service:3012`          | users                                  |
+| `/api/payments` | `core-service:3012`          | paiement, protege via `auth_request`   |
 
-### B. Flux "Chat Message" (Temps Réel & Persistance)
+Auth interne Nginx:
 
-1. **Alice** -> WebSocket -> **Chat Gateway (Instance A)**.
-2. **Chat Gateway** -> Publie sur **Redis Pub/Sub** (Channel: `chat_events`).
-3. **Chat Gateway (Instance B)** -> Reçoit l'event Redis -> Pousse via WebSocket vers **Bob**.
-4. **Chat Gateway** -> Produit event `MESSAGE_SENT` -> **Kafka**.
-5. **Chat History Service** (Consumer Node.js) -> Lit Kafka -> Sauvegarde dans **MongoDB**.
+- endpoint interne: `/internal/auth/verify`
+- proxy vers `core-service:3012/api/auth/verify`
+- headers reinjectes vers upstreams proteges: `X-User-Id`, `X-User-Logged-In`
 
-### C. Flux "Media Upload" (Performance)
+## 6. Liaisons inter-services (code)
 
-1. **Client** -> Demande upload -> **Media Service**.
-2. **Media Service** -> Génère URL S3 Pré-signée -> Renvoie au Client.
-3. **Client** -> PUT binaire -> **S3 / MinIO** (Directement).
+### 6.1 HTTP synchrone
 
----
+- `chat-gateway` -> `chat-delivery-service`
+  - appel `POST {DELIVERY_SERVICE_URL}/mls-api/send`
+  - utilise pour la livraison offline ou fallback non connecte
 
-## 5. Décisions d'Architecture (ADR)
+- `social-service` -> service paiement
+  - `forms.service.ts` appelle `POST {PAYMENT_SERVICE_URL}/api/payments/create-checkout-session`
+  - fallback code: `http://localhost:3004` si variable absente
 
-**ADR-001 : Stockage de l'Historique de Chat**
+- `core-service` -> service forms
+  - `payment/webhook.controller.ts` appelle `POST {FORM_SERVICE_URL}/api/forms/submissions/:id/mark-paid`
+  - fallback code: `http://localhost:3008` si variable absente
 
-- **Contexte :** Le stockage de chat nécessite une écriture rapide (Write-heavy). La solution idéale est Cassandra/ScyllaDB.
-- **Décision Phase 1 :** Utilisation de **MongoDB**.
-- _Justification :_ Réduit la complexité opérationnelle en local (pas de cluster lourd). Suffisant pour les premiers millions de messages. Réutilisation de l'infra du Post Service.
+### 6.2 Pub/Sub Redis
 
-- **Stratégie Long Terme :** Migration vers **ScyllaDB**.
-- _Déclencheur :_ Problèmes de performance en écriture ou besoin de sharding géographique complexe.
+- Canal `chat:messages`
+  - publie par `chat-gateway`
+  - consomme localement par `chat-gateway` (fanout multi-instance)
 
----
+- Canal `chat:channel_events`
+  - consomme par `chat-gateway` pour notifier les clients connectes
 
-## 6. Infrastructure Locale (Docker Compose)
+- Presence
+  - cles `user:online:<userId>:<deviceId>` dans Redis
 
-Le fichier `infrastructure/local/docker-compose.yml` doit provisionner :
+- Historique groupe
+  - stream `history:<groupId>` alimente par `chat-gateway`
+  - lu par `chat-delivery-service` pour `/api/history/:groupId`
 
-- **Zookeeper & Kafka** (Port 9092)
-- **Redis** (Port 6379)
-- **PostgreSQL** (Port 5432 - DB: `auth_db`)
-- **MongoDB** (Port 27017 - DB: `social_db` & `chat_db`)
-- **MinIO** (S3 Local - Port 9000)
+### 6.3 Kafka
 
----
+- Topic `chat.messages`
+  - produit par `chat-gateway` (evenements `MessageSentEvent`)
+  - consomme par `chat-delivery-service` (microservice Kafka, group `chat-delivery-consumer`)
 
-## 7. Roadmap Canaux Communautaires
+- Topic `post.created`
+  - consomme par `chat-gateway` (abonnement visible dans `main.rs`)
+  - utilite: diffusion d'evenements channels/posts vers clients en ligne
 
-Pour l'evolution vers un systeme de canaux type Discord (promotion, associations, communautes), voir:
+## 7. Endpoints backend exposes (principaux)
 
-- `docs/CHANNELS_SERVICE_ROADMAP.md`
+### 7.1 chat-gateway (port 3000)
 
-La direction cible est un modele hybride:
+- `GET /api/health`
+- `GET /api/ws` (WebSocket)
+- `GET /api/presence`
+- `GET/POST /api/groups/{group_id}/tree`
 
-- DM/groupes prives: MLS E2E
-- Canaux communautaires: micro-service dedie (`channel-service`) avec ACL, historique persistant, join/leave dynamiques
+### 7.2 chat-delivery-service (port 3010, prefix global `/api`)
 
-## 8. Diagramme Global
+Familles d'endpoints majeures:
+
+- `/api/mls-api/sync/session/*`
+- `/api/mls-api/pin-verifier/check`
+- `/api/mls-api/groups*`
+- `/api/mls-api/register-device`
+- `/api/mls-api/welcome*`
+- `/api/mls-api/send`
+- `/api/mls-api/messages/*`
+- `/api/history/:groupId`
+
+### 7.3 core-service (port 3012, prefix `/api`)
+
+- `/api/auth/*`
+- `/api/users/*`
+- `/api/payments/*`
+- `/api/payments/webhook` (raw body Stripe)
+
+### 7.4 social-service (port 3014, prefix `/api`)
+
+- `/api/posts/*`
+- `/api/forms/*`
+- `/api/channels/*`
+
+### 7.5 media-service (port 3011, prefix `/api`)
+
+- endpoints media exposes via `/api/media/*` derriere Nginx
+
+## 8. Flux critiques
+
+### 8.1 Message MLS (online/offline)
+
+1. Client -> `frontend` -> `/api/ws` -> `chat-gateway`
+2. `chat-gateway` publie en Redis `chat:messages` pour les destinataires online
+3. Si destinataire offline: `chat-gateway` appelle `chat-delivery-service /mls-api/send`
+4. `chat-gateway` archive aussi en Kafka `chat.messages` et Redis Stream `history:*`
+
+### 8.2 Creation paiement formulaire
+
+1. Client -> `/api/forms/*` -> `social-service`
+2. `social-service` appelle le service paiement (`/api/payments/create-checkout-session`)
+3. Webhook Stripe recu par `core-service /api/payments/webhook`
+4. `core-service` notifie le service forms (`/api/forms/submissions/:id/mark-paid`)
+
+## 9. Ecart a surveiller
+
+- Les fallbacks `PAYMENT_SERVICE_URL=http://localhost:3004` et `FORM_SERVICE_URL=http://localhost:3008` ne correspondent pas aux ports compose (`3012` et `3014`).
+- Ces valeurs ne cassent pas tant que les variables d'environnement sont correctement renseignees, mais elles sont trompeuses en cas de config manquante.
+
+## 10. Diagramme simplifie
 
 ```mermaid
-graph TD
-    Client[📱 Client App]
-    GW[🚪 API Gateway]
+graph LR
+    U[Client] --> F[Frontend Nginx :80]
 
-    subgraph "Infrastructure"
-        Kafka{🔥 Kafka}
-        Redis((⚡ Redis))
-        Mongo[(🍃 MongoDB)]
-    end
+    F --> GW[chat-gateway :3000]
+    F --> DEL[chat-delivery-service :3010]
+    F --> MED[media-service :3011]
+    F --> CORE[core-service :3012]
+    F --> SOC[social-service :3014]
 
-    subgraph "Apps"
-        Chat[🦀 Chat Gateway]
-        ChatHist[🚀 Chat History]
-        Post[🚀 Post Service]
-    end
+    GW <--> R[(Redis :6379)]
+    GW --> K[(Kafka :29092/9092)]
+    GW --> DEL
 
-    Client -.-> Chat
-    Client --> GW --> Post
+    DEL --> R
+    DEL --> K
+    DEL --> M[(Mongo :27017)]
 
-    %% Flux Chat
-    Chat <--> Redis
-    Chat -- "Event: MSG_SENT" --> Kafka
-    Kafka -- "Consomme" --> ChatHist
-    ChatHist -- "Persiste" --> Mongo
-
-    %% Flux Post
-    Post -- "Persiste" --> Mongo
-    Post -- "Event: POST_CREATED" --> Kafka
-
+    CORE --> P[(Postgres :5432)]
+    SOC --> P
+    MED --> MIN[(MinIO :9000)]
 ```

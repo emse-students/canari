@@ -116,7 +116,7 @@ else
 fi
 
 # Check Delivery Service
-if curl -f http://localhost:3001/health &> /dev/null; then
+if curl -f http://localhost:3010/health &> /dev/null; then
     echo -e "${GREEN}✅ Chat Delivery Service is healthy${RESET}"
 else
     echo -e "${RED}❌ Chat Delivery Service health check failed${RESET}"

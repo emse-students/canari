@@ -83,8 +83,6 @@ export default defineConfig(async () => ({
       '/api/users': { target: 'http://localhost:3012', changeOrigin: true },
       '/api/media': { target: 'http://localhost:3011', changeOrigin: true },
       '/api/forms': { target: 'http://localhost:3014', changeOrigin: true },
-      // WebSocket for Call Service
-      '/api/call': { target: 'ws://localhost:3001', ws: true, changeOrigin: true },
 
       '/ws': {
         target: 'ws://localhost:3000',

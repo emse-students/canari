@@ -86,25 +86,6 @@ services:
       kafka:
         condition: service_healthy
 
-  # Call Service (Rust / Axum) — port 3001
-  call-service:
-    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/call-service:${TAG:-latest}
-    restart: always
-    build:
-      context: ../../
-      dockerfile: infrastructure/local/Dockerfile.call-service
-    ports:
-      - "3001:3001"
-    environment:
-      PORT: "3001"
-      RUST_LOG: call_service=info,tower_http=info
-      # Same as Chat Gateway if needed
-    depends_on:
-      redis:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
-
   # ─────────────────────────────────────────────────────
   # NODE.JS SERVICES (3010-3029 range)
   # ─────────────────────────────────────────────────────

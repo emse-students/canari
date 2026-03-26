@@ -53,14 +53,13 @@ Les services sont accessibles via Nginx (port 80) ou directement (nouveaux ports
 ### Services Temps-Réel (Rust)
 
 - **Chat Gateway**: `ws://localhost:3000` (Port Interne: 3000)
-- **Call Service**: `ws://localhost:3001` (Port Interne: 3001)
 
 ### Services Backend (NestJS - Ports 3010+)
 
 - **Delivery Service**: `http://localhost:3010` (Port Interne: 3010)
 - **Media Service**: `http://localhost:3011` (Port Interne: 3011)
-- **Core Service**: `http://localhost:3020` (Port Interne: 3020)
-- **Social Service**: `http://localhost:3021` (Port Interne: 3021)
+- **Core Service**: `http://localhost:3012` (Port Interne: 3012)
+- **Social Service**: `http://localhost:3014` (Port Interne: 3014)
 
 ### Frontend
 
@@ -68,8 +67,7 @@ Les services sont accessibles via Nginx (port 80) ou directement (nouveaux ports
 
 - **Backend Chat Gateway (Rust)**: `apps/chat-gateway`
   - Lancer: `cargo run`
-- **Backend Call Service (Rust)**: `apps/call-service`
-  - Lancer: `cargo run`
+- **Backend Call Service (Rust)**: archivé dans `apps/_archived/call-service` (non utilisé actuellement)
 - **Frontend (SvelteKit + Tauri)**: `frontend/`
   - Dépend de `libs/shared-ts` et `mls-wasm` (Rust)
   - Lancer Web: `npm run dev`

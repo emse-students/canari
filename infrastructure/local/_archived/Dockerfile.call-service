@@ -9,15 +9,15 @@ WORKDIR /build
 # Copy all sources in one shot
 COPY libs/shared-rust ./libs/shared-rust
 COPY libs/proto ./libs/proto
-COPY apps/call-service ./apps/call-service
+COPY apps/_archived/call-service ./apps/_archived/call-service
 
-RUN cd apps/call-service && cargo build --release
+RUN cd apps/_archived/call-service && cargo build --release
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
 
 WORKDIR /app
-COPY --from=builder /build/apps/call-service/target/release/call-service .
+COPY --from=builder /build/apps/_archived/call-service/target/release/call-service .
 
 ENV RUST_LOG=info
 EXPOSE 3001

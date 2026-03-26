@@ -27,10 +27,6 @@ jobs:
             path: apps/chat-gateway
             cmd: cargo test
             check: true
-          - name: Call Service
-            path: apps/call-service
-            cmd: cargo test
-            check: true
           - name: Frontend MLS Core
             path: frontend/mls-core
             cmd: cargo test --lib

@@ -123,9 +123,6 @@ jobs:
           - name: social-service
             context: .
             dockerfile: ./infrastructure/local/Dockerfile.social-service
-          - name: call-service
-            context: .
-            dockerfile: ./infrastructure/local/Dockerfile.call-service
           - name: chat-gateway
             context: .
             dockerfile: ./infrastructure/local/Dockerfile.chat-gateway
@@ -454,7 +451,6 @@ jobs:
           echo "⏳ Waiting for critical services to be running..."
           critical_services=(
             chat-gateway
-            call-service
             chat-delivery-service
             media-service
             core-service
@@ -467,7 +463,7 @@ jobs:
             running_services=$(eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml ps --status running --services" || true)
             ps_all=$(eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml ps --all" || true)
 
-            if echo "$ps_all" | grep -E "(chat-gateway|call-service|chat-delivery-service|media-service|core-service|social-service|frontend)" | grep -E "Restarting|Exit|Dead|unhealthy" >/dev/null; then
+            if echo "$ps_all" | grep -E "(chat-gateway|chat-delivery-service|media-service|core-service|social-service|frontend)" | grep -E "Restarting|Exit|Dead|unhealthy" >/dev/null; then
               echo "❌ One or more critical services are unhealthy/restarting/exited"
               echo "$ps_all"
               exit 1

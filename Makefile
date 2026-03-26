@@ -316,6 +316,7 @@ build-frontend:
 
 run-services:
 	@echo "${BLUE}🚀 Starting services...${RESET}"
+	@echo "${BLUE}ℹ️ call-service est archivé et n'est pas lancé${RESET}"
 	@docker compose -f infrastructure/local/docker-compose.yml --env-file infrastructure/.env down --remove-orphans || true
 	@docker compose -f infrastructure/local/docker-compose.yml --env-file infrastructure/.env up -d --build --remove-orphans
 	@echo "${GREEN}✅ Services démarrés${RESET}"

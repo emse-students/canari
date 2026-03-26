@@ -13,14 +13,10 @@
         ↓
 [Services Docker]
   ├─ Chat Gateway :3000
-  ├─ Call Service :3001
   ├─ Chat Delivery :3010
   ├─ Media Service :3011
-  ├─ Auth Service :3012
-  ├─ User Service :3013
-  ├─ Channel Svc :3014
-  ├─ Post Service :3015
-  └─ Form Service :3016
+  ├─ Core Service :3012
+  └─ Social Service :3014
   
 ```
 
