@@ -97,7 +97,7 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       REDIS_URL: redis://redis:6379
       KAFKA_BROKERS: kafka:29092
-      DELIVERY_SERVICE_URL: http://chat-delivery-service:3001
+      DELIVERY_SERVICE_URL: http://chat-delivery-service:3010
       ALLOW_ORIGIN: "*"
     depends_on:
       redis:

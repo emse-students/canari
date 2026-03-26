@@ -353,18 +353,51 @@ jobs:
       - name: Wait for services to be healthy
         working-directory: ${{ env.DEPLOY_PATH }}
         run: |
-          echo "⏳ Waiting for services to be healthy..."
-          healthy=0
-          for _ in {1..24}; do
-            if eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml ps" | grep -q "healthy"; then
-              healthy=1
+          echo "⏳ Waiting for critical services to be running..."
+          critical_services=(
+            chat-gateway
+            call-service
+            chat-delivery-service
+            media-service
+            core-service
+            social-service
+            frontend
+          )
+
+          ready=0
+          for _ in {1..36}; do
+            running_services=$(eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml ps --status running --services" || true)
+            ps_all=$(eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml ps --all" || true)
+
+            if echo "$ps_all" | grep -E "(chat-gateway|call-service|chat-delivery-service|media-service|core-service|social-service|frontend)" | grep -E "Restarting|Exit|Dead|unhealthy" >/dev/null; then
+              echo "❌ One or more critical services are unhealthy/restarting/exited"
+              echo "$ps_all"
+              exit 1
+            fi
+
+            missing=0
+            for service in "${critical_services[@]}"; do
+              if ! echo "$running_services" | grep -qx "$service"; then
+                missing=1
+                break
+              fi
+            done
+
+            if [ "$missing" -eq 0 ]; then
+              ready=1
               break
             fi
+
             sleep 5
           done
-          if [ "$healthy" -ne 1 ]; then
-            echo "⚠️ Timeout waiting for health checks"
+
+          if [ "$ready" -ne 1 ]; then
+            echo "❌ Timeout waiting for critical services"
+            eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml ps --all"
+            exit 1
           fi
+
+          echo "✅ Critical services are running"
 
       - name: Cleanup old resources
         run: |
@@ -393,7 +426,25 @@ jobs:
           FRONTEND_HOST_PORT="${FRONTEND_HOST_PORT:-8080}"
 
           # Check frontend (local host port)
-          curl -f "http://localhost:${FRONTEND_HOST_PORT}/" || echo "⚠️ Frontend health check failed"
+          curl -fsS "http://localhost:${FRONTEND_HOST_PORT}/" >/dev/null
+
+          # Check chat-delivery-service reachability on MLS endpoint.
+          # 400 is expected here because verifier format is intentionally invalid.
+          MLS_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST "http://localhost:3010/api/mls-api/pin-verifier/check" \
+            -H "Content-Type: application/json" \
+            -d '{"userId":"healthcheck","verifier":"invalid"}' || true)
+          if [ "$MLS_STATUS" != "400" ] && [ "$MLS_STATUS" != "200" ]; then
+            echo "❌ chat-delivery-service MLS health check failed (HTTP $MLS_STATUS)"
+            exit 1
+          fi
+
+          # Check media-service TCP/HTTP reachability (status may be 2xx/4xx depending on route).
+          MEDIA_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3011/api/media" || true)
+          if [ "$MEDIA_STATUS" = "000" ]; then
+            echo "❌ media-service health check failed (unreachable)"
+            exit 1
+          fi
 
           echo "✅ Health checks completed"
 
