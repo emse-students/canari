@@ -406,6 +406,48 @@ jobs:
 
           echo "✅ Services deployed"
 
+      - name: Verify runtime secrets are applied
+        working-directory: ${{ env.DEPLOY_PATH }}
+        env:
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+        run: |
+          if [ -z "$JWT_SECRET" ]; then
+            echo "::error::Missing required GitHub secret: JWT_SECRET"
+            exit 1
+          fi
+
+          expected_jwt_sha=$(printf '%s' "$JWT_SECRET" | sha256sum | awk '{print $1}')
+          core_jwt_sha=$(eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml exec -T core-service sh -lc 'printf %s \"$JWT_SECRET\" | sha256sum | awk \"{print \\\$1}\"'" || true)
+
+          if [ -z "$core_jwt_sha" ] || [ "$core_jwt_sha" != "$expected_jwt_sha" ]; then
+            echo "::error::JWT_SECRET is not correctly applied in core-service"
+            exit 1
+          fi
+
+          delivery_has_jwt=$(eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml exec -T chat-delivery-service sh -lc 'test -n \"$JWT_SECRET\" && echo yes || echo no'" || true)
+          if [ "$delivery_has_jwt" != "yes" ]; then
+            echo "::error::JWT_SECRET is not present in chat-delivery-service"
+            exit 1
+          fi
+
+          if [ -n "$STRIPE_SECRET_KEY" ]; then
+            expected_stripe_sha=$(printf '%s' "$STRIPE_SECRET_KEY" | sha256sum | awk '{print $1}')
+            core_stripe_sha=$(eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml exec -T core-service sh -lc 'printf %s \"$STRIPE_SECRET_KEY\" | sha256sum | awk \"{print \\\$1}\"'" || true)
+            social_stripe_sha=$(eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml exec -T social-service sh -lc 'printf %s \"$STRIPE_SECRET_KEY\" | sha256sum | awk \"{print \\\$1}\"'" || true)
+
+            if [ -z "$core_stripe_sha" ] || [ "$core_stripe_sha" != "$expected_stripe_sha" ]; then
+              echo "::error::STRIPE_SECRET_KEY is not correctly applied in core-service"
+              exit 1
+            fi
+            if [ -z "$social_stripe_sha" ] || [ "$social_stripe_sha" != "$expected_stripe_sha" ]; then
+              echo "::error::STRIPE_SECRET_KEY is not correctly applied in social-service"
+              exit 1
+            fi
+          fi
+
+          echo "✅ Runtime secrets are applied in containers"
+
       - name: Wait for services to be healthy
         working-directory: ${{ env.DEPLOY_PATH }}
         run: |

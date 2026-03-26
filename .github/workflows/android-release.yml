@@ -57,6 +57,33 @@ jobs:
         working-directory: frontend
         run: bun run proto:gen
 
+      - name: Validate Android release secrets
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          BASE_URL: ${{ secrets.BASE_URL }}
+        run: |
+          required=(
+            ANDROID_KEYSTORE_BASE64
+            ANDROID_KEY_ALIAS
+            ANDROID_KEY_PASSWORD
+            ANDROID_STORE_PASSWORD
+            JWT_SECRET
+            BASE_URL
+          )
+
+          for key in "${required[@]}"; do
+            if [ -z "${!key}" ]; then
+              echo "::error::Missing required GitHub secret: ${key}"
+              exit 1
+            fi
+          done
+
+          echo "✅ Required Android secrets are present"
+
       - name: Setup Android Signing
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -74,6 +101,15 @@ jobs:
           echo "storePassword=$ANDROID_STORE_PASSWORD" >> keystore.properties
           echo "storeFile=release.jks" >> keystore.properties
 
+      - name: Verify signing files are populated
+        run: |
+          test -s frontend/src-tauri/gen/android/release.jks
+          test -s frontend/src-tauri/gen/android/keystore.properties
+          grep -q '^keyAlias=' frontend/src-tauri/gen/android/keystore.properties
+          grep -q '^keyPassword=' frontend/src-tauri/gen/android/keystore.properties
+          grep -q '^storePassword=' frontend/src-tauri/gen/android/keystore.properties
+          echo "✅ Android signing material prepared"
+
       - name: Create frontend .env
         working-directory: frontend
         env:
@@ -89,6 +125,14 @@ jobs:
           echo "VITE_CALL_URL=${BASE_URL}" >> .env
           echo "VITE_CHANNEL_URL=${BASE_URL}" >> .env
           echo "VITE_FORM_URL=${BASE_URL}" >> .env
+
+      - name: Verify frontend env for Android build
+        working-directory: frontend
+        run: |
+          grep -q '^VITE_JWT_SECRET=.' .env
+          grep -q '^VITE_GATEWAY_URL=.' .env
+          grep -q '^VITE_DELIVERY_URL=.' .env
+          echo "✅ Android frontend env prepared"
 
       - name: Build Android APK
         uses: tauri-apps/tauri-action@v0
