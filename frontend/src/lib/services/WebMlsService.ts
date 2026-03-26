@@ -17,8 +17,17 @@ export class WebMlsService implements IMlsService {
   private disconnectCallback: (() => void) | null = null;
   private baseUrl: string; // Chat Gateway URL
   private historyUrl: string; // Chat Delivery Service URL
+  private authToken: string | null = null;
   private userId: string = 'unknown';
   private deviceId: string;
+
+  private withAuthHeaders(extra: Record<string, string> = {}): Record<string, string> {
+    const headers: Record<string, string> = { ...extra };
+    if (this.authToken) {
+      headers.Authorization = `Bearer ${this.authToken}`;
+    }
+    return headers;
+  }
 
   constructor() {
     // Device ID is initialized per-user in init() to avoid collisions when multiple
@@ -46,6 +55,7 @@ export class WebMlsService implements IMlsService {
   }
 
   async connect(token: string): Promise<void> {
+    this.authToken = token;
     return new Promise((resolve, reject) => {
       // Convert HTTP(S) URL to WS(S) URL
       // https:// -> wss://, http:// -> ws://
@@ -161,7 +171,9 @@ export class WebMlsService implements IMlsService {
 
     // Fetch pending welcome messages (group invitations stored while offline)
     try {
-      const wRes = await fetch(`${this.historyUrl}/api/mls-api/welcome/${this.deviceId}`);
+      const wRes = await fetch(`${this.historyUrl}/api/mls-api/welcome/${this.deviceId}`, {
+        headers: this.withAuthHeaders(),
+      });
       if (wRes.ok) {
         const welcomes = await wRes.json();
         if (Array.isArray(welcomes) && welcomes.length > 0) {
@@ -203,7 +215,7 @@ export class WebMlsService implements IMlsService {
           if (successfullyProcessedIds.length > 0) {
             await fetch(`${this.historyUrl}/api/mls-api/messages/ack`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
               body: JSON.stringify({
                 userId: this.userId,
                 deviceId: this.deviceId,
@@ -271,7 +283,9 @@ export class WebMlsService implements IMlsService {
     userId: string
   ): Promise<Array<{ keyPackage: Uint8Array; deviceId: string }>> {
     try {
-      const res = await fetch(`${this.historyUrl}/api/mls-api/devices/${userId}`);
+      const res = await fetch(`${this.historyUrl}/api/mls-api/devices/${userId}`, {
+        headers: this.withAuthHeaders(),
+      });
       if (!res.ok) return [];
       const devices = await res.json();
 
@@ -293,7 +307,7 @@ export class WebMlsService implements IMlsService {
     try {
       await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}/members`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ userId, deviceId }),
       });
     } catch (e) {
@@ -306,7 +320,7 @@ export class WebMlsService implements IMlsService {
     const base64 = btoa(String.fromCharCode(...keyPackageBytes));
     const response = await fetch(`${this.historyUrl}/api/mls-api/register-device`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         userId: this.userId,
         deviceId: this.deviceId,
@@ -336,7 +350,7 @@ export class WebMlsService implements IMlsService {
       // via Redis pubsub if the target device is currently online.
       await fetch(`${this.historyUrl}/api/mls-api/welcome`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           targetDeviceId,
           targetUserId, // required to disambiguate when device IDs collide
@@ -359,7 +373,7 @@ export class WebMlsService implements IMlsService {
     } else {
       await fetch(`${this.historyUrl}/api/mls-api/send`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           senderId: this.userId,
           recipients: [{ userId: targetUserId }],
@@ -382,7 +396,7 @@ export class WebMlsService implements IMlsService {
       const base64 = btoa(String.fromCharCode(...commitBytes));
       await fetch(`${this.historyUrl}/api/mls-api/send`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           senderId: this.userId,
           senderDeviceId: this.deviceId,
@@ -450,7 +464,7 @@ export class WebMlsService implements IMlsService {
     try {
       const res = await fetch(`${this.historyUrl}/api/mls-api/groups`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ name, createdBy: this.userId }),
       });
       if (!res.ok) throw new Error('Failed to create remote group');
@@ -541,7 +555,7 @@ export class WebMlsService implements IMlsService {
       try {
         await fetch(`${this.historyUrl}/api/mls-api/send`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({
             senderId: this.userId,
             senderDeviceId: this.deviceId,
@@ -608,7 +622,7 @@ export class WebMlsService implements IMlsService {
   async renameGroup(groupId: string, name: string): Promise<void> {
     const res = await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ name }),
     });
     if (!res.ok) throw new Error(`Rename failed: ${res.status}`);
@@ -617,6 +631,7 @@ export class WebMlsService implements IMlsService {
   async deleteGroupOnServer(groupId: string): Promise<void> {
     const res = await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}`, {
       method: 'DELETE',
+      headers: this.withAuthHeaders(),
     });
     if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
   }
@@ -624,13 +639,16 @@ export class WebMlsService implements IMlsService {
   async removeMemberFromServer(groupId: string, userId: string): Promise<void> {
     const res = await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}/members/${userId}`, {
       method: 'DELETE',
+      headers: this.withAuthHeaders(),
     });
     if (!res.ok) throw new Error(`Remove member failed: ${res.status}`);
   }
 
   async getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]> {
     try {
-      const res = await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}/members`);
+      const res = await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}/members`, {
+        headers: this.withAuthHeaders(),
+      });
       if (!res.ok) return [];
       return await res.json();
     } catch {
