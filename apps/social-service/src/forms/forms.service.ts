@@ -91,6 +91,11 @@ export class FormsService {
       }
     }
 
+    if (form.maxSubmissions) {
+      const count = await this.submissionRepo.count({ where: { formId: id } });
+      if (count >= form.maxSubmissions) throw new BadRequestException('Form is full');
+    }
+
     const submission = this.submissionRepo.create({
       formId: id,
       userId: input.userId,
@@ -116,7 +121,7 @@ export class FormsService {
       ];
 
       const paymentServiceBase =
-        this.configService.get<string>('PAYMENT_SERVICE_URL') || 'http://localhost:3004';
+        this.configService.get<string>('PAYMENT_SERVICE_URL') || 'http://localhost:3012';
       const url = `${paymentServiceBase.replace(/\/$/, '')}/api/payments/create-checkout-session`;
 
       try {

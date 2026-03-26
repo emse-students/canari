@@ -81,10 +81,8 @@ jobs:
       - name: Create frontend .env with JWT_SECRET
         working-directory: frontend
         env:
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
           BASE_URL: ${{ secrets.BASE_URL }}
         run: |
-          echo "VITE_JWT_SECRET=${JWT_SECRET}" > .env
           # VITE_GATEWAY_URL et VITE_DELIVERY_URL intentionnellement vides :
           # le code utilise window.location.origin comme fallback, ce qui fonctionne
           # derrière nginx (même domaine, /ws, /mls-api/ et /media/ routés par le reverse proxy).

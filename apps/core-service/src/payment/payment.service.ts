@@ -18,6 +18,28 @@ export class PaymentService {
     return !!this.stripe;
   }
 
+  async createConnectOnboarding(params: {
+    associationId: string;
+    refreshUrl: string;
+    returnUrl: string;
+  }): Promise<{ url: string }> {
+    if (!this.stripe) throw new BadRequestException('Stripe not configured');
+
+    const account = await this.stripe.accounts.create({
+      type: 'standard',
+      metadata: { associationId: params.associationId },
+    });
+
+    const accountLink = await this.stripe.accountLinks.create({
+      account: account.id,
+      refresh_url: params.refreshUrl,
+      return_url: params.returnUrl,
+      type: 'account_onboarding',
+    });
+
+    return { url: accountLink.url };
+  }
+
   async createCheckoutSession(params: {
     lineItems: Stripe.Checkout.SessionCreateParams.LineItem[];
     successUrl: string;

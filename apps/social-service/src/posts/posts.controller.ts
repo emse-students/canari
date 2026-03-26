@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Param, Post as HttpPost, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post as HttpPost, Query, UseGuards } from '@nestjs/common';
+import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { PostsService } from './posts.service';
 import {
   CreatePostDto,
@@ -21,6 +22,7 @@ export class PostsController {
     };
   }
 
+  @UseGuards(NginxAuthGuard)
   @HttpPost()
   createPost(@Body() body: CreatePostDto) {
     return this.service.createPost(body);
@@ -33,6 +35,7 @@ export class PostsController {
     return this.service.listPosts(limit, offset);
   }
 
+  @UseGuards(NginxAuthGuard)
   @HttpPost(':postId/polls/:pollId/vote')
   votePoll(
     @Param('postId') postId: string,
@@ -42,6 +45,7 @@ export class PostsController {
     return this.service.votePoll(postId, pollId, body);
   }
 
+  @UseGuards(NginxAuthGuard)
   @HttpPost(':postId/events/:buttonId/register')
   registerEvent(
     @Param('postId') postId: string,
@@ -51,6 +55,7 @@ export class PostsController {
     return this.service.registerEvent(postId, buttonId, body);
   }
 
+  @UseGuards(NginxAuthGuard)
   @HttpPost(':postId/forms/:formId/submit')
   submitForm(
     @Param('postId') postId: string,

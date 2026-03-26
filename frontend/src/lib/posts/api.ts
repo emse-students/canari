@@ -1,4 +1,5 @@
 import type { MediaRef } from '$lib/media';
+import { getToken } from '$lib/stores/auth';
 
 export type PostImageRef = Omit<MediaRef, 'type'>;
 
@@ -27,6 +28,7 @@ export interface EventButton {
   stripePriceId?: string;
   capacity?: number;
   registrants: string[];
+  formId?: string;
 }
 
 export interface FormOption {
@@ -88,6 +90,7 @@ export interface CreatePostPayload {
     currency?: string;
     stripePriceId?: string;
     capacity?: number;
+    formId?: string;
   }>;
   attachedFormId?: string;
 }
@@ -100,16 +103,14 @@ function getPostsBaseUrl(): string {
   return '';
 }
 
-function getAuthToken() {
-  if (typeof localStorage !== 'undefined') {
-    return localStorage.getItem('canari_authToken') || '';
-  }
-  return '';
-}
-
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const baseUrl = getPostsBaseUrl();
-  const token = getAuthToken();
+  let token = '';
+  try {
+    token = await getToken();
+  } catch {
+    // unauthenticated
+  }
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(init.headers as Record<string, string>),

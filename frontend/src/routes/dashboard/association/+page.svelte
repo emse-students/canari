@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { getToken } from '$lib/stores/auth';
+
   let isLoading = $state(false);
   let errorMessage = $state('');
 
@@ -10,11 +12,17 @@
     isLoading = true;
     errorMessage = '';
     try {
+      let token = '';
+      try {
+        token = await getToken();
+      } catch {
+        // unauthenticated
+      }
       const response = await fetch('/api/payments/onboarding', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('canari_authToken')}`, // Adapté à votre auth
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({ associationId }),
       });
@@ -32,22 +40,28 @@
   }
 </script>
 
-<div class="p-6 bg-white rounded-lg shadow-md">
-  <h2 class="text-xl font-bold mb-4">Caisse de l'association</h2>
-  <p class="mb-4">
-    Pour recevoir les paiements de vos billets directement sur le compte de l'association, veuillez
-    configurer votre compte bancaire.
-  </p>
+<div class="px-4 py-6 sm:px-6 max-w-2xl mx-auto">
+  <div class="rounded-2xl border border-cn-border bg-white/80 p-6">
+    <h2 class="text-xl font-extrabold text-text-main tracking-tight mb-2">
+      Caisse de l'association
+    </h2>
+    <p class="text-sm text-text-muted mb-6">
+      Pour recevoir les paiements de vos billets directement sur le compte de l'association,
+      veuillez configurer votre compte bancaire.
+    </p>
 
-  {#if errorMessage}
-    <p class="text-red-500 mb-4">{errorMessage}</p>
-  {/if}
+    {#if errorMessage}
+      <div class="rounded-xl bg-red-50 border border-red-200 text-red-700 p-3 mb-4 text-sm">
+        {errorMessage}
+      </div>
+    {/if}
 
-  <button
-    onclick={connectStripe}
-    disabled={isLoading}
-    class="bg-blue-600 text-white px-4 py-2 rounded disabled:opacity-50"
-  >
-    {isLoading ? 'Redirection...' : 'Connecter mon compte bancaire (Stripe)'}
-  </button>
+    <button
+      onclick={connectStripe}
+      disabled={isLoading}
+      class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover transition-colors disabled:opacity-50"
+    >
+      {isLoading ? 'Redirection…' : 'Connecter mon compte bancaire (Stripe)'}
+    </button>
+  </div>
 </div>

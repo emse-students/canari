@@ -1,5 +1,17 @@
-import { Body, Controller, Get, Param, Post, Res, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Res,
+  Query,
+  NotFoundException,
+  BadRequestException,
+  UseGuards,
+} from '@nestjs/common';
 import { Response } from 'express';
+import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { CreateFormDto, SubmitFormDto } from './dto/form.dto';
 import { FormsService } from './forms.service';
 
@@ -7,6 +19,7 @@ import { FormsService } from './forms.service';
 export class FormsController {
   constructor(private readonly service: FormsService) {}
 
+  @UseGuards(NginxAuthGuard)
   @Post()
   create(@Body() dto: CreateFormDto) {
     return this.service.create(dto);
@@ -25,7 +38,7 @@ export class FormsController {
   @Get(':id/submission')
   async getSubmission(@Param('id') id: string, @Query('userId') userId: string) {
     if (!userId) {
-      throw new Error('UserId is required');
+      throw new BadRequestException('UserId is required');
     }
     return this.service.getSubmission(id, userId);
   }
@@ -36,6 +49,7 @@ export class FormsController {
     return { hasSubmitted };
   }
 
+  @UseGuards(NginxAuthGuard)
   @Post(':id/submit')
   submit(@Param('id') id: string, @Body() dto: SubmitFormDto) {
     return this.service.submit(id, dto);
@@ -50,9 +64,8 @@ export class FormsController {
   async export(@Param('id') id: string, @Res() res: Response) {
     const buffer = await this.service.exportSubmissions(id);
 
-    // Filename should be the form title
-
     const form = await this.service.get(id);
+    if (!form) throw new NotFoundException('Form not found');
     const filename = form.title.replace(/[^a-zA-Z0-9]/g, '');
 
     res.set({

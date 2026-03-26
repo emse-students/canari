@@ -32,12 +32,14 @@
 </script>
 
 <Modal {open} {onClose} title="Paramètres de la communauté" maxWidth="max-w-4xl">
-  <div class="flex flex-col md:flex-row h-[70vh] min-h-[500px] border-t border-cn-border/40">
+  <div class="flex flex-col md:flex-row min-h-0 border-t border-cn-border/40">
     <!-- Barre de menu à gauche -->
     <div
-      class="w-full md:w-64 bg-[color-mix(in_srgb,var(--cn-surface)_60%,white)] border-r border-cn-border/40 flex flex-col p-4 space-y-1"
+      class="w-full md:w-64 md:flex-shrink-0 bg-[color-mix(in_srgb,var(--cn-surface)_60%,white)] border-b md:border-b-0 md:border-r border-cn-border/40 flex flex-row md:flex-col overflow-x-auto md:overflow-x-visible p-2 md:p-4 gap-1 md:gap-1 md:space-y-1"
     >
-      <h3 class="text-xs font-bold uppercase tracking-wider text-text-muted mb-2 px-2">
+      <h3
+        class="hidden md:block text-xs font-bold uppercase tracking-wider text-text-muted mb-2 px-2"
+      >
         {selectedWorkspace ? selectedWorkspace.name : 'Communauté'}
       </h3>
 
@@ -62,7 +64,7 @@
         Membres
       </button>
 
-      <div class="mt-auto pt-4 space-y-2">
+      <div class="hidden md:block mt-auto pt-4 space-y-2">
         <button
           class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-red-600 hover:bg-red-50 transition-colors w-full"
         >
@@ -73,7 +75,7 @@
     </div>
 
     <!-- Contenu Principal -->
-    <div class="flex-1 bg-white/50 p-6 overflow-y-auto">
+    <div class="flex-1 bg-white/50 p-6 overflow-y-auto min-h-[300px]">
       {#if activeTab === 'overview'}
         <div class="space-y-6 max-w-2xl">
           <h2 class="text-xl font-bold text-text-main">Vue d'ensemble</h2>

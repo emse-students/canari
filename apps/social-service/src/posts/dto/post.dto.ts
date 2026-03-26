@@ -103,6 +103,10 @@ export class EventButtonInputDto {
   @Min(1)
   @IsOptional()
   capacity?: number;
+
+  @IsString()
+  @IsOptional()
+  formId?: string;
 }
 
 export class FormOptionInputDto {

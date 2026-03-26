@@ -36,17 +36,17 @@ export interface Form extends CreateFormPayload {
   updatedAt: string;
 }
 
+import { getToken } from '$lib/stores/auth';
+
 const API_Base = import.meta.env.VITE_SOCIAL_URL || '';
 
-function getAuthToken() {
-  if (typeof localStorage !== 'undefined') {
-    return localStorage.getItem('canari_authToken') || '';
-  }
-  return '';
-}
-
 async function request(url: string, init: RequestInit = {}) {
-  const token = getAuthToken();
+  let token = '';
+  try {
+    token = await getToken();
+  } catch {
+    // unauthenticated
+  }
   const headers = {
     'Content-Type': 'application/json',
     ...(init.headers as Record<string, string>),

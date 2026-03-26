@@ -15,7 +15,7 @@ let _accessToken: string | null = null;
 
 function coreUrl(): string {
   const url = import.meta.env.VITE_CORE_URL as string | undefined;
-  return url?.trim() || 'http://localhost:3000';
+  return url?.trim() || 'http://localhost:3012';
 }
 
 /**

@@ -91,8 +91,11 @@ RUN printf 'server {\n\
     proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
     }\n\
     location /api/media {\n\
-    proxy_set_header X-User-Id "";\n\
-    proxy_set_header X-User-Logged-In "";\n\
+    auth_request /internal/auth/verify;\n\
+    auth_request_set $user_id $upstream_http_x_user_id;\n\
+    auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
+    proxy_set_header X-User-Id $user_id;\n\
+    proxy_set_header X-User-Logged-In $user_logged_in;\n\
     set $upstream_media media-service:3011;\n\
     proxy_pass http://$upstream_media;\n\
     proxy_set_header Host $host;\n\
@@ -170,8 +173,11 @@ RUN printf 'server {\n\
     \n\
     # User Service\n\
     location /api/users {\n\
-    proxy_set_header X-User-Id "";\n\
-    proxy_set_header X-User-Logged-In "";\n\
+    auth_request /internal/auth/verify;\n\
+    auth_request_set $user_id $upstream_http_x_user_id;\n\
+    auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
+    proxy_set_header X-User-Id $user_id;\n\
+    proxy_set_header X-User-Logged-In $user_logged_in;\n\
     set $upstream_user core-service:3012;\n\
     proxy_pass http://$upstream_user;\n\
     proxy_set_header Host $host;\n\

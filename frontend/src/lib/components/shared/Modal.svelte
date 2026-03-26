@@ -35,7 +35,7 @@
       in:fly={{ duration: 150, y: 8 }}
     >
       <div
-        class="bg-[var(--cn-surface)] border border-cn-border rounded-2xl shadow-2xl w-full {maxWidth} mx-4 overflow-hidden text-text-main"
+        class="bg-[var(--cn-surface)] border border-cn-border rounded-2xl shadow-2xl w-full {maxWidth} mx-4 overflow-hidden text-text-main flex flex-col max-h-[90dvh]"
       >
         {#if title}
           <div class="px-6 py-4 border-b border-cn-border flex items-center justify-between">
@@ -50,7 +50,7 @@
           </div>
         {/if}
 
-        <div class="px-6 py-4">
+        <div class="px-6 py-4 overflow-y-auto flex-1">
           {@render children?.()}
         </div>
 

@@ -1,5 +1,5 @@
 /* eslint-disable */
-import { Injectable, NotFoundException, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
@@ -13,13 +13,14 @@ import { URL } from 'url';
 export class PostsService {
   private readonly logger = new Logger(PostsService.name);
   private readonly userServiceUrl: string;
-  private readonly stripe: any;
 
   constructor(
     @InjectRepository(Post) private readonly postRepo: Repository<Post>,
     private readonly httpService: HttpService,
     private readonly configService: ConfigService
-  ) {}
+  ) {
+    this.userServiceUrl = configService.get<string>('USER_SERVICE_URL', 'http://core-service:3012');
+  }
 
   async createPost(data: any) {
     const post = this.postRepo.create(data);
@@ -137,11 +138,12 @@ export class PostsService {
     const post = await this.postRepo.findOne({ where: { id } });
     if (!post) throw new NotFoundException();
 
+    const { randomUUID } = await import('crypto');
     const poll = {
-      id: Math.random().toString(36).substring(2, 10),
+      id: randomUUID(),
       question,
       options: options.map((opt) => ({
-        id: Math.random().toString(36).substring(2, 10),
+        id: randomUUID(),
         text: opt,
         votes: [],
       })),
@@ -165,7 +167,9 @@ export class PostsService {
         for (const opt of p.options) {
           opt.votes = (opt.votes || []).filter((v: string) => v !== data.userId);
         }
-        const targetOpt = p.options.find((o: any) => o.id === data.optionId);
+        const targetOpt = p.options.find(
+          (o: any) => data.optionIds?.includes(o.id) || o.id === data.optionId
+        );
         if (targetOpt) {
           targetOpt.votes.push(data.userId);
           updated = true;
@@ -183,8 +187,9 @@ export class PostsService {
     const post = await this.postRepo.findOne({ where: { id } });
     if (!post) throw new NotFoundException();
 
+    const { randomUUID } = await import('crypto');
     const btn = {
-      id: Math.random().toString(36).substring(2, 10),
+      id: randomUUID(),
       text,
       eventPayload,
       clickCount: 0,
@@ -194,21 +199,67 @@ export class PostsService {
     return this.postRepo.save(post);
   }
 
-  async registerEvent(postId: string, _buttonId: string, _data: any) {
+  async registerEvent(postId: string, buttonId: string, data: any) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
-    if (!post) throw new NotFoundException();
+    if (!post) throw new NotFoundException('Post not found');
 
-    // Check user service (Phase 3.7)
-    try {
-      const userRes = await lastValueFrom(
-        this.httpService.get(`${this.userServiceUrl}/users/${_data.userId}`)
-      );
-      this.logger.log(`Successfully communicated with user-service for user ${_data.userId}`);
-    } catch (err: any) {
-      this.logger.error(`Failed inter-service communication with user-service for ${_data.userId}: ${err.message}`);
+    const buttons: any[] = post.eventButtons || [];
+    const btnIndex = buttons.findIndex((b: any) => b.id === buttonId);
+    if (btnIndex === -1) throw new NotFoundException('Event button not found');
+
+    const btn = { ...buttons[btnIndex] };
+    if (!Array.isArray(btn.registrants)) btn.registrants = [];
+
+    if (btn.capacity && btn.registrants.length >= btn.capacity) {
+      throw new BadRequestException('Event is full');
     }
 
-    return { success: true };
+    if (btn.registrants.includes(data.userId)) {
+      return { alreadyRegistered: true, requiresPayment: false };
+    }
+
+    if (btn.requiresPayment && btn.amountCents > 0) {
+      const paymentBase =
+        this.configService.get<string>('PAYMENT_SERVICE_URL') || 'http://core-service:3012';
+      const frontendUrl = this.configService.get<string>('FRONTEND_URL') || 'http://localhost';
+      try {
+        const res = await lastValueFrom(
+          this.httpService.post(
+            `${paymentBase.replace(/\/$/, '')}/api/payments/create-checkout-session`,
+            {
+              lineItems: [
+                {
+                  price_data: {
+                    currency: (btn.currency || 'eur').toLowerCase(),
+                    product_data: { name: btn.label },
+                    unit_amount: btn.amountCents,
+                  },
+                  quantity: 1,
+                },
+              ],
+              successUrl: `${frontendUrl}/posts?registered=${buttonId}`,
+              cancelUrl: `${frontendUrl}/posts`,
+              metadata: { postId, buttonId, userId: data.userId },
+            }
+          )
+        );
+        const checkoutUrl = (res.data as any)?.url;
+        if (checkoutUrl) {
+          return { requiresPayment: true, checkoutUrl };
+        }
+      } catch (err: any) {
+        this.logger.error('Payment service error', err?.response?.data || err.message);
+      }
+      return { requiresPayment: true, message: 'Payment service unavailable' };
+    }
+
+    btn.registrants = [...btn.registrants, data.userId];
+    const updated = [...buttons];
+    updated[btnIndex] = btn;
+    post.eventButtons = updated;
+    await this.postRepo.save(post);
+
+    return { registered: true, requiresPayment: false };
   }
 
   async submitForm(postId: string, _formId: string, _data: any) {
@@ -222,7 +273,9 @@ export class PostsService {
       );
       this.logger.log(`Successfully communicated with user-service for user ${_data.userId}`);
     } catch (err: any) {
-      this.logger.error(`Failed inter-service communication with user-service for ${_data.userId}: ${err.message}`);
+      this.logger.error(
+        `Failed inter-service communication with user-service for ${_data.userId}: ${err.message}`
+      );
     }
 
     return { success: true };

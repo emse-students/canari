@@ -18,7 +18,7 @@ import { FormsModule } from './forms/forms.module';
         database: process.env.DB_DATABASE || 'canari_social',
         url: process.env.DATABASE_URL,
         autoLoadEntities: true,
-        synchronize: true, // Only for dev
+        synchronize: process.env.NODE_ENV !== 'production', // Never sync in production
       }),
     }),
     ChannelsModule,

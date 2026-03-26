@@ -21,7 +21,7 @@ import { PaymentModule } from './payment/payment.module';
         password: configService.get<string>('DB_PASSWORD', 'password'),
         database: configService.get<string>('DB_DATABASE', 'auth_db'), // Changed from users_db to auth_db globally
         entities: [User],
-        synchronize: true, // Only for development!
+        synchronize: process.env.NODE_ENV !== 'production', // Never sync in production
       }),
       inject: [ConfigService],
     }),

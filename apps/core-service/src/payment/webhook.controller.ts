@@ -45,8 +45,7 @@ export class PaymentWebhookController {
       if (submissionId) {
         try {
           const formServiceBase =
-            this.config.get<string>('FORM_SERVICE_URL') ||
-            'http://localhost:3008';
+            this.config.get<string>('FORM_URL') || 'http://localhost:3014';
           const url = `${formServiceBase.replace(/\/$/, '')}/api/forms/submissions/${submissionId}/mark-paid`;
           await axios.post(url, { sessionId: session.id });
           this.logger.log(

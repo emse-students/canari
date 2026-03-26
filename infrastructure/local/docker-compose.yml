@@ -165,8 +165,8 @@ services:
       MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio}
       MINIO_PORT: "${MINIO_PORT:-9000}"
       MINIO_USE_SSL: "${MINIO_USE_SSL:-false}"
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-${MINIO_ROOT_USER:-minioadmin}}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-${MINIO_ROOT_PASSWORD:-minioadmin}}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       MINIO_BUCKET: ${MINIO_BUCKET:-canari-media}
       MEDIA_MAX_SIZE_MB: "${MEDIA_MAX_SIZE_MB:-50}"
     depends_on:
@@ -192,6 +192,7 @@ services:
       DB_PASSWORD: password
       DB_DATABASE: auth_db
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      FORM_SERVICE_URL: http://social-service:3014
     depends_on:
       postgres:
         condition: service_started
@@ -218,6 +219,7 @@ services:
       STRIPE_SUCCESS_URL: ${STRIPE_SUCCESS_URL:-http://localhost:5173/posts?registration=success}
       STRIPE_CANCEL_URL: ${STRIPE_CANCEL_URL:-http://localhost:5173/posts?registration=cancel}
       USER_SERVICE_URL: http://core-service:3012
+      PAYMENT_SERVICE_URL: http://core-service:3012
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
     depends_on:
       postgres:

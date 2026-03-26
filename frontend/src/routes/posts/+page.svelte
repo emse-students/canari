@@ -127,7 +127,12 @@
     </header>
 
     <!-- Create Post Modal -->
-    <Modal open={showCreateModal} title="Create New Post" onClose={() => (showCreateModal = false)}>
+    <Modal
+      open={showCreateModal}
+      title="Create New Post"
+      maxWidth="max-w-2xl"
+      onClose={() => (showCreateModal = false)}
+    >
       <div class="p-1">
         <CreatePostForm bind:userId bind:email bind:authToken {onPostCreated} />
       </div>

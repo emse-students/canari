@@ -28,8 +28,16 @@ interface TokenPair {
 
 @Controller('auth')
 export class AuthController {
-  private get jwtSecret(): string {
-    return process.env.JWT_SECRET || 'change-me-in-production';
+  private readonly jwtSecret: string;
+
+  constructor() {
+    const secret = process.env.JWT_SECRET;
+    if (!secret || secret === 'change-me-in-production') {
+      throw new Error(
+        'JWT_SECRET must be set to a strong random value (e.g. openssl rand -hex 32)',
+      );
+    }
+    this.jwtSecret = secret;
   }
 
   // ─── Dev-phase login ───────────────────────────────────────────────────────
@@ -113,10 +121,7 @@ export class AuthController {
     }
 
     try {
-      const payload = jwt.verify(
-        token,
-        process.env.JWT_SECRET || 'change-me-in-production',
-      ) as { sub: string };
+      const payload = jwt.verify(token, this.jwtSecret) as { sub: string };
 
       res.set('X-User-Id', payload.sub);
       res.set('X-Logged-In', 'true');

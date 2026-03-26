@@ -38,6 +38,79 @@
   let formSubmitted = $state<Record<string, boolean>>({});
   let formExpanded = $state<Record<string, boolean>>({});
 
+  // Forms attached to event buttons (keyed by btn.id, value is the PostForm)
+  let btnForms = $state<Record<string, PostForm>>({});
+  let btnFormExpanded = $state<Record<string, boolean>>({});
+  let btnFormSelections = $state<Record<string, Record<string, any>>>({});
+  let btnFormSubmitted = $state<Record<string, boolean>>({});
+
+  $effect(() => {
+    // Load forms attached to event buttons
+    for (const btn of post.eventButtons ?? []) {
+      if (btn.formId && !btnForms[btn.id]) {
+        getForm(btn.formId)
+          .then((f) => {
+            const mapped: PostForm = {
+              id: f._id,
+              title: f.title,
+              eventId: btn.id,
+              basePrice: f.basePrice,
+              currency: f.currency,
+              submitLabel: f.submitLabel || "S'inscrire",
+              items: f.items as any,
+            };
+            btnForms = { ...btnForms, [btn.id]: mapped };
+            btnFormExpanded = { ...btnFormExpanded, [btn.id]: false };
+            // initialise selections
+            const initial: Record<string, any> = {};
+            f.items.forEach((i: any) => {
+              if (i.type === 'multiple_choice') initial[i.id] = [];
+              else if (['matrix_single', 'matrix_multiple'].includes(i.type)) {
+                initial[i.id] = {};
+                (i.rows ?? []).forEach((r: string) => {
+                  initial[i.id][r] = i.type === 'matrix_multiple' ? [] : '';
+                });
+              } else initial[i.id] = '';
+            });
+            btnFormSelections = { ...btnFormSelections, [btn.id]: initial };
+            // check if already submitted
+            checkSubmission(f._id)
+              .then(({ hasSubmitted }) => {
+                btnFormSubmitted = { ...btnFormSubmitted, [btn.id]: hasSubmitted };
+              })
+              .catch(() => {});
+          })
+          .catch((e) => console.error('Failed to load event button form', e));
+      }
+    }
+  });
+
+  async function handleBtnFormSubmit(btnId: string) {
+    const form = btnForms[btnId];
+    if (!form || !currentUserId.trim()) {
+      errorMessage = 'Please sign in to submit.';
+      return;
+    }
+    const selections = btnFormSelections[btnId] || {};
+    try {
+      const res = await submitFormService(form.id, {
+        userId: currentUserId,
+        email: currentUserEmail || '',
+        answers: selections,
+      });
+      if (res.checkoutUrl) {
+        window.location.href = res.checkoutUrl;
+      } else {
+        btnFormSubmitted = { ...btnFormSubmitted, [btnId]: true };
+        btnFormExpanded = { ...btnFormExpanded, [btnId]: false };
+        actionMessage = res.message || 'Inscription enregistrée !';
+        onRefresh();
+      }
+    } catch (e: any) {
+      errorMessage = e.message || "Échec de l'inscription.";
+    }
+  }
+
   $effect(() => {
     if (post.forms && post.forms.length > 0) {
       forms = post.forms;
@@ -278,7 +351,7 @@
   }
 </script>
 
-<Card class="mb-6 relative overflow-hidden group hover:shadow-md transition-shadow">
+<Card class="mb-6 relative group hover:shadow-md transition-shadow">
   <div class="flex justify-between items-start mb-4">
     <div class="flex items-center gap-3">
       <div
@@ -345,28 +418,146 @@
   {/if}
 
   {#if post.eventButtons && post.eventButtons.length > 0}
-    <div class="flex flex-wrap gap-4 mt-6 pt-6 border-t border-cn-border">
+    <div class="space-y-4 mt-6 pt-6 border-t border-cn-border">
       {#each post.eventButtons as btn (btn.id)}
         {@const isRegistered = btn.registrants.includes(currentUserId)}
         {@const isFull = Boolean(btn.capacity && btn.registrants.length >= btn.capacity)}
+        {@const btnForm = btnForms[btn.id]}
 
-        <div class="flex flex-col items-start gap-2">
-          <Button
-            variant={isRegistered ? 'ghost' : 'primary'}
-            disabled={isRegistered || (isFull && !isRegistered)}
-            onclick={() => registerForEvent(btn.id)}
-            class="w-full sm:w-auto"
-          >
-            {isRegistered ? 'Registered ✓' : btn.label}
-            {#if btn.requiresPayment && !isRegistered}
-              <span class="ml-1 opacity-80">({formatCurrency(btn.amountCents, btn.currency)})</span>
+        <div class="flex flex-col gap-2">
+          {#if btn.formId}
+            <!-- Event button with attached registration form -->
+            {#if btnFormSubmitted[btn.id]}
+              <div class="flex items-center gap-2 text-green-600 font-semibold text-sm">
+                <span>✓</span>
+                <span>{btn.label} — Inscrit</span>
+                <button
+                  class="ml-2 text-xs text-text-muted underline"
+                  onclick={() =>
+                    (btnFormExpanded = { ...btnFormExpanded, [btn.id]: !btnFormExpanded[btn.id] })}
+                >
+                  Voir ma réponse
+                </button>
+              </div>
+            {:else}
+              <button
+                type="button"
+                class="inline-flex items-center gap-2 rounded-xl border border-cn-border bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover transition-all disabled:opacity-60"
+                disabled={isFull}
+                onclick={() =>
+                  (btnFormExpanded = { ...btnFormExpanded, [btn.id]: !btnFormExpanded[btn.id] })}
+              >
+                {isFull ? 'Complet' : btn.label}
+                {#if btn.requiresPayment && !isFull}
+                  <span class="opacity-80">({formatCurrency(btn.amountCents, btn.currency)})</span>
+                {/if}
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  class="h-4 w-4 transition-transform {btnFormExpanded[btn.id] ? 'rotate-180' : ''}"
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                >
+                  <path
+                    fill-rule="evenodd"
+                    d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
+                    clip-rule="evenodd"
+                  />
+                </svg>
+              </button>
             {/if}
-          </Button>
-          {#if isFull && !isRegistered}
-            <span class="text-xs text-red-500 font-bold">Event Full</span>
-          {/if}
-          {#if isRegistered}
-            <span class="text-xs text-green-600 font-bold">You are going!</span>
+
+            {#if btnFormExpanded[btn.id] && btnForm}
+              <div class="rounded-xl border border-cn-border bg-white p-4 space-y-3">
+                {#each btnForm.items as item (item.id)}
+                  <div class="space-y-1">
+                    <!-- svelte-ignore a11y_label_has_associated_control -->
+                    <label class="block text-sm font-semibold text-text-main">
+                      {item.label}{#if item.required}<span class="text-red-500 ml-0.5">*</span>{/if}
+                    </label>
+                    {#if item.type === 'short_text'}
+                      <input
+                        type="text"
+                        class="w-full rounded-lg border border-cn-border bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-cn-yellow disabled:bg-gray-100"
+                        bind:value={btnFormSelections[btn.id][item.id]}
+                        disabled={btnFormSubmitted[btn.id]}
+                      />
+                    {:else if item.type === 'long_text'}
+                      <textarea
+                        rows="3"
+                        class="w-full rounded-lg border border-cn-border bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-cn-yellow resize-y disabled:bg-gray-100"
+                        bind:value={btnFormSelections[btn.id][item.id]}
+                        disabled={btnFormSubmitted[btn.id]}
+                      ></textarea>
+                    {:else if item.type === 'single_choice' || item.type === 'dropdown'}
+                      <select
+                        class="w-full rounded-lg border border-cn-border bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-cn-yellow disabled:bg-gray-100"
+                        bind:value={btnFormSelections[btn.id][item.id]}
+                        disabled={btnFormSubmitted[btn.id]}
+                      >
+                        <option value="" disabled selected>Choisir...</option>
+                        {#each item.options ?? [] as opt (opt.id)}
+                          <option value={opt.id}
+                            >{opt.label}{opt.priceModifier > 0
+                              ? ` (+${formatCurrency(opt.priceModifier, btnForm.currency)})`
+                              : ''}</option
+                          >
+                        {/each}
+                      </select>
+                    {:else if item.type === 'multiple_choice'}
+                      <div class="space-y-1">
+                        {#each item.options ?? [] as opt (opt.id)}
+                          <label class="flex items-center gap-2 text-sm cursor-pointer">
+                            <input
+                              type="checkbox"
+                              value={opt.id}
+                              bind:group={btnFormSelections[btn.id][item.id]}
+                              disabled={btnFormSubmitted[btn.id]}
+                              class="accent-cn-yellow"
+                            />
+                            {opt.label}
+                          </label>
+                        {/each}
+                      </div>
+                    {/if}
+                  </div>
+                {/each}
+                {#if !btnFormSubmitted[btn.id]}
+                  <div class="flex justify-end pt-2">
+                    <Button variant="primary" onclick={() => handleBtnFormSubmit(btn.id)}>
+                      {btnForm.submitLabel}
+                      {#if btnForm.basePrice > 0}
+                        <span class="ml-1 opacity-80"
+                          >— {formatCurrency(btnForm.basePrice, btnForm.currency)}</span
+                        >
+                      {/if}
+                    </Button>
+                  </div>
+                {/if}
+              </div>
+            {/if}
+          {:else}
+            <!-- Simple event button (no form) -->
+            <div class="flex flex-col items-start gap-2">
+              <Button
+                variant={isRegistered ? 'ghost' : 'primary'}
+                disabled={isRegistered || (isFull && !isRegistered)}
+                onclick={() => registerForEvent(btn.id)}
+                class="w-full sm:w-auto"
+              >
+                {isRegistered ? 'Registered ✓' : btn.label}
+                {#if btn.requiresPayment && !isRegistered}
+                  <span class="ml-1 opacity-80"
+                    >({formatCurrency(btn.amountCents, btn.currency)})</span
+                  >
+                {/if}
+              </Button>
+              {#if isFull && !isRegistered}
+                <span class="text-xs text-red-500 font-bold">Event Full</span>
+              {/if}
+              {#if isRegistered}
+                <span class="text-xs text-green-600 font-bold">You are going!</span>
+              {/if}
+            </div>
           {/if}
         </div>
       {/each}

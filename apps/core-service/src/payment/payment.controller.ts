@@ -12,6 +12,20 @@ import { Stripe } from 'stripe';
 export class PaymentController {
   constructor(private readonly paymentService: PaymentService) {}
 
+  @Post('onboarding')
+  @HttpCode(200)
+  async createOnboarding(@Body() body: { associationId: string }) {
+    if (!this.paymentService.isConfigured()) {
+      return { ok: false, message: 'Stripe not configured' };
+    }
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost';
+    return this.paymentService.createConnectOnboarding({
+      associationId: body.associationId ?? '',
+      refreshUrl: `${frontendUrl}/dashboard/association`,
+      returnUrl: `${frontendUrl}/dashboard/association`,
+    });
+  }
+
   @Post('create-checkout-session')
   @HttpCode(200)
   async createCheckout(

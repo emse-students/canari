@@ -40,8 +40,9 @@
   let eventAmount = $state<number>(25);
   let eventCurrency = $state('eur');
   let eventCapacity = $state<number>(100);
+  let eventFormId = $state('');
 
-  // Form referencing
+  // Form referencing (standalone — only used when no event button)
   let availableForms = $state<Form[]>([]);
   let selectedFormId = $state('');
   let includeForm = $state(false);
@@ -53,8 +54,18 @@
   const mediaService = new MediaService();
 
   onMount(async () => {
+    // Auto-fill userId from saved session
+    const savedUser = localStorage.getItem('canari_saved_user');
+    if (savedUser && !userId) {
+      userId = savedUser;
+    }
+    // Silently acquire auth token for media uploads
     try {
-      // In real app, pass userId or fetch public forms
+      authToken = await getToken();
+    } catch {
+      // will be retried when the user tries to upload
+    }
+    try {
       availableForms = await getForms();
     } catch (e) {
       console.error('Failed to load forms', e);
@@ -142,11 +153,12 @@
             amountCents: eventRequiresPayment ? Math.round(Number(eventAmount) * 100) : undefined,
             currency: eventRequiresPayment ? eventCurrency.toLowerCase() : undefined,
             capacity: Number(eventCapacity),
+            formId: eventFormId || undefined,
           },
         ];
       }
 
-      if (includeForm) {
+      if (includeForm && !includeEventButton) {
         if (!selectedFormId) {
           throw new Error('Please select a form to attach.');
         }
@@ -171,18 +183,10 @@
 
 <Card title="Create a Post" class="h-fit">
   <div class="space-y-4">
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
       <Input label="User ID" bind:value={userId} placeholder="alice" />
       <Input label="Email (for receipts)" bind:value={email} placeholder="alice@example.com" />
     </div>
-
-    {#if !authToken}
-      <Button class="w-full" variant="outline" onclick={createSessionToken}>
-        Generate Upload Token
-      </Button>
-    {:else}
-      <div class="text-xs text-green-600 font-mono">Token active</div>
-    {/if}
 
     <Textarea
       label="Content (Markdown)"
@@ -238,7 +242,7 @@
 
       {#if includeEventButton}
         <div class="space-y-3 mt-3 pl-2 border-l-2 border-cn-border">
-          <div class="grid grid-cols-2 gap-3">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Input label="Button Label" bind:value={eventLabel} />
             <Input label="Event ID" bind:value={eventId} />
           </div>
@@ -249,7 +253,7 @@
           </label>
 
           {#if eventRequiresPayment}
-            <div class="grid grid-cols-2 gap-3">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Input
                 type="number"
                 label="Amount"
@@ -260,12 +264,34 @@
             </div>
           {/if}
           <Input type="number" label="Capacity" bind:value={eventCapacity as unknown as string} />
+
+          <!-- Attach a registration form to this event -->
+          {#if availableForms.length > 0}
+            <div>
+              <!-- svelte-ignore a11y_label_has_associated_control -->
+              <label class="block text-sm font-semibold text-text-main mb-1">
+                Formulaire d'inscription (optionnel)
+              </label>
+              <select
+                bind:value={eventFormId}
+                class="w-full appearance-none rounded-xl border border-cn-border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cn-yellow transition-all"
+              >
+                <option value="">-- Aucun formulaire --</option>
+                {#each availableForms as form (form._id)}
+                  <option value={form._id}>{form.title}</option>
+                {/each}
+              </select>
+            </div>
+          {/if}
         </div>
       {/if}
     </div>
 
-    <!-- Form Section -->
-    <div class="rounded-2xl border border-cn-border p-4 bg-cn-surface/50">
+    <!-- Standalone Form Section (only when no event button) -->
+    <div
+      class="rounded-2xl border border-cn-border p-4 bg-cn-surface/50"
+      class:hidden={includeEventButton}
+    >
       <label class="flex items-center gap-2 font-bold text-sm cursor-pointer mb-2">
         <input type="checkbox" bind:checked={includeForm} class="accent-cn-yellow w-4 h-4" />
         Joindre un formulaire d'inscription
