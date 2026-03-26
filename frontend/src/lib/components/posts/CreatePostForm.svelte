@@ -11,17 +11,11 @@
 
   interface Props {
     onPostCreated: () => void;
-    userId?: string;
     email?: string;
     authToken?: string;
   }
 
-  let {
-    onPostCreated,
-    userId = $bindable(''),
-    email = $bindable(''),
-    authToken = $bindable(''),
-  }: Props = $props();
+  let { onPostCreated, email = $bindable(''), authToken = $bindable('') }: Props = $props();
 
   let markdown = $state('');
   let selectedFiles = $state<File[]>([]);
@@ -54,11 +48,6 @@
   const mediaService = new MediaService();
 
   onMount(async () => {
-    // Auto-fill userId from saved session
-    const savedUser = localStorage.getItem('canari_saved_user');
-    if (savedUser && !userId) {
-      userId = savedUser;
-    }
     // Silently acquire auth token for media uploads
     try {
       authToken = await getToken();
@@ -95,9 +84,6 @@
     actionMessage = '';
 
     try {
-      if (!userId.trim()) {
-        throw new Error('Please provide user id before publishing.');
-      }
       if (!markdown.trim()) {
         throw new Error('Post markdown is required.');
       }
@@ -119,7 +105,6 @@
       }
 
       const payload: CreatePostPayload = {
-        authorId: userId.trim(),
         markdown,
         images,
       };
@@ -184,7 +169,6 @@
 <Card title="Create a Post" class="h-fit">
   <div class="space-y-4">
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-      <Input label="User ID" bind:value={userId} placeholder="alice" />
       <Input label="Email (for receipts)" bind:value={email} placeholder="alice@example.com" />
     </div>
 

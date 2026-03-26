@@ -134,7 +134,7 @@
       onClose={() => (showCreateModal = false)}
     >
       <div class="p-1">
-        <CreatePostForm bind:userId bind:email bind:authToken {onPostCreated} />
+        <CreatePostForm bind:email bind:authToken {onPostCreated} />
       </div>
     </Modal>
 

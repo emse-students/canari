@@ -10,6 +10,7 @@ import {
   Inject,
   BadRequestException,
   UseGuards,
+  Headers,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, MoreThanOrEqual } from 'typeorm';
@@ -638,10 +639,11 @@ export class AppController {
     };
   }
 
+  @UseGuards(HeaderAuthGuard)
   @Get('mls-api/sync/session/:sessionId')
   async getSyncSessionState(
     @Param('sessionId') sessionIdRaw: string,
-    @Query('userId') userIdRaw: string,
+    @Headers('x-user-id') userIdRaw: string,
   ) {
     const sessionId = sanitizeQueryValue(sessionIdRaw, 'sessionId');
     const userId = sanitizeQueryValue(userIdRaw, 'userId');
@@ -834,10 +836,11 @@ export class AppController {
     };
   }
 
+  @UseGuards(HeaderAuthGuard)
   @Get('mls-api/sync/session/:sessionId/chunks/pull')
   async pullSyncChunks(
     @Param('sessionId') sessionIdRaw: string,
-    @Query('userId') userIdRaw: string,
+    @Headers('x-user-id') userIdRaw: string,
     @Query('toDeviceId') toDeviceIdRaw: string,
     @Query('fromDeviceId') fromDeviceIdRaw: string,
   ) {

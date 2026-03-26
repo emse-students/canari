@@ -94,7 +94,6 @@
     const selections = btnFormSelections[btnId] || {};
     try {
       const res = await submitFormService(form.id, {
-        userId: currentUserId,
         email: currentUserEmail || '',
         answers: selections,
       });
@@ -189,7 +188,6 @@
 
     try {
       await votePoll(post._id, pollId, {
-        userId: currentUserId.trim(),
         optionIds: selectedOptions,
       });
       actionMessage = 'Vote submitted.';
@@ -208,7 +206,6 @@
 
     try {
       const response = await registerEvent(post._id, buttonId, {
-        userId: currentUserId.trim(),
         email: currentUserEmail?.trim() || undefined,
       });
 
@@ -325,7 +322,6 @@
       let res;
       if (post.attachedFormId) {
         res = await submitFormService(form.id, {
-          userId: currentUserId,
           email: currentUserEmail || '',
           answers: selections,
         });
@@ -334,7 +330,6 @@
         }
       } else {
         res = await submitForm(post._id, form.id, {
-          userId: currentUserId,
           email: currentUserEmail,
           selections,
         });

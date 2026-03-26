@@ -73,7 +73,6 @@ export interface PostEntity {
 }
 
 export interface CreatePostPayload {
-  authorId: string;
   markdown: string;
   images?: PostImageRef[];
   polls?: Array<{
@@ -146,7 +145,7 @@ export async function createPost(payload: CreatePostPayload): Promise<PostEntity
 export async function votePoll(
   postId: string,
   pollId: string,
-  payload: { userId: string; optionIds: string[] }
+  payload: { optionIds: string[] }
 ): Promise<{ ok: boolean; poll: Poll }> {
   return request<{ ok: boolean; poll: Poll }>(`/api/posts/${postId}/polls/${pollId}/vote`, {
     method: 'POST',
@@ -157,7 +156,7 @@ export async function votePoll(
 export async function registerEvent(
   postId: string,
   buttonId: string,
-  payload: { userId: string; email?: string }
+  payload: { email?: string }
 ): Promise<{
   ok: boolean;
   registered?: boolean;
@@ -176,7 +175,7 @@ export async function registerEvent(
 export async function submitForm(
   postId: string,
   formId: string,
-  payload: { userId: string; selections: Record<string, string>; email?: string }
+  payload: { selections: Record<string, string>; email?: string }
 ): Promise<{
   ok: boolean;
   requiresPayment: boolean;

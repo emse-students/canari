@@ -96,16 +96,16 @@ export class CreateFormDto {
   items: FormItemDto[];
 
   @IsString()
-  @IsNotEmpty()
-  ownerId: string;
+  @IsOptional()
+  ownerId?: string;
 }
 
 export class UpdateFormDto extends CreateFormDto {}
 
 export class SubmitFormDto {
   @IsString()
-  @IsNotEmpty()
-  userId: string;
+  @IsOptional()
+  userId?: string;
 
   @IsString()
   @IsOptional()

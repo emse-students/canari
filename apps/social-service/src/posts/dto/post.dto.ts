@@ -190,8 +190,8 @@ export class FormInputDto {
 
 export class CreatePostDto {
   @IsString()
-  @IsNotEmpty()
-  authorId: string;
+  @IsOptional()
+  authorId?: string;
 
   @IsString()
   @IsNotEmpty()
@@ -241,8 +241,8 @@ export class ListPostsQueryDto {
 
 export class VotePollDto {
   @IsString()
-  @IsNotEmpty()
-  userId: string;
+  @IsOptional()
+  userId?: string;
 
   @IsArray()
   @IsString({ each: true })
@@ -252,8 +252,8 @@ export class VotePollDto {
 
 export class RegisterEventDto {
   @IsString()
-  @IsNotEmpty()
-  userId: string;
+  @IsOptional()
+  userId?: string;
 
   @IsString()
   @IsOptional()
@@ -262,8 +262,8 @@ export class RegisterEventDto {
 
 export class SubmitFormDto {
   @IsString()
-  @IsNotEmpty()
-  userId: string;
+  @IsOptional()
+  userId?: string;
 
   @IsString()
   @IsOptional()

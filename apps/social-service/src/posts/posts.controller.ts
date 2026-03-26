@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Param, Post as HttpPost, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Headers,
+  Param,
+  Post as HttpPost,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { PostsService } from './posts.service';
 import {
@@ -24,8 +33,8 @@ export class PostsController {
 
   @UseGuards(NginxAuthGuard)
   @HttpPost()
-  createPost(@Body() body: CreatePostDto) {
-    return this.service.createPost(body);
+  createPost(@Headers('x-user-id') xUserId: string, @Body() body: CreatePostDto) {
+    return this.service.createPost({ ...body, authorId: xUserId });
   }
 
   @Get()
@@ -38,30 +47,33 @@ export class PostsController {
   @UseGuards(NginxAuthGuard)
   @HttpPost(':postId/polls/:pollId/vote')
   votePoll(
+    @Headers('x-user-id') xUserId: string,
     @Param('postId') postId: string,
     @Param('pollId') pollId: string,
     @Body() body: VotePollDto
   ) {
-    return this.service.votePoll(postId, pollId, body);
+    return this.service.votePoll(postId, pollId, { ...body, userId: xUserId });
   }
 
   @UseGuards(NginxAuthGuard)
   @HttpPost(':postId/events/:buttonId/register')
   registerEvent(
+    @Headers('x-user-id') xUserId: string,
     @Param('postId') postId: string,
     @Param('buttonId') buttonId: string,
     @Body() body: RegisterEventDto
   ) {
-    return this.service.registerEvent(postId, buttonId, body);
+    return this.service.registerEvent(postId, buttonId, { ...body, userId: xUserId });
   }
 
   @UseGuards(NginxAuthGuard)
   @HttpPost(':postId/forms/:formId/submit')
   submitForm(
+    @Headers('x-user-id') xUserId: string,
     @Param('postId') postId: string,
     @Param('formId') formId: string,
     @Body() body: SubmitFormDto
   ) {
-    return this.service.submitForm(postId, formId, body);
+    return this.service.submitForm(postId, formId, { ...body, userId: xUserId });
   }
 }

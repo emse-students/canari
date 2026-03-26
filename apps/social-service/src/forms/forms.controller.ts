@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   Param,
   Post,
   Res,
@@ -21,13 +22,14 @@ export class FormsController {
 
   @UseGuards(NginxAuthGuard)
   @Post()
-  create(@Body() dto: CreateFormDto) {
-    return this.service.create(dto);
+  create(@Headers('x-user-id') xUserId: string, @Body() dto: CreateFormDto) {
+    return this.service.create({ ...dto, ownerId: xUserId });
   }
 
+  @UseGuards(NginxAuthGuard)
   @Get()
-  list(@Query('ownerId') ownerId?: string) {
-    return this.service.list(ownerId);
+  list(@Headers('x-user-id') xUserId: string) {
+    return this.service.list(xUserId);
   }
 
   @Get(':id')
@@ -35,24 +37,27 @@ export class FormsController {
     return this.service.get(id);
   }
 
+  @UseGuards(NginxAuthGuard)
   @Get(':id/submission')
-  async getSubmission(@Param('id') id: string, @Query('userId') userId: string) {
-    if (!userId) {
-      throw new BadRequestException('UserId is required');
-    }
-    return this.service.getSubmission(id, userId);
+  async getSubmission(@Param('id') id: string, @Headers('x-user-id') xUserId: string) {
+    return this.service.getSubmission(id, xUserId);
   }
 
+  @UseGuards(NginxAuthGuard)
   @Get(':id/check')
-  async checkSubmission(@Param('id') id: string, @Query('userId') userId: string) {
-    const hasSubmitted = await this.service.hasSubmission(id, userId);
+  async checkSubmission(@Param('id') id: string, @Headers('x-user-id') xUserId: string) {
+    const hasSubmitted = await this.service.hasSubmission(id, xUserId);
     return { hasSubmitted };
   }
 
   @UseGuards(NginxAuthGuard)
   @Post(':id/submit')
-  submit(@Param('id') id: string, @Body() dto: SubmitFormDto) {
-    return this.service.submit(id, dto);
+  submit(
+    @Headers('x-user-id') xUserId: string,
+    @Param('id') id: string,
+    @Body() dto: SubmitFormDto
+  ) {
+    return this.service.submit(id, { ...dto, userId: xUserId });
   }
 
   @Get(':id/submissions')
