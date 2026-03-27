@@ -47,7 +47,7 @@ export interface SendChannelMessageDto {
   keyVersion?: number;
 }
 
-import { getToken, refresh, clearAuth } from '$lib/stores/auth';
+import { apiFetch } from '$lib/utils/apiFetch';
 
 export class ChannelService {
   private baseUrl: string;
@@ -62,28 +62,8 @@ export class ChannelService {
     }
   }
 
-  private async fetchWithAuth(url: string, init: RequestInit = {}): Promise<Response> {
-    const token = await getToken();
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      ...(init.headers as Record<string, string>),
-      Authorization: `Bearer ${token}`,
-    };
-
-    let res = await fetch(url, { ...init, headers });
-
-    if (res.status === 401) {
-      try {
-        const newToken = await refresh();
-        headers['Authorization'] = `Bearer ${newToken}`;
-        res = await fetch(url, { ...init, headers });
-      } catch {
-        clearAuth();
-        throw new Error('Session expired — please log in again');
-      }
-    }
-
-    return res;
+  private fetchWithAuth(url: string, init: RequestInit = {}): Promise<Response> {
+    return apiFetch(url, init as any);
   }
 
   private async handleError(res: Response) {

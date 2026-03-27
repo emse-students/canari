@@ -1,5 +1,5 @@
+import { apiFetch } from '$lib/utils/apiFetch';
 import type { MediaRef } from '$lib/media';
-import { getToken } from '$lib/stores/auth';
 
 export type PostImageRef = Omit<MediaRef, 'type'>;
 
@@ -104,25 +104,7 @@ function getPostsBaseUrl(): string {
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const baseUrl = getPostsBaseUrl();
-  let token = '';
-  try {
-    token = await getToken();
-  } catch {
-    // unauthenticated
-  }
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(init.headers as Record<string, string>),
-  };
-
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-
-  const res = await fetch(`${baseUrl}${path}`, {
-    ...init,
-    headers,
-  });
+  const res = await apiFetch(`${baseUrl}${path}`, init as any);
 
   if (!res.ok) {
     const details = await res.text();

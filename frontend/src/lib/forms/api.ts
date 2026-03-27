@@ -36,31 +36,12 @@ export interface Form extends CreateFormPayload {
   updatedAt: string;
 }
 
-import { getToken } from '$lib/stores/auth';
+import { apiFetch } from '$lib/utils/apiFetch';
 
 const API_Base = import.meta.env.VITE_SOCIAL_URL || '';
 
 async function request(url: string, init: RequestInit = {}) {
-  let token = '';
-  try {
-    token = await getToken();
-  } catch {
-    // unauthenticated
-  }
-  const headers = {
-    'Content-Type': 'application/json',
-    ...(init.headers as Record<string, string>),
-  } as Record<string, string>;
-
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-
-  const res = await fetch(url, {
-    ...init,
-    headers,
-  });
-  return res;
+  return apiFetch(url, init as any);
 }
 
 export async function createForm(payload: CreateFormPayload): Promise<Form> {

@@ -63,12 +63,32 @@ export async function refresh(): Promise<string> {
   return data.access_token;
 }
 
+/** Decode the `exp` claim from a JWT without verifying the signature. */
+function jwtExpiresAt(token: string): number | null {
+  try {
+    const payload = token.split('.')[1];
+    if (!payload) return null;
+    const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
+    const { exp } = JSON.parse(json) as { exp?: number };
+    return typeof exp === 'number' ? exp : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Returns the current access token, attempting a silent refresh if none is
- * held in memory (e.g. after a page reload in Tauri).
+ * held in memory (e.g. after a page reload in Tauri) or if it expires within
+ * the next 60 seconds.
  */
 export async function getToken(): Promise<string> {
-  if (_accessToken) return _accessToken;
+  if (_accessToken) {
+    const exp = jwtExpiresAt(_accessToken);
+    const expiresWithinGrace = exp !== null && exp - Math.floor(Date.now() / 1000) < 60;
+    if (!expiresWithinGrace) return _accessToken;
+    // Token is about to expire — clear it so refresh() runs.
+    _accessToken = null;
+  }
   return await refresh();
 }
 
