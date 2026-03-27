@@ -86,7 +86,7 @@
   {#if isOpen}
     <div
       role="menu"
-      class="absolute right-0 top-[calc(100%+0.35rem)] z-50 w-[min(90vw,23rem)] overflow-hidden rounded-2xl border border-cn-border bg-[color-mix(in_srgb,var(--cn-surface)_92%,white)] shadow-xl backdrop-blur-md"
+      class="absolute left-1/2 -translate-x-1/2 top-[calc(100%+0.35rem)] z-50 w-[min(90vw,23rem)] overflow-hidden rounded-2xl border border-cn-border bg-[color-mix(in_srgb,var(--cn-surface)_92%,white)] shadow-xl backdrop-blur-md"
     >
       <div class="p-1.5">
         {#each APP_PLACES as place (place.id)}

@@ -1,58 +1,53 @@
 <script lang="ts">
+  import { Image, ChartColumn, CalendarCheck, ClipboardList, LoaderCircle, X } from 'lucide-svelte';
   import { MediaService } from '$lib/media';
   import { getToken } from '$lib/stores/auth';
   import { createPost, type CreatePostPayload } from '$lib/posts/api';
   import { getForms, type Form } from '$lib/forms/api';
   import { onMount } from 'svelte';
-  import Button from '$lib/components/ui/Button.svelte';
-  import Card from '$lib/components/ui/Card.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
 
   interface Props {
     onPostCreated: () => void;
-    email?: string;
-    authToken?: string;
   }
 
-  let { onPostCreated, email = $bindable(''), authToken = $bindable('') }: Props = $props();
+  let { onPostCreated }: Props = $props();
 
   let markdown = $state('');
   let selectedFiles = $state<File[]>([]);
+  let filePreviews = $state<string[]>([]);
 
   let includePoll = $state(false);
   let pollQuestion = $state('');
-  let pollOptionsRaw = $state('Yes\nNo');
+  let pollOptionsRaw = $state('Oui\nNon');
   let pollMultipleChoice = $state(false);
 
   let includeEventButton = $state(false);
-
   const imageInputId = 'create-post-images-input';
-  let eventLabel = $state('Register now');
-  let eventId = $state('event-2026');
+  let eventLabel = $state("S'inscrire");
+  let eventId = $state('');
   let eventRequiresPayment = $state(false);
   let eventAmount = $state<number>(25);
   let eventCurrency = $state('eur');
   let eventCapacity = $state<number>(100);
   let eventFormId = $state('');
 
-  // Form referencing (standalone — only used when no event button)
   let availableForms = $state<Form[]>([]);
   let selectedFormId = $state('');
   let includeForm = $state(false);
 
   let publishing = $state(false);
   let errorMessage = $state('');
-  let actionMessage = $state('');
+  let authToken = $state('');
 
   const mediaService = new MediaService();
 
   onMount(async () => {
-    // Silently acquire auth token for media uploads
     try {
       authToken = await getToken();
     } catch {
-      // will be retried when the user tries to upload
+      // will retry on upload
     }
     try {
       availableForms = await getForms();
@@ -61,34 +56,32 @@
     }
   });
 
-  async function createSessionToken() {
-    actionMessage = '';
-    errorMessage = '';
-    try {
-      authToken = await getToken();
-      actionMessage = 'Token generated for media-service operations.';
-    } catch (err) {
-      errorMessage = err instanceof Error ? err.message : 'Unable to generate token';
-    }
-  }
-
   function onPickFiles(event: Event) {
     const input = event.target as HTMLInputElement;
-    const files = Array.from(input.files ?? []).filter((file) => file.type.startsWith('image/'));
+    const files = Array.from(input.files ?? []).filter((f) => f.type.startsWith('image/'));
+    filePreviews.forEach((url) => URL.revokeObjectURL(url));
     selectedFiles = files;
+    filePreviews = files.map((f) => URL.createObjectURL(f));
+  }
+
+  function removeFile(i: number) {
+    URL.revokeObjectURL(filePreviews[i]);
+    selectedFiles = selectedFiles.filter((_, idx) => idx !== i);
+    filePreviews = filePreviews.filter((_, idx) => idx !== i);
   }
 
   async function publishPost() {
     publishing = true;
     errorMessage = '';
-    actionMessage = '';
 
     try {
-      if (!markdown.trim()) {
-        throw new Error('Post markdown is required.');
-      }
+      if (!markdown.trim()) throw new Error('Le contenu du post est requis.');
       if (selectedFiles.length > 0 && !authToken) {
-        throw new Error('Generate a token before uploading images.');
+        try {
+          authToken = await getToken();
+        } catch {
+          throw new Error("Impossible d'obtenir un jeton pour l'envoi d'images.");
+        }
       }
 
       const images = [];
@@ -104,32 +97,24 @@
         });
       }
 
-      const payload: CreatePostPayload = {
-        markdown,
-        images,
-      };
+      const payload: CreatePostPayload = { markdown, images };
 
       if (includePoll) {
         const options = pollOptionsRaw
           .split('\n')
-          .map((item) => item.trim())
+          .map((l) => l.trim())
           .filter(Boolean)
           .map((label) => ({ label }));
         if (pollQuestion.trim() && options.length >= 2) {
           payload.polls = [
-            {
-              question: pollQuestion.trim(),
-              options,
-              multipleChoice: pollMultipleChoice,
-            },
+            { question: pollQuestion.trim(), options, multipleChoice: pollMultipleChoice },
           ];
         }
       }
 
       if (includeEventButton) {
-        if (!eventLabel.trim() || !eventId.trim()) {
-          throw new Error('Event label and eventId are required when event button is enabled.');
-        }
+        if (!eventLabel.trim() || !eventId.trim())
+          throw new Error("Le libellé et l'identifiant de l'événement sont requis.");
         payload.eventButtons = [
           {
             label: eventLabel.trim(),
@@ -144,221 +129,249 @@
       }
 
       if (includeForm && !includeEventButton) {
-        if (!selectedFormId) {
-          throw new Error('Please select a form to attach.');
-        }
+        if (!selectedFormId) throw new Error('Veuillez sélectionner un formulaire.');
         payload.attachedFormId = selectedFormId;
       }
 
       await createPost(payload);
+
       markdown = '';
       selectedFiles = [];
-      includeForm = false;
+      filePreviews.forEach((url) => URL.revokeObjectURL(url));
+      filePreviews = [];
       includePoll = false;
       includeEventButton = false;
-      actionMessage = 'Post published.';
+      includeForm = false;
       onPostCreated();
     } catch (err) {
-      errorMessage = err instanceof Error ? err.message : 'Unable to publish post';
+      errorMessage = err instanceof Error ? err.message : 'Impossible de publier le post';
     } finally {
       publishing = false;
     }
   }
 </script>
 
-<Card title="Create a Post" class="h-fit">
-  <div class="space-y-4">
-    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-      <Input label="Email (for receipts)" bind:value={email} placeholder="alice@example.com" />
+<div class="flex flex-col">
+  <!-- Content textarea -->
+  <textarea
+    bind:value={markdown}
+    placeholder="Partagez une annonce, un sondage ou un événement avec la communauté…"
+    rows={5}
+    class="w-full resize-none bg-transparent px-1 py-2 text-sm leading-relaxed text-text-main placeholder:text-text-muted focus:outline-none"
+  ></textarea>
+
+  <!-- Image previews -->
+  {#if filePreviews.length > 0}
+    <div class="flex flex-wrap gap-2 px-1 pb-3">
+      {#each filePreviews as src, i (src)}
+        <div
+          class="relative h-20 w-20 overflow-hidden rounded-xl border border-cn-border shadow-sm"
+        >
+          <img {src} alt="Aperçu" class="h-full w-full object-cover" />
+          <button
+            type="button"
+            onclick={() => removeFile(i)}
+            class="absolute right-1 top-1 rounded-full bg-black/60 p-0.5 text-white transition-colors hover:bg-black/80"
+            aria-label="Supprimer l'image"
+          >
+            <X size={10} />
+          </button>
+        </div>
+      {/each}
     </div>
+  {/if}
 
-    <Textarea
-      label="Content (Markdown)"
-      bind:value={markdown}
-      placeholder="# Hello World"
-      rows={6}
-    />
+  <!-- Poll section -->
+  {#if includePoll}
+    <div class="mx-1 mb-3 rounded-2xl border border-cn-border bg-cn-surface/40 p-4">
+      <p class="mb-3 text-xs font-bold uppercase tracking-wide text-text-muted">Sondage</p>
+      <div class="space-y-3">
+        <Input
+          label="Question"
+          bind:value={pollQuestion}
+          placeholder="Quelle est votre question ?"
+        />
+        <Textarea label="Options (une par ligne)" bind:value={pollOptionsRaw} rows={3} />
+        <label class="flex cursor-pointer select-none items-center gap-2 text-sm text-text-main">
+          <input
+            type="checkbox"
+            bind:checked={pollMultipleChoice}
+            class="h-4 w-4 accent-cn-yellow"
+          />
+          Autoriser plusieurs réponses
+        </label>
+      </div>
+    </div>
+  {/if}
 
-    <div>
-      <label for={imageInputId} class="block text-sm font-bold text-text-main mb-2 ml-1"
-        >Images</label
+  <!-- Event button section -->
+  {#if includeEventButton}
+    <div class="mx-1 mb-3 rounded-2xl border border-cn-border bg-cn-surface/40 p-4">
+      <p class="mb-3 text-xs font-bold uppercase tracking-wide text-text-muted">
+        Bouton d'inscription
+      </p>
+      <div class="space-y-3">
+        <div class="grid grid-cols-2 gap-3">
+          <Input label="Libellé du bouton" bind:value={eventLabel} placeholder="S'inscrire" />
+          <Input label="ID de l'événement" bind:value={eventId} placeholder="evenement-2026" />
+        </div>
+        <Input
+          type="number"
+          label="Capacité (places)"
+          bind:value={eventCapacity as unknown as string}
+        />
+        <label
+          class="flex cursor-pointer select-none items-center gap-2 text-sm font-semibold text-text-main"
+        >
+          <input
+            type="checkbox"
+            bind:checked={eventRequiresPayment}
+            class="h-4 w-4 accent-cn-yellow"
+          />
+          Inscription payante
+        </label>
+        {#if eventRequiresPayment}
+          <div class="grid grid-cols-2 gap-3">
+            <Input
+              type="number"
+              label="Montant (€)"
+              bind:value={eventAmount as unknown as string}
+              step="0.01"
+            />
+            <Input label="Devise" bind:value={eventCurrency} placeholder="eur" />
+          </div>
+        {/if}
+        {#if availableForms.length > 0}
+          <div>
+            <!-- svelte-ignore a11y_label_has_associated_control -->
+            <label class="mb-1.5 block text-sm font-semibold text-text-main">
+              Formulaire d'inscription (optionnel)
+            </label>
+            <select
+              bind:value={eventFormId}
+              class="w-full appearance-none rounded-xl border border-cn-border bg-white px-3 py-2 text-sm transition-all focus:outline-none focus:ring-2 focus:ring-cn-yellow"
+            >
+              <option value="">— Aucun —</option>
+              {#each availableForms as form (form._id)}
+                <option value={form._id}>{form.title}</option>
+              {/each}
+            </select>
+          </div>
+        {/if}
+      </div>
+    </div>
+  {/if}
+
+  <!-- Standalone form section -->
+  {#if includeForm && !includeEventButton}
+    <div class="mx-1 mb-3 rounded-2xl border border-cn-border bg-cn-surface/40 p-4">
+      <p class="mb-3 text-xs font-bold uppercase tracking-wide text-text-muted">Formulaire joint</p>
+      {#if availableForms.length === 0}
+        <p class="text-sm text-text-muted">
+          Aucun formulaire disponible.
+          <a href="/forms/create" class="font-semibold text-cn-dark underline">En créer un</a>
+        </p>
+      {:else}
+        <select
+          bind:value={selectedFormId}
+          class="w-full appearance-none rounded-xl border border-cn-border bg-white px-3 py-2 text-sm transition-all focus:outline-none focus:ring-2 focus:ring-cn-yellow"
+        >
+          <option value="">— Choisir un formulaire —</option>
+          {#each availableForms as form (form._id)}
+            <option value={form._id}>{form.title} ({form.items.length} questions)</option>
+          {/each}
+        </select>
+      {/if}
+    </div>
+  {/if}
+
+  <!-- Error message -->
+  {#if errorMessage}
+    <div
+      class="mx-1 mb-3 rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600"
+    >
+      {errorMessage}
+    </div>
+  {/if}
+
+  <!-- Toolbar -->
+  <div class="flex items-center justify-between border-t border-cn-border pt-3">
+    <div class="flex items-center gap-0.5">
+      <!-- Image upload -->
+      <label
+        for={imageInputId}
+        title="Ajouter des images"
+        class="cursor-pointer rounded-lg p-2 transition-colors hover:bg-cn-bg hover:text-text-main {selectedFiles.length >
+        0
+          ? 'text-cn-dark'
+          : 'text-text-muted'}"
       >
+        <Image size={18} />
+      </label>
       <input
         id={imageInputId}
         type="file"
         accept="image/*"
         multiple
         onchange={onPickFiles}
-        class="block w-full text-sm text-text-muted
-            file:mr-4 file:py-2 file:px-4
-            file:rounded-full file:border-0
-            file:text-sm file:font-semibold
-            file:bg-cn-yellow file:text-cn-dark
-            hover:file:bg-cn-yellow-hover"
+        class="sr-only"
       />
-    </div>
 
-    <!-- Poll Section -->
-    <div class="rounded-2xl border border-cn-border p-4 bg-cn-surface/50">
-      <label class="flex items-center gap-2 font-bold text-sm cursor-pointer mb-2">
-        <input type="checkbox" bind:checked={includePoll} class="accent-cn-yellow w-4 h-4" />
-        Include Poll
-      </label>
-
-      {#if includePoll}
-        <div class="space-y-3 mt-3 pl-2 border-l-2 border-cn-border">
-          <Input label="Question" bind:value={pollQuestion} placeholder="What do you think?" />
-          <Textarea label="Options (one per line)" bind:value={pollOptionsRaw} rows={3} />
-          <label class="flex items-center gap-2 text-sm">
-            <input type="checkbox" bind:checked={pollMultipleChoice} class="accent-cn-yellow" />
-            Allow multiple choices
-          </label>
-        </div>
-      {/if}
-    </div>
-
-    <!-- Event Button Section -->
-    <div class="rounded-2xl border border-cn-border p-4 bg-cn-surface/50">
-      <label class="flex items-center gap-2 font-bold text-sm cursor-pointer mb-2">
-        <input type="checkbox" bind:checked={includeEventButton} class="accent-cn-yellow w-4 h-4" />
-        Include Event Button
-      </label>
-
-      {#if includeEventButton}
-        <div class="space-y-3 mt-3 pl-2 border-l-2 border-cn-border">
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Input label="Button Label" bind:value={eventLabel} />
-            <Input label="Event ID" bind:value={eventId} />
-          </div>
-
-          <label class="flex items-center gap-2 text-sm font-semibold">
-            <input type="checkbox" bind:checked={eventRequiresPayment} class="accent-cn-yellow" />
-            Requires Payment
-          </label>
-
-          {#if eventRequiresPayment}
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <Input
-                type="number"
-                label="Amount"
-                bind:value={eventAmount as unknown as string}
-                step="0.01"
-              />
-              <Input label="Currency" bind:value={eventCurrency} />
-            </div>
-          {/if}
-          <Input type="number" label="Capacity" bind:value={eventCapacity as unknown as string} />
-
-          <!-- Attach a registration form to this event -->
-          {#if availableForms.length > 0}
-            <div>
-              <!-- svelte-ignore a11y_label_has_associated_control -->
-              <label class="block text-sm font-semibold text-text-main mb-1">
-                Formulaire d'inscription (optionnel)
-              </label>
-              <select
-                bind:value={eventFormId}
-                class="w-full appearance-none rounded-xl border border-cn-border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cn-yellow transition-all"
-              >
-                <option value="">-- Aucun formulaire --</option>
-                {#each availableForms as form (form._id)}
-                  <option value={form._id}>{form.title}</option>
-                {/each}
-              </select>
-            </div>
-          {/if}
-        </div>
-      {/if}
-    </div>
-
-    <!-- Standalone Form Section (only when no event button) -->
-    <div
-      class="rounded-2xl border border-cn-border p-4 bg-cn-surface/50"
-      class:hidden={includeEventButton}
-    >
-      <label class="flex items-center gap-2 font-bold text-sm cursor-pointer mb-2">
-        <input type="checkbox" bind:checked={includeForm} class="accent-cn-yellow w-4 h-4" />
-        Joindre un formulaire d'inscription
-      </label>
-
-      {#if includeForm}
-        <div class="space-y-4 mt-3 pl-2 border-l-2 border-cn-border">
-          <span class="block text-sm font-bold text-text-main mb-1">Sélectionner un formulaire</span
-          >
-          {#if availableForms.length === 0}
-            <div class="text-sm text-gray-500">
-              Aucun formulaire disponible. <a href="/forms/create" class="text-blue-500 underline"
-                >En créer un d'abord</a
-              >
-            </div>
-          {:else}
-            <div class="relative">
-              <select
-                bind:value={selectedFormId}
-                class="w-full appearance-none rounded-xl border border-cn-border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cn-yellow transition-all pr-8"
-              >
-                <option value="">-- Choisir un formulaire --</option>
-                {#each availableForms as form (form._id)}
-                  <option value={form._id}>{form.title} ({form.items.length} questions)</option>
-                {/each}
-              </select>
-              <div
-                class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-text-muted"
-              >
-                <svg
-                  class="fill-current h-4 w-4"
-                  xmlns="http://www.w3.org/2000/svg"
-                  viewBox="0 0 20 20"
-                  ><path
-                    d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"
-                  /></svg
-                >
-              </div>
-            </div>
-          {/if}
-          <div class="text-xs text-gray-500 mt-2 flex items-center gap-2">
-            <span>Les formulaires doivent être créés dans le</span>
-            <a
-              href="/forms"
-              class="inline-flex items-center gap-1 font-semibold text-blue-600 hover:text-blue-800 bg-blue-50 px-2 py-0.5 rounded border border-blue-200"
-            >
-              <span>Gestionnaire de formulaires</span>
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 20 20"
-                fill="currentColor"
-                class="w-3 h-3"
-              >
-                <path
-                  fill-rule="evenodd"
-                  d="M4.25 5.5a.75.75 0 00-.75.75v8.5c0 .414.336.75.75.75h8.5a.75.75 0 00.75-.75v-4a.75.75 0 011.5 0v4A2.25 2.25 0 0112.75 17h-8.5A2.25 2.25 0 012 14.75v-8.5A2.25 2.25 0 014.25 4h5a.75.75 0 010 1.5h-5z"
-                  clip-rule="evenodd"
-                />
-                <path
-                  fill-rule="evenodd"
-                  d="M6.194 12.753a.75.75 0 001.06.053L16.5 4.44v2.81a.75.75 0 001.5 0v-4.5a.75.75 0 00-.75-.75h-4.5a.75.75 0 000 1.5h2.553l-9.056 8.194a.75.75 0 00-.053 1.06z"
-                  clip-rule="evenodd"
-                />
-              </svg>
-            </a>
-          </div>
-        </div>
-      {/if}
-    </div>
-
-    {#if errorMessage}
-      <div class="p-3 rounded-xl bg-red-50 text-red-600 text-sm font-medium border border-red-100">
-        {errorMessage}
-      </div>
-    {/if}
-    {#if actionMessage}
-      <div
-        class="p-3 rounded-xl bg-green-50 text-green-600 text-sm font-medium border border-green-100"
+      <!-- Poll toggle -->
+      <button
+        type="button"
+        title="Sondage"
+        onclick={() => (includePoll = !includePoll)}
+        class="rounded-lg p-2 transition-colors hover:bg-cn-bg hover:text-text-main {includePoll
+          ? 'bg-cn-yellow/20 text-cn-dark'
+          : 'text-text-muted'}"
       >
-        {actionMessage}
-      </div>
-    {/if}
+        <ChartColumn size={18} />
+      </button>
 
-    <Button class="w-full" loading={publishing} onclick={publishPost}>Publish Post</Button>
+      <!-- Event toggle -->
+      <button
+        type="button"
+        title="Bouton d'événement"
+        onclick={() => {
+          includeEventButton = !includeEventButton;
+          if (includeEventButton) includeForm = false;
+        }}
+        class="rounded-lg p-2 transition-colors hover:bg-cn-bg hover:text-text-main {includeEventButton
+          ? 'bg-cn-yellow/20 text-cn-dark'
+          : 'text-text-muted'}"
+      >
+        <CalendarCheck size={18} />
+      </button>
+
+      <!-- Form toggle (hidden when event is active) -->
+      {#if !includeEventButton}
+        <button
+          type="button"
+          title="Formulaire"
+          onclick={() => (includeForm = !includeForm)}
+          class="rounded-lg p-2 transition-colors hover:bg-cn-bg hover:text-text-main {includeForm
+            ? 'bg-cn-yellow/20 text-cn-dark'
+            : 'text-text-muted'}"
+        >
+          <ClipboardList size={18} />
+        </button>
+      {/if}
+    </div>
+
+    <!-- Publish button -->
+    <button
+      type="button"
+      onclick={publishPost}
+      disabled={publishing || !markdown.trim()}
+      class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-5 py-2 text-sm font-bold text-cn-dark shadow-sm transition-all hover:bg-cn-yellow-hover disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {#if publishing}
+        <LoaderCircle size={14} class="animate-spin" />
+        Publication…
+      {:else}
+        Publier
+      {/if}
+    </button>
   </div>
-</Card>
+</div>

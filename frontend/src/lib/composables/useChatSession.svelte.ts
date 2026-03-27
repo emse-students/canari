@@ -13,7 +13,7 @@ import { getStorage } from '$lib/db';
 import type { IStorage } from '$lib/db';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { computePinVerifier } from '$lib/utils/chat/auth';
-import { getToken } from '$lib/stores/auth';
+import { getToken, clearAuth } from '$lib/stores/auth';
 import {
   addDevMember,
   exportUserBackup,
@@ -284,8 +284,8 @@ export function useChatSession() {
     showBiometricEnrollPrompt = false;
     localStorage.removeItem('canari_saved_user');
     localStorage.removeItem('canari_saved_pin');
-    const cur = window.location.pathname + window.location.search;
-    void goto(`/login?returnTo=${encodeURIComponent(cur)}`, { replaceState: true });
+    clearAuth();
+    void goto('/login', { replaceState: true });
   }
 
   // ── Reconnection ──────────────────────────────────────────────────────────
