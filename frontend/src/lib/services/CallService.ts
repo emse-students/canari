@@ -178,11 +178,15 @@ export class CallService {
     this.pc = new RTCPeerConnection({
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
-        {
-          urls: 'turn:localhost:3478',
-          username: 'user',
-          credential: 'password',
-        },
+        ...(import.meta.env.VITE_TURN_URL
+          ? [
+              {
+                urls: import.meta.env.VITE_TURN_URL,
+                username: import.meta.env.VITE_TURN_USERNAME || 'user',
+                credential: import.meta.env.VITE_TURN_CREDENTIAL || 'password',
+              },
+            ]
+          : []),
       ],
     });
 

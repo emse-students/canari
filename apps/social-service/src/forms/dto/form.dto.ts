@@ -98,6 +98,10 @@ export class CreateFormDto {
   @IsString()
   @IsOptional()
   ownerId?: string;
+
+  @IsString()
+  @IsOptional()
+  associationId?: string;
 }
 
 export class UpdateFormDto extends CreateFormDto {}

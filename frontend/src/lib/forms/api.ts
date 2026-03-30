@@ -28,6 +28,7 @@ export interface CreateFormPayload {
   items: FormItem[];
   maxSubmissions?: number;
   requiresPayment?: boolean;
+  associationId?: string;
 }
 
 export interface Form extends CreateFormPayload {

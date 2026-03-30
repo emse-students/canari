@@ -28,10 +28,20 @@ export class TauriMlsService implements IMlsService {
     this.deviceId = 'pending';
 
     const envGateway = import.meta.env.VITE_GATEWAY_URL;
-    this.baseUrl = envGateway && envGateway.trim() ? envGateway : 'http://localhost:3000';
+    this.baseUrl =
+      envGateway && envGateway.trim()
+        ? envGateway
+        : typeof window !== 'undefined'
+          ? window.location.origin
+          : 'http://localhost:3000';
 
     const envHistory = import.meta.env.VITE_DELIVERY_URL;
-    this.historyUrl = envHistory && envHistory.trim() ? envHistory : 'http://localhost:3010';
+    this.historyUrl =
+      envHistory && envHistory.trim()
+        ? envHistory
+        : typeof window !== 'undefined'
+          ? window.location.origin
+          : 'http://localhost:3010';
   }
 
   async connect(token: string): Promise<void> {

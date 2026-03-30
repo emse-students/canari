@@ -37,6 +37,10 @@ export class Form {
   @Column({ default: false })
   requiresPayment: boolean;
 
+  @Column({ nullable: true })
+  @Index()
+  associationId: string;
+
   @Column('jsonb', { default: [] })
   items: any[];
 

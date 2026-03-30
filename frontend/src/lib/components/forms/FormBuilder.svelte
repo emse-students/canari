@@ -1,5 +1,6 @@
 <script lang="ts">
   import Input from '$lib/components/ui/Input.svelte';
+  import { Trash2, X, Plus } from 'lucide-svelte';
 
   let { item = $bindable(), onRemove } = $props<{
     item: any;
@@ -7,19 +8,22 @@
   }>();
 
   const formItemTypes = [
-    { value: 'short_text', label: 'Short Answer' },
-    { value: 'long_text', label: 'Paragraph' },
-    { value: 'single_choice', label: 'Single Choice (Radio)' },
-    { value: 'multiple_choice', label: 'Multiple Choice (Checkbox)' },
-    { value: 'dropdown', label: 'Dropdown' },
-    { value: 'linear_scale', label: 'Linear Scale' },
-    { value: 'matrix_single', label: 'Single Choice Grid' },
-    { value: 'matrix_multiple', label: 'Checkbox Grid' },
+    { value: 'short_text', label: 'Réponse courte' },
+    { value: 'long_text', label: 'Paragraphe' },
+    { value: 'single_choice', label: 'Choix unique (Radio)' },
+    { value: 'multiple_choice', label: 'Choix multiples (Cases)' },
+    { value: 'dropdown', label: 'Liste déroulante' },
+    { value: 'linear_scale', label: 'Échelle linéaire' },
+    { value: 'matrix_single', label: 'Grille choix unique' },
+    { value: 'matrix_multiple', label: 'Grille choix multiples' },
   ];
+
+  const isMatrix = $derived(['matrix_single', 'matrix_multiple'].includes(item.type));
+  const hasOptions = $derived(!['short_text', 'long_text', 'linear_scale'].includes(item.type));
 
   function addOption() {
     if (!item.options) item.options = [];
-    item.options = [...item.options, { label: 'Nouvelle option', priceModifier: undefined }];
+    item.options = [...item.options, { label: '', priceModifier: undefined }];
   }
 
   function removeOption(idx: number) {
@@ -29,7 +33,7 @@
 
   function addRow() {
     if (!item.rows) item.rows = [];
-    item.rows = [...item.rows, `Row ${item.rows.length + 1}`];
+    item.rows = [...item.rows, ''];
   }
 
   function removeRow(idx: number) {
@@ -44,250 +48,187 @@
 </script>
 
 <div
-  class="relative p-5 bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-sm group transition-all hover:shadow-md"
+  class="relative p-5 bg-[var(--cn-surface)] rounded-2xl border-2 border-cn-border group transition-all hover:border-cn-yellow/40"
 >
+  <!-- Delete button -->
   <button
-    class="absolute top-3 right-3 p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+    class="absolute top-3 right-3 p-1.5 text-text-muted hover:text-red-500 hover:bg-red-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
     onclick={onRemove}
     type="button"
-    title="Remove Question"
+    title="Supprimer la question"
   >
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      stroke-width="2"
-      stroke-linecap="round"
-      stroke-linejoin="round"
-    >
-      <path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path
-        d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
-      /><line x1="10" x2="10" y1="11" y2="17" /><line x1="14" x2="14" y1="11" y2="17" />
-    </svg>
+    <Trash2 size={16} />
   </button>
 
+  <!-- Question label + Type -->
   <div class="grid grid-cols-1 md:grid-cols-12 gap-4 mb-4 pr-8">
-    <div class="md:col-span-8">
-      <Input label="Question" bind:value={item.label} />
+    <div class="md:col-span-7">
+      <Input label="Question" bind:value={item.label} placeholder="Intitulé de la question" />
     </div>
-    <div class="md:col-span-4">
-      <span class="block text-sm font-bold mb-1 ml-1">Type</span>
-      <div class="relative">
-        <select
-          bind:value={item.type}
-          class="w-full appearance-none rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all pr-8"
-        >
-          {#each formItemTypes as type (type.value)}
-            <option value={type.value}>{type.label}</option>
-          {/each}
-        </select>
-        <div
-          class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-500"
-        >
-          <svg class="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"
-            ><path
-              d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"
-            /></svg
-          >
-        </div>
-      </div>
+    <div class="md:col-span-5">
+      <label for="item-type-select" class="block text-sm font-bold text-text-main mb-2 ml-1"
+        >Type</label
+      >
+      <select
+        id="item-type-select"
+        bind:value={item.type}
+        class="w-full px-4 py-3 border-2 border-cn-border rounded-2xl text-base text-text-main bg-[var(--cn-surface)] outline-none transition-all focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)]"
+      >
+        {#each formItemTypes as type (type.value)}
+          <option value={type.value}>{type.label}</option>
+        {/each}
+      </select>
     </div>
   </div>
 
+  <!-- Required toggle -->
   <div class="mb-5 flex justify-end">
-    <label class="flex items-center gap-2 cursor-pointer select-none">
-      <input
-        type="checkbox"
-        bind:checked={item.required}
-        class="appearance-none w-5 h-5 rounded border border-gray-300 checked:bg-blue-600 checked:border-blue-600 relative transition-all cursor-pointer before:content-[''] before:absolute before:inset-0 before:m-auto before:w-3 before:h-2 before:border-l-2 before:border-b-2 before:border-white before:rotate-[-45deg] before:opacity-0 checked:before:opacity-100"
-      />
-      <span class="text-sm font-medium">Answer required</span>
+    <label class="flex items-center gap-3 cursor-pointer select-none">
+      <span class="text-sm font-medium text-text-muted">Réponse obligatoire</span>
+      <div class="relative">
+        <input type="checkbox" bind:checked={item.required} class="peer sr-only" />
+        <div
+          class="w-10 h-5.5 bg-cn-border rounded-full peer-checked:bg-cn-yellow transition-colors"
+        ></div>
+        <div
+          class="absolute top-0.5 left-0.5 w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-[18px]"
+        ></div>
+      </div>
     </label>
   </div>
 
   <!-- Type Specific Rendering -->
   {#if ['short_text', 'long_text'].includes(item.type)}
     <div
-      class="p-4 bg-gray-50 dark:bg-gray-700/50 border border-dashed border-gray-200 dark:border-gray-600 rounded-xl text-sm text-gray-500 dark:text-gray-400 italic text-center"
+      class="p-4 bg-cn-border/20 border-2 border-dashed border-cn-border rounded-2xl text-sm text-text-muted italic text-center"
     >
-      User will see a {item.type === 'short_text' ? 'single-line' : 'multi-line'} text input here.
+      L'utilisateur verra un champ de saisie {item.type === 'short_text'
+        ? 'en une ligne'
+        : 'multiligne'} ici.
     </div>
   {:else if item.type === 'linear_scale'}
-    <div
-      class="p-4 bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded-xl"
-    >
-      <div class="flex items-center gap-4 mb-4">
-        <div class="flex items-center gap-3">
-          <span class="text-sm font-bold">Range:</span>
-          <select
-            bind:value={item.scale.min}
-            class="bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-sm rounded-lg px-2 py-1 outline-none"
-          >
-            <option value={0}>0</option>
-            <option value={1}>1</option>
-          </select>
-          <span class="text-xs text-gray-500 uppercase font-bold">to</span>
-          <select
-            bind:value={item.scale.max}
-            class="bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-sm rounded-lg px-2 py-1 outline-none"
-          >
-            {#each Array.from({ length: 9 }, (_, i) => i + 2) as val (val)}
-              <option value={val}>{val}</option>
-            {/each}
-          </select>
-        </div>
+    <div class="p-4 bg-cn-border/20 border-2 border-cn-border rounded-2xl space-y-4">
+      <div class="flex items-center gap-4">
+        <span class="text-sm font-bold text-text-main">Plage :</span>
+        <select
+          bind:value={item.scale.min}
+          class="px-3 py-1.5 border-2 border-cn-border rounded-xl text-sm bg-[var(--cn-surface)] outline-none focus:border-cn-yellow transition-all"
+        >
+          <option value={0}>0</option>
+          <option value={1}>1</option>
+        </select>
+        <span class="text-xs text-text-muted uppercase font-bold">à</span>
+        <select
+          bind:value={item.scale.max}
+          class="px-3 py-1.5 border-2 border-cn-border rounded-xl text-sm bg-[var(--cn-surface)] outline-none focus:border-cn-yellow transition-all"
+        >
+          {#each Array.from({ length: 9 }, (_, i) => i + 2) as val (val)}
+            <option value={val}>{val}</option>
+          {/each}
+        </select>
       </div>
 
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Input
-          label={`Label for ${item.scale.min} (Optional)`}
+          label={`Libellé pour ${item.scale.min} (optionnel)`}
           bind:value={item.scale.minLabel}
-          placeholder="e.g. Strongly Disagree"
+          placeholder="ex: Pas du tout d'accord"
         />
         <Input
-          label={`Label for ${item.scale.max} (Optional)`}
+          label={`Libellé pour ${item.scale.max} (optionnel)`}
           bind:value={item.scale.maxLabel}
-          placeholder="e.g. Strongly Agree"
+          placeholder="ex: Tout à fait d'accord"
         />
       </div>
     </div>
-  {:else}
+  {:else if hasOptions}
     <!-- Options / Columns -->
     <div class="space-y-3">
-      <div
-        class="text-xs font-bold text-text-muted uppercase tracking-wider flex justify-between items-end"
-      >
-        <span
-          >{['matrix_single', 'matrix_multiple'].includes(item.type) ? 'Colonnes' : 'Options'}</span
-        >
-        {#if !['matrix_single', 'matrix_multiple'].includes(item.type)}
-          <span class="text-xs normal-case text-gray-500 font-medium mr-14">Supplément (€)</span>
+      <div class="flex justify-between items-end px-1">
+        <span class="text-xs font-bold text-text-muted uppercase tracking-wider">
+          {isMatrix ? 'Colonnes' : 'Options'}
+        </span>
+        {#if !isMatrix}
+          <span class="text-xs text-text-muted font-medium mr-12">Supplément (€)</span>
         {/if}
       </div>
 
-      <div class="space-y-2 pl-1">
+      <div class="space-y-2">
         {#each item.options as opt, optIdx (optIdx)}
-          <div class="flex gap-3 items-center group/option">
-            <div class="w-5 flex justify-center text-gray-400 pt-3">
-              <span class="text-xs font-mono opacity-60">{optIdx + 1}.</span>
-            </div>
+          <div class="flex gap-2 items-center">
+            <span class="text-xs font-mono text-text-muted w-5 text-center shrink-0 pt-2"
+              >{optIdx + 1}.</span
+            >
 
             <div class="flex-1">
               <Input
-                placeholder={['matrix_single', 'matrix_multiple'].includes(item.type)
-                  ? 'Libellé de la colonne'
-                  : "Libellé de l'option"}
+                placeholder={isMatrix ? 'Libellé de la colonne' : "Libellé de l'option"}
                 bind:value={opt.label}
               />
             </div>
 
-            {#if !['matrix_single', 'matrix_multiple'].includes(item.type)}
-              <div class="w-28 relative group/price">
-                <Input
-                  type="number"
-                  placeholder="0.00"
-                  bind:value={opt.priceModifier}
-                  step="0.01"
-                />
+            {#if !isMatrix}
+              <div class="w-24">
+                <Input type="number" placeholder="0" bind:value={opt.priceModifier} step="0.01" />
               </div>
             {/if}
 
-            <div class="pt-1">
-              <button
-                class="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                onclick={() => removeOption(optIdx)}
-                type="button"
-                title="Remove option"
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
-            </div>
+            <button
+              class="p-2 text-text-muted hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors shrink-0 mt-1"
+              onclick={() => removeOption(optIdx)}
+              type="button"
+              title="Supprimer"
+            >
+              <X size={16} />
+            </button>
           </div>
         {/each}
       </div>
 
-      <div class="pl-8">
-        <button
-          class="text-xs flex items-center gap-1 text-blue-600 font-bold hover:underline py-1"
-          onclick={addOption}
-          type="button"
-        >
-          <span class="text-lg leading-none">+</span> Ajouter {[
-            'matrix_single',
-            'matrix_multiple',
-          ].includes(item.type)
-            ? 'une colonne'
-            : 'une option'}
-        </button>
-      </div>
+      <button
+        class="text-sm flex items-center gap-1.5 text-cn-dark font-bold hover:text-cn-yellow transition-colors py-1 ml-7"
+        onclick={addOption}
+        type="button"
+      >
+        <Plus size={16} />
+        Ajouter {isMatrix ? 'une colonne' : 'une option'}
+      </button>
     </div>
 
     <!-- Rows for Matrix -->
-    {#if ['matrix_single', 'matrix_multiple'].includes(item.type)}
-      <div class="mt-6 pt-4 border-t border-dashed border-gray-200 dark:border-gray-700 space-y-3">
-        <div class="text-xs font-bold text-text-muted uppercase tracking-wider">Rows</div>
+    {#if isMatrix}
+      <div class="mt-5 pt-5 border-t-2 border-dashed border-cn-border space-y-3">
+        <span class="text-xs font-bold text-text-muted uppercase tracking-wider px-1">Lignes</span>
 
-        <div class="space-y-2 pl-1">
+        <div class="space-y-2">
           {#each item.rows as _row, rowIdx (rowIdx)}
-            <div class="flex gap-3 items-center">
-              <div class="w-5 text-gray-400 text-xs text-right opacity-50 font-mono pt-3">
-                {rowIdx + 1}.
-              </div>
+            <div class="flex gap-2 items-center">
+              <span class="text-xs font-mono text-text-muted w-5 text-center shrink-0 pt-2"
+                >{rowIdx + 1}.</span
+              >
               <div class="flex-1">
-                <Input placeholder="Row Label" bind:value={item.rows[rowIdx]} />
+                <Input placeholder="Libellé de la ligne" bind:value={item.rows[rowIdx]} />
               </div>
-              <div class="pt-1">
-                <button
-                  class="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                  onclick={() => removeRow(rowIdx)}
-                  type="button"
-                  title="Remove row"
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  >
-                    <line x1="18" y1="6" x2="6" y2="18" />
-                    <line x1="6" y1="6" x2="18" y2="18" />
-                  </svg>
-                </button>
-              </div>
+              <button
+                class="p-2 text-text-muted hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors shrink-0 mt-1"
+                onclick={() => removeRow(rowIdx)}
+                type="button"
+                title="Supprimer"
+              >
+                <X size={16} />
+              </button>
             </div>
           {/each}
         </div>
 
-        <div class="pl-8">
-          <button
-            class="text-xs flex items-center gap-1 text-blue-600 font-bold hover:underline py-1"
-            onclick={addRow}
-            type="button"
-          >
-            <span class="text-lg leading-none">+</span> Add Row
-          </button>
-        </div>
+        <button
+          class="text-sm flex items-center gap-1.5 text-cn-dark font-bold hover:text-cn-yellow transition-colors py-1 ml-7"
+          onclick={addRow}
+          type="button"
+        >
+          <Plus size={16} />
+          Ajouter une ligne
+        </button>
       </div>
     {/if}
   {/if}
