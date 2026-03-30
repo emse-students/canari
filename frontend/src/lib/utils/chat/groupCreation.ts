@@ -180,18 +180,26 @@ async function processBulkAddition(
     const stateBytes = await mlsService.saveState(pin);
     localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
 
-    // Send Welcomes
+    // Send welcomes per-device; do not abort all recipients on one failure.
     if (bulk.welcome) {
       for (const did of bulk.addedDeviceIds) {
         const tUser = userMap.get(did);
         if (!tUser) continue;
-        await mlsService.sendWelcome(
-          bulk.welcome,
-          tUser,
-          conversation.groupId,
-          did,
-          bulk.ratchetTree
-        );
+        try {
+          await mlsService.sendWelcome(
+            bulk.welcome,
+            tUser,
+            conversation.groupId,
+            did,
+            bulk.ratchetTree
+          );
+        } catch (err) {
+          log(
+            `[WARN] Welcome non livre pour ${tUser}:${did} - ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
+        }
       }
     }
 

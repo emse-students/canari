@@ -43,6 +43,7 @@ export class ChannelService {
     const adminRole = this.roleRepo.create({
       workspaceId: savedWs.id,
       name: 'Admin',
+      priority: 100,
       permissions: [
         'MANAGE_WORKSPACE',
         'MANAGE_CHANNELS',
@@ -57,6 +58,7 @@ export class ChannelService {
     const memberRole = this.roleRepo.create({
       workspaceId: savedWs.id,
       name: 'Member',
+      priority: 10,
       permissions: ['SEND_MESSAGES', 'INVITE_USERS'],
     });
     await this.roleRepo.save(memberRole);

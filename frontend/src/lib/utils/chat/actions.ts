@@ -38,8 +38,13 @@ export async function syncOwnDevicesToGroups(params: {
   let totalWelcomes = 0;
 
   for (const device of newDevices) {
+    let deviceWelcomes = 0;
+    let hadAttempt = false;
+    let hadFailure = false;
+
     for (const [, convo] of conversations.entries()) {
       if (!convo.isReady) continue;
+      hadAttempt = true;
       try {
         const result = await mlsService.addMember(convo.groupId, device.keyPackage);
         await mlsService.registerMember(convo.groupId, userId, device.deviceId);
@@ -52,6 +57,7 @@ export async function syncOwnDevicesToGroups(params: {
             result.ratchetTree
           );
           totalWelcomes++;
+          deviceWelcomes++;
         }
         if (result.commit) {
           await mlsService.sendCommit(result.commit, convo.groupId);
@@ -60,15 +66,22 @@ export async function syncOwnDevicesToGroups(params: {
         localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
       } catch {
         // Per-group failure is expected (deleted group, wrong epoch, etc.).
-        // Don't block caching — we still mark the device as known so we
-        // don't re-trigger a full sync-storm on every reconnect.
+        hadFailure = true;
       }
     }
-    // Always cache the device as "known" after attempting the sync.
-    // If a specific group failed, it will be fixed separately (re-invite, etc.)
-    // rather than by re-running the full sync loop on every connection.
-    knownIds.add(device.deviceId);
-    localStorage.setItem(cacheKey, JSON.stringify([...knownIds]));
+
+    // Cache the device only after at least one successful welcome, or when there
+    // was nothing to sync at all. If all attempts failed, keep it uncached so a
+    // later reconnect retries the repair automatically.
+    const markKnown = deviceWelcomes > 0 || !hadAttempt || !hadFailure;
+    if (markKnown) {
+      knownIds.add(device.deviceId);
+      localStorage.setItem(cacheKey, JSON.stringify([...knownIds]));
+    } else {
+      log(
+        `[SYNC] Synchronisation partielle pour ${device.deviceId}; nouvelle tentative automatique au prochain reconnect.`
+      );
+    }
   }
 
   if (totalWelcomes > 0) {
