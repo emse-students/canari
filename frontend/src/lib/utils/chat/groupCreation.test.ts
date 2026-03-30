@@ -222,7 +222,7 @@ describe('startNewConversation', () => {
     expect(mls.registerMember).toHaveBeenCalledWith('group-test-uuid', 'jolan2', 'dev-jolan2-B');
   });
 
-  it('envoie un Welcome HTTP pour chaque device de jolan2', async () => {
+  it('envoie un Welcome pour chaque device de jolan2', async () => {
     const devices = [
       { keyPackage: new Uint8Array([0x10]), deviceId: 'dev-jolan2-A' },
       { keyPackage: new Uint8Array([0x20]), deviceId: 'dev-jolan2-B' },
@@ -238,18 +238,21 @@ describe('startNewConversation', () => {
     const convs = makeConversationMap();
     await startNewConversation('jolan2', makeDeps(mls, convs));
 
-    const welcomeCalls = mockFetch.mock.calls.filter(([url]: any[]) =>
-      (url as string).includes('/api/mls-api/welcome')
+    expect(mls.sendWelcome).toHaveBeenCalledTimes(2);
+    expect(mls.sendWelcome).toHaveBeenCalledWith(
+      new Uint8Array([0xaa, 0xbb]),
+      'jolan2',
+      'group-test-uuid',
+      'dev-jolan2-A',
+      undefined
     );
-    // Un Welcome par device
-    expect(welcomeCalls).toHaveLength(2);
-    // Vérifier le payload du premier Welcome
-    const [, opts] = welcomeCalls[0];
-    const body = JSON.parse(opts.body);
-    expect(body.targetUserId).toBe('jolan2');
-    expect(body.senderUserId).toBe('jolan');
-    expect(body.groupId).toBe('group-test-uuid');
-    expect(body.welcomePayload).toBeDefined();
+    expect(mls.sendWelcome).toHaveBeenCalledWith(
+      new Uint8Array([0xaa, 0xbb]),
+      'jolan2',
+      'group-test-uuid',
+      'dev-jolan2-B',
+      undefined
+    );
   });
 
   it('envoie le commit après les Welcomes', async () => {
@@ -497,16 +500,21 @@ describe('inviteMemberToGroup', () => {
     const convs = makeConversationMap();
     await inviteMemberToGroup('jolan2', existingConvo, makeDeps(mls, convs));
 
-    const welcomeCalls = mockFetch.mock.calls.filter(([url]: any[]) =>
-      (url as string).includes('/api/mls-api/welcome')
+    expect(mls.sendWelcome).toHaveBeenCalledTimes(2);
+    expect(mls.sendWelcome).toHaveBeenCalledWith(
+      new Uint8Array([0xff]),
+      'jolan2',
+      'group-dev-team',
+      'dev-j2-a',
+      undefined
     );
-    expect(welcomeCalls).toHaveLength(2);
-    const bodies = welcomeCalls.map((call: any[]) =>
-      JSON.parse((call[1] as RequestInit).body as string)
+    expect(mls.sendWelcome).toHaveBeenCalledWith(
+      new Uint8Array([0xff]),
+      'jolan2',
+      'group-dev-team',
+      'dev-j2-b',
+      undefined
     );
-    expect(bodies[0].targetUserId).toBe('jolan2');
-    expect(bodies[0].groupId).toBe('group-dev-team');
-    expect(bodies[1].targetDeviceId).toBe('dev-j2-b');
   });
 
   it('envoie le commit après les Welcomes', async () => {
@@ -567,10 +575,12 @@ describe('inviteMemberToGroup', () => {
     const convs = makeConversationMap();
     await inviteMemberToGroup('JOLAN2', existingConvo, makeDeps(mls, convs));
 
-    const welcomeCalls = mockFetch.mock.calls.filter(([url]: any[]) =>
-      (url as string).includes('/api/mls-api/welcome')
+    expect(mls.sendWelcome).toHaveBeenCalledWith(
+      expect.any(Uint8Array),
+      'jolan2',
+      'group-dev-team',
+      'dev-jolan2-01',
+      undefined
     );
-    const body = JSON.parse((welcomeCalls[0][1] as RequestInit).body as string);
-    expect(body.targetUserId).toBe('jolan2');
   });
 });

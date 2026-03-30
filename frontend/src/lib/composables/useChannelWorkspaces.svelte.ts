@@ -31,6 +31,23 @@ export function useChannelWorkspaces() {
 
   const service = new ChannelService();
 
+  function toUiActionError(action: string, error: unknown): string {
+    const raw = error instanceof Error ? error.message : String(error);
+    const lower = raw.toLowerCase();
+
+    if (lower.includes('401') || lower.includes('403') || lower.includes('unauthorized')) {
+      return `${action} impossible: session expirée ou droits insuffisants. Reconnectez-vous.`;
+    }
+    if (lower.includes('409') || lower.includes('already')) {
+      return `${action} impossible: élément déjà existant.`;
+    }
+    if (lower.includes('network') || lower.includes('fetch') || lower.includes('failed to fetch')) {
+      return `${action} impossible: service indisponible. Vérifiez la connexion réseau.`;
+    }
+
+    return `${action} impossible: ${raw}`;
+  }
+
   // ---------- Workspace helpers ----------
 
   function slugifyWorkspace(name: string): string {
@@ -185,8 +202,12 @@ export function useChannelWorkspaces() {
   async function createNewCommunity(nameRaw: string, ctx: ChannelWorkspaceContext) {
     const normalized = nameRaw.trim();
     if (!normalized) return;
-    await ensureWorkspaceByName(normalized, ctx);
-    ctx.log(`Communauté créée : ${normalized}`);
+    try {
+      await ensureWorkspaceByName(normalized, ctx);
+      ctx.log(`Communauté créée : ${normalized}`);
+    } catch (error) {
+      ctx.log(toUiActionError('Création de communauté', error));
+    }
   }
 
   async function createNewChannel(
@@ -194,42 +215,50 @@ export function useChannelWorkspaces() {
     nameRaw: string,
     ctx: ChannelWorkspaceContext
   ) {
-    if (!workspaceId) throw new Error("Vous devez d'abord sélectionner une communauté.");
+    if (!workspaceId) {
+      ctx.log("Création de canal impossible: sélectionnez d'abord une communauté.");
+      return;
+    }
     const normalizedChannelName = nameRaw.trim().toLowerCase();
     if (!normalizedChannelName) return;
 
-    const createdChannel = await service.createChannel({
-      workspaceId,
-      name: normalizedChannelName,
-      visibility: 'public',
-    });
-
-    const actualId =
-      createdChannel?.id || createdChannel?._id || `${workspaceId}_${normalizedChannelName}`;
-    const channelId = `channel_${actualId}`;
-
-    const sidebarWorkspace = channelWorkspaces.find((w) => w.workspaceDbId === workspaceId);
-    if (sidebarWorkspace) {
-      addChannelToWorkspace(sidebarWorkspace.id, {
-        id: channelId,
+    try {
+      const createdChannel = await service.createChannel({
+        workspaceId,
         name: normalizedChannelName,
-        isPrivate: false,
+        visibility: 'public',
       });
-    }
 
-    selectedChannelConversationId = channelId;
+      const actualId =
+        createdChannel?.id || createdChannel?._id || `${workspaceId}_${normalizedChannelName}`;
+      const channelId = `channel_${actualId}`;
 
-    if (!ctx.conversations.has(channelId)) {
-      ctx.conversations.set(channelId, {
-        contactName: channelId,
-        name: normalizedChannelName,
-        groupId: channelId,
-        messages: [],
-        isReady: true,
-        mlsStateHex: null,
-      });
-      await ctx.saveConversation(channelId);
-      ctx.selectConversation(channelId);
+      const sidebarWorkspace = channelWorkspaces.find((w) => w.workspaceDbId === workspaceId);
+      if (sidebarWorkspace) {
+        addChannelToWorkspace(sidebarWorkspace.id, {
+          id: channelId,
+          name: normalizedChannelName,
+          isPrivate: false,
+        });
+      }
+
+      selectedChannelConversationId = channelId;
+
+      if (!ctx.conversations.has(channelId)) {
+        ctx.conversations.set(channelId, {
+          contactName: channelId,
+          name: normalizedChannelName,
+          groupId: channelId,
+          messages: [],
+          isReady: true,
+          mlsStateHex: null,
+        });
+        await ctx.saveConversation(channelId);
+        ctx.selectConversation(channelId);
+      }
+      ctx.log(`Canal créé : #${normalizedChannelName}`);
+    } catch (error) {
+      ctx.log(toUiActionError('Création de canal', error));
     }
   }
 
@@ -243,8 +272,12 @@ export function useChannelWorkspaces() {
     const channelId = channelConversationId.replace(/^channel_/, '');
     if (!memberId || !channelId) return;
 
-    await service.joinChannel(channelId, { roleName });
-    ctx.log(`Membre invité dans le canal (${roleName}) : ${memberId}`);
+    try {
+      await service.joinChannel(channelId, { roleName });
+      ctx.log(`Membre invité dans le canal (${roleName}) : ${memberId}`);
+    } catch (error) {
+      ctx.log(toUiActionError(`Invitation dans le canal (${roleName})`, error));
+    }
   }
 
   async function updateChannelMemberRole(
@@ -257,8 +290,12 @@ export function useChannelWorkspaces() {
     const channelId = channelConversationId.replace(/^channel_/, '');
     if (!memberId || !channelId) return;
 
-    await service.updateMemberRole(channelId, { targetUserId: memberId, roleName });
-    ctx.log(`Rôle mis à jour (${roleName}) pour : ${memberId}`);
+    try {
+      await service.updateMemberRole(channelId, { targetUserId: memberId, roleName });
+      ctx.log(`Rôle mis à jour (${roleName}) pour : ${memberId}`);
+    } catch (error) {
+      ctx.log(toUiActionError(`Mise à jour du rôle (${roleName})`, error));
+    }
   }
 
   return {

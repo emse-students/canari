@@ -17,6 +17,26 @@ interface GroupCreationDeps {
   log: (msg: string) => void;
 }
 
+function toUiDiscussionError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const lower = raw.toLowerCase();
+
+  if (lower.includes('aucun appareil actif trouvé') || lower.includes('no registered device')) {
+    return "Le destinataire ne possède pas encore d'appareil actif.";
+  }
+  if (lower.includes('session expir') || lower.includes('401') || lower.includes('403')) {
+    return 'Session expirée ou droits insuffisants. Reconnectez-vous puis réessayez.';
+  }
+  if (lower.includes('failed to fetch') || lower.includes('network')) {
+    return 'Service de messagerie indisponible. Vérifiez votre connexion réseau.';
+  }
+  if (lower.includes("impossible d'envoyer l'invitation sécurisée")) {
+    return raw;
+  }
+
+  return raw;
+}
+
 async function fetchDevicesWithRetry(
   mlsService: IMlsService,
   userId: string,
@@ -106,7 +126,7 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
     saveConversation(conversationKey);
     log(`[OK] Groupe "${groupDisplayName}" cree.`);
   } catch (e) {
-    log(`Erreur création groupe: ${e}`);
+    log(`Erreur création groupe: ${toUiDiscussionError(e)}`);
   }
 }
 
@@ -116,7 +136,7 @@ async function processBulkAddition(
   conversation: Conversation,
   deps: GroupCreationDeps
 ): Promise<void> {
-  const { mlsService, userId, pin, historyBaseUrl, log } = deps;
+  const { mlsService, userId, pin, log } = deps;
   if (memberIds.length === 0) return;
 
   const targetUsers = memberIds.map((m) => m.trim().toLowerCase()).filter(Boolean);
@@ -162,35 +182,16 @@ async function processBulkAddition(
 
     // Send Welcomes
     if (bulk.welcome) {
-      const welcomeB64 = btoa(
-        Array.from(bulk.welcome)
-          .map((b) => String.fromCharCode(b))
-          .join('')
-      );
-      const ratchetTreeB64 = bulk.ratchetTree
-        ? btoa(
-            Array.from(bulk.ratchetTree)
-              .map((b) => String.fromCharCode(b))
-              .join('')
-          )
-        : undefined;
-
       for (const did of bulk.addedDeviceIds) {
         const tUser = userMap.get(did);
-        if (tUser) {
-          await fetch(`${historyBaseUrl}/api/mls-api/welcome`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              targetDeviceId: did,
-              targetUserId: tUser,
-              senderUserId: userId,
-              welcomePayload: welcomeB64,
-              ratchetTreePayload: ratchetTreeB64,
-              groupId: conversation.groupId,
-            }),
-          });
-        }
+        if (!tUser) continue;
+        await mlsService.sendWelcome(
+          bulk.welcome,
+          tUser,
+          conversation.groupId,
+          did,
+          bulk.ratchetTree
+        );
       }
     }
 
@@ -211,7 +212,7 @@ async function processBulkAddition(
       console.warn('Failed to broadcast member addition:', e);
     }
   } catch (e: any) {
-    log(`Erreur invitation groupée: ${e?.message ?? e}`);
+    log(`Erreur invitation groupée: ${toUiDiscussionError(e)}`);
   }
 }
 
@@ -246,16 +247,8 @@ export async function startNewConversation(
   contactName: string,
   deps: GroupCreationDeps
 ): Promise<void> {
-  const {
-    mlsService,
-    userId,
-    pin,
-    historyBaseUrl,
-    conversations,
-    selectConversation,
-    saveConversation,
-    log,
-  } = deps;
+  const { mlsService, userId, pin, conversations, selectConversation, saveConversation, log } =
+    deps;
 
   const contact = contactName.trim().toLowerCase();
   if (!contact || contact === userId) return;
@@ -332,31 +325,8 @@ export async function startNewConversation(
       localStorage.setItem('mls_autosave_' + userId, toHex(st2Bytes));
 
       if (bulk.welcome) {
-        const welcomeB64 = btoa(
-          Array.from(bulk.welcome)
-            .map((b) => String.fromCharCode(b))
-            .join('')
-        );
-        const ratchetTreeB64 = bulk.ratchetTree
-          ? btoa(
-              Array.from(bulk.ratchetTree)
-                .map((b) => String.fromCharCode(b))
-                .join('')
-            )
-          : undefined;
         for (const did of bulk.addedDeviceIds) {
-          await fetch(`${historyBaseUrl}/api/mls-api/welcome`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              targetDeviceId: did,
-              targetUserId: contact,
-              senderUserId: userId,
-              welcomePayload: welcomeB64,
-              ratchetTreePayload: ratchetTreeB64,
-              groupId,
-            }),
-          });
+          await mlsService.sendWelcome(bulk.welcome, contact, groupId, did, bulk.ratchetTree);
         }
       }
       if (bulk.commit) await mlsService.sendCommit(bulk.commit, groupId);
@@ -373,7 +343,7 @@ export async function startNewConversation(
     }
   } catch (_e: unknown) {
     const msg = _e instanceof Error ? _e.message : String(_e);
-    log(`Erreur création: ${msg}`);
+    log(`Erreur création: ${toUiDiscussionError(msg)}`);
     conversations.delete(conversationKey);
   }
 }
@@ -382,7 +352,7 @@ export async function repairDirectConversation(
   conversationKey: string,
   deps: GroupCreationDeps
 ): Promise<boolean> {
-  const { mlsService, userId, pin, historyBaseUrl, conversations, saveConversation, log } = deps;
+  const { mlsService, userId, pin, conversations, saveConversation, log } = deps;
   const convo = conversations.get(conversationKey);
   if (!convo || convo.conversationType !== 'direct') return false;
 
@@ -431,31 +401,8 @@ export async function repairDirectConversation(
       localStorage.setItem('mls_autosave_' + userId, toHex(st2Bytes));
 
       if (bulk.welcome) {
-        const welcomeB64 = btoa(
-          Array.from(bulk.welcome)
-            .map((b) => String.fromCharCode(b))
-            .join('')
-        );
-        const ratchetTreeB64 = bulk.ratchetTree
-          ? btoa(
-              Array.from(bulk.ratchetTree)
-                .map((b) => String.fromCharCode(b))
-                .join('')
-            )
-          : undefined;
         for (const did of bulk.addedDeviceIds) {
-          await fetch(`${historyBaseUrl}/api/mls-api/welcome`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              targetDeviceId: did,
-              targetUserId: contact,
-              senderUserId: userId,
-              welcomePayload: welcomeB64,
-              ratchetTreePayload: ratchetTreeB64,
-              groupId,
-            }),
-          });
+          await mlsService.sendWelcome(bulk.welcome, contact, groupId, did, bulk.ratchetTree);
         }
       }
       if (bulk.commit) await mlsService.sendCommit(bulk.commit, groupId);
@@ -469,7 +416,7 @@ export async function repairDirectConversation(
       return false;
     }
   } catch (e) {
-    log(`Erreur de réparation : ${e}`);
+    log(`Erreur de réparation : ${toUiDiscussionError(e)}`);
     return false;
   }
 }

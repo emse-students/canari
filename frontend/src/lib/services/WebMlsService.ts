@@ -29,6 +29,21 @@ export class WebMlsService implements IMlsService {
     return headers;
   }
 
+  private async assertOkResponse(response: Response, context: string): Promise<void> {
+    if (response.ok) return;
+    let bodyPreview = '';
+    try {
+      bodyPreview = (await response.text()).slice(0, 300);
+    } catch {
+      // Silent fallback if response body cannot be read
+    }
+    const details = bodyPreview ? ` - ${bodyPreview}` : '';
+    throw new Error(
+      `Impossible d'envoyer l'invitation sécurisée (${context}). ` +
+        `Le serveur a répondu ${response.status} ${response.statusText}${details}`
+    );
+  }
+
   constructor() {
     // Device ID is initialized per-user in init() to avoid collisions when multiple
     // users share the same browser (e.g. two tabs in the same browser window).
@@ -348,7 +363,7 @@ export class WebMlsService implements IMlsService {
     if (targetDeviceId) {
       // Dedicated welcome endpoint: persists to MongoDB (offline inbox) and pushes
       // via Redis pubsub if the target device is currently online.
-      await fetch(`${this.historyUrl}/api/mls-api/welcome`, {
+      const response = await fetch(`${this.historyUrl}/api/mls-api/welcome`, {
         method: 'POST',
         headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
@@ -360,6 +375,10 @@ export class WebMlsService implements IMlsService {
           groupId,
         }),
       });
+      await this.assertOkResponse(
+        response,
+        `Welcome delivery to ${targetUserId}:${targetDeviceId} (group ${groupId})`
+      );
     } else if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       // WS path: we need a deviceId for the gateway to route properly.
       // If caller didn't provide one, resolve it from the delivery service.
@@ -369,7 +388,10 @@ export class WebMlsService implements IMlsService {
         resolvedDeviceId = devices[0]?.deviceId;
       }
       if (!resolvedDeviceId) {
-        throw new Error(`Cannot send Welcome to ${targetUserId}: no registered device found`);
+        throw new Error(
+          `Impossible d'envoyer l'invitation sécurisée à ${targetUserId} : ` +
+            `aucun appareil actif trouvé.`
+        );
       }
       this.ws.send(
         JSON.stringify({
@@ -388,9 +410,12 @@ export class WebMlsService implements IMlsService {
         resolvedDeviceId = devices[0]?.deviceId;
       }
       if (!resolvedDeviceId) {
-        throw new Error(`Cannot send Welcome to ${targetUserId}: no registered device found`);
+        throw new Error(
+          `Impossible d'envoyer l'invitation sécurisée à ${targetUserId} : ` +
+            `aucun appareil actif trouvé.`
+        );
       }
-      await fetch(`${this.historyUrl}/api/mls-api/welcome`, {
+      const response = await fetch(`${this.historyUrl}/api/mls-api/welcome`, {
         method: 'POST',
         headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
@@ -402,6 +427,10 @@ export class WebMlsService implements IMlsService {
           groupId,
         }),
       });
+      await this.assertOkResponse(
+        response,
+        `Welcome fallback delivery to ${targetUserId}:${resolvedDeviceId} (group ${groupId})`
+      );
     }
   }
 

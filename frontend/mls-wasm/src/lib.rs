@@ -14,7 +14,7 @@ struct WebLogger;
 
 impl log::Log for WebLogger {
     fn enabled(&self, metadata: &Metadata) -> bool {
-        metadata.level() <= Level::Debug
+        metadata.level() <= Level::Info
     }
 
     fn log(&self, record: &Record) {
@@ -32,7 +32,7 @@ static LOGGER: WebLogger = WebLogger;
 #[wasm_bindgen]
 pub fn init_logger() {
     // Attempt to init logger. If fails (already init), ignore.
-    let _ = log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Debug));
+    let _ = log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Info));
 }
 
 // ----------------------------------------------------

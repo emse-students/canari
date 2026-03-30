@@ -7,6 +7,21 @@ import type { IMlsService } from './IMlsService';
 
 export class TauriMlsService implements IMlsService {
   private ws: WebSocket | null = null;
+
+  private async assertOkResponse(response: Response, context: string): Promise<void> {
+    if (response.ok) return;
+    let bodyPreview = '';
+    try {
+      bodyPreview = (await response.text()).slice(0, 300);
+    } catch {
+      // Silent fallback if response body cannot be read
+    }
+    const details = bodyPreview ? ` - ${bodyPreview}` : '';
+    throw new Error(
+      `Impossible d'envoyer l'invitation sécurisée (${context}). ` +
+        `Le serveur a répondu ${response.status} ${response.statusText}${details}`
+    );
+  }
   public onChannelEvent?: (event: { type: string; data: any }) => void;
   private messageCallback:
     | ((
@@ -309,7 +324,7 @@ export class TauriMlsService implements IMlsService {
       : undefined;
 
     if (targetDeviceId) {
-      await fetch(`${this.historyUrl}/api/mls-api/welcome`, {
+      const response = await fetch(`${this.historyUrl}/api/mls-api/welcome`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -321,6 +336,10 @@ export class TauriMlsService implements IMlsService {
           groupId,
         }),
       });
+      await this.assertOkResponse(
+        response,
+        `Welcome delivery to ${targetUserId}:${targetDeviceId} (group ${groupId})`
+      );
       return;
     }
 
