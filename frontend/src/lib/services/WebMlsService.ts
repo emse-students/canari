@@ -1,4 +1,5 @@
 import type { IMlsService } from './IMlsService';
+import { apiFetch } from '$lib/utils/apiFetch';
 
 // Implémentation pour le Site Web (WASM)
 export class WebMlsService implements IMlsService {
@@ -298,10 +299,12 @@ export class WebMlsService implements IMlsService {
     userId: string
   ): Promise<Array<{ keyPackage: Uint8Array; deviceId: string }>> {
     try {
-      const res = await fetch(`${this.historyUrl}/api/mls-api/devices/${userId}`, {
+      const res = await apiFetch(`${this.historyUrl}/api/mls-api/devices/${userId}`, {
         headers: this.withAuthHeaders(),
       });
       if (!res.ok) return [];
+      const contentType = res.headers.get('content-type')?.toLowerCase() ?? '';
+      if (!contentType.includes('application/json')) return [];
       const devices = await res.json();
 
       return devices.map((d: any) => {
@@ -507,7 +510,7 @@ export class WebMlsService implements IMlsService {
         throw new Error(`Binaire WASM invalide (${wasmUrl}) : signature incorrecte.`);
       }
 
-      await initWasm.default(wasmResponse);
+      await initWasm.default({ module_or_path: wasmResponse });
 
       const w = window as Window & { wasm_bindings_log?: (level: string, msg: string) => void };
       if (typeof w.wasm_bindings_log !== 'function') {

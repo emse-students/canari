@@ -31,8 +31,17 @@ export async function checkPresenceNow() {
     const baseUrl = getGatewayBase();
     const res = await apiFetch(`${baseUrl}/api/presence?users=${usersStr}`);
     if (res.ok) {
+      const contentType = res.headers.get('content-type')?.toLowerCase() ?? '';
+      if (!contentType.includes('application/json')) {
+        console.warn('Presence endpoint returned non-JSON response, skipping update.');
+        return;
+      }
       const data = await res.json();
       presenceMap.update((prev) => ({ ...prev, ...data }));
+      return;
+    }
+    if (res.status !== 401) {
+      console.warn(`Presence request failed with status ${res.status}.`);
     }
   } catch (err) {
     console.error('Failed to fetch presence', err);

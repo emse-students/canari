@@ -7,6 +7,7 @@ import type { MessageReaction } from '$lib/types';
 import { decodeAppMessage, MediaKind } from '$lib/proto/codec';
 import { serializeEnvelope, mkTextEnvelope, mkMediaEnvelope } from '$lib/envelope';
 import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
+import { apiFetch } from '$lib/utils/apiFetch';
 
 function bytesToHex(bytes?: Uint8Array | null): string {
   if (!bytes || bytes.length === 0) return '';
@@ -521,18 +522,39 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       try {
         const joinedGroupId = await mlsService.processWelcome(content, ratchetTreeBytes);
         let groupName = senderNorm;
+        let memberUserIds: string[] = [];
 
         // Fetch group metadata
         try {
-          const gRes = await fetch(
+          const gRes = await apiFetch(
             `${historyBaseUrl}/api/mls-api/groups/${groupId || joinedGroupId}`
           );
           if (gRes.ok) {
-            const gData = await gRes.json();
-            if (gData?.name) groupName = gData.name;
+            const contentType = gRes.headers.get('content-type')?.toLowerCase() ?? '';
+            if (contentType.includes('application/json')) {
+              const gData = await gRes.json();
+              if (gData?.name) groupName = gData.name;
+            }
           }
         } catch {
           // Silent fallback if group metadata fetch fails
+        }
+
+        try {
+          const mRes = await apiFetch(
+            `${historyBaseUrl}/api/mls-api/groups/${groupId || joinedGroupId}/members`
+          );
+          if (mRes.ok) {
+            const contentType = mRes.headers.get('content-type')?.toLowerCase() ?? '';
+            if (contentType.includes('application/json')) {
+              const rows = (await mRes.json()) as Array<{ userId?: string }>;
+              memberUserIds = [
+                ...new Set(rows.map((r) => String(r.userId ?? '').toLowerCase())),
+              ].filter(Boolean);
+            }
+          }
+        } catch {
+          // Silent fallback if group members fetch fails
         }
 
         let isDirect = false;
@@ -550,6 +572,16 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                 ? parts[1].toLowerCase()
                 : parts[0].toLowerCase();
           }
+        }
+
+        if (
+          !isDirect &&
+          memberUserIds.length === 2 &&
+          memberUserIds.includes(userId.toLowerCase())
+        ) {
+          isDirect = true;
+          directPeerId = memberUserIds.find((id) => id !== userId.toLowerCase()) || '';
+          if (directPeerId) groupName = directPeerId;
         }
 
         let newConvoKey = `grp_${crypto.randomUUID()}`;

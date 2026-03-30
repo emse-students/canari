@@ -14,6 +14,7 @@
   function getSafeReturnTarget(): string {
     const target =
       requestedReturnTo && requestedReturnTo.startsWith('/') ? requestedReturnTo : '/chat';
+    // Avoid redirect loops to the login page itself.
     if (target === '/login' || target.startsWith('/login?')) return '/chat';
     return target;
   }

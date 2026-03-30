@@ -9,6 +9,7 @@ import { mapStoredMessagesToChatMessages, replayConversationHistory } from './hi
 import { migrateFromLocalStorage } from '../migration';
 import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
+import { apiFetch } from '$lib/utils/apiFetch';
 
 // ---------- Archive persistence ----------
 
@@ -231,6 +232,51 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
   for (const meta of mergedConvMetas) {
     (async () => {
       try {
+        const existingConvo = ctx.conversations.get(meta.id);
+        if (
+          existingConvo &&
+          (existingConvo.conversationType ?? 'group') === 'group' &&
+          !meta.groupId.startsWith('channel_')
+        ) {
+          try {
+            const res = await apiFetch(
+              `${ctx.historyBaseUrl}/api/mls-api/groups/${meta.groupId}/members`
+            );
+            if (res.ok) {
+              const contentType = res.headers.get('content-type')?.toLowerCase() ?? '';
+              if (contentType.includes('application/json')) {
+                const rows = (await res.json()) as Array<{ userId?: string }>;
+                const memberIds = [
+                  ...new Set(rows.map((r) => String(r.userId ?? '').toLowerCase())),
+                ].filter(Boolean);
+                if (memberIds.length === 2 && memberIds.includes(ctx.userId.toLowerCase())) {
+                  const peer = memberIds.find((m) => m !== ctx.userId.toLowerCase()) ?? '';
+                  if (peer) {
+                    ctx.conversations.set(meta.id, {
+                      ...existingConvo,
+                      conversationType: 'direct',
+                      directPeerId: peer,
+                      contactName: peer,
+                      name: peer,
+                    });
+
+                    const normalizedName = `${ctx.userId.toLowerCase()}::${peer}`;
+                    if (meta.name !== normalizedName) {
+                      await ctx.storage.saveConversation({
+                        ...meta,
+                        name: normalizedName,
+                        updatedAt: Date.now(),
+                      });
+                    }
+                  }
+                }
+              }
+            }
+          } catch {
+            // Non-blocking: keep existing type when members endpoint is unavailable.
+          }
+        }
+
         const storedMessages = await ctx.storage.getMessages(meta.id, ctx.pin);
         const msgs = mapStoredMessagesToChatMessages(storedMessages, ctx.userId);
         const existing = ctx.conversations.get(meta.id);
