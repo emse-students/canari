@@ -186,15 +186,20 @@ export async function deleteMessage(messageId: string, deps: AddReactionDeps): P
   }
 }
 
-export async function sendReadReceipt(messageIds: string[], deps: AddReactionDeps): Promise<void> {
+export async function sendReadReceipt(
+  messageIds: string[],
+  deps: AddReactionDeps
+): Promise<boolean> {
   const { mlsService, userId, pin, conversation } = deps;
-  if (!conversation.isReady || messageIds.length === 0) return;
+  if (!conversation.isReady || messageIds.length === 0) return false;
   try {
     const payload = encodeAppMessage(mkSystem('read_receipt', JSON.stringify({ messageIds })));
     await mlsService.sendMessage(conversation.groupId, payload);
     const stateBytes = await mlsService.saveState(pin);
     localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
+    return true;
   } catch (e) {
     console.warn('Failed to send read receipt:', e);
+    return false;
   }
 }

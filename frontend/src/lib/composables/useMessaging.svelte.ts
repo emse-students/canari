@@ -40,6 +40,9 @@ export interface MessagingContext {
   saveConversation: (contactName: string) => Promise<void>;
   verifyCurrentUserMembership: (contactName: string) => Promise<boolean>;
   playNotificationTone: () => void;
+  playSendTone?: () => void;
+  playReceiveTone?: () => void;
+  playReadTone?: () => void;
   sendSystemNotification: (title: string, body: string) => Promise<void>;
 }
 
@@ -96,8 +99,11 @@ export function useMessaging() {
       messages: [...convo.messages, newMsg],
     });
 
+    if (!isOwn && !isSystem) {
+      (ctx.playReceiveTone ?? ctx.playNotificationTone)();
+    }
+
     if (shouldMarkUnread) {
-      ctx.playNotificationTone();
       const preview = getPreviewText(parseEnvelope(content));
       if (
         typeof document !== 'undefined' &&
@@ -215,6 +221,9 @@ export function useMessaging() {
           );
           sentMediaMessageCount++;
         }
+        if (sentMediaMessageCount > 0) {
+          ctx.playSendTone?.();
+        }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         if (sentMediaMessageCount < filesToSend.length) {
@@ -247,7 +256,10 @@ export function useMessaging() {
 
     if (!result.success) {
       ctx.setSendError(result.error || "Echec de l'envoi");
+      return;
     }
+
+    ctx.playSendTone?.();
   }
 
   // ── File handling ─────────────────────────────────────────────────────────
@@ -398,7 +410,11 @@ export function useMessaging() {
             userId: ctx.userId,
             pin: ctx.pin,
             conversation: fresh,
-          }).catch(() => {});
+          })
+            .then((sent) => {
+              if (sent) ctx.playReadTone?.();
+            })
+            .catch(() => {});
         } catch {
           /* MLS not ready */
         }

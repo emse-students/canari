@@ -479,10 +479,35 @@ export class WebMlsService implements IMlsService {
 
     // Import dynamique du WASM généré
     try {
-      // Import from local lib to ensure Vite handles it correctly
-      const initWasm = await import('$lib/wasm/mls_wasm.js');
+      // Import from local lib and force the .wasm asset URL through Vite.
+      const [initWasm, wasmAsset] = await Promise.all([
+        import('$lib/wasm/mls_wasm.js'),
+        import('$lib/wasm/mls_wasm_bg.wasm?url'),
+      ]);
 
-      await initWasm.default();
+      const wasmUrl = (wasmAsset as { default: string }).default;
+      const wasmResponse = await fetch(wasmUrl, { credentials: 'same-origin' });
+      if (!wasmResponse.ok) {
+        throw new Error(
+          `Chargement WASM impossible (${wasmResponse.status} ${wasmResponse.statusText}) depuis ${wasmUrl}`
+        );
+      }
+
+      const contentType = wasmResponse.headers.get('Content-Type')?.toLowerCase() ?? '';
+      if (contentType.includes('text/html')) {
+        throw new Error(
+          `Réponse HTML reçue à la place du binaire WASM (${wasmUrl}). Vérifiez le routage statique / MIME.`
+        );
+      }
+
+      const magic = new Uint8Array((await wasmResponse.clone().arrayBuffer()).slice(0, 4));
+      const isWasmMagic =
+        magic[0] === 0x00 && magic[1] === 0x61 && magic[2] === 0x73 && magic[3] === 0x6d;
+      if (!isWasmMagic) {
+        throw new Error(`Binaire WASM invalide (${wasmUrl}) : signature incorrecte.`);
+      }
+
+      await initWasm.default(wasmResponse);
 
       const w = window as Window & { wasm_bindings_log?: (level: string, msg: string) => void };
       if (typeof w.wasm_bindings_log !== 'function') {

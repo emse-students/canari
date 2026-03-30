@@ -67,6 +67,11 @@ interface MessageHandlerDeps {
     workspaceId?: string;
     kickedBy?: string;
   }) => void;
+  onReadReceiptReceived?: (event: {
+    conversationKey: string;
+    senderId: string;
+    messageIds: string[];
+  }) => void;
   onCallSignal?: (senderId: string, callMsg: any) => void;
   log: (msg: string) => void;
 }
@@ -93,6 +98,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
     addSystemMessage,
     onChannelMemberJoined,
     onChannelMemberKicked,
+    onReadReceiptReceived,
     onCallSignal,
     log,
   } = deps;
@@ -407,6 +413,13 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                     }
                   }
                   if (updated) conversations.set(convoKey, { ...c, messages: newMsgs });
+                  if (updated) {
+                    onReadReceiptReceived?.({
+                      conversationKey: convoKey,
+                      senderId: senderNorm,
+                      messageIds: msgIds,
+                    });
+                  }
                 }
                 return true;
               }

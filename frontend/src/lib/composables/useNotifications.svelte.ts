@@ -6,6 +6,8 @@
 export function useNotifications() {
   let audioContext = $state<AudioContext | null>(null);
   let lastNotificationAt = $state(0);
+  let lastSendToneAt = $state(0);
+  let lastReadToneAt = $state(0);
   let lastSystemNotificationAt = $state(0);
 
   // Channel membership notice banner
@@ -38,6 +40,66 @@ export function useNotifications() {
       gain.connect(ctx.destination);
       osc.start(startAt);
       osc.stop(startAt + 0.16);
+    } catch {
+      // Browser/autoplay restriction — silently ignored.
+    }
+  }
+
+  function playSendTone() {
+    if (typeof window === 'undefined') return;
+    const now = Date.now();
+    if (now - lastSendToneAt < 200) return;
+    lastSendToneAt = now;
+
+    try {
+      audioContext = audioContext ?? new AudioContext();
+      const ctx = audioContext;
+      const startAt = ctx.currentTime + 0.01;
+
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(740, startAt);
+      osc.frequency.exponentialRampToValueAtTime(980, startAt + 0.08);
+      gain.gain.setValueAtTime(0.0001, startAt);
+      gain.gain.exponentialRampToValueAtTime(0.05, startAt + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.11);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(startAt);
+      osc.stop(startAt + 0.12);
+    } catch {
+      // Browser/autoplay restriction — silently ignored.
+    }
+  }
+
+  function playReceiveTone() {
+    playNotificationTone();
+  }
+
+  function playReadTone() {
+    if (typeof window === 'undefined') return;
+    const now = Date.now();
+    if (now - lastReadToneAt < 250) return;
+    lastReadToneAt = now;
+
+    try {
+      audioContext = audioContext ?? new AudioContext();
+      const ctx = audioContext;
+      const startAt = ctx.currentTime + 0.01;
+
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(1080, startAt);
+      osc.frequency.exponentialRampToValueAtTime(820, startAt + 0.07);
+      gain.gain.setValueAtTime(0.0001, startAt);
+      gain.gain.exponentialRampToValueAtTime(0.04, startAt + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.09);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(startAt);
+      osc.stop(startAt + 0.1);
     } catch {
       // Browser/autoplay restriction — silently ignored.
     }
@@ -141,6 +203,9 @@ export function useNotifications() {
       return channelMembershipActionChannelId;
     },
     playNotificationTone,
+    playSendTone,
+    playReceiveTone,
+    playReadTone,
     requestSystemNotificationPermission,
     sendSystemNotification,
     showChannelMembershipNotice,

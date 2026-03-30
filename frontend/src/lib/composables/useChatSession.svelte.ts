@@ -44,6 +44,11 @@ export interface ChatSessionCallbacks {
   selectConversation: (name: string) => void;
   onChannelMemberJoined: (event: any) => void;
   onChannelMemberKicked: (event: any) => void;
+  onReadReceiptReceived?: (event: {
+    conversationKey: string;
+    senderId: string;
+    messageIds: string[];
+  }) => void;
   onSendError: (msg: string) => void;
   onShowSyncGuidePrompt: () => void;
   log: (msg: string) => void;
@@ -206,6 +211,7 @@ export function useChatSession() {
         loadHistoryForConversation: cb.onLoadHistoryForConversation,
         onChannelMemberJoined: cb.onChannelMemberJoined,
         onChannelMemberKicked: cb.onChannelMemberKicked,
+        onReadReceiptReceived: cb.onReadReceiptReceived,
         onCallSignal: (senderId: string, callMsg: any) => {
           callService?.handleCallSignal(senderId, callMsg);
         },

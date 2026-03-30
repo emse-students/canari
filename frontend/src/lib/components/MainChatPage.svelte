@@ -40,6 +40,8 @@
   let statusLog = $state<string[]>([]);
   let showLogs = $state(false);
   let messageText = $state('');
+  let isWindowFocused = $state(true);
+  let isTabVisible = $state(true);
 
   // ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -130,6 +132,9 @@
       verifyCurrentUserMembership: (name: string) =>
         convs.verifyCurrentUserMembership(name, convCtx()),
       playNotificationTone: notifs.playNotificationTone,
+      playSendTone: notifs.playSendTone,
+      playReceiveTone: notifs.playReceiveTone,
+      playReadTone: notifs.playReadTone,
       sendSystemNotification: notifs.sendSystemNotification,
     };
   }
@@ -223,6 +228,9 @@
       onShowSyncGuidePrompt: () => {
         convs.showSyncGuidePrompt = true;
       },
+      onReadReceiptReceived: () => {
+        notifs.playReadTone();
+      },
       log,
       messageReactions: messaging.messageReactions,
       getSelectedContact: () => convs.selectedContact,
@@ -243,6 +251,8 @@
 
   $effect(() => {
     if (!convs.selectedContact || !session.isLoggedIn) return;
+    if (!isWindowFocused || !isTabVisible) return;
+    if (convs.mobileView !== 'chat') return;
     const convo = convs.conversations.get(convs.selectedContact);
     if (!convo || !convo.isReady) return;
 
@@ -288,7 +298,11 @@
               userId: session.userId,
               pin: session.pin,
               conversation: fresh,
-            }).catch(() => {});
+            })
+              .then((sent) => {
+                if (sent) notifs.playReadTone();
+              })
+              .catch(() => {});
           } catch {
             /* MLS not ready */
           }
@@ -341,14 +355,30 @@
       }
     }
 
+    isWindowFocused = document.hasFocus();
+    isTabVisible = document.visibilityState === 'visible';
+
     const handleVisibilityChange = () => {
+      isTabVisible = document.visibilityState === 'visible';
       if (document.visibilityState === 'visible' && session.isLoggedIn && !session.isWsConnected) {
         log('Page visible de nouveau — reconnexion...');
         void session.attemptReconnect(sessionCb());
       }
     };
+    const handleWindowFocus = () => {
+      isWindowFocused = true;
+    };
+    const handleWindowBlur = () => {
+      isWindowFocused = false;
+    };
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleWindowFocus);
+    window.addEventListener('blur', handleWindowBlur);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleWindowFocus);
+      window.removeEventListener('blur', handleWindowBlur);
+    };
   });
 
   // ─── Post-login init (load channels + archived ids) ───────────────────────
