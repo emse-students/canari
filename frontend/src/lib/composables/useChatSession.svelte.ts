@@ -239,8 +239,11 @@ export function useChatSession() {
       cb.log(`Erreur: ${msg}`);
       localStorage.removeItem('canari_saved_user');
       localStorage.removeItem('canari_saved_pin');
-      const cur = window.location.pathname + window.location.search;
-      void goto(`/login?returnTo=${encodeURIComponent(cur)}`, { replaceState: true });
+      clearAuth();
+      if (!window.location.pathname.startsWith('/login')) {
+        const cur = window.location.pathname + window.location.search;
+        void goto(`/login?returnTo=${encodeURIComponent(cur)}`, { replaceState: true });
+      }
     }
   }
 

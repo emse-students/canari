@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
-  import { login, hasStoredSession } from '$lib/stores/auth';
+  import { login, hasStoredSession, getToken } from '$lib/stores/auth';
   import { BiometricService } from '$lib/services/biometric';
   import LoginForm from './LoginForm.svelte';
 
@@ -12,6 +12,13 @@
   let loginError = $state('');
   let biometricAvailable = $state(false);
   let requestedReturnTo = '';
+
+  function getSafeReturnTarget(): string {
+    const target = requestedReturnTo && requestedReturnTo.startsWith('/') ? requestedReturnTo : '/chat';
+    // Avoid redirect loops to the login page itself.
+    if (target === '/login' || target.startsWith('/login?')) return '/chat';
+    return target;
+  }
 
   onMount(() => {
     try {
@@ -31,10 +38,23 @@
         }
       })();
     } else if (hasStoredSession()) {
-      // A refresh token is stored — silently restore the session and redirect.
-      const target =
-        requestedReturnTo && requestedReturnTo.startsWith('/') ? requestedReturnTo : '/chat';
-      void goto(target, { replaceState: true });
+      // Only auto-redirect when a refresh token is still usable and local chat creds exist.
+      void (async () => {
+        const savedUser = localStorage.getItem('canari_saved_user');
+        const savedPin = localStorage.getItem('canari_saved_pin');
+        if (!savedUser || !savedPin) return;
+
+        try {
+          await getToken();
+          const target = getSafeReturnTarget();
+          const current = window.location.pathname + window.location.search;
+          if (target !== current) {
+            await goto(target, { replaceState: true });
+          }
+        } catch {
+          // Refresh token invalid or expired: stay on login page.
+        }
+      })();
     }
   });
 
@@ -62,8 +82,7 @@
         localStorage.setItem('canari_saved_pin', pin.trim());
       }
 
-      const target =
-        requestedReturnTo && requestedReturnTo.startsWith('/') ? requestedReturnTo : '/chat';
+      const target = getSafeReturnTarget();
       void goto(target, { replaceState: true });
     } catch (_e: unknown) {
       loginError = _e instanceof Error ? _e.message : String(_e);
