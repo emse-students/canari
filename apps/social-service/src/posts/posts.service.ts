@@ -23,16 +23,30 @@ export class PostsService {
   }
 
   async createPost(data: any) {
+    if (Array.isArray(data.eventButtons)) {
+      data.eventButtons = data.eventButtons.map((btn: any) => ({
+        ...btn,
+        registrants: btn.registrants ?? [],
+      }));
+    }
     const post = this.postRepo.create(data);
     return this.postRepo.save(post);
   }
 
   async listPosts(limit: number = 20, offset: number = 0) {
-    return this.postRepo.find({
+    const posts = await this.postRepo.find({
       order: { createdAt: 'DESC' },
       take: Number(limit),
       skip: Number(offset),
     });
+    for (const post of posts) {
+      if (Array.isArray(post.eventButtons)) {
+        for (const btn of post.eventButtons) {
+          if (!Array.isArray(btn.registrants)) btn.registrants = [];
+        }
+      }
+    }
+    return posts;
   }
 
   async listMentions(userId: string, limit = 20) {
@@ -193,6 +207,7 @@ export class PostsService {
       text,
       eventPayload,
       clickCount: 0,
+      registrants: [],
     };
 
     post.eventButtons = [...(post.eventButtons || []), btn];
