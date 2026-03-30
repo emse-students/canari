@@ -58,7 +58,7 @@ export interface PostForm {
 }
 
 export interface PostEntity {
-  _id: string;
+  id: string;
   authorId: string;
   markdown: string;
   mentions: string[];

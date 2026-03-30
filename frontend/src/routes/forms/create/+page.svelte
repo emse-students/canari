@@ -42,7 +42,7 @@
       const payload: CreateFormPayload = {
         title,
         description,
-        basePrice: requiresPayment ? basePrice : 0,
+        basePrice: requiresPayment ? Math.round(basePrice * 100) : 0,
         currency: requiresPayment ? currency : 'eur',
         submitLabel,
         items: items.map((item) => ({
@@ -50,7 +50,7 @@
           options:
             item.options?.map((opt: any) => ({
               ...opt,
-              priceModifier: opt.priceModifier ?? 0,
+              priceModifier: opt.priceModifier != null ? Math.round(opt.priceModifier * 100) : 0,
             })) || [],
         })),
         maxSubmissions,
@@ -197,11 +197,12 @@
     {#if requiresPayment}
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-5 pt-5 border-t-2 border-cn-border">
         <Input
-          label="Prix de base (centimes)"
+          label="Prix de base (€)"
           type="number"
           bind:value={basePrice}
           min="0"
-          placeholder="0"
+          step="0.01"
+          placeholder="0.00"
         />
         <div>
           <label for="currency-select" class="block text-sm font-bold text-text-main mb-2 ml-1"
@@ -283,7 +284,11 @@
             </button>
           </div>
           <div class="flex-1 min-w-0">
-            <FormBuilder bind:item={items[i]} onRemove={() => removeItem(i)} />
+            <FormBuilder
+              bind:item={items[i]}
+              onRemove={() => removeItem(i)}
+              showPriceModifier={requiresPayment}
+            />
           </div>
         </div>
       {/each}
@@ -309,7 +314,7 @@
             <span class="text-amber-600 font-medium">Renseignez un titre pour enregistrer</span>
           {:else}
             {items.length} question{items.length > 1 ? 's' : ''} · {requiresPayment
-              ? `${basePrice} centimes`
+              ? `${basePrice.toFixed(2)} €`
               : 'Gratuit'}
           {/if}
         </p>

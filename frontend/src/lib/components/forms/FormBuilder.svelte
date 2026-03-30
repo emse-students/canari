@@ -2,9 +2,14 @@
   import Input from '$lib/components/ui/Input.svelte';
   import { Trash2, X, Plus } from 'lucide-svelte';
 
-  let { item = $bindable(), onRemove } = $props<{
+  let {
+    item = $bindable(),
+    onRemove,
+    showPriceModifier = false,
+  } = $props<{
     item: any;
     onRemove: () => void;
+    showPriceModifier?: boolean;
   }>();
 
   const formItemTypes = [
@@ -148,7 +153,7 @@
         <span class="text-xs font-bold text-text-muted uppercase tracking-wider">
           {isMatrix ? 'Colonnes' : 'Options'}
         </span>
-        {#if !isMatrix}
+        {#if !isMatrix && showPriceModifier}
           <span class="text-xs text-text-muted font-medium mr-12">Supplément (€)</span>
         {/if}
       </div>
@@ -167,9 +172,14 @@
               />
             </div>
 
-            {#if !isMatrix}
+            {#if !isMatrix && showPriceModifier}
               <div class="w-24">
-                <Input type="number" placeholder="0" bind:value={opt.priceModifier} step="0.01" />
+                <Input
+                  type="number"
+                  placeholder="0.00"
+                  bind:value={opt.priceModifier}
+                  step="0.01"
+                />
               </div>
             {/if}
 

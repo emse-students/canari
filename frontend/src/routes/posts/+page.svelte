@@ -60,7 +60,7 @@
           console.log('[Posts] Received new post via WS', msg.data);
           // Add new post to top of list if not already there
           const newPost = msg.data as PostEntity;
-          if (!posts.find((p) => p._id === newPost._id)) {
+          if (!posts.find((p) => p.id === newPost.id)) {
             posts = [newPost, ...posts];
           }
         }
@@ -166,7 +166,7 @@
             <p class="text-text-muted">Be the first to share something amazing!</p>
           </div>
         {:else}
-          {#each posts as post (post._id)}
+          {#each posts as post (post.id)}
             <PostCard
               {post}
               currentUserId={userId}

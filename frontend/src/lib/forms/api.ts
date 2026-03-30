@@ -32,7 +32,7 @@ export interface CreateFormPayload {
 }
 
 export interface Form extends CreateFormPayload {
-  _id: string;
+  id: string;
   createdAt: string;
   updatedAt: string;
 }

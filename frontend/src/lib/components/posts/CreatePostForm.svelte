@@ -252,8 +252,8 @@
               class="w-full appearance-none rounded-xl border border-cn-border bg-white px-3 py-2 text-sm transition-all focus:outline-none focus:ring-2 focus:ring-cn-yellow"
             >
               <option value="">— Aucun —</option>
-              {#each availableForms as form (form._id)}
-                <option value={form._id}>{form.title}</option>
+              {#each availableForms as form (form.id)}
+                <option value={form.id}>{form.title}</option>
               {/each}
             </select>
           </div>
@@ -277,8 +277,8 @@
           class="w-full appearance-none rounded-xl border border-cn-border bg-white px-3 py-2 text-sm transition-all focus:outline-none focus:ring-2 focus:ring-cn-yellow"
         >
           <option value="">— Choisir un formulaire —</option>
-          {#each availableForms as form (form._id)}
-            <option value={form._id}>{form.title} ({form.items.length} questions)</option>
+          {#each availableForms as form (form.id)}
+            <option value={form.id}>{form.title} ({form.items.length} questions)</option>
           {/each}
         </select>
       {/if}

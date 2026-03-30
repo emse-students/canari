@@ -51,7 +51,7 @@
         getForm(btn.formId)
           .then((f) => {
             const mapped: PostForm = {
-              id: f._id,
+              id: f.id,
               title: f.title,
               eventId: btn.id,
               basePrice: f.basePrice,
@@ -74,7 +74,7 @@
             });
             btnFormSelections = { ...btnFormSelections, [btn.id]: initial };
             // check if already submitted
-            checkSubmission(f._id)
+            checkSubmission(f.id)
               .then(({ hasSubmitted }) => {
                 btnFormSubmitted = { ...btnFormSubmitted, [btn.id]: hasSubmitted };
               })
@@ -119,7 +119,7 @@
       getForm(post.attachedFormId)
         .then((f) => {
           const mappedForm: PostForm = {
-            id: f._id,
+            id: f.id,
             title: f.title,
             eventId: 'N/A',
             basePrice: f.basePrice,
@@ -187,7 +187,7 @@
     }
 
     try {
-      await votePoll(post._id, pollId, {
+      await votePoll(post.id, pollId, {
         optionIds: selectedOptions,
       });
       actionMessage = 'Vote submitted.';
@@ -205,7 +205,7 @@
     }
 
     try {
-      const response = await registerEvent(post._id, buttonId, {
+      const response = await registerEvent(post.id, buttonId, {
         email: currentUserEmail?.trim() || undefined,
       });
 
@@ -329,7 +329,7 @@
           formSubmitted[form.id] = true;
         }
       } else {
-        res = await submitForm(post._id, form.id, {
+        res = await submitForm(post.id, form.id, {
           email: currentUserEmail,
           selections,
         });

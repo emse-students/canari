@@ -1,8 +1,17 @@
 import { get, writable } from 'svelte/store';
+import { apiFetch } from '$lib/utils/apiFetch';
 
 export const presenceMap = writable<Record<string, boolean>>({});
 const peerIdsToPoll = new Set<string>();
 let pollInterval: any = null;
+
+function getGatewayBase(): string {
+  const env = typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GATEWAY_URL;
+  if (typeof env === 'string' && env.trim()) {
+    return env.trim().replace(/\/$/, '');
+  }
+  return typeof window !== 'undefined' ? window.location.origin : '';
+}
 
 export function watchUsers(userIds: string[]) {
   userIds.forEach((id) => {
@@ -19,8 +28,8 @@ export async function checkPresenceNow() {
   if (peerIdsToPoll.size === 0) return;
   const usersStr = Array.from(peerIdsToPoll).join(',');
   try {
-    const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
-    const res = await fetch(`${baseUrl}/api/presence?users=${usersStr}`);
+    const baseUrl = getGatewayBase();
+    const res = await apiFetch(`${baseUrl}/api/presence?users=${usersStr}`);
     if (res.ok) {
       const data = await res.json();
       presenceMap.update((prev) => ({ ...prev, ...data }));

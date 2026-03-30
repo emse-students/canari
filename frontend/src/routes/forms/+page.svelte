@@ -78,7 +78,7 @@
     </div>
   {:else}
     <div class="space-y-3">
-      {#each forms as form (form._id)}
+      {#each forms as form (form.id)}
         <div
           class="rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] p-5 flex flex-col sm:flex-row sm:items-center gap-3 hover:border-cn-yellow/40 transition-colors"
         >
@@ -87,18 +87,18 @@
             {#if form.description}
               <p class="text-sm text-text-muted mt-0.5 truncate">{form.description}</p>
             {/if}
-            <p class="text-xs text-text-muted/60 font-mono mt-1.5 truncate">{form._id}</p>
+            <p class="text-xs text-text-muted/60 font-mono mt-1.5 truncate">{form.id}</p>
           </div>
           <div class="flex gap-2 flex-shrink-0">
             <button
-              onclick={() => handleExport(form._id)}
+              onclick={() => handleExport(form.id)}
               class="inline-flex items-center gap-1.5 rounded-xl border-2 border-cn-border bg-[var(--cn-surface)] px-3.5 py-2 text-xs font-bold text-text-main hover:border-cn-yellow/40 transition-colors"
             >
               <Download size={14} />
               Exporter
             </button>
             <button
-              onclick={() => navigator.clipboard.writeText(form._id)}
+              onclick={() => navigator.clipboard.writeText(form.id)}
               class="inline-flex items-center gap-1.5 rounded-xl border-2 border-cn-border bg-[var(--cn-surface)] px-3.5 py-2 text-xs font-bold text-text-main hover:border-cn-yellow/40 transition-colors"
             >
               <Copy size={14} />
