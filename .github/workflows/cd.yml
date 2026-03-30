@@ -20,8 +20,142 @@ jobs:
     name: Run Code Analysis
     uses: ./.github/workflows/code-analysis.yml
 
+  detect-changed-services:
+    name: Detect Changed Services
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.detect.outputs.matrix }}
+      services_csv: ${{ steps.detect.outputs.services_csv }}
+      services_args: ${{ steps.detect.outputs.services_args }}
+      any_changed: ${{ steps.detect.outputs.any_changed }}
+      frontend_changed: ${{ steps.detect.outputs.frontend_changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect modified services
+        id: detect
+        run: |
+          set -euo pipefail
+
+          declare -A SERVICE_DOCKERFILE=(
+            [core-service]="./infrastructure/local/Dockerfile.core-service"
+            [social-service]="./infrastructure/local/Dockerfile.social-service"
+            [chat-gateway]="./infrastructure/local/Dockerfile.chat-gateway"
+            [chat-delivery-service]="./infrastructure/local/Dockerfile.chat-delivery-service"
+            [frontend]="./infrastructure/local/Dockerfile.frontend"
+            [media-service]="./infrastructure/local/Dockerfile.media-service"
+          )
+
+          ALL_SERVICES=(
+            core-service
+            social-service
+            chat-gateway
+            chat-delivery-service
+            frontend
+            media-service
+          )
+
+          CHANGED_SERVICES=()
+
+          add_service() {
+            local service="$1"
+            for existing in "${CHANGED_SERVICES[@]}"; do
+              if [ "$existing" = "$service" ]; then
+                return 0
+              fi
+            done
+            CHANGED_SERVICES+=("$service")
+          }
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manual dispatch detected: building all services."
+            CHANGED_SERVICES=("${ALL_SERVICES[@]}")
+          else
+            BEFORE_SHA="${{ github.event.before }}"
+            HEAD_SHA="${{ github.sha }}"
+
+            if [ -z "$BEFORE_SHA" ] || [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
+              if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+                BEFORE_SHA="$(git rev-parse HEAD~1)"
+              else
+                BEFORE_SHA="$HEAD_SHA"
+              fi
+            fi
+
+            CHANGED_FILES="$(git diff --name-only "$BEFORE_SHA" "$HEAD_SHA")"
+
+            echo "Changed files between $BEFORE_SHA and $HEAD_SHA:"
+            if [ -n "$CHANGED_FILES" ]; then
+              echo "$CHANGED_FILES"
+            else
+              echo "(none)"
+            fi
+
+            while IFS= read -r file; do
+              [ -z "$file" ] && continue
+
+              case "$file" in
+                apps/core-service/*|infrastructure/local/Dockerfile.core-service)
+                  add_service core-service
+                  ;;
+                apps/social-service/*|infrastructure/local/Dockerfile.social-service)
+                  add_service social-service
+                  ;;
+                apps/chat-gateway/*|libs/shared-rust/*|libs/proto/*|infrastructure/local/Dockerfile.chat-gateway)
+                  add_service chat-gateway
+                  ;;
+                apps/chat-delivery-service/*|libs/shared-ts/*|infrastructure/local/Dockerfile.chat-delivery-service)
+                  add_service chat-delivery-service
+                  ;;
+                frontend/*|infrastructure/local/Dockerfile.frontend)
+                  add_service frontend
+                  ;;
+                apps/media-service/*|infrastructure/local/Dockerfile.media-service)
+                  add_service media-service
+                  ;;
+              esac
+            done <<< "$CHANGED_FILES"
+          fi
+
+          if [ ${#CHANGED_SERVICES[@]} -eq 0 ]; then
+            MATRIX='{"include":[]}'
+            SERVICES_CSV=""
+            SERVICES_ARGS=""
+            FRONTEND_CHANGED="false"
+            ANY_CHANGED="false"
+            echo "No image-producing service changes detected."
+          else
+            MATRIX_ITEMS=""
+            FRONTEND_CHANGED="false"
+            for service in "${CHANGED_SERVICES[@]}"; do
+              dockerfile="${SERVICE_DOCKERFILE[$service]}"
+              MATRIX_ITEMS+="{\"name\":\"$service\",\"context\":\".\",\"dockerfile\":\"$dockerfile\"},"
+              if [ "$service" = "frontend" ]; then
+                FRONTEND_CHANGED="true"
+              fi
+            done
+            MATRIX_ITEMS="${MATRIX_ITEMS%,}"
+            MATRIX="{\"include\":[${MATRIX_ITEMS}]}"
+            SERVICES_CSV="$(IFS=,; echo "${CHANGED_SERVICES[*]}")"
+            SERVICES_ARGS="$(IFS=' '; echo "${CHANGED_SERVICES[*]}")"
+            ANY_CHANGED="true"
+            echo "Services selected for image rebuild: ${SERVICES_ARGS}"
+          fi
+
+          {
+            echo "matrix=$MATRIX"
+            echo "services_csv=$SERVICES_CSV"
+            echo "services_args=$SERVICES_ARGS"
+            echo "any_changed=$ANY_CHANGED"
+            echo "frontend_changed=$FRONTEND_CHANGED"
+          } >> "$GITHUB_OUTPUT"
+
   build-frontend:
     name: Build Frontend
+    needs: detect-changed-services
+    if: needs.detect-changed-services.outputs.frontend_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -107,36 +241,20 @@ jobs:
   build-docker-images:
     name: Build & Push Docker Images
     runs-on: ubuntu-latest
-    needs: build-frontend
+    needs: [detect-changed-services, build-frontend]
+    if: |
+      needs.detect-changed-services.outputs.any_changed == 'true' &&
+      (needs.build-frontend.result == 'success' || needs.build-frontend.result == 'skipped')
     permissions:
       contents: read
       packages: write
     strategy:
-      matrix:
-        service:
-          - name: core-service
-            context: .
-            dockerfile: ./infrastructure/local/Dockerfile.core-service
-          - name: social-service
-            context: .
-            dockerfile: ./infrastructure/local/Dockerfile.social-service
-          - name: chat-gateway
-            context: .
-            dockerfile: ./infrastructure/local/Dockerfile.chat-gateway
-          - name: chat-delivery-service
-            context: .
-            dockerfile: ./infrastructure/local/Dockerfile.chat-delivery-service
-          - name: frontend
-            context: .
-            dockerfile: ./infrastructure/local/Dockerfile.frontend
-          - name: media-service
-            context: .
-            dockerfile: ./infrastructure/local/Dockerfile.media-service
+      matrix: ${{ fromJson(needs.detect-changed-services.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Download frontend build artifact
-        if: matrix.service.name == 'frontend'
+        if: matrix.name == 'frontend'
         uses: actions/download-artifact@v4
         with:
           name: frontend-build
@@ -156,7 +274,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service.name }}
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.name }}
           tags: |
             type=ref,event=branch
             type=sha,prefix={{branch}}-
@@ -166,8 +284,8 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
-          context: ${{ matrix.service.context }}
-          file: ${{ matrix.service.dockerfile }}
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -179,8 +297,12 @@ jobs:
   deploy-to-server:
     name: Deploy to Production Server
     runs-on: self-hosted
-    needs: [run-ci, run-code-analysis, build-docker-images]
-    if: github.ref == 'refs/heads/main'
+    needs: [run-ci, run-code-analysis, detect-changed-services, build-docker-images]
+    if: |
+      github.ref == 'refs/heads/main' &&
+      needs.run-ci.result == 'success' &&
+      needs.run-code-analysis.result == 'success' &&
+      (needs.build-docker-images.result == 'success' || needs.build-docker-images.result == 'skipped')
     permissions:
       contents: read
       packages: read
@@ -201,7 +323,8 @@ jobs:
         run: |
           echo "REGISTRY=${{ env.REGISTRY }}" >> $GITHUB_ENV
           echo "IMAGE_PREFIX=${{ env.IMAGE_PREFIX }}" >> $GITHUB_ENV
-          echo "TAG=${{ github.sha }}" >> $GITHUB_ENV
+          # TAG=latest allows selective image rebuilds while keeping unchanged services deployable.
+          echo "TAG=latest" >> $GITHUB_ENV
 
       - name: Resolve Docker access
         run: |
@@ -346,18 +469,21 @@ jobs:
         env:
           REGISTRY: ${{ env.REGISTRY }}
           IMAGE_PREFIX: ${{ env.IMAGE_PREFIX }}
-          TAG: ${{ github.sha }}
+          CHANGED_SERVICES: ${{ needs.detect-changed-services.outputs.services_args }}
         run: |
-          echo "🔄 Pulling Docker images..."
-          eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml pull"
-          echo "✅ Images pulled successfully"
+          if [ -n "$CHANGED_SERVICES" ]; then
+            echo "🔄 Pulling changed Docker images: $CHANGED_SERVICES"
+            eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml pull $CHANGED_SERVICES"
+            echo "✅ Changed images pulled successfully"
+          else
+            echo "ℹ️ No service image changes detected. Skipping docker pull."
+          fi
 
       - name: Deploy services
         working-directory: ${{ env.DEPLOY_PATH }}
         env:
           REGISTRY: ${{ env.REGISTRY }}
           IMAGE_PREFIX: ${{ env.IMAGE_PREFIX }}
-          TAG: ${{ github.sha }}
         run: |
           echo "🚀 Deploying services with zero-downtime..."
           set +e
