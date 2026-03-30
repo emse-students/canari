@@ -39,7 +39,7 @@ export async function apiFetch(url: string, init: ApiFetchOptions = {}): Promise
       headers['Authorization'] = `Bearer ${newToken}`;
       res = await fetch(url, { ...init, headers });
     } catch {
-      clearAuth();
+      await clearAuth();
       throw new Error('Session expirée — veuillez vous reconnecter.');
     }
   }

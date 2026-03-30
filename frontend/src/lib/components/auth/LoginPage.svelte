@@ -33,8 +33,7 @@
         const configured = await BiometricService.isConfigured();
         if (configured) {
           biometricAvailable = true;
-          // On Tauri, try silent session restore if refresh token exists
-          if (hasStoredSession()) {
+          if (await hasStoredSession()) {
             try {
               await getToken();
               void goto(getSafeReturnTarget(), { replaceState: true });
@@ -44,17 +43,19 @@
           }
         }
       })();
-    } else if (hasStoredSession()) {
+    } else {
       void (async () => {
-        try {
-          await getToken();
-          const target = getSafeReturnTarget();
-          const current = window.location.pathname + window.location.search;
-          if (target !== current) {
-            await goto(target, { replaceState: true });
+        if (await hasStoredSession()) {
+          try {
+            await getToken();
+            const target = getSafeReturnTarget();
+            const current = window.location.pathname + window.location.search;
+            if (target !== current) {
+              await goto(target, { replaceState: true });
+            }
+          } catch {
+            // Refresh token invalid — stay on login page
           }
-        } catch {
-          // Refresh token invalid — stay on login page
         }
       })();
     }

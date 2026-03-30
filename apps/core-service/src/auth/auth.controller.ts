@@ -19,14 +19,8 @@ interface OidcCallbackDto {
   redirect_uri: string;
 }
 
-interface RefreshDto {
-  refresh_token: string;
-}
-
-interface TokenPair {
-  access_token: string;
-  refresh_token: string;
-}
+const REFRESH_COOKIE = 'canari_refresh';
+const REFRESH_MAX_AGE = 7 * 24 * 60 * 60; // 7 days in seconds
 
 @Controller('auth')
 export class AuthController {
@@ -34,6 +28,7 @@ export class AuthController {
   private readonly authentikBaseUrl: string;
   private readonly authentikClientId: string;
   private readonly authentikClientSecret: string;
+  private readonly isProduction: boolean;
 
   constructor(private readonly usersService: UsersService) {
     const secret = process.env.JWT_SECRET;
@@ -43,12 +38,35 @@ export class AuthController {
       );
     }
     this.jwtSecret = secret;
+    this.isProduction = process.env.NODE_ENV === 'production';
 
-    this.authentikBaseUrl = (
-      process.env.AUTHENTIK_BASE_URL || ''
-    ).replace(/\/+$/, '');
+    this.authentikBaseUrl = (process.env.AUTHENTIK_BASE_URL || '').replace(
+      /\/+$/,
+      '',
+    );
     this.authentikClientId = process.env.AUTHENTIK_CLIENT_ID || '';
     this.authentikClientSecret = process.env.AUTHENTIK_CLIENT_SECRET || '';
+  }
+
+  /** Set the refresh token as an HttpOnly cookie. */
+  private setRefreshCookie(res: Response, token: string): void {
+    res.cookie(REFRESH_COOKIE, token, {
+      httpOnly: true,
+      secure: this.isProduction,
+      sameSite: 'lax',
+      path: '/api/auth', // only sent to auth endpoints
+      maxAge: REFRESH_MAX_AGE * 1000, // express uses milliseconds
+    });
+  }
+
+  /** Clear the refresh cookie (e.g. on logout or expired session). */
+  private clearRefreshCookie(res: Response): void {
+    res.clearCookie(REFRESH_COOKIE, {
+      httpOnly: true,
+      secure: this.isProduction,
+      sameSite: 'lax',
+      path: '/api/auth',
+    });
   }
 
   // ─── OIDC callback (Authentik) ─────────────────────────────────────────────
@@ -59,10 +77,15 @@ export class AuthController {
   @HttpCode(200)
   async oidcCallback(
     @Body() body: OidcCallbackDto,
-  ): Promise<TokenPair & { user: { id: string; email: string; displayName: string } }> {
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<{
+    access_token: string;
+    user: { id: string; email: string; displayName: string };
+  }> {
     const { code, redirect_uri } = body ?? {};
     if (!code) throw new BadRequestException('code is required');
-    if (!redirect_uri) throw new BadRequestException('redirect_uri is required');
+    if (!redirect_uri)
+      throw new BadRequestException('redirect_uri is required');
 
     if (
       !this.authentikBaseUrl ||
@@ -120,7 +143,9 @@ export class AuthController {
     };
 
     if (!userinfo.sub) {
-      throw new UnauthorizedException('Invalid userinfo response from Authentik');
+      throw new UnauthorizedException(
+        'Invalid userinfo response from Authentik',
+      );
     }
 
     // 3. Upsert local user
@@ -140,9 +165,11 @@ export class AuthController {
       { expiresIn: '7d' },
     );
 
+    // Set refresh token as HttpOnly cookie (not accessible to JS)
+    this.setRefreshCookie(res, refresh_token);
+
     return {
       access_token,
-      refresh_token,
       user: {
         id: user.id,
         email: user.email || '',
@@ -154,10 +181,15 @@ export class AuthController {
   // ─── Token refresh ─────────────────────────────────────────────────────────
   @Post('refresh')
   @HttpCode(200)
-  refreshToken(@Body() body: RefreshDto): TokenPair {
-    const { refresh_token } = body ?? {};
-    if (!refresh_token)
-      throw new UnauthorizedException('refresh_token is required');
+  refreshToken(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): { access_token: string } {
+    const refresh_token = req.cookies?.[REFRESH_COOKIE] as string | undefined;
+    if (!refresh_token) {
+      this.clearRefreshCookie(res);
+      throw new UnauthorizedException('No refresh token — please log in again');
+    }
 
     let payload: { sub: string; type: string };
     try {
@@ -166,10 +198,13 @@ export class AuthController {
         type: string;
       };
     } catch {
+      this.clearRefreshCookie(res);
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
-    if (payload.type !== 'refresh')
+    if (payload.type !== 'refresh') {
+      this.clearRefreshCookie(res);
       throw new UnauthorizedException('Invalid token type');
+    }
 
     const access_token = jwt.sign({ sub: payload.sub }, this.jwtSecret, {
       expiresIn: '1h',
@@ -179,7 +214,19 @@ export class AuthController {
       this.jwtSecret,
       { expiresIn: '7d' },
     );
-    return { access_token, refresh_token: new_refresh };
+
+    // Rotate the refresh cookie
+    this.setRefreshCookie(res, new_refresh);
+
+    return { access_token };
+  }
+
+  // ─── Logout ────────────────────────────────────────────────────────────────
+  @Post('logout')
+  @HttpCode(200)
+  logout(@Res({ passthrough: true }) res: Response): { ok: true } {
+    this.clearRefreshCookie(res);
+    return { ok: true };
   }
 
   // ─── Verify (used by nginx auth_request) ──────────────────────────────────

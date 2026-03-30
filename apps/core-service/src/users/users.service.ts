@@ -39,7 +39,7 @@ export class UsersService {
     email: string | null,
     displayName: string | null,
   ): Promise<User> {
-    let user = await this.userRepository.findOne({ where: { id } });
+    const user = await this.userRepository.findOne({ where: { id } });
     if (user) {
       let updated = false;
       if (email && user.email !== email) {

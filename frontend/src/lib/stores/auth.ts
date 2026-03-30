@@ -7,10 +7,9 @@
  *    server-side (keeping client_secret safe) and returns an internal JWT pair.
  *
  * Access token  → kept in memory only (lost on page reload, recovered via refresh).
- * Refresh token → persisted in localStorage so sessions survive reloads.
+ * Refresh token → HttpOnly cookie set by the backend (never accessible to JS).
  */
 
-const REFRESH_KEY = 'canari_refresh_token';
 const OIDC_STATE_KEY = 'canari_oidc_state';
 const OIDC_RETURN_KEY = 'canari_oidc_return';
 
@@ -80,6 +79,7 @@ export async function handleOidcCallback(
   const res = await fetch(`${coreUrl()}/api/auth/oidc/callback`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'include', // receive HttpOnly cookie
     body: JSON.stringify({ code, redirect_uri: redirectUri }),
   });
 
@@ -90,14 +90,12 @@ export async function handleOidcCallback(
 
   const data = (await res.json()) as {
     access_token: string;
-    refresh_token: string;
     user: { id: string; email: string; displayName: string };
   };
 
   _accessToken = data.access_token;
-  localStorage.setItem(REFRESH_KEY, data.refresh_token);
 
-  // Persist user info
+  // Persist non-secret user info for UI display
   localStorage.setItem('canari_saved_user', data.user.id);
   if (data.user.email) localStorage.setItem('canari_user_email', data.user.email);
   if (data.user.displayName)
@@ -113,25 +111,23 @@ export function getOidcReturnTo(): string {
   return returnTo;
 }
 
-/** Rotate the access token using the stored refresh token. */
+/**
+ * Rotate the access token using the HttpOnly refresh cookie.
+ * The browser sends the cookie automatically with `credentials: 'include'`.
+ */
 export async function refresh(): Promise<string> {
-  const rt = localStorage.getItem(REFRESH_KEY);
-  if (!rt) throw new Error('No refresh token — please log in again');
-
   const res = await fetch(`${coreUrl()}/api/auth/refresh`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ refresh_token: rt }),
+    credentials: 'include', // send HttpOnly cookie
   });
 
   if (!res.ok) {
-    clearAuth();
+    await clearAuth();
     throw new Error('Session expired — please log in again');
   }
 
-  const data = (await res.json()) as { access_token: string; refresh_token: string };
+  const data = (await res.json()) as { access_token: string };
   _accessToken = data.access_token;
-  localStorage.setItem(REFRESH_KEY, data.refresh_token);
   return data.access_token;
 }
 
@@ -169,11 +165,27 @@ export function setToken(token: string): void {
   _accessToken = token;
 }
 
-export function clearAuth(): void {
+export async function clearAuth(): Promise<void> {
   _accessToken = null;
-  localStorage.removeItem(REFRESH_KEY);
+  // Tell the backend to clear the HttpOnly cookie
+  await fetch(`${coreUrl()}/api/auth/logout`, {
+    method: 'POST',
+    credentials: 'include',
+  }).catch(() => {});
+  localStorage.removeItem('canari_saved_user');
+  localStorage.removeItem('canari_user_email');
+  localStorage.removeItem('canari_user_display_name');
 }
 
-export function hasStoredSession(): boolean {
-  return !!localStorage.getItem(REFRESH_KEY);
+/**
+ * Check if we have a session: try a silent refresh.
+ * Returns true if the refresh cookie exists and is valid.
+ */
+export async function hasStoredSession(): Promise<boolean> {
+  try {
+    await refresh();
+    return true;
+  } catch {
+    return false;
+  }
 }
