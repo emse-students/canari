@@ -173,6 +173,9 @@ services:
     environment:
       PORT: "3012"
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-me}
+      AUTHENTIK_BASE_URL: ${AUTHENTIK_BASE_URL:-}
+      AUTHENTIK_CLIENT_ID: ${AUTHENTIK_CLIENT_ID:-}
+      AUTHENTIK_CLIENT_SECRET: ${AUTHENTIK_CLIENT_SECRET:-}
       DB_HOST: postgres
       DB_PORT: "5432"
       DB_USERNAME: admin

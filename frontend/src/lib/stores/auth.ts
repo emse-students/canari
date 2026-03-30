@@ -1,15 +1,18 @@
 /**
- * Client-side auth store.
+ * Client-side auth store — Authentik OIDC flow.
  *
- * Tokens are issued by core-service (POST /auth/login, POST /auth/refresh).
- * The frontend never signs or holds a JWT secret — it only stores the tokens
- * it receives from the backend.
+ * 1. `startOidcLogin()` redirects the user to Authentik's authorize endpoint.
+ * 2. Authentik redirects back to `/auth/callback?code=…&state=…`.
+ * 3. `handleOidcCallback()` sends the code to core-service which exchanges it
+ *    server-side (keeping client_secret safe) and returns an internal JWT pair.
  *
  * Access token  → kept in memory only (lost on page reload, recovered via refresh).
  * Refresh token → persisted in localStorage so sessions survive reloads.
  */
 
 const REFRESH_KEY = 'canari_refresh_token';
+const OIDC_STATE_KEY = 'canari_oidc_state';
+const OIDC_RETURN_KEY = 'canari_oidc_return';
 
 let _accessToken: string | null = null;
 
@@ -19,16 +22,65 @@ function coreUrl(): string {
   return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3012';
 }
 
+function authentikUrl(): string {
+  return ((import.meta.env.VITE_AUTHENTIK_URL as string) || '').replace(/\/+$/, '');
+}
+
+function authentikClientId(): string {
+  return (import.meta.env.VITE_AUTHENTIK_CLIENT_ID as string) || '';
+}
+
 /**
- * Login with just a userId (dev phase).
- * The PIN is not involved in authentication — it is only used by the delivery
- * service to unlock the local MLS key package.
+ * Redirect the user to Authentik's authorize endpoint.
+ * After login, Authentik will redirect back to `/auth/callback`.
  */
-export async function login(userId: string): Promise<string> {
-  const res = await fetch(`${coreUrl()}/api/auth/login`, {
+export function startOidcLogin(returnTo = '/chat'): void {
+  const baseUrl = authentikUrl();
+  const clientId = authentikClientId();
+  if (!baseUrl || !clientId) {
+    throw new Error(
+      'Authentik OIDC is not configured (VITE_AUTHENTIK_URL / VITE_AUTHENTIK_CLIENT_ID)'
+    );
+  }
+
+  // Generate random state for CSRF protection
+  const state = crypto.randomUUID();
+  sessionStorage.setItem(OIDC_STATE_KEY, state);
+  sessionStorage.setItem(OIDC_RETURN_KEY, returnTo);
+
+  const redirectUri = `${window.location.origin}/auth/callback`;
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    response_type: 'code',
+    scope: 'openid profile email',
+    state,
+  });
+
+  window.location.href = `${baseUrl}/application/o/authorize/?${params}`;
+}
+
+/**
+ * Exchange the authorization code received from Authentik for internal tokens.
+ * Called from the `/auth/callback` page.
+ */
+export async function handleOidcCallback(
+  code: string,
+  state: string
+): Promise<{ id: string; email: string; displayName: string }> {
+  // Verify state
+  const savedState = sessionStorage.getItem(OIDC_STATE_KEY);
+  if (!savedState || savedState !== state) {
+    throw new Error('Invalid OIDC state — possible CSRF attack');
+  }
+  sessionStorage.removeItem(OIDC_STATE_KEY);
+
+  const redirectUri = `${window.location.origin}/auth/callback`;
+
+  const res = await fetch(`${coreUrl()}/api/auth/oidc/callback`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ userId }),
+    body: JSON.stringify({ code, redirect_uri: redirectUri }),
   });
 
   if (!res.ok) {
@@ -36,10 +88,29 @@ export async function login(userId: string): Promise<string> {
     throw new Error(msg || `Authentication failed (${res.status})`);
   }
 
-  const data = (await res.json()) as { access_token: string; refresh_token: string };
+  const data = (await res.json()) as {
+    access_token: string;
+    refresh_token: string;
+    user: { id: string; email: string; displayName: string };
+  };
+
   _accessToken = data.access_token;
   localStorage.setItem(REFRESH_KEY, data.refresh_token);
-  return data.access_token;
+
+  // Persist user info
+  localStorage.setItem('canari_saved_user', data.user.id);
+  if (data.user.email) localStorage.setItem('canari_user_email', data.user.email);
+  if (data.user.displayName)
+    localStorage.setItem('canari_user_display_name', data.user.displayName);
+
+  return data.user;
+}
+
+/** Get the intended return path after OIDC callback, then clear it. */
+export function getOidcReturnTo(): string {
+  const returnTo = sessionStorage.getItem(OIDC_RETURN_KEY) || '/chat';
+  sessionStorage.removeItem(OIDC_RETURN_KEY);
+  return returnTo;
 }
 
 /** Rotate the access token using the stored refresh token. */

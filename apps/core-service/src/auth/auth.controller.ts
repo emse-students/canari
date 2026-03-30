@@ -12,9 +12,11 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import * as jwt from 'jsonwebtoken';
+import { UsersService } from '../users/users.service';
 
-interface LoginDto {
-  userId: string;
+interface OidcCallbackDto {
+  code: string;
+  redirect_uri: string;
 }
 
 interface RefreshDto {
@@ -29,8 +31,11 @@ interface TokenPair {
 @Controller('auth')
 export class AuthController {
   private readonly jwtSecret: string;
+  private readonly authentikBaseUrl: string;
+  private readonly authentikClientId: string;
+  private readonly authentikClientSecret: string;
 
-  constructor() {
+  constructor(private readonly usersService: UsersService) {
     const secret = process.env.JWT_SECRET;
     if (!secret || secret === 'change-me-in-production') {
       throw new Error(
@@ -38,26 +43,112 @@ export class AuthController {
       );
     }
     this.jwtSecret = secret;
+
+    this.authentikBaseUrl = (
+      process.env.AUTHENTIK_BASE_URL || ''
+    ).replace(/\/+$/, '');
+    this.authentikClientId = process.env.AUTHENTIK_CLIENT_ID || '';
+    this.authentikClientSecret = process.env.AUTHENTIK_CLIENT_SECRET || '';
   }
 
-  // ─── Dev-phase login ───────────────────────────────────────────────────────
-  // No password required: the user provides their userId and gets a token pair.
-  // The PIN is handled separately by the delivery service for MLS key access.
-  @Post('login')
+  // ─── OIDC callback (Authentik) ─────────────────────────────────────────────
+  // The frontend redirects the user to Authentik, which redirects back with a
+  // `code`.  The frontend then POSTs that code here so we can exchange it for
+  // tokens server-side (keeping the client_secret safe).
+  @Post('oidc/callback')
   @HttpCode(200)
-  devLogin(@Body() body: LoginDto): TokenPair {
-    const userId = body?.userId?.trim();
-    if (!userId) throw new BadRequestException('userId is required');
+  async oidcCallback(
+    @Body() body: OidcCallbackDto,
+  ): Promise<TokenPair & { user: { id: string; email: string; displayName: string } }> {
+    const { code, redirect_uri } = body ?? {};
+    if (!code) throw new BadRequestException('code is required');
+    if (!redirect_uri) throw new BadRequestException('redirect_uri is required');
 
-    const access_token = jwt.sign({ sub: userId }, this.jwtSecret, {
+    if (
+      !this.authentikBaseUrl ||
+      !this.authentikClientId ||
+      !this.authentikClientSecret
+    ) {
+      throw new BadRequestException(
+        'Authentik OIDC is not configured on the server',
+      );
+    }
+
+    // 1. Exchange authorization code for tokens
+    const tokenUrl = `${this.authentikBaseUrl}/application/o/token/`;
+    const tokenRes = await fetch(tokenUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri,
+        client_id: this.authentikClientId,
+        client_secret: this.authentikClientSecret,
+      }),
+    });
+
+    if (!tokenRes.ok) {
+      const errText = await tokenRes.text().catch(() => '');
+      throw new UnauthorizedException(
+        `Authentik token exchange failed (${tokenRes.status}): ${errText}`,
+      );
+    }
+
+    const tokenData = (await tokenRes.json()) as {
+      access_token: string;
+      id_token?: string;
+    };
+
+    // 2. Fetch user info from Authentik
+    const userinfoUrl = `${this.authentikBaseUrl}/application/o/userinfo/`;
+    const userinfoRes = await fetch(userinfoUrl, {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
+
+    if (!userinfoRes.ok) {
+      throw new UnauthorizedException(
+        'Failed to fetch user info from Authentik',
+      );
+    }
+
+    const userinfo = (await userinfoRes.json()) as {
+      sub: string;
+      email?: string;
+      preferred_username?: string;
+      name?: string;
+    };
+
+    if (!userinfo.sub) {
+      throw new UnauthorizedException('Invalid userinfo response from Authentik');
+    }
+
+    // 3. Upsert local user
+    const user = await this.usersService.findOrCreateFromOidc(
+      userinfo.sub,
+      userinfo.email || null,
+      userinfo.name || userinfo.preferred_username || null,
+    );
+
+    // 4. Issue internal JWT pair
+    const access_token = jwt.sign({ sub: user.id }, this.jwtSecret, {
       expiresIn: '1h',
     });
     const refresh_token = jwt.sign(
-      { sub: userId, type: 'refresh' },
+      { sub: user.id, type: 'refresh' },
       this.jwtSecret,
       { expiresIn: '7d' },
     );
-    return { access_token, refresh_token };
+
+    return {
+      access_token,
+      refresh_token,
+      user: {
+        id: user.id,
+        email: user.email || '',
+        displayName: user.displayName || '',
+      },
+    };
   }
 
   // ─── Token refresh ─────────────────────────────────────────────────────────

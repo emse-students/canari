@@ -29,4 +29,39 @@ export class UsersService {
     this.userRepository.merge(user, updateUserDto);
     return await this.userRepository.save(user);
   }
+
+  /**
+   * Upsert a user from OIDC provider data (Authentik).
+   * Creates the user if they don't exist, or updates email/displayName if changed.
+   */
+  async findOrCreateFromOidc(
+    id: string,
+    email: string | null,
+    displayName: string | null,
+  ): Promise<User> {
+    let user = await this.userRepository.findOne({ where: { id } });
+    if (user) {
+      let updated = false;
+      if (email && user.email !== email) {
+        user.email = email;
+        updated = true;
+      }
+      if (displayName && user.displayName !== displayName) {
+        user.displayName = displayName;
+        updated = true;
+      }
+      if (updated) {
+        await this.userRepository.save(user).catch(() => {
+          // Ignore unique constraint violations (e.g. email already taken)
+        });
+      }
+      return user;
+    }
+    const newUser = this.userRepository.create({
+      id,
+      email: email || null,
+      displayName: displayName || null,
+    });
+    return await this.userRepository.save(newUser);
+  }
 }

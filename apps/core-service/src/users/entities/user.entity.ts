@@ -5,8 +5,11 @@ export class User {
   @PrimaryColumn()
   id: string;
 
-  @Column({ unique: true })
-  email: string;
+  @Column({ unique: true, nullable: true })
+  email: string | null;
+
+  @Column({ nullable: true })
+  displayName: string | null;
 
   @Column({ nullable: true })
   stripeCustomerId: string;
