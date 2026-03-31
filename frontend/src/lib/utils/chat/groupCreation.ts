@@ -81,7 +81,9 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
     await mlsService.createGroup(groupId);
     await mlsService.registerMember(groupId, userId, mlsService.getDeviceId());
 
-    // Add own other devices to the group
+    // Add own other devices to the group — use a single bulk commit to avoid
+    // epoch fragmentation (sequential addMember would create one commit per device,
+    // causing WrongEpoch errors on already-joined devices).
     const ownDevices = (await mlsService.fetchUserDevices(userId)).filter(
       (d) => d.deviceId !== mlsService.getDeviceId()
     );
@@ -89,36 +91,36 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
       `[GROUP] Mes autres appareils: ${ownDevices.length} (${ownDevices.map((d) => d.deviceId).join(', ')})`
     );
 
-    for (const device of ownDevices) {
+    if (ownDevices.length > 0) {
       try {
-        const result = await mlsService.addMember(groupId, device.keyPackage);
+        const bulk = await mlsService.addMembersBulk(groupId, ownDevices);
         log(
-          `[GROUP] addMember result pour ${device.deviceId}: welcome=${!!result.welcome} (${result.welcome?.length ?? 0} bytes), commit=${!!result.commit}`
+          `[GROUP] addMembersBulk result: welcome=${!!bulk.welcome} (${bulk.welcome?.length ?? 0} bytes), added=${bulk.addedDeviceIds.length} (${bulk.addedDeviceIds.join(', ')})`
         );
 
-        await mlsService.registerMember(groupId, userId, device.deviceId);
-        if (result.welcome) {
-          log(`[GROUP] Envoi Welcome a ${userId}:${device.deviceId}...`);
-          if (result.ratchetTree) {
-            await mlsService.sendWelcome(
-              result.welcome,
-              userId,
-              groupId,
-              device.deviceId,
-              result.ratchetTree
-            );
-          } else {
-            await mlsService.sendWelcome(result.welcome, userId, groupId, device.deviceId);
-          }
-          log(`[GROUP] Welcome envoye a ${device.deviceId}`);
-        } else {
-          log(`[GROUP] PAS DE WELCOME pour ${device.deviceId}!`);
+        for (const did of bulk.addedDeviceIds) {
+          await mlsService.registerMember(groupId, userId, did);
         }
-        if (result.commit) {
-          await mlsService.sendCommit(result.commit, groupId);
+
+        if (bulk.welcome) {
+          for (const did of bulk.addedDeviceIds) {
+            try {
+              log(`[GROUP] Envoi Welcome a ${userId}:${did}...`);
+              await mlsService.sendWelcome(bulk.welcome, userId, groupId, did, bulk.ratchetTree);
+              log(`[GROUP] Welcome envoye a ${did}`);
+            } catch (e) {
+              log(`[GROUP] Erreur Welcome ${did}: ${e}`);
+            }
+          }
+        } else {
+          log('[GROUP] PAS DE WELCOME dans le bulk!');
+        }
+
+        if (bulk.commit) {
+          await mlsService.sendCommit(bulk.commit, groupId);
         }
       } catch (e) {
-        log(`Erreur synchro propre appareil ${device.deviceId}: ${e}`);
+        log(`Erreur synchro propres appareils: ${e}`);
       }
     }
 

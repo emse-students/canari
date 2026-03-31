@@ -152,6 +152,24 @@ fn recevoir_message(
 }
 
 #[tauri::command]
+fn retirer_membres(
+    group_id: String,
+    user_ids: Vec<String>,
+    state: tauri::State<AppState>,
+) -> Result<Vec<u8>, String> {
+    let mut lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+
+    let id_slices: Vec<&str> = user_ids.iter().map(|s| s.as_str()).collect();
+    manager
+        .remove_members_for_users(&group_id, &id_slices)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn recevoir_message_bytes(
     group_id: String,
     message_bytes: Vec<u8>,
@@ -211,6 +229,7 @@ pub fn run() {
             creer_groupe,
             generer_key_package,
             ajouter_membre,
+            retirer_membres,
             trailer_welcome,
             envoyer_message,
             envoyer_message_bytes,

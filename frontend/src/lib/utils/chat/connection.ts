@@ -315,10 +315,36 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             }
 
             if (msg?.reaction) {
-              const reactions = messageReactions.get(msg.reaction.messageId ?? '') || [];
+              const msgId = msg.reaction.messageId ?? '';
+              const reactions = messageReactions.get(msgId) || [];
               const filtered = reactions.filter((r) => r.userId !== senderNorm);
               filtered.push({ emoji: msg.reaction.emoji ?? '', userId: senderNorm });
-              messageReactions.set(msg.reaction.messageId ?? '', filtered);
+              messageReactions.set(msgId, filtered);
+
+              // Also persist the reaction into the message's DB row
+              const convo = conversations.get(convoKey);
+              if (storage && convo) {
+                const target = convo.messages.find((m) => m.id === msgId);
+                if (target) {
+                  try {
+                    await storage.saveMessage(
+                      {
+                        id: target.id,
+                        conversationId: convoKey,
+                        senderId: target.senderId,
+                        content: target.content,
+                        timestamp: target.timestamp.getTime(),
+                        readBy: target.readBy,
+                        reactions: filtered,
+                      },
+                      pin
+                    );
+                  } catch {
+                    // Non-blocking
+                  }
+                }
+              }
+
               log(`[REACTION] ${senderNorm} a reagi avec ${msg.reaction.emoji}`);
               return true;
             }
@@ -412,8 +438,34 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                       }
                     }
                   }
-                  if (updated) conversations.set(convoKey, { ...c, messages: newMsgs });
                   if (updated) {
+                    conversations.set(convoKey, { ...c, messages: newMsgs });
+
+                    // Persist updated readBy to DB
+                    if (storage) {
+                      for (const msgId of msgIds) {
+                        const m = newMsgs.find((x) => x.id === msgId);
+                        if (m) {
+                          try {
+                            await storage.saveMessage(
+                              {
+                                id: m.id,
+                                conversationId: convoKey,
+                                senderId: m.senderId,
+                                content: m.content,
+                                timestamp: m.timestamp.getTime(),
+                                readBy: m.readBy,
+                                reactions: messageReactions.get(m.id),
+                              },
+                              pin
+                            );
+                          } catch {
+                            // Non-blocking
+                          }
+                        }
+                      }
+                    }
+
                     onReadReceiptReceived?.({
                       conversationKey: convoKey,
                       senderId: senderNorm,
@@ -523,10 +575,19 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         let groupName = senderNorm;
         let isGroupFromApi: boolean | null = null;
 
-        // Fetch group metadata
+        // Fetch group metadata (include auth token so the endpoint can answer)
         try {
+          let authHeader: Record<string, string> = {};
+          try {
+            const { getToken } = await import('$lib/stores/auth');
+            const token = await getToken();
+            if (token) authHeader = { Authorization: `Bearer ${token}` };
+          } catch {
+            // Silent: proceed without auth header if token unavailable
+          }
           const gRes = await fetch(
-            `${historyBaseUrl}/api/mls-api/groups/${groupId || joinedGroupId}`
+            `${historyBaseUrl}/api/mls-api/groups/${groupId || joinedGroupId}`,
+            { headers: authHeader }
           );
           if (gRes.ok) {
             const gData = await gRes.json();
@@ -607,6 +668,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             groupId: joinedGroupId,
             isReady: true,
           });
+          if (storage) await saveConversation(newConvoKey);
         } else {
           // Create new conversation
           conversations.set(newConvoKey, {
@@ -619,6 +681,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             conversationType: isDirect ? 'direct' : 'group',
             ...(isDirect ? { directPeerId: directPeerId } : {}),
           });
+          if (storage) await saveConversation(newConvoKey);
         }
         return true;
       } catch (_e) {

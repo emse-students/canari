@@ -57,6 +57,8 @@ export function mapStoredMessagesToChatMessages(storedMessages: StoredMessage[],
       timestamp: new Date(m.timestamp),
       isOwn: m.senderId.toLowerCase() === userId.toLowerCase(),
       replyTo,
+      readBy: m.readBy,
+      reactions: m.reactions,
     } satisfies ChatMessage;
   });
 }

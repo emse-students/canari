@@ -707,6 +707,14 @@ export class TauriMlsService implements IMlsService {
     if (!res.ok) throw new Error(`Remove member failed: ${res.status}`);
   }
 
+  async removeMember(groupId: string, userIds: string[]): Promise<void> {
+    const commitBytes = await invoke<number[]>('retirer_membres', {
+      groupId,
+      userIds,
+    });
+    await this.sendCommit(new Uint8Array(commitBytes), groupId);
+  }
+
   async getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]> {
     try {
       const res = await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}/members`);

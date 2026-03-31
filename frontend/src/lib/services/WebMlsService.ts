@@ -831,6 +831,16 @@ export class WebMlsService implements IMlsService {
     if (!res.ok) throw new Error(`Remove member failed: ${res.status}`);
   }
 
+  async removeMember(groupId: string, userIds: string[]): Promise<void> {
+    // Build a JS Array for the WASM call
+    const jsArray = userIds.reduce((arr, id) => {
+      arr.push(id);
+      return arr;
+    }, [] as string[]);
+    const commitBytes: Uint8Array = this.client.remove_members(groupId, jsArray);
+    await this.sendCommit(commitBytes, groupId);
+  }
+
   async getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]> {
     try {
       const res = await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}/members`, {

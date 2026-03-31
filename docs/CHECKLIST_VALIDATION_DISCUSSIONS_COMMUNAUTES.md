@@ -14,10 +14,12 @@ Environnement (local/prod):
 - [ ] Aucun log bloquant de type "Ignoré: pas un message pour un groupe existant" apres 30s
 
 Resultat global:
+
 - [ ] OK
 - [ ] KO
 
 Si KO (copier-coller exact):
+
 - Actions realisees:
 - Logs pertinents:
 
@@ -32,10 +34,12 @@ Si KO (copier-coller exact):
 - [ ] Renommage groupe propage chez tous les membres
 
 Resultat global:
+
 - [ ] OK
 - [ ] KO
 
 Si KO (copier-coller exact):
+
 - A quel membre/appareil ca casse:
 - Logs pertinents:
 
@@ -54,10 +58,12 @@ Si KO (copier-coller exact):
 - [ ] L'evenement `channel.message.created` est bien recu par les membres connectes via WebSocket
 
 Resultat global:
+
 - [ ] OK
 - [ ] KO
 
 Si KO (copier-coller exact):
+
 - Requete en echec (endpoint + code HTTP):
 - Message UI:
 - Logs backend:
@@ -68,6 +74,7 @@ Si KO (copier-coller exact):
 - [ ] Encore des KO
 
 Priorite des KO restants (P1/P2/P3):
+
 1.
 2.
 3.

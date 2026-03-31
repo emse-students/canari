@@ -295,6 +295,30 @@ impl WasmMlsClient {
             .process_incoming_message(&group_id, &message_bytes)
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
+
+    /// Remove all devices of one or more users from a group.
+    /// `user_ids` is a JS Array of strings (usernames/identities).
+    /// Returns the serialized commit bytes to broadcast to remaining group members.
+    #[wasm_bindgen]
+    pub fn remove_members(
+        &mut self,
+        group_id: String,
+        user_ids: js_sys::Array,
+    ) -> Result<Vec<u8>, JsValue> {
+        let ids: Vec<String> = user_ids
+            .iter()
+            .filter_map(|v| v.as_string())
+            .collect();
+        log::info!(
+            "remove_members from group: {} (users: {:?})",
+            group_id,
+            ids
+        );
+        let id_slices: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+        self.manager
+            .remove_members_for_users(&group_id, &id_slices)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
 }
 
 // Security Utilities (Encryption at Rest)

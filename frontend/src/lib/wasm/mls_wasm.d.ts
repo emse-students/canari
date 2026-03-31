@@ -22,6 +22,12 @@ export class WasmMlsClient {
      */
     process_incoming_message_bytes(group_id: string, message_bytes: Uint8Array): Uint8Array | undefined;
     process_welcome(welcome_bytes: Uint8Array, ratchet_tree_bytes?: Uint8Array | null): string;
+    /**
+     * Remove all devices of one or more users from a group.
+     * `user_ids` is a JS Array of strings (usernames/identities).
+     * Returns the serialized commit bytes to broadcast to remaining group members.
+     */
+    remove_members(group_id: string, user_ids: Array<any>): Uint8Array;
     save_state(pin?: string | null): Uint8Array;
     send_message(group_id: string, message: string): Uint8Array;
     /**
@@ -54,15 +60,16 @@ export interface InitOutput {
     readonly wasmmlsclient_process_incoming_message: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly wasmmlsclient_process_incoming_message_bytes: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly wasmmlsclient_process_welcome: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly wasmmlsclient_remove_members: (a: number, b: number, c: number, d: any) => [number, number, number, number];
     readonly wasmmlsclient_save_state: (a: number, b: number, c: number) => [number, number, number, number];
     readonly wasmmlsclient_send_message: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly wasmmlsclient_send_message_bytes: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly __wbindgen_malloc: (a: number, b: number) => number;
+    readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;
     readonly __externref_table_alloc: () => number;
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
-    readonly __wbindgen_malloc: (a: number, b: number) => number;
-    readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __externref_table_dealloc: (a: number) => void;
     readonly __wbindgen_start: () => void;
 }

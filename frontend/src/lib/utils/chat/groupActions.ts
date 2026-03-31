@@ -48,11 +48,19 @@ export async function removeMemberAndBroadcast(params: {
 }) {
   const { mlsService, groupId, memberId, userId, pin } = params;
 
+  // 1. MLS remove commit — removes all devices of the target user from the group
+  //    and broadcasts the commit to remaining members so they advance their epoch.
+  await mlsService.removeMember(groupId, [memberId]);
+
+  // 2. Notify remaining members via an application-layer system message.
   const controlMsg = encodeAppMessage(
     mkSystem('memberRemoved', JSON.stringify({ targetUser: memberId }))
   );
   await mlsService.sendMessage(groupId, controlMsg);
+
+  // 3. Remove from the server-side member registry.
   await mlsService.removeMemberFromServer(groupId, memberId);
+
   const stBytes = await mlsService.saveState(pin);
   localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
 }

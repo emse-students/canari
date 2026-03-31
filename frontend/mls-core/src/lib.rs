@@ -169,6 +169,57 @@ impl MlsManager {
         self.groups.keys().cloned().collect()
     }
 
+    // --- C0. SUPPRESSION DE MEMBRE(S) ---
+
+    /// Remove all leaf nodes whose credential identity matches any of the provided user IDs.
+    /// Returns the serialized commit bytes that must be broadcast to all group members.
+    pub fn remove_members_for_users(
+        &mut self,
+        group_id: &str,
+        user_ids: &[&str],
+    ) -> Result<Vec<u8>, MlsError> {
+        let group = self
+            .groups
+            .get_mut(group_id)
+            .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
+
+        // Collect the leaf indices of all leaves whose identity matches one of the user IDs.
+        let leaf_indices: Vec<LeafNodeIndex> = group
+            .members()
+            .filter_map(|m| {
+                // Decode as BasicCredential to extract the raw identity bytes.
+                let identity = BasicCredential::try_from(m.credential.clone())
+                    .ok()
+                    .map(|bc| bc.identity().to_vec())
+                    .unwrap_or_default();
+                if user_ids.iter().any(|uid| uid.as_bytes() == identity.as_slice()) {
+                    Some(m.index)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if leaf_indices.is_empty() {
+            return Err(MlsError::OpenMls(format!(
+                "Aucun membre trouvé pour les identités : {:?}",
+                user_ids
+            )));
+        }
+
+        let (commit_msg_out, _welcome, _group_info) = group
+            .remove_members(&self.provider, &self.keypair, &leaf_indices)
+            .map_err(|e| MlsError::OpenMls(format!("RemoveMembers error: {:?}", e)))?;
+
+        group
+            .merge_pending_commit(&self.provider)
+            .map_err(|e| MlsError::OpenMls(format!("Merge error: {:?}", e)))?;
+
+        commit_msg_out
+            .tls_serialize_detached()
+            .map_err(|e| MlsError::OpenMls(e.to_string()))
+    }
+
     // --- C. AJOUT DE MEMBRE(S) ---
 
     /// Add a single key package (kept for backward compat, delegates to bulk).

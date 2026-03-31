@@ -187,6 +187,25 @@ export class WasmMlsClient {
         }
     }
     /**
+     * Remove all devices of one or more users from a group.
+     * `user_ids` is a JS Array of strings (usernames/identities).
+     * Returns the serialized commit bytes to broadcast to remaining group members.
+     * @param {string} group_id
+     * @param {Array<any>} user_ids
+     * @returns {Uint8Array}
+     */
+    remove_members(group_id, user_ids) {
+        const ptr0 = passStringToWasm0(group_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmmlsclient_remove_members(this.__wbg_ptr, ptr0, len0, user_ids);
+        if (ret[3]) {
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v2;
+    }
+    /**
      * @param {string | null} [pin]
      * @returns {Uint8Array}
      */
@@ -302,6 +321,14 @@ function __wbg_get_imports() {
         __wbg___wbindgen_is_undefined_52709e72fb9f179c: function(arg0) {
             const ret = arg0 === undefined;
             return ret;
+        },
+        __wbg___wbindgen_string_get_395e606bd0ee4427: function(arg0, arg1) {
+            const obj = arg1;
+            const ret = typeof(obj) === 'string' ? obj : undefined;
+            var ptr1 = isLikeNone(ret) ? 0 : passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            var len1 = WASM_VECTOR_LEN;
+            getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
+            getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
         },
         __wbg___wbindgen_throw_6ddd609b62940d55: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));

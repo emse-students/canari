@@ -50,6 +50,8 @@ export interface IMlsService {
   renameGroup(groupId: string, name: string): Promise<void>;
   deleteGroupOnServer(groupId: string): Promise<void>;
   removeMemberFromServer(groupId: string, userId: string): Promise<void>;
+  /** Performs a real MLS remove commit for all devices of the given user(s) and broadcasts it. */
+  removeMember(groupId: string, userIds: string[]): Promise<void>;
   getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]>;
 
   // Callbacks
