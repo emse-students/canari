@@ -36,6 +36,11 @@ export interface ChannelJoinDto {
   roleName?: string;
 }
 
+export interface ChannelInviteDto {
+  targetUserId: string;
+  roleName?: string;
+}
+
 export interface ChannelUpdateRoleDto {
   targetUserId: string;
   roleName: string;
@@ -137,6 +142,18 @@ export class ChannelService {
       method: 'POST',
       body: JSON.stringify(dto),
     });
+    await this.handleError(res);
+    return res.json();
+  }
+
+  async inviteToChannel(channelId: string, dto: ChannelInviteDto) {
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/${channelId}/members/invite`,
+      {
+        method: 'POST',
+        body: JSON.stringify(dto),
+      }
+    );
     await this.handleError(res);
     return res.json();
   }

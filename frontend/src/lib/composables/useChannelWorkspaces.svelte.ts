@@ -273,7 +273,13 @@ export function useChannelWorkspaces() {
     if (!memberId || !channelId) return;
 
     try {
-      await service.joinChannel(channelId, { roleName });
+      // Map frontend role names to backend role names (capitalized)
+      const backendRoleName =
+        roleName === 'admin' ? 'Admin' : roleName === 'moderator' ? 'Moderator' : 'Member';
+      await service.inviteToChannel(channelId, {
+        targetUserId: memberId,
+        roleName: backendRoleName,
+      });
       ctx.log(`Membre invité dans le canal (${roleName}) : ${memberId}`);
     } catch (error) {
       ctx.log(toUiActionError(`Invitation dans le canal (${roleName})`, error));

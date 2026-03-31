@@ -14,6 +14,7 @@ import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { ChannelService } from './channel.service';
 import {
   type ChannelJoinDto,
+  type ChannelInviteDto,
   type ChannelKickDto,
   type ChannelLeaveDto,
   type ChannelUpdateRoleDto,
@@ -80,6 +81,21 @@ export class ChannelsController {
   ) {
     const userId = xUserId.trim().toLowerCase();
     return this.service.joinChannel(channelId, { ...body, userId, actorUserId: userId });
+  }
+
+  @UseGuards(NginxAuthGuard)
+  @Post(':channelId/members/invite')
+  invite(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string,
+    @Body() body: ChannelInviteDto
+  ) {
+    const actorUserId = xUserId.trim().toLowerCase();
+    return this.service.inviteToChannel(channelId, {
+      ...body,
+      targetUserId: body.targetUserId?.trim().toLowerCase(),
+      actorUserId,
+    });
   }
 
   @UseGuards(NginxAuthGuard)

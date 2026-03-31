@@ -28,6 +28,12 @@ export interface ChannelLeaveDto {
   userId: string;
 }
 
+export interface ChannelInviteDto {
+  targetUserId: string;
+  actorUserId: string;
+  roleName?: string;
+}
+
 export interface ChannelKickDto {
   targetUserId: string;
   actorUserId: string;

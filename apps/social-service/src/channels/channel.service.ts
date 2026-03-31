@@ -14,6 +14,7 @@ import {
   ChannelJoinDto,
   ChannelLeaveDto,
   ChannelKickDto,
+  ChannelInviteDto,
   ChannelUpdateRoleDto,
   SendChannelMessageDto,
 } from './dto/channel.dto';
@@ -157,6 +158,52 @@ export class ChannelService {
       await this.memberRepo.save(newMember);
     }
     return { success: true };
+  }
+
+  async inviteToChannel(channelId: string, input: ChannelInviteDto) {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
+
+    // Check if actor has permission to invite
+    const actorMember = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId: input.actorUserId },
+    });
+    if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
+
+    let hasPerm = false;
+    if (actorMember.roleIds?.length > 0) {
+      const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
+      hasPerm = roles.some(
+        (r) =>
+          r.permissions.includes('INVITE_USERS') ||
+          r.permissions.includes('MANAGE_WORKSPACE') ||
+          r.permissions.includes('MANAGE_CHANNELS')
+      );
+    }
+    if (!hasPerm) throw new ForbiddenException('Missing INVITE_USERS permission');
+
+    // Add target user as member if not already
+    let targetMember = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId: input.targetUserId },
+    });
+
+    if (!targetMember) {
+      // Find the role to assign (default to Member if not specified)
+      const roleName = input.roleName || 'Member';
+      const role = await this.roleRepo.findOne({
+        where: { workspaceId: channel.workspaceId, name: roleName },
+      });
+      const roleIds = role ? [role.id] : [];
+
+      targetMember = this.memberRepo.create({
+        workspaceId: channel.workspaceId,
+        userId: input.targetUserId,
+        roleIds,
+      });
+      await this.memberRepo.save(targetMember);
+    }
+
+    return { success: true, userId: input.targetUserId };
   }
 
   async leaveChannel(channelId: string, input: ChannelLeaveDto) {
