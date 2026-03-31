@@ -312,11 +312,17 @@ export class WebMlsService implements IMlsService {
   async fetchPendingMessages() {
     if (this.userId === 'unknown') return;
 
+    const FETCH_TIMEOUT = 10_000;
+
     // Fetch pending welcome messages (group invitations stored while offline)
     try {
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT);
       const wRes = await fetch(`${this.historyUrl}/api/mls-api/welcome/${this.deviceId}`, {
         headers: this.withAuthHeaders(),
+        signal: ctrl.signal,
       });
+      clearTimeout(tid);
       if (wRes.ok) {
         const welcomes = await wRes.json();
         if (Array.isArray(welcomes) && welcomes.length > 0) {
@@ -338,9 +344,13 @@ export class WebMlsService implements IMlsService {
     }
 
     try {
+      const ctrl2 = new AbortController();
+      const tid2 = setTimeout(() => ctrl2.abort(), FETCH_TIMEOUT);
       const res = await fetch(
-        `${this.historyUrl}/api/mls-api/messages/${this.userId}/${this.deviceId}`
+        `${this.historyUrl}/api/mls-api/messages/${this.userId}/${this.deviceId}`,
+        { signal: ctrl2.signal }
       );
+      clearTimeout(tid2);
       if (res.ok) {
         const messages = await res.json();
         if (Array.isArray(messages) && messages.length > 0) {
@@ -356,7 +366,7 @@ export class WebMlsService implements IMlsService {
           }
 
           if (successfullyProcessedIds.length > 0) {
-            await fetch(`${this.historyUrl}/api/mls-api/messages/ack`, {
+            const ackRes = await fetch(`${this.historyUrl}/api/mls-api/messages/ack`, {
               method: 'POST',
               headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
               body: JSON.stringify({
@@ -365,7 +375,11 @@ export class WebMlsService implements IMlsService {
                 messageIds: successfullyProcessedIds,
               }),
             });
-            console.log(`Acknowledged ${successfullyProcessedIds.length} messages`);
+            if (!ackRes.ok) {
+              console.error(`Message ACK failed: ${ackRes.status}`);
+            } else {
+              console.log(`Acknowledged ${successfullyProcessedIds.length} messages`);
+            }
           }
         }
       }
