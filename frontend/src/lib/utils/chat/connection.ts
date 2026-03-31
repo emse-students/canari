@@ -90,7 +90,6 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
     historyBaseUrl,
     conversations,
     messageReactions,
-    selectedContact,
     setSelectedContact,
     setMobileView,
     saveConversation,
@@ -103,6 +102,10 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
     onCallSignal,
     log,
   } = deps;
+
+  // Read selectedContact lazily from deps to avoid stale closure —
+  // the value captured at setup time would never update.
+  const getSelectedContact = () => deps.selectedContact;
 
   // Compteur d'échecs MLS par conversation — détection des groupes fantômes
   const groupMlsFailures = new Map<string, number>();
@@ -566,6 +569,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               convoKey
             );
           }
+          // Reset phantom failure counter on any successful processing
+          groupMlsFailures.delete(convoKey);
           return true;
         } catch (_e) {
           const errMsg = String(_e);
@@ -596,7 +601,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               }
               conversations.delete(convoKey);
               groupMlsFailures.delete(convoKey);
-              if (selectedContact === convoKey) {
+              if (getSelectedContact() === convoKey) {
                 setSelectedContact(null);
                 setMobileView('list');
               }
@@ -711,6 +716,16 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             matchedExisting = true;
           } else {
             newConvoKey = `dm_${crypto.randomUUID()}`;
+          }
+        } else {
+          // For groups: check if a placeholder already exists with this groupId
+          // (created by discoverMissingGroups or a previous partial Welcome)
+          const existingGroup = Array.from(conversations.entries()).find(
+            ([, convo]) => convo.groupId === joinedGroupId
+          );
+          if (existingGroup) {
+            newConvoKey = existingGroup[0];
+            matchedExisting = true;
           }
         }
 

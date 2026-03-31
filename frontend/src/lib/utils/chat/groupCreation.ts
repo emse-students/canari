@@ -75,9 +75,10 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
   if (duplicateGroup) return log(`Groupe "${groupDisplayName}" existe déjà.`);
 
   const conversationKey = `grp_${crypto.randomUUID()}`;
+  let groupId: string | undefined;
 
   try {
-    const groupId = await mlsService.createRemoteGroup(groupDisplayName, true); // true = multi-user group
+    groupId = await mlsService.createRemoteGroup(groupDisplayName, true); // true = multi-user group
     await mlsService.createGroup(groupId);
     await mlsService.registerMember(groupId, userId, mlsService.getDeviceId());
 
@@ -137,10 +138,20 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
       conversationType: 'group',
     });
     selectConversation(conversationKey);
-    saveConversation(conversationKey);
+    await saveConversation(conversationKey);
     log(`[OK] Groupe "${groupDisplayName}" cree.`);
   } catch (e) {
     log(`Erreur création groupe: ${toUiDiscussionError(e)}`);
+    conversations.delete(conversationKey);
+
+    // Best-effort: clean up the orphan remote group
+    if (groupId) {
+      try {
+        await mlsService.deleteGroupOnServer(groupId);
+      } catch {
+        // Non-blocking
+      }
+    }
   }
 }
 
@@ -407,9 +418,10 @@ export async function repairDirectConversation(
     return false;
   }
 
+  let groupId: string | undefined;
   try {
     log(`Réparation automatique de la connexion avec ${contact}...`);
-    const groupId = await mlsService.createRemoteGroup(groupName, false); // false = 1-to-1 direct conversation
+    groupId = await mlsService.createRemoteGroup(groupName, false); // false = 1-to-1 direct conversation
 
     await mlsService.createGroup(groupId);
     await mlsService.registerMember(groupId, userId, mlsService.getDeviceId());
@@ -456,11 +468,20 @@ export async function repairDirectConversation(
     localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
 
     conversations.set(conversationKey, { ...convo, groupId, isReady: true });
-    saveConversation(conversationKey);
+    await saveConversation(conversationKey);
     log(`[OK] Connexion réparée avec ${contact}.`);
     return true;
   } catch (e) {
     log(`Erreur de réparation : ${toUiDiscussionError(e)}`);
+
+    // Best-effort: clean up the orphan remote group
+    if (groupId) {
+      try {
+        await mlsService.deleteGroupOnServer(groupId);
+      } catch {
+        // Non-blocking
+      }
+    }
     return false;
   }
 }
