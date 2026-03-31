@@ -180,6 +180,25 @@ export async function importBackup(
     throw new Error(`Version de sauvegarde non supportée : ${backup.version}`);
   }
 
+  // Validate backup structure
+  if (!Array.isArray(backup.conversations)) {
+    throw new Error('Format de sauvegarde invalide : conversations manquantes');
+  }
+  if (!Array.isArray(backup.messages)) {
+    throw new Error('Format de sauvegarde invalide : messages manquants');
+  }
+  if (backup.conversations.length > 10_000) {
+    throw new Error('Sauvegarde trop volumineuse : trop de conversations');
+  }
+  if (backup.messages.length > 500_000) {
+    throw new Error('Sauvegarde trop volumineuse : trop de messages');
+  }
+  for (const conv of backup.conversations) {
+    if (typeof conv.id !== 'string' || !conv.id.trim()) {
+      throw new Error('ID de conversation invalide dans la sauvegarde');
+    }
+  }
+
   // Detect whether this is the same physical device (wipe/restore) or a
   // second device receiving a transfer.  Back-compat: old backups without
   // exporterDeviceId are treated as same-device to preserve previous behaviour.

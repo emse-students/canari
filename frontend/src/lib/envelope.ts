@@ -86,10 +86,12 @@ export function parseEnvelope(content: string): MessageEnvelope {
       // Dynamic import or use of codec to avoid circular dependencies
       // We will parse the protobuf manually since it's simple or just return a fallback.
       // A typical AppMessage text payload has: 0x0A (10), length, 0x0A (10), length, then text characters
-      if (bytes[0] === 10 && bytes[2] === 10) {
+      if (bytes.length >= 4 && bytes[0] === 10 && bytes[2] === 10) {
         const textLen = bytes[3];
-        const textContent = new TextDecoder().decode(bytes.slice(4, 4 + textLen));
-        return { kind: 'text', text: textContent };
+        if (textLen > 0 && 4 + textLen <= bytes.length) {
+          const textContent = new TextDecoder().decode(bytes.slice(4, 4 + textLen));
+          return { kind: 'text', text: textContent };
+        }
       }
     } catch (err) {
       void err;
@@ -99,14 +101,28 @@ export function parseEnvelope(content: string): MessageEnvelope {
   if (content.startsWith('{')) {
     try {
       const obj = JSON.parse(content) as Record<string, unknown>;
+
+      const safeReplyTo = (
+        v: unknown
+      ): { id: string; senderId: string; content: string } | undefined => {
+        if (v && typeof v === 'object') {
+          const r = v as Record<string, unknown>;
+          if (
+            typeof r.id === 'string' &&
+            typeof r.senderId === 'string' &&
+            typeof r.content === 'string'
+          ) {
+            return { id: r.id, senderId: r.senderId, content: r.content };
+          }
+        }
+        return undefined;
+      };
+
       if (obj.kind === 'text' && typeof obj.text === 'string') {
         return {
           kind: 'text',
           text: obj.text,
-          replyTo:
-            obj.replyTo && typeof obj.replyTo === 'object'
-              ? (obj.replyTo as { id: string; senderId: string; content: string })
-              : undefined,
+          replyTo: safeReplyTo(obj.replyTo),
         };
       }
 
@@ -137,10 +153,7 @@ export function parseEnvelope(content: string): MessageEnvelope {
               fileName: typeof media.fileName === 'string' ? media.fileName : undefined,
             },
             caption: typeof obj.caption === 'string' ? obj.caption : undefined,
-            replyTo:
-              obj.replyTo && typeof obj.replyTo === 'object'
-                ? (obj.replyTo as { id: string; senderId: string; content: string })
-                : undefined,
+            replyTo: safeReplyTo(obj.replyTo),
           };
         }
       }

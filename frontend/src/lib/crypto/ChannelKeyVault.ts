@@ -9,6 +9,15 @@ export class ChannelKeyVault {
   private currentEpoch: number = 0;
 
   async rotateKey(newEpochId: number, rawKeyMaterial: Uint8Array) {
+    if (!Number.isInteger(newEpochId) || newEpochId < 0) {
+      throw new Error(`Invalid epoch ID: ${newEpochId}`);
+    }
+    if (!rawKeyMaterial || rawKeyMaterial.length !== 32) {
+      throw new Error(
+        `Key material must be exactly 32 bytes, got ${rawKeyMaterial?.length ?? 'null'}`
+      );
+    }
+
     const key = await crypto.subtle.importKey(
       'raw',
       rawKeyMaterial as unknown as BufferSource,
@@ -27,7 +36,11 @@ export class ChannelKeyVault {
 
   getCurrentKey(): SymmetricPayloadKey {
     const key = this.keys.get(this.currentEpoch);
-    if (!key) throw new Error('No active key for channel');
+    if (!key) {
+      throw new Error(
+        `No key for epoch ${this.currentEpoch}. Available: ${[...this.keys.keys()].join(', ') || 'none'}`
+      );
+    }
     return key;
   }
 

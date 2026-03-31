@@ -147,15 +147,28 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         const keyVersion = data.keyVersion;
         if (channelId && newEpochBaseKey && keyVersion !== undefined) {
           try {
+            if (!Number.isInteger(keyVersion) || keyVersion < 0) {
+              throw new Error(`Invalid keyVersion: ${keyVersion}`);
+            }
+            if (
+              typeof newEpochBaseKey !== 'string' ||
+              !/^[A-Za-z0-9+/]*={0,2}$/.test(newEpochBaseKey)
+            ) {
+              throw new Error('Invalid base64 format for epoch key');
+            }
             const vault = channelKeyManager.getVault(channelId);
             const rawKeyMat = new Uint8Array(
               atob(newEpochBaseKey)
                 .split('')
                 .map((c) => c.charCodeAt(0))
             );
+            if (rawKeyMat.length < 32) {
+              throw new Error(`Key material too short: ${rawKeyMat.length} bytes`);
+            }
             await vault.rotateKey(keyVersion, rawKeyMat);
             log(`[Key Rotation] Epoch ${keyVersion} stored for Channel ${channelId}`);
           } catch (e) {
+            log(`[ERROR] Key rotation failed for channel ${channelId}: ${e}`);
             console.error('[Key Rotation] failed for channel', channelId, e);
           }
         }
@@ -734,6 +747,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           conversations.set(newConvoKey, {
             ...convo,
             groupId: joinedGroupId,
+            name: isDirect ? directPeerId : groupName,
             isReady: true,
           });
           if (storage) await saveConversation(newConvoKey);

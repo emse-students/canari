@@ -27,13 +27,18 @@ export async function migrateFromLocalStorage(
       continue;
     }
 
-    await storage.saveConversation({
-      id: contactName,
-      groupId: data.groupId,
-      name: data.name || contactName,
-      isReady: data.isReady || false,
-      updatedAt: Date.now(),
-    });
+    try {
+      await storage.saveConversation({
+        id: contactName,
+        groupId: data.groupId,
+        name: data.name || contactName,
+        isReady: data.isReady || false,
+        updatedAt: data.updatedAt || Date.now(),
+      });
+    } catch (e) {
+      log(`⚠️ Échec sauvegarde conversation ${contactName}: ${e}`);
+      continue;
+    }
 
     for (const m of (data.messages || []) as any[]) {
       try {
@@ -44,6 +49,8 @@ export async function migrateFromLocalStorage(
             senderId: m.senderId || '',
             content: m.content || '',
             timestamp: m.timestamp ? new Date(m.timestamp).getTime() : Date.now(),
+            isDeleted: m.isDeleted === true ? true : undefined,
+            isEdited: m.isEdited === true ? true : undefined,
           },
           pin
         );
