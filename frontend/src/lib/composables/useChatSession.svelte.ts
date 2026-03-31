@@ -239,11 +239,8 @@ export function useChatSession() {
       cb.log(`Erreur: ${msg}`);
       localStorage.removeItem('canari_saved_user');
       localStorage.removeItem('canari_saved_pin');
-      await clearAuth();
-      if (!window.location.pathname.startsWith('/login')) {
-        const cur = window.location.pathname + window.location.search;
-        void goto(`/login?returnTo=${encodeURIComponent(cur)}`, { replaceState: true });
-      }
+      const cur = window.location.pathname + window.location.search;
+      void goto(`/login?returnTo=${encodeURIComponent(cur)}`, { replaceState: true });
     }
   }
 
@@ -278,7 +275,7 @@ export function useChatSession() {
     }
   }
 
-  async function logout(cb: ChatSessionCallbacks) {
+  function logout(cb: ChatSessionCallbacks) {
     if (reconnectTimer !== null) {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
@@ -293,7 +290,7 @@ export function useChatSession() {
     showBiometricEnrollPrompt = false;
     localStorage.removeItem('canari_saved_user');
     localStorage.removeItem('canari_saved_pin');
-    await clearAuth();
+    clearAuth();
     void goto('/login', { replaceState: true });
   }
 

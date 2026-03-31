@@ -271,6 +271,17 @@ export async function startNewConversation(
     return;
   }
 
+  // IMPORTANT: Check if contact is available BEFORE creating the group
+  // This prevents orphaned groups on other devices if the contact isn't online
+  log(`Vérification de la disponibilité de ${contact}...`);
+  const contactDevices = await fetchDevicesWithRetry(mlsService, contact, log);
+  if (contactDevices.length === 0) {
+    log(
+      `[ERREUR] Appareils introuvables pour ${contact}. Le contact doit se connecter une première fois pour publier son KeyPackage.`
+    );
+    return;
+  }
+
   const conversationKey = `dm_${crypto.randomUUID()}`;
   const groupName = `${userId}::${contact}`;
   try {
@@ -291,7 +302,21 @@ export async function startNewConversation(
     await mlsService.createGroup(groupId);
     await mlsService.registerMember(groupId, userId, mlsService.getDeviceId());
 
-    // Add own other devices
+    // First add target contact's devices (they are already verified available)
+    const bulk = await mlsService.addMembersBulk(groupId, contactDevices);
+
+    for (const did of bulk.addedDeviceIds) {
+      await mlsService.registerMember(groupId, contact, did);
+    }
+
+    if (bulk.welcome) {
+      for (const did of bulk.addedDeviceIds) {
+        await mlsService.sendWelcome(bulk.welcome, contact, groupId, did, bulk.ratchetTree);
+      }
+    }
+    if (bulk.commit) await mlsService.sendCommit(bulk.commit, groupId);
+
+    // Now add own other devices (after contact is successfully added)
     const ownDevices = (await mlsService.fetchUserDevices(userId)).filter(
       (d) => d.deviceId !== mlsService.getDeviceId()
     );
@@ -299,7 +324,7 @@ export async function startNewConversation(
       try {
         const result = await mlsService.addMember(groupId, device.keyPackage);
         await mlsService.registerMember(groupId, userId, device.deviceId);
-        if (result.welcome)
+        if (result.welcome) {
           if (result.ratchetTree) {
             await mlsService.sendWelcome(
               result.welcome,
@@ -311,6 +336,7 @@ export async function startNewConversation(
           } else {
             await mlsService.sendWelcome(result.welcome, userId, groupId, device.deviceId);
           }
+        }
         if (result.commit) await mlsService.sendCommit(result.commit, groupId);
       } catch {
         // Silently ignore errors in device sync
@@ -320,35 +346,10 @@ export async function startNewConversation(
     const stBytes = await mlsService.saveState(pin);
     localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
 
-    // Add target contact's devices
-    const devices = await fetchDevicesWithRetry(mlsService, contact, log);
-    if (devices.length > 0) {
-      const bulk = await mlsService.addMembersBulk(groupId, devices);
-
-      for (const did of bulk.addedDeviceIds) {
-        await mlsService.registerMember(groupId, contact, did);
-      }
-
-      const st2Bytes = await mlsService.saveState(pin);
-      localStorage.setItem('mls_autosave_' + userId, toHex(st2Bytes));
-
-      if (bulk.welcome) {
-        for (const did of bulk.addedDeviceIds) {
-          await mlsService.sendWelcome(bulk.welcome, contact, groupId, did, bulk.ratchetTree);
-        }
-      }
-      if (bulk.commit) await mlsService.sendCommit(bulk.commit, groupId);
-
-      const convo = conversations.get(conversationKey)!;
-      conversations.set(conversationKey, { ...convo, isReady: true });
-      saveConversation(conversationKey);
-      log(`[OK] Canal securise avec ${contact}.`);
-    } else {
-      log(
-        `[ERREUR] Appareils introuvables pour ${contact}. Le contact doit se connecter une premiere fois pour publier son KeyPackage.`
-      );
-      conversations.delete(conversationKey);
-    }
+    const convo = conversations.get(conversationKey)!;
+    conversations.set(conversationKey, { ...convo, isReady: true });
+    saveConversation(conversationKey);
+    log(`[OK] Canal sécurisé avec ${contact}.`);
   } catch (_e: unknown) {
     const msg = _e instanceof Error ? _e.message : String(_e);
     log(`Erreur création: ${toUiDiscussionError(msg)}`);
@@ -366,6 +367,15 @@ export async function repairDirectConversation(
 
   const contact = (convo.directPeerId ?? convo.contactName).toLowerCase();
   const groupName = `${userId}::${contact}`;
+
+  // Check contact availability first
+  log(`Vérification de la disponibilité de ${contact}...`);
+  const devices = await fetchDevicesWithRetry(mlsService, contact, log, 3, 1000);
+  if (devices.length === 0) {
+    log(`Échec de la réparation : aucun appareil pour ${contact}`);
+    return false;
+  }
+
   try {
     log(`Réparation automatique de la connexion avec ${contact}...`);
     const groupId = await mlsService.createRemoteGroup(groupName);
@@ -373,6 +383,18 @@ export async function repairDirectConversation(
     await mlsService.createGroup(groupId);
     await mlsService.registerMember(groupId, userId, mlsService.getDeviceId());
 
+    // First add contact's devices (already verified available)
+    const bulk = await mlsService.addMembersBulk(groupId, devices);
+    for (const did of bulk.addedDeviceIds) await mlsService.registerMember(groupId, contact, did);
+
+    if (bulk.welcome) {
+      for (const did of bulk.addedDeviceIds) {
+        await mlsService.sendWelcome(bulk.welcome, contact, groupId, did, bulk.ratchetTree);
+      }
+    }
+    if (bulk.commit) await mlsService.sendCommit(bulk.commit, groupId);
+
+    // Then add own other devices
     const ownDevices = (await mlsService.fetchUserDevices(userId)).filter(
       (d) => d.deviceId !== mlsService.getDeviceId()
     );
@@ -400,29 +422,10 @@ export async function repairDirectConversation(
     const stBytes = await mlsService.saveState(pin);
     localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
 
-    const devices = await fetchDevicesWithRetry(mlsService, contact, log, 3, 1000);
-    if (devices.length > 0) {
-      const bulk = await mlsService.addMembersBulk(groupId, devices);
-      for (const did of bulk.addedDeviceIds) await mlsService.registerMember(groupId, contact, did);
-
-      const st2Bytes = await mlsService.saveState(pin);
-      localStorage.setItem('mls_autosave_' + userId, toHex(st2Bytes));
-
-      if (bulk.welcome) {
-        for (const did of bulk.addedDeviceIds) {
-          await mlsService.sendWelcome(bulk.welcome, contact, groupId, did, bulk.ratchetTree);
-        }
-      }
-      if (bulk.commit) await mlsService.sendCommit(bulk.commit, groupId);
-
-      conversations.set(conversationKey, { ...convo, groupId, isReady: true });
-      saveConversation(conversationKey);
-      log(`[OK] Connexion réparée avec ${contact}.`);
-      return true;
-    } else {
-      log(`Echec de la réparation : aucun appareil pour ${contact}`);
-      return false;
-    }
+    conversations.set(conversationKey, { ...convo, groupId, isReady: true });
+    saveConversation(conversationKey);
+    log(`[OK] Connexion réparée avec ${contact}.`);
+    return true;
   } catch (e) {
     log(`Erreur de réparation : ${toUiDiscussionError(e)}`);
     return false;
