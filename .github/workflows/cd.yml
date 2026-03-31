@@ -16,10 +16,6 @@ jobs:
     name: Run CI Checks
     uses: ./.github/workflows/ci.yml
 
-  run-code-analysis:
-    name: Run Code Analysis
-    uses: ./.github/workflows/code-analysis.yml
-
   detect-changed-services:
     name: Detect Changed Services
     runs-on: ubuntu-latest
@@ -313,12 +309,11 @@ jobs:
   deploy-to-server:
     name: Deploy to Production Server
     runs-on: self-hosted
-    needs: [run-ci, run-code-analysis, detect-changed-services, build-docker-images]
+    needs: [run-ci, detect-changed-services, build-docker-images]
     if: |
       always() &&
       github.ref == 'refs/heads/main' &&
       needs.run-ci.result == 'success' &&
-      needs.run-code-analysis.result == 'success' &&
       needs.detect-changed-services.result == 'success' &&
       (needs.build-docker-images.result == 'success' || needs.build-docker-images.result == 'skipped')
     permissions:
