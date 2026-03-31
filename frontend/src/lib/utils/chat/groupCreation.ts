@@ -77,7 +77,7 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
   const conversationKey = `grp_${crypto.randomUUID()}`;
 
   try {
-    const groupId = await mlsService.createRemoteGroup(groupDisplayName);
+    const groupId = await mlsService.createRemoteGroup(groupDisplayName, true); // true = multi-user group
     await mlsService.createGroup(groupId);
     await mlsService.registerMember(groupId, userId, mlsService.getDeviceId());
 
@@ -304,7 +304,7 @@ export async function startNewConversation(
   const conversationKey = `dm_${crypto.randomUUID()}`;
   const groupName = `${userId}::${contact}`;
   try {
-    const groupId = await mlsService.createRemoteGroup(groupName);
+    const groupId = await mlsService.createRemoteGroup(groupName, false); // false = 1-to-1 direct conversation
 
     conversations.set(conversationKey, {
       contactName: contact,
@@ -397,7 +397,7 @@ export async function repairDirectConversation(
 
   try {
     log(`Réparation automatique de la connexion avec ${contact}...`);
-    const groupId = await mlsService.createRemoteGroup(groupName);
+    const groupId = await mlsService.createRemoteGroup(groupName, false); // false = 1-to-1 direct conversation
 
     await mlsService.createGroup(groupId);
     await mlsService.registerMember(groupId, userId, mlsService.getDeviceId());

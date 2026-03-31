@@ -1,7 +1,7 @@
 export interface IMlsService {
   init(userId: string, pin: string, state?: Uint8Array): Promise<void>;
   createGroup(groupId: string): Promise<void>;
-  createRemoteGroup(name: string): Promise<string>;
+  createRemoteGroup(name: string, isGroup?: boolean): Promise<string>;
   saveState(pin: string): Promise<Uint8Array>;
   generateKeyPackage(pin: string): Promise<Uint8Array>;
   addMember(

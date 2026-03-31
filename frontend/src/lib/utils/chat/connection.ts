@@ -521,6 +521,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       try {
         const joinedGroupId = await mlsService.processWelcome(content, ratchetTreeBytes);
         let groupName = senderNorm;
+        let isGroupFromApi: boolean | null = null;
 
         // Fetch group metadata
         try {
@@ -530,6 +531,10 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           if (gRes.ok) {
             const gData = await gRes.json();
             if (gData?.name) groupName = gData.name;
+            // Use the explicit isGroup field from the backend
+            if (typeof gData?.isGroup === 'boolean') {
+              isGroupFromApi = gData.isGroup;
+            }
           }
         } catch {
           // Silent fallback if group metadata fetch fails
@@ -537,7 +542,33 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
 
         let isDirect = false;
         let directPeerId = '';
-        if (groupName.includes('::')) {
+
+        // Determine if this is a direct conversation:
+        // 1. If backend explicitly returns isGroup=false, it's a direct conversation
+        // 2. Fallback to name pattern detection for backwards compatibility
+        if (isGroupFromApi === false) {
+          // Explicit 1-to-1 conversation from backend
+          isDirect = true;
+          // Extract peer from name pattern (userId::contact) or use sender
+          if (groupName.includes('::')) {
+            const parts = groupName.split('::');
+            if (
+              parts.length === 2 &&
+              (parts[0].toLowerCase() === userId.toLowerCase() ||
+                parts[1].toLowerCase() === userId.toLowerCase())
+            ) {
+              directPeerId =
+                parts[0].toLowerCase() === userId.toLowerCase()
+                  ? parts[1].toLowerCase()
+                  : parts[0].toLowerCase();
+            } else {
+              directPeerId = senderNorm;
+            }
+          } else {
+            directPeerId = senderNorm;
+          }
+        } else if (isGroupFromApi === null && groupName.includes('::')) {
+          // Fallback: name pattern detection for legacy groups
           const parts = groupName.split('::');
           if (
             parts.length === 2 &&
@@ -551,6 +582,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                 : parts[0].toLowerCase();
           }
         }
+        // If isGroupFromApi === true, it's explicitly a group, so isDirect stays false
 
         let newConvoKey = `grp_${crypto.randomUUID()}`;
         let matchedExisting = false;

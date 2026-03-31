@@ -179,7 +179,8 @@ describe('startNewConversation', () => {
     expect(created).toBeDefined();
 
     // Le groupe doit être créé avec le nom normalisé et le format "userId::contact"
-    expect(mls.createRemoteGroup).toHaveBeenCalledWith('jolan::jolan2');
+    // isGroup=false pour conversation 1-to-1
+    expect(mls.createRemoteGroup).toHaveBeenCalledWith('jolan::jolan2', false);
   });
 
   it('crée le groupe et ajoute jolan comme membre', async () => {
@@ -193,7 +194,8 @@ describe('startNewConversation', () => {
     const convs = makeConversationMap();
     await startNewConversation('jolan2', makeDeps(mls, convs));
 
-    expect(mls.createRemoteGroup).toHaveBeenCalledWith('jolan::jolan2');
+    // isGroup=false pour conversation 1-to-1
+    expect(mls.createRemoteGroup).toHaveBeenCalledWith('jolan::jolan2', false);
     expect(mls.createGroup).toHaveBeenCalledWith('group-test-uuid');
     expect(mls.registerMember).toHaveBeenCalledWith('group-test-uuid', 'jolan', 'dev-jolan-01');
   });
@@ -393,7 +395,8 @@ describe('createNewGroup', () => {
     const selectConversation = vi.fn();
     await createNewGroup('Projet Alpha', makeDeps(mls, convs, { selectConversation }));
 
-    expect(mls.createRemoteGroup).toHaveBeenCalledWith('Projet Alpha');
+    // isGroup=true pour groupe multi-membres
+    expect(mls.createRemoteGroup).toHaveBeenCalledWith('Projet Alpha', true);
     expect(mls.createGroup).toHaveBeenCalledWith('group-test-uuid');
     expect(mls.registerMember).toHaveBeenCalledWith('group-test-uuid', 'jolan', 'dev-jolan-01');
   });

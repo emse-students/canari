@@ -1007,15 +1007,22 @@ export class AppController {
 
   @UseGuards(HeaderAuthGuard)
   @Post('mls-api/groups')
-  async createGroup(@Body() body: { name: string; createdBy: string }) {
+  async createGroup(
+    @Body() body: { name: string; createdBy: string; isGroup?: boolean },
+  ) {
     const groupId = uuidv4();
     const newGroup = this.groupRepo.create({
       id: groupId,
       name: body.name,
-      isGroup: true,
+      isGroup: body.isGroup ?? true, // Default to true (group) if not specified
     });
     await this.groupRepo.save(newGroup);
-    return { groupId, name: body.name, createdBy: body.createdBy };
+    return {
+      groupId,
+      name: body.name,
+      createdBy: body.createdBy,
+      isGroup: newGroup.isGroup,
+    };
   }
 
   @UseGuards(HeaderAuthGuard)

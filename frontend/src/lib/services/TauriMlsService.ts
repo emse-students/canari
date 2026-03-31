@@ -481,12 +481,12 @@ export class TauriMlsService implements IMlsService {
     await invoke('creer_groupe', { groupId });
   }
 
-  async createRemoteGroup(name: string): Promise<string> {
+  async createRemoteGroup(name: string, isGroup: boolean = true): Promise<string> {
     try {
       const res = await fetch(`${this.historyUrl}/api/mls-api/groups`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, createdBy: this.userId }),
+        body: JSON.stringify({ name, createdBy: this.userId, isGroup }),
       });
       if (!res.ok) throw new Error('Failed to create remote group');
       const data = await res.json();
