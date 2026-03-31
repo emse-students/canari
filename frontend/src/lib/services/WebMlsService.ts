@@ -86,6 +86,20 @@ export class WebMlsService implements IMlsService {
 
   async connect(token: string): Promise<void> {
     this.authToken = token;
+
+    // Close existing socket before creating a new one
+    if (this.ws) {
+      try {
+        this.ws.onclose = null;
+        this.ws.onerror = null;
+        this.ws.onmessage = null;
+        this.ws.close();
+      } catch {
+        /* ignore */
+      }
+      this.ws = null;
+    }
+
     return new Promise((resolve, reject) => {
       // Convert HTTP(S) URL to WS(S) URL
       // https:// -> wss://, http:// -> ws://
@@ -98,7 +112,16 @@ export class WebMlsService implements IMlsService {
       this.ws = new WebSocket(fullWsUrl);
       let resolved = false;
 
+      const timeout = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          this.ws?.close();
+          reject(new Error('WebSocket connection timeout after 15s'));
+        }
+      }, 15_000);
+
       this.ws.onopen = async () => {
+        clearTimeout(timeout);
         resolved = true;
         console.log('Connected to Chat Gateway with DeviceID:', this.deviceId);
         try {
@@ -110,14 +133,18 @@ export class WebMlsService implements IMlsService {
         resolve();
       };
       this.ws.onerror = (event) => {
+        clearTimeout(timeout);
         console.error('WebSocket Error:', event);
         if (!resolved) {
+          resolved = true;
           const errorMsg = `WebSocket connection failed to ${wsUrl}/ws. Check that Chat Gateway is running and accessible.`;
           reject(new Error(errorMsg));
         }
       };
       this.ws.onclose = (event) => {
+        clearTimeout(timeout);
         if (!resolved) {
+          resolved = true;
           reject(
             new Error(
               `WebSocket closed before opening. Code: ${event.code}, Reason: ${event.reason || 'Connection refused or network error'}`
@@ -268,8 +295,8 @@ export class WebMlsService implements IMlsService {
         }
       } catch (e) {
         console.error(`[QUEUE] Error processing message:`, e);
-        // Clean up pending Welcome state on error
-        if (msg.isWelcome && groupId) {
+        // Clean up pending Welcome state on error to prevent buffering forever
+        if (groupId) {
           this.pendingWelcomeGroups.delete(groupId);
         }
       }

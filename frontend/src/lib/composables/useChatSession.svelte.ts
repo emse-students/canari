@@ -125,6 +125,13 @@ export function useChatSession() {
     userId = userId.trim().toLowerCase();
     const hadLocalState = Boolean(localStorage.getItem('mls_autosave_' + userId));
 
+    // Clear any stale reconnect timer from a previous session
+    if (reconnectTimer !== null) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    reconnectAttempts = 0;
+
     try {
       const mlsService = ensureMls();
       cb.log('Verification du PIN...');

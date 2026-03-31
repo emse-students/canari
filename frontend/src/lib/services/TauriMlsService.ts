@@ -75,13 +75,36 @@ export class TauriMlsService implements IMlsService {
   }
 
   async connect(token: string): Promise<void> {
+    // Close existing socket before creating a new one
+    if (this.ws) {
+      try {
+        this.ws.onclose = null;
+        this.ws.onerror = null;
+        this.ws.onmessage = null;
+        this.ws.close();
+      } catch {
+        /* ignore */
+      }
+      this.ws = null;
+    }
+
     // Reuse direct WebSocket logic for now (Tauri allows localhost by default)
     return new Promise((resolve, reject) => {
       this.ws = new WebSocket(
         `${this.baseUrl.replace('http', 'ws')}/api/ws?token=${token}&device_id=${this.deviceId}`
       );
       let resolved = false;
+
+      const timeout = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          this.ws?.close();
+          reject(new Error('WebSocket connection timeout after 15s'));
+        }
+      }, 15_000);
+
       this.ws.onopen = async () => {
+        clearTimeout(timeout);
         resolved = true;
         console.log('Connected to Chat Gateway (Tauri) with DeviceID:', this.deviceId);
         try {
@@ -93,10 +116,16 @@ export class TauriMlsService implements IMlsService {
         resolve();
       };
       this.ws.onerror = (e) => {
-        if (!resolved) reject(e);
+        clearTimeout(timeout);
+        if (!resolved) {
+          resolved = true;
+          reject(e);
+        }
       };
       this.ws.onclose = (event) => {
+        clearTimeout(timeout);
         if (!resolved) {
+          resolved = true;
           reject(new Error(`WebSocket closed before opening. Code: ${event.code}`));
         } else {
           console.warn(`WebSocket disconnected. Code: ${event.code}`);
@@ -344,8 +373,8 @@ export class TauriMlsService implements IMlsService {
         }
       } catch (e) {
         console.error(`[QUEUE] Error processing message:`, e);
-        // Clean up pending Welcome state on error
-        if (msg.isWelcome && groupId) {
+        // Clean up pending Welcome state on error to prevent buffering forever
+        if (groupId) {
           this.pendingWelcomeGroups.delete(groupId);
         }
       }
