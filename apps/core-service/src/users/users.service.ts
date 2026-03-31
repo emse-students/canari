@@ -62,13 +62,7 @@ export class UsersService {
       email: email || null,
       displayName: displayName || null,
     });
-    try {
-      return await this.userRepository.save(newUser);
-    } catch {
-      // If email constraint fails, try without email (dev scenario)
-      newUser.email = null;
-      return await this.userRepository.save(newUser);
-    }
+    return await this.userRepository.save(newUser);
   }
 
   /**

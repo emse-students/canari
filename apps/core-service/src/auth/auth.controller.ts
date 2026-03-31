@@ -91,11 +91,21 @@ export class AuthController {
 
     let user: User;
     try {
-      user = await this.usersService.findOrCreateFromOidc(
-        devId,
-        `${devId}@canari.local`,
-        devId,
-      );
+      // First try to find existing user with legacy 'dev-' prefix
+      const legacyId = `dev-${devId}`;
+      const existingLegacy = await this.usersService
+        .findOne(legacyId)
+        .catch(() => null);
+      if (existingLegacy) {
+        user = existingLegacy;
+      } else {
+        // Try new ID format, or create new user
+        user = await this.usersService.findOrCreateFromOidc(
+          devId,
+          `${devId}@canari.local`,
+          devId,
+        );
+      }
     } catch (err) {
       console.error('[dev-login] Failed to find/create user:', devId, err);
       throw new BadRequestException(
