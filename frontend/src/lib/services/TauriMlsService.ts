@@ -229,8 +229,9 @@ export class TauriMlsService implements IMlsService {
 
           for (const msg of messages) {
             const success = await this.simulateMessageReceive(msg);
-            if (success && msg._id) {
-              successfullyProcessedIds.push(msg._id);
+            const msgId = msg.id || msg._id;
+            if (success && msgId) {
+              successfullyProcessedIds.push(msgId);
             }
           }
 

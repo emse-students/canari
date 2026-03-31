@@ -371,8 +371,10 @@ export async function startNewConversation(
           }
         }
         if (ownBulk.commit) await mlsService.sendCommit(ownBulk.commit, groupId);
-      } catch {
-        // Silently ignore errors in device sync
+      } catch (e) {
+        log(
+          `[WARN] Echec sync propres appareils (createNewGroup): ${e instanceof Error ? e.message : String(e)}`
+        );
       }
     }
 
@@ -459,8 +461,10 @@ export async function repairDirectConversation(
           }
         }
         if (ownBulk.commit) await mlsService.sendCommit(ownBulk.commit, groupId);
-      } catch {
-        // Silently ignore errors in device sync
+      } catch (e) {
+        log(
+          `[WARN] Echec sync propres appareils (repairDirect): ${e instanceof Error ? e.message : String(e)}`
+        );
       }
     }
 

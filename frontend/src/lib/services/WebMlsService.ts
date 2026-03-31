@@ -360,8 +360,9 @@ export class WebMlsService implements IMlsService {
 
           for (const msg of messages) {
             const success = await this.simulateMessageReceive(msg);
-            if (success && msg.id) {
-              successfullyProcessedIds.push(msg.id);
+            const msgId = msg.id || msg._id;
+            if (success && msgId) {
+              successfullyProcessedIds.push(msgId);
             }
           }
 
