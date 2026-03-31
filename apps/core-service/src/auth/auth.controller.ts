@@ -88,11 +88,19 @@ export class AuthController {
   }> {
     const devId = (body?.id || 'dev').trim().toLowerCase();
 
-    const user = await this.usersService.findOrCreateFromOidc(
-      devId,
-      `${devId}@canari.local`,
-      devId,
-    );
+    let user;
+    try {
+      user = await this.usersService.findOrCreateFromOidc(
+        devId,
+        `${devId}@canari.local`,
+        devId,
+      );
+    } catch (err) {
+      console.error('[dev-login] Failed to find/create user:', devId, err);
+      throw new BadRequestException(
+        `Failed to create user: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
 
     const access_token = jwt.sign({ sub: user.id }, this.jwtSecret, {
       expiresIn: '1h',
