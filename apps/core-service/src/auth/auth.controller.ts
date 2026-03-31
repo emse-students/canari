@@ -85,7 +85,14 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ): Promise<{
     access_token: string;
-    user: { id: string; email: string; displayName: string };
+    user: {
+      id: string;
+      email: string;
+      displayName: string;
+      firstYearOfSchool: number | null;
+      avatarMediaId: string | null;
+      bio: string | null;
+    };
   }> {
     const devId = (body?.id || 'dev').trim().toLowerCase();
 
@@ -130,6 +137,9 @@ export class AuthController {
         id: user.id,
         email: user.email || '',
         displayName: user.displayName || '',
+        firstYearOfSchool: user.firstYearOfSchool ?? null,
+        avatarMediaId: user.avatarMediaId ?? null,
+        bio: user.bio ?? null,
       },
     };
   }
@@ -140,7 +150,14 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ): Promise<{
     access_token: string;
-    user: { id: string; email: string; displayName: string };
+    user: {
+      id: string;
+      email: string;
+      displayName: string;
+      firstYearOfSchool: number | null;
+      avatarMediaId: string | null;
+      bio: string | null;
+    };
   }> {
     const { code, redirect_uri } = body ?? {};
     if (!code) throw new BadRequestException('code is required');
@@ -200,6 +217,7 @@ export class AuthController {
       email?: string;
       preferred_username?: string;
       name?: string;
+      first_year_of_school?: number;
     };
 
     if (!userinfo.sub) {
@@ -209,10 +227,15 @@ export class AuthController {
     }
 
     // 3. Upsert local user
+    const firstYear =
+      typeof userinfo.first_year_of_school === 'number'
+        ? userinfo.first_year_of_school
+        : null;
     const user = await this.usersService.findOrCreateFromOidc(
       userinfo.sub,
       userinfo.email || null,
       userinfo.name || userinfo.preferred_username || null,
+      firstYear,
     );
 
     // 4. Issue internal JWT pair
@@ -234,6 +257,9 @@ export class AuthController {
         id: user.id,
         email: user.email || '',
         displayName: user.displayName || '',
+        firstYearOfSchool: user.firstYearOfSchool ?? null,
+        avatarMediaId: user.avatarMediaId ?? null,
+        bio: user.bio ?? null,
       },
     };
   }

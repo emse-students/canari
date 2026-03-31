@@ -1,15 +1,18 @@
 import {
   Controller,
   Get,
-  Post,
   Body,
   Patch,
   Param,
-  Query,
+  Headers,
+  UseGuards,
   Req,
+  Query,
+  Post,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
-import { CreateUserDto, UpdateUserDto } from './dto/user.dto';
+import { UpdateUserDto } from './dto/user.dto';
+import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 
 interface JwtUser {
   sub?: string;
@@ -39,14 +42,27 @@ export class UsersController {
   create(@Body() createUserDto: CreateUserDto) {
     return this.usersService.create(createUserDto);
   }
-
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.usersService.findOne(id);
+  
+  @UseGuards(NginxAuthGuard)
+  @Get('me')
+  async getMe(@Headers('x-user-id') userId: string) {
+    const user = await this.usersService.findOne(userId);
+    return this.usersService.toPublicDto(user);
   }
 
-  @Patch(':id')
-  update(@Param('id') id: string, @Body() updateUserDto: UpdateUserDto) {
-    return this.usersService.update(id, updateUserDto);
+  @Get(':id')
+  async findOne(@Param('id') id: string) {
+    const user = await this.usersService.findOne(id);
+    return this.usersService.toPublicDto(user);
+  }
+
+  @UseGuards(NginxAuthGuard)
+  @Patch('me')
+  async updateMe(
+    @Headers('x-user-id') userId: string,
+    @Body() updateUserDto: UpdateUserDto,
+  ) {
+    const user = await this.usersService.update(userId, updateUserDto);
+    return this.usersService.toPublicDto(user);
   }
 }

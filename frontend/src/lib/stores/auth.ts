@@ -10,6 +10,8 @@
  * Refresh token → HttpOnly cookie set by the backend (never accessible to JS).
  */
 
+import { saveUserLocally, clearUserLocally } from '$lib/stores/user';
+
 const OIDC_STATE_KEY = 'canari_oidc_state';
 const OIDC_RETURN_KEY = 'canari_oidc_return';
 
@@ -90,16 +92,19 @@ export async function handleOidcCallback(
 
   const data = (await res.json()) as {
     access_token: string;
-    user: { id: string; email: string; displayName: string };
+    user: {
+      id: string;
+      email: string;
+      displayName: string;
+      firstYearOfSchool: number | null;
+      avatarMediaId: string | null;
+      bio: string | null;
+    };
   };
 
   _accessToken = data.access_token;
 
-  // Persist non-secret user info for UI display
-  localStorage.setItem('canari_saved_user', data.user.id);
-  if (data.user.email) localStorage.setItem('canari_user_email', data.user.email);
-  if (data.user.displayName)
-    localStorage.setItem('canari_user_display_name', data.user.displayName);
+  saveUserLocally(data.user);
 
   return data.user;
 }
@@ -125,15 +130,19 @@ export async function devLogin(
 
   const data = (await res.json()) as {
     access_token: string;
-    user: { id: string; email: string; displayName: string };
+    user: {
+      id: string;
+      email: string;
+      displayName: string;
+      firstYearOfSchool: number | null;
+      avatarMediaId: string | null;
+      bio: string | null;
+    };
   };
 
   _accessToken = data.access_token;
 
-  localStorage.setItem('canari_saved_user', data.user.id);
-  if (data.user.email) localStorage.setItem('canari_user_email', data.user.email);
-  if (data.user.displayName)
-    localStorage.setItem('canari_user_display_name', data.user.displayName);
+  saveUserLocally(data.user);
 
   return data.user;
 }
@@ -206,9 +215,7 @@ export async function clearAuth(): Promise<void> {
     method: 'POST',
     credentials: 'include',
   }).catch(() => {});
-  localStorage.removeItem('canari_saved_user');
-  localStorage.removeItem('canari_user_email');
-  localStorage.removeItem('canari_user_display_name');
+  clearUserLocally();
 }
 
 /**

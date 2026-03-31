@@ -11,8 +11,17 @@ export class User {
   @Column({ type: 'varchar', nullable: true })
   displayName: string | null;
 
+  @Column({ type: 'int', nullable: true })
+  firstYearOfSchool: number | null;
+
   @Column({ type: 'varchar', nullable: true })
-  stripeCustomerId: string;
+  avatarMediaId: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  bio: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  stripeCustomerId: string | null;
 
   @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
   createdAt: Date;

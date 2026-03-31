@@ -2,7 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from './entities/user.entity';
-import { CreateUserDto, UpdateUserDto } from './dto/user.dto';
+import { CreateUserDto, UpdateUserDto, PublicUserDto } from './dto/user.dto';
 
 @Injectable()
 export class UsersService {
@@ -30,14 +30,27 @@ export class UsersService {
     return await this.userRepository.save(user);
   }
 
+  toPublicDto(user: User): PublicUserDto {
+    return {
+      id: user.id,
+      email: user.email,
+      displayName: user.displayName,
+      firstYearOfSchool: user.firstYearOfSchool,
+      avatarMediaId: user.avatarMediaId,
+      bio: user.bio,
+      createdAt: user.createdAt,
+    };
+  }
+
   /**
    * Upsert a user from OIDC provider data (Authentik).
-   * Creates the user if they don't exist, or updates email/displayName if changed.
+   * Creates the user if they don't exist, or updates email/displayName/firstYearOfSchool if changed.
    */
   async findOrCreateFromOidc(
     id: string,
     email: string | null,
     displayName: string | null,
+    firstYearOfSchool: number | null = null,
   ): Promise<User> {
     const user = await this.userRepository.findOne({ where: { id } });
     if (user) {
@@ -48,6 +61,13 @@ export class UsersService {
       }
       if (displayName && user.displayName !== displayName) {
         user.displayName = displayName;
+        updated = true;
+      }
+      if (
+        firstYearOfSchool !== null &&
+        user.firstYearOfSchool !== firstYearOfSchool
+      ) {
+        user.firstYearOfSchool = firstYearOfSchool;
         updated = true;
       }
       if (updated) {
@@ -61,6 +81,7 @@ export class UsersService {
       id,
       email: email || null,
       displayName: displayName || null,
+      firstYearOfSchool,
     });
     return await this.userRepository.save(newUser);
   }
