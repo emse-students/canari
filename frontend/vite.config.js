@@ -83,6 +83,7 @@ export default defineConfig(async () => ({
       '/api/users': { target: 'http://localhost:3012', changeOrigin: true },
       '/api/media': { target: 'http://localhost:3011', changeOrigin: true },
       '/api/forms': { target: 'http://localhost:3014', changeOrigin: true },
+      '/api/associations': { target: 'http://localhost:3014', changeOrigin: true },
 
       '/ws': {
         target: 'ws://localhost:3000',

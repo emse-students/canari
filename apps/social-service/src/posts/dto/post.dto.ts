@@ -223,6 +223,14 @@ export class CreatePostDto {
   @ValidateNested({ each: true })
   @Type(() => FormInputDto)
   forms?: FormInputDto[];
+
+  @IsString()
+  @IsOptional()
+  associationId?: string;
+
+  @IsString()
+  @IsOptional()
+  paymentAssociationId?: string;
 }
 
 export class ListPostsQueryDto {

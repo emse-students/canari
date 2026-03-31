@@ -99,6 +99,7 @@ export async function handleOidcCallback(
       firstYearOfSchool: number | null;
       avatarMediaId: string | null;
       bio: string | null;
+      isGlobalAdmin: boolean;
     };
   };
 
@@ -137,6 +138,7 @@ export async function devLogin(
       firstYearOfSchool: number | null;
       avatarMediaId: string | null;
       bio: string | null;
+      isGlobalAdmin: boolean;
     };
   };
 

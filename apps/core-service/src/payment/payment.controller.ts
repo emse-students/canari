@@ -14,15 +14,18 @@ export class PaymentController {
 
   @Post('onboarding')
   @HttpCode(200)
-  async createOnboarding(@Body() body: { associationId: string }) {
+  async createOnboarding(
+    @Body() body: { associationId: string; existingAccountId?: string },
+  ) {
     if (!this.paymentService.isConfigured()) {
       return { ok: false, message: 'Stripe not configured' };
     }
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost';
     return this.paymentService.createConnectOnboarding({
       associationId: body.associationId ?? '',
-      refreshUrl: `${frontendUrl}/dashboard/association`,
-      returnUrl: `${frontendUrl}/dashboard/association`,
+      existingAccountId: body.existingAccountId,
+      refreshUrl: `${frontendUrl}/associations`,
+      returnUrl: `${frontendUrl}/associations`,
     });
   }
 
@@ -35,6 +38,7 @@ export class PaymentController {
       successUrl: string;
       cancelUrl: string;
       metadata?: Record<string, string>;
+      stripeConnectAccountId?: string;
     },
   ) {
     if (!body || !body.lineItems || !Array.isArray(body.lineItems)) {
@@ -50,6 +54,7 @@ export class PaymentController {
       successUrl: body.successUrl,
       cancelUrl: body.cancelUrl,
       metadata: body.metadata,
+      stripeConnectAccountId: body.stripeConnectAccountId,
     });
 
     return { ok: true, url: session.url, id: session.id };

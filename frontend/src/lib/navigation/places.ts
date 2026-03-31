@@ -57,6 +57,14 @@ export const APP_PLACES: AppPlace[] = [
     enabled: true,
   },
   {
+    id: 'associations',
+    label: 'Associations',
+    description: 'Les associations de la communauté',
+    icon: 'users',
+    href: '/associations',
+    enabled: true,
+  },
+  {
     id: 'dashboard',
     label: 'Tableau de bord',
     description: "Gestion de l'association",

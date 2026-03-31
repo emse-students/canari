@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -10,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { PostsService } from './posts.service';
+import { AssociationsService } from '../associations/associations.service';
 import {
   CreatePostDto,
   ListPostsQueryDto,
@@ -20,7 +22,10 @@ import {
 
 @Controller('posts')
 export class PostsController {
-  constructor(private readonly service: PostsService) {}
+  constructor(
+    private readonly service: PostsService,
+    private readonly associationsService: AssociationsService
+  ) {}
 
   @Get('health')
   health() {
@@ -33,7 +38,23 @@ export class PostsController {
 
   @UseGuards(NginxAuthGuard)
   @HttpPost()
-  createPost(@Headers('x-user-id') xUserId: string, @Body() body: CreatePostDto) {
+  async createPost(@Headers('x-user-id') xUserId: string, @Body() body: CreatePostDto) {
+    // Validate association authorship
+    if (body.associationId) {
+      const canPost = await this.associationsService.canPostAs(xUserId, body.associationId);
+      if (!canPost) {
+        throw new BadRequestException('You need admin or owner role to post as this association');
+      }
+    }
+
+    // Validate payment association has completed Stripe onboarding
+    if (body.paymentAssociationId) {
+      const asso = await this.associationsService.findById(body.paymentAssociationId);
+      if (!asso.stripeOnboardingComplete) {
+        throw new BadRequestException('This association has not completed Stripe onboarding');
+      }
+    }
+
     return this.service.createPost({ ...body, authorId: xUserId });
   }
 

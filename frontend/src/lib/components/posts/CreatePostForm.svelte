@@ -4,6 +4,7 @@
   import { getToken } from '$lib/stores/auth';
   import { createPost, type CreatePostPayload } from '$lib/posts/api';
   import { getForms, type Form } from '$lib/forms/api';
+  import { listMyAssociations, type Association } from '$lib/associations/api';
   import { onMount } from 'svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
@@ -37,6 +38,14 @@
   let selectedFormId = $state('');
   let includeForm = $state(false);
 
+  let myAssociations = $state<Association[]>([]);
+  let selectedAssociationId = $state('');
+  let selectedPaymentAssociationId = $state('');
+  let adminAssociations = $derived(
+    myAssociations.filter((a) => a.role === 'admin' || a.role === 'owner')
+  );
+  let payableAssociations = $derived(adminAssociations.filter((a) => a.stripeOnboardingComplete));
+
   let publishing = $state(false);
   let errorMessage = $state('');
   let authToken = $state('');
@@ -53,6 +62,11 @@
       availableForms = await getForms();
     } catch (e) {
       console.error('Failed to load forms', e);
+    }
+    try {
+      myAssociations = await listMyAssociations();
+    } catch (e) {
+      console.error('Failed to load associations', e);
     }
   });
 
@@ -133,6 +147,13 @@
         payload.attachedFormId = selectedFormId;
       }
 
+      if (selectedAssociationId) {
+        payload.associationId = selectedAssociationId;
+      }
+      if (selectedPaymentAssociationId) {
+        payload.paymentAssociationId = selectedPaymentAssociationId;
+      }
+
       await createPost(payload);
 
       markdown = '';
@@ -152,6 +173,40 @@
 </script>
 
 <div class="flex flex-col">
+  <!-- Association selectors -->
+  {#if adminAssociations.length > 0}
+    <div class="flex flex-wrap gap-3 px-1 pb-3 border-b border-cn-border mb-2">
+      <div class="flex-1 min-w-[140px]">
+        <!-- svelte-ignore a11y_label_has_associated_control -->
+        <label class="mb-1 block text-xs font-semibold text-text-muted">Publier en tant que</label>
+        <select
+          bind:value={selectedAssociationId}
+          class="w-full appearance-none rounded-xl border border-cn-border bg-white px-3 py-1.5 text-sm transition-all focus:outline-none focus:ring-2 focus:ring-cn-yellow/50"
+        >
+          <option value="">Moi-même</option>
+          {#each adminAssociations as a (a.id)}
+            <option value={a.id}>{a.name}</option>
+          {/each}
+        </select>
+      </div>
+      {#if payableAssociations.length > 0}
+        <div class="flex-1 min-w-[140px]">
+          <!-- svelte-ignore a11y_label_has_associated_control -->
+          <label class="mb-1 block text-xs font-semibold text-text-muted">Paiement vers</label>
+          <select
+            bind:value={selectedPaymentAssociationId}
+            class="w-full appearance-none rounded-xl border border-cn-border bg-white px-3 py-1.5 text-sm transition-all focus:outline-none focus:ring-2 focus:ring-cn-yellow/50"
+          >
+            <option value="">— Aucun —</option>
+            {#each payableAssociations as a (a.id)}
+              <option value={a.id}>{a.name}</option>
+            {/each}
+          </select>
+        </div>
+      {/if}
+    </div>
+  {/if}
+
   <!-- Content textarea -->
   <textarea
     bind:value={markdown}

@@ -40,6 +40,13 @@ export class Post {
   @Column('jsonb', { default: [] })
   forms: any[];
 
+  @Column({ nullable: true })
+  @Index()
+  associationId: string;
+
+  @Column({ nullable: true })
+  paymentAssociationId: string;
+
   @CreateDateColumn()
   @Index()
   createdAt: Date;

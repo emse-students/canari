@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ChannelsModule } from './channels/channels.module';
 import { PostsModule } from './posts/posts.module';
 import { FormsModule } from './forms/forms.module';
+import { AssociationsModule } from './associations/associations.module';
 import { RedisModule } from './common/redis';
 
 @Module({
@@ -26,6 +27,7 @@ import { RedisModule } from './common/redis';
     ChannelsModule,
     PostsModule,
     FormsModule,
+    AssociationsModule,
   ],
   controllers: [],
 })

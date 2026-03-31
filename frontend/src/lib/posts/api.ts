@@ -68,6 +68,8 @@ export interface PostEntity {
   eventButtons: EventButton[];
   forms?: PostForm[];
   attachedFormId?: string;
+  associationId?: string;
+  paymentAssociationId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -92,6 +94,8 @@ export interface CreatePostPayload {
     formId?: string;
   }>;
   attachedFormId?: string;
+  associationId?: string;
+  paymentAssociationId?: string;
 }
 
 function getPostsBaseUrl(): string {

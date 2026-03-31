@@ -23,6 +23,9 @@ export class User {
   @Column({ type: 'varchar', nullable: true })
   stripeCustomerId: string | null;
 
+  @Column({ type: 'boolean', default: false })
+  isGlobalAdmin: boolean;
+
   @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
   createdAt: Date;
 

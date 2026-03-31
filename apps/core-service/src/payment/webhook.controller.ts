@@ -66,6 +66,28 @@ export class PaymentWebhookController {
       }
     }
 
+    if (event.type === 'account.updated') {
+      const account = event.data.object;
+      const associationId = account.metadata?.associationId;
+      if (associationId && account.charges_enabled) {
+        try {
+          const socialServiceBase =
+            this.config.get<string>('FORM_URL') || 'http://localhost:3014';
+          const url = `${socialServiceBase.replace(/\/$/, '')}/api/associations/${associationId}/stripe-complete`;
+          await axios.post(url);
+          this.logger.log(
+            `Marked association ${associationId} stripe onboarding complete`,
+          );
+        } catch (err: unknown) {
+          const error = err as Error & { response?: { data?: unknown } };
+          this.logger.error(
+            'Failed to notify social-service about stripe onboarding',
+            error?.response?.data || error?.message || error,
+          );
+        }
+      }
+    }
+
     return res.json({ received: true });
   }
 }

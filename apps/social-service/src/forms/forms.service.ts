@@ -8,6 +8,7 @@ import { Submission } from './entities/submission.entity';
 import { CreateFormDto, SubmitFormDto } from './dto/form.dto';
 import axios from 'axios';
 import * as ExcelJS from 'exceljs';
+import { AssociationsService } from '../associations/associations.service';
 
 function makeId(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
@@ -20,7 +21,8 @@ export class FormsService {
   constructor(
     @InjectRepository(Form) private readonly formRepo: Repository<Form>,
     @InjectRepository(Submission) private readonly submissionRepo: Repository<Submission>,
-    private readonly configService: ConfigService
+    private readonly configService: ConfigService,
+    private readonly associationsService: AssociationsService
   ) {}
 
   async create(input: CreateFormDto) {
@@ -125,11 +127,19 @@ export class FormsService {
       const url = `${paymentServiceBase.replace(/\/$/, '')}/api/payments/create-checkout-session`;
 
       try {
+        // If the form belongs to an association, route payment via Stripe Connect
+        let stripeConnectAccountId: string | undefined;
+        if (form.associationId) {
+          const acctId = await this.associationsService.getStripeAccountId(form.associationId);
+          if (acctId) stripeConnectAccountId = acctId;
+        }
+
         const res = await axios.post(url, {
           lineItems: singleLineItem,
           successUrl: `${this.configService.get('FRONTEND_URL')}/forms/success?session_id={CHECKOUT_SESSION_ID}`,
           cancelUrl: `${this.configService.get('FRONTEND_URL')}/forms/cancel`,
           metadata: { submissionId: savedSubmission.id, formId: id },
+          stripeConnectAccountId,
         });
 
         const data = res.data || {};

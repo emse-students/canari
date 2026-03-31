@@ -13,6 +13,7 @@ export interface UserProfile {
 const USER_STORAGE_KEY = 'canari_saved_user';
 const USER_EMAIL_KEY = 'canari_user_email';
 const USER_DISPLAY_NAME_KEY = 'canari_user_display_name';
+const USER_GLOBAL_ADMIN_KEY = 'canari_global_admin';
 
 export function getSavedUserId(): string | null {
   if (typeof localStorage === 'undefined') return null;
@@ -29,16 +30,28 @@ export function getSavedEmail(): string | null {
   return localStorage.getItem(USER_EMAIL_KEY);
 }
 
-export function saveUserLocally(user: { id: string; email?: string; displayName?: string }): void {
+export function isGlobalAdmin(): boolean {
+  if (typeof localStorage === 'undefined') return false;
+  return localStorage.getItem(USER_GLOBAL_ADMIN_KEY) === 'true';
+}
+
+export function saveUserLocally(user: {
+  id: string;
+  email?: string;
+  displayName?: string;
+  isGlobalAdmin?: boolean;
+}): void {
   localStorage.setItem(USER_STORAGE_KEY, user.id);
   if (user.email) localStorage.setItem(USER_EMAIL_KEY, user.email);
   if (user.displayName) localStorage.setItem(USER_DISPLAY_NAME_KEY, user.displayName);
+  localStorage.setItem(USER_GLOBAL_ADMIN_KEY, user.isGlobalAdmin ? 'true' : 'false');
 }
 
 export function clearUserLocally(): void {
   localStorage.removeItem(USER_STORAGE_KEY);
   localStorage.removeItem(USER_EMAIL_KEY);
   localStorage.removeItem(USER_DISPLAY_NAME_KEY);
+  localStorage.removeItem(USER_GLOBAL_ADMIN_KEY);
 }
 
 function coreUrl(): string {

@@ -22,22 +22,28 @@ export class PaymentService {
     associationId: string;
     refreshUrl: string;
     returnUrl: string;
-  }): Promise<{ url: string }> {
+    existingAccountId?: string;
+  }): Promise<{ url: string; accountId: string }> {
     if (!this.stripe) throw new BadRequestException('Stripe not configured');
 
-    const account = await this.stripe.accounts.create({
-      type: 'standard',
-      metadata: { associationId: params.associationId },
-    });
+    // Reuse existing account or create a new one
+    const accountId =
+      params.existingAccountId ||
+      (
+        await this.stripe.accounts.create({
+          type: 'standard',
+          metadata: { associationId: params.associationId },
+        })
+      ).id;
 
     const accountLink = await this.stripe.accountLinks.create({
-      account: account.id,
+      account: accountId,
       refresh_url: params.refreshUrl,
       return_url: params.returnUrl,
       type: 'account_onboarding',
     });
 
-    return { url: accountLink.url };
+    return { url: accountLink.url, accountId };
   }
 
   async createCheckoutSession(params: {
@@ -45,18 +51,38 @@ export class PaymentService {
     successUrl: string;
     cancelUrl: string;
     metadata?: Record<string, string>;
+    stripeConnectAccountId?: string;
   }) {
     if (!this.stripe) throw new BadRequestException('Stripe not configured');
 
-    const session = await this.stripe.checkout.sessions.create({
+    const sessionParams: Stripe.Checkout.SessionCreateParams = {
       mode: 'payment',
       payment_method_types: ['card'],
       line_items: params.lineItems,
       metadata: params.metadata,
       success_url: params.successUrl,
       cancel_url: params.cancelUrl,
-    });
+    };
+
+    // Destination charge: funds go to the connected account
+    if (params.stripeConnectAccountId) {
+      sessionParams.payment_intent_data = {
+        transfer_data: {
+          destination: params.stripeConnectAccountId,
+        },
+      };
+    }
+
+    const session = await this.stripe.checkout.sessions.create(sessionParams);
 
     return session;
+  }
+
+  async getAccountStatus(
+    accountId: string,
+  ): Promise<{ chargesEnabled: boolean }> {
+    if (!this.stripe) throw new BadRequestException('Stripe not configured');
+    const account = await this.stripe.accounts.retrieve(accountId);
+    return { chargesEnabled: account.charges_enabled ?? false };
   }
 }

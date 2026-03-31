@@ -120,9 +120,13 @@ export class AuthController {
       );
     }
 
-    const access_token = jwt.sign({ sub: user.id }, this.jwtSecret, {
-      expiresIn: '1h',
-    });
+    const access_token = jwt.sign(
+      { sub: user.id, admin: !!user.isGlobalAdmin },
+      this.jwtSecret,
+      {
+        expiresIn: '1h',
+      },
+    );
     const refresh_token = jwt.sign(
       { sub: user.id, type: 'refresh' },
       this.jwtSecret,
@@ -140,6 +144,7 @@ export class AuthController {
         firstYearOfSchool: user.firstYearOfSchool ?? null,
         avatarMediaId: user.avatarMediaId ?? null,
         bio: user.bio ?? null,
+        isGlobalAdmin: !!user.isGlobalAdmin,
       },
     };
   }
@@ -239,9 +244,13 @@ export class AuthController {
     );
 
     // 4. Issue internal JWT pair
-    const access_token = jwt.sign({ sub: user.id }, this.jwtSecret, {
-      expiresIn: '1h',
-    });
+    const access_token = jwt.sign(
+      { sub: user.id, admin: !!user.isGlobalAdmin },
+      this.jwtSecret,
+      {
+        expiresIn: '1h',
+      },
+    );
     const refresh_token = jwt.sign(
       { sub: user.id, type: 'refresh' },
       this.jwtSecret,
@@ -260,6 +269,7 @@ export class AuthController {
         firstYearOfSchool: user.firstYearOfSchool ?? null,
         avatarMediaId: user.avatarMediaId ?? null,
         bio: user.bio ?? null,
+        isGlobalAdmin: !!user.isGlobalAdmin,
       },
     };
   }
@@ -267,10 +277,10 @@ export class AuthController {
   // ─── Token refresh ─────────────────────────────────────────────────────────
   @Post('refresh')
   @HttpCode(200)
-  refreshToken(
+  async refreshToken(
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
-  ): { access_token: string } {
+  ): Promise<{ access_token: string }> {
     const refresh_token = req.cookies?.[REFRESH_COOKIE] as string | undefined;
     if (!refresh_token) {
       this.clearRefreshCookie(res);
@@ -292,9 +302,17 @@ export class AuthController {
       throw new UnauthorizedException('Invalid token type');
     }
 
-    const access_token = jwt.sign({ sub: payload.sub }, this.jwtSecret, {
-      expiresIn: '1h',
-    });
+    // Look up the user to get current admin status
+    const user = await this.usersService.findOne(payload.sub).catch(() => null);
+    const isAdmin = !!user?.isGlobalAdmin;
+
+    const access_token = jwt.sign(
+      { sub: payload.sub, admin: isAdmin },
+      this.jwtSecret,
+      {
+        expiresIn: '1h',
+      },
+    );
     const new_refresh = jwt.sign(
       { sub: payload.sub, type: 'refresh' },
       this.jwtSecret,
@@ -333,6 +351,7 @@ export class AuthController {
     // receive a consistent shape regardless of whether a token was provided.
     res.set('X-User-Id', '');
     res.set('X-Logged-In', 'false');
+    res.set('X-Global-Admin', 'false');
 
     if (!rawHeaders) {
       return res.status(200).send();
@@ -345,10 +364,14 @@ export class AuthController {
     }
 
     try {
-      const payload = jwt.verify(token, this.jwtSecret) as { sub: string };
+      const payload = jwt.verify(token, this.jwtSecret) as {
+        sub: string;
+        admin?: boolean;
+      };
 
       res.set('X-User-Id', payload.sub);
       res.set('X-Logged-In', 'true');
+      res.set('X-Global-Admin', payload.admin ? 'true' : 'false');
       return res.status(200).send();
     } catch {
       // Invalid/expired token — pass through as anonymous; the service decides
