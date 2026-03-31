@@ -26,7 +26,21 @@ export class PostsService {
     if (Array.isArray(data.eventButtons)) {
       data.eventButtons = data.eventButtons.map((btn: any) => ({
         ...btn,
+        id: btn.id || crypto.randomUUID(),
         registrants: btn.registrants ?? [],
+      }));
+    }
+    if (Array.isArray(data.polls)) {
+      data.polls = data.polls.map((poll: any) => ({
+        ...poll,
+        id: poll.id || crypto.randomUUID(),
+        multipleChoice: poll.multipleChoice ?? false,
+        votesByUser: poll.votesByUser ?? {},
+        options: (poll.options || []).map((opt: any) => ({
+          ...opt,
+          id: opt.id || crypto.randomUUID(),
+          votes: opt.votes ?? 0,
+        })),
       }));
     }
     const post = this.postRepo.create(data);
@@ -72,7 +86,11 @@ export class PostsService {
   async setImages(id: string, data: any) {
     const post = await this.postRepo.findOne({ where: { id } });
     if (!post) throw new NotFoundException();
-    post.images = [...(post.images || []), ...data.images];
+    const images = (data.images || []).map((img: any) => ({
+      ...img,
+      mediaId: img.mediaId || crypto.randomUUID(),
+    }));
+    post.images = [...(post.images || []), ...images];
     return this.postRepo.save(post);
   }
 
@@ -98,6 +116,7 @@ export class PostsService {
         const meta = await this.fetchUrlMeta(url);
         if (meta) {
           newLinks.push({
+            id: crypto.randomUUID(),
             url,
             title: meta.title || url,
             description: meta.description,

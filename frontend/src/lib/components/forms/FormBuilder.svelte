@@ -28,7 +28,10 @@
 
   function addOption() {
     if (!item.options) item.options = [];
-    item.options = [...item.options, { label: '', priceModifier: undefined }];
+    item.options = [
+      ...item.options,
+      { id: crypto.randomUUID(), label: '', priceModifier: undefined },
+    ];
   }
 
   function removeOption(idx: number) {
@@ -38,7 +41,7 @@
 
   function addRow() {
     if (!item.rows) item.rows = [];
-    item.rows = [...item.rows, ''];
+    item.rows = [...item.rows, { id: crypto.randomUUID(), value: '' }];
   }
 
   function removeRow(idx: number) {
@@ -49,7 +52,13 @@
   // Ensure defaults
   if (!item.scale) item.scale = { min: 1, max: 5 };
   if (!item.options) item.options = [];
+  item.options = item.options.map((opt: any) => ({ ...opt, id: opt.id || crypto.randomUUID() }));
   if (!item.rows) item.rows = [];
+  item.rows = item.rows.map((row: any) =>
+    typeof row === 'string'
+      ? { id: crypto.randomUUID(), value: row }
+      : { ...row, id: row.id || crypto.randomUUID() }
+  );
 </script>
 
 <div
@@ -159,10 +168,10 @@
       </div>
 
       <div class="space-y-2">
-        {#each item.options as opt, optIdx (optIdx)}
+        {#each item.options as opt (opt.id)}
           <div class="flex gap-2 items-center">
             <span class="text-xs font-mono text-text-muted w-5 text-center shrink-0 pt-2"
-              >{optIdx + 1}.</span
+              >{item.options.indexOf(opt) + 1}.</span
             >
 
             <div class="flex-1">
@@ -185,7 +194,7 @@
 
             <button
               class="p-2 text-text-muted hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors shrink-0 mt-1"
-              onclick={() => removeOption(optIdx)}
+              onclick={() => removeOption(item.options.indexOf(opt))}
               type="button"
               title="Supprimer"
             >
@@ -211,17 +220,17 @@
         <span class="text-xs font-bold text-text-muted uppercase tracking-wider px-1">Lignes</span>
 
         <div class="space-y-2">
-          {#each item.rows as _row, rowIdx (rowIdx)}
+          {#each item.rows as row (row.id)}
             <div class="flex gap-2 items-center">
               <span class="text-xs font-mono text-text-muted w-5 text-center shrink-0 pt-2"
-                >{rowIdx + 1}.</span
+                >{item.rows.indexOf(row) + 1}.</span
               >
               <div class="flex-1">
-                <Input placeholder="Libellé de la ligne" bind:value={item.rows[rowIdx]} />
+                <Input placeholder="Libellé de la ligne" bind:value={row.value} />
               </div>
               <button
                 class="p-2 text-text-muted hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors shrink-0 mt-1"
-                onclick={() => removeRow(rowIdx)}
+                onclick={() => removeRow(item.rows.indexOf(row))}
                 type="button"
                 title="Supprimer"
               >

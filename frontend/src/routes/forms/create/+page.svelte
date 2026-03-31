@@ -52,6 +52,7 @@
               ...opt,
               priceModifier: opt.priceModifier != null ? Math.round(opt.priceModifier * 100) : 0,
             })) || [],
+          rows: item.rows?.map((r: any) => (typeof r === 'string' ? r : r.value)) || [],
         })),
         maxSubmissions,
         requiresPayment,
