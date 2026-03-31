@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
   import { getToken } from '$lib/stores/auth';
@@ -15,8 +15,8 @@
   import Card from '$lib/components/ui/Card.svelte';
   import { ArrowLeft, ClipboardList, Check, Send } from 'lucide-svelte';
 
-  const formId = $derived($page.params.id);
-  const redirectTo = $derived($page.url.searchParams.get('redirect') || '/posts');
+  const formId = $derived(page.params.id);
+  const redirectTo = $derived(page.url.searchParams.get('redirect') || '/posts');
 
   let form = $state<Form | null>(null);
   let selections = $state<Record<string, any>>({});

@@ -4,7 +4,7 @@
   import PlaceSwitcher from './PlaceSwitcher.svelte';
   import ThemeToggleButton from './ThemeToggleButton.svelte';
   import SessionActionButtons from './SessionActionButtons.svelte';
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
 
   interface Props {
     isWsConnected: boolean;
@@ -13,7 +13,7 @@
   }
 
   let { isWsConnected, onToggleLogs, onLogout }: Props = $props();
-  const pathname = $derived($page.url.pathname);
+  const pathname = $derived(page.url.pathname);
 
   let isDarkMode = $state(false);
 

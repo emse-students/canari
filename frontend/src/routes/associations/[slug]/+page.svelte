@@ -45,7 +45,7 @@
   // Stripe
   let stripeLoading = $state(false);
 
-  const slug = $derived(($page.params as Record<string, string>).slug);
+  const slug = $derived((page.params as Record<string, string>).slug);
 
   onMount(loadData);
 
