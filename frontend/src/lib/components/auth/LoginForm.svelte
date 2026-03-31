@@ -5,7 +5,9 @@
     isLoggingIn: boolean;
     loginError: string;
     biometricAvailable: boolean;
+    isDev?: boolean;
     onLogin: () => void;
+    onDevLogin?: () => void;
     onReset: () => void;
   }
 
@@ -13,7 +15,9 @@
     isLoggingIn,
     loginError,
     biometricAvailable,
+    isDev = false,
     onLogin,
+    onDevLogin,
     onReset,
   }: Props = $props();
 </script>
@@ -60,9 +64,17 @@
         {/if}
       </button>
 
-      <p class="text-xs text-text-muted">
-        Connexion sécurisée via votre compte Mines
-      </p>
+      <p class="text-xs text-text-muted">Connexion sécurisée via votre compte Mines</p>
+
+      {#if isDev && onDevLogin}
+        <button
+          onclick={onDevLogin}
+          disabled={isLoggingIn}
+          class="w-full py-3 bg-zinc-700 text-white rounded-2xl font-bold text-sm transition-all hover:bg-zinc-600 disabled:opacity-70 disabled:cursor-wait"
+        >
+          Dev Login (no Authentik)
+        </button>
+      {/if}
 
       {#if loginError}
         <div

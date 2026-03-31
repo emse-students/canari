@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
-  import { startOidcLogin, hasStoredSession, getToken } from '$lib/stores/auth';
+  import { startOidcLogin, hasStoredSession, getToken, devLogin } from '$lib/stores/auth';
   import { BiometricService } from '$lib/services/biometric';
   import LoginForm from './LoginForm.svelte';
 
@@ -74,6 +74,22 @@
     }
   }
 
+  // ─── DEV Login (no Authentik) ─────────────────────────────────────────────
+  const isDev = import.meta.env.DEV;
+
+  async function handleDevLogin() {
+    loginError = '';
+    isLoggingIn = true;
+    try {
+      await devLogin();
+      await goto(getSafeReturnTarget(), { replaceState: true });
+    } catch (e: unknown) {
+      loginError = e instanceof Error ? e.message : String(e);
+    } finally {
+      isLoggingIn = false;
+    }
+  }
+
   async function resetAll() {
     if (!(window as any).__TAURI_INTERNALS__) {
       const allDbs = await indexedDB.databases();
@@ -100,6 +116,8 @@
   {isLoggingIn}
   {loginError}
   {biometricAvailable}
+  {isDev}
   onLogin={handleLogin}
+  onDevLogin={handleDevLogin}
   onReset={resetAll}
 />

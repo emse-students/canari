@@ -73,6 +73,53 @@ export class AuthController {
   // The frontend redirects the user to Authentik, which redirects back with a
   // `code`.  The frontend then POSTs that code here so we can exchange it for
   // tokens server-side (keeping the client_secret safe).
+
+  // ─── DEV-ONLY: bypass Authentik ────────────────────────────────────────────
+  // Creates a dev user and returns tokens without touching Authentik.
+  // Blocked in production — only available when NODE_ENV !== 'production'.
+  @Post('dev-login')
+  @HttpCode(200)
+  async devLogin(
+    @Body() body: { email?: string; displayName?: string },
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<{
+    access_token: string;
+    user: { id: string; email: string; displayName: string };
+  }> {
+    if (this.isProduction) {
+      throw new BadRequestException('dev-login is disabled in production');
+    }
+
+    const email = body?.email || 'dev@canari.local';
+    const displayName = body?.displayName || 'Dev User';
+    const devOidcSub = `dev-${email}`;
+
+    const user = await this.usersService.findOrCreateFromOidc(
+      devOidcSub,
+      email,
+      displayName,
+    );
+
+    const access_token = jwt.sign({ sub: user.id }, this.jwtSecret, {
+      expiresIn: '1h',
+    });
+    const refresh_token = jwt.sign(
+      { sub: user.id, type: 'refresh' },
+      this.jwtSecret,
+      { expiresIn: '7d' },
+    );
+
+    this.setRefreshCookie(res, refresh_token);
+
+    return {
+      access_token,
+      user: {
+        id: user.id,
+        email: user.email || '',
+        displayName: user.displayName || '',
+      },
+    };
+  }
   @Post('oidc/callback')
   @HttpCode(200)
   async oidcCallback(

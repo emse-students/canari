@@ -104,6 +104,41 @@ export async function handleOidcCallback(
   return data.user;
 }
 
+/**
+ * DEV-ONLY: bypass Authentik and log in directly via core-service.
+ * Only works when the backend is running in non-production mode.
+ */
+export async function devLogin(
+  email = 'dev@canari.local',
+  displayName = 'Dev User'
+): Promise<{ id: string; email: string; displayName: string }> {
+  const res = await fetch(`${coreUrl()}/api/auth/dev-login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ email, displayName }),
+  });
+
+  if (!res.ok) {
+    const msg = await res.text().catch(() => '');
+    throw new Error(msg || `Dev login failed (${res.status})`);
+  }
+
+  const data = (await res.json()) as {
+    access_token: string;
+    user: { id: string; email: string; displayName: string };
+  };
+
+  _accessToken = data.access_token;
+
+  localStorage.setItem('canari_saved_user', data.user.id);
+  if (data.user.email) localStorage.setItem('canari_user_email', data.user.email);
+  if (data.user.displayName)
+    localStorage.setItem('canari_user_display_name', data.user.displayName);
+
+  return data.user;
+}
+
 /** Get the intended return path after OIDC callback, then clear it. */
 export function getOidcReturnTo(): string {
   const returnTo = sessionStorage.getItem(OIDC_RETURN_KEY) || '/chat';
