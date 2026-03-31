@@ -321,6 +321,11 @@ export function useMessaging() {
     if (!ctx.selectedContact) return;
     const convo = ctx.conversations.get(ctx.selectedContact);
     if (!convo) return;
+
+    // Ownership check: only the sender can delete their own message
+    const target = convo.messages.find((m) => m.id === messageId);
+    if (!target || target.senderId.toLowerCase() !== ctx.userId.toLowerCase()) return;
+
     await deleteMessage(messageId, {
       mlsService: ctx.ensureMls(),
       userId: ctx.userId,
@@ -339,6 +344,11 @@ export function useMessaging() {
     if (!ctx.selectedContact) return;
     const convo = ctx.conversations.get(ctx.selectedContact);
     if (!convo) return;
+
+    // Ownership check: only the sender can edit their own message
+    const target = convo.messages.find((m) => m.id === messageId);
+    if (!target || target.senderId.toLowerCase() !== ctx.userId.toLowerCase()) return;
+
     await editMessage(messageId, text, {
       mlsService: ctx.ensureMls(),
       userId: ctx.userId,

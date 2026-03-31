@@ -84,7 +84,12 @@ export class TauriMlsService implements IMlsService {
       this.ws.onopen = async () => {
         resolved = true;
         console.log('Connected to Chat Gateway (Tauri) with DeviceID:', this.deviceId);
-        await this.fetchPendingMessages();
+        try {
+          await this.fetchPendingMessages();
+        } catch (e) {
+          console.error('Failed to fetch pending messages on connect (Tauri):', e);
+          // Non-blocking: connection is still valid, proceed
+        }
         resolve();
       };
       this.ws.onerror = (e) => {
@@ -599,36 +604,41 @@ export class TauriMlsService implements IMlsService {
 
     // Send via WebSocket if connected
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(
-        JSON.stringify({
-          type: 'mls',
-          groupId,
-          proto: btoa(String.fromCharCode(...encryptedBytes)),
-        })
-      );
-    } else {
-      console.warn('WebSocket not open, using HTTP fallback');
       try {
-        const response = await fetch(`${this.historyUrl}/api/mls-api/send`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            senderId: this.userId,
-            senderDeviceId: this.deviceId,
-            content: base64,
-            groupId: groupId,
-          }),
-        });
-        if (!response.ok) {
-          throw new Error(`HTTP fallback failed: ${response.statusText}`);
-        }
-      } catch (e) {
-        console.error('Failed to send message via HTTP fallback', e);
-        throw e;
+        this.ws.send(
+          JSON.stringify({
+            type: 'mls',
+            groupId,
+            proto: btoa(String.fromCharCode(...encryptedBytes)),
+          })
+        );
+      } catch (wsErr) {
+        // WebSocket closed between readyState check and send — fall through to HTTP
+        console.warn('WebSocket send failed (Tauri), falling back to HTTP:', wsErr);
+        await this.sendViaHttpFallback(base64, groupId);
       }
+    } else {
+      await this.sendViaHttpFallback(base64, groupId);
     }
 
     return encryptedBytes;
+  }
+
+  private async sendViaHttpFallback(base64: string, groupId: string): Promise<void> {
+    console.warn('Sending via HTTP fallback (Tauri)...');
+    const response = await fetch(`${this.historyUrl}/api/mls-api/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        senderId: this.userId,
+        senderDeviceId: this.deviceId,
+        content: base64,
+        groupId,
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP fallback failed: ${response.statusText}`);
+    }
   }
 
   async processIncomingMessage(

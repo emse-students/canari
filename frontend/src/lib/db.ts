@@ -174,6 +174,8 @@ export class IndexedDbStorage implements IStorage {
         };
         if (msg.readBy && msg.readBy.length > 0) payload.readBy = msg.readBy;
         if (msg.reactions && msg.reactions.length > 0) payload.reactions = msg.reactions;
+        if (msg.isDeleted) payload.isDeleted = true;
+        if (msg.isEdited) payload.isEdited = true;
         const encrypted = await encryptData(payload, pin);
         return {
           id: msg.id,
@@ -221,6 +223,8 @@ export class IndexedDbStorage implements IStorage {
           content: payload.content,
           readBy: Array.isArray(payload.readBy) ? payload.readBy : undefined,
           reactions: Array.isArray(payload.reactions) ? payload.reactions : undefined,
+          isDeleted: payload.isDeleted === true ? true : undefined,
+          isEdited: payload.isEdited === true ? true : undefined,
         });
       } catch {
         console.warn('Failed to decrypt message', row.id);
@@ -379,6 +383,8 @@ export class SqliteStorage implements IStorage {
         };
         if (msg.readBy && msg.readBy.length > 0) payload.readBy = msg.readBy;
         if (msg.reactions && msg.reactions.length > 0) payload.reactions = msg.reactions;
+        if (msg.isDeleted) payload.isDeleted = true;
+        if (msg.isEdited) payload.isEdited = true;
         const encrypted = await encryptData(payload, pin);
         return { msg, encrypted };
       })
@@ -420,6 +426,8 @@ export class SqliteStorage implements IStorage {
           content: payload.content,
           readBy: Array.isArray(payload.readBy) ? payload.readBy : undefined,
           reactions: Array.isArray(payload.reactions) ? payload.reactions : undefined,
+          isDeleted: payload.isDeleted === true ? true : undefined,
+          isEdited: payload.isEdited === true ? true : undefined,
         });
       } catch {
         console.warn('Failed to decrypt SQLite row', row.id);
