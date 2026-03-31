@@ -1032,6 +1032,23 @@ export class AppController {
     return g ? { ...g, groupId: g.id } : null;
   }
 
+  @UseGuards(HeaderAuthGuard)
+  @Get('mls-api/user-groups/:userId')
+  async getUserGroups(@Param('userId') userId: string) {
+    const safeUserId = sanitizeQueryValue(userId, 'userId');
+    const memberships = await this.groupMemberRepo.find({
+      where: { userId: safeUserId },
+    });
+    const groupIds = [...new Set(memberships.map((m) => m.groupId))];
+    if (groupIds.length === 0) return [];
+    const groups = await this.groupRepo.findByIds(groupIds);
+    return groups.map((g) => ({
+      groupId: g.id,
+      name: g.name,
+      isGroup: g.isGroup,
+    }));
+  }
+
   @Post('mls-api/groups/:groupId/members')
   async addGroupMember(
     @Param('groupId') groupId: string,

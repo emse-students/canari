@@ -341,24 +341,24 @@ export async function startNewConversation(
     const ownDevices = (await mlsService.fetchUserDevices(userId)).filter(
       (d) => d.deviceId !== mlsService.getDeviceId()
     );
-    for (const device of ownDevices) {
+    if (ownDevices.length > 0) {
       try {
-        const result = await mlsService.addMember(groupId, device.keyPackage);
-        await mlsService.registerMember(groupId, userId, device.deviceId);
-        if (result.welcome) {
-          if (result.ratchetTree) {
+        const ownBulk = await mlsService.addMembersBulk(groupId, ownDevices);
+        for (const did of ownBulk.addedDeviceIds) {
+          await mlsService.registerMember(groupId, userId, did);
+        }
+        if (ownBulk.welcome) {
+          for (const did of ownBulk.addedDeviceIds) {
             await mlsService.sendWelcome(
-              result.welcome,
+              ownBulk.welcome,
               userId,
               groupId,
-              device.deviceId,
-              result.ratchetTree
+              did,
+              ownBulk.ratchetTree
             );
-          } else {
-            await mlsService.sendWelcome(result.welcome, userId, groupId, device.deviceId);
           }
         }
-        if (result.commit) await mlsService.sendCommit(result.commit, groupId);
+        if (ownBulk.commit) await mlsService.sendCommit(ownBulk.commit, groupId);
       } catch {
         // Silently ignore errors in device sync
       }
@@ -419,24 +419,26 @@ export async function repairDirectConversation(
     const ownDevices = (await mlsService.fetchUserDevices(userId)).filter(
       (d) => d.deviceId !== mlsService.getDeviceId()
     );
-    for (const device of ownDevices) {
+    if (ownDevices.length > 0) {
       try {
-        const result = await mlsService.addMember(groupId, device.keyPackage);
-        await mlsService.registerMember(groupId, userId, device.deviceId);
-        if (result.welcome) {
-          if (result.ratchetTree)
+        const ownBulk = await mlsService.addMembersBulk(groupId, ownDevices);
+        for (const did of ownBulk.addedDeviceIds) {
+          await mlsService.registerMember(groupId, userId, did);
+        }
+        if (ownBulk.welcome) {
+          for (const did of ownBulk.addedDeviceIds) {
             await mlsService.sendWelcome(
-              result.welcome,
+              ownBulk.welcome,
               userId,
               groupId,
-              device.deviceId,
-              result.ratchetTree
+              did,
+              ownBulk.ratchetTree
             );
-          else await mlsService.sendWelcome(result.welcome, userId, groupId, device.deviceId);
+          }
         }
-        if (result.commit) await mlsService.sendCommit(result.commit, groupId);
-      } catch (err) {
-        void err;
+        if (ownBulk.commit) await mlsService.sendCommit(ownBulk.commit, groupId);
+      } catch {
+        // Silently ignore errors in device sync
       }
     }
 

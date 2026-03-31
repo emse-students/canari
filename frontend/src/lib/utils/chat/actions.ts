@@ -74,6 +74,18 @@ export async function syncOwnDevicesToGroups(params: {
     for (const [, convo] of conversations.entries()) {
       if (!convo.isReady) continue;
       hadAttempt = true;
+
+      // Check if device is already a member of this group (server-side)
+      try {
+        const members = await mlsService.getGroupMembers(convo.groupId);
+        if (members.some((m) => m.deviceId === device.deviceId)) {
+          log(`[SYNC] ${device.deviceId} deja membre de ${convo.groupId} (skip)`);
+          continue;
+        }
+      } catch {
+        // If member check fails, proceed with add attempt
+      }
+
       try {
         const result = await mlsService.addMember(convo.groupId, freshKeyPackage);
         await mlsService.registerMember(convo.groupId, userId, device.deviceId);
@@ -98,15 +110,17 @@ export async function syncOwnDevicesToGroups(params: {
         // Small delay between groups to allow propagation
         await new Promise((r) => setTimeout(r, 100));
       } catch (e) {
-        // Per-group failure is expected (deleted group, wrong epoch, device already member, etc.).
         const errStr = String(e);
-        // Don't log expected errors (device already in group, wrong epoch)
-        if (!errStr.includes('WrongEpoch') && !errStr.includes('already')) {
+        // DuplicateSignatureKey means device is already in the MLS tree — not a real failure
+        const isAlreadyMember = errStr.includes('DuplicateSignatur') || errStr.includes('already');
+        if (!isAlreadyMember && !errStr.includes('WrongEpoch')) {
           log(
             `[SYNC] Erreur ajout ${device.deviceId} au groupe ${convo.groupId}: ${errStr.slice(0, 100)}`
           );
         }
-        hadFailure = true;
+        if (!isAlreadyMember) {
+          hadFailure = true;
+        }
       }
     }
 
@@ -145,6 +159,58 @@ export function forceSyncReset(userId: string, log: (msg: string) => void) {
   log(
     `[SYNC] Cache des appareils connus efface. Rechargez la page pour relancer la synchronisation.`
   );
+}
+
+/**
+ * Discover groups this user belongs to on the server but doesn't have locally.
+ * For each missing group, request a re-invitation from another online device by
+ * fetching the group's members and asking a peer to re-send a Welcome.
+ */
+export async function discoverMissingGroups(params: {
+  mlsService: IMlsService;
+  userId: string;
+  conversations: Map<string, Conversation>;
+  log: (msg: string) => void;
+}) {
+  const { mlsService, userId, conversations, log } = params;
+
+  let serverGroups: { groupId: string; name: string; isGroup: boolean }[];
+  try {
+    serverGroups = await mlsService.getUserGroups(userId);
+  } catch {
+    return;
+  }
+  if (serverGroups.length === 0) return;
+
+  const localGroupIds = new Set(
+    [...conversations.values()].filter((c) => c.isReady).map((c) => c.groupId)
+  );
+  const missing = serverGroups.filter((g) => !localGroupIds.has(g.groupId));
+  if (missing.length === 0) return;
+
+  log(
+    `[DISCOVERY] ${missing.length} groupe(s) serveur absent(s) localement: ${missing.map((g) => g.name || g.groupId).join(', ')}`
+  );
+
+  // For each missing group, create a placeholder conversation so the user sees it.
+  // The group will become functional once a Welcome is received (pending Welcome fetch
+  // or another device re-adds this device).
+  for (const g of missing) {
+    const existingEntry = [...conversations.entries()].find(([, c]) => c.groupId === g.groupId);
+    if (existingEntry) continue;
+
+    const key = g.isGroup ? `grp_${crypto.randomUUID()}` : `dm_${crypto.randomUUID()}`;
+    conversations.set(key, {
+      contactName: g.name || g.groupId,
+      name: g.name || g.groupId,
+      groupId: g.groupId,
+      messages: [],
+      isReady: false, // Not ready until Welcome is processed
+      mlsStateHex: null,
+      conversationType: g.isGroup ? 'group' : 'direct',
+    });
+    log(`[DISCOVERY] Groupe "${g.name}" ajouté en attente de Welcome.`);
+  }
 }
 
 export async function exportUserBackup(params: {

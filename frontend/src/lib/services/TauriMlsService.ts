@@ -724,4 +724,16 @@ export class TauriMlsService implements IMlsService {
       return [];
     }
   }
+
+  async getUserGroups(
+    userId: string
+  ): Promise<{ groupId: string; name: string; isGroup: boolean }[]> {
+    try {
+      const res = await fetch(`${this.historyUrl}/api/mls-api/user-groups/${userId}`);
+      if (!res.ok) return [];
+      return await res.json();
+    } catch {
+      return [];
+    }
+  }
 }

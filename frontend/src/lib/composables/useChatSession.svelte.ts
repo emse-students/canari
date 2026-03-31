@@ -16,6 +16,7 @@ import { computePinVerifier } from '$lib/utils/chat/auth';
 import { getToken, clearAuth } from '$lib/stores/auth';
 import {
   addDevMember,
+  discoverMissingGroups,
   exportUserBackup,
   generateDevKeyPackage,
   importUserBackup,
@@ -228,6 +229,15 @@ export function useChatSession() {
         syncOwnDevicesToGroupsLocally: () => syncOwnDevicesToGroupsLocally(cb),
         log: cb.log,
       });
+
+      // Discover groups the user belongs to on the server but doesn't have locally.
+      // This catches cases where Welcomes were lost (device offline, state cleared, etc.)
+      discoverMissingGroups({
+        mlsService,
+        userId,
+        conversations: cb.conversations,
+        log: cb.log,
+      }).catch(() => {});
 
       const isTauri = !!(window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
       if (isTauri && !(await BiometricService.isConfigured())) {

@@ -852,4 +852,18 @@ export class WebMlsService implements IMlsService {
       return [];
     }
   }
+
+  async getUserGroups(
+    userId: string
+  ): Promise<{ groupId: string; name: string; isGroup: boolean }[]> {
+    try {
+      const res = await fetch(`${this.historyUrl}/api/mls-api/user-groups/${userId}`, {
+        headers: this.withAuthHeaders(),
+      });
+      if (!res.ok) return [];
+      return await res.json();
+    } catch {
+      return [];
+    }
+  }
 }

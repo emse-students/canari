@@ -53,6 +53,7 @@ export interface IMlsService {
   /** Performs a real MLS remove commit for all devices of the given user(s) and broadcasts it. */
   removeMember(groupId: string, userIds: string[]): Promise<void>;
   getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]>;
+  getUserGroups(userId: string): Promise<{ groupId: string; name: string; isGroup: boolean }[]>;
 
   // Callbacks
   onChannelEvent?: (event: { type: string; data: any }) => void;

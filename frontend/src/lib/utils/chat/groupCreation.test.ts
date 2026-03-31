@@ -80,6 +80,7 @@ function makeMlsService(overrides: Partial<IMlsService> = {}): IMlsService {
     removeMemberFromServer: vi.fn().mockResolvedValue(undefined),
     removeMember: vi.fn().mockResolvedValue(undefined),
     getGroupMembers: vi.fn().mockResolvedValue([]),
+    getUserGroups: vi.fn().mockResolvedValue([]),
     exportSecret: vi.fn().mockResolvedValue(new Uint8Array([0xde, 0xad, 0xbe, 0xef])),
     onMessage: vi.fn(),
     onDisconnect: vi.fn(),
@@ -324,19 +325,32 @@ describe('startNewConversation', () => {
         .fn()
         .mockResolvedValueOnce([jolan2Device]) // contact devices (vérification disponibilité)
         .mockResolvedValueOnce([ownDevice2]), // propres appareils : 1 autre device
+      addMembersBulk: vi
+        .fn()
+        .mockResolvedValueOnce({
+          commit: new Uint8Array([0x01]),
+          welcome: new Uint8Array([0x02, 0x03]),
+          addedDeviceIds: ['dev-jolan2-01'],
+        })
+        .mockResolvedValueOnce({
+          commit: new Uint8Array([0x01]),
+          welcome: new Uint8Array([0x04, 0x05]),
+          addedDeviceIds: ['dev-jolan-02'],
+        }),
     });
     const convs = makeConversationMap();
     await startNewConversation('jolan2', makeDeps(mls, convs));
 
-    // Le propre device de jolan doit aussi être ajouté
-    expect(mls.addMember).toHaveBeenCalledWith('group-test-uuid', ownDevice2.keyPackage);
+    // Le propre device de jolan doit aussi être ajouté via bulk
+    expect(mls.addMembersBulk).toHaveBeenCalledWith('group-test-uuid', [ownDevice2]);
     expect(mls.registerMember).toHaveBeenCalledWith('group-test-uuid', 'jolan', 'dev-jolan-02');
     // Un Welcome doit être envoyé à dev-jolan-02
     expect(mls.sendWelcome).toHaveBeenCalledWith(
       expect.any(Uint8Array),
       'jolan',
       'group-test-uuid',
-      'dev-jolan-02'
+      'dev-jolan-02',
+      undefined
     );
   });
 
