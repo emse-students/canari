@@ -17,26 +17,17 @@ export async function renameGroupAndBroadcast(params: {
   const { mlsService, groupId, newName, userId, pin } = params;
   await mlsService.renameGroup(groupId, newName);
 
-  const controlMsg = encodeAppMessage(mkSystem('groupRenamed', JSON.stringify({ newName })));
-  await mlsService.sendMessage(groupId, controlMsg);
-  const stBytes = await mlsService.saveState(pin);
-  localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
-}
-
-export async function deleteGroupAndBroadcast(params: {
-  mlsService: IMlsService;
-  groupId: string;
-}) {
-  const { mlsService, groupId } = params;
-
-  const controlMsg = encodeAppMessage(mkSystem('groupDeleted'));
+  // Broadcast the rename notification — best-effort: the local rename is
+  // already committed to the server; if the MLS message fails, peers will
+  // still see the new name when they next fetch group metadata.
   try {
+    const controlMsg = encodeAppMessage(mkSystem('groupRenamed', JSON.stringify({ newName })));
     await mlsService.sendMessage(groupId, controlMsg);
   } catch {
-    // Best effort broadcast
+    // Non-blocking: rename already applied server-side
   }
-
-  await mlsService.deleteGroupOnServer(groupId);
+  const stBytes = await mlsService.saveState(pin);
+  localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
 }
 
 export async function removeMemberAndBroadcast(params: {
@@ -53,13 +44,23 @@ export async function removeMemberAndBroadcast(params: {
   await mlsService.removeMember(groupId, [memberId]);
 
   // 2. Notify remaining members via an application-layer system message.
-  const controlMsg = encodeAppMessage(
-    mkSystem('memberRemoved', JSON.stringify({ targetUser: memberId }))
-  );
-  await mlsService.sendMessage(groupId, controlMsg);
+  //    Best-effort: do not abort server cleanup if notification fails.
+  try {
+    const controlMsg = encodeAppMessage(
+      mkSystem('memberRemoved', JSON.stringify({ targetUser: memberId }))
+    );
+    await mlsService.sendMessage(groupId, controlMsg);
+  } catch {
+    // Non-blocking: the MLS commit already informed peers of the removal
+  }
 
   // 3. Remove from the server-side member registry.
-  await mlsService.removeMemberFromServer(groupId, memberId);
+  //    Best-effort: even if this fails, the MLS tree no longer contains the member.
+  try {
+    await mlsService.removeMemberFromServer(groupId, memberId);
+  } catch {
+    // Non-blocking: retry on next sync if needed
+  }
 
   const stBytes = await mlsService.saveState(pin);
   localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));

@@ -236,6 +236,7 @@ export function useChatSession() {
         mlsService,
         userId,
         conversations: cb.conversations,
+        saveConversation: cb.saveConversation,
         log: cb.log,
       }).catch(() => {});
 

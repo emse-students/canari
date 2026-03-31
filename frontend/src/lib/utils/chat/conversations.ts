@@ -229,103 +229,107 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
   }
 
   // Phase 2 — decrypt stored messages + replay remote history in parallel.
+  const phase2Promises: Promise<void>[] = [];
   for (const meta of mergedConvMetas) {
-    (async () => {
-      try {
-        const existingConvo = ctx.conversations.get(meta.id);
-        if (
-          existingConvo &&
-          (existingConvo.conversationType ?? 'group') === 'group' &&
-          !meta.groupId.startsWith('channel_')
-        ) {
-          try {
-            // First check the explicit isGroup flag from the backend — this is
-            // authoritative and prevents multi-user groups with only 2 members
-            // from being misclassified as direct conversations.
-            let isGroupFromApi: boolean | null = null;
+    phase2Promises.push(
+      (async () => {
+        try {
+          const existingConvo = ctx.conversations.get(meta.id);
+          if (
+            existingConvo &&
+            (existingConvo.conversationType ?? 'group') === 'group' &&
+            !meta.groupId.startsWith('channel_')
+          ) {
             try {
-              const gRes = await apiFetch(
-                `${ctx.historyBaseUrl}/api/mls-api/groups/${meta.groupId}`
-              );
-              if (gRes.ok) {
-                const gData = await gRes.json();
-                if (typeof gData?.isGroup === 'boolean') {
-                  isGroupFromApi = gData.isGroup;
+              // First check the explicit isGroup flag from the backend — this is
+              // authoritative and prevents multi-user groups with only 2 members
+              // from being misclassified as direct conversations.
+              let isGroupFromApi: boolean | null = null;
+              try {
+                const gRes = await apiFetch(
+                  `${ctx.historyBaseUrl}/api/mls-api/groups/${meta.groupId}`
+                );
+                if (gRes.ok) {
+                  const gData = await gRes.json();
+                  if (typeof gData?.isGroup === 'boolean') {
+                    isGroupFromApi = gData.isGroup;
+                  }
                 }
+              } catch {
+                // Non-blocking
               }
-            } catch {
-              // Non-blocking
-            }
 
-            // If the backend explicitly says this is a group, skip member-count heuristic.
-            if (isGroupFromApi !== true) {
-              const res = await apiFetch(
-                `${ctx.historyBaseUrl}/api/mls-api/groups/${meta.groupId}/members`
-              );
-              if (res.ok) {
-                const contentType = res.headers.get('content-type')?.toLowerCase() ?? '';
-                if (contentType.includes('application/json')) {
-                  const rows = (await res.json()) as Array<{ userId?: string }>;
-                  const memberIds = [
-                    ...new Set(rows.map((r) => String(r.userId ?? '').toLowerCase())),
-                  ].filter(Boolean);
-                  if (memberIds.length === 2 && memberIds.includes(ctx.userId.toLowerCase())) {
-                    const peer = memberIds.find((m) => m !== ctx.userId.toLowerCase()) ?? '';
-                    if (peer) {
-                      ctx.conversations.set(meta.id, {
-                        ...existingConvo,
-                        conversationType: 'direct',
-                        directPeerId: peer,
-                        contactName: peer,
-                        name: peer,
-                      });
-
-                      const normalizedName = `${ctx.userId.toLowerCase()}::${peer}`;
-                      if (meta.name !== normalizedName) {
-                        await ctx.storage.saveConversation({
-                          ...meta,
-                          name: normalizedName,
-                          updatedAt: Date.now(),
+              // If the backend explicitly says this is a group, skip member-count heuristic.
+              if (isGroupFromApi !== true) {
+                const res = await apiFetch(
+                  `${ctx.historyBaseUrl}/api/mls-api/groups/${meta.groupId}/members`
+                );
+                if (res.ok) {
+                  const contentType = res.headers.get('content-type')?.toLowerCase() ?? '';
+                  if (contentType.includes('application/json')) {
+                    const rows = (await res.json()) as Array<{ userId?: string }>;
+                    const memberIds = [
+                      ...new Set(rows.map((r) => String(r.userId ?? '').toLowerCase())),
+                    ].filter(Boolean);
+                    if (memberIds.length === 2 && memberIds.includes(ctx.userId.toLowerCase())) {
+                      const peer = memberIds.find((m) => m !== ctx.userId.toLowerCase()) ?? '';
+                      if (peer) {
+                        ctx.conversations.set(meta.id, {
+                          ...existingConvo,
+                          conversationType: 'direct',
+                          directPeerId: peer,
+                          contactName: peer,
+                          name: peer,
                         });
+
+                        const normalizedName = `${ctx.userId.toLowerCase()}::${peer}`;
+                        if (meta.name !== normalizedName) {
+                          await ctx.storage.saveConversation({
+                            ...meta,
+                            name: normalizedName,
+                            updatedAt: Date.now(),
+                          });
+                        }
                       }
                     }
                   }
                 }
               }
-            }
-          } catch {
-            // Non-blocking: keep existing type when members endpoint is unavailable.
-          }
-        }
-
-        const storedMessages = await ctx.storage.getMessages(meta.id, ctx.pin);
-        const msgs = mapStoredMessagesToChatMessages(storedMessages, ctx.userId);
-        const existing = ctx.conversations.get(meta.id);
-        if (existing && msgs.length > 0) {
-          ctx.conversations.set(meta.id, { ...existing, messages: msgs });
-
-          // Restore reactions into the shared messageReactions map
-          for (const m of msgs) {
-            if (m.reactions && m.reactions.length > 0) {
-              ctx.messageReactions.set(m.id, m.reactions);
+            } catch {
+              // Non-blocking: keep existing type when members endpoint is unavailable.
             }
           }
+
+          const storedMessages = await ctx.storage.getMessages(meta.id, ctx.pin);
+          const msgs = mapStoredMessagesToChatMessages(storedMessages, ctx.userId);
+          const existing = ctx.conversations.get(meta.id);
+          if (existing && msgs.length > 0) {
+            ctx.conversations.set(meta.id, { ...existing, messages: msgs });
+
+            // Restore reactions into the shared messageReactions map
+            for (const m of msgs) {
+              if (m.reactions && m.reactions.length > 0) {
+                ctx.messageReactions.set(m.id, m.reactions);
+              }
+            }
+          }
+          await replayConversationHistory({
+            mlsService: ctx.mlsService,
+            groupId: meta.groupId,
+            contactName: meta.id,
+            userId: ctx.userId,
+            pin: ctx.pin,
+            addMessageToChat: ctx.addMessageToChat,
+            getConversation: (name) => ctx.conversations.get(name),
+            setConversation: (name, next) => ctx.conversations.set(name, next),
+            messageReactions: ctx.messageReactions,
+            log: ctx.log,
+          });
+        } catch {
+          // Resilient: keep loading other conversations.
         }
-        await replayConversationHistory({
-          mlsService: ctx.mlsService,
-          groupId: meta.groupId,
-          contactName: meta.id,
-          userId: ctx.userId,
-          pin: ctx.pin,
-          addMessageToChat: ctx.addMessageToChat,
-          getConversation: (name) => ctx.conversations.get(name),
-          setConversation: (name, next) => ctx.conversations.set(name, next),
-          messageReactions: ctx.messageReactions,
-          log: ctx.log,
-        });
-      } catch {
-        // Resilient: keep loading other conversations.
-      }
-    })();
+      })()
+    );
   }
+  await Promise.allSettled(phase2Promises);
 }

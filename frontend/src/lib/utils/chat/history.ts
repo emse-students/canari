@@ -59,6 +59,8 @@ export function mapStoredMessagesToChatMessages(storedMessages: StoredMessage[],
       replyTo,
       readBy: m.readBy,
       reactions: m.reactions,
+      ...(m.isDeleted ? { isDeleted: true } : {}),
+      ...(m.isEdited ? { isEdited: true } : {}),
     } satisfies ChatMessage;
   });
 }
@@ -311,7 +313,10 @@ export async function replayConversationHistory(params: {
       localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
       log(`[OK] ${addedMsg} msg rattrapes pour ${contactName}.`);
     }
-  } catch {
-    // Silently ignore errors in loading history
+  } catch (err) {
+    // Non-blocking: log the error and continue so other conversations still load
+    log(
+      `[WARN] Echec replay historique pour ${contactName}: ${err instanceof Error ? err.message : String(err)}`
+    );
   }
 }

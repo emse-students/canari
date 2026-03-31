@@ -152,7 +152,7 @@ export async function syncOwnDevicesToGroups(params: {
   }
 }
 
-/** Force re-sync by clearing the known devices cache */
+/** Force re-sync by clearing the known devices cache (Ctrl+Shift+S in dev UI) */
 export function forceSyncReset(userId: string, log: (msg: string) => void) {
   const cacheKey = `known_own_devices:${userId}`;
   localStorage.removeItem(cacheKey);
@@ -170,9 +170,10 @@ export async function discoverMissingGroups(params: {
   mlsService: IMlsService;
   userId: string;
   conversations: Map<string, Conversation>;
+  saveConversation?: (key: string) => Promise<void>;
   log: (msg: string) => void;
 }) {
-  const { mlsService, userId, conversations, log } = params;
+  const { mlsService, userId, conversations, saveConversation, log } = params;
 
   let serverGroups: { groupId: string; name: string; isGroup: boolean }[];
   try {
@@ -209,6 +210,14 @@ export async function discoverMissingGroups(params: {
       mlsStateHex: null,
       conversationType: g.isGroup ? 'group' : 'direct',
     });
+    // Persist to DB so the placeholder survives page reloads
+    if (saveConversation) {
+      try {
+        await saveConversation(key);
+      } catch {
+        // Non-blocking
+      }
+    }
     log(`[DISCOVERY] Groupe "${g.name}" ajouté en attente de Welcome.`);
   }
 }

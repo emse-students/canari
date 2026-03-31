@@ -96,6 +96,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
     saveConversation,
     addMessageToChat,
     addSystemMessage,
+    loadHistoryForConversation,
     onChannelMemberJoined,
     onChannelMemberKicked,
     onReadReceiptReceived,
@@ -487,6 +488,27 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                       content: 'Ce message a été supprimé.',
                     };
                     conversations.set(convoKey, { ...c, messages: newMsgs });
+
+                    // Persist deletion to DB so it survives page reload
+                    if (storage) {
+                      try {
+                        await storage.saveMessage(
+                          {
+                            id: newMsgs[idx].id,
+                            conversationId: convoKey,
+                            senderId: newMsgs[idx].senderId,
+                            content: newMsgs[idx].content,
+                            timestamp: newMsgs[idx].timestamp.getTime(),
+                            readBy: newMsgs[idx].readBy,
+                            reactions: messageReactions.get(newMsgs[idx].id),
+                            isDeleted: true,
+                          },
+                          pin
+                        );
+                      } catch {
+                        // Non-blocking
+                      }
+                    }
                   }
                 }
                 return true;
@@ -507,6 +529,27 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                       readBy: [],
                     };
                     conversations.set(convoKey, { ...c, messages: newMsgs });
+
+                    // Persist edit to DB so it survives page reload
+                    if (storage) {
+                      try {
+                        await storage.saveMessage(
+                          {
+                            id: newMsgs[idx].id,
+                            conversationId: convoKey,
+                            senderId: newMsgs[idx].senderId,
+                            content: data.newContent,
+                            timestamp: newMsgs[idx].timestamp.getTime(),
+                            readBy: [],
+                            reactions: messageReactions.get(newMsgs[idx].id),
+                            isEdited: true,
+                          },
+                          pin
+                        );
+                      } catch {
+                        // Non-blocking
+                      }
+                    }
                   }
                 }
                 return true;
@@ -572,6 +615,16 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       // Unknown group → Process Welcome message
       try {
         const joinedGroupId = await mlsService.processWelcome(content, ratchetTreeBytes);
+
+        // Persist MLS state immediately after Welcome — a crash before this
+        // would lose the joined group and require a fresh Welcome.
+        try {
+          const stBytes = await mlsService.saveState(pin);
+          localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
+        } catch {
+          // Non-blocking: state will be saved on next message
+        }
+
         let groupName = senderNorm;
         let isGroupFromApi: boolean | null = null;
 
@@ -683,6 +736,9 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           });
           if (storage) await saveConversation(newConvoKey);
         }
+
+        // Background: fetch history so the new conversation isn't empty
+        loadHistoryForConversation(newConvoKey, joinedGroupId).catch(() => {});
         return true;
       } catch (_e) {
         log(`Ignoré: pas un message pour un groupe existant ni un welcome. Erreur: ${String(_e)}`);

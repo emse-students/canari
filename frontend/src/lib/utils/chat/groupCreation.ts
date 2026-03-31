@@ -305,8 +305,9 @@ export async function startNewConversation(
 
   const conversationKey = `dm_${crypto.randomUUID()}`;
   const groupName = `${userId}::${contact}`;
+  let groupId: string | undefined;
   try {
-    const groupId = await mlsService.createRemoteGroup(groupName, false); // false = 1-to-1 direct conversation
+    groupId = await mlsService.createRemoteGroup(groupName, false); // false = 1-to-1 direct conversation
 
     conversations.set(conversationKey, {
       contactName: contact,
@@ -375,6 +376,15 @@ export async function startNewConversation(
     const msg = _e instanceof Error ? _e.message : String(_e);
     log(`Erreur création: ${toUiDiscussionError(msg)}`);
     conversations.delete(conversationKey);
+
+    // Best-effort: clean up the orphan remote group to avoid server-side litter
+    if (groupId) {
+      try {
+        await mlsService.deleteGroupOnServer(groupId);
+      } catch {
+        // Non-blocking: orphan will be cleaned up on next server-side GC
+      }
+    }
   }
 }
 

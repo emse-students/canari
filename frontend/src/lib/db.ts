@@ -20,6 +20,8 @@ export interface StoredMessage {
   timestamp: number;
   readBy?: string[];
   reactions?: Array<{ emoji: string; userId: string }>;
+  isDeleted?: boolean;
+  isEdited?: boolean;
 }
 
 export interface EncryptedMessageRow {
