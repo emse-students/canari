@@ -257,6 +257,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [detect-changed-services, build-frontend]
     if: |
+      always() &&
+      needs.detect-changed-services.result == 'success' &&
       needs.detect-changed-services.outputs.any_changed == 'true' &&
       (needs.build-frontend.result == 'success' || needs.build-frontend.result == 'skipped')
     permissions:
@@ -313,9 +315,11 @@ jobs:
     runs-on: self-hosted
     needs: [run-ci, run-code-analysis, detect-changed-services, build-docker-images]
     if: |
+      always() &&
       github.ref == 'refs/heads/main' &&
       needs.run-ci.result == 'success' &&
       needs.run-code-analysis.result == 'success' &&
+      needs.detect-changed-services.result == 'success' &&
       (needs.build-docker-images.result == 'success' || needs.build-docker-images.result == 'skipped')
     permissions:
       contents: read
@@ -416,13 +420,11 @@ jobs:
           upsert_env_var() {
             key="$1"
             value="$2"
-            escaped_value=$(printf '%s' "$value" | sed -e 's/[\\/&]/\\\\&/g')
-
-            if grep -q "^${key}=" infrastructure/.env; then
-              sed -i "s/^${key}=.*/${key}=${escaped_value}/" infrastructure/.env
-            else
-              printf "\n%s=%s\n" "$key" "$value" >> infrastructure/.env
-            fi
+            # Remove existing line (if any), then append.
+            # Avoids sed delimiter issues with URLs containing '/'.
+            grep -v "^${key}=" infrastructure/.env > infrastructure/.env.tmp || true
+            mv infrastructure/.env.tmp infrastructure/.env
+            printf '%s=%s\n' "$key" "$value" >> infrastructure/.env
           }
 
           upsert_env_var "JWT_SECRET" "$JWT_SECRET"

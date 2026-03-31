@@ -10,32 +10,149 @@ env:
 
 jobs:
   # =================================================================================================
+  # CHANGE DETECTION
+  # Only test components affected by the current changeset.
+  # =================================================================================================
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      rust-matrix: ${{ steps.matrix.outputs.rust }}
+      ts-matrix: ${{ steps.matrix.outputs.ts }}
+      run-frontend: ${{ steps.matrix.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Build test matrices
+        id: matrix
+        run: |
+          set -euo pipefail
+
+          # ── Full matrices (used as fallback) ──
+          ALL_RUST='[{"name":"Shared Rust Lib","path":"libs/shared-rust","cmd":"cargo test","check":true},{"name":"Chat Gateway","path":"apps/chat-gateway","cmd":"cargo test","check":true},{"name":"Frontend MLS Core","path":"frontend/mls-core","cmd":"cargo test --lib","check":true},{"name":"Frontend MLS WASM","path":"frontend/mls-wasm","cmd":"cargo build --target wasm32-unknown-unknown --release","wasm":true,"check":true}]'
+          ALL_TS='["libs/shared-ts","apps/core-service","apps/social-service","apps/chat-delivery-service","apps/media-service"]'
+
+          run_all() {
+            echo "rust=$ALL_RUST"    >> "$GITHUB_OUTPUT"
+            echo "ts=$ALL_TS"        >> "$GITHUB_OUTPUT"
+            echo "frontend=true"     >> "$GITHUB_OUTPUT"
+          }
+
+          # ── Determine base commit ──
+          BASE=""
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          elif [[ -n "${{ github.event.before }}" ]] && \
+               [[ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]]; then
+            BASE="${{ github.event.before }}"
+          elif git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+            BASE="$(git rev-parse HEAD~1)"
+          fi
+
+          if [[ -z "$BASE" ]]; then
+            echo "No base commit available – running all tests."
+            run_all; exit 0
+          fi
+
+          CHANGED="$(git diff --name-only "$BASE" HEAD)"
+          echo "Changed files:" && echo "$CHANGED"
+
+          # Helper: returns 0 if any changed file matches the pattern
+          has() { echo "$CHANGED" | grep -qE "$1"; }
+
+          # CI workflow itself changed → test everything
+          if has '\.github/workflows/ci\.yml'; then
+            echo "CI workflow changed – running all tests."
+            run_all; exit 0
+          fi
+
+          # ── Shared-lib flags (propagate to dependents) ──
+          shared_rust=false
+          if has '^libs/shared-rust/' || has '^libs/proto/'; then
+            shared_rust=true
+          fi
+
+          shared_ts=false
+          if has '^libs/shared-ts/' || has '^libs/event-contracts/'; then
+            shared_ts=true
+          fi
+
+          # ── Rust matrix ──
+          rust=()
+          if [[ "$shared_rust" == "true" ]]; then
+            rust+=('{"name":"Shared Rust Lib","path":"libs/shared-rust","cmd":"cargo test","check":true}')
+          fi
+          # chat-gateway depends on shared-rust
+          if [[ "$shared_rust" == "true" ]] || has '^apps/chat-gateway/'; then
+            rust+=('{"name":"Chat Gateway","path":"apps/chat-gateway","cmd":"cargo test","check":true}')
+          fi
+
+          mls_core=false
+          if has '^frontend/mls-core/'; then mls_core=true; fi
+          if [[ "$mls_core" == "true" ]]; then
+            rust+=('{"name":"Frontend MLS Core","path":"frontend/mls-core","cmd":"cargo test --lib","check":true}')
+          fi
+          # mls-wasm depends on mls-core
+          if [[ "$mls_core" == "true" ]] || has '^frontend/mls-wasm/'; then
+            rust+=('{"name":"Frontend MLS WASM","path":"frontend/mls-wasm","cmd":"cargo build --target wasm32-unknown-unknown --release","wasm":true,"check":true}')
+          fi
+
+          if [[ ${#rust[@]} -eq 0 ]]; then
+            echo "rust=[]" >> "$GITHUB_OUTPUT"
+          else
+            echo "rust=[$(IFS=,; echo "${rust[*]}")]" >> "$GITHUB_OUTPUT"
+          fi
+
+          # ── TypeScript backend matrix ──
+          ts=()
+          # shared-ts is a build dependency for all TS backends
+          if [[ "$shared_ts" == "true" ]]; then
+            ts+=('"libs/shared-ts"')
+          fi
+          if [[ "$shared_ts" == "true" ]] || has '^apps/core-service/'; then
+            ts+=('"apps/core-service"')
+          fi
+          if [[ "$shared_ts" == "true" ]] || has '^apps/social-service/'; then
+            ts+=('"apps/social-service"')
+          fi
+          if [[ "$shared_ts" == "true" ]] || has '^apps/chat-delivery-service/'; then
+            ts+=('"apps/chat-delivery-service"')
+          fi
+          if [[ "$shared_ts" == "true" ]] || has '^apps/media-service/'; then
+            ts+=('"apps/media-service"')
+          fi
+
+          if [[ ${#ts[@]} -eq 0 ]]; then
+            echo "ts=[]" >> "$GITHUB_OUTPUT"
+          else
+            echo "ts=[$(IFS=,; echo "${ts[*]}")]" >> "$GITHUB_OUTPUT"
+          fi
+
+          # ── Frontend ──
+          if [[ "$shared_ts" == "true" ]] || has '^frontend/src/' || has '^frontend/static/' || \
+             has '^frontend/package\.json' || has '^frontend/svelte\.config' || \
+             has '^frontend/vite\.config' || has '^frontend/vitest\.config' || \
+             has '^frontend/tsconfig' || has '^frontend/eslint\.config' || \
+             has '^frontend/mls-wasm/'; then
+            echo "frontend=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "frontend=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # =================================================================================================
   # RUST MATRIX
   # =================================================================================================
   test-rust:
     name: Test Rust (${{ matrix.component.name }})
+    needs: [changes]
+    if: ${{ needs.changes.outputs.rust-matrix != '[]' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        component:
-          - name: Shared Rust Lib
-            path: libs/shared-rust
-            cmd: cargo test
-            check: true
-          - name: Chat Gateway
-            path: apps/chat-gateway
-            cmd: cargo test
-            check: true
-          - name: Frontend MLS Core
-            path: frontend/mls-core
-            cmd: cargo test --lib
-            check: true
-          - name: Frontend MLS WASM
-            path: frontend/mls-wasm
-            cmd: cargo build --target wasm32-unknown-unknown --release
-            wasm: true
-            check: true
+        component: ${{ fromJSON(needs.changes.outputs.rust-matrix) }}
 
     steps:
       - uses: actions/checkout@v6
@@ -92,16 +209,13 @@ jobs:
   # =================================================================================================
   test-typescript-backend:
     name: Test TS Backend (${{ matrix.service }})
+    needs: [changes]
+    if: ${{ needs.changes.outputs.ts-matrix != '[]' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        service:
-          - libs/shared-ts
-          - apps/core-service
-          - apps/social-service
-          - apps/chat-delivery-service
-          - apps/media-service
+        service: ${{ fromJSON(needs.changes.outputs.ts-matrix) }}
     steps:
       - uses: actions/checkout@v6
 
@@ -161,6 +275,8 @@ jobs:
   # =================================================================================================
   test-frontend:
     name: Test Frontend (Svelte)
+    needs: [changes]
+    if: ${{ needs.changes.outputs.run-frontend == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
