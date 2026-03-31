@@ -87,10 +87,9 @@ export class AuthController {
     user: { id: string; email: string; displayName: string };
   }> {
     const devId = (body?.id || 'dev').trim().toLowerCase();
-    const devOidcSub = `dev-${devId}`;
 
     const user = await this.usersService.findOrCreateFromOidc(
-      devOidcSub,
+      devId,
       `${devId}@canari.local`,
       devId,
     );
