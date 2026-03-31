@@ -1,5 +1,6 @@
 <script lang="ts">
   import Modal from '../shared/Modal.svelte';
+  import UserAutocomplete from '../shared/UserAutocomplete.svelte';
 
   interface Props {
     open: boolean;
@@ -58,14 +59,12 @@
         <label for="new-contact-id" class="block text-sm font-medium text-text-main mb-1"
           >Identifiant du contact</label
         >
-        <input
-          id="new-contact-id"
-          type="text"
+        <UserAutocomplete
           value={contactId}
-          oninput={(e) => onContactIdChange((e.target as HTMLInputElement).value)}
+          onValueChange={onContactIdChange}
           placeholder="ex: alice"
-          class="w-full px-4 py-2.5 bg-white/65 dark:bg-black/30 border border-white/60 dark:border-white/10 rounded-xl text-sm outline-none focus:ring-2 focus:ring-amber-400/45"
-          onkeydown={(e) => e.key === 'Enter' && onSubmitContact()}
+          inputId="new-contact-id"
+          onSubmit={onSubmitContact}
         />
       </div>
       <button

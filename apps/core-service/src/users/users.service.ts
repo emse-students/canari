@@ -64,4 +64,28 @@ export class UsersService {
     });
     return await this.userRepository.save(newUser);
   }
+
+  /**
+   * Search users by id or displayName (case-insensitive prefix match).
+   * Returns up to 10 results, excluding the current user.
+   */
+  async search(
+    query: string,
+    excludeUserId?: string,
+  ): Promise<Pick<User, 'id' | 'displayName'>[]> {
+    if (!query || query.length < 1) return [];
+
+    const qb = this.userRepository
+      .createQueryBuilder('user')
+      .select(['user.id', 'user.displayName'])
+      .where('user.id ILIKE :q OR user.displayName ILIKE :q', {
+        q: `${query}%`,
+      });
+
+    if (excludeUserId) {
+      qb.andWhere('user.id != :excludeId', { excludeId: excludeUserId });
+    }
+
+    return qb.take(10).getMany();
+  }
 }
