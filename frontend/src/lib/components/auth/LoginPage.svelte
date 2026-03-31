@@ -10,6 +10,7 @@
   let loginError = $state('');
   let biometricAvailable = $state(false);
   let requestedReturnTo = '';
+  let devId = $state('');
 
   function getSafeReturnTarget(): string {
     const target =
@@ -82,7 +83,7 @@
     loginError = '';
     isLoggingIn = true;
     try {
-      await devLogin();
+      await devLogin(devId || undefined);
       await goto(getSafeReturnTarget(), { replaceState: true });
     } catch (e: unknown) {
       loginError = e instanceof Error ? e.message : String(e);
@@ -121,4 +122,5 @@
   onLogin={handleLogin}
   onDevLogin={handleDevLogin}
   onReset={resetAll}
+  bind:devId
 />

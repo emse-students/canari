@@ -21,6 +21,7 @@
   import ChatArea from './chat/ChatArea.svelte';
   import LogsPanel from './dev/LogsPanel.svelte';
   import CallOverlay from '$lib/components/chat/CallOverlay.svelte';
+  import PinModal from '$lib/components/auth/PinModal.svelte';
 
   interface Props {
     routeMode?: 'chat' | 'communities';
@@ -42,6 +43,7 @@
   let messageText = $state('');
   let isWindowFocused = $state(true);
   let isTabVisible = $state(true);
+  let showPinModal = $state(false);
 
   // ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -337,6 +339,10 @@
           session.userId = savedUser;
           session.pin = savedPin;
           void session.login(sessionCb());
+        } else if (savedUser) {
+          // Authenticated but no PIN yet — ask for it.
+          session.userId = savedUser;
+          showPinModal = true;
         } else {
           const cur = window.location.pathname + window.location.search;
           void goto(`/login?returnTo=${encodeURIComponent(cur)}`, { replaceState: true });
@@ -349,6 +355,10 @@
         session.userId = savedUser;
         session.pin = savedPin;
         void session.login(sessionCb());
+      } else if (savedUser) {
+        // Authenticated but no PIN yet — ask for it.
+        session.userId = savedUser;
+        showPinModal = true;
       } else {
         const cur = window.location.pathname + window.location.search;
         void goto(`/login?returnTo=${encodeURIComponent(cur)}`, { replaceState: true });
@@ -407,14 +417,24 @@
     convs.showSyncGuidePrompt = false;
     sync.openJoinSyncModal();
   }
-  // ─── END ──────────────────────────────────────────────────────────────────
+  function handlePinSubmit(pin: string) {
+    showPinModal = false;
+    session.pin = pin;
+    void session.login(sessionCb());
+  } // ─── END ──────────────────────────────────────────────────────────────────
 </script>
 
 <!-- ==================== UI ==================== -->
 
+<PinModal open={showPinModal} onSubmit={handlePinSubmit} />
+
 {#if !session.isLoggedIn}
   <div class="min-h-screen flex items-center justify-center text-sm text-text-muted">
-    Redirection vers la page de connexion...
+    {#if showPinModal}
+      <!-- PIN modal is visible — don't show redirect text -->
+    {:else}
+      Redirection vers la page de connexion...
+    {/if}
   </div>
 {:else}
   <div class="app-layout" in:fade>

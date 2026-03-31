@@ -6,6 +6,7 @@
     loginError: string;
     biometricAvailable: boolean;
     isDev?: boolean;
+    devId?: string;
     onLogin: () => void;
     onDevLogin?: () => void;
     onReset: () => void;
@@ -16,6 +17,7 @@
     loginError,
     biometricAvailable,
     isDev = false,
+    devId = $bindable(''),
     onLogin,
     onDevLogin,
     onReset,
@@ -67,13 +69,21 @@
       <p class="text-xs text-text-muted">Connexion sécurisée via votre compte Mines</p>
 
       {#if isDev && onDevLogin}
-        <button
-          onclick={onDevLogin}
-          disabled={isLoggingIn}
-          class="w-full py-3 bg-zinc-700 text-white rounded-2xl font-bold text-sm transition-all hover:bg-zinc-600 disabled:opacity-70 disabled:cursor-wait"
-        >
-          Dev Login (no Authentik)
-        </button>
+        <div class="space-y-2">
+          <input
+            type="text"
+            bind:value={devId}
+            placeholder="ID (default: dev)"
+            class="w-full rounded-xl border border-zinc-600 bg-zinc-800 px-4 py-2.5 text-sm text-white placeholder:text-zinc-400 focus:border-cn-yellow focus:outline-none"
+          />
+          <button
+            onclick={onDevLogin}
+            disabled={isLoggingIn}
+            class="w-full py-3 bg-zinc-700 text-white rounded-2xl font-bold text-sm transition-all hover:bg-zinc-600 disabled:opacity-70 disabled:cursor-wait"
+          >
+            Dev Login (no Authentik)
+          </button>
+        </div>
       {/if}
 
       {#if loginError}

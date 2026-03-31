@@ -109,14 +109,13 @@ export async function handleOidcCallback(
  * Only works when the backend is running in non-production mode.
  */
 export async function devLogin(
-  email = 'dev@canari.local',
-  displayName = 'Dev User'
+  id?: string
 ): Promise<{ id: string; email: string; displayName: string }> {
   const res = await fetch(`${coreUrl()}/api/auth/dev-login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
-    body: JSON.stringify({ email, displayName }),
+    body: JSON.stringify({ id }),
   });
 
   if (!res.ok) {

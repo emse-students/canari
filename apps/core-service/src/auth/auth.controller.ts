@@ -80,20 +80,19 @@ export class AuthController {
   @Post('dev-login')
   @HttpCode(200)
   async devLogin(
-    @Body() body: { email?: string; displayName?: string },
+    @Body() body: { id?: string },
     @Res({ passthrough: true }) res: Response,
   ): Promise<{
     access_token: string;
     user: { id: string; email: string; displayName: string };
   }> {
-    const email = body?.email || 'dev@canari.local';
-    const displayName = body?.displayName || 'Dev User';
-    const devOidcSub = `dev-${email}`;
+    const devId = (body?.id || 'dev').trim().toLowerCase();
+    const devOidcSub = `dev-${devId}`;
 
     const user = await this.usersService.findOrCreateFromOidc(
       devOidcSub,
-      email,
-      displayName,
+      `${devId}@canari.local`,
+      devId,
     );
 
     const access_token = jwt.sign({ sub: user.id }, this.jwtSecret, {
