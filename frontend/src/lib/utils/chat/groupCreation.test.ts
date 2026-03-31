@@ -437,17 +437,23 @@ describe('createNewGroup', () => {
     const ownDevice2 = { keyPackage: new Uint8Array([0xee]), deviceId: 'dev-jolan-02' };
     const mls = makeMlsService({
       fetchUserDevices: vi.fn().mockResolvedValueOnce([ownDevice2]),
+      addMembersBulk: vi.fn().mockResolvedValue({
+        commit: new Uint8Array([0x01]),
+        welcome: new Uint8Array([0x02, 0x03]),
+        addedDeviceIds: ['dev-jolan-02'],
+      }),
     });
     const convs = makeConversationMap();
     await createNewGroup('Projet Beta', makeDeps(mls, convs));
 
-    expect(mls.addMember).toHaveBeenCalledWith('group-test-uuid', ownDevice2.keyPackage);
+    expect(mls.addMembersBulk).toHaveBeenCalledWith('group-test-uuid', [ownDevice2]);
     expect(mls.registerMember).toHaveBeenCalledWith('group-test-uuid', 'jolan', 'dev-jolan-02');
     expect(mls.sendWelcome).toHaveBeenCalledWith(
       expect.any(Uint8Array),
       'jolan',
       'group-test-uuid',
-      'dev-jolan-02'
+      'dev-jolan-02',
+      undefined
     );
   });
 });

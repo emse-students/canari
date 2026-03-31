@@ -192,7 +192,10 @@ impl MlsManager {
                     .ok()
                     .map(|bc| bc.identity().to_vec())
                     .unwrap_or_default();
-                if user_ids.iter().any(|uid| uid.as_bytes() == identity.as_slice()) {
+                if user_ids
+                    .iter()
+                    .any(|uid| uid.as_bytes() == identity.as_slice())
+                {
                     Some(m.index)
                 } else {
                     None
