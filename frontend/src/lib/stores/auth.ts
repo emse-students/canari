@@ -213,9 +213,14 @@ export async function clearAuth(): Promise<void> {
 
 /**
  * Check if we have a session: try a silent refresh.
- * Returns true if the refresh cookie exists and is valid.
+ * Returns true if the refresh cookie exists and is valid,
+ * AND we have a saved user in localStorage (prevents loops after logout).
  */
 export async function hasStoredSession(): Promise<boolean> {
+  // If no saved user, consider the session invalid even if we could refresh
+  if (!localStorage.getItem('canari_saved_user')) {
+    return false;
+  }
   try {
     await refresh();
     return true;
