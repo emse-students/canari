@@ -55,11 +55,25 @@ export async function syncOwnDevicesToGroups(params: {
     let hadAttempt = false;
     let hadFailure = false;
 
+    // Re-fetch the device's latest KeyPackage to avoid using stale data
+    // (the device might have just published a new KeyPackage after reconnecting)
+    let freshKeyPackage = device.keyPackage;
+    try {
+      const freshDevices = await mlsService.fetchUserDevices(userId);
+      const freshDevice = freshDevices.find((d) => d.deviceId === device.deviceId);
+      if (freshDevice) {
+        freshKeyPackage = freshDevice.keyPackage;
+        log(`[SYNC] KeyPackage rafraichi pour ${device.deviceId}`);
+      }
+    } catch {
+      // Use the original KeyPackage if refresh fails
+    }
+
     for (const [, convo] of conversations.entries()) {
       if (!convo.isReady) continue;
       hadAttempt = true;
       try {
-        const result = await mlsService.addMember(convo.groupId, device.keyPackage);
+        const result = await mlsService.addMember(convo.groupId, freshKeyPackage);
         await mlsService.registerMember(convo.groupId, userId, device.deviceId);
         if (result.welcome) {
           await mlsService.sendWelcome(

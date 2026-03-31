@@ -633,19 +633,24 @@ export async function initializeConnection(deps: ConnectionDeps): Promise<void> 
     setReconnectAttempts(0);
     log('Connecté au réseau !');
     mlsService.onDisconnect(scheduleReconnect);
-
-    // Sync own devices to existing groups
-    syncOwnDevicesToGroupsLocally().catch(() => {});
   } catch (_wsErr: unknown) {
     const msg = _wsErr instanceof Error ? _wsErr.message : String(_wsErr);
     log(`Gateway inaccessible: ${msg}`);
   }
 
-  // Generate and publish KeyPackage
+  // Generate and publish KeyPackage FIRST (before syncing devices)
+  // This ensures other devices will fetch our fresh KeyPackage, not a stale one.
   try {
     await mlsService.generateKeyPackage(pin);
     log('KeyPackage publié.');
   } catch {
     // Silent fallback if key package generation fails
   }
+
+  // Small delay to allow KeyPackage propagation before syncing
+  // This helps avoid race conditions where we fetch stale KeyPackages
+  await new Promise((r) => setTimeout(r, 500));
+
+  // Sync own devices to existing groups AFTER publishing our KeyPackage
+  syncOwnDevicesToGroupsLocally().catch(() => {});
 }
