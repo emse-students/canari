@@ -8,13 +8,16 @@ import {
   Query,
   Req,
 } from '@nestjs/common';
-import { Request } from 'express';
 import { UsersService } from './users.service';
 import { CreateUserDto, UpdateUserDto } from './dto/user.dto';
 
 interface JwtUser {
   sub?: string;
   id?: string;
+}
+
+interface RequestWithUser {
+  user?: JwtUser;
 }
 
 @Controller('users')
@@ -26,10 +29,9 @@ export class UsersController {
    * Usage: GET /users/search?q=jol
    */
   @Get('search')
-  search(@Query('q') query: string, @Req() req: Request) {
+  search(@Query('q') query: string, @Req() req: RequestWithUser) {
     // Exclude current user from results if authenticated
-    const user = req.user as JwtUser | undefined;
-    const currentUserId = user?.sub || user?.id;
+    const currentUserId = req.user?.sub || req.user?.id;
     return this.usersService.search(query, currentUserId);
   }
 
