@@ -74,8 +74,9 @@
     }
   }
 
-  // ─── DEV Login (no Authentik) ─────────────────────────────────────────────
-  const isDev = import.meta.env.DEV;
+  // ─── TEMPORARY Login (no Authentik) ────────────────────────────────────────
+  // TODO: remove once Authentik is fully configured.
+  const isDev = true;
 
   async function handleDevLogin() {
     loginError = '';

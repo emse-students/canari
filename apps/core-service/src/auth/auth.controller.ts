@@ -74,9 +74,9 @@ export class AuthController {
   // `code`.  The frontend then POSTs that code here so we can exchange it for
   // tokens server-side (keeping the client_secret safe).
 
-  // ─── DEV-ONLY: bypass Authentik ────────────────────────────────────────────
+  // ─── TEMPORARY: bypass Authentik ────────────────────────────────────────────
   // Creates a dev user and returns tokens without touching Authentik.
-  // Blocked in production — only available when NODE_ENV !== 'production'.
+  // TODO: remove this endpoint once Authentik is fully configured.
   @Post('dev-login')
   @HttpCode(200)
   async devLogin(
@@ -86,10 +86,6 @@ export class AuthController {
     access_token: string;
     user: { id: string; email: string; displayName: string };
   }> {
-    if (this.isProduction) {
-      throw new BadRequestException('dev-login is disabled in production');
-    }
-
     const email = body?.email || 'dev@canari.local';
     const displayName = body?.displayName || 'Dev User';
     const devOidcSub = `dev-${email}`;
