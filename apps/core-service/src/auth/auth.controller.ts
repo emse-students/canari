@@ -13,6 +13,7 @@ import {
 import type { Request, Response } from 'express';
 import * as jwt from 'jsonwebtoken';
 import { UsersService } from '../users/users.service';
+import { User } from '../users/entities/user.entity';
 
 interface OidcCallbackDto {
   code: string;
@@ -88,7 +89,7 @@ export class AuthController {
   }> {
     const devId = (body?.id || 'dev').trim().toLowerCase();
 
-    let user;
+    let user: User;
     try {
       user = await this.usersService.findOrCreateFromOidc(
         devId,
