@@ -187,7 +187,9 @@ export function useChatSession() {
         /* non-blocking diagnostic */
       }
 
-      syncOwnDevicesToGroupsLocally(cb).catch(() => {});
+      syncOwnDevicesToGroupsLocally(cb).catch((e) =>
+        cb.log(`[WARN] Echec sync appareils (login): ${e instanceof Error ? e.message : String(e)}`)
+      );
 
       const syncGuideKey = `canari_sync_guide_seen_${userId}`;
       if (!hadLocalState && localStorage.getItem(syncGuideKey) !== '1') {
@@ -238,7 +240,9 @@ export function useChatSession() {
         conversations: cb.conversations,
         saveConversation: cb.saveConversation,
         log: cb.log,
-      }).catch(() => {});
+      }).catch((e) =>
+        cb.log(`[WARN] Echec decouverte groupes: ${e instanceof Error ? e.message : String(e)}`)
+      );
 
       const isTauri = !!(window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
       if (isTauri && !(await BiometricService.isConfigured())) {
@@ -332,8 +336,13 @@ export function useChatSession() {
       isWsConnected = true;
       reconnectAttempts = 0;
       cb.log('[OK] Reconnecte au reseau.');
-      syncOwnDevicesToGroupsLocally(cb).catch(() => {});
-    } catch {
+      syncOwnDevicesToGroupsLocally(cb).catch((e) =>
+        cb.log(
+          `[WARN] Echec sync appareils (reconnect): ${e instanceof Error ? e.message : String(e)}`
+        )
+      );
+    } catch (err) {
+      cb.log(`Reconnexion echouee: ${err instanceof Error ? err.message : String(err)}`);
       scheduleReconnect(cb);
     } finally {
       isReconnecting = false;

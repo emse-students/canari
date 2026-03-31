@@ -101,7 +101,12 @@ export class WebMlsService implements IMlsService {
       this.ws.onopen = async () => {
         resolved = true;
         console.log('Connected to Chat Gateway with DeviceID:', this.deviceId);
-        await this.fetchPendingMessages();
+        try {
+          await this.fetchPendingMessages();
+        } catch (e) {
+          console.error('Failed to fetch pending messages on connect:', e);
+          // Non-blocking: connection is still valid, proceed
+        }
         resolve();
       };
       this.ws.onerror = (event) => {
@@ -729,34 +734,42 @@ export class WebMlsService implements IMlsService {
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       // Binary proto WsEnvelope { mls: { ciphertext, groupId } }
-      this.ws.send(
-        JSON.stringify({
-          type: 'mls',
-          groupId,
-          proto: btoa(String.fromCharCode(...encryptedBytes)),
-        })
-      );
-    } else {
-      console.warn('WebSocket not connected. Sending via HTTP fallback...');
-      const base64 = btoa(String.fromCharCode(...encryptedBytes));
       try {
-        await fetch(`${this.historyUrl}/api/mls-api/send`, {
-          method: 'POST',
-          headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify({
-            senderId: this.userId,
-            senderDeviceId: this.deviceId,
-            content: base64,
+        this.ws.send(
+          JSON.stringify({
+            type: 'mls',
             groupId,
-          }),
-        });
-      } catch (e) {
-        console.error('HTTP Send failed:', e);
-        throw e;
+            proto: btoa(String.fromCharCode(...encryptedBytes)),
+          })
+        );
+      } catch (wsErr) {
+        // WebSocket closed between readyState check and send — fall through to HTTP
+        console.warn('WebSocket send failed, falling back to HTTP:', wsErr);
+        await this.sendViaHttp(encryptedBytes, groupId);
       }
+    } else {
+      await this.sendViaHttp(encryptedBytes, groupId);
     }
 
     return encryptedBytes;
+  }
+
+  private async sendViaHttp(encryptedBytes: Uint8Array, groupId: string): Promise<void> {
+    console.warn('Sending via HTTP fallback...');
+    const base64 = btoa(String.fromCharCode(...encryptedBytes));
+    const res = await fetch(`${this.historyUrl}/api/mls-api/send`, {
+      method: 'POST',
+      headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        senderId: this.userId,
+        senderDeviceId: this.deviceId,
+        content: base64,
+        groupId,
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`HTTP send failed: ${res.status} ${res.statusText}`);
+    }
   }
 
   async processIncomingMessage(
