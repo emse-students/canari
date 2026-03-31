@@ -168,8 +168,8 @@ describe('startNewConversation', () => {
     const mls = makeMlsService({
       fetchUserDevices: vi
         .fn()
-        .mockResolvedValueOnce([]) // propres appareils
-        .mockResolvedValueOnce([jolan2Device]),
+        .mockResolvedValueOnce([jolan2Device]) // contact devices (vérification disponibilité)
+        .mockResolvedValueOnce([]), // propres appareils
     });
     const convs = makeConversationMap();
     await startNewConversation('JOLAN2', makeDeps(mls, convs));
@@ -187,8 +187,8 @@ describe('startNewConversation', () => {
     const mls = makeMlsService({
       fetchUserDevices: vi
         .fn()
-        .mockResolvedValueOnce([]) // propres appareils (aucun autre)
-        .mockResolvedValueOnce([jolan2Device]),
+        .mockResolvedValueOnce([jolan2Device]) // contact devices (vérification disponibilité)
+        .mockResolvedValueOnce([]), // propres appareils (aucun autre)
     });
     const convs = makeConversationMap();
     await startNewConversation('jolan2', makeDeps(mls, convs));
@@ -206,8 +206,8 @@ describe('startNewConversation', () => {
     const mls = makeMlsService({
       fetchUserDevices: vi
         .fn()
-        .mockResolvedValueOnce([]) // propres appareils
-        .mockResolvedValueOnce(devices),
+        .mockResolvedValueOnce(devices) // contact devices (vérification disponibilité)
+        .mockResolvedValueOnce([]), // propres appareils
       addMembersBulk: vi.fn().mockResolvedValue({
         commit: new Uint8Array([0x01]),
         welcome: new Uint8Array([0x02]),
@@ -228,7 +228,7 @@ describe('startNewConversation', () => {
       { keyPackage: new Uint8Array([0x20]), deviceId: 'dev-jolan2-B' },
     ];
     const mls = makeMlsService({
-      fetchUserDevices: vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce(devices),
+      fetchUserDevices: vi.fn().mockResolvedValueOnce(devices).mockResolvedValueOnce([]),
       addMembersBulk: vi.fn().mockResolvedValue({
         commit: new Uint8Array([0x01]),
         welcome: new Uint8Array([0xaa, 0xbb]),
@@ -258,7 +258,7 @@ describe('startNewConversation', () => {
   it('envoie le commit après les Welcomes', async () => {
     const jolan2Device = { keyPackage: new Uint8Array([0x10]), deviceId: 'dev-jolan2-01' };
     const mls = makeMlsService({
-      fetchUserDevices: vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([jolan2Device]),
+      fetchUserDevices: vi.fn().mockResolvedValueOnce([jolan2Device]).mockResolvedValueOnce([]),
     });
     const convs = makeConversationMap();
     await startNewConversation('jolan2', makeDeps(mls, convs));
@@ -269,7 +269,7 @@ describe('startNewConversation', () => {
   it('marque la conversation isReady=true après succès', async () => {
     const jolan2Device = { keyPackage: new Uint8Array([0x10]), deviceId: 'dev-jolan2-01' };
     const mls = makeMlsService({
-      fetchUserDevices: vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([jolan2Device]),
+      fetchUserDevices: vi.fn().mockResolvedValueOnce([jolan2Device]).mockResolvedValueOnce([]),
     });
     const convs = makeConversationMap();
     const saveConversation = vi.fn().mockResolvedValue(undefined);
@@ -283,15 +283,15 @@ describe('startNewConversation', () => {
     expect(saveConversation).toHaveBeenCalledWith(expect.stringMatching(/^dm_/));
   });
 
-  it('log [OK] Canal securise avec le nom du contact', async () => {
+  it('log [OK] Canal sécurisé avec le nom du contact', async () => {
     const jolan2Device = { keyPackage: new Uint8Array([0x10]), deviceId: 'dev-jolan2-01' };
     const mls = makeMlsService({
-      fetchUserDevices: vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([jolan2Device]),
+      fetchUserDevices: vi.fn().mockResolvedValueOnce([jolan2Device]).mockResolvedValueOnce([]),
     });
     const convs = makeConversationMap();
     const log = vi.fn();
     await startNewConversation('jolan2', makeDeps(mls, convs, { log }));
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('[OK] Canal securise avec jolan2.'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('[OK] Canal sécurisé avec jolan2.'));
   });
 
   it('BLOCAGE 1 : supprime la conversation et log [ERREUR] si aucun device trouve', async () => {
@@ -319,8 +319,8 @@ describe('startNewConversation', () => {
     const mls = makeMlsService({
       fetchUserDevices: vi
         .fn()
-        .mockResolvedValueOnce([ownDevice2]) // propres appareils : 1 autre device
-        .mockResolvedValueOnce([jolan2Device]),
+        .mockResolvedValueOnce([jolan2Device]) // contact devices (vérification disponibilité)
+        .mockResolvedValueOnce([ownDevice2]), // propres appareils : 1 autre device
     });
     const convs = makeConversationMap();
     await startNewConversation('jolan2', makeDeps(mls, convs));
@@ -340,7 +340,7 @@ describe('startNewConversation', () => {
   it("sauvegarde l'état MLS dans localStorage", async () => {
     const jolan2Device = { keyPackage: new Uint8Array([0x10]), deviceId: 'dev-jolan2-01' };
     const mls = makeMlsService({
-      fetchUserDevices: vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([jolan2Device]),
+      fetchUserDevices: vi.fn().mockResolvedValueOnce([jolan2Device]).mockResolvedValueOnce([]),
       saveState: vi.fn().mockResolvedValue(new Uint8Array([0xde, 0xad])),
     });
     const convs = makeConversationMap();
