@@ -18,9 +18,14 @@ export async function syncOwnDevicesToGroups(params: {
     allOwnDevices = (await mlsService.fetchUserDevices(userId)).filter(
       (d) => d.deviceId !== mlsService.getDeviceId()
     );
-  } catch {
+  } catch (e) {
+    log(`[SYNC] Erreur lors de la recuperation des appareils: ${e}`);
     return;
   }
+
+  log(
+    `[SYNC] Appareils distants trouves: ${allOwnDevices.length} (${allOwnDevices.map((d) => d.deviceId).join(', ')})`
+  );
   if (allOwnDevices.length === 0) return;
 
   const cacheKey = `known_own_devices:${userId}`;
@@ -30,11 +35,19 @@ export async function syncOwnDevicesToGroups(params: {
   } catch {
     knownIds = new Set();
   }
+  log(`[SYNC] Appareils deja connus en cache: ${knownIds.size} (${[...knownIds].join(', ')})`);
 
   const newDevices = allOwnDevices.filter((d) => !knownIds.has(d.deviceId));
-  if (newDevices.length === 0) return;
+  if (newDevices.length === 0) {
+    log(`[SYNC] Aucun nouvel appareil a synchroniser.`);
+    return;
+  }
 
-  log(`[SYNC] Nouvel appareil detecte : synchronisation en cours...`);
+  log(`[SYNC] Nouveaux appareils detectes: ${newDevices.map((d) => d.deviceId).join(', ')}`);
+
+  const readyConvos = [...conversations.entries()].filter(([, c]) => c.isReady);
+  log(`[SYNC] Conversations pretes: ${readyConvos.length}/${conversations.size}`);
+
   let totalWelcomes = 0;
 
   for (const device of newDevices) {
@@ -86,7 +99,18 @@ export async function syncOwnDevicesToGroups(params: {
 
   if (totalWelcomes > 0) {
     log(`[OK] ${totalWelcomes} Welcome(s) envoye(s) aux nouveaux appareils.`);
+  } else if (readyConvos.length > 0 && newDevices.length > 0) {
+    log(`[SYNC] Aucun Welcome envoye - verifier les etats des groupes.`);
   }
+}
+
+/** Force re-sync by clearing the known devices cache */
+export function forceSyncReset(userId: string, log: (msg: string) => void) {
+  const cacheKey = `known_own_devices:${userId}`;
+  localStorage.removeItem(cacheKey);
+  log(
+    `[SYNC] Cache des appareils connus efface. Rechargez la page pour relancer la synchronisation.`
+  );
 }
 
 export async function exportUserBackup(params: {

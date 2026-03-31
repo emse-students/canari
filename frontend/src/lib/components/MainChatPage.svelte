@@ -5,6 +5,7 @@
   import { fade } from 'svelte/transition';
   import { Users } from 'lucide-svelte';
   import { sendReadReceipt } from '$lib/utils/chat/messaging';
+  import { forceSyncReset } from '$lib/utils/chat/actions';
   import { useChatSession } from '$lib/composables/useChatSession.svelte';
   import { useConversations } from '$lib/composables/useConversations.svelte';
   import { useMessaging } from '$lib/composables/useMessaging.svelte';
@@ -381,13 +382,26 @@
     const handleWindowBlur = () => {
       isWindowFocused = false;
     };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl+Shift+S: Force sync reset (clear device cache and reload)
+      if (e.ctrlKey && e.shiftKey && e.key === 'S') {
+        e.preventDefault();
+        if (session.isLoggedIn && session.userId) {
+          forceSyncReset(session.userId, log);
+          log('[INFO] Rechargement de la page dans 1s...');
+          setTimeout(() => window.location.reload(), 1000);
+        }
+      }
+    };
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('focus', handleWindowFocus);
     window.addEventListener('blur', handleWindowBlur);
+    window.addEventListener('keydown', handleKeyDown);
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('focus', handleWindowFocus);
       window.removeEventListener('blur', handleWindowBlur);
+      window.removeEventListener('keydown', handleKeyDown);
     };
   });
 
