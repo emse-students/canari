@@ -6,6 +6,7 @@ import { Channel } from './entities/channel.entity';
 import { ChannelRole } from './entities/channel-role.entity';
 import { ChannelMember } from './entities/channel-member.entity';
 import { ChannelMessage } from './entities/channel-message.entity';
+import { RedisService } from '../common/redis';
 
 import {
   CreateChannelDto,
@@ -28,8 +29,17 @@ export class ChannelService {
     @InjectRepository(Channel) private readonly channelRepo: Repository<Channel>,
     @InjectRepository(ChannelRole) private readonly roleRepo: Repository<ChannelRole>,
     @InjectRepository(ChannelMember) private readonly memberRepo: Repository<ChannelMember>,
-    @InjectRepository(ChannelMessage) private readonly messageRepo: Repository<ChannelMessage>
+    @InjectRepository(ChannelMessage) private readonly messageRepo: Repository<ChannelMessage>,
+    private readonly redis: RedisService
   ) {}
+
+  /**
+   * Get all user IDs in a workspace for event broadcasting.
+   */
+  private async getWorkspaceMemberIds(workspaceId: string): Promise<string[]> {
+    const members = await this.memberRepo.find({ where: { workspaceId } });
+    return members.map((m) => m.userId);
+  }
 
   // ================= WORKSPACES =================
 
@@ -143,26 +153,52 @@ export class ChannelService {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
 
-    const member = await this.memberRepo.findOne({
+    const workspace = await this.workspaceRepo.findOne({ where: { id: channel.workspaceId } });
+
+    let member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId: input.userId },
     });
+    const isNewMember = !member;
+
     if (!member) {
       const defaultRole = await this.roleRepo.findOne({
         where: { workspaceId: channel.workspaceId, name: 'Member' },
       });
-      const newMember = this.memberRepo.create({
+      member = this.memberRepo.create({
         workspaceId: channel.workspaceId,
         userId: input.userId,
         roleIds: defaultRole ? [defaultRole.id] : [],
       });
-      await this.memberRepo.save(newMember);
+      await this.memberRepo.save(member);
     }
+
+    // Publish event to notify connected clients
+    if (isNewMember) {
+      const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
+      await this.redis.publishChannelEvent(
+        'channel.member.joined',
+        {
+          channelId,
+          channelName: channel.name,
+          workspaceId: channel.workspaceId,
+          workspaceSlug: workspace?.slug,
+          workspaceName: workspace?.name,
+          visibility: channel.isPrivate ? 'private' : 'public',
+          roleName: input.roleName || 'Member',
+          joinedBy: input.userId,
+        },
+        workspaceMemberIds
+      );
+    }
+
     return { success: true };
   }
 
   async inviteToChannel(channelId: string, input: ChannelInviteDto) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
+
+    const workspace = await this.workspaceRepo.findOne({ where: { id: channel.workspaceId } });
 
     // Check if actor has permission to invite
     const actorMember = await this.memberRepo.findOne({
@@ -187,6 +223,8 @@ export class ChannelService {
       where: { workspaceId: channel.workspaceId, userId: input.targetUserId },
     });
 
+    const isNewMember = !targetMember;
+
     if (!targetMember) {
       // Find the role to assign (default to Member if not specified)
       const roleName = input.roleName || 'Member';
@@ -201,6 +239,26 @@ export class ChannelService {
         roleIds,
       });
       await this.memberRepo.save(targetMember);
+    }
+
+    // Publish event to notify the invited user and connected clients
+    if (isNewMember) {
+      const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
+      await this.redis.publishChannelEvent(
+        'channel.member.joined',
+        {
+          channelId,
+          channelName: channel.name,
+          workspaceId: channel.workspaceId,
+          workspaceSlug: workspace?.slug,
+          workspaceName: workspace?.name,
+          visibility: channel.isPrivate ? 'private' : 'public',
+          roleName: input.roleName || 'Member',
+          joinedBy: input.targetUserId,
+          invitedBy: input.actorUserId,
+        },
+        workspaceMemberIds
+      );
     }
 
     return { success: true, userId: input.targetUserId };
@@ -247,6 +305,23 @@ export class ChannelService {
     if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNELS permission');
 
     await this.memberRepo.delete({ workspaceId: channel.workspaceId, userId: input.targetUserId });
+
+    // Publish event to notify the kicked user and connected clients
+    const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
+    // Also include the kicked user so they're notified
+    const notifyIds = [...new Set([...workspaceMemberIds, input.targetUserId])];
+    await this.redis.publishChannelEvent(
+      'channel.member.kicked',
+      {
+        channelId,
+        channelName: channel.name,
+        workspaceId: channel.workspaceId,
+        kickedUserId: input.targetUserId,
+        kickedBy: input.actorUserId,
+      },
+      notifyIds
+    );
+
     return { success: true };
   }
 
@@ -307,6 +382,23 @@ export class ChannelService {
     });
 
     const savedMsg = await this.messageRepo.save(msg);
+
+    // Publish event to notify all connected channel members in real-time
+    const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
+    await this.redis.publishChannelEvent(
+      'channel.message.created',
+      {
+        channelId,
+        messageId: savedMsg.id,
+        senderId: input.senderId,
+        ciphertext: input.ciphertext,
+        nonce: input.nonce,
+        keyVersion: input.keyVersion,
+        createdAt: savedMsg.createdAt,
+      },
+      workspaceMemberIds
+    );
+
     return savedMsg;
   }
 
