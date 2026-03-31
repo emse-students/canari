@@ -103,11 +103,11 @@ Auth interne Nginx:
 
 - `social-service` -> service paiement
   - `forms.service.ts` appelle `POST {PAYMENT_SERVICE_URL}/api/payments/create-checkout-session`
-  - fallback code: `http://localhost:3004` si variable absente
+  - fallback code: `http://localhost:3012` si variable absente
 
 - `core-service` -> service forms
-  - `payment/webhook.controller.ts` appelle `POST {FORM_SERVICE_URL}/api/forms/submissions/:id/mark-paid`
-  - fallback code: `http://localhost:3008` si variable absente
+  - `payment/webhook.controller.ts` appelle `POST {FORM_URL}/api/forms/submissions/:id/mark-paid`
+  - fallback code: `http://localhost:3014` si variable absente
 
 ### 6.2 Pub/Sub Redis
 
@@ -190,10 +190,10 @@ Familles d'endpoints majeures:
 3. Webhook Stripe recu par `core-service /api/payments/webhook`
 4. `core-service` notifie le service forms (`/api/forms/submissions/:id/mark-paid`)
 
-## 9. Ecart a surveiller
+## 9. Notes
 
-- Les fallbacks `PAYMENT_SERVICE_URL=http://localhost:3004` et `FORM_SERVICE_URL=http://localhost:3008` ne correspondent pas aux ports compose (`3012` et `3014`).
-- Ces valeurs ne cassent pas tant que les variables d'environnement sont correctement renseignees, mais elles sont trompeuses en cas de config manquante.
+- En dev local, les fallbacks `PAYMENT_SERVICE_URL` dans `forms.service.ts` (`http://localhost:3012`) et `FORM_URL` dans `webhook.controller.ts` (`http://localhost:3014`) correspondent aux ports compose.
+- En prod (Docker network), `posts.service.ts` utilise `http://core-service:3012` comme fallback pour `PAYMENT_SERVICE_URL`.
 
 ## 10. Diagramme simplifie
 
@@ -219,24 +219,7 @@ graph LR
     SOC --> P
     MED --> MIN[(MinIO :9000)]
 ```
-# Chiffrement
 
-La messagerie utilise un chiffrement de bout en bout (E2EE) pour garantir la confidentialité des messages dans toutes les conversations. Voici les détails techniques des mécanismes de chiffrement utilisés selon le type de discussion :
-
-## 1. Discussions Directes et Petits Groupes (DMs)
-
-- **Protocole de Chiffrement :** Utilisation de **Message Layer Security (MLS)** pour la gestion des clés et le chiffrement de groupe. (cf. [RFC 9420](https://datatracker.ietf.org/doc/html/rfc9420)).
-- **Perfect Forward Secrecy (PFS) et Post-Compromise Security (PCS) :** Le protocole MLS assure la rotation continue des clés, empêchant la lecture des anciens messages si une clé est compromise, et garantissant l'impossibilité de lire les nouveaux si un membre est expulsé.
-
-## 2. Canaux Communautaires (Espaces / Workspaces)
-
-Pour les espaces communautaires à fort volume impliquant de fréquents mouvements de membres (ex: promotions, associations), le maintien exclusif de la rotation MLS pure peut s'avérer trop coûteux en performances. Un modèle hybride est ainsi appliqué :
-
-- **Clé par Canal :** Une clé privée symétrique unique (AES-256) est générée pour chaque canal. Actuellement (au stade de MVP), cette clé est statique et n'est pas modifiée au cours du temps.
-- **Distribution via MLS :** La clé privée du canal n'est **jamais** transmise en clair au serveur. Lorsqu'un nouveau membre rejoint le canal, un bot ou un administrateur ayant déjà accès transmet la clé privée du canal de manière asynchrone au nouvel arrivant via un message chiffré MLS (en utilisant l'infrastructure sécurisée de la partie DMs/Groupes de l'application).
-- **Chiffrement des messages :** Les messages envoyés dans le canal sont chiffrés en AES-256-GCM à l'aide de la clé statique du canal.
-- **Accès à l'historique :** Ce paradigme permet intrinsèquement à un nouveau venu, une fois la clé reçue, de déchiffrer sans complexité l'intégralité de l'historique du canal.
-- **Gestion des expulsions :** Dans la version actuelle, une exclusion repose sur une interdiction serveur ("soft block") : le serveur coupe l'accès de la cible aux flux de la WebSocket et de l'API. La clé n'étant pas rotative, la cryptographie seule ne prévient pas un membre expulsé de déchiffrer les requêtes futures s'il parvenait à écouter le réseau en contournant l'ACL. C'est un compromis assumé sur ce volet MVP.
 # Chiffrement
 
 La messagerie utilise un chiffrement de bout en bout (E2EE) pour garantir la confidentialité des messages dans toutes les conversations. Voici les détails techniques des mécanismes de chiffrement utilisés selon le type de discussion :

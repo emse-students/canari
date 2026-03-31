@@ -143,12 +143,12 @@ Cloudflare Edge
          ↓
 Cloudflare Tunnel
          ↓
-Nginx :8080 → Chat Delivery :3001
+Nginx :8080 → Chat Delivery :3010
 ```
 
 ## Configuration Nginx
 
-Le fichier [infrastructure/nginx/canari.conf.template](../infrastructure/nginx/canari.conf.template) est optimisé pour Cloudflare :
+Le fichier `infrastructure/local/Dockerfile.frontend` contient la configuration Nginx intégrée, optimisée pour Cloudflare :
 
 ```nginx
 server {
@@ -224,7 +224,7 @@ docker compose -f infrastructure/docker-compose.prod.yml logs -f
 
 # Vérifier les ports
 curl http://localhost:3000  # Gateway
-curl http://localhost:3001  # Delivery
+curl http://localhost:3010  # Delivery
 ```
 
 ## Modification de la configuration

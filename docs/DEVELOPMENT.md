@@ -63,11 +63,11 @@ Les services sont accessibles via Nginx (port 80) ou directement (nouveaux ports
 
 ### Frontend
 
-- **Frontend**: http://localhost:5173 (dev) ou http://localhost (prod/docker)
+- **Frontend**: http://localhost:1420 (dev) ou http://localhost (prod/docker)
 
 - **Backend Chat Gateway (Rust)**: `apps/chat-gateway`
   - Lancer: `cargo run`
-- **Backend Call Service (Rust)**: archivé dans `apps/_archived/call-service` (non utilisé actuellement)
+- **Backend Call Service (Rust)**: `apps/call-service` (non utilisé actuellement, Dockerfile archivé dans `infrastructure/local/_archived/`)
 - **Frontend (SvelteKit + Tauri)**: `frontend/`
   - Dépend de `libs/shared-ts` et `mls-wasm` (Rust)
   - Lancer Web: `npm run dev`

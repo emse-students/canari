@@ -53,16 +53,18 @@ Canari est une application de **messagerie instantanée sécurisée** avec chiff
       │ • Redis PubSub             │
       └────┬────────┬────────┬─────┘
            │        │        │
-     ┌─────▼──┐ ┌───▼────┐ ┌─▼─────────┐ ┌──────────┐ ┌──────────┐
-     │  Auth  │ │  User  │ │ Chat Del. │ │  Forms   │ │  Posts   │
-     │Service │ │ Service│ │  Service  │ │ Service  │ │ Service  │
-     │(NestJS)│ │(NestJS)│ │ (NestJS)  │ │ (NestJS) │ │ (NestJS) │
-     └────┬───┘ └───┬────┘ └─┬─────────┘ └─┬────────┘ └──────────┘
-          │         │        │             │
-     ┌────▼─────────▼────────▼─────────────▼─────────┐
-     │ PostgreSQL • MongoDB • Redis • MinIO          │
-     │ Kafka • ZooKeeper • Stripe (API externe)      │
-     └───────────────────────────────────────────────┘
+     ┌─────▼──────┐ ┌─▼─────────┐ ┌──────────┐ ┌──────────┐
+     │   Core     │ │ Chat Del. │ │  Social  │ │  Media   │
+     │  Service   │ │  Service  │ │ Service  │ │ Service  │
+     │  (NestJS)  │ │ (NestJS)  │ │ (NestJS) │ │ (NestJS) │
+     │Auth+Users  │ │           │ │Posts+Forms│ │          │
+     │ +Payments  │ │           │ │+Channels │ │          │
+     └────┬───────┘ └─┬─────────┘ └─┬────────┘ └────┬─────┘
+          │           │             │               │
+     ┌────▼───────────▼─────────────▼───────────────▼────┐
+     │ PostgreSQL • MongoDB • Redis • MinIO              │
+     │ Kafka • ZooKeeper • Stripe (API externe)          │
+     └───────────────────────────────────────────────────┘
 ```
 
 ### 📦 Stack Technique
@@ -120,7 +122,7 @@ cd canari
 chmod +x scripts/setup-env.sh
 ./scripts/setup-env.sh
 # Crée infrastructure/.env et frontend/.env avec un JWT_SECRET généré automatiquement
-# Synchronise aussi VITE_MEDIA_URL=http://localhost:3002 pour le dev local
+# Synchronise aussi VITE_MEDIA_URL=http://localhost:3011 pour le dev local
 ```
 
 3. **Installer les dépendances**
@@ -133,7 +135,7 @@ make install
 
 ```bash
 make run-services              # Lance Redis, Kafka, MongoDB, PostgreSQL, Chat Gateway, Delivery, Media, MinIO
-cd frontend && bun run dev     # Frontend sur http://localhost:5173
+cd frontend && bun run dev     # Frontend sur http://localhost:1420
 ```
 
 > **Windows** : installer manuellement [Node.js](https://nodejs.org/), [Bun](https://bun.sh/), [Rust](https://rustup.rs/) et `cargo install wasm-pack`, puis `npm install` à la place de `bun install`.
@@ -144,7 +146,7 @@ Services disponibles après `make run-services` :
 
 | Service        | URL                    |
 | -------------- | ---------------------- |
-| Frontend dev   | http://localhost:5173  |
+| Frontend dev   | http://localhost:1420  |
 | Chat Gateway   | ws://localhost:3000/ws |
 | Chat Delivery  | http://localhost:3010  |
 | Media Service  | http://localhost:3011  |
@@ -374,9 +376,12 @@ Chaque `push` sur `main` déclenche automatiquement :
    - Production artifacts
 
 3. **Docker Build** 🐳
-   - Construction 3 images Docker :
+   - Construction 6 images Docker :
      - `chat-gateway` (Rust)
      - `chat-delivery-service` (NestJS)
+     - `core-service` (NestJS)
+     - `media-service` (NestJS)
+     - `social-service` (NestJS)
      - `frontend` (Nginx + SvelteKit statique)
    - Push sur **GitHub Container Registry** (`ghcr.io/emse-students/canari/*`)
 
@@ -415,22 +420,27 @@ canari/
 │
 ├── apps/
 │   ├── chat-gateway/             # Gateway WebSocket (Rust - Axum)
-│   ├── auth-service/             # Auth Service (Spring Boot)
-│   ├── user-service/             # User Service (Spring Boot)
-│   └── chat-delivery-service/    # History Service (NestJS)
+│   ├── chat-delivery-service/    # Chat Delivery Service (NestJS)
+│   ├── core-service/             # Auth + Users + Payments (NestJS)
+│   ├── media-service/            # Media upload/download (NestJS)
+│   └── social-service/           # Posts + Forms + Channels (NestJS)
 │
 ├── libs/
+│   ├── event-contracts/          # Shared event schemas (Kafka)
+│   ├── proto/                    # Protobuf definitions
 │   ├── shared-rust/              # Shared Rust utilities
 │   └── shared-ts/                # Shared TypeScript utilities
 │
 ├── infrastructure/
 │   ├── local/                    # Docker Compose local dev
 │   │   ├── docker-compose.yml
-│   │   ├── Dockerfile.frontend
+│   │   ├── Dockerfile.chat-delivery-service
 │   │   ├── Dockerfile.chat-gateway
-│   │   └── Dockerfile.chat-delivery-service
+│   │   ├── Dockerfile.core-service
+│   │   ├── Dockerfile.frontend
+│   │   ├── Dockerfile.media-service
+│   │   └── Dockerfile.social-service
 │   ├── docker-compose.prod.yml   # Production config
-│   ├── nginx/                    # Config Nginx
 │   └── .env.example              # Template variables
 │
 ├── .github/
@@ -454,7 +464,6 @@ canari/
 │
 ├── Makefile                      # Build automation
 ├── .prettierrc                   # Prettier config
-├── .eslintrc                     # ESLint config
 ├── .editorconfig                 # Editor config
 ├── .pre-commit-config.yaml       # Pre-commit hooks
 ├── .gitignore                    # Git ignore
