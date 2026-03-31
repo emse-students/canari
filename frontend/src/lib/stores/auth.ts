@@ -74,7 +74,7 @@ export async function handleOidcCallback(
   }
   sessionStorage.removeItem(OIDC_STATE_KEY);
 
-  const redirectUri = `${window.location.origin}/auth/callback`;
+  const redirectUri = `${coreUrl()}/auth/callback`;
 
   const res = await fetch(`${coreUrl()}/api/auth/oidc/callback`, {
     method: 'POST',
