@@ -451,6 +451,9 @@ export class WebMlsService implements IMlsService {
     targetDeviceId?: string,
     ratchetTreeBytes?: Uint8Array
   ): Promise<void> {
+    console.log(
+      `[MLS] sendWelcome called: target=${targetUserId}:${targetDeviceId}, group=${groupId}, welcomeLen=${welcomeBytes.length}, treeLen=${ratchetTreeBytes?.length ?? 0}`
+    );
     const base64 = btoa(String.fromCharCode(...welcomeBytes));
     const ratchetTreeBase64 = ratchetTreeBytes
       ? btoa(String.fromCharCode(...ratchetTreeBytes))
@@ -459,6 +462,7 @@ export class WebMlsService implements IMlsService {
     if (targetDeviceId) {
       // Dedicated welcome endpoint: persists to MongoDB (offline inbox) and pushes
       // via Redis pubsub if the target device is currently online.
+      console.log(`[MLS] POSTing Welcome to ${this.historyUrl}/api/mls-api/welcome`);
       const response = await fetch(`${this.historyUrl}/api/mls-api/welcome`, {
         method: 'POST',
         headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
@@ -471,6 +475,7 @@ export class WebMlsService implements IMlsService {
           groupId,
         }),
       });
+      console.log(`[MLS] Welcome POST response: ${response.status}`);
       await this.assertOkResponse(
         response,
         `Welcome delivery to ${targetUserId}:${targetDeviceId} (group ${groupId})`

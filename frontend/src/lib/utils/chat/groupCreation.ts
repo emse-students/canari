@@ -85,11 +85,20 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
     const ownDevices = (await mlsService.fetchUserDevices(userId)).filter(
       (d) => d.deviceId !== mlsService.getDeviceId()
     );
+    log(
+      `[GROUP] Mes autres appareils: ${ownDevices.length} (${ownDevices.map((d) => d.deviceId).join(', ')})`
+    );
+
     for (const device of ownDevices) {
       try {
         const result = await mlsService.addMember(groupId, device.keyPackage);
+        log(
+          `[GROUP] addMember result pour ${device.deviceId}: welcome=${!!result.welcome} (${result.welcome?.length ?? 0} bytes), commit=${!!result.commit}`
+        );
+
         await mlsService.registerMember(groupId, userId, device.deviceId);
         if (result.welcome) {
+          log(`[GROUP] Envoi Welcome a ${userId}:${device.deviceId}...`);
           if (result.ratchetTree) {
             await mlsService.sendWelcome(
               result.welcome,
@@ -101,6 +110,9 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
           } else {
             await mlsService.sendWelcome(result.welcome, userId, groupId, device.deviceId);
           }
+          log(`[GROUP] Welcome envoye a ${device.deviceId}`);
+        } else {
+          log(`[GROUP] PAS DE WELCOME pour ${device.deviceId}!`);
         }
         if (result.commit) {
           await mlsService.sendCommit(result.commit, groupId);
@@ -181,11 +193,17 @@ async function processBulkAddition(
     localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
 
     // Send welcomes per-device; do not abort all recipients on one failure.
+    log(
+      `[SYNC] bulk.welcome exists: ${!!bulk.welcome}, bulk.welcome length: ${bulk.welcome?.length ?? 0}`
+    );
+    log(`[SYNC] bulk.addedDeviceIds: ${bulk.addedDeviceIds.join(', ')}`);
+
     if (bulk.welcome) {
       for (const did of bulk.addedDeviceIds) {
         const tUser = userMap.get(did);
         if (!tUser) continue;
         try {
+          log(`[SYNC] Envoi Welcome a ${tUser}:${did} pour groupe ${conversation.groupId}...`);
           await mlsService.sendWelcome(
             bulk.welcome,
             tUser,
@@ -193,6 +211,7 @@ async function processBulkAddition(
             did,
             bulk.ratchetTree
           );
+          log(`[SYNC] Welcome envoye avec succes a ${tUser}:${did}`);
         } catch (err) {
           log(
             `[WARN] Welcome non livre pour ${tUser}:${did} - ${
