@@ -50,6 +50,8 @@ export async function syncOwnDevicesToGroups(params: {
 
   let totalWelcomes = 0;
 
+  // Process devices ONE AT A TIME with delays to avoid epoch race conditions.
+  // Each device must fully receive and process their Welcome before we add the next device.
   for (const device of newDevices) {
     let deviceWelcomes = 0;
     let hadAttempt = false;
@@ -85,16 +87,34 @@ export async function syncOwnDevicesToGroups(params: {
           );
           totalWelcomes++;
           deviceWelcomes++;
+          log(`[SYNC] Welcome envoye a ${device.deviceId} pour groupe ${convo.groupId}`);
         }
         if (result.commit) {
           await mlsService.sendCommit(result.commit, convo.groupId);
         }
         const stBytes = await mlsService.saveState(pin);
         localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
-      } catch {
-        // Per-group failure is expected (deleted group, wrong epoch, etc.).
+
+        // Small delay between groups to allow propagation
+        await new Promise((r) => setTimeout(r, 100));
+      } catch (e) {
+        // Per-group failure is expected (deleted group, wrong epoch, device already member, etc.).
+        const errStr = String(e);
+        // Don't log expected errors (device already in group, wrong epoch)
+        if (!errStr.includes('WrongEpoch') && !errStr.includes('already')) {
+          log(
+            `[SYNC] Erreur ajout ${device.deviceId} au groupe ${convo.groupId}: ${errStr.slice(0, 100)}`
+          );
+        }
         hadFailure = true;
       }
+    }
+
+    // Wait for the device to process their Welcomes before adding the next device
+    // This helps avoid epoch race conditions where multiple commits happen before Welcomes are processed
+    if (deviceWelcomes > 0) {
+      log(`[SYNC] Attente propagation pour ${device.deviceId} (${deviceWelcomes} Welcome(s))...`);
+      await new Promise((r) => setTimeout(r, 2000));
     }
 
     // Cache the device only after at least one successful welcome, or when there

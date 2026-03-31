@@ -2,6 +2,15 @@ import { invoke } from '@tauri-apps/api/core';
 import { fetch } from '@tauri-apps/plugin-http';
 import type { IMlsService } from './IMlsService';
 
+/** Message pending in the processing queue */
+interface QueuedMessage {
+  senderId: string;
+  ciphertext: Uint8Array;
+  groupId?: string;
+  isWelcome: boolean;
+  ratchetTreeBytes?: Uint8Array;
+}
+
 // Implémentation pour Tauri (App Mobile/Desktop)
 // Note: We use a dynamic import or checks to prevent this from crashing in pure web if invoked eagerly
 
@@ -37,6 +46,12 @@ export class TauriMlsService implements IMlsService {
   private historyUrl: string;
   private userId: string = 'unknown';
   private deviceId: string;
+
+  // Message queue for sequential processing
+  private messageQueue: QueuedMessage[] = [];
+  private isProcessingQueue = false;
+  // Groups currently being joined (Welcome in progress) - buffer messages for these
+  private pendingWelcomeGroups = new Map<string, QueuedMessage[]>();
 
   constructor() {
     // Device ID is initialized per-user in init() — see WebMlsService for rationale.
@@ -114,13 +129,14 @@ export class TauriMlsService implements IMlsService {
                 : undefined;
 
             if (ciphertext.length > 0) {
-              await this.messageCallback(
-                (msg.senderId as string) || 'unknown',
+              // Queue the message for sequential processing
+              this.enqueueMessage({
+                senderId: (msg.senderId as string) || 'unknown',
                 ciphertext,
-                (msg.groupId as string) || undefined,
-                msg.isWelcome === true,
-                ratchetTreeBytes
-              );
+                groupId: (msg.groupId as string) || undefined,
+                isWelcome: msg.isWelcome === true,
+                ratchetTreeBytes,
+              });
             }
           }
         } catch (e) {
@@ -250,6 +266,88 @@ export class TauriMlsService implements IMlsService {
     ) => Promise<boolean>
   ) {
     this.messageCallback = callback;
+  }
+
+  /**
+   * Enqueue a message for sequential processing.
+   * Welcome messages are prioritized and processed first.
+   * Messages for groups with pending Welcomes are buffered.
+   */
+  private enqueueMessage(msg: QueuedMessage) {
+    const groupId = msg.groupId;
+
+    // If a Welcome is being processed for this group, buffer the message
+    if (groupId && this.pendingWelcomeGroups.has(groupId) && !msg.isWelcome) {
+      console.log(`[QUEUE] Buffering message for group ${groupId} (Welcome in progress)`);
+      this.pendingWelcomeGroups.get(groupId)!.push(msg);
+      return;
+    }
+
+    // Welcome messages go to front of queue for priority processing
+    if (msg.isWelcome) {
+      // Mark this group as having a pending Welcome
+      if (groupId) {
+        this.pendingWelcomeGroups.set(groupId, []);
+      }
+      this.messageQueue.unshift(msg);
+    } else {
+      this.messageQueue.push(msg);
+    }
+
+    // Start processing if not already running
+    if (!this.isProcessingQueue) {
+      this.processQueue();
+    }
+  }
+
+  /**
+   * Process messages from the queue one by one.
+   * This ensures Welcome messages complete before regular messages.
+   */
+  private async processQueue() {
+    if (this.isProcessingQueue || !this.messageCallback) return;
+
+    this.isProcessingQueue = true;
+    console.log(`[QUEUE] Starting queue processing (${this.messageQueue.length} messages)`);
+
+    while (this.messageQueue.length > 0) {
+      const msg = this.messageQueue.shift()!;
+      const groupId = msg.groupId;
+
+      try {
+        console.log(
+          `[QUEUE] Processing ${msg.isWelcome ? 'Welcome' : 'message'} for group ${groupId ?? 'unknown'}`
+        );
+        await this.messageCallback(
+          msg.senderId,
+          msg.ciphertext,
+          msg.groupId,
+          msg.isWelcome,
+          msg.ratchetTreeBytes
+        );
+
+        // If this was a Welcome, process buffered messages for this group
+        if (msg.isWelcome && groupId && this.pendingWelcomeGroups.has(groupId)) {
+          const buffered = this.pendingWelcomeGroups.get(groupId)!;
+          console.log(`[QUEUE] Welcome complete, processing ${buffered.length} buffered messages`);
+          this.pendingWelcomeGroups.delete(groupId);
+
+          // Add buffered messages to front of queue (in order)
+          for (let i = buffered.length - 1; i >= 0; i--) {
+            this.messageQueue.unshift(buffered[i]);
+          }
+        }
+      } catch (e) {
+        console.error(`[QUEUE] Error processing message:`, e);
+        // Clean up pending Welcome state on error
+        if (msg.isWelcome && groupId) {
+          this.pendingWelcomeGroups.delete(groupId);
+        }
+      }
+    }
+
+    this.isProcessingQueue = false;
+    console.log(`[QUEUE] Queue processing complete`);
   }
 
   onDisconnect(callback: () => void) {
