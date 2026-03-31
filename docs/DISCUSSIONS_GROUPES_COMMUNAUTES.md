@@ -21,6 +21,7 @@
 13. [Inventaire complet des fonctions](#13-inventaire-complet-des-fonctions)
 14. [Fonctions inutilisées / code mort](#14-fonctions-inutilisées--code-mort)
 15. [Incohérences temporelles et risques identifiés](#15-incohérences-temporelles-et-risques-identifiés)
+16. [Corrections de résilience (Cycles 1-8)](#16-corrections-de-résilience-cycles-1-8)
 
 ---
 
@@ -45,13 +46,20 @@
 | ------------------------------------------------------- | -------------------------------------------------------------- |
 | `frontend/src/lib/services/IMlsService.ts`              | Interface du service MLS (~30 méthodes)                        |
 | `frontend/src/lib/services/WebMlsService.ts`            | Implémentation WASM pour le web                                |
+| `frontend/src/lib/services/TauriMlsService.ts`          | Implémentation Tauri (IPC Rust) pour le desktop                |
 | `frontend/src/lib/utils/chat/groupCreation.ts`          | Création de groupes et conversations 1-to-1                    |
-| `frontend/src/lib/utils/chat/groupActions.ts`           | Renommage, suppression de groupe, retrait de membre            |
+| `frontend/src/lib/utils/chat/groupActions.ts`           | Renommage de groupe, retrait de membre                         |
 | `frontend/src/lib/utils/chat/actions.ts`                | Synchronisation multi-appareils, backup, découverte de groupes |
 | `frontend/src/lib/utils/chat/connection.ts`             | Gestion des messages entrants, traitement des Welcome          |
 | `frontend/src/lib/utils/chat/conversations.ts`          | Chargement des conversations, dédoublonnage, migration         |
 | `frontend/src/lib/utils/chat/history.ts`                | Rejeu de l'historique serveur, mapping des messages stockés    |
+| `frontend/src/lib/utils/chat/messaging.ts`              | Envoi de messages, édition, suppression, read receipts         |
 | `frontend/src/lib/composables/useChatSession.svelte.ts` | Composable principal : login, lifecycle, reconnexion           |
+| `frontend/src/lib/composables/useMessaging.svelte.ts`   | Composable messagerie : envoi, UI optimiste, réactions         |
+| `frontend/src/lib/db.ts`                                | Interface stockage (IndexedDB + SQLite)                        |
+| `frontend/src/lib/backup.ts`                            | Export/import de sauvegardes chiffrées (.canari)               |
+| `frontend/src/lib/envelope.ts`                          | Sérialisation/parsing des enveloppes de messages               |
+| `frontend/src/lib/crypto/ChannelKeyVault.ts`            | Gestion des clés AES-256-GCM pour les communautés              |
 
 ---
 
@@ -914,6 +922,107 @@ L'utilisation de `addMembersBulk` dans la plupart des flux de création évite l
 ### 🟢 Point positif : Vérification pré-création des appareils
 
 `startNewConversation` vérifie que le contact a des appareils disponibles AVANT de créer le groupe serveur, évitant les groupes orphelins.
+
+---
+
+## 16. Corrections de résilience (Cycles 1-8)
+
+> Audit systématique de tous les scénarios de défaillance identifiés et corrigés à travers 8 cycles d'analyse.
+
+### Cycle 1 — Persistance et nettoyage fondamental
+
+| # | Sévérité | Fichier | Problème | Correction |
+|---|----------|---------|----------|------------|
+| 1 | 🔴 CRITIQUE | `connection.ts` | `saveState` manquant après `processWelcome` → état MLS perdu au rechargement | Ajout `saveState` après chaque Welcome traité |
+| 2 | 🔴 CRITIQUE | `connection.ts` | delete_message/edit_message non persistés en DB → modifications perdues au rechargement | Ajout persistance DB des messages supprimés/édités avec flags `isDeleted`/`isEdited` |
+| 3 | 🟠 HAUT | `db.ts` | Interface `StoredMessage` sans champs `isDeleted`/`isEdited` | Extension du type avec champs optionnels |
+| 4 | 🟠 HAUT | `history.ts` | `mapStoredMessagesToChatMessages` ne propageait pas `isDeleted`/`isEdited` | Propagation des flags dans le mapper |
+| 5 | 🟠 HAUT | `conversations.ts` | Race condition Phase 2 : async IIFEs sans `await` | Collecte dans `phase2Promises` + `Promise.allSettled` |
+| 6 | 🟠 HAUT | `connection.ts` | `loadHistoryForConversation` non appelé après Welcome join | Ajout appel après création de la conversation |
+| 7 | 🟡 MOYEN | `groupActions.ts` | `deleteGroupAndBroadcast` code mort | Suppression |
+| 8 | 🟡 MOYEN | `history.ts` | `replayConversationHistory` avale les erreurs silencieusement | Ajout logging des erreurs |
+| 9 | 🟡 MOYEN | `groupActions.ts` | `removeMemberAndBroadcast` non résilient (crash si notification échoue) | Best-effort notification + cleanup |
+| 10 | 🟡 MOYEN | `groupActions.ts` | `renameGroupAndBroadcast` non résilient | Best-effort broadcast |
+| 11 | 🟡 MOYEN | `actions.ts` | `discoverMissingGroups` placeholders non persistés en DB | Persist via `saveConversation` optionnel |
+| 12 | 🟡 MOYEN | `groupCreation.ts` | `startNewConversation` groupes orphelins si échec | Cleanup remote group via `deleteGroupOnServer` |
+
+### Cycle 2 — Closures, compteurs et doublons
+
+| # | Sévérité | Fichier | Problème | Correction |
+|---|----------|---------|----------|------------|
+| 13 | 🔴 CRITIQUE | `connection.ts` | Closure stale de `selectedContact` dans phantom group cleanup | Lambda `getSelectedContact = () => deps.selectedContact` |
+| 14 | 🟠 HAUT | `connection.ts` | Compteur `groupMlsFailures` jamais réinitialisé après succès | `groupMlsFailures.delete(convoKey)` sur message traité |
+| 15 | 🟠 HAUT | `connection.ts` | Welcome handler duplique conversations (discoverMissingGroups crée un placeholder, Welcome en crée un autre) | Recherche par `joinedGroupId` dans conversations existantes |
+| 16 | 🟡 MOYEN | `groupCreation.ts` | `createNewGroup` : `saveConversation` non await, pas de cleanup orphelins | `await saveConversation` + cleanup on failure |
+| 17 | 🟡 MOYEN | `groupCreation.ts` | `repairDirectConversation` : pas de cleanup orphelins | Cleanup remote group on failure |
+
+### Cycle 3 — Stabilité WebSocket et logging
+
+| # | Sévérité | Fichier | Problème | Correction |
+|---|----------|---------|----------|------------|
+| 18 | 🔴 CRITIQUE | `WebMlsService.ts` | `connect()` bloque indéfiniment si `fetchPendingMessages` lance une exception | try/catch autour de `fetchPendingMessages` dans `onopen` |
+| 19 | 🟠 HAUT | `WebMlsService.ts` | `ws.send()` race condition (WS pas encore OPEN) | try/catch + fallback HTTP via `sendViaHttp` |
+| 20 | 🟠 HAUT | `WebMlsService.ts` | `sendViaHttp` ne vérifie pas `response.ok` | Vérification du code retour |
+| 21 | 🟡 MOYEN | `useChatSession.svelte.ts` | Errors sync/discovery silencieusement avalées (`.catch(() => {})`) | Remplacement par logging via `cb.log` |
+| 22 | 🟡 MOYEN | `useChatSession.svelte.ts` | Reconnexion échouée sans détail d'erreur | Log du message d'erreur complet |
+
+### Cycle 4 — Persistance cryptée et sécurité
+
+| # | Sévérité | Fichier | Problème | Correction |
+|---|----------|---------|----------|------------|
+| 23 | 🔴 CRITIQUE | `db.ts` | `isDeleted`/`isEdited` absents du payload chiffré (IndexedDB ET SQLite) → perdus au rechargement | Persistance dans le payload chiffré pour les deux backends |
+| 24 | 🔴 SÉCURITÉ | `useMessaging.svelte.ts` | `handleDeleteMessage`/`handleEditMessage` sans vérification de propriété | Validation `senderId === userId` avant modification |
+| 25 | 🟠 HAUT | `TauriMlsService.ts` | Même bug `connect()` hang que WebMlsService | try/catch autour de `fetchPendingMessages` |
+| 26 | 🟠 HAUT | `TauriMlsService.ts` | Même race condition `ws.send()` | try/catch + fallback HTTP |
+
+### Cycle 5 — Validation entrées et parsing robuste
+
+| # | Sévérité | Fichier | Problème | Correction |
+|---|----------|---------|----------|------------|
+| 27 | 🔴 CRITIQUE | `backup.ts` | Aucune validation des données importées (conversations, messages) | Validation arrays + types + limites (10K conversations, 500K messages) |
+| 28 | 🟠 HAUT | `migration.ts` | `saveConversation` sans try/catch → migration s'arrête sur erreur | try/catch + skip conversation en erreur |
+| 29 | 🟠 HAUT | `migration.ts` | `isDeleted`/`isEdited` perdus lors de la migration localStorage | Préservation des champs dans saveMessage |
+| 30 | 🟠 HAUT | `connection.ts` | Welcome matchedExisting ne met pas à jour le nom → nom placeholder stale | Mise à jour `name` dans le spread |
+| 31 | 🟠 HAUT | `connection.ts` | `channel.key.rotated` sans validation base64/format clé | Regex base64 + validation longueur 32 bytes minimum |
+| 32 | 🟠 HAUT | `ChannelKeyVault.ts` | `rotateKey` accepte clé invalide (taille, epoch négatif) | Validation epoch `>= 0` + clé exactement 32 bytes |
+| 33 | 🟡 MOYEN | `ChannelKeyVault.ts` | Messages d'erreur non informatifs | Epoch courant et epochs disponibles dans le message |
+| 34 | 🟡 MOYEN | `envelope.ts` | Parsing protobuf hors limites (bytes[3] sans vérification) | Bounds check `bytes.length >= 4` + `4 + textLen <= bytes.length` |
+| 35 | 🟡 MOYEN | `envelope.ts` | `replyTo` non validé structurellement (cast unsafe) | Validation stricte des champs `id`, `senderId`, `content` |
+
+### Cycle 6 — Timeout WebSocket et fuite mémoire
+
+| # | Sévérité | Fichier | Problème | Correction |
+|---|----------|---------|----------|------------|
+| 36 | 🔴 CRITIQUE | `WebMlsService.ts` | `connect()` bloque indéfiniment si réseau ne répond pas (pas de timeout) | Timeout 15s avec `clearTimeout` sur open/error/close |
+| 37 | 🔴 CRITIQUE | `WebMlsService.ts` | Ancien WebSocket non fermé avant reconnexion → fuite mémoire | Close old WS (null handlers + close) avant new WebSocket |
+| 38 | 🔴 CRITIQUE | `TauriMlsService.ts` | Mêmes bugs connect() timeout + close-before-create | Mêmes corrections |
+| 39 | 🟠 HAUT | `WebMlsService.ts` / `TauriMlsService.ts` | `processQueue` ne nettoie `pendingWelcomeGroups` que sur erreur Welcome | Nettoyage sur TOUTE erreur (messages réguliers aussi) |
+| 40 | 🟡 MOYEN | `useChatSession.svelte.ts` | `reconnectTimer` stale d'une session précédente non nettoyé au login | `clearTimeout` + reset au début de `login()` |
+
+### Cycle 7 — Timeout fetch et validation ACK
+
+| # | Sévérité | Fichier | Problème | Correction |
+|---|----------|---------|----------|------------|
+| 41 | 🟠 HAUT | `WebMlsService.ts` | `fetchPendingMessages` sans timeout → hang indéfini si serveur lent | AbortController 10s sur toutes les requêtes fetch |
+| 42 | 🟠 HAUT | `TauriMlsService.ts` | Même absence de timeout | Mêmes AbortController 10s |
+| 43 | 🟡 MOYEN | `WebMlsService.ts` | ACK response non vérifiée → messages considérés comme acquittés même si serveur refuse | Vérification `ackRes.ok` avec log d'erreur |
+| 44 | 🟡 MOYEN | `TauriMlsService.ts` | Même absence de vérification ACK | Même correction |
+
+### Cycle 8 — Cohérence cross-plateforme et diagnostic
+
+| # | Sévérité | Fichier | Problème | Correction |
+|---|----------|---------|----------|------------|
+| 45 | 🟠 HAUT | `WebMlsService.ts` / `TauriMlsService.ts` | Champ ID message inconsistant (`msg.id` vs `msg._id`) | Fallback `msg.id \|\| msg._id` dans les deux services |
+| 46 | 🟡 MOYEN | `groupCreation.ts` | Erreurs sync propres appareils avalées silencieusement (2 emplacements) | Log `[WARN]` avec message d'erreur |
+
+### Risques architecturaux identifiés (non corrigés — requièrent refactoring backend)
+
+| # | Sévérité | Composant | Problème |
+|---|----------|-----------|----------|
+| A1 | 🔴 CRITIQUE | `chat-gateway/handlers.rs` | Pas de vérification d'appartenance au groupe pour le routage MLS |
+| A2 | 🟠 HAUT | `chat-gateway/handlers.rs` | Pas d'autorisation destinataire pour les Welcome |
+| A3 | 🟡 MOYEN | `chat-gateway/handlers.rs` | Array `recipients` non borné (vecteur DoS potentiel) |
+| A4 | 🟡 MOYEN | `chat-gateway/handlers.rs` | Race condition async cleanup à la déconnexion (ConnectionGuard Drop) |
 
 ---
 
