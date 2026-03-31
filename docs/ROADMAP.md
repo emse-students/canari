@@ -28,6 +28,8 @@ Ce document rassemble les différentes feuilles de route (roadmaps) des sous-sys
 - [x] Espaces (workspaces) pour promotions / associations.
 - [x] Canaux texte avec gestion des rôles et permissions (ACL).
 - [x] Chiffrement applicatif soft (pas MLS pur) avec historique lisible pour les nouveaux membres.
+- [x] **Invitations par acteur** : endpoint `POST /channels/:id/members/invite` avec vérification de permission `INVITE_USERS`.
+- [x] **Événements temps-réel** : `social-service` publie sur Redis `chat:channel_events` → routage par `chat-gateway` vers les clients connectés. Types: `channel.member.joined`, `channel.member.kicked`, `channel.message.created`.
 
 ### 🟡 Phase 2: Productivité
 - [ ] **Fils de discussion (Threads) :** Sous-conversations pour désengorger le canal principal.

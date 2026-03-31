@@ -41,11 +41,17 @@ Si KO (copier-coller exact):
 
 ## 3) Communautes
 
-- [ ] Creation d'une communaute (nom libre) fonctionne
+- [ ] Creation d'une communaute (workspace) fonctionne : `POST /api/channels/workspaces`
 - [ ] Aucun 500 a la creation
 - [ ] Message UI de succes affiche
 - [ ] Creation d'un canal public dans la communaute fonctionne
 - [ ] Le canal apparait dans la sidebar sans refresh
+- [ ] Invitation d'un membre par un admin fonctionne : `POST /api/channels/:id/members/invite` (body: actorUserId + targetUserId)
+- [ ] L'invite recoit un evenement temps-reel `channel.member.joined` via WebSocket
+- [ ] Expulsion d'un membre fonctionne : `POST /api/channels/:id/members/kick`
+- [ ] Le membre expulse recoit un evenement temps-reel `channel.member.kicked` via WebSocket
+- [ ] Envoi d'un message dans le canal : `POST /api/channels/:id/messages` (body: ciphertext + nonce + keyVersion + senderId)
+- [ ] L'evenement `channel.message.created` est bien recu par les membres connectes via WebSocket
 
 Resultat global:
 - [ ] OK

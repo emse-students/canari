@@ -116,7 +116,14 @@ Auth interne Nginx:
   - consomme localement par `chat-gateway` (fanout multi-instance)
 
 - Canal `chat:channel_events`
+  - **publie par `social-service`** lors des mutations de membres et d'envoi de messages
   - consomme par `chat-gateway` pour notifier les clients connectes
+  - format: `{ type: string, data: object, userIds: string[], timestamp: string }`
+  - types d'evenements publies:
+    - `channel.member.joined` : quand un membre rejoint ou est invite (joinChannel / inviteToChannel)
+    - `channel.member.kicked` : quand un membre est expulse (kickMember)
+    - `channel.message.created` : quand un message est envoye dans un canal
+  - le champ `userIds` liste les IDs des utilisateurs destinataires (membres du workspace + utilisateur kick le cas echeant)
 
 - Presence
   - cles `user:online:<userId>:<deviceId>` dans Redis
@@ -150,7 +157,7 @@ Familles d'endpoints majeures:
 
 - `/api/mls-api/sync/session/*`
 - `/api/mls-api/pin-verifier/check`
-- `/api/mls-api/groups*`
+- `/api/mls-api/groups*` — `POST` accepte `{ groupId, createdBy, members[], isGroup? }` ; `isGroup=false` signifie conversation 1-pour-1
 - `/api/mls-api/register-device`
 - `/api/mls-api/welcome*`
 - `/api/mls-api/send`
@@ -169,6 +176,14 @@ Familles d'endpoints majeures:
 - `/api/posts/*`
 - `/api/forms/*`
 - `/api/channels/*`
+  - `POST /api/channels/workspaces` : creer un workspace
+  - `GET /api/channels/workspaces/:slug` : obtenir un workspace par slug
+  - `GET /api/channels/workspaces/:id/user/:userId` : lister les workspaces d'un user
+  - `POST /api/channels/:channelId/join` : rejoindre un canal
+  - `POST /api/channels/:channelId/leave` : quitter un canal
+  - `POST /api/channels/:channelId/members/invite` : inviter un membre (actorUserId + targetUserId)
+  - `POST /api/channels/:channelId/members/kick` : expulser un membre
+  - `POST /api/channels/:channelId/messages` : envoyer un message chiffre dans un canal
 
 ### 7.5 media-service (port 3011, prefix `/api`)
 
@@ -215,6 +230,7 @@ graph LR
     DEL --> K
     DEL --> M[(Mongo :27017)]
 
+    SOC --> R
     CORE --> P[(Postgres :5432)]
     SOC --> P
     MED --> MIN[(MinIO :9000)]
