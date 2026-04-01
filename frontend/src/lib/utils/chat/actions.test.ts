@@ -79,6 +79,7 @@ describe('discoverMissingGroups', () => {
     await discoverMissingGroups({
       mlsService: mls,
       userId: 'jolan',
+      pin: '1234',
       conversations: convs,
       saveConversation,
       log: vi.fn(),
@@ -101,6 +102,7 @@ describe('discoverMissingGroups', () => {
     await discoverMissingGroups({
       mlsService: mls,
       userId: 'jolan',
+      pin: '1234',
       conversations: convs,
       saveConversation: vi.fn().mockResolvedValue(undefined),
       log: vi.fn(),
@@ -111,6 +113,143 @@ describe('discoverMissingGroups', () => {
     expect(created.name).toBe('alice');
     expect(created.conversationType).toBe('direct');
     expect(created.directPeerId).toBe('alice');
+  });
+
+  it('le leader re-bootstrap un groupe orphelin en creant le groupe et envoyant les Welcomes', async () => {
+    const convs = new Map<string, Conversation>();
+    const createGroup = vi.fn().mockResolvedValue(undefined);
+    const registerMember = vi.fn().mockResolvedValue(undefined);
+    const addMembersBulk = vi.fn().mockResolvedValue({
+      commit: new Uint8Array([0x01]),
+      welcome: new Uint8Array([0x02]),
+      addedDeviceIds: ['dev-alice'],
+      ratchetTree: new Uint8Array([0x03]),
+    });
+    const sendWelcome = vi.fn().mockResolvedValue(undefined);
+    const sendCommit = vi.fn().mockResolvedValue(undefined);
+
+    const mls = makeMls({
+      getUserGroups: vi
+        .fn()
+        .mockResolvedValue([{ groupId: 'g-1', name: 'alice::jolan', isGroup: false }]),
+      getGroupMembers: vi.fn().mockResolvedValue([{ userId: 'alice' }, { userId: 'jolan' }]),
+      fetchUserDevices: vi
+        .fn()
+        .mockImplementation((uid: string) =>
+          uid === 'alice'
+            ? Promise.resolve([{ keyPackage: new Uint8Array([10]), deviceId: 'dev-alice' }])
+            : Promise.resolve([])
+        ),
+      createGroup,
+      registerMember,
+      addMembersBulk,
+      sendWelcome,
+      sendCommit,
+    });
+
+    // userId 'alice' < 'jolan' alphabetically, so jolan is NOT the leader
+    // Let's use userId='alice' to be the leader
+    await discoverMissingGroups({
+      mlsService: mls,
+      userId: 'alice',
+      pin: '1234',
+      conversations: convs,
+      saveConversation: vi.fn().mockResolvedValue(undefined),
+      log: vi.fn(),
+    });
+
+    // Leader should have bootstrapped the group
+    expect(createGroup).toHaveBeenCalledWith('g-1');
+    // The conversation should now be ready
+    const conv = [...convs.values()].find((c) => c.groupId === 'g-1');
+    expect(conv?.isReady).toBe(true);
+  });
+
+  it('le non-leader attend le bootstrap sans creer le groupe', async () => {
+    const convs = new Map<string, Conversation>();
+    const createGroup = vi.fn();
+
+    const mls = makeMls({
+      getUserGroups: vi
+        .fn()
+        .mockResolvedValue([{ groupId: 'g-1', name: 'alice::jolan', isGroup: false }]),
+      getGroupMembers: vi.fn().mockResolvedValue([{ userId: 'alice' }, { userId: 'jolan' }]),
+      createGroup,
+    });
+
+    // 'alice' < 'jolan', so jolan is NOT the leader
+    await discoverMissingGroups({
+      mlsService: mls,
+      userId: 'jolan',
+      pin: '1234',
+      conversations: convs,
+      saveConversation: vi.fn().mockResolvedValue(undefined),
+      log: vi.fn(),
+    });
+
+    // Non-leader should NOT have created the group
+    expect(createGroup).not.toHaveBeenCalled();
+    // Conversation should still be a placeholder
+    const conv = [...convs.values()].find((c) => c.groupId === 'g-1');
+    expect(conv?.isReady).toBe(false);
+  });
+
+  it('le non-leader re-bootstrap apres le timeout de 30s', async () => {
+    const convs = new Map<string, Conversation>();
+    const createGroup = vi.fn().mockResolvedValue(undefined);
+    const registerMember = vi.fn().mockResolvedValue(undefined);
+    const addMembersBulk = vi.fn().mockResolvedValue({
+      commit: new Uint8Array([0x01]),
+      welcome: new Uint8Array([0x02]),
+      addedDeviceIds: ['dev-alice'],
+      ratchetTree: undefined,
+    });
+    const sendWelcome = vi.fn().mockResolvedValue(undefined);
+    const sendCommit = vi.fn().mockResolvedValue(undefined);
+
+    const mls = makeMls({
+      getUserGroups: vi.fn().mockResolvedValue([]),
+      getGroupMembers: vi.fn().mockResolvedValue([{ userId: 'alice' }, { userId: 'jolan' }]),
+      fetchUserDevices: vi
+        .fn()
+        .mockImplementation((uid: string) =>
+          uid === 'alice'
+            ? Promise.resolve([{ keyPackage: new Uint8Array([10]), deviceId: 'dev-alice' }])
+            : Promise.resolve([])
+        ),
+      createGroup,
+      registerMember,
+      addMembersBulk,
+      sendWelcome,
+      sendCommit,
+    });
+
+    // Pre-seed a placeholder that has been pending for > 30s
+    convs.set('dm_old', {
+      contactName: 'alice',
+      name: 'alice',
+      groupId: 'g-1',
+      messages: [],
+      isReady: false,
+      mlsStateHex: null,
+      conversationType: 'direct',
+      directPeerId: 'alice',
+    } as Conversation);
+    localStorage.setItem('discovery_pending:g-1', String(Date.now() - 60_000));
+
+    await discoverMissingGroups({
+      mlsService: mls,
+      userId: 'jolan',
+      pin: '1234',
+      conversations: convs,
+      saveConversation: vi.fn().mockResolvedValue(undefined),
+      log: vi.fn(),
+    });
+
+    // Non-leader should bootstrap after timeout
+    expect(createGroup).toHaveBeenCalledWith('g-1');
+    const conv = convs.get('dm_old');
+    expect(conv?.isReady).toBe(true);
   });
 });
 

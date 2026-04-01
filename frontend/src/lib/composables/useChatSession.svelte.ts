@@ -248,6 +248,7 @@ export function useChatSession() {
       discoverMissingGroups({
         mlsService,
         userId,
+        pin,
         conversations: cb.conversations,
         saveConversation: cb.saveConversation,
         log: cb.log,
@@ -369,10 +370,19 @@ export function useChatSession() {
     // Re-run sync every 30 s to catch devices that connect after us.
     // syncOwnDevicesToGroups returns early if no new device is detected (1 HTTP call),
     // so the cost when idle is minimal.
-    periodicSyncTimer = setInterval(
-      () => syncOwnDevicesToGroupsLocally(cb).catch(() => {}),
-      30_000
-    );
+    // Also re-run discoverMissingGroups to re-bootstrap orphaned groups
+    // (non-leader fallback after 30 s timeout).
+    periodicSyncTimer = setInterval(() => {
+      syncOwnDevicesToGroupsLocally(cb).catch(() => {});
+      discoverMissingGroups({
+        mlsService: ensureMls(),
+        userId,
+        pin,
+        conversations: cb.conversations,
+        saveConversation: cb.saveConversation,
+        log: cb.log,
+      }).catch(() => {});
+    }, 30_000);
   }
 
   function stopPeriodicSync() {

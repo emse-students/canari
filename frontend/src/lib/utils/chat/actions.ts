@@ -236,26 +236,36 @@ export function forceSyncReset(userId: string, log: (msg: string) => void) {
 }
 
 /**
- * Discover groups this user belongs to on the server but doesn't have locally.
- * For each missing group, request a re-invitation from another online device by
- * fetching the group's members and asking a peer to re-send a Welcome.
+ * Discover groups this user belongs to on the server but doesn't have locally,
+ * then re-bootstrap any orphaned groups where no device has MLS state.
+ *
+ * Phase 1 — Create placeholders for missing groups.
+ * Phase 2 — Re-bootstrap: when ALL devices lost their MLS state (state cleared,
+ * new browser session, etc.), no device can produce a Welcome → deadlock.
+ * We break the deadlock by having one device re-create the MLS group locally
+ * and re-invite all members.
+ *
+ * Leader election: alphabetically first userId among group members bootstraps.
+ * Fallback: after 30 s without Welcome, any device can bootstrap.
  */
 export async function discoverMissingGroups(params: {
   mlsService: IMlsService;
   userId: string;
+  pin: string;
   conversations: Map<string, Conversation>;
   saveConversation?: (key: string) => Promise<void>;
   log: (msg: string) => void;
 }) {
-  const { mlsService, userId, conversations, saveConversation, log } = params;
+  const { mlsService, userId, pin, conversations, saveConversation, log } = params;
 
-  let serverGroups: { groupId: string; name: string; isGroup: boolean }[];
+  // ── Phase 1: Create placeholders for server groups not present locally ────
+
+  let serverGroups: { groupId: string; name: string; isGroup: boolean }[] = [];
   try {
     serverGroups = await mlsService.getUserGroups(userId);
   } catch {
-    return;
+    // Continue to Phase 2 even if server fetch fails — there may be pending placeholders
   }
-  if (serverGroups.length === 0) return;
 
   // Some backends can transiently return duplicates; keep first occurrence by groupId.
   const uniqueServerGroups = Array.from(new Map(serverGroups.map((g) => [g.groupId, g])).values());
@@ -264,15 +274,13 @@ export async function discoverMissingGroups(params: {
   // the same pending entry on each login.
   const localGroupIds = new Set([...conversations.values()].map((c) => c.groupId));
   const missing = uniqueServerGroups.filter((g) => !localGroupIds.has(g.groupId));
-  if (missing.length === 0) return;
 
-  log(
-    `[DISCOVERY] ${missing.length} groupe(s) serveur absent(s) localement: ${missing.map((g) => g.name || g.groupId).join(', ')}`
-  );
+  if (missing.length > 0) {
+    log(
+      `[DISCOVERY] ${missing.length} groupe(s) serveur absent(s) localement: ${missing.map((g) => g.name || g.groupId).join(', ')}`
+    );
+  }
 
-  // For each missing group, create a placeholder conversation so the user sees it.
-  // The group will become functional once a Welcome is received (pending Welcome fetch
-  // or another device re-adds this device).
   for (const g of missing) {
     const existingEntry = [...conversations.entries()].find(([, c]) => c.groupId === g.groupId);
     if (existingEntry) continue;
@@ -291,7 +299,6 @@ export async function discoverMissingGroups(params: {
       conversationType: g.isGroup ? 'group' : 'direct',
       ...(directPeer ? { directPeerId: directPeer } : {}),
     });
-    // Persist to DB so the placeholder survives page reloads
     if (saveConversation) {
       try {
         await saveConversation(key);
@@ -301,7 +308,121 @@ export async function discoverMissingGroups(params: {
         );
       }
     }
-    log(`[DISCOVERY] Groupe "${displayName}" ajouté en attente de Welcome.`);
+    log(`[DISCOVERY] Placeholder "${displayName}" créé.`);
+  }
+
+  // ── Phase 2: Re-bootstrap orphaned groups ─────────────────────────────────
+
+  const pendingConvos = [...conversations.entries()].filter(([, c]) => !c.isReady);
+  if (pendingConvos.length === 0) return;
+
+  for (const [key, convo] of pendingConvos) {
+    let members: { userId: string }[];
+    try {
+      members = await mlsService.getGroupMembers(convo.groupId);
+    } catch {
+      continue;
+    }
+    if (members.length === 0) {
+      log(`[DISCOVERY] "${convo.name}": aucun membre serveur — skip.`);
+      continue;
+    }
+
+    const memberUserIds = [...new Set(members.map((m) => m.userId.toLowerCase()))].sort();
+    const isLeader = memberUserIds[0] === userId.toLowerCase();
+
+    // Track how long this placeholder has been pending
+    const pendingKey = `discovery_pending:${convo.groupId}`;
+    const pendingSince = parseInt(localStorage.getItem(pendingKey) ?? '0', 10);
+    if (!pendingSince) {
+      localStorage.setItem(pendingKey, String(Date.now()));
+    }
+    const waitingMs = pendingSince ? Date.now() - pendingSince : 0;
+    const shouldBootstrap = isLeader || waitingMs > 30_000;
+
+    if (!shouldBootstrap) {
+      log(
+        `[DISCOVERY] "${convo.name}": attente bootstrap par ${memberUserIds[0]} (${Math.round(waitingMs / 1000)}s)`
+      );
+      continue;
+    }
+
+    log(
+      `[DISCOVERY] Re-bootstrap "${convo.name}" (${isLeader ? 'leader' : `fallback ${Math.round(waitingMs / 1000)}s`})...`
+    );
+
+    try {
+      // Create MLS group locally with the existing server groupId
+      await mlsService.createGroup(convo.groupId);
+      await mlsService.registerMember(convo.groupId, userId, mlsService.getDeviceId());
+
+      // Collect all members' current devices
+      const allDevices: { keyPackage: Uint8Array; deviceId: string }[] = [];
+      const deviceUserMap = new Map<string, string>();
+      for (const memberId of memberUserIds) {
+        try {
+          const devices = await mlsService.fetchUserDevices(memberId);
+          for (const d of devices) {
+            if (d.deviceId === mlsService.getDeviceId()) continue;
+            allDevices.push(d);
+            deviceUserMap.set(d.deviceId, memberId);
+          }
+        } catch {
+          log(`[DISCOVERY] Appareils indisponibles pour ${memberId}.`);
+        }
+      }
+
+      if (allDevices.length > 0) {
+        const bulk = await mlsService.addMembersBulk(convo.groupId, allDevices);
+
+        for (const did of bulk.addedDeviceIds) {
+          const memberUserId = deviceUserMap.get(did);
+          if (memberUserId) {
+            await mlsService.registerMember(convo.groupId, memberUserId, did);
+          }
+        }
+
+        if (bulk.welcome) {
+          for (const did of bulk.addedDeviceIds) {
+            const memberUserId = deviceUserMap.get(did);
+            if (memberUserId) {
+              try {
+                await mlsService.sendWelcome(
+                  bulk.welcome,
+                  memberUserId,
+                  convo.groupId,
+                  did,
+                  bulk.ratchetTree
+                );
+              } catch (e) {
+                log(
+                  `[DISCOVERY] Welcome echoue ${memberUserId}:${did}: ${e instanceof Error ? e.message : String(e)}`
+                );
+              }
+            }
+          }
+        }
+
+        if (bulk.commit) {
+          await mlsService.sendCommit(bulk.commit, convo.groupId);
+        }
+      }
+
+      const stBytes = await mlsService.saveState(pin);
+      localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
+
+      conversations.set(key, { ...convo, isReady: true });
+      if (saveConversation) await saveConversation(key);
+      localStorage.removeItem(pendingKey);
+
+      log(
+        `[DISCOVERY][OK] "${convo.name}" re-bootstrap (${allDevices.length} appareil(s) invite(s)).`
+      );
+    } catch (e) {
+      log(
+        `[DISCOVERY] Echec re-bootstrap "${convo.name}": ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
   }
 }
 
