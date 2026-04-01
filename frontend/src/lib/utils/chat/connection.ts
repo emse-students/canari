@@ -590,7 +590,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           if (errMsg.includes('CannotDecryptOwnMessage') || errMsg.includes('WrongEpoch')) {
             return true; // ACK it so it isn't resent
           }
-          log(`Erreur message (groupe connu): ${errMsg}`);
+          log(`Erreur message de ${senderNorm} (groupe connu): ${errMsg}`);
 
           // Détection de groupe fantôme : le groupId existe dans nos conversations
           // mais n'est plus dans l'état WASM MLS → nettoyage automatique après N échecs

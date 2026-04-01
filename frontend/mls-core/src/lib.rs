@@ -414,9 +414,19 @@ impl MlsManager {
             _ => return Err(MlsError::InvalidData),
         };
 
+        // Both fields are always cleartext in the MLS frame header — safe to read
+        // before decryption and invaluable for diagnosing epoch-mismatch errors.
+        let msg_epoch = protocol_message.epoch();
+        let group_epoch = group.epoch();
+
         let processed_message = group
             .process_message(&self.provider, protocol_message)
-            .map_err(|e| MlsError::OpenMls(format!("Process error: {:?}", e)))?;
+            .map_err(|e| {
+                MlsError::OpenMls(format!(
+                    "Process error: {:?} [msg_epoch={}, group_epoch={}]",
+                    e, msg_epoch, group_epoch
+                ))
+            })?;
 
         match processed_message.into_content() {
             ProcessedMessageContent::ApplicationMessage(app_msg) => {
