@@ -62,6 +62,22 @@ describe('TauriMlsService welcome and pending flows', () => {
     expect((ackCall as any)[1].headers.Authorization).toBe('Bearer token-abc');
   });
 
+  it('log un diagnostic explicite quand aucun pending welcome/message n est trouve', async () => {
+    const service = setupService();
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    tauriFetchMock
+      .mockResolvedValueOnce({ ok: true, json: vi.fn().mockResolvedValue([]) })
+      .mockResolvedValueOnce({ ok: true, json: vi.fn().mockResolvedValue([]) });
+
+    await service.fetchPendingMessages();
+
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[WELCOME][PENDING] No pending'));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[MSG][PENDING] No pending MLS'));
+
+    logSpy.mockRestore();
+  });
+
   it('utilise les headers auth pour fetchUserDevices', async () => {
     const service = setupService();
 

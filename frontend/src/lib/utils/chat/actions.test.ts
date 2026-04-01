@@ -176,6 +176,35 @@ describe('syncOwnDevicesToGroups', () => {
     expect(cacheRaw).not.toBeNull();
     expect(JSON.parse(cacheRaw as string)).toContain('dev-2');
   });
+
+  it('ne met pas en cache si seules des conversations placeholders non pretes existent', async () => {
+    const log = vi.fn();
+    const mls = makeMls({
+      fetchUserDevices: vi
+        .fn()
+        .mockResolvedValueOnce([{ keyPackage: new Uint8Array([1]), deviceId: 'dev-2' }])
+        .mockResolvedValue([{ keyPackage: new Uint8Array([2]), deviceId: 'dev-2' }]),
+    });
+
+    const convs = new Map<string, Conversation>();
+    convs.set('placeholder', makeConversation({ groupId: 'g-missing', isReady: false }));
+
+    const promise = syncOwnDevicesToGroups({
+      mlsService: mls,
+      userId: 'jolan',
+      pin: '1234',
+      conversations: convs,
+      log,
+    });
+
+    await vi.runAllTimersAsync();
+    await promise;
+
+    const cacheRaw = localStorage.getItem('known_own_devices:jolan');
+    expect(cacheRaw).toBeNull();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("Aucune conversation n'est prete"));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Welcome manquant'));
+  });
 });
 
 describe('forceSyncReset', () => {

@@ -337,7 +337,13 @@ export class WebMlsService implements IMlsService {
               ratchetTree: w.ratchetTree,
             });
           }
+        } else {
+          console.log(`[WELCOME][PENDING] No pending welcome for device ${this.deviceId}`);
         }
+      } else {
+        console.warn(
+          `[WELCOME][PENDING] Welcome fetch failed: ${wRes.status} ${wRes.statusText} (device=${this.deviceId})`
+        );
       }
     } catch (e) {
       console.error('Failed to fetch pending welcome messages', e);
@@ -382,7 +388,13 @@ export class WebMlsService implements IMlsService {
               console.log(`Acknowledged ${successfullyProcessedIds.length} messages`);
             }
           }
+        } else {
+          console.log(`[MSG][PENDING] No pending MLS message for ${this.userId}:${this.deviceId}`);
         }
+      } else {
+        console.warn(
+          `[MSG][PENDING] Pending message fetch failed: ${res.status} ${res.statusText} (${this.userId}:${this.deviceId})`
+        );
       }
     } catch (e) {
       console.error('Failed to fetch pending messages', e);

@@ -64,6 +64,22 @@ describe('WebMlsService.fetchPendingMessages', () => {
     expect(messagesCall[1]?.signal).toBeDefined();
   });
 
+  it('log un diagnostic explicite quand aucun pending welcome/message n est trouve', async () => {
+    const service = setupService();
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, json: vi.fn().mockResolvedValue([]) })
+      .mockResolvedValueOnce({ ok: true, json: vi.fn().mockResolvedValue([]) });
+
+    await service.fetchPendingMessages();
+
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[WELCOME][PENDING] No pending'));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[MSG][PENDING] No pending MLS'));
+
+    logSpy.mockRestore();
+  });
+
   it('applique les headers auth sur welcome, messages et ack', async () => {
     const service = setupService();
 

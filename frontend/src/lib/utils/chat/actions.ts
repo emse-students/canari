@@ -60,6 +60,15 @@ export async function syncOwnDevicesToGroups(params: {
 
   const readyConvos = [...conversations.entries()].filter(([, c]) => c.isReady);
   log(`[SYNC] Conversations pretes: ${readyConvos.length}/${conversations.size}`);
+  if (conversations.size > 0 && readyConvos.length === 0) {
+    const pending = [...conversations.values()]
+      .filter((c) => !c.isReady)
+      .map((c) => c.name || c.groupId)
+      .slice(0, 5);
+    log(
+      `[SYNC][DIAG] Aucune conversation n'est prete. Placeholders en attente de Welcome: ${pending.join(', ') || 'n/a'}`
+    );
+  }
 
   let totalWelcomes = 0;
 
@@ -69,6 +78,7 @@ export async function syncOwnDevicesToGroups(params: {
     let deviceWelcomes = 0;
     let hadAttempt = false;
     let hadFailure = false;
+    let pendingSkipped = 0;
 
     // Re-fetch the device's latest KeyPackage to avoid using stale data
     // (the device might have just published a new KeyPackage after reconnecting)
@@ -85,7 +95,10 @@ export async function syncOwnDevicesToGroups(params: {
     }
 
     for (const [, convo] of conversations.entries()) {
-      if (!convo.isReady) continue;
+      if (!convo.isReady) {
+        pendingSkipped++;
+        continue;
+      }
       hadAttempt = true;
 
       // Check if device is already a member of this group (server-side)
@@ -137,6 +150,12 @@ export async function syncOwnDevicesToGroups(params: {
       }
     }
 
+    if (pendingSkipped > 0 && !hadAttempt) {
+      log(
+        `[SYNC][DIAG] ${device.deviceId}: ${pendingSkipped} conversation(s) ignoree(s) car non pretes (Welcome manquant).`
+      );
+    }
+
     // Wait for the device to process their Welcomes before adding the next device
     // This helps avoid epoch race conditions where multiple commits happen before Welcomes are processed
     if (deviceWelcomes > 0) {
@@ -147,7 +166,9 @@ export async function syncOwnDevicesToGroups(params: {
     // Cache the device only after at least one successful welcome, or when there
     // was nothing to sync at all. If all attempts failed, keep it uncached so a
     // later reconnect retries the repair automatically.
-    const markKnown = deviceWelcomes > 0 || !hadAttempt || !hadFailure;
+    const hasNoConversation = conversations.size === 0;
+    const markKnown =
+      deviceWelcomes > 0 || (hasNoConversation && !hadAttempt) || (hadAttempt && !hadFailure);
     if (markKnown) {
       knownIds.add(device.deviceId);
       localStorage.setItem(cacheKey, JSON.stringify([...knownIds]));
