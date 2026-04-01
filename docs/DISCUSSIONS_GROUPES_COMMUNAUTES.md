@@ -88,6 +88,8 @@ Clé publique éphémère qu'un appareil publie pour permettre à d'autres de l'
 
 Message d'invitation MLS envoyé après un `addMember`/`addMembersBulk`. Le récepteur appelle `processWelcome` pour rejoindre le groupe à l'epoch courant.
 
+Important : un appareil **ne peut pas s'auto-ajouter** sans Welcome. Le Welcome doit être produit par un appareil qui possède déjà l'état MLS du groupe (même utilisateur sur un autre appareil, ou autre membre du groupe), puis livré au nouvel appareil.
+
 ### Commit
 
 Message de contrôle MLS diffusé aux membres existants pour qu'ils fassent avancer leur epoch. Envoyé via `sendCommit` après chaque opération de membership.
@@ -572,6 +574,8 @@ Frontend (AES-256-GCM)  ←→  Social Service (MongoDB)  ←→  Redis PubSub
 
 **Fonction** : `syncOwnDevicesToGroups(params)` → `actions.ts`
 
+Règle de sécurité MLS : le nouvel appareil rejoint via un Welcome émis par un appareil déjà membre du groupe. Dans Canari, c'est généralement l'appareil courant (déjà membre) qui invite les autres appareils du même utilisateur.
+
 ```
 Pour chaque nouvel appareil :
   Pour chaque conversation isReady :
@@ -606,9 +610,12 @@ Pour chaque nouvel appareil :
 **Fonction** : `discoverMissingGroups(params)` → `actions.ts`
 
 1. `mlsService.getUserGroups(userId)` → `GET /api/mls-api/user-groups/{userId}`
-2. Compare avec les `groupId` des conversations locales `isReady: true`
-3. Pour chaque groupe manquant : crée un placeholder avec `isReady: false`
-4. Le groupe deviendra fonctionnel quand un Welcome sera reçu
+2. Déduplique la réponse serveur par `groupId`
+3. Compare avec **tous** les `groupId` locaux (conversations prêtes et placeholders)
+4. Pour chaque groupe manquant : crée un placeholder avec `isReady: false`
+5. Le groupe deviendra fonctionnel quand un Welcome sera reçu
+
+Cas limite : si aucun appareil déjà membre n'émet de Welcome (ou si la livraison échoue), le groupe peut apparaître en placeholder mais restera non utilisable tant qu'une ré-invitation MLS n'a pas lieu.
 
 ### 8.3 Reset de sync forcé
 
