@@ -428,7 +428,7 @@ fn test_scenario4_bidirectional_messaging() {
     // Setup complet (même que scénario 3)
     jolan1.create_group(gid.to_string()).expect("create_group");
     let kp_test1 = test1.generate_key_package().expect("kp test1");
-    let (commit1, welcome_test1, _, rt1) = jolan1
+    let (_commit1, welcome_test1, _, rt1) = jolan1
         .add_members_bulk(gid, &[&kp_test1])
         .expect("add test1");
     test1
