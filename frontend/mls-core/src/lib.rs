@@ -144,6 +144,7 @@ impl MlsManager {
         let group_config = MlsGroupCreateConfig::builder()
             .ciphersuite(Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519)
             .use_ratchet_tree_extension(true)
+            .max_past_epochs(2)
             .build();
 
         let credential_with_key = CredentialWithKey {
@@ -317,6 +318,7 @@ impl MlsManager {
 
         let group_config = MlsGroupJoinConfig::builder()
             .use_ratchet_tree_extension(true)
+            .max_past_epochs(2)
             .build();
 
         // If ratchet tree is provided externally (e.g. via specific server endpoint), deserialize it

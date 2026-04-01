@@ -773,7 +773,12 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         loadHistoryForConversation(newConvoKey, joinedGroupId).catch(() => {});
         return true;
       } catch (_e) {
-        log(`Ignoré: pas un message pour un groupe existant ni un welcome. Erreur: ${String(_e)}`);
+        const errStr = String(_e);
+        if (errStr.includes('NoMatchingKeyPackage')) {
+          // Ce Welcome n'était pas destiné à cet appareil — ignoré silencieusement
+          return false;
+        }
+        log(`Ignoré: pas un message pour un groupe existant ni un welcome. Erreur: ${errStr}`);
         return false;
       }
     }
