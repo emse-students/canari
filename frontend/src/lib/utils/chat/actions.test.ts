@@ -316,6 +316,8 @@ describe('syncPeerDevicesToGroups', () => {
     const sendCommit = vi.fn().mockResolvedValue(undefined);
 
     const mls = makeMls({
+      // alice n'est PAS encore enregistrée dans le groupe → path d'ajout actif
+      getGroupMembers: vi.fn().mockResolvedValue([]),
       fetchUserDevices: vi
         .fn()
         .mockImplementation((uid: string) =>
@@ -454,6 +456,51 @@ describe('syncPeerDevicesToGroups', () => {
       log: vi.fn(),
     });
 
+    expect(addMembersBulk).not.toHaveBeenCalled();
+  });
+
+  it("n'invite pas les appareils d'un pair deja enregistre dans le groupe (evite le double-commit)", async () => {
+    // Reproduit le scénario réel : jolan-dev3 se connecte.
+    // jolan-dev1 (syncOwnDevicesToGroups) va l'ajouter → commit-A.
+    // test-dev1 (syncPeerDevicesToGroups, userId='test') ne DOIT PAS aussi l'ajouter
+    // car cela produirait commit-B au même epoch de base → secrets divergés → UnableToDecrypt.
+    const addMembersBulk = vi.fn();
+    const mls = makeMls({
+      // 'jolan' est déjà membre enregistré du groupe → guard actif
+      getGroupMembers: vi.fn().mockResolvedValue([{ userId: 'jolan' }]),
+      fetchUserDevices: vi.fn().mockImplementation((uid: string) =>
+        uid === 'jolan'
+          ? Promise.resolve([
+              { keyPackage: new Uint8Array([10]), deviceId: 'jolan-dev1' },
+              { keyPackage: new Uint8Array([20]), deviceId: 'jolan-dev3' },
+            ])
+          : Promise.resolve([])
+      ),
+      addMembersBulk,
+    });
+
+    const convs = new Map<string, Conversation>();
+    convs.set(
+      'dm_1',
+      makeConversation({
+        groupId: 'g-direct',
+        isReady: true,
+        conversationType: 'direct',
+        directPeerId: 'jolan',
+        contactName: 'jolan',
+        name: 'jolan',
+      })
+    );
+
+    await syncPeerDevicesToGroups({
+      mlsService: mls,
+      userId: 'test',
+      pin: '1234',
+      conversations: convs,
+      log: vi.fn(),
+    });
+
+    // jolan est déjà membre → syncOwnDevicesToGroups de jolan gère jolan-dev3 → pas de double-commit
     expect(addMembersBulk).not.toHaveBeenCalled();
   });
 });

@@ -249,6 +249,19 @@ export async function syncPeerDevicesToGroups(params: {
   for (const [, convo] of conversations.entries()) {
     if (!convo.isReady) continue;
 
+    // Always fetch the registered members first.
+    // If a peer userId is already in the group, their own syncOwnDevicesToGroups
+    // will handle adding any new devices they have. We must NOT also add their
+    // device here — two simultaneous addMember/addMembersBulk calls on the same
+    // base epoch produce diverging MLS secrets → UnableToDecrypt(AeadError).
+    let groupMembers: { userId: string }[];
+    try {
+      groupMembers = await mlsService.getGroupMembers(convo.groupId);
+    } catch {
+      continue;
+    }
+    const registeredUserIds = new Set(groupMembers.map((m) => m.userId.toLowerCase()));
+
     // Determine peer user IDs for this conversation
     let peerUserIds: string[];
     if ((convo.conversationType ?? 'group') === 'direct') {
@@ -256,16 +269,8 @@ export async function syncPeerDevicesToGroups(params: {
       if (!peerId || peerId === userId.toLowerCase()) continue;
       peerUserIds = [peerId];
     } else {
-      // Group conversation: query server for registered member userIds
-      let groupMembers: { userId: string }[];
-      try {
-        groupMembers = await mlsService.getGroupMembers(convo.groupId);
-      } catch {
-        continue;
-      }
-      peerUserIds = [...new Set(groupMembers.map((m) => m.userId.toLowerCase()))].filter(
-        (u) => u !== userId.toLowerCase()
-      );
+      // Group conversation: derive from registered members
+      peerUserIds = [...registeredUserIds].filter((u) => u !== userId.toLowerCase());
       if (peerUserIds.length === 0) continue;
     }
 
@@ -279,6 +284,17 @@ export async function syncPeerDevicesToGroups(params: {
     }
 
     for (const peerId of peerUserIds) {
+      // Skip peers who are already registered in the group — their own
+      // syncOwnDevicesToGroups handles adding new devices for them. Inviting
+      // them here too would produce a second commit at the same base epoch,
+      // causing diverging secrets and UnableToDecrypt(AeadError) for everyone.
+      if (registeredUserIds.has(peerId)) {
+        log(
+          `[SYNC] Pair ${peerId} deja membre enregistre — sync deleguee a syncOwnDevicesToGroups (skip)`
+        );
+        continue;
+      }
+
       let peerDevices: { keyPackage: Uint8Array; deviceId: string }[];
       try {
         peerDevices = await mlsService.fetchUserDevices(peerId);
