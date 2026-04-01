@@ -226,6 +226,126 @@ export async function syncOwnDevicesToGroups(params: {
   }
 }
 
+/**
+ * Syncs peer users' new devices into conversations where we already have MLS state.
+ *
+ * When a peer registers a new device (new browser/app install), their device
+ * cannot add itself to existing groups — only existing members can invite it.
+ * This function detects missing peer devices and re-invites them, breaking the
+ * "I have state but my peer's new device doesn't" deadlock without any
+ * re-bootstrap (which would create conflicting MLS group states).
+ *
+ * Covers both direct (1-to-1) and multi-user group conversations.
+ */
+export async function syncPeerDevicesToGroups(params: {
+  mlsService: IMlsService;
+  userId: string;
+  pin: string;
+  conversations: Map<string, Conversation>;
+  log: (msg: string) => void;
+}) {
+  const { mlsService, userId, pin, conversations, log } = params;
+
+  for (const [, convo] of conversations.entries()) {
+    if (!convo.isReady) continue;
+
+    // Determine peer user IDs for this conversation
+    let peerUserIds: string[];
+    if ((convo.conversationType ?? 'group') === 'direct') {
+      const peerId = ((convo.directPeerId ?? convo.contactName) || '').toLowerCase();
+      if (!peerId || peerId === userId.toLowerCase()) continue;
+      peerUserIds = [peerId];
+    } else {
+      // Group conversation: query server for registered member userIds
+      let groupMembers: { userId: string }[];
+      try {
+        groupMembers = await mlsService.getGroupMembers(convo.groupId);
+      } catch {
+        continue;
+      }
+      peerUserIds = [...new Set(groupMembers.map((m) => m.userId.toLowerCase()))].filter(
+        (u) => u !== userId.toLowerCase()
+      );
+      if (peerUserIds.length === 0) continue;
+    }
+
+    // Per-group cache of peer device IDs we've already added (avoid redundant invites)
+    const peerCacheKey = `known_peer_devices:${convo.groupId}`;
+    let knownPeerDeviceIds: Set<string>;
+    try {
+      knownPeerDeviceIds = new Set(JSON.parse(localStorage.getItem(peerCacheKey) ?? '[]'));
+    } catch {
+      knownPeerDeviceIds = new Set();
+    }
+
+    for (const peerId of peerUserIds) {
+      let peerDevices: { keyPackage: Uint8Array; deviceId: string }[];
+      try {
+        peerDevices = await mlsService.fetchUserDevices(peerId);
+      } catch {
+        continue;
+      }
+
+      const newPeerDevices = peerDevices.filter((d) => !knownPeerDeviceIds.has(d.deviceId));
+      if (newPeerDevices.length === 0) continue;
+
+      log(
+        `[SYNC] Nouvel(aux) appareil(s) de ${peerId} pour "${convo.name}": ${newPeerDevices.map((d) => d.deviceId).join(', ')}`
+      );
+
+      try {
+        const bulk = await mlsService.addMembersBulk(convo.groupId, newPeerDevices);
+
+        for (const did of bulk.addedDeviceIds) {
+          await mlsService.registerMember(convo.groupId, peerId, did);
+          knownPeerDeviceIds.add(did);
+        }
+
+        if (bulk.welcome) {
+          for (const did of bulk.addedDeviceIds) {
+            try {
+              await mlsService.sendWelcome(
+                bulk.welcome,
+                peerId,
+                convo.groupId,
+                did,
+                bulk.ratchetTree
+              );
+              log(`[SYNC] Welcome (re-invite) → ${peerId}:${did}`);
+            } catch (e) {
+              log(
+                `[SYNC] Echec Welcome re-invite ${peerId}:${did}: ${e instanceof Error ? e.message : String(e)}`
+              );
+            }
+          }
+        }
+
+        if (bulk.commit) {
+          await mlsService.sendCommit(bulk.commit, convo.groupId);
+        }
+
+        const stBytes = await mlsService.saveState(pin);
+        localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
+        localStorage.setItem(peerCacheKey, JSON.stringify([...knownPeerDeviceIds]));
+      } catch (e) {
+        const errStr = String(e);
+        const alreadyInGroup =
+          errStr.includes('DuplicateSignatur') ||
+          errStr.includes('ProposalValidation') ||
+          errStr.includes('already');
+        if (alreadyInGroup) {
+          // Device already in MLS tree — cache to avoid repeated attempts
+          for (const d of newPeerDevices) knownPeerDeviceIds.add(d.deviceId);
+          localStorage.setItem(peerCacheKey, JSON.stringify([...knownPeerDeviceIds]));
+          log(`[SYNC] Appareils de ${peerId} deja dans le groupe (mis en cache)`);
+        } else {
+          log(`[SYNC] Erreur re-invite ${peerId} dans "${convo.name}": ${errStr.slice(0, 100)}`);
+        }
+      }
+    }
+  }
+}
+
 /** Force re-sync by clearing the known devices cache (Ctrl+Shift+S in dev UI) */
 export function forceSyncReset(userId: string, log: (msg: string) => void) {
   const cacheKey = `known_own_devices:${userId}`;
@@ -330,6 +450,7 @@ export async function discoverMissingGroups(params: {
 
     const memberUserIds = [...new Set(members.map((m) => m.userId.toLowerCase()))].sort();
     const isLeader = memberUserIds[0] === userId.toLowerCase();
+    const otherMemberIds = memberUserIds.filter((m) => m !== userId.toLowerCase());
 
     // Track how long this placeholder has been pending
     const pendingKey = `discovery_pending:${convo.groupId}`;
@@ -338,11 +459,34 @@ export async function discoverMissingGroups(params: {
       localStorage.setItem(pendingKey, String(Date.now()));
     }
     const waitingMs = pendingSince ? Date.now() - pendingSince : 0;
-    const shouldBootstrap = isLeader || waitingMs > 30_000;
+
+    // Check if another member has published devices — they can re-invite us via their sync.
+    // If so, use a long timeout to give them time; re-bootstrap only as a last resort.
+    // Avoids creating a split-brain (two incompatible MLS states for the same groupId).
+    let otherMemberIsActive = false;
+    for (const memberId of otherMemberIds) {
+      try {
+        const devices = await mlsService.fetchUserDevices(memberId);
+        if (devices.length > 0) {
+          otherMemberIsActive = true;
+          break;
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    // Leader bootstraps immediately (no wait).
+    // Non-leader timeout: 120 s when another member is online (they should re-invite us),
+    //                     30 s when nobody else is active (truly orphaned).
+    const bootstrapTimeout = otherMemberIsActive ? 120_000 : 30_000;
+    const shouldBootstrap = isLeader || waitingMs > bootstrapTimeout;
 
     if (!shouldBootstrap) {
       log(
-        `[DISCOVERY] "${convo.name}": attente bootstrap par ${memberUserIds[0]} (${Math.round(waitingMs / 1000)}s)`
+        otherMemberIsActive
+          ? `[DISCOVERY] "${convo.name}": ${otherMemberIds[0] ?? 'membre'} actif, attente re-invitation... (${Math.round(waitingMs / 1000)}s / 120s)`
+          : `[DISCOVERY] "${convo.name}": attente bootstrap par ${memberUserIds[0]} (${Math.round(waitingMs / 1000)}s / 30s)`
       );
       continue;
     }

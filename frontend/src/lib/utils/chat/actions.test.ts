@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { discoverMissingGroups, forceSyncReset, syncOwnDevicesToGroups } from './actions';
+import {
+  discoverMissingGroups,
+  forceSyncReset,
+  syncOwnDevicesToGroups,
+  syncPeerDevicesToGroups,
+} from './actions';
 import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
 
@@ -194,7 +199,7 @@ describe('discoverMissingGroups', () => {
     expect(conv?.isReady).toBe(false);
   });
 
-  it('le non-leader re-bootstrap apres le timeout de 30s', async () => {
+  it("le non-leader re-bootstrap apres le timeout de 30s quand aucun autre membre n'est actif", async () => {
     const convs = new Map<string, Conversation>();
     const createGroup = vi.fn().mockResolvedValue(undefined);
     const registerMember = vi.fn().mockResolvedValue(undefined);
@@ -210,13 +215,8 @@ describe('discoverMissingGroups', () => {
     const mls = makeMls({
       getUserGroups: vi.fn().mockResolvedValue([]),
       getGroupMembers: vi.fn().mockResolvedValue([{ userId: 'alice' }, { userId: 'jolan' }]),
-      fetchUserDevices: vi
-        .fn()
-        .mockImplementation((uid: string) =>
-          uid === 'alice'
-            ? Promise.resolve([{ keyPackage: new Uint8Array([10]), deviceId: 'dev-alice' }])
-            : Promise.resolve([])
-        ),
+      // alice has NO active devices (offline) → short 30s timeout applies
+      fetchUserDevices: vi.fn().mockResolvedValue([]),
       createGroup,
       registerMember,
       addMembersBulk,
@@ -246,10 +246,215 @@ describe('discoverMissingGroups', () => {
       log: vi.fn(),
     });
 
-    // Non-leader should bootstrap after timeout
+    // Non-leader bootstraps after 30s when no other member is active
     expect(createGroup).toHaveBeenCalledWith('g-1');
     const conv = convs.get('dm_old');
     expect(conv?.isReady).toBe(true);
+  });
+
+  it("le non-leader attend plus longtemps (120s) quand l'autre membre est actif", async () => {
+    const convs = new Map<string, Conversation>();
+    const createGroup = vi.fn();
+
+    const mls = makeMls({
+      getUserGroups: vi.fn().mockResolvedValue([]),
+      getGroupMembers: vi.fn().mockResolvedValue([{ userId: 'alice' }, { userId: 'jolan' }]),
+      // alice HAS active devices → extended 120s timeout
+      fetchUserDevices: vi
+        .fn()
+        .mockImplementation((uid: string) =>
+          uid === 'alice'
+            ? Promise.resolve([{ keyPackage: new Uint8Array([10]), deviceId: 'dev-alice' }])
+            : Promise.resolve([])
+        ),
+      createGroup,
+    });
+
+    // Pending 60s — beyond 30s but below 120s extended timeout
+    convs.set('dm_old', {
+      contactName: 'alice',
+      name: 'alice',
+      groupId: 'g-1',
+      messages: [],
+      isReady: false,
+      mlsStateHex: null,
+      conversationType: 'direct',
+      directPeerId: 'alice',
+    } as Conversation);
+    localStorage.setItem('discovery_pending:g-1', String(Date.now() - 60_000));
+
+    await discoverMissingGroups({
+      mlsService: mls,
+      userId: 'jolan',
+      pin: '1234',
+      conversations: convs,
+      saveConversation: vi.fn().mockResolvedValue(undefined),
+      log: vi.fn(),
+    });
+
+    // Should NOT bootstrap — waiting for alice's sync to re-invite us
+    expect(createGroup).not.toHaveBeenCalled();
+    const conv = convs.get('dm_old');
+    expect(conv?.isReady).toBe(false);
+  });
+});
+
+describe('syncPeerDevicesToGroups', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("invite le nouveau device d'un pair dans une conversation directe", async () => {
+    const addMembersBulk = vi.fn().mockResolvedValue({
+      commit: new Uint8Array([0x01]),
+      welcome: new Uint8Array([0x02]),
+      addedDeviceIds: ['dev-alice-new'],
+      ratchetTree: new Uint8Array([0x03]),
+    });
+    const registerMember = vi.fn().mockResolvedValue(undefined);
+    const sendWelcome = vi.fn().mockResolvedValue(undefined);
+    const sendCommit = vi.fn().mockResolvedValue(undefined);
+
+    const mls = makeMls({
+      fetchUserDevices: vi
+        .fn()
+        .mockImplementation((uid: string) =>
+          uid === 'alice'
+            ? Promise.resolve([{ keyPackage: new Uint8Array([10]), deviceId: 'dev-alice-new' }])
+            : Promise.resolve([])
+        ),
+      addMembersBulk,
+      registerMember,
+      sendWelcome,
+      sendCommit,
+    });
+
+    const convs = new Map<string, Conversation>();
+    convs.set(
+      'dm_1',
+      makeConversation({
+        groupId: 'g-direct',
+        isReady: true,
+        conversationType: 'direct',
+        directPeerId: 'alice',
+        contactName: 'alice',
+        name: 'alice',
+      })
+    );
+
+    await syncPeerDevicesToGroups({
+      mlsService: mls,
+      userId: 'jolan',
+      pin: '1234',
+      conversations: convs,
+      log: vi.fn(),
+    });
+
+    expect(addMembersBulk).toHaveBeenCalledWith(
+      'g-direct',
+      expect.arrayContaining([expect.objectContaining({ deviceId: 'dev-alice-new' })])
+    );
+    expect(registerMember).toHaveBeenCalledWith('g-direct', 'alice', 'dev-alice-new');
+    expect(sendWelcome).toHaveBeenCalled();
+    expect(sendCommit).toHaveBeenCalled();
+
+    const cached = JSON.parse(localStorage.getItem('known_peer_devices:g-direct') ?? '[]');
+    expect(cached).toContain('dev-alice-new');
+  });
+
+  it('ne re-tente pas un device deja en cache', async () => {
+    const addMembersBulk = vi.fn();
+
+    const mls = makeMls({
+      fetchUserDevices: vi
+        .fn()
+        .mockImplementation((uid: string) =>
+          uid === 'alice'
+            ? Promise.resolve([{ keyPackage: new Uint8Array([10]), deviceId: 'dev-alice-old' }])
+            : Promise.resolve([])
+        ),
+      addMembersBulk,
+    });
+
+    localStorage.setItem('known_peer_devices:g-direct', JSON.stringify(['dev-alice-old']));
+
+    const convs = new Map<string, Conversation>();
+    convs.set(
+      'dm_1',
+      makeConversation({
+        groupId: 'g-direct',
+        isReady: true,
+        conversationType: 'direct',
+        directPeerId: 'alice',
+      })
+    );
+
+    await syncPeerDevicesToGroups({
+      mlsService: mls,
+      userId: 'jolan',
+      pin: '1234',
+      conversations: convs,
+      log: vi.fn(),
+    });
+
+    expect(addMembersBulk).not.toHaveBeenCalled();
+  });
+
+  it('met en cache les devices en cas de ProposalValidationErr', async () => {
+    const addMembersBulk = vi
+      .fn()
+      .mockRejectedValue(new Error('AddMembers error: CreateCommitError(ProposalValidationErr)'));
+
+    const mls = makeMls({
+      fetchUserDevices: vi
+        .fn()
+        .mockImplementation((uid: string) =>
+          uid === 'alice'
+            ? Promise.resolve([{ keyPackage: new Uint8Array([10]), deviceId: 'dev-alice' }])
+            : Promise.resolve([])
+        ),
+      addMembersBulk,
+    });
+
+    const convs = new Map<string, Conversation>();
+    convs.set(
+      'dm_1',
+      makeConversation({
+        groupId: 'g-direct',
+        isReady: true,
+        conversationType: 'direct',
+        directPeerId: 'alice',
+      })
+    );
+
+    await syncPeerDevicesToGroups({
+      mlsService: mls,
+      userId: 'jolan',
+      pin: '1234',
+      conversations: convs,
+      log: vi.fn(),
+    });
+
+    const cached = JSON.parse(localStorage.getItem('known_peer_devices:g-direct') ?? '[]');
+    expect(cached).toContain('dev-alice');
+  });
+
+  it('ignore les conversations non pretes', async () => {
+    const addMembersBulk = vi.fn();
+    const mls = makeMls({ addMembersBulk });
+
+    const convs = new Map<string, Conversation>();
+    convs.set('pending', makeConversation({ isReady: false }));
+
+    await syncPeerDevicesToGroups({
+      mlsService: mls,
+      userId: 'jolan',
+      pin: '1234',
+      conversations: convs,
+      log: vi.fn(),
+    });
+
+    expect(addMembersBulk).not.toHaveBeenCalled();
   });
 });
 

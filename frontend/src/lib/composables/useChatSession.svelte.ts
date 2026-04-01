@@ -22,6 +22,7 @@ import {
   importUserBackup,
   processDevWelcome,
   syncOwnDevicesToGroups,
+  syncPeerDevicesToGroups,
 } from '$lib/utils/chat/actions';
 import { setupMessageHandler, initializeConnection } from '$lib/utils/chat/connection';
 import { BiometricService } from '$lib/services/biometric';
@@ -399,6 +400,15 @@ export function useChatSession() {
     isSyncing = true;
     try {
       await syncOwnDevicesToGroups({
+        mlsService: ensureMls(),
+        userId,
+        pin,
+        conversations: cb.conversations,
+        log: cb.log,
+      });
+      // Also re-invite peer users' new devices that we haven't added yet.
+      // Prevents the split-brain where a peer with fresh state re-bootstraps.
+      await syncPeerDevicesToGroups({
         mlsService: ensureMls(),
         userId,
         pin,
