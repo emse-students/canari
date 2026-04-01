@@ -241,6 +241,70 @@ describe('syncOwnDevicesToGroups', () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining('addMember g-1 -> commit=1B'));
     expect(log).toHaveBeenCalledWith(expect.stringContaining('Aucun Welcome retourne par MLS'));
   });
+
+  it('enregistre un membre côté serveur quand addMember echoue avec DuplicateSignatureKey', async () => {
+    const log = vi.fn();
+    const registerMember = vi.fn().mockResolvedValue(undefined);
+    const mls = makeMls({
+      fetchUserDevices: vi
+        .fn()
+        .mockResolvedValueOnce([{ keyPackage: new Uint8Array([1]), deviceId: 'dev-2' }])
+        .mockResolvedValue([{ keyPackage: new Uint8Array([2]), deviceId: 'dev-2' }]),
+      getGroupMembers: vi.fn().mockResolvedValue([]),
+      addMember: vi.fn().mockRejectedValue(new Error('DuplicateSignatureKey already exists')),
+      registerMember,
+    });
+
+    const convs = new Map<string, Conversation>();
+    convs.set('grp_1', makeConversation({ groupId: 'g-1', isReady: true }));
+
+    const promise = syncOwnDevicesToGroups({
+      mlsService: mls,
+      userId: 'jolan',
+      pin: '1234',
+      conversations: convs,
+      log,
+    });
+
+    await vi.runAllTimersAsync();
+    await promise;
+
+    // Should log DIAG about DuplicateSignature
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("deja dans l'arbre MLS de g-1"));
+    // Should still register the member server-side to fix Redis inconsistency
+    expect(registerMember).toHaveBeenCalledWith('g-1', 'jolan', 'dev-2');
+  });
+
+  it('enregistre le device courant côté serveur pour les conversations prêtes au premier sync', async () => {
+    const log = vi.fn();
+    const registerMember = vi.fn().mockResolvedValue(undefined);
+    const mls = makeMls({
+      fetchUserDevices: vi.fn().mockResolvedValue([]),
+      getDeviceId: vi.fn().mockReturnValue('dev-main'),
+      registerMember,
+    });
+
+    const convs = new Map<string, Conversation>();
+    convs.set('grp_1', makeConversation({ groupId: 'g-1', isReady: true }));
+    convs.set('grp_2', makeConversation({ groupId: 'g-2', isReady: true, name: 'room2' }));
+
+    const promise = syncOwnDevicesToGroups({
+      mlsService: mls,
+      userId: 'jolan',
+      pin: '1234',
+      conversations: convs,
+      log,
+    });
+
+    await vi.runAllTimersAsync();
+    await promise;
+
+    // Self-registration should have been called for both ready conversations
+    expect(registerMember).toHaveBeenCalledWith('g-1', 'jolan', 'dev-main');
+    expect(registerMember).toHaveBeenCalledWith('g-2', 'jolan', 'dev-main');
+    // Flag should be cached to avoid repeating on next sync cycle
+    expect(localStorage.getItem('self_registered:jolan:dev-main')).toBe('1');
+  });
 });
 
 describe('forceSyncReset', () => {

@@ -634,6 +634,15 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       try {
         const joinedGroupId = await mlsService.processWelcome(content, ratchetTreeBytes);
 
+        // Register this device as a group member on the server so the gateway
+        // routes future commits/messages to us.  Without this, we join the MLS
+        // tree locally but the gateway doesn't know we're a member.
+        try {
+          await mlsService.registerMember(joinedGroupId, userId, mlsService.getDeviceId());
+        } catch {
+          // Non-blocking: worst case we miss commits until next sync repairs it
+        }
+
         // Persist MLS state immediately after Welcome — a crash before this
         // would lose the joined group and require a fresh Welcome.
         try {

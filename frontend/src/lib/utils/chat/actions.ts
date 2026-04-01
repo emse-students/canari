@@ -39,6 +39,23 @@ export async function syncOwnDevicesToGroups(params: {
   log(
     `[SYNC] Appareils distants trouves: ${allOwnDevices.length} (${allOwnDevices.map((d) => d.deviceId).join(', ')})`
   );
+
+  // Ensure this device is registered as a member for all ready conversations.
+  // Repairs server-side state when a Welcome was processed without registration
+  // (e.g. pending welcome replayed by gateway, or older code without registration).
+  const readyConvos = [...conversations.entries()].filter(([, c]) => c.isReady);
+  const selfRegKey = `self_registered:${userId}:${mlsService.getDeviceId()}`;
+  if (!localStorage.getItem(selfRegKey) && readyConvos.length > 0) {
+    for (const [, convo] of readyConvos) {
+      try {
+        await mlsService.registerMember(convo.groupId, userId, mlsService.getDeviceId());
+      } catch {
+        /* ignore */
+      }
+    }
+    localStorage.setItem(selfRegKey, '1');
+  }
+
   if (allOwnDevices.length === 0) return;
 
   const cacheKey = `known_own_devices:${userId}`;
@@ -58,7 +75,6 @@ export async function syncOwnDevicesToGroups(params: {
 
   log(`[SYNC] Nouveaux appareils detectes: ${newDevices.map((d) => d.deviceId).join(', ')}`);
 
-  const readyConvos = [...conversations.entries()].filter(([, c]) => c.isReady);
   log(`[SYNC] Conversations pretes: ${readyConvos.length}/${conversations.size}`);
   if (conversations.size > 0 && readyConvos.length === 0) {
     const pending = [...conversations.values()]
@@ -148,7 +164,22 @@ export async function syncOwnDevicesToGroups(params: {
         const errStr = String(e);
         // DuplicateSignatureKey means device is already in the MLS tree — not a real failure
         const isAlreadyMember = errStr.includes('DuplicateSignatur') || errStr.includes('already');
-        if (!isAlreadyMember && !errStr.includes('WrongEpoch')) {
+        if (isAlreadyMember) {
+          log(
+            `[SYNC][DIAG] ${device.deviceId} deja dans l'arbre MLS de ${convo.groupId} (${errStr.slice(0, 80)})`
+          );
+          // Ensure server-side membership is consistent with the MLS tree
+          // (the device is in the tree but may be missing from Redis group:members)
+          try {
+            await mlsService.registerMember(convo.groupId, userId, device.deviceId);
+          } catch {
+            /* ignore registration errors */
+          }
+        } else if (errStr.includes('WrongEpoch')) {
+          log(
+            `[SYNC][DIAG] WrongEpoch lors de addMember ${device.deviceId} sur ${convo.groupId}: ${errStr.slice(0, 80)}`
+          );
+        } else {
           log(
             `[SYNC] Erreur ajout ${device.deviceId} au groupe ${convo.groupId}: ${errStr.slice(0, 100)}`
           );
