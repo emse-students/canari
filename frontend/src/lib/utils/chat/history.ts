@@ -301,7 +301,12 @@ export async function replayConversationHistory(params: {
           continue;
         }
       } catch (err) {
-        if (String(err).includes('CannotDecryptOwnMessage') || String(err).includes('WrongEpoch')) {
+        const errStr = String(err);
+        if (
+          errStr.includes('CannotDecryptOwnMessage') ||
+          errStr.includes('WrongEpoch') ||
+          errStr.includes('SecretReuseError')
+        ) {
           continue;
         }
         console.warn(`History msg error: ${err}`);

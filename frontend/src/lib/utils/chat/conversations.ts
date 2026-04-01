@@ -46,11 +46,23 @@ export function deriveConversationIdentity(
   directPeerId?: string;
 } {
   const normalizedName = metaName.trim();
+  const currentUser = userId.toLowerCase();
 
   if (normalizedName.includes('::')) {
-    const [a, b] = normalizedName.split('::').map((v) => v.trim().toLowerCase());
-    const peer = a === userId.toLowerCase() ? b : a;
-    return { conversationType: 'direct', contactName: peer, displayName: peer, directPeerId: peer };
+    const parts = normalizedName
+      .split('::')
+      .map((v) => v.trim().toLowerCase())
+      .filter(Boolean);
+    const unique = [...new Set(parts)];
+    const peer = unique.find((p) => p !== currentUser);
+    if (peer) {
+      return {
+        conversationType: 'direct',
+        contactName: peer,
+        displayName: peer,
+        directPeerId: peer,
+      };
+    }
   }
 
   if (normalizedName.includes(' & ')) {
@@ -58,8 +70,8 @@ export function deriveConversationIdentity(
       .split(' & ')
       .map((v) => v.trim().toLowerCase())
       .filter(Boolean);
-    if (participants.length === 2 && participants.includes(userId.toLowerCase())) {
-      const peer = participants.find((p) => p !== userId.toLowerCase()) || participants[0];
+    if (participants.length === 2 && participants.includes(currentUser)) {
+      const peer = participants.find((p) => p !== currentUser) || participants[0];
       return {
         conversationType: 'direct',
         contactName: peer,
@@ -71,7 +83,7 @@ export function deriveConversationIdentity(
 
   if (metaId?.startsWith('dm_')) {
     const peer = normalizedName.toLowerCase();
-    if (peer && peer !== userId.toLowerCase()) {
+    if (peer && peer !== currentUser) {
       return {
         conversationType: 'direct',
         contactName: peer,
@@ -156,7 +168,10 @@ export async function mergeDirectConversationDuplicates(
       const updatedMeta = { ...meta, name: normalizedDirectName, updatedAt: Date.now() };
       await storage.saveConversation(updatedMeta);
       normalizedMetas.push(updatedMeta);
-    } catch {
+    } catch (e) {
+      log(
+        `[WARN] Echec normalisation conversation directe ${meta.id}: ${e instanceof Error ? e.message : String(e)}`
+      );
       normalizedMetas.push(meta);
     }
   }
@@ -325,8 +340,10 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
             messageReactions: ctx.messageReactions,
             log: ctx.log,
           });
-        } catch {
-          // Resilient: keep loading other conversations.
+        } catch (e) {
+          ctx.log(
+            `[WARN] Echec chargement conversation ${meta.id}: ${e instanceof Error ? e.message : String(e)}`
+          );
         }
       })()
     );

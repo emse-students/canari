@@ -683,35 +683,29 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           isDirect = true;
           // Extract peer from name pattern (userId::contact) or use sender
           if (groupName.includes('::')) {
-            const parts = groupName.split('::');
-            if (
-              parts.length === 2 &&
-              (parts[0].toLowerCase() === userId.toLowerCase() ||
-                parts[1].toLowerCase() === userId.toLowerCase())
-            ) {
-              directPeerId =
-                parts[0].toLowerCase() === userId.toLowerCase()
-                  ? parts[1].toLowerCase()
-                  : parts[0].toLowerCase();
-            } else {
-              directPeerId = senderNorm;
-            }
+            const parts = groupName
+              .split('::')
+              .map((p) => p.trim().toLowerCase())
+              .filter(Boolean);
+            const current = userId.toLowerCase();
+            const unique = [...new Set(parts)];
+            const peer = unique.find((p) => p !== current);
+            directPeerId = peer || senderNorm;
           } else {
             directPeerId = senderNorm;
           }
         } else if (isGroupFromApi === null && groupName.includes('::')) {
           // Fallback: name pattern detection for legacy groups
-          const parts = groupName.split('::');
-          if (
-            parts.length === 2 &&
-            (parts[0].toLowerCase() === userId.toLowerCase() ||
-              parts[1].toLowerCase() === userId.toLowerCase())
-          ) {
+          const parts = groupName
+            .split('::')
+            .map((p) => p.trim().toLowerCase())
+            .filter(Boolean);
+          const current = userId.toLowerCase();
+          const unique = [...new Set(parts)];
+          const peer = unique.find((p) => p !== current);
+          if (peer) {
             isDirect = true;
-            directPeerId =
-              parts[0].toLowerCase() === userId.toLowerCase()
-                ? parts[1].toLowerCase()
-                : parts[0].toLowerCase();
+            directPeerId = peer;
           }
         }
         // If isGroupFromApi === true, it's explicitly a group, so isDirect stays false

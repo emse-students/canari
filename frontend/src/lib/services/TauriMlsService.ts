@@ -44,6 +44,7 @@ export class TauriMlsService implements IMlsService {
   private disconnectCallback: (() => void) | null = null;
   private baseUrl: string;
   private historyUrl: string;
+  private authToken = '';
   private userId: string = 'unknown';
   private deviceId: string;
 
@@ -74,7 +75,13 @@ export class TauriMlsService implements IMlsService {
           : 'http://localhost:3010';
   }
 
+  private withAuthHeaders(extra: Record<string, string> = {}): Record<string, string> {
+    if (!this.authToken) return extra;
+    return { Authorization: `Bearer ${this.authToken}`, ...extra };
+  }
+
   async connect(token: string): Promise<void> {
+    this.authToken = token;
     // Close existing socket before creating a new one
     if (this.ws) {
       try {
@@ -190,6 +197,7 @@ export class TauriMlsService implements IMlsService {
       const ctrl = new AbortController();
       const tid = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT);
       const wRes = await fetch(`${this.historyUrl}/api/mls-api/welcome/${this.deviceId}`, {
+        headers: this.withAuthHeaders(),
         signal: ctrl.signal,
       });
       clearTimeout(tid);
@@ -217,7 +225,7 @@ export class TauriMlsService implements IMlsService {
       const tid2 = setTimeout(() => ctrl2.abort(), FETCH_TIMEOUT);
       const res = await fetch(
         `${this.historyUrl}/api/mls-api/messages/${this.userId}/${this.deviceId}`,
-        { signal: ctrl2.signal }
+        { headers: this.withAuthHeaders(), signal: ctrl2.signal }
       );
       clearTimeout(tid2);
       if (res.ok) {
@@ -238,7 +246,7 @@ export class TauriMlsService implements IMlsService {
           if (successfullyProcessedIds.length > 0) {
             const ackRes = await fetch(`${this.historyUrl}/api/mls-api/messages/ack`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
               body: JSON.stringify({
                 userId: this.userId,
                 deviceId: this.deviceId,

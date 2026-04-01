@@ -4,6 +4,19 @@ import type { IStorage } from '$lib/db';
 import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
 
+function parseDirectPeerFromName(rawName: string, userId: string): string | null {
+  const parts = rawName
+    .split('::')
+    .map((p) => p.trim().toLowerCase())
+    .filter(Boolean);
+  if (parts.length < 2) return null;
+
+  const current = userId.toLowerCase();
+  const unique = [...new Set(parts)];
+  const peer = unique.find((p) => p !== current);
+  return peer ?? null;
+}
+
 export async function syncOwnDevicesToGroups(params: {
   mlsService: IMlsService;
   userId: string;
@@ -183,10 +196,13 @@ export async function discoverMissingGroups(params: {
   }
   if (serverGroups.length === 0) return;
 
-  const localGroupIds = new Set(
-    [...conversations.values()].filter((c) => c.isReady).map((c) => c.groupId)
-  );
-  const missing = serverGroups.filter((g) => !localGroupIds.has(g.groupId));
+  // Some backends can transiently return duplicates; keep first occurrence by groupId.
+  const uniqueServerGroups = Array.from(new Map(serverGroups.map((g) => [g.groupId, g])).values());
+
+  // Include both ready and placeholder conversations to avoid recreating
+  // the same pending entry on each login.
+  const localGroupIds = new Set([...conversations.values()].map((c) => c.groupId));
+  const missing = uniqueServerGroups.filter((g) => !localGroupIds.has(g.groupId));
   if (missing.length === 0) return;
 
   log(
@@ -200,25 +216,31 @@ export async function discoverMissingGroups(params: {
     const existingEntry = [...conversations.entries()].find(([, c]) => c.groupId === g.groupId);
     if (existingEntry) continue;
 
+    const directPeer = !g.isGroup ? parseDirectPeerFromName(g.name || '', userId) : null;
+    const displayName = directPeer || g.name || g.groupId;
+
     const key = g.isGroup ? `grp_${crypto.randomUUID()}` : `dm_${crypto.randomUUID()}`;
     conversations.set(key, {
-      contactName: g.name || g.groupId,
-      name: g.name || g.groupId,
+      contactName: displayName,
+      name: displayName,
       groupId: g.groupId,
       messages: [],
       isReady: false, // Not ready until Welcome is processed
       mlsStateHex: null,
       conversationType: g.isGroup ? 'group' : 'direct',
+      ...(directPeer ? { directPeerId: directPeer } : {}),
     });
     // Persist to DB so the placeholder survives page reloads
     if (saveConversation) {
       try {
         await saveConversation(key);
-      } catch {
-        // Non-blocking
+      } catch (e) {
+        log(
+          `[WARN] Echec persistance placeholder ${g.groupId}: ${e instanceof Error ? e.message : String(e)}`
+        );
       }
     }
-    log(`[DISCOVERY] Groupe "${g.name}" ajouté en attente de Welcome.`);
+    log(`[DISCOVERY] Groupe "${displayName}" ajouté en attente de Welcome.`);
   }
 }
 
