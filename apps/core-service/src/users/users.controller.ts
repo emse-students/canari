@@ -11,7 +11,7 @@ import {
   Post,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
-import { UpdateUserDto } from './dto/user.dto';
+import { CreateUserDto, UpdateUserDto } from './dto/user.dto';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 
 interface JwtUser {
@@ -42,7 +42,7 @@ export class UsersController {
   create(@Body() createUserDto: CreateUserDto) {
     return this.usersService.create(createUserDto);
   }
-  
+
   @UseGuards(NginxAuthGuard)
   @Get('me')
   async getMe(@Headers('x-user-id') userId: string) {

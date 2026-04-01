@@ -24,7 +24,7 @@ export class User {
   stripeCustomerId: string | null;
 
   @Column({ type: 'boolean', default: false })
-  isGlobalAdmin: boolean;
+  admin: boolean;
 
   @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
   createdAt: Date;

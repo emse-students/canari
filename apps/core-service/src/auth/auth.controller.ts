@@ -92,6 +92,7 @@ export class AuthController {
       firstYearOfSchool: number | null;
       avatarMediaId: string | null;
       bio: string | null;
+      admin: boolean;
     };
   }> {
     const devId = (body?.id || 'dev').trim().toLowerCase();
@@ -121,7 +122,7 @@ export class AuthController {
     }
 
     const access_token = jwt.sign(
-      { sub: user.id, admin: !!user.isGlobalAdmin },
+      { sub: user.id, admin: !!user.admin },
       this.jwtSecret,
       {
         expiresIn: '1h',
@@ -144,7 +145,7 @@ export class AuthController {
         firstYearOfSchool: user.firstYearOfSchool ?? null,
         avatarMediaId: user.avatarMediaId ?? null,
         bio: user.bio ?? null,
-        isGlobalAdmin: !!user.isGlobalAdmin,
+        admin: !!user.admin,
       },
     };
   }
@@ -162,6 +163,7 @@ export class AuthController {
       firstYearOfSchool: number | null;
       avatarMediaId: string | null;
       bio: string | null;
+      admin: boolean;
     };
   }> {
     const { code, redirect_uri } = body ?? {};
@@ -245,7 +247,7 @@ export class AuthController {
 
     // 4. Issue internal JWT pair
     const access_token = jwt.sign(
-      { sub: user.id, admin: !!user.isGlobalAdmin },
+      { sub: user.id, admin: !!user.admin },
       this.jwtSecret,
       {
         expiresIn: '1h',
@@ -269,7 +271,7 @@ export class AuthController {
         firstYearOfSchool: user.firstYearOfSchool ?? null,
         avatarMediaId: user.avatarMediaId ?? null,
         bio: user.bio ?? null,
-        isGlobalAdmin: !!user.isGlobalAdmin,
+        admin: !!user.admin,
       },
     };
   }
@@ -304,7 +306,7 @@ export class AuthController {
 
     // Look up the user to get current admin status
     const user = await this.usersService.findOne(payload.sub).catch(() => null);
-    const isAdmin = !!user?.isGlobalAdmin;
+    const isAdmin = !!user?.admin;
 
     const access_token = jwt.sign(
       { sub: payload.sub, admin: isAdmin },

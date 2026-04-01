@@ -39,12 +39,12 @@ export function saveUserLocally(user: {
   id: string;
   email?: string;
   displayName?: string;
-  isGlobalAdmin?: boolean;
+  admin?: boolean;
 }): void {
   localStorage.setItem(USER_STORAGE_KEY, user.id);
   if (user.email) localStorage.setItem(USER_EMAIL_KEY, user.email);
   if (user.displayName) localStorage.setItem(USER_DISPLAY_NAME_KEY, user.displayName);
-  localStorage.setItem(USER_GLOBAL_ADMIN_KEY, user.isGlobalAdmin ? 'true' : 'false');
+  localStorage.setItem(USER_GLOBAL_ADMIN_KEY, user.admin ? 'true' : 'false');
 }
 
 export function clearUserLocally(): void {
