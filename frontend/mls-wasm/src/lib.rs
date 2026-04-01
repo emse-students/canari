@@ -19,7 +19,19 @@ impl log::Log for WebLogger {
 
     fn log(&self, record: &Record) {
         if self.enabled(record.metadata()) {
-            js_log(&record.level().to_string(), &format!("{}", record.args()));
+            let message = format!("{}", record.args());
+            // WrongEpoch / SecretReuseError can happen during replay and are
+            // handled gracefully by the frontend; don't emit them as ERROR noise.
+            if record.level() == Level::Error
+                && (message.contains("Wrong Epoch")
+                    || message.contains("wrong epoch")
+                    || message.contains("SecretReuseError")
+                    || message.contains("CannotDecryptOwnMessage"))
+            {
+                js_log("DEBUG", &message);
+                return;
+            }
+            js_log(&record.level().to_string(), &message);
         }
     }
 
@@ -227,7 +239,7 @@ impl WasmMlsClient {
         group_id: String,
         message_bytes: Vec<u8>,
     ) -> Result<Vec<u8>, JsValue> {
-        log::info!(
+        log::debug!(
             "send_message_bytes to group: {} ({} bytes)",
             group_id,
             message_bytes.len()
@@ -263,7 +275,7 @@ impl WasmMlsClient {
         group_id: String,
         message_bytes: Vec<u8>,
     ) -> Result<Option<String>, JsValue> {
-        log::info!(
+        log::debug!(
             "process_incoming_message for group: {} ({} bytes)",
             group_id,
             message_bytes.len()
@@ -286,7 +298,7 @@ impl WasmMlsClient {
         group_id: String,
         message_bytes: Vec<u8>,
     ) -> Result<Option<Vec<u8>>, JsValue> {
-        log::info!(
+        log::debug!(
             "process_incoming_message_bytes for group: {} ({} bytes)",
             group_id,
             message_bytes.len()

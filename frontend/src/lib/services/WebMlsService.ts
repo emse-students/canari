@@ -672,6 +672,8 @@ export class WebMlsService implements IMlsService {
           if (isExpectedError) {
             // Downgrade to debug level - these are expected during normal operation
             console.debug(`[RUST::${level}] ${msg}`);
+          } else if (level === 'DEBUG') {
+            console.debug(`[RUST::${level}] ${msg}`);
           } else {
             console.log(`[RUST::${level}] ${msg}`);
           }
