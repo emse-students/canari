@@ -196,11 +196,9 @@ async function processBulkAddition(
     // Add all devices in bulk (single MLS commit)
     const bulk = await mlsService.addMembersBulk(conversation.groupId, allDevices);
 
-    // Register mapping for all added devices
-    for (const did of bulk.addedDeviceIds) {
-      const u = userMap.get(did);
-      if (u) await mlsService.registerMember(conversation.groupId, u, did);
-    }
+    // Track delivery success per user. We only register server membership when a
+    // Welcome has been successfully accepted by delivery service for that device.
+    const deliveredUsers = new Set<string>();
 
     const stateBytes = await mlsService.saveState(pin);
     localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
@@ -224,6 +222,8 @@ async function processBulkAddition(
             did,
             bulk.ratchetTree
           );
+          await mlsService.registerMember(conversation.groupId, tUser, did);
+          deliveredUsers.add(tUser);
           log(`[SYNC] Welcome envoye avec succes a ${tUser}:${did}`);
         } catch (err) {
           log(
@@ -237,19 +237,27 @@ async function processBulkAddition(
 
     if (bulk.commit) await mlsService.sendCommit(bulk.commit, conversation.groupId);
 
-    log(`[OK] Ajoutes: ${targetUsers.join(', ')} (${bulk.addedDeviceIds.length} appareils).`);
+    log(
+      `[OK] Ajoutes: ${targetUsers.join(', ')} (${bulk.addedDeviceIds.length} appareils, ${deliveredUsers.size} utilisateur(s) livrés).`
+    );
 
     // Broadcast member addition notification (one generic or multiple specific?)
     // Let's send one generic message listing all new users
-    try {
-      const controlMsg = encodeAppMessage(
-        mkSystem('memberAdded', JSON.stringify({ newUsers: targetUsers }))
+    if (deliveredUsers.size > 0) {
+      try {
+        const controlMsg = encodeAppMessage(
+          mkSystem('memberAdded', JSON.stringify({ newUsers: [...deliveredUsers] }))
+        );
+        await mlsService.sendMessage(conversation.groupId, controlMsg);
+        const st = await mlsService.saveState(pin);
+        localStorage.setItem('mls_autosave_' + userId, toHex(st));
+      } catch (e) {
+        console.warn('Failed to broadcast member addition:', e);
+      }
+    } else {
+      log(
+        '[WARN] Aucun Welcome livré: aucun membre ajouté ne sera annoncé tant que la livraison échoue.'
       );
-      await mlsService.sendMessage(conversation.groupId, controlMsg);
-      const st = await mlsService.saveState(pin);
-      localStorage.setItem('mls_autosave_' + userId, toHex(st));
-    } catch (e) {
-      console.warn('Failed to broadcast member addition:', e);
     }
   } catch (e: any) {
     log(`Erreur invitation groupée: ${toUiDiscussionError(e)}`);

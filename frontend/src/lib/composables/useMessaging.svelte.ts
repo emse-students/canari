@@ -113,7 +113,7 @@ export function useMessaging() {
       }
     }
 
-    if (ctx.storage && !isSystem) {
+    if (ctx.storage) {
       try {
         await ctx.storage.saveMessage(
           {
@@ -122,6 +122,7 @@ export function useMessaging() {
             senderId: newMsg.senderId,
             content,
             timestamp: newMsg.timestamp.getTime(),
+            ...(isSystem ? { readBy: [] } : {}),
           },
           ctx.pin
         );
@@ -309,6 +310,38 @@ export function useMessaging() {
     const updated = existing.filter((r) => r.userId !== meNorm);
     updated.push({ emoji, userId: meNorm });
     messageReactions.set(messageId, updated);
+
+    // Keep in-memory conversation + DB in sync immediately so reactions survive reload,
+    // even if the network echo arrives late or fails.
+    const msgIdx = convo.messages.findIndex((m) => m.id === messageId);
+    if (msgIdx !== -1) {
+      const nextMsgs = [...convo.messages];
+      nextMsgs[msgIdx] = { ...nextMsgs[msgIdx], reactions: updated };
+      ctx.conversations.set(ctx.selectedContact, { ...convo, messages: nextMsgs });
+
+      if (ctx.storage) {
+        try {
+          const target = nextMsgs[msgIdx];
+          await ctx.storage.saveMessage(
+            {
+              id: target.id,
+              conversationId: ctx.selectedContact,
+              senderId: target.senderId,
+              content: target.content,
+              timestamp: target.timestamp.getTime(),
+              readBy: target.readBy,
+              reactions: updated,
+              isDeleted: target.isDeleted,
+              isEdited: target.isEdited,
+            },
+            ctx.pin
+          );
+        } catch (e) {
+          console.warn('[DB] Failed to persist reaction locally:', e);
+        }
+      }
+    }
+
     await addReaction(messageId, emoji, {
       mlsService: ctx.ensureMls(),
       userId: ctx.userId,
