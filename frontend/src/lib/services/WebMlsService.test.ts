@@ -64,7 +64,7 @@ describe('WebMlsService.fetchPendingMessages', () => {
     expect(messagesCall[1]?.signal).toBeDefined();
   });
 
-  it('applique les headers auth sur welcome et ack', async () => {
+  it('applique les headers auth sur welcome, messages et ack', async () => {
     const service = setupService();
 
     fetchMock
@@ -87,11 +87,15 @@ describe('WebMlsService.fetchPendingMessages', () => {
     const welcomeCall = fetchMock.mock.calls.find((args) =>
       String(args[0]).includes('/api/mls-api/welcome/')
     );
+    const messagesCall = fetchMock.mock.calls.find((args) =>
+      String(args[0]).includes('/api/mls-api/messages/jolan/dev-1')
+    );
     const ackCall = fetchMock.mock.calls.find((args) =>
       String(args[0]).includes('/api/mls-api/messages/ack')
     );
 
     expect((welcomeCall as any)[1].headers.Authorization).toBe('Bearer token-abc');
+    expect((messagesCall as any)[1].headers.Authorization).toBe('Bearer token-abc');
     expect((ackCall as any)[1].headers.Authorization).toBe('Bearer token-abc');
   });
 });

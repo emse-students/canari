@@ -348,7 +348,7 @@ export class WebMlsService implements IMlsService {
       const tid2 = setTimeout(() => ctrl2.abort(), FETCH_TIMEOUT);
       const res = await fetch(
         `${this.historyUrl}/api/mls-api/messages/${this.userId}/${this.deviceId}`,
-        { signal: ctrl2.signal }
+        { headers: this.withAuthHeaders(), signal: ctrl2.signal }
       );
       clearTimeout(tid2);
       if (res.ok) {

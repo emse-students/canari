@@ -420,7 +420,9 @@ export class TauriMlsService implements IMlsService {
     userId: string
   ): Promise<Array<{ keyPackage: Uint8Array; deviceId: string }>> {
     try {
-      const res = await fetch(`${this.historyUrl}/api/mls-api/devices/${userId}`);
+      const res = await fetch(`${this.historyUrl}/api/mls-api/devices/${userId}`, {
+        headers: this.withAuthHeaders(),
+      });
       if (!res.ok) return [];
       const devices = await res.json();
 
@@ -442,7 +444,7 @@ export class TauriMlsService implements IMlsService {
     try {
       await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}/members`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ userId, deviceId }),
       });
     } catch (e) {
@@ -454,7 +456,7 @@ export class TauriMlsService implements IMlsService {
     const base64 = btoa(String.fromCharCode(...keyPackageBytes));
     const response = await fetch(`${this.historyUrl}/api/mls-api/register-device`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         userId: this.userId,
         deviceId: this.deviceId,
@@ -482,7 +484,7 @@ export class TauriMlsService implements IMlsService {
     if (targetDeviceId) {
       const response = await fetch(`${this.historyUrl}/api/mls-api/welcome`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           targetDeviceId,
           targetUserId,
@@ -500,16 +502,57 @@ export class TauriMlsService implements IMlsService {
     }
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      let resolvedDeviceId = targetDeviceId;
+      if (!resolvedDeviceId) {
+        const devices = await this.fetchUserDevices(targetUserId);
+        resolvedDeviceId = devices[0]?.deviceId;
+      }
+      if (!resolvedDeviceId) {
+        throw new Error(
+          `Impossible d'envoyer l'invitation sécurisée à ${targetUserId} : ` +
+            `aucun appareil actif trouvé.`
+        );
+      }
       this.ws.send(
         JSON.stringify({
           type: 'welcome',
           groupId,
           proto: base64,
           ratchetTree: ratchetTreeBase64,
-          recipients: [{ userId: targetUserId, deviceId: targetDeviceId ?? '' }],
+          recipients: [{ userId: targetUserId, deviceId: resolvedDeviceId }],
         })
       );
+      return;
     }
+
+    // WS closed fallback: resolve deviceId and use the dedicated REST endpoint.
+    let resolvedDeviceId = targetDeviceId;
+    if (!resolvedDeviceId) {
+      const devices = await this.fetchUserDevices(targetUserId);
+      resolvedDeviceId = devices[0]?.deviceId;
+    }
+    if (!resolvedDeviceId) {
+      throw new Error(
+        `Impossible d'envoyer l'invitation sécurisée à ${targetUserId} : ` +
+          `aucun appareil actif trouvé.`
+      );
+    }
+    const response = await fetch(`${this.historyUrl}/api/mls-api/welcome`, {
+      method: 'POST',
+      headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        targetDeviceId: resolvedDeviceId,
+        targetUserId,
+        senderUserId: this.userId,
+        welcomePayload: base64,
+        ratchetTreePayload: ratchetTreeBase64,
+        groupId,
+      }),
+    });
+    await this.assertOkResponse(
+      response,
+      `Welcome fallback delivery to ${targetUserId}:${resolvedDeviceId} (group ${groupId})`
+    );
   }
 
   async init(userId: string, pin: string, state?: Uint8Array) {
@@ -543,7 +586,7 @@ export class TauriMlsService implements IMlsService {
     try {
       const res = await fetch(`${this.historyUrl}/api/mls-api/groups`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ name, createdBy: this.userId, isGroup }),
       });
       if (!res.ok) throw new Error('Failed to create remote group');
@@ -566,7 +609,7 @@ export class TauriMlsService implements IMlsService {
       // Fallback HTTP
       await fetch(`${this.historyUrl}/api/mls-api/send`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           senderId: this.userId,
           senderDeviceId: this.deviceId,
@@ -681,7 +724,7 @@ export class TauriMlsService implements IMlsService {
     console.warn('Sending via HTTP fallback (Tauri)...');
     const response = await fetch(`${this.historyUrl}/api/mls-api/send`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         senderId: this.userId,
         senderDeviceId: this.deviceId,
@@ -724,7 +767,9 @@ export class TauriMlsService implements IMlsService {
     groupId: string
   ): Promise<{ sender_id: string; content: string; timestamp: string }[]> {
     try {
-      const res = await fetch(`${this.historyUrl}/api/history/${groupId}`);
+      const res = await fetch(`${this.historyUrl}/api/history/${groupId}`, {
+        headers: this.withAuthHeaders(),
+      });
       if (!res.ok) return [];
       const contentType = res.headers.get('content-type') ?? '';
       if (!contentType.toLowerCase().includes('application/json')) {
@@ -750,7 +795,7 @@ export class TauriMlsService implements IMlsService {
   async renameGroup(groupId: string, name: string): Promise<void> {
     const res = await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ name }),
     });
     if (!res.ok) throw new Error(`Rename failed: ${res.status}`);
@@ -759,6 +804,7 @@ export class TauriMlsService implements IMlsService {
   async deleteGroupOnServer(groupId: string): Promise<void> {
     const res = await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}`, {
       method: 'DELETE',
+      headers: this.withAuthHeaders(),
     });
     if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
   }
@@ -766,6 +812,7 @@ export class TauriMlsService implements IMlsService {
   async removeMemberFromServer(groupId: string, userId: string): Promise<void> {
     const res = await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}/members/${userId}`, {
       method: 'DELETE',
+      headers: this.withAuthHeaders(),
     });
     if (!res.ok) throw new Error(`Remove member failed: ${res.status}`);
   }
