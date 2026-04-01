@@ -369,11 +369,21 @@ impl MlsManager {
 
         let group_id = String::from_utf8_lossy(group.group_id().as_slice()).to_string();
 
-        // Save to our map
-        self.groups.insert(group_id.clone(), group);
+        // Don't overwrite an actively running group: a stale pending Welcome or a Welcome
+        // generated from a parallel commit at the same base epoch would silently corrupt
+        // the epoch key schedule, causing AeadError on all subsequent messages.
+        // If the group is already in our map, the in-memory state is authoritative.
+        // Recovery (group lost from memory but present in conversations) is handled by
+        // the absence of the key — only then do we insert.
+        if self.groups.contains_key(&group_id) {
+            log::info!(
+                "process_welcome: groupe {} deja actif — Welcome ignore (etat en memoire conserve)",
+                group_id
+            );
+            return Ok(group_id);
+        }
 
-        // Save to storage immediately to persist the join
-        // (Optional: usually explicit save is better, but safe for now)
+        self.groups.insert(group_id.clone(), group);
 
         Ok(group_id)
     }

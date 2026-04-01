@@ -283,6 +283,22 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         }
       }
 
+      // Welcome for an already-known group: process at MLS level only.
+      // The Rust layer will skip overwriting if the group is already active.
+      // This handles the recovery case (MLS state lost, conversation persists)
+      // while preventing a stale or parallel-commit Welcome from corrupting
+      // the epoch key schedule (root cause of AeadError at equal epochs).
+      if (convoKey && isWelcome) {
+        try {
+          await mlsService.processWelcome(content, ratchetTreeBytes);
+          const stBytes = await mlsService.saveState(pin);
+          localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
+        } catch {
+          // Welcome was for another device or already handled — ignore
+        }
+        return true;
+      }
+
       // Process message for known conversation
       if (convoKey && !isWelcome) {
         const convo = conversations.get(convoKey)!;
