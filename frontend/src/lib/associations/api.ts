@@ -4,7 +4,9 @@ export interface AssociationMember {
   id: string;
   associationId: string;
   userId: string;
+  displayName: string | null;
   role: string;
+  permission: 0 | 1;
   createdAt: string;
 }
 
@@ -115,22 +117,24 @@ export async function deleteAssociation(id: string): Promise<{ ok: boolean }> {
 export async function addMember(
   associationId: string,
   userId: string,
-  role: string = 'member'
+  role: string,
+  permission: 0 | 1
 ): Promise<AssociationMember> {
   return request<AssociationMember>(
     `/api/associations/${encodeURIComponent(associationId)}/members`,
-    { method: 'POST', body: JSON.stringify({ userId, role }) }
+    { method: 'POST', body: JSON.stringify({ userId, role, permission }) }
   );
 }
 
 export async function updateMemberRole(
   associationId: string,
   userId: string,
-  role: string
+  role?: string,
+  permission?: 0 | 1
 ): Promise<AssociationMember> {
   return request<AssociationMember>(
     `/api/associations/${encodeURIComponent(associationId)}/members/${encodeURIComponent(userId)}`,
-    { method: 'PATCH', body: JSON.stringify({ role }) }
+    { method: 'PATCH', body: JSON.stringify({ role, permission }) }
   );
 }
 

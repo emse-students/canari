@@ -4,6 +4,29 @@ import { Repository } from 'typeorm';
 import { User } from './entities/user.entity';
 import { CreateUserDto, UpdateUserDto, PublicUserDto } from './dto/user.dto';
 
+/**
+ * Parse "Firstname LASTNAME" into { firstName, lastName }.
+ * Words that are fully uppercase are treated as the last name.
+ */
+function parseName(name: string): { firstName: string; lastName: string } {
+  const parts = name.trim().split(/\s+/);
+  const lastNameParts: string[] = [];
+  const firstNameParts: string[] = [];
+
+  for (const part of parts) {
+    if (part === part.toUpperCase() && part.length > 1) {
+      lastNameParts.push(part);
+    } else {
+      firstNameParts.push(part);
+    }
+  }
+
+  return {
+    firstName: firstNameParts.join(' ') || parts[0] || '',
+    lastName: lastNameParts.join(' ') || '',
+  };
+}
+
 @Injectable()
 export class UsersService {
   constructor(
@@ -35,7 +58,9 @@ export class UsersService {
       id: user.id,
       email: user.email,
       displayName: user.displayName,
-      firstYearOfSchool: user.firstYearOfSchool,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      promo: user.promo,
       avatarMediaId: user.avatarMediaId,
       bio: user.bio,
       createdAt: user.createdAt,
@@ -44,13 +69,13 @@ export class UsersService {
 
   /**
    * Upsert a user from OIDC provider data (Authentik).
-   * Creates the user if they don't exist, or updates email/displayName/firstYearOfSchool if changed.
+   * Creates the user if they don't exist, or updates email/displayName/promo if changed.
    */
   async findOrCreateFromOidc(
     id: string,
     email: string | null,
     displayName: string | null,
-    firstYearOfSchool: number | null = null,
+    promo: number | null = null,
   ): Promise<User> {
     const user = await this.userRepository.findOne({ where: { id } });
     if (user) {
@@ -63,11 +88,8 @@ export class UsersService {
         user.displayName = displayName;
         updated = true;
       }
-      if (
-        firstYearOfSchool !== null &&
-        user.firstYearOfSchool !== firstYearOfSchool
-      ) {
-        user.firstYearOfSchool = firstYearOfSchool;
+      if (promo !== null && user.promo !== promo) {
+        user.promo = promo;
         updated = true;
       }
       if (updated) {
@@ -81,13 +103,15 @@ export class UsersService {
       id,
       email: email || null,
       displayName: displayName || null,
-      firstYearOfSchool,
+      firstName: displayName ? parseName(displayName).firstName : null,
+      lastName: displayName ? parseName(displayName).lastName : null,
+      promo,
     });
     return await this.userRepository.save(newUser);
   }
 
   /**
-   * Search users by id or displayName (case-insensitive prefix match).
+   * Search users by displayName (case-insensitive prefix match).
    * Returns up to 10 results, excluding the current user.
    */
   async search(
@@ -99,8 +123,8 @@ export class UsersService {
     const qb = this.userRepository
       .createQueryBuilder('user')
       .select(['user.id', 'user.displayName'])
-      .where('user.id ILIKE :q OR user.displayName ILIKE :q', {
-        q: `${query}%`,
+      .where('user.displayName ILIKE :q', {
+        q: `%${query}%`,
       });
 
     if (excludeUserId) {

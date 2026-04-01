@@ -18,6 +18,7 @@
   import { Users, Settings, CreditCard, Trash2, UserPlus } from 'lucide-svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
+  import UserAutocomplete from '$lib/components/shared/UserAutocomplete.svelte';
 
   let asso = $state<Association | null>(null);
   let members = $state<AssociationMember[]>([]);
@@ -38,7 +39,8 @@
 
   // Add member state
   let newMemberUserId = $state('');
-  let newMemberRole = $state('member');
+  let newMemberRole = $state('Membre');
+  let newMemberPermission = $state<0 | 1>(0);
   let addingMember = $state(false);
   let memberError = $state('');
 
@@ -96,10 +98,16 @@
     addingMember = true;
     memberError = '';
     try {
-      const member = await addMember(asso.id, newMemberUserId.trim(), newMemberRole);
+      const member = await addMember(
+        asso.id,
+        newMemberUserId.trim(),
+        newMemberRole,
+        newMemberPermission
+      );
       members = [...members, member];
       newMemberUserId = '';
-      newMemberRole = 'member';
+      newMemberRole = 'Membre';
+      newMemberPermission = 0;
     } catch (err) {
       memberError = err instanceof Error ? err.message : 'Erreur';
     } finally {
@@ -117,11 +125,11 @@
     }
   }
 
-  async function handleChangeRole(userId: string, role: string) {
+  async function handleChangeRole(userId: string, role: string, permission: 0 | 1) {
     if (!asso) return;
     try {
-      await updateMemberRole(asso.id, userId, role);
-      members = members.map((m) => (m.userId === userId ? { ...m, role } : m));
+      await updateMemberRole(asso.id, userId, role, permission);
+      members = members.map((m) => (m.userId === userId ? { ...m, role, permission } : m));
     } catch (err) {
       memberError = err instanceof Error ? err.message : 'Erreur';
     }
@@ -280,29 +288,44 @@
         {#each members as member (member.id)}
           <div class="flex items-center justify-between rounded-xl bg-cn-bg/50 px-4 py-2.5">
             <div class="flex items-center gap-3 min-w-0">
-              <span class="text-sm font-medium text-text-main truncate">{member.userId}</span>
+              <span class="text-sm font-medium text-text-main truncate"
+                >{member.displayName || member.userId}</span
+              >
               <span
                 class="text-xs font-semibold px-2 py-0.5 rounded-full
-                {member.role === 'owner'
-                  ? 'bg-amber-100 text-amber-700'
-                  : member.role === 'admin'
-                    ? 'bg-blue-100 text-blue-700'
-                    : 'bg-gray-100 text-gray-600'}"
+                {member.permission === 1
+                  ? 'bg-blue-100 text-blue-700'
+                  : 'bg-gray-100 text-gray-600'}"
               >
                 {member.role}
               </span>
             </div>
             {#if isGlobalAdminUser}
               <div class="flex items-center gap-2">
-                <select
+                <input
+                  type="text"
                   value={member.role}
                   onchange={(e) =>
-                    handleChangeRole(member.userId, (e.target as HTMLSelectElement).value)}
+                    handleChangeRole(
+                      member.userId,
+                      (e.target as HTMLInputElement).value,
+                      member.permission as 0 | 1
+                    )}
+                  class="text-xs rounded-lg border border-cn-border bg-white px-2 py-1 w-28"
+                  placeholder="Nom du rôle"
+                />
+                <select
+                  value={member.permission}
+                  onchange={(e) =>
+                    handleChangeRole(
+                      member.userId,
+                      member.role,
+                      Number((e.target as HTMLSelectElement).value) as 0 | 1
+                    )}
                   class="text-xs rounded-lg border border-cn-border bg-white px-2 py-1"
                 >
-                  <option value="member">member</option>
-                  <option value="admin">admin</option>
-                  <option value="owner">owner</option>
+                  <option value={0}>Membre</option>
+                  <option value={1}>Admin</option>
                 </select>
                 <button
                   onclick={() => handleRemoveMember(member.userId)}
@@ -331,18 +354,27 @@
               handleAddMember();
             }}
           >
+            <div class="flex-1">
+              <UserAutocomplete
+                value={newMemberUserId}
+                onValueChange={(v) => (newMemberUserId = v)}
+                placeholder="Rechercher un utilisateur…"
+                inputId="add-member-autocomplete"
+                onSubmit={handleAddMember}
+              />
+            </div>
             <input
               type="text"
-              bind:value={newMemberUserId}
-              placeholder="ID de l'utilisateur"
-              class="flex-1 rounded-xl border border-cn-border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cn-yellow/50"
+              bind:value={newMemberRole}
+              placeholder="Nom du rôle"
+              class="w-28 rounded-xl border border-cn-border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cn-yellow/50"
             />
             <select
-              bind:value={newMemberRole}
+              bind:value={newMemberPermission}
               class="rounded-xl border border-cn-border bg-white px-3 py-2 text-sm"
             >
-              <option value="member">member</option>
-              <option value="admin">admin</option>
+              <option value={0}>Membre</option>
+              <option value={1}>Admin</option>
             </select>
             <button
               type="submit"

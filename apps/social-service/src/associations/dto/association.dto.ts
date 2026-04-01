@@ -1,4 +1,12 @@
-import { IsArray, IsEnum, IsNotEmpty, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
+import {
+  IsArray,
+  IsEnum,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Matches,
+  MaxLength,
+} from 'class-validator';
 import { AssociationPermission } from '../entities/association-member.entity';
 
 export class CreateAssociationDto {
@@ -51,8 +59,7 @@ export class AddMemberDto {
   role: string;
 
   @IsEnum(AssociationPermission)
-  @IsOptional()
-  permission?: AssociationPermission;
+  permission: AssociationPermission;
 }
 
 export class UpdateMemberRoleDto {

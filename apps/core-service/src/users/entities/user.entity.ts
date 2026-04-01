@@ -11,8 +11,14 @@ export class User {
   @Column({ type: 'varchar', nullable: true })
   displayName: string | null;
 
+  @Column({ type: 'varchar', nullable: true })
+  firstName: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  lastName: string | null;
+
   @Column({ type: 'int', nullable: true })
-  firstYearOfSchool: number | null;
+  promo: number | null;
 
   @Column({ type: 'varchar', nullable: true })
   avatarMediaId: string | null;

@@ -89,7 +89,7 @@ export class AuthController {
       id: string;
       email: string;
       displayName: string;
-      firstYearOfSchool: number | null;
+      promo: number | null;
       avatarMediaId: string | null;
       bio: string | null;
       admin: boolean;
@@ -142,7 +142,7 @@ export class AuthController {
         id: user.id,
         email: user.email || '',
         displayName: user.displayName || '',
-        firstYearOfSchool: user.firstYearOfSchool ?? null,
+        promo: user.promo ?? null,
         avatarMediaId: user.avatarMediaId ?? null,
         bio: user.bio ?? null,
         admin: !!user.admin,
@@ -160,7 +160,7 @@ export class AuthController {
       id: string;
       email: string;
       displayName: string;
-      firstYearOfSchool: number | null;
+      promo: number | null;
       avatarMediaId: string | null;
       bio: string | null;
       admin: boolean;
@@ -222,9 +222,8 @@ export class AuthController {
     const userinfo = (await userinfoRes.json()) as {
       sub: string;
       email?: string;
-      preferred_username?: string;
       name?: string;
-      first_year_of_school?: number;
+      promo?: number;
     };
 
     if (!userinfo.sub) {
@@ -234,15 +233,12 @@ export class AuthController {
     }
 
     // 3. Upsert local user
-    const firstYear =
-      typeof userinfo.first_year_of_school === 'number'
-        ? userinfo.first_year_of_school
-        : null;
+    const promo = typeof userinfo.promo === 'number' ? userinfo.promo : null;
     const user = await this.usersService.findOrCreateFromOidc(
       userinfo.sub,
       userinfo.email || null,
-      userinfo.name || userinfo.preferred_username || null,
-      firstYear,
+      userinfo.name || null,
+      promo,
     );
 
     // 4. Issue internal JWT pair
@@ -268,7 +264,7 @@ export class AuthController {
         id: user.id,
         email: user.email || '',
         displayName: user.displayName || '',
-        firstYearOfSchool: user.firstYearOfSchool ?? null,
+        promo: user.promo ?? null,
         avatarMediaId: user.avatarMediaId ?? null,
         bio: user.bio ?? null,
         admin: !!user.admin,

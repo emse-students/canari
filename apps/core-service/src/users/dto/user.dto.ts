@@ -49,7 +49,9 @@ export class PublicUserDto {
   id: string;
   email: string | null;
   displayName: string | null;
-  firstYearOfSchool: number | null;
+  firstName: string | null;
+  lastName: string | null;
+  promo: number | null;
   avatarMediaId: string | null;
   bio: string | null;
   createdAt: Date;

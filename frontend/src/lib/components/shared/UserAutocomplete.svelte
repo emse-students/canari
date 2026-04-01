@@ -3,8 +3,7 @@
 
   interface User {
     id: string;
-    oidcSub: string;
-    createdAt: string;
+    displayName: string | null;
   }
 
   interface Props {
@@ -20,7 +19,7 @@
     value,
     onValueChange,
     onSelect,
-    placeholder = 'ex: alice',
+    placeholder = 'Rechercher un utilisateur…',
     inputId = 'user-autocomplete',
     onSubmit,
   }: Props = $props();
@@ -73,7 +72,7 @@
   }
 
   function selectUser(user: User) {
-    onValueChange(user.oidcSub);
+    onValueChange(user.id);
     showDropdown = false;
     suggestions = [];
     onSelect?.(user);
@@ -173,7 +172,7 @@
               : ''}"
             onmousedown={() => selectUser(user)}
           >
-            <span class="font-medium text-text-main">{user.oidcSub}</span>
+            <span class="font-medium text-text-main">{user.displayName || user.id}</span>
           </button>
         </li>
       {/each}

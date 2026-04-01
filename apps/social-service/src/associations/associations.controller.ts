@@ -13,6 +13,7 @@ import {
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { AssociationRoleGuard, MIN_ROLE_KEY } from './guards/association-role.guard';
+import { AssociationPermission } from './entities/association-member.entity';
 import { AssociationsService } from './associations.service';
 import {
   AddMemberDto,
@@ -71,7 +72,7 @@ export class AssociationsController {
 
   // ── Association Admin+ (settings) ─────────────────────────────────────────
 
-  @SetMetadata(MIN_ROLE_KEY, 'admin')
+  @SetMetadata(MIN_ROLE_KEY, AssociationPermission.Admin)
   @UseGuards(NginxAuthGuard, AssociationRoleGuard)
   @Patch(':id')
   update(@Param('id') id: string, @Body() dto: UpdateAssociationDto) {
@@ -83,7 +84,7 @@ export class AssociationsController {
   @UseGuards(NginxAuthGuard, GlobalAdminGuard)
   @Post(':id/members')
   addMember(@Param('id') id: string, @Body() dto: AddMemberDto) {
-    return this.service.addMember(id, dto.userId, dto.role);
+    return this.service.addMember(id, dto.userId, dto.role, dto.permission);
   }
 
   @UseGuards(NginxAuthGuard, GlobalAdminGuard)
@@ -93,17 +94,13 @@ export class AssociationsController {
     @Param('userId') targetUserId: string,
     @Body() dto: UpdateMemberRoleDto
   ) {
-    return this.service.updateMemberRole(id, targetUserId, dto.role);
+    return this.service.updateMemberRole(id, targetUserId, dto.role, dto.permission);
   }
 
   @UseGuards(NginxAuthGuard, GlobalAdminGuard)
   @Delete(':id/members/:userId')
-  removeMember(
-    @Param('id') id: string,
-    @Param('userId') targetUserId: string,
-    @Headers('x-user-id') callerUserId: string
-  ) {
-    return this.service.removeMember(id, targetUserId, callerUserId);
+  removeMember(@Param('id') id: string, @Param('userId') targetUserId: string) {
+    return this.service.removeMember(id, targetUserId);
   }
 
   // ── Internal (called by core-service webhook) ─────────────────────────────

@@ -2,9 +2,8 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Association } from './entities/association.entity';
-import { AssociationMember, type AssociationRole } from './entities/association-member.entity';
+import { AssociationMember, AssociationPermission } from './entities/association-member.entity';
 import { CreateAssociationDto, UpdateAssociationDto } from './dto/association.dto';
-import { ROLE_HIERARCHY } from './guards/association-role.guard';
 
 @Injectable()
 export class AssociationsService {
@@ -28,14 +27,6 @@ export class AssociationsService {
     const asso = this.assoRepo.create({ ...dto, createdBy: userId });
     const saved = await this.assoRepo.save(asso);
 
-    // Creator becomes owner
-    const membership = this.memberRepo.create({
-      associationId: saved.id,
-      userId,
-      role: 'owner',
-    });
-    await this.memberRepo.save(membership);
-
     return saved;
   }
 
@@ -52,7 +43,12 @@ export class AssociationsService {
       .groupBy('m.associationId')
       .getRawMany();
 
-    const countMap = new Map(counts.map((c) => [c.associationId, parseInt(c.count, 10)]));
+    const countMap = new Map(
+      counts.map((c: { associationId: string; count: string }) => [
+        c.associationId,
+        parseInt(c.count, 10),
+      ])
+    );
 
     return associations.map((a) => ({
       ...a,
@@ -93,13 +89,33 @@ export class AssociationsService {
   // ── Members ───────────────────────────────────────────────────────────────
 
   async listMembers(associationId: string) {
-    return this.memberRepo.find({
-      where: { associationId },
-      order: { createdAt: 'ASC' },
-    });
+    // Join with users table (same DB) to get displayName
+    return this.memberRepo
+      .createQueryBuilder('m')
+      .select(['m.id', 'm.associationId', 'm.userId', 'm.role', 'm.createdAt'])
+      .addSelect('u."displayName"', 'displayName')
+      .leftJoin('users', 'u', 'u.id = m."userId"')
+      .where('m."associationId" = :associationId', { associationId })
+      .orderBy('m."createdAt"', 'ASC')
+      .getRawMany()
+      .then((rows) =>
+        rows.map((r) => ({
+          id: r.m_id,
+          associationId: r.m_associationId,
+          userId: r.m_userId,
+          role: r.m_role,
+          createdAt: r.m_createdAt,
+          displayName: r.displayName || null,
+        }))
+      );
   }
 
-  async addMember(associationId: string, userId: string, role: AssociationRole = 'member') {
+  async addMember(
+    associationId: string,
+    userId: string,
+    role: string,
+    permission: AssociationPermission
+  ) {
     // Ensure association exists
     await this.findById(associationId);
 
@@ -114,22 +130,29 @@ export class AssociationsService {
       associationId,
       userId,
       role,
+      permission,
     });
     return this.memberRepo.save(membership);
   }
 
-  async updateMemberRole(associationId: string, targetUserId: string, newRole: AssociationRole) {
+  async updateMemberRole(
+    associationId: string,
+    targetUserId: string,
+    role?: string,
+    permission?: AssociationPermission
+  ) {
     const membership = await this.memberRepo.findOne({
       where: { associationId, userId: targetUserId },
     });
     if (!membership) {
       throw new NotFoundException('Member not found');
     }
-    membership.role = newRole;
+    if (role !== undefined) membership.role = role;
+    if (permission !== undefined) membership.permission = permission;
     return this.memberRepo.save(membership);
   }
 
-  async removeMember(associationId: string, targetUserId: string, _callerUserId: string) {
+  async removeMember(associationId: string, targetUserId: string) {
     const membership = await this.memberRepo.findOne({
       where: { associationId, userId: targetUserId },
     });
@@ -183,6 +206,6 @@ export class AssociationsService {
       where: { associationId, userId },
     });
     if (!membership) return false;
-    return ROLE_HIERARCHY[membership.role] >= ROLE_HIERARCHY['admin'];
+    return membership.permission >= AssociationPermission.Admin;
   }
 }
