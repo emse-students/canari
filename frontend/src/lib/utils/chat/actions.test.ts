@@ -205,6 +205,42 @@ describe('syncOwnDevicesToGroups', () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining("Aucune conversation n'est prete"));
     expect(log).toHaveBeenCalledWith(expect.stringContaining('Welcome manquant'));
   });
+
+  it('log un diagnostic explicite quand addMember ne retourne pas de welcome', async () => {
+    const log = vi.fn();
+    const mls = makeMls({
+      fetchUserDevices: vi
+        .fn()
+        .mockResolvedValueOnce([{ keyPackage: new Uint8Array([1]), deviceId: 'dev-2' }])
+        .mockResolvedValue([{ keyPackage: new Uint8Array([2]), deviceId: 'dev-2' }]),
+      getGroupMembers: vi.fn().mockResolvedValue([]),
+      addMember: vi.fn().mockResolvedValue({
+        commit: new Uint8Array([0x01]),
+        welcome: undefined,
+        ratchetTree: undefined,
+      }),
+      registerMember: vi.fn().mockResolvedValue(undefined),
+      sendCommit: vi.fn().mockResolvedValue(undefined),
+      saveState: vi.fn().mockResolvedValue(new Uint8Array([0xaa])),
+    });
+
+    const convs = new Map<string, Conversation>();
+    convs.set('grp_1', makeConversation({ groupId: 'g-1', isReady: true }));
+
+    const promise = syncOwnDevicesToGroups({
+      mlsService: mls,
+      userId: 'jolan',
+      pin: '1234',
+      conversations: convs,
+      log,
+    });
+
+    await vi.runAllTimersAsync();
+    await promise;
+
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('addMember g-1 -> commit=1B'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Aucun Welcome retourne par MLS'));
+  });
 });
 
 describe('forceSyncReset', () => {

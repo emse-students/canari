@@ -114,6 +114,9 @@ export async function syncOwnDevicesToGroups(params: {
 
       try {
         const result = await mlsService.addMember(convo.groupId, freshKeyPackage);
+        log(
+          `[SYNC][DIAG] addMember ${convo.groupId} -> commit=${result.commit?.length ?? 0}B, welcome=${result.welcome?.length ?? 0}B, ratchetTree=${result.ratchetTree?.length ?? 0}B`
+        );
         await mlsService.registerMember(convo.groupId, userId, device.deviceId);
         if (result.welcome) {
           await mlsService.sendWelcome(
@@ -126,9 +129,15 @@ export async function syncOwnDevicesToGroups(params: {
           totalWelcomes++;
           deviceWelcomes++;
           log(`[SYNC] Welcome envoye a ${device.deviceId} pour groupe ${convo.groupId}`);
+        } else {
+          log(
+            `[SYNC][DIAG] Aucun Welcome retourne par MLS pour ${device.deviceId} sur ${convo.groupId}.`
+          );
         }
         if (result.commit) {
           await mlsService.sendCommit(result.commit, convo.groupId);
+        } else {
+          log(`[SYNC][DIAG] Aucun commit retourne par MLS pour ${convo.groupId}.`);
         }
         const stBytes = await mlsService.saveState(pin);
         localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));

@@ -17,6 +17,7 @@ import {
   deleteMessage,
   sendReadReceipt,
 } from '$lib/utils/chat/messaging';
+import { insertMessageOrdered } from '$lib/utils/chat/messageOrder';
 import { MediaService } from '$lib/media';
 import { getPreviewText, mkMediaEnvelope, parseEnvelope, serializeEnvelope } from '$lib/envelope';
 import { encodeAppMessage, mkMedia, MediaKind } from '$lib/proto/codec';
@@ -96,7 +97,7 @@ export function useMessaging() {
     ctx.conversations.set(normalized, {
       ...convo,
       unreadCount: nextUnreadCount,
-      messages: [...convo.messages, newMsg],
+      messages: insertMessageOrdered(convo.messages, newMsg),
     });
 
     if (!isOwn && !isSystem) {
