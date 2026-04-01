@@ -35,8 +35,8 @@ fn print_scenario(title: &str, steps: &[&str]) {
 fn ok_or(result: &Result<Option<Vec<u8>>, mls_core::MlsError>, label: &str) {
     match result {
         Ok(Some(data)) => println!("  ✓ {label}: \"{}\"", String::from_utf8_lossy(data)),
-        Ok(None)       => println!("  ✓ {label}: (commit/handshake, pas de payload applicatif)"),
-        Err(e)         => println!("  ✗ {label}: ERREUR → {e}"),
+        Ok(None) => println!("  ✓ {label}: (commit/handshake, pas de payload applicatif)"),
+        Err(e) => println!("  ✗ {label}: ERREUR → {e}"),
     }
 }
 
@@ -78,7 +78,7 @@ fn test_scenario1_happy_path() {
     );
 
     let mut jolan1 = make_device("jolan");
-    let mut test1  = make_device("test");
+    let mut test1 = make_device("test");
     let mut jolan3 = make_device("jolan");
     let gid = "g-dm-happy";
 
@@ -88,35 +88,52 @@ fn test_scenario1_happy_path() {
 
     // Étapes 2-4
     let kp_test1 = test1.generate_key_package().expect("kp test1");
-    let (commit1, welcome1, added1, rt1) =
-        jolan1.add_members_bulk(gid, &[&kp_test1]).expect("add test1");
-    println!("  ✓ [3] jolan-dev1 a ajouté test-dev1 ({added1} device(s)), commit {} bytes", commit1.len());
+    let (commit1, welcome1, added1, rt1) = jolan1
+        .add_members_bulk(gid, &[&kp_test1])
+        .expect("add test1");
+    println!(
+        "  ✓ [3] jolan-dev1 a ajouté test-dev1 ({added1} device(s)), commit {} bytes",
+        commit1.len()
+    );
 
-    test1.process_welcome(
-        welcome1.as_deref().expect("welcome1 manquant"),
-        rt1.as_deref(),
-    ).expect("test1 process_welcome");
+    test1
+        .process_welcome(
+            welcome1.as_deref().expect("welcome1 manquant"),
+            rt1.as_deref(),
+        )
+        .expect("test1 process_welcome");
     println!("  ✓ [4] test-dev1 a rejoint le groupe (epoch 1)");
 
     // Étapes 5-8
     let kp_jolan3 = jolan3.generate_key_package().expect("kp jolan3");
-    let (commit2, welcome2, added2, rt2) =
-        jolan1.add_members_bulk(gid, &[&kp_jolan3]).expect("add jolan3");
-    println!("  ✓ [6] jolan-dev1 a ajouté jolan-dev3 ({added2} device(s)), commit {} bytes", commit2.len());
+    let (commit2, welcome2, added2, rt2) = jolan1
+        .add_members_bulk(gid, &[&kp_jolan3])
+        .expect("add jolan3");
+    println!(
+        "  ✓ [6] jolan-dev1 a ajouté jolan-dev3 ({added2} device(s)), commit {} bytes",
+        commit2.len()
+    );
 
     let r_test1_commit = test1.process_incoming_message(gid, &commit2);
     ok_or(&r_test1_commit, "[7] test-dev1 traite C2 (add jolan3)");
     assert!(r_test1_commit.is_ok(), "test1 doit traiter C2 sans erreur");
 
-    jolan3.process_welcome(
-        welcome2.as_deref().expect("welcome2 manquant"),
-        rt2.as_deref(),
-    ).expect("jolan3 process_welcome");
+    jolan3
+        .process_welcome(
+            welcome2.as_deref().expect("welcome2 manquant"),
+            rt2.as_deref(),
+        )
+        .expect("jolan3 process_welcome");
     println!("  ✓ [8] jolan-dev3 a rejoint le groupe (epoch 2)");
 
     // Étapes 9-11
-    let msg = jolan3.send_message(gid, b"Salut depuis jolan-dev3").expect("send_message");
-    println!("  ✓ [9] jolan-dev3 a envoyé un message chiffré ({} bytes)", msg.len());
+    let msg = jolan3
+        .send_message(gid, b"Salut depuis jolan-dev3")
+        .expect("send_message");
+    println!(
+        "  ✓ [9] jolan-dev3 a envoyé un message chiffré ({} bytes)",
+        msg.len()
+    );
 
     let r_jolan1 = jolan1.process_incoming_message(gid, &msg);
     ok_or(&r_jolan1, "[10] jolan-dev1 déchiffre");
@@ -125,8 +142,16 @@ fn test_scenario1_happy_path() {
     ok_or(&r_test1, "[11] test-dev1 déchiffre");
 
     println!("\n  ═══ RÉSULTAT SCÉNARIO 1 ═══");
-    assert!(r_jolan1.is_ok(), "jolan-dev1 devrait décrypter: {:?}", r_jolan1);
-    assert!(r_test1.is_ok(),  "test-dev1 devrait décrypter: {:?}", r_test1);
+    assert!(
+        r_jolan1.is_ok(),
+        "jolan-dev1 devrait décrypter: {:?}",
+        r_jolan1
+    );
+    assert!(
+        r_test1.is_ok(),
+        "test-dev1 devrait décrypter: {:?}",
+        r_test1
+    );
     println!("  ✓ PASS — chemin heureux validé");
 }
 
@@ -174,46 +199,55 @@ fn test_scenario2_race_condition() {
     );
 
     let mut jolan1 = make_device("jolan");
-    let mut test1  = make_device("test");
+    let mut test1 = make_device("test");
     let mut jolan3 = make_device("jolan");
     let gid = "g-dm-race";
 
     // Setup initial (époque 0→1)
     jolan1.create_group(gid.to_string()).expect("create_group");
     let kp_test1 = test1.generate_key_package().expect("kp test1");
-    let (_, welcome_test1, _, rt_test1) =
-        jolan1.add_members_bulk(gid, &[&kp_test1]).expect("add test1");
-    test1.process_welcome(
-        welcome_test1.as_deref().expect("welcome_test1"),
-        rt_test1.as_deref(),
-    ).expect("test1 join");
+    let (_, welcome_test1, _, rt_test1) = jolan1
+        .add_members_bulk(gid, &[&kp_test1])
+        .expect("add test1");
+    test1
+        .process_welcome(
+            welcome_test1.as_deref().expect("welcome_test1"),
+            rt_test1.as_deref(),
+        )
+        .expect("test1 join");
     println!("  ✓ Setup : jolan-dev1 + test-dev1 dans le groupe (epoch 1)");
 
     // RACE : les deux génèrent un commit concurrent depuis la même base
     let kp_jolan3 = jolan3.generate_key_package().expect("kp jolan3");
 
     // jolan-dev1 ajoute jolan3 PREMIER (côté jolan, syncOwnDevicesToGroups)
-    let (commit_a, welcome_a, _, rt_a) =
-        jolan1.add_members_bulk(gid, &[&kp_jolan3]).expect("jolan1 add jolan3");
-    println!("  ✓ [6] jolan-dev1 commit-A créé (epoch 1→2), {} bytes", commit_a.len());
+    let (commit_a, welcome_a, _, rt_a) = jolan1
+        .add_members_bulk(gid, &[&kp_jolan3])
+        .expect("jolan1 add jolan3");
+    println!(
+        "  ✓ [6] jolan-dev1 commit-A créé (epoch 1→2), {} bytes",
+        commit_a.len()
+    );
 
     // test-dev1 essaie AUSSI d'ajouter jolan3 (côté test, syncPeerDevicesToGroups)
     // MÊME KeyPackage ! Les deux partaient de la même base epoch.
-    let result_test1_add =
-        test1.add_members_bulk(gid, &[&kp_jolan3]);
+    let result_test1_add = test1.add_members_bulk(gid, &[&kp_jolan3]);
     match &result_test1_add {
-        Ok((c, _, _, _)) => println!("  ⚠ [7] test-dev1 commit-B créé (epoch 1→2 DIVERGÉ), {} bytes — RACE ACTIVE", c.len()),
-        Err(e)           => println!("  ✓ [7] test-dev1 a échoué à créer commit-B (peut-être kp déjà consommé): {e}"),
+        Ok((c, _, _, _)) => println!(
+            "  ⚠ [7] test-dev1 commit-B créé (epoch 1→2 DIVERGÉ), {} bytes — RACE ACTIVE",
+            c.len()
+        ),
+        Err(e) => println!(
+            "  ✓ [7] test-dev1 a échoué à créer commit-B (peut-être kp déjà consommé): {e}"
+        ),
     }
 
     // jolan-dev3 reçoit le Welcome issu du commit-A de jolan-dev1
-    let join_result = jolan3.process_welcome(
-        welcome_a.as_deref().expect("welcome_a"),
-        rt_a.as_deref(),
-    );
+    let join_result =
+        jolan3.process_welcome(welcome_a.as_deref().expect("welcome_a"), rt_a.as_deref());
     let join_ok = join_result.is_ok();
     let join_status = match join_result {
-        Ok(_)  => "OK (epoch 2, secrets set-A)".to_string(),
+        Ok(_) => "OK (epoch 2, secrets set-A)".to_string(),
         Err(e) => format!("ERREUR: {e}"),
     };
     println!("  [8] jolan-dev3 rejoint via Welcome-A: {join_status}");
@@ -221,27 +255,30 @@ fn test_scenario2_race_condition() {
     if join_ok {
         // test-dev1 reçoit le commit-A de jolan-dev1 sur le canal
         let r_test1_commit_a = test1.process_incoming_message(gid, &commit_a);
-        println!("  [9] test-dev1 traite commit-A (déjà à epoch 2 depuis commit-B): {}",
+        println!(
+            "  [9] test-dev1 traite commit-A (déjà à epoch 2 depuis commit-B): {}",
             match &r_test1_commit_a {
-                Ok(_)  => "OK (inattendu — epoch reset ?)".to_string(),
+                Ok(_) => "OK (inattendu — epoch reset ?)".to_string(),
                 Err(e) => format!("ERREUR (attendue) → {e}"),
             }
         );
 
         // jolan-dev3 envoie un message
-        let msg = jolan3.send_message(gid, b"Message de dev3 post-race").expect("jolan3 send");
+        let msg = jolan3
+            .send_message(gid, b"Message de dev3 post-race")
+            .expect("jolan3 send");
         println!("  ✓ [10] jolan-dev3 envoie message ({} bytes)", msg.len());
 
         let r_jolan1 = jolan1.process_incoming_message(gid, &msg);
-        let r_test1  = test1.process_incoming_message(gid, &msg);
+        let r_test1 = test1.process_incoming_message(gid, &msg);
 
         println!("\n  ═══ RÉSULTAT SCÉNARIO 2 ═══");
         match &r_jolan1 {
-            Ok(_)  => println!("  ✓ jolan-dev1 déchiffre : OK (aligné sur commit-A)"),
+            Ok(_) => println!("  ✓ jolan-dev1 déchiffre : OK (aligné sur commit-A)"),
             Err(e) => println!("  ✗ jolan-dev1 déchiffre : ERREUR → {e}"),
         }
         match &r_test1 {
-            Ok(_)  => println!("  ✓ test-dev1 déchiffre : OK (étonnant si secrets divergés)"),
+            Ok(_) => println!("  ✓ test-dev1 déchiffre : OK (étonnant si secrets divergés)"),
             Err(e) => println!("  ✗ test-dev1 déchiffre : ERREUR → {} ← BUG REPRODUIT", e),
         }
 
@@ -249,9 +286,15 @@ fn test_scenario2_race_condition() {
         // Si les deux réussissent, OpenMLS a peut-être rejeté commit-B silencieusement.
         let both_ok = r_jolan1.is_ok() && r_test1.is_ok();
         if both_ok {
-            println!("  ℹ Les deux déchiffrent → OpenMLS a rejeté commit-B en amont (kp déjà consommé ou epoch guard actif)");
-            println!("    → La race condition n'est PAS reproductible au niveau Rust (déjà protégé côté OpenMLS)");
-            println!("    → Le vrai bug est dans l'orchestration TypeScript (deux add_members_bulk sur websocket)");
+            println!(
+                "  ℹ Les deux déchiffrent → OpenMLS a rejeté commit-B en amont (kp déjà consommé ou epoch guard actif)"
+            );
+            println!(
+                "    → La race condition n'est PAS reproductible au niveau Rust (déjà protégé côté OpenMLS)"
+            );
+            println!(
+                "    → Le vrai bug est dans l'orchestration TypeScript (deux add_members_bulk sur websocket)"
+            );
         } else {
             println!("  ⚠ Race condition MLS confirmée au niveau Rust !");
         }
@@ -296,28 +339,35 @@ fn test_scenario3_fix_single_adder_guard() {
     );
 
     let mut jolan1 = make_device("jolan");
-    let mut test1  = make_device("test");
+    let mut test1 = make_device("test");
     let mut jolan3 = make_device("jolan");
     let gid = "g-dm-fix";
 
     // Setup (epoch 0→1)
     jolan1.create_group(gid.to_string()).expect("create_group");
     let kp_test1 = test1.generate_key_package().expect("kp test1");
-    let (_, welcome_test1, _, rt_test1) =
-        jolan1.add_members_bulk(gid, &[&kp_test1]).expect("add test1");
-    test1.process_welcome(
-        welcome_test1.as_deref().expect("welcome_test1"),
-        rt_test1.as_deref(),
-    ).expect("test1 join");
+    let (_, welcome_test1, _, rt_test1) = jolan1
+        .add_members_bulk(gid, &[&kp_test1])
+        .expect("add test1");
+    test1
+        .process_welcome(
+            welcome_test1.as_deref().expect("welcome_test1"),
+            rt_test1.as_deref(),
+        )
+        .expect("test1 join");
     println!("  ✓ Setup : jolan-dev1 + test-dev1 dans le groupe (epoch 1)");
 
     // Génération KP jolan-dev3
     let kp_jolan3 = jolan3.generate_key_package().expect("kp jolan3");
 
     // jolan-dev1 ajoute jolan-dev3 (via syncOwnDevicesToGroups)
-    let (commit_a, welcome_a, added, rt_a) =
-        jolan1.add_members_bulk(gid, &[&kp_jolan3]).expect("jolan1 add jolan3");
-    println!("  ✓ [6] jolan-dev1 a ajouté jolan-dev3 ({added} device(s)), commit {} bytes", commit_a.len());
+    let (commit_a, welcome_a, added, rt_a) = jolan1
+        .add_members_bulk(gid, &[&kp_jolan3])
+        .expect("jolan1 add jolan3");
+    println!(
+        "  ✓ [6] jolan-dev1 a ajouté jolan-dev3 ({added} device(s)), commit {} bytes",
+        commit_a.len()
+    );
 
     // test-dev1 SKIP — simule le guard TypeScript corrigé
     // (Dans le vrai code : registeredUserIds.has('jolan') → continue)
@@ -326,28 +376,41 @@ fn test_scenario3_fix_single_adder_guard() {
     // test-dev1 traite commit-A du canal (comportement normal de réception)
     let r_test1_commit = test1.process_incoming_message(gid, &commit_a);
     ok_or(&r_test1_commit, "[7b] test-dev1 traite commit-A");
-    assert!(r_test1_commit.is_ok(), "test-dev1 doit traiter commit-A: {:?}", r_test1_commit);
+    assert!(
+        r_test1_commit.is_ok(),
+        "test-dev1 doit traiter commit-A: {:?}",
+        r_test1_commit
+    );
 
     // jolan-dev3 rejoint
-    jolan3.process_welcome(
-        welcome_a.as_deref().expect("welcome_a"),
-        rt_a.as_deref(),
-    ).expect("jolan3 join via Welcome-A");
+    jolan3
+        .process_welcome(welcome_a.as_deref().expect("welcome_a"), rt_a.as_deref())
+        .expect("jolan3 join via Welcome-A");
     println!("  ✓ [9] jolan-dev3 a rejoint (epoch 2, secrets set-A)");
 
     // jolan-dev3 envoie un message
-    let msg = jolan3.send_message(gid, b"Message de dev3 post-fix").expect("jolan3 send");
+    let msg = jolan3
+        .send_message(gid, b"Message de dev3 post-fix")
+        .expect("jolan3 send");
     println!("  ✓ [10] jolan-dev3 envoie message ({} bytes)", msg.len());
 
     let r_jolan1 = jolan1.process_incoming_message(gid, &msg);
-    let r_test1  = test1.process_incoming_message(gid, &msg);
+    let r_test1 = test1.process_incoming_message(gid, &msg);
 
     ok_or(&r_jolan1, "[11] jolan-dev1 déchiffre");
-    ok_or(&r_test1,  "[11] test-dev1  déchiffre");
+    ok_or(&r_test1, "[11] test-dev1  déchiffre");
 
     println!("\n  ═══ RÉSULTAT SCÉNARIO 3 ═══");
-    assert!(r_jolan1.is_ok(), "jolan-dev1 devrait décrypter: {:?}", r_jolan1);
-    assert!(r_test1.is_ok(),  "test-dev1 devrait décrypter: {:?}", r_test1);
+    assert!(
+        r_jolan1.is_ok(),
+        "jolan-dev1 devrait décrypter: {:?}",
+        r_jolan1
+    );
+    assert!(
+        r_test1.is_ok(),
+        "test-dev1 devrait décrypter: {:?}",
+        r_test1
+    );
     println!("  ✓ PASS — fix validé, aucune divergence d'epoch");
 }
 
@@ -358,20 +421,30 @@ fn test_scenario3_fix_single_adder_guard() {
 #[test]
 fn test_scenario4_bidirectional_messaging() {
     let mut jolan1 = make_device("jolan");
-    let mut test1  = make_device("test");
+    let mut test1 = make_device("test");
     let mut jolan3 = make_device("jolan");
     let gid = "g-dm-bidir";
 
     // Setup complet (même que scénario 3)
     jolan1.create_group(gid.to_string()).expect("create_group");
     let kp_test1 = test1.generate_key_package().expect("kp test1");
-    let (commit1, welcome_test1, _, rt1) = jolan1.add_members_bulk(gid, &[&kp_test1]).expect("add test1");
-    test1.process_welcome(welcome_test1.as_deref().unwrap(), rt1.as_deref()).expect("test1 join");
+    let (commit1, welcome_test1, _, rt1) = jolan1
+        .add_members_bulk(gid, &[&kp_test1])
+        .expect("add test1");
+    test1
+        .process_welcome(welcome_test1.as_deref().unwrap(), rt1.as_deref())
+        .expect("test1 join");
 
     let kp_jolan3 = jolan3.generate_key_package().expect("kp jolan3");
-    let (commit2, welcome_jolan3, _, rt2) = jolan1.add_members_bulk(gid, &[&kp_jolan3]).expect("add jolan3");
-    test1.process_incoming_message(gid, &commit2).expect("test1 process commit2");
-    jolan3.process_welcome(welcome_jolan3.as_deref().unwrap(), rt2.as_deref()).expect("jolan3 join");
+    let (commit2, welcome_jolan3, _, rt2) = jolan1
+        .add_members_bulk(gid, &[&kp_jolan3])
+        .expect("add jolan3");
+    test1
+        .process_incoming_message(gid, &commit2)
+        .expect("test1 process commit2");
+    jolan3
+        .process_welcome(welcome_jolan3.as_deref().unwrap(), rt2.as_deref())
+        .expect("jolan3 join");
 
     // Les deux commits précédents ont été broadcastés. Dans notre test, jolan1 a mergé commit1
     // mais n'a PAS traité commit1 en tant que récepteur (il était l'expéditeur).
@@ -381,19 +454,43 @@ fn test_scenario4_bidirectional_messaging() {
     println!("\n═══ SCÉNARIO 4 — Messages bidirectionnels ═══");
 
     // jolan1 → tous
-    let msg1 = jolan1.send_message(gid, b"Depuis jolan-dev1").expect("j1 send");
-    ok_or(&test1.process_incoming_message(gid, &msg1),  "test-dev1  reçoit message de jolan-dev1");
-    ok_or(&jolan3.process_incoming_message(gid, &msg1), "jolan-dev3 reçoit message de jolan-dev1");
+    let msg1 = jolan1
+        .send_message(gid, b"Depuis jolan-dev1")
+        .expect("j1 send");
+    ok_or(
+        &test1.process_incoming_message(gid, &msg1),
+        "test-dev1  reçoit message de jolan-dev1",
+    );
+    ok_or(
+        &jolan3.process_incoming_message(gid, &msg1),
+        "jolan-dev3 reçoit message de jolan-dev1",
+    );
 
     // test1 → tous
-    let msg2 = test1.send_message(gid, b"Depuis test-dev1").expect("t1 send");
-    ok_or(&jolan1.process_incoming_message(gid, &msg2),  "jolan-dev1 reçoit message de test-dev1");
-    ok_or(&jolan3.process_incoming_message(gid, &msg2),  "jolan-dev3 reçoit message de test-dev1");
+    let msg2 = test1
+        .send_message(gid, b"Depuis test-dev1")
+        .expect("t1 send");
+    ok_or(
+        &jolan1.process_incoming_message(gid, &msg2),
+        "jolan-dev1 reçoit message de test-dev1",
+    );
+    ok_or(
+        &jolan3.process_incoming_message(gid, &msg2),
+        "jolan-dev3 reçoit message de test-dev1",
+    );
 
     // jolan3 → tous
-    let msg3 = jolan3.send_message(gid, b"Depuis jolan-dev3").expect("j3 send");
-    ok_or(&jolan1.process_incoming_message(gid, &msg3), "jolan-dev1 reçoit message de jolan-dev3");
-    ok_or(&test1.process_incoming_message(gid, &msg3),  "test-dev1  reçoit message de jolan-dev3");
+    let msg3 = jolan3
+        .send_message(gid, b"Depuis jolan-dev3")
+        .expect("j3 send");
+    ok_or(
+        &jolan1.process_incoming_message(gid, &msg3),
+        "jolan-dev1 reçoit message de jolan-dev3",
+    );
+    ok_or(
+        &test1.process_incoming_message(gid, &msg3),
+        "test-dev1  reçoit message de jolan-dev3",
+    );
 
     println!("  ✓ PASS — messages bidirectionnels 3 appareils / 2 utilisateurs");
 }
