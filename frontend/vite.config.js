@@ -2,6 +2,7 @@ import { defineConfig } from 'vite';
 import { sveltekit } from '@sveltejs/kit/vite';
 import tailwindcss from '@tailwindcss/vite';
 
+// eslint-disable-next-line no-undef
 const host = process.env.TAURI_DEV_HOST;
 
 /** @returns {import('vite').Plugin} */

@@ -54,7 +54,7 @@ export function startOidcLogin(returnTo = '/chat'): void {
     client_id: clientId,
     redirect_uri: redirectUri,
     response_type: 'code',
-    scope: 'openid profile email',
+    scope: 'openid profile promo',
     state,
   });
 
