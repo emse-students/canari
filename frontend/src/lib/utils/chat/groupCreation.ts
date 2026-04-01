@@ -238,7 +238,7 @@ async function processBulkAddition(
     if (bulk.commit) await mlsService.sendCommit(bulk.commit, conversation.groupId);
 
     log(
-      `[OK] Ajoutes: ${targetUsers.join(', ')} (${bulk.addedDeviceIds.length} appareils, ${deliveredUsers.size} utilisateur(s) livrés).`
+      `[OK] Ajoutes: ${targetUsers.join(', ')} (${bulk.addedDeviceIds.length} appareils). (${deliveredUsers.size} utilisateur(s) livrés)`
     );
 
     // Broadcast member addition notification (one generic or multiple specific?)

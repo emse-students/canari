@@ -303,7 +303,8 @@ export function useMessaging() {
 
   async function handleAddReaction(messageId: string, emoji: string, ctx: MessagingContext) {
     if (!ctx.selectedContact) return;
-    const convo = ctx.conversations.get(ctx.selectedContact);
+    const conversationKey = ctx.selectedContact.toLowerCase();
+    const convo = ctx.conversations.get(conversationKey);
     if (!convo) return;
     const meNorm = ctx.userId.toLowerCase();
     const existing = messageReactions.get(messageId) ?? [];
@@ -317,7 +318,7 @@ export function useMessaging() {
     if (msgIdx !== -1) {
       const nextMsgs = [...convo.messages];
       nextMsgs[msgIdx] = { ...nextMsgs[msgIdx], reactions: updated };
-      ctx.conversations.set(ctx.selectedContact, { ...convo, messages: nextMsgs });
+      ctx.conversations.set(conversationKey, { ...convo, messages: nextMsgs });
 
       if (ctx.storage) {
         try {
@@ -325,7 +326,7 @@ export function useMessaging() {
           await ctx.storage.saveMessage(
             {
               id: target.id,
-              conversationId: ctx.selectedContact,
+              conversationId: conversationKey,
               senderId: target.senderId,
               content: target.content,
               timestamp: target.timestamp.getTime(),
