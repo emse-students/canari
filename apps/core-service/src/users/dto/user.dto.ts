@@ -13,9 +13,6 @@ export class CreateUserDto {
   @IsNotEmpty()
   id: string;
 
-  @IsEmail()
-  email: string;
-
   @IsString()
   @IsOptional()
   displayName?: string;
@@ -43,7 +40,6 @@ export class UpdateUserDto {
 
 export class PublicUserDto {
   id: string;
-  email: string | null;
   displayName: string | null;
   firstName: string | null;
   lastName: string | null;

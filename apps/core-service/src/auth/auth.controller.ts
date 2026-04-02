@@ -104,7 +104,6 @@ export class AuthController {
     access_token: string;
     user: {
       id: string;
-      email: string;
       displayName: string;
       promo: number | null;
       firstName: string | null;
@@ -132,7 +131,6 @@ export class AuthController {
         // Try new ID format, or create new user
         user = await this.usersService.findOrCreateFromOidc(
           devId,
-          `${devId}@canari.local`,
           devId,
           devId,
           devId,
@@ -164,7 +162,6 @@ export class AuthController {
       access_token,
       user: {
         id: user.id,
-        email: user.email || '',
         displayName: user.displayName || '',
         firstName: user.firstName || '',
         lastName: user.lastName || '',
@@ -183,7 +180,6 @@ export class AuthController {
     access_token: string;
     user: {
       id: string;
-      email: string;
       displayName: string;
       promo: number | null;
       firstName: string | null;
@@ -247,7 +243,6 @@ export class AuthController {
 
     const userinfo = (await userinfoRes.json()) as {
       sub: string;
-      email?: string;
       name?: string;
       promo?: number;
       firstName?: string;
@@ -266,7 +261,6 @@ export class AuthController {
     const promo = typeof userinfo.promo === 'number' ? userinfo.promo : null;
     const user = await this.usersService.findOrCreateFromOidc(
       userinfo.sub,
-      userinfo.email || null,
       userinfo.name || null,
       userinfo.firstName || null,
       userinfo.lastName || null,
@@ -294,7 +288,6 @@ export class AuthController {
       access_token,
       user: {
         id: user.id,
-        email: user.email || '',
         displayName: user.displayName || '',
         firstName: user.firstName || '',
         lastName: user.lastName || '',

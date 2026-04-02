@@ -55,6 +55,7 @@ export class ChannelsController {
     return this.service.listWorkspacesForUser(xUserId.trim().toLowerCase());
   }
 
+  @UseGuards(NginxAuthGuard)
   @Post('roles')
   createRole(@Body() body: CreateRoleDto) {
     return this.service.createRole(body);

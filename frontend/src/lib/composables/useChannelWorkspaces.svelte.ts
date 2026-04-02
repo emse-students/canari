@@ -2,6 +2,7 @@ import { SvelteMap } from 'svelte/reactivity';
 import { ChannelService } from '$lib/services/ChannelService';
 import type { WorkspaceDto, ChannelDto } from '$lib/services/ChannelService';
 import type { Conversation } from '$lib/types';
+import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
 
 export interface ChannelSidebarItem {
   id: string;
@@ -46,6 +47,22 @@ export function useChannelWorkspaces() {
     }
 
     return `${action} impossible: ${raw}`;
+  }
+
+  // ---------- Key bootstrapping ----------
+
+  async function bootstrapChannelKey(rawChannelId: string) {
+    const vault = channelKeyManager.getVault(rawChannelId);
+    try {
+      vault.getCurrentKey();
+      // Key already exists – nothing to do
+      return;
+    } catch {
+      // No key yet – derive one from the channelId
+    }
+    const encoded = new TextEncoder().encode(`canari-channel-key:${rawChannelId}`);
+    const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', encoded));
+    await vault.rotateKey(0, hash);
   }
 
   // ---------- Workspace helpers ----------
@@ -166,6 +183,8 @@ export function useChannelWorkspaces() {
             isPrivate: channel.visibility === 'private',
           });
 
+          await bootstrapChannelKey(actualId);
+
           if (!ctx.conversations.has(channelConversationId)) {
             ctx.conversations.set(channelConversationId, {
               contactName: channelConversationId,
@@ -232,6 +251,8 @@ export function useChannelWorkspaces() {
       const actualId =
         createdChannel?.id || createdChannel?._id || `${workspaceId}_${normalizedChannelName}`;
       const channelId = `channel_${actualId}`;
+
+      await bootstrapChannelKey(actualId);
 
       const sidebarWorkspace = channelWorkspaces.find((w) => w.workspaceDbId === workspaceId);
       if (sidebarWorkspace) {

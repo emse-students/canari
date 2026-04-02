@@ -26,6 +26,12 @@ export class ChannelMessage {
   content: string;
 
   @Column({ nullable: true })
+  nonce: string;
+
+  @Column({ type: 'int', nullable: true })
+  keyVersion: number;
+
+  @Column({ nullable: true })
   replyTo: string;
 
   @Column('jsonb', { default: [] })

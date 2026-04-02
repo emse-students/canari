@@ -24,6 +24,8 @@ import { encodeAppMessage, mkMedia, MediaKind } from '$lib/proto/codec';
 import type { ChatMessage, MessageReaction, Conversation } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
 import type { IStorage } from '$lib/db';
+import { ChannelService } from '$lib/services/ChannelService';
+import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
 
 export interface MessagingContext {
   ensureMls: () => IMlsService;
@@ -156,18 +158,24 @@ export function useMessaging() {
     const convo = ctx.conversations.get(ctx.selectedContact);
     if (!convo) return;
 
-    const stillMember = await ctx.verifyCurrentUserMembership(ctx.selectedContact);
-    if (!stillMember || !convo.isReady) {
-      ctx.setSendError(
-        'Vous avez ete retire de ce groupe. Vous ne pouvez plus envoyer de messages.'
-      );
-      return;
+    const isChannel = ctx.selectedContact.startsWith('channel_');
+
+    // Channels don't use MLS — skip MLS membership verification
+    if (!isChannel) {
+      const stillMember = await ctx.verifyCurrentUserMembership(ctx.selectedContact);
+      if (!stillMember || !convo.isReady) {
+        ctx.setSendError(
+          'Vous avez ete retire de ce groupe. Vous ne pouvez plus envoyer de messages.'
+        );
+        return;
+      }
     }
 
     const currentReplyingTo = replyingTo;
     replyingTo = null;
     ctx.setSendError('');
-    const mlsService = ctx.ensureMls();
+    const mlsService = !isChannel ? ctx.ensureMls() : null;
+    const channelSvc = isChannel ? new ChannelService() : null;
 
     if (filesToSend.length > 0) {
       pendingMediaFiles = [];
@@ -208,9 +216,30 @@ export function useMessaging() {
             }),
             messageId,
           });
-          await mlsService.sendMessage(convo.groupId, protoBytes);
-          const stateBytes = await mlsService.saveState(ctx.pin);
-          localStorage.setItem('mls_autosave_' + ctx.userId, toHex(stateBytes));
+          if (isChannel && channelSvc) {
+            // Send media as channel message via REST
+            const actualChannelId = ctx.selectedContact!.replace('channel_', '');
+            try {
+              const enc = await channelKeyManager.encryptMessage(actualChannelId, protoBytes);
+              await channelSvc.sendMessage(actualChannelId, {
+                ciphertext: enc.ciphertext,
+                nonce: enc.nonce,
+                keyVersion: enc.keyVersion,
+              });
+            } catch {
+              const nonce = Array.from(crypto.getRandomValues(new Uint8Array(12)))
+                .map((b) => b.toString(16).padStart(2, '0'))
+                .join('');
+              await channelSvc.sendMessage(actualChannelId, {
+                ciphertext: btoa(String.fromCharCode(...protoBytes)),
+                nonce,
+              });
+            }
+          } else if (mlsService) {
+            await mlsService.sendMessage(convo.groupId, protoBytes);
+            const stateBytes = await mlsService.saveState(ctx.pin);
+            localStorage.setItem('mls_autosave_' + ctx.userId, toHex(stateBytes));
+          }
           const payload = serializeEnvelope(mkMediaEnvelope({ ...mediaRef }, captionForFile));
           await addMessageToChat(
             ctx.userId,
@@ -241,7 +270,7 @@ export function useMessaging() {
     if (sentMediaMessageCount > 0 || !text) return;
 
     const result = await sendChatMessage(text, ctx.selectedContact!, currentReplyingTo, {
-      mlsService,
+      mlsService: isChannel ? (null as any) : mlsService!,
       userId: ctx.userId,
       pin: ctx.pin,
       conversation: convo,

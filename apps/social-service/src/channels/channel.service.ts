@@ -377,8 +377,8 @@ export class ChannelService {
       channelId,
       authorId: input.senderId,
       content: input.ciphertext,
-      replyTo: input.nonce,
-      metadata: { keyVersion: input.keyVersion },
+      nonce: input.nonce,
+      keyVersion: input.keyVersion ?? null,
     });
 
     const savedMsg = await this.messageRepo.save(msg);
@@ -411,6 +411,15 @@ export class ChannelService {
       order: { createdAt: 'DESC' },
       take: limit,
     });
-    return msgs;
+    return msgs.map((m) => ({
+      id: m.id,
+      channelId: m.channelId,
+      senderId: m.authorId,
+      ciphertext: m.content,
+      nonce: m.nonce ?? null,
+      keyVersion: m.keyVersion ?? null,
+      replyTo: m.replyTo ?? null,
+      createdAt: m.createdAt,
+    }));
   }
 }

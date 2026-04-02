@@ -33,7 +33,6 @@ export class UsersService {
   toPublicDto(user: User): PublicUserDto {
     return {
       id: user.id,
-      email: user.email,
       displayName: user.displayName,
       firstName: user.firstName,
       lastName: user.lastName,
@@ -49,7 +48,6 @@ export class UsersService {
    */
   async findOrCreateFromOidc(
     id: string,
-    email: string | null,
     displayName: string | null,
     firstName: string | null,
     lastName: string | null,
@@ -58,10 +56,6 @@ export class UsersService {
     const user = await this.userRepository.findOne({ where: { id } });
     if (user) {
       let updated = false;
-      if (email && user.email !== email) {
-        user.email = email;
-        updated = true;
-      }
       if (displayName && user.displayName !== displayName) {
         user.displayName = displayName;
         updated = true;
@@ -79,7 +73,6 @@ export class UsersService {
     }
     const newUser = this.userRepository.create({
       id,
-      email: email || null,
       displayName: displayName || null,
       firstName: firstName || null,
       lastName: lastName || null,

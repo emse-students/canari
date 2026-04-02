@@ -14,6 +14,7 @@
   import { useNotifications } from '$lib/composables/useNotifications.svelte';
   import { loadPersistedArchivedIds } from '$lib/utils/chat/conversations';
   import { currentUserId } from '$lib/stores/user';
+  import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
   import Modal from './shared/Modal.svelte';
   import Navbar from './navigation/Navbar.svelte';
   import Sidebar from './sidebar/Sidebar.svelte';
@@ -143,6 +144,19 @@
     };
   }
 
+  async function bootstrapChannelKey(rawChannelId: string) {
+    const vault = channelKeyManager.getVault(rawChannelId);
+    try {
+      vault.getCurrentKey();
+      return;
+    } catch {
+      // no key yet
+    }
+    const encoded = new TextEncoder().encode(`canari-channel-key:${rawChannelId}`);
+    const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', encoded));
+    await vault.rotateKey(0, hash);
+  }
+
   /** Callbacks object for session composable operations. */
   function sessionCb() {
     return {
@@ -174,6 +188,7 @@
       onChannelMemberJoined: (event: any) => {
         if (!event.channelId) return;
         const channelConversationId = `channel_${event.channelId}`;
+        void bootstrapChannelKey(event.channelId);
         const workspace = channels.ensureWorkspaceForChannelEvent(event);
         const isPrivate = event.visibility === 'private';
         channels.addChannelToWorkspace(workspace.id, {

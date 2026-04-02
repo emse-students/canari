@@ -99,6 +99,12 @@ export function useConversations() {
     groupId: string,
     ctx: ConversationContext
   ) {
+    // Channel conversations: load via REST API instead of MLS replay
+    if (contactName.startsWith('channel_')) {
+      await loadChannelHistory(contactName, ctx);
+      return;
+    }
+
     const { replayConversationHistory } = await import('$lib/utils/chat/history');
     await replayConversationHistory({
       mlsService: ctx.ensureMls(),
@@ -112,6 +118,79 @@ export function useConversations() {
       messageReactions: ctx.messageReactions,
       log: ctx.log,
     });
+  }
+
+  async function loadChannelHistory(channelConversationId: string, ctx: ConversationContext) {
+    const { channelService } = await import('$lib/services/ChannelService');
+    const { channelKeyManager } = await import('$lib/crypto/ChannelKeyVault');
+    const { decodeAppMessage } = await import('$lib/proto/codec');
+    const { serializeEnvelope, mkTextEnvelope } = await import('$lib/envelope');
+
+    const rawId = channelConversationId.replace(/^channel_/, '');
+    const convo = conversations.get(channelConversationId);
+    if (!convo) return;
+
+    try {
+      const messages: any[] = await channelService.listMessages(rawId, 200);
+      if (!Array.isArray(messages) || messages.length === 0) return;
+
+      // Avoid duplicates: collect existing message IDs
+      // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local lookup set, not reactive state
+      const existingIds = new Set(convo.messages.map((m) => m.id).filter(Boolean));
+
+      for (const msg of messages) {
+        if (msg.id && existingIds.has(msg.id)) continue;
+
+        let content = '[Message chiffré]';
+        try {
+          if (msg.ciphertext && msg.nonce && msg.keyVersion !== undefined) {
+            const bytes = await channelKeyManager.decryptMessage(
+              rawId,
+              msg.ciphertext,
+              msg.nonce,
+              msg.keyVersion
+            );
+            const decoded = decodeAppMessage(bytes);
+            if (decoded?.text) {
+              content = serializeEnvelope(mkTextEnvelope(decoded.text.content ?? ''));
+            } else if (decoded?.reply) {
+              const replyTo = decoded.reply.replyTo
+                ? {
+                    id: decoded.reply.replyTo.id || '',
+                    senderId: decoded.reply.replyTo.senderId || '',
+                    content: decoded.reply.replyTo.preview || '',
+                  }
+                : undefined;
+              content = serializeEnvelope(mkTextEnvelope(decoded.reply.content ?? '', replyTo));
+            }
+          } else if (msg.ciphertext) {
+            // Legacy base64 fallback
+            const binStr = atob(msg.ciphertext);
+            const bytes = new Uint8Array(binStr.length);
+            for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
+            const decoded = decodeAppMessage(bytes);
+            if (decoded?.text) {
+              content = serializeEnvelope(mkTextEnvelope(decoded.text.content ?? ''));
+            }
+          }
+        } catch (e) {
+          ctx.log(`[CHANNEL] Échec déchiffrement msg ${msg.id}: ${e}`);
+        }
+
+        await ctx.addMessageToChat(
+          msg.senderId || 'unknown',
+          content,
+          channelConversationId,
+          undefined,
+          false,
+          msg.id,
+          // eslint-disable-next-line svelte/prefer-svelte-reactivity -- plain timestamp conversion
+          msg.createdAt ? new Date(msg.createdAt) : undefined
+        );
+      }
+    } catch (e) {
+      ctx.log(`[CHANNEL] Échec chargement historique: ${e instanceof Error ? e.message : e}`);
+    }
   }
 
   async function loadAndRestoreConversations(ctx: ConversationContext) {
@@ -193,6 +272,10 @@ export function useConversations() {
   // ── Group members ─────────────────────────────────────────────────────────
 
   async function loadGroupMembers(groupId: string, ctx: ConversationContext) {
+    if (groupId.startsWith('channel_')) {
+      groupMembers = [];
+      return;
+    }
     try {
       groupMembers = await fetchUniqueGroupMembers(ctx.ensureMls(), groupId);
     } catch (e) {
