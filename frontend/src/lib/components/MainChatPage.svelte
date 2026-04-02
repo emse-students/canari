@@ -413,6 +413,16 @@
       convs.archivedConversationIds = loadPersistedArchivedIds(session.userId);
       convs.showArchivedConversations = false;
       void channels.loadChannelWorkspacesFromBackend(channelsCtx());
+
+      // Apply any pending conversation selection (from ConversationsMiniPanel cross-navigation)
+      const pending = sessionStorage.getItem('canari_pending_contact');
+      if (pending) {
+        sessionStorage.removeItem('canari_pending_contact');
+        // Delay to let conversations load first
+        setTimeout(() => {
+          convs.selectConversation(pending);
+        }, 600);
+      }
     });
   });
 

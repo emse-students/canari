@@ -3,6 +3,7 @@
   import { listPosts, type PostEntity } from '$lib/posts/api';
   import CreatePostForm from '$lib/components/posts/CreatePostForm.svelte';
   import PostCard from '$lib/components/posts/PostCard.svelte';
+  import ConversationsMiniPanel from '$lib/components/posts/ConversationsMiniPanel.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import { getToken } from '$lib/stores/auth';
@@ -102,7 +103,9 @@
   });
 </script>
 
-<main class="min-h-dvh px-4 py-6 md:px-8 md:py-8">
+<main class="flex gap-6 px-4 py-6 md:px-8 md:py-8 h-full">
+  <!-- Posts feed -->
+  <div class="flex-1 min-w-0 overflow-y-auto">
   <div class="mx-auto max-w-xl animate-rise-in">
     <!-- Header -->
     <header class="mb-6 flex items-center justify-between gap-3">
@@ -181,4 +184,8 @@
       </div>
     </section>
   </div>
+  </div>
+
+  <!-- Conversations sidebar (desktop only) -->
+  <ConversationsMiniPanel />
 </main>
