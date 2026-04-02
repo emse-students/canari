@@ -3,6 +3,7 @@
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import { presenceMap, watchUsers } from '$lib/stores/presenceStore';
   import { onMount } from 'svelte';
+  import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
 
   interface Props {
     contactName: string;
@@ -25,8 +26,21 @@
   }: Props = $props();
   let previewText = $derived(lastMessage ? getPreviewText(parseEnvelope(lastMessage)) : null);
   let isOnline = $derived($presenceMap[contactName] || false);
+  let resolvedDisplayName = $state('');
+
+  const effectiveDisplayName = $derived(
+    displayName && displayName !== contactName ? displayName : resolvedDisplayName
+  );
+
   onMount(() => {
     watchUsers([contactName]);
+  });
+
+  $effect(() => {
+    resolvedDisplayName = getUserDisplayNameSync(contactName, displayName);
+    resolveUserDisplayName(contactName).then((resolved) => {
+      if (resolved) resolvedDisplayName = resolved;
+    });
   });
 </script>
 
@@ -51,7 +65,7 @@
   <div class="flex-1 min-w-0">
     <div class="flex justify-between items-center mb-1 gap-2">
       <span class="text-cn-dark truncate {unreadCount > 0 ? 'font-extrabold' : 'font-bold'}"
-        >{displayName}</span
+        >{effectiveDisplayName}</span
       >
       <div class="flex items-center gap-1.5 flex-shrink-0">
         {#if unreadCount > 0}

@@ -3,6 +3,7 @@
   import { untrack } from 'svelte';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import VoiceRecorder from './VoiceRecorder.svelte';
+  import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
 
   interface ReplyTo {
     id: string;
@@ -58,6 +59,23 @@
     } catch {
       return '';
     }
+  });
+
+  let replySenderDisplayName = $state('');
+
+  $effect(() => {
+    if (!replyingTo?.senderId) {
+      replySenderDisplayName = '';
+      return;
+    }
+
+    const senderId = replyingTo.senderId;
+    replySenderDisplayName = getUserDisplayNameSync(senderId, senderId);
+    resolveUserDisplayName(senderId).then((resolved) => {
+      if (resolved && replyingTo?.senderId === senderId) {
+        replySenderDisplayName = resolved;
+      }
+    });
   });
 
   function handleKeydown(e: KeyboardEvent) {
@@ -220,7 +238,7 @@
       <div class="absolute left-0 top-0 bottom-0 w-1 bg-cn-yellow"></div>
       <div class="flex-1 min-w-0">
         <div class="text-xs font-semibold text-text-main">
-          Répondre à {replyingTo.senderId}
+          Répondre à {replySenderDisplayName || replyingTo.senderId}
         </div>
         <div class="text-sm text-text-muted truncate">
           {replyPreviewText}

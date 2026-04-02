@@ -2,6 +2,8 @@
   import Avatar from '../shared/Avatar.svelte';
   import MessageBubble from '../messages/MessageBubble.svelte';
   import type { ChatMessage, MessageReaction } from '$lib/types';
+  import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
+  import { SvelteSet } from 'svelte/reactivity';
 
   interface MessageGroup {
     type: 'date_separator' | 'time_separator' | 'message';
@@ -37,6 +39,31 @@
     switchTime,
     authToken,
   }: Props = $props();
+
+  let resolvedSenderNames = $state<Record<string, string>>({});
+
+  $effect(() => {
+    const senderIds = new SvelteSet<string>();
+    for (const group of visibleMessageGroups) {
+      if (group.type !== 'message' || !group.message || group.message.isOwn || group.message.isSystem) {
+        continue;
+      }
+      senderIds.add(group.message.senderId);
+    }
+
+    for (const senderId of senderIds) {
+      if (!resolvedSenderNames[senderId]) {
+        const cached = getUserDisplayNameSync(senderId, senderId);
+        if (cached !== senderId) {
+          resolvedSenderNames = { ...resolvedSenderNames, [senderId]: cached };
+        }
+      }
+      resolveUserDisplayName(senderId).then((resolved) => {
+        if (!resolved || resolvedSenderNames[senderId] === resolved) return;
+        resolvedSenderNames = { ...resolvedSenderNames, [senderId]: resolved };
+      });
+    }
+  });
 </script>
 
 {#if hiddenGroupCount > 0}
@@ -132,7 +159,7 @@
         >
           {#if showSender}
             <div class="text-xs text-cn-muted px-2 mb-1 font-medium">
-              {msg.senderId}
+              {resolvedSenderNames[msg.senderId] || msg.senderId}
             </div>
           {/if}
 

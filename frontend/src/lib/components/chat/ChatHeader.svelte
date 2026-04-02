@@ -21,6 +21,7 @@
   import MultiUserSelector from '../shared/MultiUserSelector.svelte';
   import { portal } from '$lib/actions/portal';
   import { presenceMap, watchUsers } from '$lib/stores/presenceStore';
+  import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
 
   interface Props {
     contactName: string;
@@ -64,12 +65,30 @@
   let confirmDelete = $state(false);
 
   let isOnline = $derived($presenceMap[contactName] || false);
+  let resolvedContactDisplayName = $state('');
+
+  const effectiveDisplayName = $derived(
+    !isGroupConversation && !isChannel ? resolvedContactDisplayName : displayName
+  );
 
   $effect(() => {
     // We only poll presence for simple 1-1 conversations where the contactName represents an actual user
     if (contactName && !isGroupConversation && !isChannel) {
       watchUsers([contactName]);
     }
+  });
+
+  $effect(() => {
+    if (isGroupConversation || isChannel) {
+      resolvedContactDisplayName = displayName;
+      return;
+    }
+    resolvedContactDisplayName = getUserDisplayNameSync(contactName, displayName);
+    resolveUserDisplayName(contactName).then((resolved) => {
+      if (resolved) {
+        resolvedContactDisplayName = resolved;
+      }
+    });
   });
 
   function handleInviteMembers() {
@@ -162,7 +181,7 @@
 
   <!-- Meta -->
   <div class="flex-1 min-w-0">
-    <h2 class="text-base md:text-lg font-semibold text-cn-dark mb-1 truncate">{displayName}</h2>
+    <h2 class="text-base md:text-lg font-semibold text-cn-dark mb-1 truncate">{effectiveDisplayName}</h2>
     {#if isChannel}
       <span
         class="inline-flex items-center gap-1.5 text-[0.7rem] md:text-xs font-semibold text-text-muted"
@@ -247,7 +266,7 @@
           >
             <Avatar userId={contactName} size="lg" />
             <div class="min-w-0 flex-1">
-              <div class="text-base font-bold text-cn-dark truncate">{displayName}</div>
+              <div class="text-base font-bold text-cn-dark truncate">{effectiveDisplayName}</div>
               <div class="text-xs text-text-muted mt-0.5 inline-flex items-center gap-1.5">
                 {#if isReady}
                   <Shield size={12} class="text-emerald-500" />
