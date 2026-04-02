@@ -115,6 +115,40 @@ describe('discoverMissingGroups', () => {
     expect(created.directPeerId).toBe('alice');
   });
 
+  it("active un placeholder sans re-bootstrap quand le groupe existe deja dans l'etat MLS local", async () => {
+    const convs = new Map<string, Conversation>();
+    const createGroup = vi.fn();
+    const registerMember = vi.fn().mockResolvedValue(undefined);
+    const saveConversation = vi.fn().mockResolvedValue(undefined);
+
+    const mls = makeMls({
+      getUserGroups: vi.fn().mockResolvedValue([{ groupId: 'g-1', name: 'Projet', isGroup: true }]),
+      // The group already exists in MLS memory (loaded from localStorage backup)
+      getLocalGroups: vi.fn().mockReturnValue(['g-1']),
+      registerMember,
+      createGroup,
+    });
+
+    await discoverMissingGroups({
+      mlsService: mls,
+      userId: 'jolan',
+      pin: '1234',
+      conversations: convs,
+      saveConversation,
+      log: vi.fn(),
+    });
+
+    // Should NOT re-bootstrap (create_group would destroy the existing state)
+    expect(createGroup).not.toHaveBeenCalled();
+    // Should register this device on the gateway
+    expect(registerMember).toHaveBeenCalledWith('g-1', 'jolan', 'dev-main');
+    // Conversation should be ready
+    const conv = [...convs.values()].find((c) => c.groupId === 'g-1');
+    expect(conv?.isReady).toBe(true);
+    // saveConversation called twice: once for placeholder (Phase 1) + once for activation (Phase 2)
+    expect(saveConversation).toHaveBeenCalledTimes(2);
+  });
+
   it('le leader re-bootstrap un groupe orphelin en creant le groupe et envoyant les Welcomes', async () => {
     const convs = new Map<string, Conversation>();
     const createGroup = vi.fn().mockResolvedValue(undefined);

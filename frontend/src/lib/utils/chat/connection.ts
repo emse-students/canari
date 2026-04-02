@@ -611,6 +611,20 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           if (errMsg.includes('CannotDecryptOwnMessage') || errMsg.includes('WrongEpoch')) {
             return true; // ACK it so it isn't resent
           }
+
+          // Stale message (msg_epoch < group_epoch): our own echoed commit or a
+          // commit already applied by another path.  The Rust layer handles most of
+          // these, but some slip through (e.g. PublicMessage commits).  ACK silently.
+          const meMatch = errMsg.match(/msg_epoch=(\d+)/);
+          const geMatch = errMsg.match(/group_epoch=(\d+)/);
+          if (meMatch && geMatch) {
+            const me = parseInt(meMatch[1], 10);
+            const ge = parseInt(geMatch[1], 10);
+            if (me < ge) {
+              return true; // Stale — already processed
+            }
+          }
+
           log(`Erreur message de ${senderNorm} (groupe connu): ${errMsg}`);
 
           // Détection de groupe fantôme : le groupId existe dans nos conversations

@@ -266,7 +266,29 @@ export async function discoverMissingGroups(params: {
   const pendingConvos = [...conversations.entries()].filter(([, c]) => !c.isReady);
   if (pendingConvos.length === 0) return;
 
+  // Groupes déjà présents dans l'état MLS en mémoire (chargés depuis localStorage).
+  // Si le groupe existe ici, l'état cryptographique est intact — un re-bootstrap
+  // le détruirait et créerait un split-brain (AeadError permanent).
+  const localMlsGroupIds = new Set(mlsService.getLocalGroups());
+
   for (const [key, convo] of pendingConvos) {
+    // ── Fast path : l'état MLS existe déjà (ex: nouvel onglet ayant chargé le state) ──
+    if (localMlsGroupIds.has(convo.groupId)) {
+      log(
+        `[DISCOVERY] "${convo.name}": etat MLS present localement — activation sans re-bootstrap.`
+      );
+      // S'enregistrer auprès du gateway pour que les futurs messages soient routés ici
+      try {
+        await mlsService.registerMember(convo.groupId, userId, mlsService.getDeviceId());
+      } catch {
+        /* non-blocking */
+      }
+      conversations.set(key, { ...convo, isReady: true });
+      if (saveConversation) await saveConversation(key);
+      localStorage.removeItem(`discovery_pending:${convo.groupId}`);
+      continue;
+    }
+
     let members: { userId: string }[];
     try {
       members = await mlsService.getGroupMembers(convo.groupId);

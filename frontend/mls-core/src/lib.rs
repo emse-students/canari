@@ -431,14 +431,29 @@ impl MlsManager {
         let msg_epoch = protocol_message.epoch();
         let group_epoch = group.epoch();
 
-        let processed_message = group
-            .process_message(&self.provider, protocol_message)
-            .map_err(|e| {
-                MlsError::OpenMls(format!(
+        let processed_message = match group.process_message(&self.provider, protocol_message) {
+            Ok(pm) => pm,
+            Err(e) => {
+                // If the message is from a past epoch, it's almost certainly our own
+                // echoed commit (already merged via merge_pending_commit) or a stale
+                // commit that another device already applied.  The decryption keys for
+                // commits are consumed during merge, so re-processing always fails with
+                // AeadError.  Silently succeed so the caller ACKs it on the gateway.
+                if msg_epoch.as_u64() < group_epoch.as_u64() {
+                    log::debug!(
+                        "Stale message ignored: msg_epoch={} < group_epoch={} ({})",
+                        msg_epoch,
+                        group_epoch,
+                        group_id
+                    );
+                    return Ok(None);
+                }
+                return Err(MlsError::OpenMls(format!(
                     "Process error: {:?} [msg_epoch={}, group_epoch={}]",
                     e, msg_epoch, group_epoch
-                ))
-            })?;
+                )));
+            }
+        };
 
         match processed_message.into_content() {
             ProcessedMessageContent::ApplicationMessage(app_msg) => {
