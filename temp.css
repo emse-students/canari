@@ -1,0 +1,132 @@
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,100..900;1,100..900&display=swap');
+
+:root {
+    --rootz-cyan: #00e5ff;
+    --rootz-blue: #009bb4;
+    --rootz-bg-dark: #001a23;
+    --rootz-bg-med: #004d61;
+    --pf-global--FontFamily--sans-serif: 'Montserrat', sans-serif;
+}
+
+html, body, .pf-c-login, .pf-c-login * {
+    font-family: 'Montserrat', sans-serif !important;
+}
+
+/* --- FIX BACKGROUND AVEC BLOBS ET SANS MONTAGNE --- */
+.pf-c-login {
+    background-image: none !important; /* Force la suppression de l'image par défaut */
+    background-color: var(--rootz-bg-dark) !important;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* --- GÉNÉRATION DES BLOBS DYNAMIQUES --- */
+/* Ces éléments recréent l'effet de blobs animés en arrière-plan */
+.pf-c-login::before, .pf-c-login::after {
+    content: '';
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(80px); /* L'effet de flou qui fait le blob */
+    opacity: 0.6;
+    animation: blobBounce 20s infinite;
+    z-index: -1; /* Place derrière tout le reste */
+}
+
+/* Blob 1 : Cyan, en haut à gauche */
+.pf-c-login::before {
+    width: 400px;
+    height: 400px;
+    background: var(--rootz-cyan);
+    top: -100px;
+    left: -100px;
+}
+
+/* Blob 2 : Bleu profond, en bas à droite */
+.pf-c-login::after {
+    width: 600px;
+    height: 600px;
+    background: var(--rootz-bg-med);
+    bottom: -150px;
+    right: -150px;
+    animation-delay: -5s; /* Décale l'animation pour un effet plus naturel */
+}
+
+/* Animation douce pour que les blobs "bougent" légèrement */
+@keyframes blobBounce {
+    0%, 100% { transform: translate(0, 0); }
+    50% { transform: translate(30px, 30px) scale(1.05); }
+}
+
+/* --- CENTRAGE ET GLASSMORPHISM DE LA CARTE --- */
+.pf-c-login__main {
+    background: rgba(255, 255, 255, 0.8) !important; /* Verre transparent */
+    backdrop-filter: blur(15px);
+    -webkit-backdrop-filter: blur(15px);
+    border-radius: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    box-shadow: 0 15px 35px rgba(0,0,0,0.5);
+    padding: 2rem !important;
+    max-width: 450px;
+    width: 100%;
+    margin: auto; /* Centrage total */
+}
+
+/* --- CORRECTION VISIBILITÉ DU TEXTE --- */
+/* Pour éviter le blanc sur blanc, on force tout le texte de la carte en sombre */
+.pf-c-login__main, .pf-c-login .pf-c-title, .pf-c-login__main-header-desc {
+    color: #002b36 !important; /* Un bleu-noir profond et lisible */
+    text-align: center; /* Centrage horizontal de tous les textes */
+}
+
+/* --- LOGO ET TITRE --- */
+.pf-c-login .pf-c-title {
+    margin-top: 1rem;
+    font-size: 20px;
+}
+
+.pf-c-brand {
+    margin: 0 auto;
+    display: block;
+}
+
+/* --- TEXTE D'AIDE (SÉLECTIONNER OPTION...) --- */
+.pf-c-login__main-header-desc {
+    color: #444 !important; /* Un gris sombre pour qu'il soit bien visible */
+    font-size: 14px;
+    margin-bottom: 2rem;
+}
+
+/* --- TRADUCTION ET STYLE DES BOUTONS --- */
+.pf-c-login .pf-c-button.pf-m-primary {
+    background: linear-gradient(135deg, var(--rootz-blue), var(--rootz-cyan)) !important;
+    border: none;
+    font-size: 14px;
+    color: #001a23 !important; /* Texte de bouton sombre sur fond clair */
+    padding: 12px;
+    border-radius: 12px;
+}
+
+.pf-c-login .pf-c-button.pf-m-primary::after {
+    font-weight: bold;
+}
+
+/* Style des liens de pied de page */
+.pf-c-login__main-footer-links {
+    margin-top: 2rem;
+    text-align: center;
+}
+
+.pf-c-login__main-footer {
+    border-top: 1px solid rgba(0,0,0,0.05);
+}
+
+.pf-c-page__drawer {
+    width: 100%;
+}
+
+ak-brand-links {
+    display: none;
+}

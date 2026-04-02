@@ -4,29 +4,6 @@ import { Repository } from 'typeorm';
 import { User } from './entities/user.entity';
 import { CreateUserDto, UpdateUserDto, PublicUserDto } from './dto/user.dto';
 
-/**
- * Parse "Firstname LASTNAME" into { firstName, lastName }.
- * Words that are fully uppercase are treated as the last name.
- */
-function parseName(name: string): { firstName: string; lastName: string } {
-  const parts = name.trim().split(/\s+/);
-  const lastNameParts: string[] = [];
-  const firstNameParts: string[] = [];
-
-  for (const part of parts) {
-    if (part === part.toUpperCase() && part.length > 1) {
-      lastNameParts.push(part);
-    } else {
-      firstNameParts.push(part);
-    }
-  }
-
-  return {
-    firstName: firstNameParts.join(' ') || parts[0] || '',
-    lastName: lastNameParts.join(' ') || '',
-  };
-}
-
 @Injectable()
 export class UsersService {
   constructor(
@@ -74,6 +51,8 @@ export class UsersService {
     id: string,
     email: string | null,
     displayName: string | null,
+    firstName: string | null,
+    lastName: string | null,
     promo: number | null = null,
   ): Promise<User> {
     const user = await this.userRepository.findOne({ where: { id } });
@@ -102,8 +81,8 @@ export class UsersService {
       id,
       email: email || null,
       displayName: displayName || null,
-      firstName: displayName ? parseName(displayName).firstName : null,
-      lastName: displayName ? parseName(displayName).lastName : null,
+      firstName: firstName || null,
+      lastName: lastName || null,
       promo,
     });
     return await this.userRepository.save(newUser);

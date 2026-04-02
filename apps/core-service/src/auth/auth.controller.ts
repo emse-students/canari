@@ -107,7 +107,8 @@ export class AuthController {
       email: string;
       displayName: string;
       promo: number | null;
-      avatarMediaId: string | null;
+      firstName: string | null;
+      lastName: string | null;
       bio: string | null;
       admin: boolean;
     };
@@ -132,6 +133,8 @@ export class AuthController {
         user = await this.usersService.findOrCreateFromOidc(
           devId,
           `${devId}@canari.local`,
+          devId,
+          devId,
           devId,
         );
       }
@@ -163,8 +166,9 @@ export class AuthController {
         id: user.id,
         email: user.email || '',
         displayName: user.displayName || '',
+        firstName: user.firstName || '',
+        lastName: user.lastName || '',
         promo: user.promo ?? null,
-        avatarMediaId: user.avatarMediaId ?? null,
         bio: user.bio ?? null,
         admin: !!user.admin,
       },
@@ -182,7 +186,8 @@ export class AuthController {
       email: string;
       displayName: string;
       promo: number | null;
-      avatarMediaId: string | null;
+      firstName: string | null;
+      lastName: string | null;
       bio: string | null;
       admin: boolean;
     };
@@ -245,6 +250,8 @@ export class AuthController {
       email?: string;
       name?: string;
       promo?: number;
+      firstName?: string;
+      lastName?: string;
     };
 
     console.log('[oidcCallback] userinfo from Authentik:', userinfo);
@@ -261,6 +268,8 @@ export class AuthController {
       userinfo.sub,
       userinfo.email || null,
       userinfo.name || null,
+      userinfo.firstName || null,
+      userinfo.lastName || null,
       promo,
     );
 
@@ -287,8 +296,9 @@ export class AuthController {
         id: user.id,
         email: user.email || '',
         displayName: user.displayName || '',
+        firstName: user.firstName || '',
+        lastName: user.lastName || '',
         promo: user.promo ?? null,
-        avatarMediaId: user.avatarMediaId ?? null,
         bio: user.bio ?? null,
         admin: !!user.admin,
       },
