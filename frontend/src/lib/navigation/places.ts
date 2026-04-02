@@ -27,23 +27,23 @@ export const APP_PLACES: AppPlace[] = [
   {
     id: 'posts',
     label: 'Posts',
-    description: 'Le fil social de la communaute',
+    description: 'Le fil social de la communauté',
     icon: 'newspaper',
     href: '/posts',
     enabled: true,
   },
   {
     id: 'communities',
-    label: 'Communautes',
-    description: "Espaces d'association et canaux",
+    label: 'Communautés',
+    description: "Espaces d'associations et canaux",
     icon: 'users',
     href: '/communities',
     enabled: true,
   },
   {
     id: 'events',
-    label: 'Evenements',
-    description: 'Calendrier, rendez-vous, annonces',
+    label: 'Évènements',
+    description: 'Calendrier, rendez-vous, évènements',
     icon: 'calendar-days',
     href: '/events',
     enabled: true,
@@ -75,11 +75,11 @@ export const APP_PLACES: AppPlace[] = [
   {
     id: 'calls',
     label: 'Appels',
-    description: 'Audio et video en temps reel',
+    description: 'Audio et vidéo en temps réel',
     icon: 'phone',
     href: '/calls',
     enabled: false,
-    badge: 'Bientot',
+    badge: 'Bientôt',
   },
 ];
 

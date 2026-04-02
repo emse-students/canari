@@ -523,10 +523,11 @@ Avez-vous des questions ? Besoin d'aide ?
 - **[Tauri](https://tauri.app/)** - Framework desktop léger
 - **[Rust](https://www.rust-lang.org/)** - Langage système sécurisé
 - **[MLS Protocol](https://messaginglayersecurity.rocks/)** - Standard de sécurité
+- **[PRICE Website](https://github.com/So6oN-Maximix/Price_Website)** par Maxime Leost — Inspiration pour le fil social (posts, commentaires, likes)
 - **EMSE** - École supportant ce projet
 
 ---
 
 **Fait avec ❤️ par les étudiants de l'EMSE**
 
-_Dernière mise à jour : Mars 2026_
+_Dernière mise à jour : Avril 2026_

@@ -4,7 +4,7 @@
     subtitle?: string;
   }
 
-  let { compact = false, subtitle = 'messagerie + fil social' }: Props = $props();
+  let { compact = false, subtitle = 'Le réseau des Marteaux' }: Props = $props();
 </script>
 
 <div

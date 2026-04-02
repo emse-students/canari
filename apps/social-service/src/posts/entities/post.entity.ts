@@ -47,6 +47,12 @@ export class Post {
   @Column({ nullable: true })
   paymentAssociationId: string;
 
+  @Column('jsonb', { default: [] })
+  likes: string[];
+
+  @Column('jsonb', { default: [] })
+  comments: any[];
+
   @CreateDateColumn()
   @Index()
   createdAt: Date;

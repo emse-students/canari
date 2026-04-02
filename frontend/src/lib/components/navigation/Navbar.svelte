@@ -45,16 +45,20 @@
 <header
   class="bg-[var(--surface-elevated)] border-b border-cn-border z-20 backdrop-blur-sm pt-[env(safe-area-inset-top)]"
 >
-  <div class="h-16 flex items-center justify-between px-4 md:px-6">
-    <CanariBrand compact={true} />
+  <div class="h-14 flex items-center justify-between px-4 md:px-6 gap-3">
+    <!-- Left: Brand -->
+    <div class="flex items-center gap-2 flex-shrink-0">
+      <CanariBrand compact={true} />
+    </div>
 
-    <div class="flex items-center gap-3 min-w-0">
-      <PlaceSwitcher {pathname} compact={true} />
+    <!-- Center: Connection status -->
+    <div class="flex-1 flex justify-center">
       <StatusPill isConnected={isWsConnected} />
     </div>
 
-    <!-- Actions -->
-    <div class="flex gap-2">
+    <!-- Right: Place switcher + actions -->
+    <div class="flex items-center gap-2 flex-shrink-0">
+      <PlaceSwitcher {pathname} compact={true} />
       <ThemeToggleButton {isDarkMode} onToggle={toggleTheme} />
       <SessionActionButtons {onToggleLogs} {onLogout} />
     </div>

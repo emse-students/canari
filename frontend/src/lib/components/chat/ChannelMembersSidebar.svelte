@@ -13,9 +13,6 @@
 
   let { currentUserId, mode = 'desktop', onClose }: Props = $props();
 
-  // Ce n'est plus un mock statique, on simule l'arrivée des utilisateurs réels.
-  // Idéalement, nous devrions récupérer les vrais membres du `channel-service`,
-  // mais pour l'instant cela affichera au moins vos contacts récents/membres connectés !
   let channelMembers = $derived(
     currentUserId ? [{ id: currentUserId, name: currentUserId, role: 'admin' }] : []
   );

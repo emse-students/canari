@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Reply, Smile, Pencil, Trash2, EllipsisVertical, CheckCheck } from 'lucide-svelte';
+  import { Reply, Smile, Pencil, Trash2, EllipsisVertical, CheckCheck, Info } from 'lucide-svelte';
   import { MediaService } from '$lib/media';
   import type { MediaRef } from '$lib/media';
   import { parseEnvelope } from '$lib/envelope';
@@ -218,6 +218,38 @@
     return match?.[0] ?? null;
   }
 
+  function isGifUrl(url: string): boolean {
+    try {
+      const u = new URL(url);
+      const host = u.hostname.toLowerCase();
+      if (host.includes('tenor.com') || host.includes('giphy.com')) return true;
+      if (/\.gif(\?.*)?$/i.test(u.pathname)) return true;
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Convert a tenor/giphy page URL into a direct .gif embed URL when possible. */
+  function getGifEmbedUrl(url: string): string {
+    try {
+      const u = new URL(url);
+      const host = u.hostname.toLowerCase();
+      // Tenor: /view/... pages → use media.tenor.com embed
+      if (host.includes('tenor.com') && u.pathname.includes('/view/')) {
+        return `https://media.tenor.com/${u.pathname.split('-').pop()}/tenor.gif`;
+      }
+      // Giphy: /gifs/ or /media/ pages → direct giphy media URL
+      if (host.includes('giphy.com')) {
+        const match = u.pathname.match(/(?:gifs|media)\/(?:.*-)?([a-zA-Z0-9]+)$/);
+        if (match) return `https://media.giphy.com/media/${match[1]}/giphy.gif`;
+      }
+    } catch {
+      // fallback
+    }
+    return url;
+  }
+
   function splitTextWithLinks(text: string): Array<{ type: 'text' | 'link'; value: string }> {
     const regex = /https?:\/\/[^\s]+/gi;
     const segments: Array<{ type: 'text' | 'link'; value: string }> = [];
@@ -306,11 +338,12 @@
 
 {#if effectiveSystem}
   <div
-    class="px-4 py-1.5 bg-cn-bg rounded-full text-xs text-text-muted text-center max-w-md {shouldAnimate
+    class="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs text-text-muted text-center max-w-md border border-cn-border/50 bg-[var(--cn-surface)]/60 backdrop-blur-sm {shouldAnimate
       ? 'animate-rise-in'
       : ''}"
   >
-    {textContent}
+    <Info size={12} class="flex-shrink-0 opacity-60" />
+    <span>{textContent}</span>
   </div>
 {:else}
   <div
@@ -406,15 +439,38 @@
           >
             {#each textSegments as segment, index (`${segment.type}-${segment.value}-${index}`)}
               {#if segment.type === 'link'}
-                <a
-                  href={segment.value}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  class="underline underline-offset-2 decoration-current hover:opacity-80"
-                  onclick={(e) => e.stopPropagation()}
-                >
-                  {segment.value}
-                </a>
+                {#if isGifUrl(segment.value)}
+                  <span class="block my-1">
+                    <img
+                      src={getGifEmbedUrl(segment.value)}
+                      alt="GIF"
+                      class="rounded-xl max-h-64 max-w-full object-contain"
+                      onerror={(e) => {
+                        const img = e.currentTarget;
+                        if (img instanceof HTMLImageElement) {
+                          img.style.display = 'none';
+                          const link = document.createElement('a');
+                          link.href = segment.value;
+                          link.target = '_blank';
+                          link.rel = 'noopener noreferrer';
+                          link.textContent = segment.value;
+                          link.className = 'underline underline-offset-2 decoration-current hover:opacity-80';
+                          img.parentElement?.appendChild(link);
+                        }
+                      }}
+                    />
+                  </span>
+                {:else}
+                  <a
+                    href={segment.value}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="underline underline-offset-2 decoration-current hover:opacity-80"
+                    onclick={(e) => e.stopPropagation()}
+                  >
+                    {segment.value}
+                  </a>
+                {/if}
               {:else}
                 {segment.value}
               {/if}

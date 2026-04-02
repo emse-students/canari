@@ -330,4 +330,72 @@ export class PostsService {
     await this.postRepo.delete(id);
     return { success: true };
   }
+
+  async likePost(postId: string, userId: string) {
+    const post = await this.postRepo.findOne({ where: { id: postId } });
+    if (!post) throw new NotFoundException('Post not found');
+    const likes: string[] = post.likes ?? [];
+    if (likes.includes(userId)) {
+      return { ok: true, liked: true, likesCount: likes.length };
+    }
+    post.likes = [...likes, userId];
+    await this.postRepo.save(post);
+    return { ok: true, liked: true, likesCount: post.likes.length };
+  }
+
+  async unlikePost(postId: string, userId: string) {
+    const post = await this.postRepo.findOne({ where: { id: postId } });
+    if (!post) throw new NotFoundException('Post not found');
+    const likes: string[] = post.likes ?? [];
+    post.likes = likes.filter((id) => id !== userId);
+    await this.postRepo.save(post);
+    return { ok: true, liked: false, likesCount: post.likes.length };
+  }
+
+  async addComment(postId: string, data: { userId: string; text: string; parentId?: string }) {
+    const post = await this.postRepo.findOne({ where: { id: postId } });
+    if (!post) throw new NotFoundException('Post not found');
+
+    // Resolve display name
+    let displayName: string | null = null;
+    try {
+      const rows: { displayName: string | null }[] = await this.postRepo.manager.query(
+        `SELECT "displayName" FROM users WHERE id = $1 LIMIT 1`,
+        [data.userId],
+      );
+      displayName = rows[0]?.displayName ?? null;
+    } catch {
+      // ignore
+    }
+
+    const comment = {
+      id: crypto.randomUUID(),
+      userId: data.userId,
+      displayName,
+      text: data.text,
+      parentId: data.parentId ?? null,
+      likes: [] as string[],
+      createdAt: new Date().toISOString(),
+    };
+    post.comments = [...(post.comments ?? []), comment];
+    await this.postRepo.save(post);
+    return { ok: true, comment };
+  }
+
+  async likeComment(postId: string, commentId: string, userId: string) {
+    const post = await this.postRepo.findOne({ where: { id: postId } });
+    if (!post) throw new NotFoundException('Post not found');
+    const comments: any[] = post.comments ?? [];
+    const comment = comments.find((c: any) => c.id === commentId);
+    if (!comment) throw new NotFoundException('Comment not found');
+    const likes: string[] = comment.likes ?? [];
+    if (likes.includes(userId)) {
+      comment.likes = likes.filter((id: string) => id !== userId);
+    } else {
+      comment.likes = [...likes, userId];
+    }
+    post.comments = comments;
+    await this.postRepo.save(post);
+    return { ok: true, comment };
+  }
 }

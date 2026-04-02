@@ -72,7 +72,6 @@
   );
 
   $effect(() => {
-    // We only poll presence for simple 1-1 conversations where the contactName represents an actual user
     if (contactName && !isGroupConversation && !isChannel) {
       watchUsers([contactName]);
     }
@@ -133,8 +132,8 @@
 
   const panelSubtitle = $derived(
     isGroupConversation
-      ? 'Organisez les membres, le nom et la suppression dans un seul panneau.'
-      : 'Cette discussion est privee entre deux participants.'
+      ? 'Organisez les membres, le nom et la suppression.'
+      : 'Cette discussion est privée entre deux participants.'
   );
 </script>
 
@@ -181,7 +180,9 @@
 
   <!-- Meta -->
   <div class="flex-1 min-w-0">
-    <h2 class="text-base md:text-lg font-semibold text-cn-dark mb-1 truncate">{effectiveDisplayName}</h2>
+    <h2 class="text-base md:text-lg font-semibold text-cn-dark mb-1 truncate">
+      {effectiveDisplayName}
+    </h2>
     {#if isChannel}
       <span
         class="inline-flex items-center gap-1.5 text-[0.7rem] md:text-xs font-semibold text-text-muted"
@@ -270,7 +271,7 @@
               <div class="text-xs text-text-muted mt-0.5 inline-flex items-center gap-1.5">
                 {#if isReady}
                   <Shield size={12} class="text-emerald-500" />
-                  Groupe pret, securise et synchronise
+                  Groupe prêt, sécurisé et synchronisé
                 {:else}
                   <Clock size={12} class="text-amber-500" />
                   Synchronisation en cours
@@ -311,7 +312,7 @@
             <div
               class="rounded-2xl border border-white/60 dark:border-white/10 bg-white/55 dark:bg-black/25 p-3 text-sm text-text-muted"
             >
-              Cette discussion privee est entre deux participants.
+              Cette discussion privée est entre deux participants.
             </div>
           {/if}
 

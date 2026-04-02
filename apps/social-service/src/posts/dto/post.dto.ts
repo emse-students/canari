@@ -280,3 +280,17 @@ export class SubmitFormDto {
   @IsObject()
   selections: Record<string, string | string[] | number | Record<string, any>>;
 }
+
+export class AddCommentDto {
+  @IsString()
+  @IsOptional()
+  userId?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  text: string;
+
+  @IsString()
+  @IsOptional()
+  parentId?: string;
+}

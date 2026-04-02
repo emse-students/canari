@@ -70,7 +70,7 @@
   <button
     type="button"
     onclick={toggleMenu}
-    class="inline-flex items-center gap-2 rounded-xl border border-cn-border bg-white/80 px-3 py-1.5 text-sm font-semibold text-text-main hover:bg-white focus:ring-2 focus:ring-amber-400/45"
+    class="inline-flex items-center gap-2 rounded-xl border border-cn-border bg-[var(--cn-surface)]/80 px-3 py-1.5 text-sm font-semibold text-text-main hover:bg-[var(--cn-surface)] focus:ring-2 focus:ring-amber-400/45 transition-colors"
     aria-haspopup="menu"
     aria-expanded={isOpen}
     aria-label="Choisir un espace"
@@ -98,12 +98,12 @@
             disabled={!place.enabled}
             class="mb-1 flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left last:mb-0 {place.id ===
             activePlaceId
-              ? 'bg-[color-mix(in_srgb,var(--cn-yellow)_23%,white)]'
-              : 'hover:bg-white/80'} {place.enabled
+              ? 'bg-[color-mix(in_srgb,var(--cn-yellow)_23%,var(--cn-surface))]'
+              : 'hover:bg-[var(--cn-surface)]/80'} {place.enabled
               ? 'text-text-main'
               : 'text-text-muted opacity-70'}"
           >
-            <span class="mt-[1px] rounded-lg border border-cn-border bg-white/70 p-1.5">
+            <span class="mt-[1px] rounded-lg border border-cn-border bg-[var(--cn-surface)]/70 p-1.5">
               <PlaceIcon size={14} />
             </span>
             <span class="min-w-0 flex-1">

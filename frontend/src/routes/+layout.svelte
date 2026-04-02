@@ -27,18 +27,22 @@
 
   {#if !isChatRoute}
     <header
-      class="sticky top-0 z-20 border-b border-cn-border/70 bg-white/82 backdrop-blur-lg pt-[env(safe-area-inset-top)]"
+      class="sticky top-0 z-20 border-b border-cn-border/70 bg-[var(--surface-elevated)]/90 backdrop-blur-lg pt-[env(safe-area-inset-top)]"
     >
       <div
-        class="mx-auto flex w-full max-w-[1180px] items-center justify-between gap-3 px-3 py-3 sm:px-5"
+        class="mx-auto flex w-full max-w-[1180px] items-center justify-between gap-3 px-3 py-2.5 sm:px-5"
       >
-        <CanariBrand />
-        <PlaceSwitcher {pathname} />
-        {#if userId}
-          <a href="/profile" class="flex-shrink-0" aria-label="Mon profil">
-            <Avatar {userId} size="sm" />
-          </a>
-        {/if}
+        <div class="flex items-center gap-2 flex-shrink-0">
+          <CanariBrand />
+        </div>
+        <div class="flex items-center gap-2 flex-shrink-0">
+          <PlaceSwitcher {pathname} />
+          {#if userId}
+            <a href="/profile" class="flex-shrink-0" aria-label="Mon profil">
+              <Avatar {userId} size="sm" />
+            </a>
+          {/if}
+        </div>
       </div>
     </header>
   {/if}

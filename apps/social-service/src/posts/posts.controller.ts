@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Headers,
   Param,
@@ -18,6 +19,7 @@ import {
   RegisterEventDto,
   VotePollDto,
   SubmitFormDto,
+  AddCommentDto,
 } from './dto/post.dto';
 
 @Controller('posts')
@@ -96,5 +98,43 @@ export class PostsController {
     @Body() body: SubmitFormDto
   ) {
     return this.service.submitForm(postId, formId, { ...body, userId: xUserId });
+  }
+
+  @UseGuards(NginxAuthGuard)
+  @HttpPost(':postId/like')
+  likePost(
+    @Headers('x-user-id') xUserId: string,
+    @Param('postId') postId: string
+  ) {
+    return this.service.likePost(postId, xUserId);
+  }
+
+  @UseGuards(NginxAuthGuard)
+  @Delete(':postId/like')
+  unlikePost(
+    @Headers('x-user-id') xUserId: string,
+    @Param('postId') postId: string
+  ) {
+    return this.service.unlikePost(postId, xUserId);
+  }
+
+  @UseGuards(NginxAuthGuard)
+  @HttpPost(':postId/comments')
+  addComment(
+    @Headers('x-user-id') xUserId: string,
+    @Param('postId') postId: string,
+    @Body() body: AddCommentDto
+  ) {
+    return this.service.addComment(postId, { ...body, userId: xUserId });
+  }
+
+  @UseGuards(NginxAuthGuard)
+  @HttpPost(':postId/comments/:commentId/like')
+  likeComment(
+    @Headers('x-user-id') xUserId: string,
+    @Param('postId') postId: string,
+    @Param('commentId') commentId: string
+  ) {
+    return this.service.likeComment(postId, commentId, xUserId);
   }
 }

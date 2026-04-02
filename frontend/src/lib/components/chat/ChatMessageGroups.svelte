@@ -45,7 +45,12 @@
   $effect(() => {
     const senderIds = new SvelteSet<string>();
     for (const group of visibleMessageGroups) {
-      if (group.type !== 'message' || !group.message || group.message.isOwn || group.message.isSystem) {
+      if (
+        group.type !== 'message' ||
+        !group.message ||
+        group.message.isOwn ||
+        group.message.isSystem
+      ) {
         continue;
       }
       senderIds.add(group.message.senderId);
@@ -73,7 +78,7 @@
       onclick={loadOlderGroups}
       class="px-3 py-1 rounded-full bg-[var(--surface-elevated)]/85 backdrop-blur border border-cn-border text-xs text-text-main hover:bg-[var(--surface-elevated)] transition-colors shadow-sm"
     >
-      Charger les messages precedents ({hiddenGroupCount})
+      Charger les messages précédents ({hiddenGroupCount})
     </button>
   </div>
 {/if}

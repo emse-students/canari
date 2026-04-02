@@ -57,6 +57,16 @@ export interface PostForm {
   items: FormItem[];
 }
 
+export interface PostComment {
+  id: string;
+  userId: string;
+  displayName?: string | null;
+  text: string;
+  parentId?: string | null;
+  likes: string[];
+  createdAt: string;
+}
+
 export interface PostEntity {
   id: string;
   authorId: string;
@@ -71,6 +81,8 @@ export interface PostEntity {
   attachedFormId?: string;
   associationId?: string;
   paymentAssociationId?: string;
+  likes?: string[];
+  comments?: PostComment[];
   createdAt: string;
   updatedAt: string;
 }
@@ -173,4 +185,33 @@ export async function submitForm(
     method: 'POST',
     body: JSON.stringify(payload),
   });
+}
+
+export async function likePost(
+  postId: string
+): Promise<{ ok: boolean; liked: boolean; likesCount: number }> {
+  return request(`/api/posts/${postId}/like`, { method: 'POST' });
+}
+
+export async function unlikePost(
+  postId: string
+): Promise<{ ok: boolean; liked: boolean; likesCount: number }> {
+  return request(`/api/posts/${postId}/like`, { method: 'DELETE' });
+}
+
+export async function addComment(
+  postId: string,
+  payload: { text: string; parentId?: string }
+): Promise<{ ok: boolean; comment: PostComment }> {
+  return request(`/api/posts/${postId}/comments`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function likeComment(
+  postId: string,
+  commentId: string
+): Promise<{ ok: boolean; comment: PostComment }> {
+  return request(`/api/posts/${postId}/comments/${commentId}/like`, { method: 'POST' });
 }
