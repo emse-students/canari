@@ -42,6 +42,7 @@ export class TauriMlsService implements IMlsService {
       ) => Promise<boolean>)
     | null = null;
   private disconnectCallback: (() => void) | null = null;
+  private syncRequestCallback: (() => void) | null = null;
   private baseUrl: string;
   private historyUrl: string;
   private authToken = '';
@@ -157,6 +158,11 @@ export class TauriMlsService implements IMlsService {
             } else {
               console.warn(`[WS RCV] Received channel event but no onChannelEvent registered.`);
             }
+            return;
+          }
+          if (msg.type === 'sync_request') {
+            console.log(`[WS RCV] sync_request from ${msg.senderDeviceId}`);
+            this.syncRequestCallback?.();
             return;
           }
           if (msg.proto && this.messageCallback) {
@@ -422,6 +428,17 @@ export class TauriMlsService implements IMlsService {
 
   onDisconnect(callback: () => void) {
     this.disconnectCallback = callback;
+  }
+
+  sendSyncRequest(): void {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: 'sync_request', proto: '' }));
+      console.log('[WS] sync_request sent');
+    }
+  }
+
+  onSyncRequest(callback: () => void): void {
+    this.syncRequestCallback = callback;
   }
 
   getDeviceId(): string {

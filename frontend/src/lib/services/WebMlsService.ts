@@ -24,6 +24,7 @@ export class WebMlsService implements IMlsService {
       ) => Promise<boolean>)
     | null = null;
   private disconnectCallback: (() => void) | null = null;
+  private syncRequestCallback: (() => void) | null = null;
   private baseUrl: string; // Chat Gateway URL
   private historyUrl: string; // Chat Delivery Service URL
   private authToken: string | null = null;
@@ -182,6 +183,11 @@ export class WebMlsService implements IMlsService {
             }
             return;
           }
+          if (msg.type === 'sync_request') {
+            console.log(`[WS RCV] sync_request from ${msg.senderDeviceId}`);
+            this.syncRequestCallback?.();
+            return;
+          }
           if (msg.proto && this.messageCallback) {
             const binaryString = atob(msg.proto as string);
             const ciphertext = new Uint8Array(binaryString.length);
@@ -309,6 +315,18 @@ export class WebMlsService implements IMlsService {
   onDisconnect(callback: () => void) {
     this.disconnectCallback = callback;
   }
+
+  sendSyncRequest(): void {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: 'sync_request', proto: '' }));
+      console.log('[WS] sync_request sent');
+    }
+  }
+
+  onSyncRequest(callback: () => void): void {
+    this.syncRequestCallback = callback;
+  }
+
   async fetchPendingMessages() {
     if (this.userId === 'unknown') return;
 

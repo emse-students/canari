@@ -312,33 +312,56 @@ export async function discoverMissingGroups(params: {
     }
     const waitingMs = pendingSince ? Date.now() - pendingSince : 0;
 
-    // Check if another member has published devices — they can re-invite us via their sync.
-    // If so, use a long timeout to give them time; re-bootstrap only as a last resort.
-    // Avoids creating a split-brain (two incompatible MLS states for the same groupId).
+    // Check if any of our OWN other devices are published.
+    // If so, one of them should add us via syncOwnDevicesToGroups (triggered by
+    // our sync_request). Re-bootstrapping while they have a valid MLS state would
+    // create a split-brain (incompatible key material → permanent AeadError).
+    let hasOtherOwnDevices = false;
+    try {
+      const ownDevices = await mlsService.fetchUserDevices(userId);
+      hasOtherOwnDevices = ownDevices.some((d) => d.deviceId !== mlsService.getDeviceId());
+    } catch {
+      // ignore
+    }
+
     let otherMemberIsActive = false;
-    for (const memberId of otherMemberIds) {
-      try {
-        const devices = await mlsService.fetchUserDevices(memberId);
-        if (devices.length > 0) {
-          otherMemberIsActive = true;
-          break;
+    if (!hasOtherOwnDevices) {
+      // Only check other members when we have no own devices that can send us a Welcome.
+      for (const memberId of otherMemberIds) {
+        try {
+          const devices = await mlsService.fetchUserDevices(memberId);
+          if (devices.length > 0) {
+            otherMemberIsActive = true;
+            break;
+          }
+        } catch {
+          // ignore
         }
-      } catch {
-        // ignore
       }
     }
 
-    // Leader bootstraps immediately (no wait).
-    // Non-leader timeout: 120 s when another member is online (they should re-invite us),
-    //                     30 s when nobody else is active (truly orphaned).
-    const bootstrapTimeout = otherMemberIsActive ? 120_000 : 30_000;
-    const shouldBootstrap = isLeader || waitingMs > bootstrapTimeout;
+    // Decision logic:
+    // 1. Own devices exist → ALWAYS wait for Welcome (they handle sync via sync_request)
+    // 2. No own devices, other members active → they can't add us (single-writer),
+    //    but leader can re-bootstrap; non-leader waits 120s
+    // 3. No own devices, nobody active → truly orphaned; leader bootstraps, others wait 30s
+    let shouldBootstrap: boolean;
+    if (hasOtherOwnDevices) {
+      // Only re-bootstrap as extreme fallback if Welcome never arrives
+      shouldBootstrap = waitingMs > 120_000;
+    } else if (otherMemberIsActive) {
+      shouldBootstrap = isLeader || waitingMs > 120_000;
+    } else {
+      shouldBootstrap = isLeader || waitingMs > 30_000;
+    }
 
     if (!shouldBootstrap) {
       log(
-        otherMemberIsActive
-          ? `[DISCOVERY] "${convo.name}": ${otherMemberIds[0] ?? 'membre'} actif, attente re-invitation... (${Math.round(waitingMs / 1000)}s / 120s)`
-          : `[DISCOVERY] "${convo.name}": attente bootstrap par ${memberUserIds[0]} (${Math.round(waitingMs / 1000)}s / 30s)`
+        hasOtherOwnDevices
+          ? `[DISCOVERY] "${convo.name}": autre(s) appareil(s) propre(s) detecte(s), attente Welcome via sync_request... (${Math.round(waitingMs / 1000)}s / 120s)`
+          : otherMemberIsActive
+            ? `[DISCOVERY] "${convo.name}": ${otherMemberIds[0] ?? 'membre'} actif, attente re-invitation... (${Math.round(waitingMs / 1000)}s / 120s)`
+            : `[DISCOVERY] "${convo.name}": attente bootstrap par ${memberUserIds[0]} (${Math.round(waitingMs / 1000)}s / 30s)`
       );
       continue;
     }

@@ -941,6 +941,11 @@ export async function initializeConnection(deps: ConnectionDeps): Promise<void> 
     // Silent fallback if key package generation fails
   }
 
+  // Notify other devices of this user that a new device is available.
+  // This triggers syncOwnDevicesToGroups on those devices so they add us to
+  // their groups and send us a Welcome.
+  mlsService.sendSyncRequest();
+
   // Small delay to allow KeyPackage propagation before syncing
   // This helps avoid race conditions where we fetch stale KeyPackages
   await new Promise((r) => setTimeout(r, 500));

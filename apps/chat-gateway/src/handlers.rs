@@ -540,6 +540,34 @@ async fn handle_socket(
                                 tracing::info!("Read receipt for message {}", message_id);
                             }
 
+                            "sync_request" => {
+                                tracing::info!(
+                                    "Processing sync_request from {}:{}",
+                                    user_id,
+                                    device_id
+                                );
+
+                                let notification = serde_json::json!({
+                                    "type": "sync_request",
+                                    "senderId": user_id,
+                                    "senderDeviceId": device_id,
+                                })
+                                .to_string();
+
+                                let prefix = format!("{}:", user_id);
+                                let my_key = format!("{}:{}", user_id, device_id);
+
+                                let map = state.connected_users.lock().unwrap();
+                                for (key, senders) in map.iter() {
+                                    if key.starts_with(&prefix) && *key != my_key {
+                                        for sender in senders {
+                                            let _ = sender.try_send(notification.clone());
+                                        }
+                                        tracing::info!("sync_request forwarded to {}", key);
+                                    }
+                                }
+                            }
+
                             _ => {
                                 tracing::warn!(
                                     "Unknown message type '{}' from {}",

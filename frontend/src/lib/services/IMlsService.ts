@@ -67,4 +67,8 @@ export interface IMlsService {
     ) => Promise<boolean>
   ): void;
   onDisconnect(callback: () => void): void;
+
+  // Device sync notification
+  sendSyncRequest(): void;
+  onSyncRequest(callback: () => void): void;
 }

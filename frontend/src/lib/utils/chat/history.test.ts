@@ -44,6 +44,8 @@ function makeMls(overrides: Partial<IMlsService> = {}): IMlsService {
     exportSecret: vi.fn(),
     onMessage: vi.fn(),
     onDisconnect: vi.fn(),
+    sendSyncRequest: vi.fn(),
+    onSyncRequest: vi.fn(),
     ...overrides,
   } as unknown as IMlsService;
 }

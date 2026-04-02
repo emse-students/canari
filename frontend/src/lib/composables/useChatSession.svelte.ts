@@ -228,6 +228,19 @@ export function useChatSession() {
         log: cb.log,
       });
 
+      // When another device of this user sends a sync_request (new device just connected),
+      // re-run syncOwnDevicesToGroups so we add the new device and send it a Welcome.
+      mlsService.onSyncRequest(() => {
+        cb.log('[SYNC] sync_request reçu — recherche de nouveaux appareils...');
+        // Clear the known-devices cache so the new device is detected
+        localStorage.removeItem(`known_own_devices:${userId}`);
+        syncOwnDevicesToGroupsLocally(cb).catch((e) =>
+          cb.log(
+            `[WARN] Echec sync appareils (sync_request): ${e instanceof Error ? e.message : String(e)}`
+          )
+        );
+      });
+
       await initializeConnection({
         mlsService,
         userId,
