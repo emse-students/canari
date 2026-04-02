@@ -164,7 +164,12 @@
         >
           {#if showSender && !msg.isSystem}
             <div class="text-xs text-cn-muted px-2 mb-1 font-medium">
-              {resolvedSenderNames[msg.senderId] || msg.senderId}
+              <a
+                href="/profile/{encodeURIComponent(msg.senderId)}"
+                class="hover:underline"
+                onclick={(e) => e.stopPropagation()}
+                >{resolvedSenderNames[msg.senderId] || msg.senderId}</a
+              >
             </div>
           {/if}
 

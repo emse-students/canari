@@ -67,7 +67,9 @@
   </div>
   <div class="flex-1 min-w-0">
     <div class="font-bold text-sm text-text-main truncate">
-      {getPostAuthorName()}
+      <a href="/profile/{encodeURIComponent(post.authorId)}" class="hover:underline"
+        >{getPostAuthorName()}</a
+      >
     </div>
     <div class="text-xs text-text-muted">{timeAgo(post.createdAt)}</div>
   </div>

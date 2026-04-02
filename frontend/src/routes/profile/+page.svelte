@@ -75,6 +75,11 @@
           <p class="text-sm text-text-muted mt-0.5">
             {formatYear(profile.promo)}
           </p>
+          {#if profile.formation}
+            <p class="text-sm text-text-muted mt-0.5">
+              {profile.formation}
+            </p>
+          {/if}
         </div>
       </div>
     </div>
@@ -141,6 +146,12 @@
           <dt class="text-text-muted">Promotion</dt>
           <dd class="text-text-main font-medium">{formatYear(profile.promo)}</dd>
         </div>
+        {#if profile.formation}
+          <div class="flex justify-between">
+            <dt class="text-text-muted">Formation</dt>
+            <dd class="text-text-main font-medium">{profile.formation}</dd>
+          </div>
+        {/if}
         <div class="flex justify-between">
           <dt class="text-text-muted">Membre depuis</dt>
           <dd class="text-text-main font-medium">

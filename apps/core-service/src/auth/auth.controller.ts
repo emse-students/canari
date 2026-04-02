@@ -247,6 +247,7 @@ export class AuthController {
       promo?: number;
       firstName?: string;
       lastName?: string;
+      formation?: string;
     };
 
     console.log('[oidcCallback] userinfo from Authentik:', userinfo);
@@ -265,6 +266,7 @@ export class AuthController {
       userinfo.firstName || null,
       userinfo.lastName || null,
       promo,
+      userinfo.formation || null,
     );
 
     // 4. Issue internal JWT pair

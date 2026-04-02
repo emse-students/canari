@@ -5,9 +5,10 @@
     userId: string;
     fallback?: string;
     class?: string;
+    link?: boolean;
   }
 
-  let { userId, fallback, class: className = '' }: Props = $props();
+  let { userId, fallback, class: className = '', link = true }: Props = $props();
 
   let displayName = $state('');
 
@@ -24,4 +25,12 @@
   });
 </script>
 
-<span class={className}>{displayName}</span>
+{#if link}
+  <a
+    href="/profile/{encodeURIComponent(userId)}"
+    class="{className} hover:underline"
+    onclick={(e) => e.stopPropagation()}>{displayName}</a
+  >
+{:else}
+  <span class={className}>{displayName}</span>
+{/if}

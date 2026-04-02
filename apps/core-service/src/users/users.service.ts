@@ -37,6 +37,7 @@ export class UsersService {
       firstName: user.firstName,
       lastName: user.lastName,
       promo: user.promo,
+      formation: user.formation,
       bio: user.bio,
       createdAt: user.createdAt,
     };
@@ -52,6 +53,7 @@ export class UsersService {
     firstName: string | null,
     lastName: string | null,
     promo: number | null = null,
+    formation: string | null = null,
   ): Promise<User> {
     const user = await this.userRepository.findOne({ where: { id } });
     if (user) {
@@ -62,6 +64,10 @@ export class UsersService {
       }
       if (promo !== null && user.promo !== promo) {
         user.promo = promo;
+        updated = true;
+      }
+      if (formation !== null && user.formation !== formation) {
+        user.formation = formation;
         updated = true;
       }
       if (updated) {
@@ -77,6 +83,7 @@ export class UsersService {
       firstName: firstName || null,
       lastName: lastName || null,
       promo,
+      formation: formation || null,
     });
     return await this.userRepository.save(newUser);
   }

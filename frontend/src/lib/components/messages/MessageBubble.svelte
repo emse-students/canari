@@ -407,7 +407,11 @@
           title="Aller au message cite"
           aria-label="Aller au message cite"
         >
-          <div class="font-semibold truncate">{effectiveReplyTo.senderId}</div>
+          <a
+            href="/profile/{encodeURIComponent(effectiveReplyTo.senderId)}"
+            class="font-semibold truncate hover:underline"
+            onclick={(e) => e.stopPropagation()}>{effectiveReplyTo.senderId}</a
+          >
           <div class="truncate">{replyPreviewText}</div>
         </button>
       {/if}

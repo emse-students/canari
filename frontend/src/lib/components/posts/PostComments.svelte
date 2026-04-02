@@ -93,7 +93,11 @@
         <div class="flex items-start gap-2">
           <div class="flex-1 min-w-0">
             <p class="text-sm">
-              <span class="font-bold text-text-main mr-1">{getCommentAuthorName(comment)}</span>
+              <a
+                href="/profile/{encodeURIComponent(comment.userId)}"
+                class="font-bold text-text-main mr-1 hover:underline"
+                >{getCommentAuthorName(comment)}</a
+              >
               <span class="text-text-main">{comment.text}</span>
             </p>
             <div class="flex items-center gap-3 mt-0.5">

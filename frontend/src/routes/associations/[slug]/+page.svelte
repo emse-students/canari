@@ -288,8 +288,10 @@
         {#each members as member (member.id)}
           <div class="flex items-center justify-between rounded-xl bg-cn-bg/50 px-4 py-2.5">
             <div class="flex items-center gap-3 min-w-0">
-              <span class="text-sm font-medium text-text-main truncate"
-                >{member.displayName || member.userId}</span
+              <a
+                href="/profile/{encodeURIComponent(member.userId)}"
+                class="text-sm font-medium text-text-main truncate hover:underline"
+                >{member.displayName || member.userId}</a
               >
               <span
                 class="text-xs font-semibold px-2 py-0.5 rounded-full

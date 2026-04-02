@@ -1,5 +1,4 @@
 import {
-  IsEmail,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -18,9 +17,21 @@ export class CreateUserDto {
   displayName?: string;
 
   @IsInt()
-  @Min(2000)
+  @Min(1816)
   @IsOptional()
-  firstYearOfSchool?: number;
+  promo?: number;
+
+  @IsString()
+  @IsOptional()
+  firstName?: string;
+
+  @IsString()
+  @IsOptional()
+  lastName?: string;
+
+  @IsString()
+  @IsOptional()
+  formation?: string;
 
   @IsString()
   @IsOptional()
@@ -44,6 +55,7 @@ export class PublicUserDto {
   firstName: string | null;
   lastName: string | null;
   promo: number | null;
+  formation: string | null;
   bio: string | null;
   createdAt: Date;
 }

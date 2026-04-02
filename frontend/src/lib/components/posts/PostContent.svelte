@@ -14,7 +14,9 @@
 <!-- Markdown content -->
 <div class="px-5 py-3 border-b border-cn-border/40">
   <div class="text-sm text-text-main leading-relaxed">
-    <span class="font-bold mr-1">{post.authorDisplayName || post.authorId}</span>
+    <a href="/profile/{encodeURIComponent(post.authorId)}" class="font-bold mr-1 hover:underline"
+      >{post.authorDisplayName || post.authorId}</a
+    >
     <span class="prose prose-sm max-w-none inline [&_p]:inline [&_p]:m-0">
       <SvelteMarkdown source={post.markdown} />
     </span>

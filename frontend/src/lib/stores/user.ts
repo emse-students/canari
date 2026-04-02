@@ -10,6 +10,7 @@ export interface UserProfile {
   firstName: string | null;
   lastName: string | null;
   promo: number | null;
+  formation: string | null;
   avatarMediaId: string | null;
   bio: string | null;
   createdAt: string;
