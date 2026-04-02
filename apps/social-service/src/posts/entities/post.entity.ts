@@ -47,8 +47,8 @@ export class Post {
   @Column({ nullable: true })
   paymentAssociationId: string;
 
-  @Column('jsonb', { default: [] })
-  likes: string[];
+  @Column('jsonb', { default: {} })
+  reactions: Record<string, string>; // userId -> reactionType
 
   @Column('jsonb', { default: [] })
   comments: any[];

@@ -294,3 +294,9 @@ export class AddCommentDto {
   @IsOptional()
   parentId?: string;
 }
+
+export class AddReactionDto {
+  @IsString()
+  @IsNotEmpty()
+  reactionType: string; // J'aime, J'adore, Triste, Joyeux, Enervé, Canari, Marteau
+}

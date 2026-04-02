@@ -454,7 +454,8 @@
                           link.target = '_blank';
                           link.rel = 'noopener noreferrer';
                           link.textContent = segment.value;
-                          link.className = 'underline underline-offset-2 decoration-current hover:opacity-80';
+                          link.className =
+                            'underline underline-offset-2 decoration-current hover:opacity-80';
                           img.parentElement?.appendChild(link);
                         }
                       }}

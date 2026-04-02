@@ -103,7 +103,9 @@
               ? 'text-text-main'
               : 'text-text-muted opacity-70'}"
           >
-            <span class="mt-[1px] rounded-lg border border-cn-border bg-[var(--cn-surface)]/70 p-1.5">
+            <span
+              class="mt-[1px] rounded-lg border border-cn-border bg-[var(--cn-surface)]/70 p-1.5"
+            >
               <PlaceIcon size={14} />
             </span>
             <span class="min-w-0 flex-1">

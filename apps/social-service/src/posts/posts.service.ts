@@ -331,25 +331,24 @@ export class PostsService {
     return { success: true };
   }
 
-  async likePost(postId: string, userId: string) {
+  async addReaction(postId: string, userId: string, reactionType: string) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
-    const likes: string[] = post.likes ?? [];
-    if (likes.includes(userId)) {
-      return { ok: true, liked: true, likesCount: likes.length };
-    }
-    post.likes = [...likes, userId];
+    const reactions: Record<string, string> = post.reactions ?? {};
+    reactions[userId] = reactionType;
+    post.reactions = reactions;
     await this.postRepo.save(post);
-    return { ok: true, liked: true, likesCount: post.likes.length };
+    return { ok: true, reactions: post.reactions };
   }
 
-  async unlikePost(postId: string, userId: string) {
+  async removeReaction(postId: string, userId: string) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
-    const likes: string[] = post.likes ?? [];
-    post.likes = likes.filter((id) => id !== userId);
+    const reactions: Record<string, string> = post.reactions ?? {};
+    delete reactions[userId];
+    post.reactions = reactions;
     await this.postRepo.save(post);
-    return { ok: true, liked: false, likesCount: post.likes.length };
+    return { ok: true, reactions: post.reactions };
   }
 
   async addComment(postId: string, data: { userId: string; text: string; parentId?: string }) {
@@ -361,7 +360,7 @@ export class PostsService {
     try {
       const rows: { displayName: string | null }[] = await this.postRepo.manager.query(
         `SELECT "displayName" FROM users WHERE id = $1 LIMIT 1`,
-        [data.userId],
+        [data.userId]
       );
       displayName = rows[0]?.displayName ?? null;
     } catch {

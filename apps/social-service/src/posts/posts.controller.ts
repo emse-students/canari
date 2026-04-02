@@ -20,6 +20,7 @@ import {
   VotePollDto,
   SubmitFormDto,
   AddCommentDto,
+  AddReactionDto,
 } from './dto/post.dto';
 
 @Controller('posts')
@@ -101,21 +102,19 @@ export class PostsController {
   }
 
   @UseGuards(NginxAuthGuard)
-  @HttpPost(':postId/like')
-  likePost(
+  @HttpPost(':postId/reactions')
+  addReaction(
     @Headers('x-user-id') xUserId: string,
-    @Param('postId') postId: string
+    @Param('postId') postId: string,
+    @Body() body: AddReactionDto
   ) {
-    return this.service.likePost(postId, xUserId);
+    return this.service.addReaction(postId, xUserId, body.reactionType);
   }
 
   @UseGuards(NginxAuthGuard)
-  @Delete(':postId/like')
-  unlikePost(
-    @Headers('x-user-id') xUserId: string,
-    @Param('postId') postId: string
-  ) {
-    return this.service.unlikePost(postId, xUserId);
+  @Delete(':postId/reactions')
+  removeReaction(@Headers('x-user-id') xUserId: string, @Param('postId') postId: string) {
+    return this.service.removeReaction(postId, xUserId);
   }
 
   @UseGuards(NginxAuthGuard)

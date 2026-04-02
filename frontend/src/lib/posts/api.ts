@@ -81,7 +81,7 @@ export interface PostEntity {
   attachedFormId?: string;
   associationId?: string;
   paymentAssociationId?: string;
-  likes?: string[];
+  reactions?: Record<string, string>; // userId -> reactionType
   comments?: PostComment[];
   createdAt: string;
   updatedAt: string;
@@ -187,16 +187,20 @@ export async function submitForm(
   });
 }
 
-export async function likePost(
-  postId: string
-): Promise<{ ok: boolean; liked: boolean; likesCount: number }> {
-  return request(`/api/posts/${postId}/like`, { method: 'POST' });
+export async function addReaction(
+  postId: string,
+  reactionType: string
+): Promise<{ ok: boolean; reactions: Record<string, string> }> {
+  return request(`/api/posts/${postId}/reactions`, {
+    method: 'POST',
+    body: JSON.stringify({ reactionType }),
+  });
 }
 
-export async function unlikePost(
+export async function removeReaction(
   postId: string
-): Promise<{ ok: boolean; liked: boolean; likesCount: number }> {
-  return request(`/api/posts/${postId}/like`, { method: 'DELETE' });
+): Promise<{ ok: boolean; reactions: Record<string, string> }> {
+  return request(`/api/posts/${postId}/reactions`, { method: 'DELETE' });
 }
 
 export async function addComment(
