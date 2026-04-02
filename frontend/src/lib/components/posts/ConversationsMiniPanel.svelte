@@ -92,7 +92,9 @@
   class="hidden xl:flex flex-col w-72 h-full border-l border-cn-border/50 bg-[color-mix(in_srgb,var(--cn-surface)_60%,transparent)] backdrop-blur-sm overflow-hidden rounded-2xl"
 >
   <!-- Header -->
-  <div class="flex items-center justify-between px-4 py-3 border-b border-cn-border/50 flex-shrink-0">
+  <div
+    class="flex items-center justify-between px-4 py-3 border-b border-cn-border/50 flex-shrink-0"
+  >
     <div class="flex items-center gap-2">
       <MessageCircle size={16} class="text-text-muted" />
       <span class="text-sm font-bold text-text-main">Discussions</span>

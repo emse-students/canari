@@ -79,9 +79,7 @@
     <header
       class="sticky top-0 z-20 border-b border-cn-border/70 bg-[var(--surface-elevated)]/90 backdrop-blur-lg pt-[env(safe-area-inset-top)]"
     >
-      <div
-        class="h-14 flex items-center justify-between px-4 md:px-6 gap-3"
-      >
+      <div class="h-14 flex items-center justify-between px-4 md:px-6 gap-3">
         <!-- Left: Brand -->
         <div class="flex items-center gap-2 flex-shrink-0">
           <CanariBrand compact={true} />
@@ -95,7 +93,10 @@
         <!-- Right: Theme + SessionActionButtons + Profile -->
         <div class="flex items-center gap-2 flex-shrink-0">
           <ThemeToggleButton {isDarkMode} onToggle={toggleTheme} />
-          <SessionActionButtons onToggleLogs={() => (showLogs = !showLogs)} onLogout={handleLogout} />
+          <SessionActionButtons
+            onToggleLogs={() => (showLogs = !showLogs)}
+            onLogout={handleLogout}
+          />
           {#if userId}
             <a href="/profile" class="flex-shrink-0" aria-label="Mon profil">
               <Avatar {userId} size="sm" />

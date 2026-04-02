@@ -64,12 +64,20 @@ export class PostsService {
     // Enrich with author display names (users table is in the same DB).
     const authorIds = [...new Set(posts.map((p) => p.authorId).filter(Boolean))];
     if (authorIds.length > 0) {
-      const rows: { id: string; displayName: string | null }[] = await this.postRepo.manager.query(
-        `SELECT id, "displayName" FROM users WHERE id = ANY($1)`,
+      const rows: { id: string; displayName: string | null; firstName: string | null; lastName: string | null }[] = await this.postRepo.manager.query(
+        `SELECT id, "displayName", "firstName", "lastName" FROM users WHERE id = ANY($1)`,
         [authorIds]
       );
-      const nameMap = Object.fromEntries(rows.map((r) => [r.id, r.displayName]));
-      return posts.map((p) => ({ ...p, authorDisplayName: nameMap[p.authorId] ?? null }));
+      const nameMap = Object.fromEntries(rows.map((r) => [r.id, { displayName: r.displayName, firstName: r.firstName, lastName: r.lastName }]));
+      return posts.map((p) => {
+        const authorInfo = nameMap[p.authorId] || { displayName: null, firstName: null, lastName: null };
+        return {
+          ...p,
+          authorDisplayName: authorInfo.displayName,
+          authorFirstName: authorInfo.firstName,
+          authorLastName: authorInfo.lastName
+        };
+      });
     }
     return posts;
   }
@@ -355,14 +363,20 @@ export class PostsService {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
 
-    // Resolve display name
+    // Resolve display name, firstName, lastName
     let displayName: string | null = null;
+    let firstName: string | null = null;
+    let lastName: string | null = null;
     try {
-      const rows: { displayName: string | null }[] = await this.postRepo.manager.query(
-        `SELECT "displayName" FROM users WHERE id = $1 LIMIT 1`,
+      const rows: { displayName: string | null; firstName: string | null; lastName: string | null }[] = await this.postRepo.manager.query(
+        `SELECT "displayName", "firstName", "lastName" FROM users WHERE id = $1 LIMIT 1`,
         [data.userId]
       );
-      displayName = rows[0]?.displayName ?? null;
+      if (rows[0]) {
+        displayName = rows[0].displayName ?? null;
+        firstName = rows[0].firstName ?? null;
+        lastName = rows[0].lastName ?? null;
+      }
     } catch {
       // ignore
     }
@@ -371,6 +385,8 @@ export class PostsService {
       id: crypto.randomUUID(),
       userId: data.userId,
       displayName,
+      firstName,
+      lastName,
       text: data.text,
       parentId: data.parentId ?? null,
       likes: [] as string[],

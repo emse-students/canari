@@ -61,6 +61,8 @@ export interface PostComment {
   id: string;
   userId: string;
   displayName?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
   text: string;
   parentId?: string | null;
   likes: string[];
@@ -71,6 +73,8 @@ export interface PostEntity {
   id: string;
   authorId: string;
   authorDisplayName?: string | null;
+  authorFirstName?: string | null;
+  authorLastName?: string | null;
   markdown: string;
   mentions: string[];
   links: Array<{ url: string }>;

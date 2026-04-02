@@ -7,6 +7,43 @@
 
   let { post }: Props = $props();
 
+  function getPostAuthorName(): string {
+    const first = post.authorFirstName?.trim();
+    const last = post.authorLastName?.trim();
+    
+    if (first && last) {
+      return `${first} ${last}`;
+    }
+    if (first) {
+      return first;
+    }
+    if (last) {
+      return last;
+    }
+    if (post.authorDisplayName?.trim()) {
+      return post.authorDisplayName.trim();
+    }
+    return post.authorId;
+  }
+
+  function getAuthorInitials(): string {
+    const first = post.authorFirstName?.trim().charAt(0)?.toUpperCase() || '';
+    const last = post.authorLastName?.trim().charAt(0)?.toUpperCase() || '';
+    
+    if (first && last) {
+      return first + last;
+    }
+    if (first) {
+      return first;
+    }
+    if (last) {
+      return last;
+    }
+    
+    const display = (post.authorDisplayName?.trim() || post.authorId).charAt(0).toUpperCase();
+    return display;
+  }
+
   function timeAgo(dateStr: string): string {
     const now = Date.now();
     const then = new Date(dateStr).getTime();
@@ -26,11 +63,11 @@
   <div
     class="w-10 h-10 rounded-full bg-gradient-to-br from-cn-yellow/30 to-cn-yellow/10 flex items-center justify-center text-cn-dark font-bold text-sm border border-cn-border/50"
   >
-    {(post.authorDisplayName || post.authorId).slice(0, 2).toUpperCase()}
+    {getAuthorInitials()}
   </div>
   <div class="flex-1 min-w-0">
     <div class="font-bold text-sm text-text-main truncate">
-      {post.authorDisplayName || post.authorId}
+      {getPostAuthorName()}
     </div>
     <div class="text-xs text-text-muted">{timeAgo(post.createdAt)}</div>
   </div>

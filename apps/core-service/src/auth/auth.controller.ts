@@ -5,6 +5,7 @@ import {
   Get,
   Head,
   HttpCode,
+  NotFoundException,
   Post,
   Req,
   Res,
@@ -23,12 +24,27 @@ interface OidcCallbackDto {
 const REFRESH_COOKIE = 'canari_refresh';
 const REFRESH_MAX_AGE = 7 * 24 * 60 * 60; // 7 days in seconds
 
+function isEnvFlagEnabled(value: string | undefined): boolean {
+  if (!value) return false;
+
+  switch (value.trim().toLowerCase()) {
+    case '1':
+    case 'true':
+    case 'yes':
+    case 'on':
+      return true;
+    default:
+      return false;
+  }
+}
+
 @Controller('auth')
 export class AuthController {
   private readonly jwtSecret: string;
   private readonly authentikBaseUrl: string;
   private readonly authentikClientId: string;
   private readonly authentikClientSecret: string;
+  private readonly devRoutesEnabled: boolean;
   private readonly isProduction: boolean;
 
   constructor(private readonly usersService: UsersService) {
@@ -47,6 +63,7 @@ export class AuthController {
     );
     this.authentikClientId = process.env.AUTHENTIK_CLIENT_ID || '';
     this.authentikClientSecret = process.env.AUTHENTIK_CLIENT_SECRET || '';
+    this.devRoutesEnabled = isEnvFlagEnabled(process.env.ENABLE_DEV_ROUTES);
   }
 
   /** Set the refresh token as an HttpOnly cookie. */
@@ -95,6 +112,10 @@ export class AuthController {
       admin: boolean;
     };
   }> {
+    if (!this.devRoutesEnabled) {
+      throw new NotFoundException('Dev login is disabled');
+    }
+
     const devId = (body?.id || 'dev').trim().toLowerCase();
 
     let user: User;

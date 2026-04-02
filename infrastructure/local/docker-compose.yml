@@ -186,6 +186,7 @@ services:
     environment:
       PORT: "3012"
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-me}
+      ENABLE_DEV_ROUTES: "${ENABLE_DEV_ROUTES:-false}"
       DB_HOST: postgres
       DB_PORT: "5432"
       DB_USERNAME: admin

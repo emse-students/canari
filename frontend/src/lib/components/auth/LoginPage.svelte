@@ -1,7 +1,13 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
-  import { startOidcLogin, hasStoredSession, getToken, devLogin } from '$lib/stores/auth';
+  import {
+    startOidcLogin,
+    hasStoredSession,
+    getToken,
+    devLogin,
+    devRoutesEnabled,
+  } from '$lib/stores/auth';
   import { BiometricService } from '$lib/services/biometric';
   import LoginForm from './LoginForm.svelte';
 
@@ -75,9 +81,7 @@
     }
   }
 
-  // ─── TEMPORARY Login (no Authentik) ────────────────────────────────────────
-  // TODO: remove once Authentik is fully configured.
-  const isDev = true;
+  const isDev = devRoutesEnabled();
 
   async function handleDevLogin() {
     loginError = '';

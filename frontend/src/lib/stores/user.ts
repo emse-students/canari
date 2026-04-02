@@ -7,6 +7,8 @@ export interface UserProfile {
   id: string;
   email: string | null;
   displayName: string | null;
+  firstName: string | null;
+  lastName: string | null;
   promo: number | null;
   avatarMediaId: string | null;
   bio: string | null;

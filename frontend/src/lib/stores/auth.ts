@@ -17,6 +17,21 @@ const OIDC_RETURN_KEY = 'canari_oidc_return';
 
 let _accessToken: string | null = null;
 
+function isEnvFlagEnabled(value: string | boolean | undefined): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value !== 'string') return false;
+
+  switch (value.trim().toLowerCase()) {
+    case '1':
+    case 'true':
+    case 'yes':
+    case 'on':
+      return true;
+    default:
+      return false;
+  }
+}
+
 function coreUrl(): string {
   const url = import.meta.env.VITE_CORE_URL as string | undefined;
   if (url?.trim()) return url.trim();
@@ -29,6 +44,10 @@ function authentikUrl(): string {
 
 function authentikClientId(): string {
   return (import.meta.env.VITE_AUTHENTIK_CLIENT_ID as string) || '';
+}
+
+export function devRoutesEnabled(): boolean {
+  return isEnvFlagEnabled(import.meta.env.VITE_ENABLE_DEV_ROUTES as string | undefined);
 }
 
 /**
@@ -117,6 +136,10 @@ export async function handleOidcCallback(
 export async function devLogin(
   id?: string
 ): Promise<{ id: string; email: string; displayName: string }> {
+  if (!devRoutesEnabled()) {
+    throw new Error('Dev login is disabled');
+  }
+
   const res = await fetch(`${coreUrl()}/api/auth/dev-login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

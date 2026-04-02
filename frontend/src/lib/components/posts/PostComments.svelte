@@ -30,6 +30,25 @@
     onKeyDown,
   }: Props = $props();
 
+  function getCommentAuthorName(comment: PostComment): string {
+    const first = comment.firstName?.trim();
+    const last = comment.lastName?.trim();
+    
+    if (first && last) {
+      return `${first} ${last}`;
+    }
+    if (first) {
+      return first;
+    }
+    if (last) {
+      return last;
+    }
+    if (comment.displayName?.trim()) {
+      return comment.displayName.trim();
+    }
+    return comment.userId;
+  }
+
   function timeAgo(dateStr: string): string {
     const now = Date.now();
     const then = new Date(dateStr).getTime();
@@ -75,7 +94,7 @@
           <div class="flex-1 min-w-0">
             <p class="text-sm">
               <span class="font-bold text-text-main mr-1"
-                >{comment.displayName || comment.userId}</span
+                >{getCommentAuthorName(comment)}</span
               >
               <span class="text-text-main">{comment.text}</span>
             </p>
