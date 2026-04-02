@@ -10,7 +10,7 @@
   function getPostAuthorName(): string {
     const first = post.authorFirstName?.trim();
     const last = post.authorLastName?.trim();
-    
+
     if (first && last) {
       return `${first} ${last}`;
     }
@@ -29,7 +29,7 @@
   function getAuthorInitials(): string {
     const first = post.authorFirstName?.trim().charAt(0)?.toUpperCase() || '';
     const last = post.authorLastName?.trim().charAt(0)?.toUpperCase() || '';
-    
+
     if (first && last) {
       return first + last;
     }
@@ -39,7 +39,7 @@
     if (last) {
       return last;
     }
-    
+
     const display = (post.authorDisplayName?.trim() || post.authorId).charAt(0).toUpperCase();
     return display;
   }
