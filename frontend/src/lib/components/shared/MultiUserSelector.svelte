@@ -1,5 +1,6 @@
 <script lang="ts">
   import { X, Plus } from 'lucide-svelte';
+  import UserName from './UserName.svelte';
 
   interface Props {
     users: string[];
@@ -56,7 +57,7 @@
         <div
           class="flex items-center gap-1 pl-3 pr-1 py-1 bg-cn-bg text-cn-dark rounded-full text-sm"
         >
-          <span>{user}</span>
+          <UserName userId={user} class="text-sm font-medium" />
           <button
             onclick={() => removeUser(user)}
             class="p-1 hover:bg-gray-200 rounded-full transition-colors"
