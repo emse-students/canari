@@ -12,6 +12,34 @@ function bytesToHex(bytes?: Uint8Array | null): string {
     .join('');
 }
 
+function hashStringDjb2(input: string): string {
+  let hash = 5381;
+  for (let i = 0; i < input.length; i++) {
+    hash = (hash * 33) ^ input.charCodeAt(i);
+  }
+  return (hash >>> 0).toString(16);
+}
+
+function seenHistoryKey(userId: string, groupId: string): string {
+  return `history_seen_cipher:${userId}:${groupId}`;
+}
+
+function loadSeenCipherHashes(userId: string, groupId: string): Set<string> {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(seenHistoryKey(userId, groupId)) ?? '[]'));
+  } catch {
+    return new Set();
+  }
+}
+
+function saveSeenCipherHashes(userId: string, groupId: string, hashes: Set<string>): void {
+  // Keep the cache bounded to avoid unbounded localStorage growth.
+  const MAX_HASHES = 5000;
+  const arr = [...hashes];
+  const bounded = arr.length > MAX_HASHES ? arr.slice(arr.length - MAX_HASHES) : arr;
+  localStorage.setItem(seenHistoryKey(userId, groupId), JSON.stringify(bounded));
+}
+
 function mediaKindToType(kind?: number | null): 'image' | 'video' | 'audio' | 'file' {
   switch (kind) {
     case MediaKind.MEDIA_IMAGE:
@@ -102,10 +130,18 @@ export async function replayConversationHistory(params: {
     const history = await mlsService.fetchHistory(groupId);
     if (history.length === 0) return;
 
+    const seenCipherHashes = loadSeenCipherHashes(userId, groupId);
+    let seenUpdated = false;
+
     let addedMsg = 0;
     let mlsUpdated = false;
 
     for (const msg of history) {
+      const cipherFingerprint = hashStringDjb2(`${msg.timestamp}:${msg.content}`);
+      if (seenCipherHashes.has(cipherFingerprint)) {
+        continue;
+      }
+
       try {
         const bytesStr = atob(msg.content);
         const bytes = new Uint8Array(bytesStr.length);
@@ -307,10 +343,21 @@ export async function replayConversationHistory(params: {
           errStr.includes('WrongEpoch') ||
           errStr.includes('SecretReuseError')
         ) {
+          // Mark as seen so subsequent history sync rounds do not reprocess
+          // the same stale ciphertext forever.
+          seenCipherHashes.add(cipherFingerprint);
+          seenUpdated = true;
           continue;
         }
         console.warn(`History msg error: ${err}`);
+      } finally {
+        seenCipherHashes.add(cipherFingerprint);
+        seenUpdated = true;
       }
+    }
+
+    if (seenUpdated) {
+      saveSeenCipherHashes(userId, groupId, seenCipherHashes);
     }
 
     if (mlsUpdated) {

@@ -868,7 +868,9 @@ export class WebMlsService implements IMlsService {
     groupId: string
   ): Promise<{ sender_id: string; content: string; timestamp: string }[]> {
     try {
-      const res = await fetch(`${this.historyUrl}/api/history/${groupId}`);
+      const res = await fetch(`${this.historyUrl}/api/history/${groupId}`, {
+        headers: this.withAuthHeaders(),
+      });
       if (!res.ok) return [];
       const contentType = res.headers.get('content-type') ?? '';
       if (!contentType.toLowerCase().includes('application/json')) {

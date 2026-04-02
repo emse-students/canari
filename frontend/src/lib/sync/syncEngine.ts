@@ -50,6 +50,17 @@ function decodeConversationTransportId(transportId: string): string {
   return new TextDecoder().decode(bytes);
 }
 
+function getAuthTokenFromStorage(): string | null {
+  if (typeof window === 'undefined') return null;
+  const token = localStorage.getItem('canari_authToken');
+  return token && token.trim() ? token : null;
+}
+
+function withAuthHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  const token = getAuthTokenFromStorage();
+  return token ? { Authorization: `Bearer ${token}`, ...extra } : { ...extra };
+}
+
 export async function buildLocalSyncManifest(
   storage: IStorage,
   pin: string
@@ -269,7 +280,7 @@ export async function getSyncSessionState(
   const qs = new URLSearchParams({ userId: payload.userId });
   const response = await fetch(
     `${historyBaseUrl}/api/mls-api/sync/session/${encodeURIComponent(payload.sessionId)}?${qs.toString()}`,
-    { method: 'GET' }
+    { method: 'GET', headers: withAuthHeaders() }
   );
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
@@ -289,7 +300,7 @@ export async function getSyncSessionState(
 async function postJson<TResponse>(url: string, body: unknown): Promise<TResponse> {
   const response = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: withAuthHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(body),
   });
 
@@ -360,7 +371,7 @@ export async function pullSyncChunks(
   });
   const response = await fetch(
     `${historyBaseUrl}/api/mls-api/sync/session/${encodeURIComponent(payload.sessionId)}/chunks/pull?${qs.toString()}`,
-    { method: 'GET' }
+    { method: 'GET', headers: withAuthHeaders() }
   );
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
