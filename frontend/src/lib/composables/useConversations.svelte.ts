@@ -209,13 +209,41 @@ export function useConversations() {
     if (!convo) return false;
     if (convo.groupId.startsWith('channel_')) return true;
     try {
-      const members = await fetchUniqueGroupMembers(ctx.ensureMls(), convo.groupId);
+      const mlsService = ctx.ensureMls();
+      const members = await fetchUniqueGroupMembers(mlsService, convo.groupId);
       if (members.length === 0) return true;
       const stillMember = members.some((m) => m.toLowerCase() === ctx.userId.toLowerCase());
       if (stillMember) return true;
+
+      // Self-heal transient server drift first: re-register this device in the
+      // gateway membership set, then re-check before attempting any heavy repair.
+      try {
+        await mlsService.registerMember(convo.groupId, ctx.userId, mlsService.getDeviceId());
+        const repairedMembers = await fetchUniqueGroupMembers(mlsService, convo.groupId);
+        const backInGroup = repairedMembers.some(
+          (m) => m.toLowerCase() === ctx.userId.toLowerCase()
+        );
+        if (backInGroup) {
+          ctx.log(`[SYNC] Réinscription serveur réussie pour ${convo.groupId}.`);
+          return true;
+        }
+      } catch {
+        // Non-blocking: fallback behavior below
+      }
+
       if (convo.conversationType === 'direct') {
+        const localGroups = new SvelteSet(mlsService.getLocalGroups());
+        if (localGroups.has(convo.groupId)) {
+          // We still have valid local MLS state: avoid destructive auto-repair
+          // (new group creation) and keep operating while sync converges.
+          ctx.log(
+            `[WARN] Appartenance serveur absente pour ${convo.groupId}, réparation lourde ignorée (état MLS local présent).`
+          );
+          return true;
+        }
+
         const repaired = await repairDirectConversation(contactName, {
-          mlsService: ctx.ensureMls(),
+          mlsService,
           storage: ctx.storage,
           userId: ctx.userId,
           pin: ctx.pin,
