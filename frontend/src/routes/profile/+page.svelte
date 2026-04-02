@@ -73,7 +73,7 @@
             <p class="text-sm text-text-muted truncate">{profile.email}</p>
           {/if}
           <p class="text-sm text-text-muted mt-0.5">
-            {formatYear(profile.firstYearOfSchool)}
+            {formatYear(profile.promo)}
           </p>
         </div>
       </div>
@@ -139,7 +139,7 @@
         </div>
         <div class="flex justify-between">
           <dt class="text-text-muted">Promotion</dt>
-          <dd class="text-text-main font-medium">{formatYear(profile.firstYearOfSchool)}</dd>
+          <dd class="text-text-main font-medium">{formatYear(profile.promo)}</dd>
         </div>
         <div class="flex justify-between">
           <dt class="text-text-muted">Membre depuis</dt>

@@ -14,7 +14,7 @@
     type Association,
     type AssociationMember,
   } from '$lib/associations/api';
-  import { getSavedUserId, isGlobalAdmin } from '$lib/stores/user';
+  import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import { Users, Settings, CreditCard, Trash2, UserPlus } from 'lucide-svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
@@ -25,8 +25,8 @@
   let loading = $state(true);
   let error = $state('');
 
-  let currentUserId = $derived(getSavedUserId());
-  let myMembership = $derived(members.find((m) => m.userId === currentUserId));
+  let userId = $derived(currentUserId());
+  let myMembership = $derived(members.find((m) => m.userId === userId));
   let isAdmin = $derived(myMembership?.role === 'admin' || myMembership?.role === 'owner');
   let isGlobalAdminUser = $derived(isGlobalAdmin());
 

@@ -6,6 +6,7 @@
   import Button from '$lib/components/ui/Button.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import { getToken } from '$lib/stores/auth';
+  import { currentUserId } from '$lib/stores/user';
 
   // Global user state (could be moved to a store/context later)
   let userId = $state('');
@@ -81,7 +82,7 @@
     void refreshPosts();
 
     // Auth & Real-time setup
-    const savedUser = localStorage.getItem('canari_saved_user');
+    const savedUser = currentUserId();
     if (savedUser) {
       userId = savedUser;
       const deviceKey = `mls_device_id_${savedUser}`;

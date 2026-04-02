@@ -13,6 +13,7 @@
   import { useSyncSession } from '$lib/composables/useSyncSession.svelte';
   import { useNotifications } from '$lib/composables/useNotifications.svelte';
   import { loadPersistedArchivedIds } from '$lib/utils/chat/conversations';
+  import { currentUserId } from '$lib/stores/user';
   import Modal from './shared/Modal.svelte';
   import Navbar from './navigation/Navbar.svelte';
   import Sidebar from './sidebar/Sidebar.svelte';
@@ -334,7 +335,7 @@
           await session.biometricLogin(sessionCb());
           return;
         }
-        const savedUser = localStorage.getItem('canari_saved_user');
+        const savedUser = currentUserId();
         const savedPin = localStorage.getItem('canari_saved_pin');
         if (savedUser && savedPin) {
           session.userId = savedUser;
@@ -350,7 +351,7 @@
         }
       })();
     } else {
-      const savedUser = localStorage.getItem('canari_saved_user');
+      const savedUser = currentUserId();
       const savedPin = localStorage.getItem('canari_saved_pin');
       if (savedUser && savedPin) {
         session.userId = savedUser;

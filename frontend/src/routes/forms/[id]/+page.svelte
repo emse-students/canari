@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
   import { getToken } from '$lib/stores/auth';
+  import { currentUserId } from '$lib/stores/user';
   import {
     getForm,
     submitForm as submitFormService,
@@ -27,7 +28,7 @@
   let userId = $state('');
 
   onMount(async () => {
-    const savedUser = localStorage.getItem('canari_saved_user');
+    const savedUser = currentUserId();
     if (savedUser) {
       userId = savedUser;
       try {

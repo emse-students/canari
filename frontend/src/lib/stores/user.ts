@@ -1,10 +1,13 @@
 import { apiFetch } from '$lib/utils/apiFetch';
+import { setCurrentUserId } from '$lib/stores/userState.svelte';
+
+export { currentUserId } from '$lib/stores/userState.svelte';
 
 export interface UserProfile {
   id: string;
   email: string | null;
   displayName: string | null;
-  firstYearOfSchool: number | null;
+  promo: number | null;
   avatarMediaId: string | null;
   bio: string | null;
   createdAt: string;
@@ -45,6 +48,7 @@ export function saveUserLocally(user: {
   if (user.email) localStorage.setItem(USER_EMAIL_KEY, user.email);
   if (user.displayName) localStorage.setItem(USER_DISPLAY_NAME_KEY, user.displayName);
   localStorage.setItem(USER_GLOBAL_ADMIN_KEY, user.admin ? 'true' : 'false');
+  setCurrentUserId(user.id);
 }
 
 export function clearUserLocally(): void {
@@ -52,6 +56,7 @@ export function clearUserLocally(): void {
   localStorage.removeItem(USER_EMAIL_KEY);
   localStorage.removeItem(USER_DISPLAY_NAME_KEY);
   localStorage.removeItem(USER_GLOBAL_ADMIN_KEY);
+  setCurrentUserId(null);
 }
 
 function coreUrl(): string {

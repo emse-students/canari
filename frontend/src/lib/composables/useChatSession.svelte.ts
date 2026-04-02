@@ -14,6 +14,7 @@ import type { IStorage } from '$lib/db';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { computePinVerifier } from '$lib/utils/chat/auth';
 import { getToken, clearAuth } from '$lib/stores/auth';
+import { saveUserLocally, clearUserLocally, currentUserId } from '$lib/stores/user';
 import {
   addDevMember,
   discoverMissingGroups,
@@ -175,7 +176,7 @@ export function useChatSession() {
       authToken = await getToken();
 
       isLoggedIn = true;
-      localStorage.setItem('canari_saved_user', userId);
+      saveUserLocally({ id: userId });
       localStorage.setItem('canari_saved_pin', pin);
       localStorage.setItem('canari_authToken', authToken);
 
@@ -273,7 +274,7 @@ export function useChatSession() {
       const msg = _e instanceof Error ? _e.message : String(_e);
       loginError = msg;
       cb.log(`Erreur: ${msg}`);
-      localStorage.removeItem('canari_saved_user');
+      clearUserLocally();
       localStorage.removeItem('canari_saved_pin');
       const cur = window.location.pathname + window.location.search;
       void goto(`/login?returnTo=${encodeURIComponent(cur)}`, { replaceState: true });
@@ -283,7 +284,7 @@ export function useChatSession() {
   async function biometricLogin(cb: ChatSessionCallbacks) {
     loginError = '';
     try {
-      const savedUser = localStorage.getItem('canari_saved_user');
+      const savedUser = currentUserId();
       if (!savedUser) {
         loginError = 'Aucun utilisateur enregistre pour la biometrie.';
         return;
@@ -324,7 +325,7 @@ export function useChatSession() {
     storage = null;
     authToken = '';
     showBiometricEnrollPrompt = false;
-    localStorage.removeItem('canari_saved_user');
+    clearUserLocally();
     localStorage.removeItem('canari_saved_pin');
     clearAuth();
     void goto('/login', { replaceState: true });

@@ -10,7 +10,7 @@
  * Refresh token → HttpOnly cookie set by the backend (never accessible to JS).
  */
 
-import { saveUserLocally, clearUserLocally } from '$lib/stores/user';
+import { saveUserLocally, clearUserLocally, currentUserId } from '$lib/stores/user';
 
 const OIDC_STATE_KEY = 'canari_oidc_state';
 const OIDC_RETURN_KEY = 'canari_oidc_return';
@@ -227,7 +227,7 @@ export async function clearAuth(): Promise<void> {
  */
 export async function hasStoredSession(): Promise<boolean> {
   // If no saved user, consider the session invalid even if we could refresh
-  if (!localStorage.getItem('canari_saved_user')) {
+  if (!currentUserId()) {
     return false;
   }
   try {

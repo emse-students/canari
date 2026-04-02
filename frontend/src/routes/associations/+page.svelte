@@ -1,14 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { listAssociations, listMyAssociations, type Association } from '$lib/associations/api';
-  import { getSavedUserId, isGlobalAdmin } from '$lib/stores/user';
+  import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import { Users } from 'lucide-svelte';
 
   let associations = $state<Association[]>([]);
   let myAssociations = $state<Association[]>([]);
   let loading = $state(true);
   let error = $state('');
-  let isLoggedIn = $derived(!!getSavedUserId());
+  let isLoggedIn = $derived(!!currentUserId());
   let isAdmin = $derived(isGlobalAdmin());
 
   onMount(async () => {

@@ -4,7 +4,7 @@
   import CanariBrand from '$lib/components/navigation/CanariBrand.svelte';
   import PlaceSwitcher from '$lib/components/navigation/PlaceSwitcher.svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
-  import { getSavedUserId } from '$lib/stores/user';
+  import { currentUserId } from '$lib/stores/user';
   import { page } from '$app/state';
 
   let { children } = $props();
@@ -17,7 +17,7 @@
       pathname.startsWith('/communities/')
   );
 
-  let currentUserId = $derived(getSavedUserId());
+  let userId = $derived(currentUserId());
 </script>
 
 <div class="relative min-h-dvh">
@@ -34,9 +34,9 @@
       >
         <CanariBrand />
         <PlaceSwitcher {pathname} />
-        {#if currentUserId}
+        {#if userId}
           <a href="/profile" class="flex-shrink-0" aria-label="Mon profil">
-            <Avatar userId={currentUserId} size="sm" />
+            <Avatar {userId} size="sm" />
           </a>
         {/if}
       </div>
