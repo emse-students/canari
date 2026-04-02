@@ -61,7 +61,6 @@ export class UsersService {
       firstName: user.firstName,
       lastName: user.lastName,
       promo: user.promo,
-      avatarMediaId: user.avatarMediaId,
       bio: user.bio,
       createdAt: user.createdAt,
     };

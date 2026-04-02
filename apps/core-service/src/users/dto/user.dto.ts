@@ -38,10 +38,6 @@ export class UpdateUserDto {
 
   @IsString()
   @IsOptional()
-  avatarMediaId?: string;
-
-  @IsString()
-  @IsOptional()
   stripeCustomerId?: string;
 }
 
@@ -52,7 +48,6 @@ export class PublicUserDto {
   firstName: string | null;
   lastName: string | null;
   promo: number | null;
-  avatarMediaId: string | null;
   bio: string | null;
   createdAt: Date;
 }

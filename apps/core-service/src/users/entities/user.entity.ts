@@ -20,9 +20,6 @@ export class User {
   @Column({ type: 'int', nullable: true })
   promo: number | null;
 
-  @Column({ type: 'varchar', nullable: true })
-  avatarMediaId: string | null;
-
   @Column({ type: 'text', nullable: true })
   bio: string | null;
 
