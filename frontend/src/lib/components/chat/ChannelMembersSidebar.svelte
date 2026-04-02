@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Users, X } from 'lucide-svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
+  import UserName from '$lib/components/shared/UserName.svelte';
   import { presenceMap, watchUsers } from '$lib/stores/presenceStore';
   import { onMount } from 'svelte';
 
@@ -72,7 +73,7 @@
                     : 'bg-gray-400'}"
                 ></span>
               </div>
-              <span class="text-sm font-medium text-text-main truncate">{member.name}</span>
+              <UserName userId={member.name} class="text-sm font-medium text-text-main truncate" />
             </div>
           {/each}
         </div>
@@ -97,7 +98,7 @@
                     : 'bg-gray-400'}"
                 ></span>
               </div>
-              <span class="text-sm text-text-main truncate font-medium">{member.name}</span>
+              <UserName userId={member.name} class="text-sm text-text-main truncate font-medium" />
             </div>
           {/each}
         </div>

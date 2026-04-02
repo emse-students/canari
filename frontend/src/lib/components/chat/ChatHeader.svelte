@@ -17,6 +17,7 @@
     Phone,
   } from 'lucide-svelte';
   import Avatar from '../shared/Avatar.svelte';
+  import UserName from '../shared/UserName.svelte';
   import Modal from '../shared/Modal.svelte';
   import MultiUserSelector from '../shared/MultiUserSelector.svelte';
   import { portal } from '$lib/actions/portal';
@@ -342,7 +343,7 @@
                     >
                       <div class="flex items-center gap-2 min-w-0">
                         <Avatar userId={member} size="sm" />
-                        <span class="text-sm text-text-main truncate">{member}</span>
+                        <UserName userId={member} class="text-sm text-text-main truncate" />
                       </div>
 
                       {#if onGroupRemoveMember}
