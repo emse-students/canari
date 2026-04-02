@@ -241,7 +241,11 @@ export function useChatSession() {
       );
 
       const syncGuideKey = `canari_sync_guide_seen_${userId}`;
-      if (!hadLocalState && localStorage.getItem(syncGuideKey) !== '1') {
+      const knownDevicesKey = `known_own_devices:${userId}`;
+      const knownDevices = localStorage.getItem(knownDevicesKey);
+      const hasOtherDevices = !!knownDevices && JSON.parse(knownDevices).length > 0;
+
+      if (!hadLocalState && hasOtherDevices && localStorage.getItem(syncGuideKey) !== '1') {
         cb.onShowSyncGuidePrompt();
         localStorage.setItem(syncGuideKey, '1');
       }
