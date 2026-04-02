@@ -106,30 +106,52 @@ Si vous ne souhaitez pas utiliser le script, respectez cet ordre :
 
 - `make test` : Lance tous les tests (Rust, TS).
 
+## Resilience MLS multi-appareils
+
+Le frontend declenche des synchronisations d'historique serveur pour converger vers
+un etat final complet, quel que soit l'ordre de connexion des appareils.
+
+Declencheurs principaux:
+
+- Connexion initiale reussie (login)
+- Reconnexion WebSocket reussie
+- Fin de discovery des groupes manquants
+- Reception d'un `sync_request` d'un autre appareil du meme utilisateur
+
+Comportement:
+
+- Le sync d'historique balaye toutes les conversations `isReady` et rejoue
+  `GET /api/history/{groupId}` via `replayConversationHistory`.
+- L'execution est protegee contre les courses (anti-concurrence + re-planification
+  d'un passage si un nouveau trigger arrive pendant un sync deja en cours).
+- Les reparations destructrices de conversation directe sont bloquees quand l'etat
+  MLS local du groupe est deja present; le systeme privilegie d'abord la
+  re-inscription serveur (`registerMember`) puis resynchronise l'historique.
+
 ## Variables d'environnement
 
 Les variables suivantes doivent être définies pour chaque service (ou seront utilisées avec les valeurs par défaut locales) :
 
 ### social-service (`apps/social-service`)
 
-| Variable | Défaut local | Description |
-|---|---|---|
-| `REDIS_URL` | `redis://localhost:6379` | Connexion Redis (même instance que chat-gateway) |
-| `DATABASE_URL` | — | URL PostgreSQL |
+| Variable       | Défaut local             | Description                                      |
+| -------------- | ------------------------ | ------------------------------------------------ |
+| `REDIS_URL`    | `redis://localhost:6379` | Connexion Redis (même instance que chat-gateway) |
+| `DATABASE_URL` | —                        | URL PostgreSQL                                   |
 
 > **Important** : `social-service` publie des événements sur le canal Redis `chat:channel_events`. Il doit pointer vers la même instance Redis que `chat-gateway` pour que les événements temps-réel soient routés vers les clients connectés.
 
 ### chat-gateway (`apps/chat-gateway`)
 
-| Variable | Défaut local | Description |
-|---|---|---|
-| `REDIS_URL` | `redis://localhost:6379` | Connexion Redis pub/sub |
-| `DELIVERY_SERVICE_URL` | `http://localhost:3010` | URL du chat-delivery-service |
+| Variable               | Défaut local             | Description                  |
+| ---------------------- | ------------------------ | ---------------------------- |
+| `REDIS_URL`            | `redis://localhost:6379` | Connexion Redis pub/sub      |
+| `DELIVERY_SERVICE_URL` | `http://localhost:3010`  | URL du chat-delivery-service |
 
 ### chat-delivery-service (`apps/chat-delivery-service`)
 
-| Variable | Défaut local | Description |
-|---|---|---|
-| `REDIS_URL` | `redis://localhost:6379` | Connexion Redis (streams historique) |
-| `MONGO_URI` | — | URL MongoDB |
-| `KAFKA_BROKERS` | `localhost:9092` | Broker Kafka |
+| Variable        | Défaut local             | Description                          |
+| --------------- | ------------------------ | ------------------------------------ |
+| `REDIS_URL`     | `redis://localhost:6379` | Connexion Redis (streams historique) |
+| `MONGO_URI`     | —                        | URL MongoDB                          |
+| `KAFKA_BROKERS` | `localhost:9092`         | Broker Kafka                         |

@@ -86,6 +86,8 @@ export function useChatSession() {
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let isReconnecting = false;
   let isSyncing = false;
+  let isHistorySyncing = false;
+  let historySyncPending = false;
 
   // ── Backup ────────────────────────────────────────────────────────────────
   let isExporting = $state(false);
@@ -112,6 +114,45 @@ export function useChatSession() {
       mls = w.__TAURI_INTERNALS__ ? new TauriMlsService() : new WebMlsService();
     }
     return mls;
+  }
+
+  async function syncAllConversationHistories(
+    cb: ChatSessionCallbacks,
+    trigger: 'login' | 'reconnect' | 'sync_request' | 'post_discovery'
+  ) {
+    if (isHistorySyncing) {
+      historySyncPending = true;
+      return;
+    }
+
+    isHistorySyncing = true;
+    try {
+      do {
+        historySyncPending = false;
+
+        const readyConversations = [...cb.conversations.entries()].filter(
+          ([, convo]) => convo.isReady && !!convo.groupId
+        );
+
+        if (readyConversations.length === 0) return;
+
+        cb.log(
+          `[HISTORY] Synchronisation (${trigger}) de ${readyConversations.length} conversation(s)...`
+        );
+
+        for (const [conversationKey, convo] of readyConversations) {
+          try {
+            await cb.onLoadHistoryForConversation(conversationKey, convo.groupId);
+          } catch (e) {
+            cb.log(
+              `[WARN] Echec historique ${convo.groupId}: ${e instanceof Error ? e.message : String(e)}`
+            );
+          }
+        }
+      } while (historySyncPending);
+    } finally {
+      isHistorySyncing = false;
+    }
   }
 
   // ── Login ─────────────────────────────────────────────────────────────────
@@ -235,11 +276,13 @@ export function useChatSession() {
         cb.log('[SYNC] sync_request reçu — recherche de nouveaux appareils...');
         // Clear the known-devices cache so the new device is detected
         localStorage.removeItem(`known_own_devices:${userId}`);
-        syncOwnDevicesToGroupsLocally(cb).catch((e) =>
-          cb.log(
-            `[WARN] Echec sync appareils (sync_request): ${e instanceof Error ? e.message : String(e)}`
-          )
-        );
+        syncOwnDevicesToGroupsLocally(cb)
+          .then(() => syncAllConversationHistories(cb, 'sync_request'))
+          .catch((e) =>
+            cb.log(
+              `[WARN] Echec sync appareils (sync_request): ${e instanceof Error ? e.message : String(e)}`
+            )
+          );
       });
 
       await initializeConnection({
@@ -253,6 +296,12 @@ export function useChatSession() {
         log: cb.log,
       });
 
+      syncAllConversationHistories(cb, 'login').catch((e) =>
+        cb.log(
+          `[WARN] Echec synchronisation historique (login): ${e instanceof Error ? e.message : String(e)}`
+        )
+      );
+
       // Discover groups the user belongs to on the server but doesn't have locally.
       // This catches cases where Welcomes were lost (device offline, state cleared, etc.)
       discoverMissingGroups({
@@ -262,9 +311,11 @@ export function useChatSession() {
         conversations: cb.conversations,
         saveConversation: cb.saveConversation,
         log: cb.log,
-      }).catch((e) =>
-        cb.log(`[WARN] Echec decouverte groupes: ${e instanceof Error ? e.message : String(e)}`)
-      );
+      })
+        .then(() => syncAllConversationHistories(cb, 'post_discovery'))
+        .catch((e) =>
+          cb.log(`[WARN] Echec decouverte groupes: ${e instanceof Error ? e.message : String(e)}`)
+        );
 
       const isTauri = !!(window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
       if (isTauri && !(await BiometricService.isConfigured())) {
@@ -358,11 +409,13 @@ export function useChatSession() {
       isWsConnected = true;
       reconnectAttempts = 0;
       cb.log('[OK] Reconnecte au reseau.');
-      syncOwnDevicesToGroupsLocally(cb).catch((e) =>
-        cb.log(
-          `[WARN] Echec sync appareils (reconnect): ${e instanceof Error ? e.message : String(e)}`
-        )
-      );
+      syncOwnDevicesToGroupsLocally(cb)
+        .then(() => syncAllConversationHistories(cb, 'reconnect'))
+        .catch((e) =>
+          cb.log(
+            `[WARN] Echec sync appareils (reconnect): ${e instanceof Error ? e.message : String(e)}`
+          )
+        );
     } catch (err) {
       cb.log(`Reconnexion echouee: ${err instanceof Error ? err.message : String(err)}`);
       scheduleReconnect(cb);

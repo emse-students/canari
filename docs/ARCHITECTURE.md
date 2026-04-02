@@ -198,7 +198,32 @@ Familles d'endpoints majeures:
 3. Si destinataire offline: `chat-gateway` appelle `chat-delivery-service /mls-api/send`
 4. `chat-gateway` archive aussi en Kafka `chat.messages` et Redis Stream `history:*`
 
-### 8.2 Creation paiement formulaire
+### 8.2 Convergence historique multi-appareils
+
+Objectif: garantir qu'un appareil qui se connecte tardivement recupere un
+historique complet des conversations, meme si l'ordre de connexion des appareils
+varie.
+
+Flux frontend:
+
+1. Login/reconnexion WebSocket -> declenchement d'une synchro d'historique
+   sur toutes les conversations `isReady`.
+2. Discovery des groupes manquants -> nouveau passage de synchro apres activation
+   des placeholders.
+3. Reception d'un `sync_request` (nouvel appareil detecte) -> sync des appareils
+   - nouveau passage d'historique.
+
+Mecanismes de robustesse:
+
+- Anti-concurrence cote frontend pour eviter plusieurs replays historiques en
+  parallele sur le meme etat MLS.
+- Re-planification d'un passage de rattrapage si un trigger arrive pendant un
+  sync deja en cours.
+- En conversation directe, la verification de membership privilegie d'abord
+  `registerMember` (self-heal serveur) et evite les reparations destructrices
+  si l'etat MLS local du groupe existe deja.
+
+### 8.3 Creation paiement formulaire
 
 1. Client -> `/api/forms/*` -> `social-service`
 2. `social-service` appelle le service paiement (`/api/payments/create-checkout-session`)
