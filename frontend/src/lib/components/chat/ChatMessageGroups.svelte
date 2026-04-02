@@ -162,7 +162,7 @@
         <div
           class="flex flex-col {msg.isOwn ? 'items-end' : 'items-start'} max-w-[88%] md:max-w-[75%]"
         >
-          {#if showSender}
+          {#if showSender && !msg.isSystem}
             <div class="text-xs text-cn-muted px-2 mb-1 font-medium">
               {resolvedSenderNames[msg.senderId] || msg.senderId}
             </div>

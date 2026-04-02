@@ -5,11 +5,11 @@
   import CanariBrand from '$lib/components/navigation/CanariBrand.svelte';
   import PlaceSwitcher from '$lib/components/navigation/PlaceSwitcher.svelte';
   import ThemeToggleButton from '$lib/components/navigation/ThemeToggleButton.svelte';
+  import SessionActionButtons from '$lib/components/navigation/SessionActionButtons.svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import { currentUserId } from '$lib/stores/user';
   import { clearAuth } from '$lib/stores/auth';
   import { page } from '$app/state';
-  import { LogOut } from 'lucide-svelte';
 
   let { children } = $props();
 
@@ -28,6 +28,7 @@
   );
 
   let userId = $derived(currentUserId());
+  let showLogs = $state(false);
 
   // ── Theme toggle ──────────────────────────────────────────────────────────
   let isDarkMode = $state(false);
@@ -79,26 +80,26 @@
       class="sticky top-0 z-20 border-b border-cn-border/70 bg-[var(--surface-elevated)]/90 backdrop-blur-lg pt-[env(safe-area-inset-top)]"
     >
       <div
-        class="mx-auto flex w-full max-w-[1400px] items-center justify-between gap-3 px-3 py-2.5 sm:px-5"
+        class="h-14 flex items-center justify-between px-4 md:px-6 gap-3"
       >
+        <!-- Left: Brand -->
         <div class="flex items-center gap-2 flex-shrink-0">
-          <CanariBrand />
+          <CanariBrand compact={true} />
         </div>
+
+        <!-- Center: Place switcher -->
+        <div class="flex-1 flex justify-center">
+          <PlaceSwitcher {pathname} compact={true} />
+        </div>
+
+        <!-- Right: Theme + SessionActionButtons + Profile -->
         <div class="flex items-center gap-2 flex-shrink-0">
-          <PlaceSwitcher {pathname} />
           <ThemeToggleButton {isDarkMode} onToggle={toggleTheme} />
+          <SessionActionButtons onToggleLogs={() => (showLogs = !showLogs)} onLogout={handleLogout} />
           {#if userId}
             <a href="/profile" class="flex-shrink-0" aria-label="Mon profil">
               <Avatar {userId} size="sm" />
             </a>
-            <button
-              onclick={handleLogout}
-              title="Se déconnecter"
-              class="p-2 rounded-lg text-text-muted hover:bg-red-50 hover:text-red-500 transition-colors"
-              aria-label="Se déconnecter"
-            >
-              <LogOut size={20} />
-            </button>
           {/if}
         </div>
       </div>
