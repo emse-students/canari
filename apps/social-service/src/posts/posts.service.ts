@@ -60,6 +60,17 @@ export class PostsService {
         }
       }
     }
+
+    // Enrich with author display names (users table is in the same DB).
+    const authorIds = [...new Set(posts.map((p) => p.authorId).filter(Boolean))];
+    if (authorIds.length > 0) {
+      const rows: { id: string; displayName: string | null }[] = await this.postRepo.manager.query(
+        `SELECT id, "displayName" FROM users WHERE id = ANY($1)`,
+        [authorIds]
+      );
+      const nameMap = Object.fromEntries(rows.map((r) => [r.id, r.displayName]));
+      return posts.map((p) => ({ ...p, authorDisplayName: nameMap[p.authorId] ?? null }));
+    }
     return posts;
   }
 

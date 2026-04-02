@@ -44,14 +44,14 @@ export class UsersController {
   }
 
   @UseGuards(NginxAuthGuard)
-  @Get('me')
-  async getMe(@Headers('x-user-id') userId: string) {
-    const user = await this.usersService.findOne(userId);
-    return this.usersService.toPublicDto(user);
-  }
-
   @Get(':id')
-  async findOne(@Param('id') id: string) {
+  async findOne(
+    @Param('id') id: string,
+    @Headers('x-user-id') requesterId: string,
+  ) {
+    if (id === 'me') {
+      id = requesterId;
+    }
     const user = await this.usersService.findOne(id);
     return this.usersService.toPublicDto(user);
   }

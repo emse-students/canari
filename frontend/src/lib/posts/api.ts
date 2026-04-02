@@ -60,6 +60,7 @@ export interface PostForm {
 export interface PostEntity {
   id: string;
   authorId: string;
+  authorDisplayName?: string | null;
   markdown: string;
   mentions: string[];
   links: Array<{ url: string }>;

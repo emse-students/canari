@@ -155,10 +155,10 @@
       <div
         class="w-10 h-10 rounded-full bg-cn-yellow/20 flex items-center justify-center text-cn-dark font-bold"
       >
-        {post.authorId.slice(0, 2).toUpperCase()}
+        {(post.authorDisplayName || post.authorId).slice(0, 2).toUpperCase()}
       </div>
       <div>
-        <div class="font-bold text-text-main">@{post.authorId}</div>
+        <div class="font-bold text-text-main">{post.authorDisplayName || post.authorId}</div>
         <div class="text-xs text-text-muted">{new Date(post.createdAt).toLocaleDateString()}</div>
       </div>
     </div>
