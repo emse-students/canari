@@ -22,7 +22,6 @@ import {
   importUserBackup,
   processDevWelcome,
   syncOwnDevicesToGroups,
-  syncPeerDevicesToGroups,
 } from '$lib/utils/chat/actions';
 import { setupMessageHandler, initializeConnection } from '$lib/utils/chat/connection';
 import { BiometricService } from '$lib/services/biometric';
@@ -84,7 +83,6 @@ export function useChatSession() {
   const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 16000, 30000];
   let reconnectAttempts = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  let periodicSyncTimer: ReturnType<typeof setInterval> | null = null;
   let isReconnecting = false;
   let isSyncing = false;
 
@@ -241,9 +239,6 @@ export function useChatSession() {
         log: cb.log,
       });
 
-      // Start periodic background sync to catch devices that connect after us.
-      startPeriodicSync(cb);
-
       // Discover groups the user belongs to on the server but doesn't have locally.
       // This catches cases where Welcomes were lost (device offline, state cleared, etc.)
       discoverMissingGroups({
@@ -304,7 +299,6 @@ export function useChatSession() {
   }
 
   function logout(cb: ChatSessionCallbacks) {
-    stopPeriodicSync();
     if (reconnectTimer !== null) {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
@@ -355,41 +349,11 @@ export function useChatSession() {
           `[WARN] Echec sync appareils (reconnect): ${e instanceof Error ? e.message : String(e)}`
         )
       );
-      startPeriodicSync(cb);
     } catch (err) {
       cb.log(`Reconnexion echouee: ${err instanceof Error ? err.message : String(err)}`);
       scheduleReconnect(cb);
     } finally {
       isReconnecting = false;
-    }
-  }
-
-  // ── Periodic device sync ─────────────────────────────────────────────────
-
-  function startPeriodicSync(cb: ChatSessionCallbacks) {
-    stopPeriodicSync();
-    // Re-run sync every 30 s to catch devices that connect after us.
-    // syncOwnDevicesToGroups returns early if no new device is detected (1 HTTP call),
-    // so the cost when idle is minimal.
-    // Also re-run discoverMissingGroups to re-bootstrap orphaned groups
-    // (non-leader fallback after 30 s timeout).
-    periodicSyncTimer = setInterval(() => {
-      syncOwnDevicesToGroupsLocally(cb).catch(() => {});
-      discoverMissingGroups({
-        mlsService: ensureMls(),
-        userId,
-        pin,
-        conversations: cb.conversations,
-        saveConversation: cb.saveConversation,
-        log: cb.log,
-      }).catch(() => {});
-    }, 30_000);
-  }
-
-  function stopPeriodicSync() {
-    if (periodicSyncTimer !== null) {
-      clearInterval(periodicSyncTimer);
-      periodicSyncTimer = null;
     }
   }
 
@@ -400,15 +364,6 @@ export function useChatSession() {
     isSyncing = true;
     try {
       await syncOwnDevicesToGroups({
-        mlsService: ensureMls(),
-        userId,
-        pin,
-        conversations: cb.conversations,
-        log: cb.log,
-      });
-      // Also re-invite peer users' new devices that we haven't added yet.
-      // Prevents the split-brain where a peer with fresh state re-bootstraps.
-      await syncPeerDevicesToGroups({
         mlsService: ensureMls(),
         userId,
         pin,

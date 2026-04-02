@@ -17,6 +17,17 @@ function parseDirectPeerFromName(rawName: string, userId: string): string | null
   return peer ?? null;
 }
 
+/**
+ * Synchronise les propres appareils de l'utilisateur courant dans tous les groupes.
+ *
+ * Principe MLS fondamental : seul un appareil qui POSSÈDE l'état MLS d'un groupe
+ * peut inviter un nouvel appareil. Pour éviter les divergences d'epoch (deux
+ * appareils différents qui font chacun un addMember indépendant au même epoch),
+ * SEULS les appareils du même utilisateur ajoutent les appareils de cet utilisateur.
+ *
+ * Un pair (autre utilisateur) n'ajoute JAMAIS les appareils d'un autre user.
+ * Chaque user gère ses propres devices via cette fonction.
+ */
 export async function syncOwnDevicesToGroups(params: {
   mlsService: IMlsService;
   userId: string;
@@ -26,23 +37,22 @@ export async function syncOwnDevicesToGroups(params: {
 }) {
   const { mlsService, userId, pin, conversations, log } = params;
 
-  let allOwnDevices: { keyPackage: Uint8Array; deviceId: string }[];
+  // ── 1. Récupérer les appareils distants de l'utilisateur courant ──────
+  let remoteDevices: { keyPackage: Uint8Array; deviceId: string }[];
   try {
-    allOwnDevices = (await mlsService.fetchUserDevices(userId)).filter(
+    remoteDevices = (await mlsService.fetchUserDevices(userId)).filter(
       (d) => d.deviceId !== mlsService.getDeviceId()
     );
   } catch (e) {
-    log(`[SYNC] Erreur lors de la recuperation des appareils: ${e}`);
+    log(`[SYNC] Erreur recuperation appareils: ${e}`);
     return;
   }
 
   log(
-    `[SYNC] Appareils distants trouves: ${allOwnDevices.length} (${allOwnDevices.map((d) => d.deviceId).join(', ')})`
+    `[SYNC] Appareils distants: ${remoteDevices.length} (${remoteDevices.map((d) => d.deviceId).join(', ')})`
   );
 
-  // Ensure this device is registered as a member for all ready conversations.
-  // Repairs server-side state when a Welcome was processed without registration
-  // (e.g. pending welcome replayed by gateway, or older code without registration).
+  // ── 2. Auto-enregistrement : s'assurer que cet appareil est membre serveur ─
   const readyConvos = [...conversations.entries()].filter(([, c]) => c.isReady);
   const selfRegKey = `self_registered:${userId}:${mlsService.getDeviceId()}`;
   if (!localStorage.getItem(selfRegKey) && readyConvos.length > 0) {
@@ -56,8 +66,9 @@ export async function syncOwnDevicesToGroups(params: {
     localStorage.setItem(selfRegKey, '1');
   }
 
-  if (allOwnDevices.length === 0) return;
+  if (remoteDevices.length === 0) return;
 
+  // ── 3. Filtrer les appareils déjà connus (cache local) ────────────────
   const cacheKey = `known_own_devices:${userId}`;
   let knownIds: Set<string>;
   try {
@@ -65,75 +76,49 @@ export async function syncOwnDevicesToGroups(params: {
   } catch {
     knownIds = new Set();
   }
-  log(`[SYNC] Appareils deja connus en cache: ${knownIds.size} (${[...knownIds].join(', ')})`);
 
-  const newDevices = allOwnDevices.filter((d) => !knownIds.has(d.deviceId));
-  if (newDevices.length === 0) {
-    log(`[SYNC] Aucun nouvel appareil a synchroniser.`);
+  const newDevices = remoteDevices.filter((d) => !knownIds.has(d.deviceId));
+  if (newDevices.length === 0) return;
+
+  log(`[SYNC] Nouveaux appareils: ${newDevices.map((d) => d.deviceId).join(', ')}`);
+
+  if (readyConvos.length === 0 && conversations.size > 0) {
+    log(`[SYNC] Aucune conversation prete — les appareils seront synchronises au prochain cycle.`);
     return;
   }
 
-  log(`[SYNC] Nouveaux appareils detectes: ${newDevices.map((d) => d.deviceId).join(', ')}`);
-
-  log(`[SYNC] Conversations pretes: ${readyConvos.length}/${conversations.size}`);
-  if (conversations.size > 0 && readyConvos.length === 0) {
-    const pending = [...conversations.values()]
-      .filter((c) => !c.isReady)
-      .map((c) => c.name || c.groupId)
-      .slice(0, 5);
-    log(
-      `[SYNC][DIAG] Aucune conversation n'est prete. Placeholders en attente de Welcome: ${pending.join(', ') || 'n/a'}`
-    );
-  }
-
+  // ── 4. Pour chaque appareil, l'ajouter à chaque groupe ────────────────
+  // Séquentiel par appareil pour éviter les races d'epoch entre appareils.
+  // Pour chaque appareil, on traite tous les groupes puis on attend la propagation.
   let totalWelcomes = 0;
 
-  // Process devices ONE AT A TIME with delays to avoid epoch race conditions.
-  // Each device must fully receive and process their Welcome before we add the next device.
   for (const device of newDevices) {
     let deviceWelcomes = 0;
-    let hadAttempt = false;
-    let hadFailure = false;
-    let pendingSkipped = 0;
+    let allSucceeded = true;
 
-    // Re-fetch the device's latest KeyPackage to avoid using stale data
-    // (the device might have just published a new KeyPackage after reconnecting)
-    let freshKeyPackage = device.keyPackage;
+    // Rafraîchir le KeyPackage (l'appareil peut en avoir publié un nouveau)
+    let freshKp = device.keyPackage;
     try {
       const freshDevices = await mlsService.fetchUserDevices(userId);
-      const freshDevice = freshDevices.find((d) => d.deviceId === device.deviceId);
-      if (freshDevice) {
-        freshKeyPackage = freshDevice.keyPackage;
-        log(`[SYNC] KeyPackage rafraichi pour ${device.deviceId}`);
-      }
+      const found = freshDevices.find((d) => d.deviceId === device.deviceId);
+      if (found) freshKp = found.keyPackage;
     } catch {
-      // Use the original KeyPackage if refresh fails
+      /* utiliser l'ancien */
     }
 
-    for (const [, convo] of conversations.entries()) {
-      if (!convo.isReady) {
-        pendingSkipped++;
-        continue;
-      }
-      hadAttempt = true;
-
-      // Check if device is already a member of this group (server-side)
+    for (const [, convo] of readyConvos) {
+      // Vérifier si l'appareil est déjà membre serveur de ce groupe
       try {
         const members = await mlsService.getGroupMembers(convo.groupId);
-        if (members.some((m) => m.deviceId === device.deviceId)) {
-          log(`[SYNC] ${device.deviceId} deja membre de ${convo.groupId} (skip)`);
-          continue;
-        }
+        if (members.some((m) => m.deviceId === device.deviceId)) continue;
       } catch {
-        // If member check fails, proceed with add attempt
+        /* en cas d'erreur, tenter l'ajout quand même */
       }
 
       try {
-        const result = await mlsService.addMember(convo.groupId, freshKeyPackage);
-        log(
-          `[SYNC][DIAG] addMember ${convo.groupId} -> commit=${result.commit?.length ?? 0}B, welcome=${result.welcome?.length ?? 0}B, ratchetTree=${result.ratchetTree?.length ?? 0}B`
-        );
+        const result = await mlsService.addMember(convo.groupId, freshKp);
         await mlsService.registerMember(convo.groupId, userId, device.deviceId);
+
         if (result.welcome) {
           await mlsService.sendWelcome(
             result.welcome,
@@ -142,233 +127,62 @@ export async function syncOwnDevicesToGroups(params: {
             device.deviceId,
             result.ratchetTree
           );
-          totalWelcomes++;
           deviceWelcomes++;
-          log(`[SYNC] Welcome envoye a ${device.deviceId} pour groupe ${convo.groupId}`);
+          log(`[SYNC] Welcome → ${device.deviceId} pour ${convo.groupId}`);
         } else {
-          log(
-            `[SYNC][DIAG] Aucun Welcome retourne par MLS pour ${device.deviceId} sur ${convo.groupId}.`
-          );
+          log(`[SYNC][WARN] Aucun Welcome retourne pour ${device.deviceId} dans ${convo.groupId}`);
         }
+
         if (result.commit) {
           await mlsService.sendCommit(result.commit, convo.groupId);
-        } else {
-          log(`[SYNC][DIAG] Aucun commit retourne par MLS pour ${convo.groupId}.`);
         }
+
+        // Sauvegarder l'état MLS après chaque groupe
         const stBytes = await mlsService.saveState(pin);
         localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
 
-        // Small delay between groups to allow propagation
+        // Court délai pour laisser le commit se propager
         await new Promise((r) => setTimeout(r, 100));
       } catch (e) {
         const errStr = String(e);
-        // DuplicateSignatureKey means device is already in the MLS tree — not a real failure
-        const isAlreadyMember = errStr.includes('DuplicateSignatur') || errStr.includes('already');
-        if (isAlreadyMember) {
-          log(
-            `[SYNC][DIAG] ${device.deviceId} deja dans l'arbre MLS de ${convo.groupId} (${errStr.slice(0, 80)})`
-          );
-          // Ensure server-side membership is consistent with the MLS tree
-          // (the device is in the tree but may be missing from Redis group:members)
+        if (errStr.includes('DuplicateSignatur') || errStr.includes('already')) {
+          // L'appareil est déjà dans l'arbre MLS — s'assurer qu'il est aussi enregistré serveur
+          log(`[SYNC] ${device.deviceId} deja dans l'arbre MLS de ${convo.groupId}`);
           try {
             await mlsService.registerMember(convo.groupId, userId, device.deviceId);
           } catch {
-            /* ignore registration errors */
+            /* ignore */
           }
-        } else if (errStr.includes('WrongEpoch')) {
-          log(
-            `[SYNC][DIAG] WrongEpoch lors de addMember ${device.deviceId} sur ${convo.groupId}: ${errStr.slice(0, 80)}`
-          );
         } else {
-          log(
-            `[SYNC] Erreur ajout ${device.deviceId} au groupe ${convo.groupId}: ${errStr.slice(0, 100)}`
-          );
-        }
-        if (!isAlreadyMember) {
-          hadFailure = true;
+          log(`[SYNC] Erreur ajout ${device.deviceId} à ${convo.groupId}: ${errStr.slice(0, 100)}`);
+          allSucceeded = false;
         }
       }
     }
 
-    if (pendingSkipped > 0 && !hadAttempt) {
-      log(
-        `[SYNC][DIAG] ${device.deviceId}: ${pendingSkipped} conversation(s) ignoree(s) car non pretes (Welcome manquant).`
-      );
-    }
-
-    // Wait for the device to process their Welcomes before adding the next device
-    // This helps avoid epoch race conditions where multiple commits happen before Welcomes are processed
+    // Attente propagation Welcome avant de traiter le prochain appareil
     if (deviceWelcomes > 0) {
-      log(`[SYNC] Attente propagation pour ${device.deviceId} (${deviceWelcomes} Welcome(s))...`);
+      totalWelcomes += deviceWelcomes;
+      log(`[SYNC] Attente propagation ${device.deviceId} (${deviceWelcomes} Welcome(s))...`);
       await new Promise((r) => setTimeout(r, 2000));
     }
 
-    // Cache the device only after at least one successful welcome, or when there
-    // was nothing to sync at all. If all attempts failed, keep it uncached so a
-    // later reconnect retries the repair automatically.
-    const hasNoConversation = conversations.size === 0;
-    const markKnown =
-      deviceWelcomes > 0 || (hasNoConversation && !hadAttempt) || (hadAttempt && !hadFailure);
-    if (markKnown) {
+    // Marquer connu seulement si ça a marché (retry automatique sinon)
+    if (allSucceeded || deviceWelcomes > 0) {
       knownIds.add(device.deviceId);
       localStorage.setItem(cacheKey, JSON.stringify([...knownIds]));
-    } else {
-      log(
-        `[SYNC] Synchronisation partielle pour ${device.deviceId}; nouvelle tentative automatique au prochain reconnect.`
-      );
     }
   }
 
   if (totalWelcomes > 0) {
-    log(`[OK] ${totalWelcomes} Welcome(s) envoye(s) aux nouveaux appareils.`);
-  } else if (readyConvos.length > 0 && newDevices.length > 0) {
-    log(`[SYNC] Aucun Welcome envoye - verifier les etats des groupes.`);
+    log(`[OK] ${totalWelcomes} Welcome(s) envoye(s).`);
   }
 }
 
-/**
- * Syncs peer users' new devices into conversations where we already have MLS state.
- *
- * When a peer registers a new device (new browser/app install), their device
- * cannot add itself to existing groups — only existing members can invite it.
- * This function detects missing peer devices and re-invites them, breaking the
- * "I have state but my peer's new device doesn't" deadlock without any
- * re-bootstrap (which would create conflicting MLS group states).
- *
- * Covers both direct (1-to-1) and multi-user group conversations.
- */
-export async function syncPeerDevicesToGroups(params: {
-  mlsService: IMlsService;
-  userId: string;
-  pin: string;
-  conversations: Map<string, Conversation>;
-  log: (msg: string) => void;
-}) {
-  const { mlsService, userId, pin, conversations, log } = params;
-
-  for (const [, convo] of conversations.entries()) {
-    if (!convo.isReady) continue;
-
-    // Always fetch the registered members first.
-    // If a peer userId is already in the group, their own syncOwnDevicesToGroups
-    // will handle adding any new devices they have. We must NOT also add their
-    // device here — two simultaneous addMember/addMembersBulk calls on the same
-    // base epoch produce diverging MLS secrets → UnableToDecrypt(AeadError).
-    let groupMembers: { userId: string }[];
-    try {
-      groupMembers = await mlsService.getGroupMembers(convo.groupId);
-    } catch {
-      continue;
-    }
-    const registeredUserIds = new Set(groupMembers.map((m) => m.userId.toLowerCase()));
-
-    // Determine peer user IDs for this conversation
-    let peerUserIds: string[];
-    if ((convo.conversationType ?? 'group') === 'direct') {
-      const peerId = ((convo.directPeerId ?? convo.contactName) || '').toLowerCase();
-      if (!peerId || peerId === userId.toLowerCase()) continue;
-      peerUserIds = [peerId];
-    } else {
-      // Group conversation: derive from registered members
-      peerUserIds = [...registeredUserIds].filter((u) => u !== userId.toLowerCase());
-      if (peerUserIds.length === 0) continue;
-    }
-
-    // Per-group cache of peer device IDs we've already added (avoid redundant invites)
-    const peerCacheKey = `known_peer_devices:${convo.groupId}`;
-    let knownPeerDeviceIds: Set<string>;
-    try {
-      knownPeerDeviceIds = new Set(JSON.parse(localStorage.getItem(peerCacheKey) ?? '[]'));
-    } catch {
-      knownPeerDeviceIds = new Set();
-    }
-
-    for (const peerId of peerUserIds) {
-      // Skip peers who are already registered in the group — their own
-      // syncOwnDevicesToGroups handles adding new devices for them. Inviting
-      // them here too would produce a second commit at the same base epoch,
-      // causing diverging secrets and UnableToDecrypt(AeadError) for everyone.
-      if (registeredUserIds.has(peerId)) {
-        log(
-          `[SYNC] Pair ${peerId} deja membre enregistre — sync deleguee a syncOwnDevicesToGroups (skip)`
-        );
-        continue;
-      }
-
-      let peerDevices: { keyPackage: Uint8Array; deviceId: string }[];
-      try {
-        peerDevices = await mlsService.fetchUserDevices(peerId);
-      } catch {
-        continue;
-      }
-
-      const newPeerDevices = peerDevices.filter((d) => !knownPeerDeviceIds.has(d.deviceId));
-      if (newPeerDevices.length === 0) continue;
-
-      log(
-        `[SYNC] Nouvel(aux) appareil(s) de ${peerId} pour "${convo.name}": ${newPeerDevices.map((d) => d.deviceId).join(', ')}`
-      );
-
-      try {
-        const bulk = await mlsService.addMembersBulk(convo.groupId, newPeerDevices);
-
-        for (const did of bulk.addedDeviceIds) {
-          await mlsService.registerMember(convo.groupId, peerId, did);
-          knownPeerDeviceIds.add(did);
-        }
-
-        if (bulk.welcome) {
-          for (const did of bulk.addedDeviceIds) {
-            try {
-              await mlsService.sendWelcome(
-                bulk.welcome,
-                peerId,
-                convo.groupId,
-                did,
-                bulk.ratchetTree
-              );
-              log(`[SYNC] Welcome (re-invite) → ${peerId}:${did}`);
-            } catch (e) {
-              log(
-                `[SYNC] Echec Welcome re-invite ${peerId}:${did}: ${e instanceof Error ? e.message : String(e)}`
-              );
-            }
-          }
-        }
-
-        if (bulk.commit) {
-          await mlsService.sendCommit(bulk.commit, convo.groupId);
-        }
-
-        const stBytes = await mlsService.saveState(pin);
-        localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
-        localStorage.setItem(peerCacheKey, JSON.stringify([...knownPeerDeviceIds]));
-      } catch (e) {
-        const errStr = String(e);
-        const alreadyInGroup =
-          errStr.includes('DuplicateSignatur') ||
-          errStr.includes('ProposalValidation') ||
-          errStr.includes('already');
-        if (alreadyInGroup) {
-          // Device already in MLS tree — cache to avoid repeated attempts
-          for (const d of newPeerDevices) knownPeerDeviceIds.add(d.deviceId);
-          localStorage.setItem(peerCacheKey, JSON.stringify([...knownPeerDeviceIds]));
-          log(`[SYNC] Appareils de ${peerId} deja dans le groupe (mis en cache)`);
-        } else {
-          log(`[SYNC] Erreur re-invite ${peerId} dans "${convo.name}": ${errStr.slice(0, 100)}`);
-        }
-      }
-    }
-  }
-}
-
-/** Force re-sync by clearing the known devices cache (Ctrl+Shift+S in dev UI) */
+/** Force re-sync by clearing the known devices cache */
 export function forceSyncReset(userId: string, log: (msg: string) => void) {
-  const cacheKey = `known_own_devices:${userId}`;
-  localStorage.removeItem(cacheKey);
-  log(
-    `[SYNC] Cache des appareils connus efface. Rechargez la page pour relancer la synchronisation.`
-  );
+  localStorage.removeItem(`known_own_devices:${userId}`);
+  log(`[SYNC] Cache efface. Rechargez pour relancer la sync.`);
 }
 
 /**

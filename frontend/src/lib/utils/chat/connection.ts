@@ -111,6 +111,11 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   const groupMlsFailures = new Map<string, number>();
   const PHANTOM_THRESHOLD = 3;
 
+  // Buffer pour les messages (commits) qui arrivent AVANT leur Welcome.
+  // Clé = groupId, Valeur = messages en attente de replay.
+  const pendingGroupMessages = new Map<string, Array<{ sender: string; content: Uint8Array }>>();
+  const BUFFER_MAX_PER_GROUP = 50;
+
   if ('onChannelEvent' in mlsService) {
     (mlsService as any).onChannelEvent = async (event: any) => {
       log(`[Channel Event] ${event.type}`);
@@ -642,7 +647,19 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       }
 
       if (!isWelcome) {
-        log(`Ignoré: message pour groupe inconnu ${groupId ?? '(sans groupe)'}`);
+        // Buffer le message — le Welcome est peut-être encore en transit.
+        // Sans ce buffer, les commits qui arrivent avant le Welcome sont perdus,
+        // créant une divergence d'epoch permanente (AeadError).
+        if (groupId) {
+          const buf = pendingGroupMessages.get(groupId) ?? [];
+          if (buf.length < BUFFER_MAX_PER_GROUP) {
+            buf.push({ sender, content });
+            pendingGroupMessages.set(groupId, buf);
+            log(`[BUFFER] Message bufferise pour groupe ${groupId} (${buf.length} en attente)`);
+          }
+          return true; // ACK pour éviter que le gateway renvoie
+        }
+        log(`Ignoré: message sans groupe ni conversation`);
         return false;
       }
 
@@ -787,6 +804,65 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
 
         // Background: fetch history so the new conversation isn't empty
         loadHistoryForConversation(newConvoKey, joinedGroupId).catch(() => {});
+
+        // Replay des messages bufferisés (commits arrivés avant le Welcome).
+        // Les commits font avancer l'epoch ; les messages applicatifs sont déchiffrés.
+        const buffered = pendingGroupMessages.get(joinedGroupId);
+        if (buffered && buffered.length > 0) {
+          pendingGroupMessages.delete(joinedGroupId);
+          log(`[BUFFER] Replay ${buffered.length} message(s) bufferise(s) pour ${joinedGroupId}`);
+          for (const msg of buffered) {
+            try {
+              const decBytes = await mlsService.processIncomingMessage(joinedGroupId, msg.content);
+              if (decBytes) {
+                try {
+                  const appMsg = decodeAppMessage(decBytes);
+                  if (appMsg?.text) {
+                    await addMessageToChat(
+                      msg.sender.toLowerCase(),
+                      serializeEnvelope(mkTextEnvelope(appMsg.text.content ?? '')),
+                      newConvoKey,
+                      undefined,
+                      false,
+                      appMsg.messageId || undefined
+                    );
+                  } else if (appMsg?.reply) {
+                    const rt = appMsg.reply.replyTo
+                      ? {
+                          id: appMsg.reply.replyTo.id ?? '',
+                          senderId: appMsg.reply.replyTo.senderId ?? '',
+                          content: appMsg.reply.replyTo.preview ?? '',
+                        }
+                      : undefined;
+                    await addMessageToChat(
+                      msg.sender.toLowerCase(),
+                      serializeEnvelope(mkTextEnvelope(appMsg.reply.content ?? '', rt)),
+                      newConvoKey,
+                      undefined,
+                      false,
+                      appMsg.messageId || undefined
+                    );
+                  }
+                } catch {
+                  /* ignore decode errors during replay */
+                }
+              }
+            } catch (e) {
+              const errMsg = String(e);
+              if (!errMsg.includes('CannotDecryptOwnMessage') && !errMsg.includes('WrongEpoch')) {
+                log(`[BUFFER] Erreur replay: ${errMsg.slice(0, 150)}`);
+              }
+            }
+          }
+          // Sauvegarder l'état MLS une seule fois après tout le replay
+          try {
+            const stBytes = await mlsService.saveState(pin);
+            localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
+          } catch {
+            /* non-blocking */
+          }
+        }
+
         return true;
       } catch (_e) {
         const errStr = String(_e);

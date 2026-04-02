@@ -1,10 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  discoverMissingGroups,
-  forceSyncReset,
-  syncOwnDevicesToGroups,
-  syncPeerDevicesToGroups,
-} from './actions';
+import { discoverMissingGroups, forceSyncReset, syncOwnDevicesToGroups } from './actions';
 import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
 
@@ -299,212 +294,6 @@ describe('discoverMissingGroups', () => {
   });
 });
 
-describe('syncPeerDevicesToGroups', () => {
-  beforeEach(() => {
-    localStorage.clear();
-  });
-
-  it("invite le nouveau device d'un pair dans une conversation directe", async () => {
-    const addMembersBulk = vi.fn().mockResolvedValue({
-      commit: new Uint8Array([0x01]),
-      welcome: new Uint8Array([0x02]),
-      addedDeviceIds: ['dev-alice-new'],
-      ratchetTree: new Uint8Array([0x03]),
-    });
-    const registerMember = vi.fn().mockResolvedValue(undefined);
-    const sendWelcome = vi.fn().mockResolvedValue(undefined);
-    const sendCommit = vi.fn().mockResolvedValue(undefined);
-
-    const mls = makeMls({
-      // alice n'est PAS encore enregistrée dans le groupe → path d'ajout actif
-      getGroupMembers: vi.fn().mockResolvedValue([]),
-      fetchUserDevices: vi
-        .fn()
-        .mockImplementation((uid: string) =>
-          uid === 'alice'
-            ? Promise.resolve([{ keyPackage: new Uint8Array([10]), deviceId: 'dev-alice-new' }])
-            : Promise.resolve([])
-        ),
-      addMembersBulk,
-      registerMember,
-      sendWelcome,
-      sendCommit,
-    });
-
-    const convs = new Map<string, Conversation>();
-    convs.set(
-      'dm_1',
-      makeConversation({
-        groupId: 'g-direct',
-        isReady: true,
-        conversationType: 'direct',
-        directPeerId: 'alice',
-        contactName: 'alice',
-        name: 'alice',
-      })
-    );
-
-    await syncPeerDevicesToGroups({
-      mlsService: mls,
-      userId: 'jolan',
-      pin: '1234',
-      conversations: convs,
-      log: vi.fn(),
-    });
-
-    expect(addMembersBulk).toHaveBeenCalledWith(
-      'g-direct',
-      expect.arrayContaining([expect.objectContaining({ deviceId: 'dev-alice-new' })])
-    );
-    expect(registerMember).toHaveBeenCalledWith('g-direct', 'alice', 'dev-alice-new');
-    expect(sendWelcome).toHaveBeenCalled();
-    expect(sendCommit).toHaveBeenCalled();
-
-    const cached = JSON.parse(localStorage.getItem('known_peer_devices:g-direct') ?? '[]');
-    expect(cached).toContain('dev-alice-new');
-  });
-
-  it('ne re-tente pas un device deja en cache', async () => {
-    const addMembersBulk = vi.fn();
-
-    const mls = makeMls({
-      fetchUserDevices: vi
-        .fn()
-        .mockImplementation((uid: string) =>
-          uid === 'alice'
-            ? Promise.resolve([{ keyPackage: new Uint8Array([10]), deviceId: 'dev-alice-old' }])
-            : Promise.resolve([])
-        ),
-      addMembersBulk,
-    });
-
-    localStorage.setItem('known_peer_devices:g-direct', JSON.stringify(['dev-alice-old']));
-
-    const convs = new Map<string, Conversation>();
-    convs.set(
-      'dm_1',
-      makeConversation({
-        groupId: 'g-direct',
-        isReady: true,
-        conversationType: 'direct',
-        directPeerId: 'alice',
-      })
-    );
-
-    await syncPeerDevicesToGroups({
-      mlsService: mls,
-      userId: 'jolan',
-      pin: '1234',
-      conversations: convs,
-      log: vi.fn(),
-    });
-
-    expect(addMembersBulk).not.toHaveBeenCalled();
-  });
-
-  it('met en cache les devices en cas de ProposalValidationErr', async () => {
-    const addMembersBulk = vi
-      .fn()
-      .mockRejectedValue(new Error('AddMembers error: CreateCommitError(ProposalValidationErr)'));
-
-    const mls = makeMls({
-      fetchUserDevices: vi
-        .fn()
-        .mockImplementation((uid: string) =>
-          uid === 'alice'
-            ? Promise.resolve([{ keyPackage: new Uint8Array([10]), deviceId: 'dev-alice' }])
-            : Promise.resolve([])
-        ),
-      addMembersBulk,
-    });
-
-    const convs = new Map<string, Conversation>();
-    convs.set(
-      'dm_1',
-      makeConversation({
-        groupId: 'g-direct',
-        isReady: true,
-        conversationType: 'direct',
-        directPeerId: 'alice',
-      })
-    );
-
-    await syncPeerDevicesToGroups({
-      mlsService: mls,
-      userId: 'jolan',
-      pin: '1234',
-      conversations: convs,
-      log: vi.fn(),
-    });
-
-    const cached = JSON.parse(localStorage.getItem('known_peer_devices:g-direct') ?? '[]');
-    expect(cached).toContain('dev-alice');
-  });
-
-  it('ignore les conversations non pretes', async () => {
-    const addMembersBulk = vi.fn();
-    const mls = makeMls({ addMembersBulk });
-
-    const convs = new Map<string, Conversation>();
-    convs.set('pending', makeConversation({ isReady: false }));
-
-    await syncPeerDevicesToGroups({
-      mlsService: mls,
-      userId: 'jolan',
-      pin: '1234',
-      conversations: convs,
-      log: vi.fn(),
-    });
-
-    expect(addMembersBulk).not.toHaveBeenCalled();
-  });
-
-  it("n'invite pas les appareils d'un pair deja enregistre dans le groupe (evite le double-commit)", async () => {
-    // Reproduit le scénario réel : jolan-dev3 se connecte.
-    // jolan-dev1 (syncOwnDevicesToGroups) va l'ajouter → commit-A.
-    // test-dev1 (syncPeerDevicesToGroups, userId='test') ne DOIT PAS aussi l'ajouter
-    // car cela produirait commit-B au même epoch de base → secrets divergés → UnableToDecrypt.
-    const addMembersBulk = vi.fn();
-    const mls = makeMls({
-      // 'jolan' est déjà membre enregistré du groupe → guard actif
-      getGroupMembers: vi.fn().mockResolvedValue([{ userId: 'jolan' }]),
-      fetchUserDevices: vi.fn().mockImplementation((uid: string) =>
-        uid === 'jolan'
-          ? Promise.resolve([
-              { keyPackage: new Uint8Array([10]), deviceId: 'jolan-dev1' },
-              { keyPackage: new Uint8Array([20]), deviceId: 'jolan-dev3' },
-            ])
-          : Promise.resolve([])
-      ),
-      addMembersBulk,
-    });
-
-    const convs = new Map<string, Conversation>();
-    convs.set(
-      'dm_1',
-      makeConversation({
-        groupId: 'g-direct',
-        isReady: true,
-        conversationType: 'direct',
-        directPeerId: 'jolan',
-        contactName: 'jolan',
-        name: 'jolan',
-      })
-    );
-
-    await syncPeerDevicesToGroups({
-      mlsService: mls,
-      userId: 'test',
-      pin: '1234',
-      conversations: convs,
-      log: vi.fn(),
-    });
-
-    // jolan est déjà membre → syncOwnDevicesToGroups de jolan gère jolan-dev3 → pas de double-commit
-    expect(addMembersBulk).not.toHaveBeenCalled();
-  });
-});
-
 describe('syncOwnDevicesToGroups', () => {
   beforeEach(() => {
     localStorage.clear();
@@ -593,8 +382,7 @@ describe('syncOwnDevicesToGroups', () => {
 
     const cacheRaw = localStorage.getItem('known_own_devices:jolan');
     expect(cacheRaw).toBeNull();
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("Aucune conversation n'est prete"));
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('Welcome manquant'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Aucune conversation prete'));
   });
 
   it('log un diagnostic explicite quand addMember ne retourne pas de welcome', async () => {
@@ -629,8 +417,9 @@ describe('syncOwnDevicesToGroups', () => {
     await vi.runAllTimersAsync();
     await promise;
 
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('addMember g-1 -> commit=1B'));
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('Aucun Welcome retourne par MLS'));
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining('Aucun Welcome retourne pour dev-2 dans g-1')
+    );
   });
 
   it('enregistre un membre côté serveur quand addMember echoue avec DuplicateSignatureKey', async () => {
@@ -660,9 +449,8 @@ describe('syncOwnDevicesToGroups', () => {
     await vi.runAllTimersAsync();
     await promise;
 
-    // Should log DIAG about DuplicateSignature
+    // Should log about DuplicateSignature and register server-side
     expect(log).toHaveBeenCalledWith(expect.stringContaining("deja dans l'arbre MLS de g-1"));
-    // Should still register the member server-side to fix Redis inconsistency
     expect(registerMember).toHaveBeenCalledWith('g-1', 'jolan', 'dev-2');
   });
 
@@ -706,6 +494,6 @@ describe('forceSyncReset', () => {
     forceSyncReset('jolan', log);
 
     expect(localStorage.getItem('known_own_devices:jolan')).toBeNull();
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('Cache des appareils connus efface'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Cache efface'));
   });
 });
