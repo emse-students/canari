@@ -226,6 +226,8 @@ export class AuthController {
       promo?: number;
     };
 
+    console.log('[oidcCallback] userinfo from Authentik:', userinfo);
+
     if (!userinfo.sub) {
       throw new UnauthorizedException(
         'Invalid userinfo response from Authentik',
