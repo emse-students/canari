@@ -40,6 +40,11 @@ export interface IMlsService {
   ): Promise<void>;
   sendCommit(commitBytes: Uint8Array, groupId: string): Promise<void>; // New Method for WS priority
   registerMember(groupId: string, userId: string, deviceId: string): Promise<void>;
+  /** Acquiert un verrou distribué Redis pour éviter les commits MLS concurrents sur le même groupe.
+   *  Retourne true si le verrou a été acquis, false si un autre appareil le détient déjà. */
+  acquireAddLock(groupId: string, ttlMs?: number): Promise<boolean>;
+  /** Libère le verrou acquis via acquireAddLock. */
+  releaseAddLock(groupId: string): Promise<void>;
   fetchHistory(
     groupId: string
   ): Promise<{ sender_id: string; content: string; timestamp: string }[]>;

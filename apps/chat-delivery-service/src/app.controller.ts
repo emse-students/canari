@@ -1170,6 +1170,42 @@ export class AppController {
   }
 
   @UseGuards(HeaderAuthGuard)
+  @Post('mls-api/add-lock')
+  async acquireAddLock(
+    @Body()
+    body: {
+      groupId: string;
+      deviceId: string;
+      ttlMs?: number;
+    },
+  ) {
+    const groupId = sanitizeQueryValue(body.groupId, 'groupId');
+    const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
+    const ttlSec = Math.max(
+      1,
+      Math.min(30, Math.round((body.ttlMs ?? 10_000) / 1000)),
+    );
+    // Redis SET NX EX : acquiert le verrou seulement si la clé n'existe pas encore
+    const lockKey = `mls:addlock:${groupId}`;
+    const result = await this.redis.set(lockKey, deviceId, 'EX', ttlSec, 'NX');
+    return { acquired: result === 'OK' };
+  }
+
+  @UseGuards(HeaderAuthGuard)
+  @Delete('mls-api/add-lock')
+  async releaseAddLock(@Body() body: { groupId: string; deviceId: string }) {
+    const groupId = sanitizeQueryValue(body.groupId, 'groupId');
+    const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
+    const lockKey = `mls:addlock:${groupId}`;
+    // Libérer seulement si c'est ce deviceId qui détient le verrou
+    const holder = await this.redis.get(lockKey);
+    if (holder === deviceId) {
+      await this.redis.del(lockKey);
+    }
+    return { released: holder === deviceId };
+  }
+
+  @UseGuards(HeaderAuthGuard)
   @Post('mls-api/welcome')
   async sendWelcome(
     @Body()

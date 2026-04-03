@@ -635,6 +635,34 @@ export class WebMlsService implements IMlsService {
     }
   }
 
+  async acquireAddLock(groupId: string, ttlMs = 10_000): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.historyUrl}/api/mls-api/add-lock`, {
+        method: 'POST',
+        headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ groupId, deviceId: this.deviceId, ttlMs }),
+      });
+      if (!res.ok) return false;
+      const data = await res.json();
+      return data.acquired === true;
+    } catch {
+      // En cas d'erreur réseau, on laisse passer (fail-open pour éviter le deadlock)
+      return true;
+    }
+  }
+
+  async releaseAddLock(groupId: string): Promise<void> {
+    try {
+      await fetch(`${this.historyUrl}/api/mls-api/add-lock`, {
+        method: 'DELETE',
+        headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ groupId, deviceId: this.deviceId }),
+      });
+    } catch {
+      // Non-bloquant
+    }
+  }
+
   async init(userId: string, pin: string, state?: Uint8Array) {
     this.userId = userId;
 

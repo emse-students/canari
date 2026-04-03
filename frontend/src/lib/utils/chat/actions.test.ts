@@ -34,6 +34,8 @@ function makeMls(overrides: Partial<IMlsService> = {}): IMlsService {
     sendWelcome: vi.fn(),
     sendCommit: vi.fn(),
     registerMember: vi.fn(),
+    acquireAddLock: vi.fn().mockResolvedValue(true),
+    releaseAddLock: vi.fn().mockResolvedValue(undefined),
     fetchHistory: vi.fn(),
     getDeviceId: vi.fn().mockReturnValue('dev-main'),
     getLocalGroups: vi.fn().mockReturnValue([]),

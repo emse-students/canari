@@ -115,6 +115,15 @@ export async function syncOwnDevicesToGroups(params: {
         /* en cas d'erreur, tenter l'ajout quand même */
       }
 
+      // Acquérir le verrou distribué pour ce groupe.
+      // Si un autre appareil est en train d'ajouter des membres, on saute ce groupe
+      // pour éviter deux commits concurrents sur le même epoch (race condition d'epoch).
+      const lockAcquired = await mlsService.acquireAddLock(convo.groupId, 12_000).catch(() => true);
+      if (!lockAcquired) {
+        log(`[SYNC] Verrou groupe ${convo.groupId} tenu par un autre appareil — skip`);
+        continue;
+      }
+
       try {
         const result = await mlsService.addMember(convo.groupId, freshKp);
         await mlsService.registerMember(convo.groupId, userId, device.deviceId);
@@ -157,6 +166,9 @@ export async function syncOwnDevicesToGroups(params: {
           log(`[SYNC] Erreur ajout ${device.deviceId} à ${convo.groupId}: ${errStr.slice(0, 100)}`);
           allSucceeded = false;
         }
+      } finally {
+        // Libérer le verrou distribué dans tous les cas (succès ou erreur)
+        await mlsService.releaseAddLock(convo.groupId).catch(() => {});
       }
     }
 

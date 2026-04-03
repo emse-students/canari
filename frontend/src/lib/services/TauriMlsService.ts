@@ -651,6 +651,33 @@ export class TauriMlsService implements IMlsService {
     }
   }
 
+  async acquireAddLock(groupId: string, ttlMs = 10_000): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.historyUrl}/api/mls-api/add-lock`, {
+        method: 'POST',
+        headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ groupId, deviceId: this.deviceId, ttlMs }),
+      });
+      if (!res.ok) return false;
+      const data = await res.json();
+      return data.acquired === true;
+    } catch {
+      return true; // fail-open
+    }
+  }
+
+  async releaseAddLock(groupId: string): Promise<void> {
+    try {
+      await fetch(`${this.historyUrl}/api/mls-api/add-lock`, {
+        method: 'DELETE',
+        headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ groupId, deviceId: this.deviceId }),
+      });
+    } catch {
+      // Non-bloquant
+    }
+  }
+
   async saveState(pin: string) {
     // Pass the PIN to the Tauri command
     return await invoke<Uint8Array>('sauvegarder_mls', { pin });
