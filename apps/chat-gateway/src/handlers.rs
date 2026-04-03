@@ -136,7 +136,7 @@ async fn handle_socket(
     // Register connection — push into the list for this key (supports multiple tabs)
     {
         let mut map = state.connected_users.lock().unwrap();
-        map.entry(conn_key.clone()).or_default().push(tx);
+        map.entry(conn_key.clone()).or_default().push(tx.clone());
         tracing::info!(
             "Registered connection key: {} ({} active)",
             conn_key,
@@ -302,6 +302,228 @@ async fn handle_socket(
                             .unwrap_or(serde_json::Value::Null);
 
                         match msg_type {
+                            "commit" => {
+                                // Epoch-gated structural commit (addMember, removeMember, update).
+                                // Validate baseEpoch with delivery service before broadcasting.
+                                let base_epoch =
+                                    json.get("baseEpoch").and_then(|v| v.as_u64()).unwrap_or(0)
+                                        as i64;
+
+                                tracing::info!(
+                                    "Processing COMMIT frame. GroupID: {}, baseEpoch: {}",
+                                    group_id,
+                                    base_epoch
+                                );
+
+                                // Call epoch-commit endpoint
+                                let epoch_body = serde_json::json!({
+                                    "groupId": group_id,
+                                    "deviceId": format!("{}:{}", user_id, device_id),
+                                    "baseEpoch": base_epoch
+                                });
+
+                                let epoch_result = state
+                                    .http_client
+                                    .post(format!(
+                                        "{}/mls-api/epoch-commit",
+                                        state.delivery_service_url
+                                    ))
+                                    .json(&epoch_body)
+                                    .send()
+                                    .await;
+
+                                let accepted = match epoch_result {
+                                    Ok(resp) => {
+                                        if let Ok(body) = resp.json::<serde_json::Value>().await {
+                                            if body.get("accepted").and_then(|v| v.as_bool())
+                                                == Some(true)
+                                            {
+                                                true
+                                            } else {
+                                                let current_epoch = body
+                                                    .get("currentEpoch")
+                                                    .and_then(|v| v.as_i64())
+                                                    .unwrap_or(0);
+                                                // Send rejection back to client
+                                                let reject_msg = serde_json::json!({
+                                                    "type": "epoch_rejected",
+                                                    "groupId": group_id,
+                                                    "currentEpoch": current_epoch
+                                                })
+                                                .to_string();
+                                                let _ = tx.send(reject_msg).await;
+                                                tracing::warn!(
+                                                    "Epoch rejected for group {} (base={}, current={})",
+                                                    group_id,
+                                                    base_epoch,
+                                                    current_epoch
+                                                );
+                                                false
+                                            }
+                                        } else {
+                                            // Cannot parse response — let it through (fail-open)
+                                            tracing::warn!(
+                                                "Epoch-commit response unparseable, allowing commit"
+                                            );
+                                            true
+                                        }
+                                    }
+                                    Err(e) => {
+                                        // Network error to delivery service — fail-open
+                                        tracing::error!(
+                                            "Epoch-commit call failed: {}, allowing commit",
+                                            e
+                                        );
+                                        true
+                                    }
+                                };
+
+                                if !accepted {
+                                    continue;
+                                }
+
+                                // Accepted — broadcast like a normal MLS frame
+                                let payload_b64 = B64.encode(&ciphertext);
+                                if let Ok(serialized) = serde_json::to_string(&MessageSentEvent {
+                                    id: Uuid::new_v4(),
+                                    sender_id: user_id.clone(),
+                                    username: "Anonymous".to_string(),
+                                    content: payload_b64.clone(),
+                                    timestamp: Utc::now(),
+                                    conversation_id: Some(group_id.clone())
+                                        .filter(|s| !s.is_empty()),
+                                }) {
+                                    let record = FutureRecord::to(TOPIC_CHAT_MESSAGES)
+                                        .payload(&serialized)
+                                        .key(&user_id);
+                                    let _ = state
+                                        .kafka_producer
+                                        .send(record, std::time::Duration::from_secs(0))
+                                        .await;
+
+                                    if !group_id.is_empty() {
+                                        if let Ok(mut con) = state
+                                            .redis_client
+                                            .get_multiplexed_async_connection()
+                                            .await
+                                        {
+                                            let stream_key = format!("history:{}", group_id);
+                                            let _: Result<String, _> = redis::cmd("XADD")
+                                                .arg(&stream_key)
+                                                .arg("*")
+                                                .arg("sender_id")
+                                                .arg(user_id.clone())
+                                                .arg("content")
+                                                .arg(payload_b64)
+                                                .arg("timestamp")
+                                                .arg(Utc::now().to_rfc3339())
+                                                .query_async(&mut con)
+                                                .await;
+                                        }
+                                    }
+                                }
+
+                                // Route to recipients (same logic as "mls")
+                                let mut target_recipients: Vec<Recipient> = recipients;
+
+                                if target_recipients.is_empty() && !group_id.is_empty() {
+                                    if let Ok(mut con) =
+                                        state.redis_client.get_multiplexed_async_connection().await
+                                    {
+                                        let key = format!("group:members:{}", group_id);
+                                        if let Ok(members) =
+                                            con.smembers::<_, Vec<String>>(&key).await
+                                        {
+                                            for m in members {
+                                                let parts: Vec<&str> = m.split(':').collect();
+                                                if parts.len() == 2 {
+                                                    target_recipients.push(Recipient {
+                                                        user_id: parts[0].to_string(),
+                                                        device_id: parts[1].to_string(),
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if !target_recipients.is_empty() {
+                                    let mut offline_list: Vec<Recipient> = Vec::new();
+
+                                    for recipient in target_recipients {
+                                        if recipient.device_id.is_empty() {
+                                            offline_list.push(recipient);
+                                            continue;
+                                        }
+
+                                        let target_key = format!(
+                                            "{}:{}",
+                                            recipient.user_id, recipient.device_id
+                                        );
+                                        let redis_presence_key =
+                                            format!("user:online:{}", target_key);
+                                        let mut is_online = false;
+
+                                        if let Ok(mut con) = state
+                                            .redis_client
+                                            .get_multiplexed_async_connection()
+                                            .await
+                                        {
+                                            if let Ok(true) =
+                                                con.exists::<_, bool>(&redis_presence_key).await
+                                            {
+                                                is_online = true;
+                                                let routing = serde_json::json!({
+                                                    "recipientId": recipient.user_id,
+                                                    "deviceId": recipient.device_id,
+                                                    "senderId": user_id,
+                                                    "senderDeviceId": device_id,
+                                                    "groupId": group_id,
+                                                    "isWelcome": false,
+                                                    "proto": B64.encode(&ciphertext)
+                                                })
+                                                .to_string();
+                                                let _: Result<(), _> =
+                                                    con.publish("chat:messages", &routing).await;
+                                            }
+                                        }
+
+                                        if !is_online {
+                                            offline_list.push(recipient);
+                                        }
+                                    }
+
+                                    if !offline_list.is_empty() {
+                                        let body = serde_json::json!({
+                                            "recipients": offline_list
+                                                .iter()
+                                                .map(|r| serde_json::json!({
+                                                    "userId": r.user_id,
+                                                    "deviceId": if r.device_id.is_empty() { serde_json::Value::Null } else { r.device_id.clone().into() }
+                                                }))
+                                                .collect::<Vec<_>>(),
+                                            "senderId": user_id,
+                                            "senderDeviceId": device_id,
+                                            "groupId": group_id,
+                                            "isWelcome": false,
+                                            "proto": B64.encode(&ciphertext)
+                                        });
+                                        if let Err(e) = state
+                                            .http_client
+                                            .post(format!(
+                                                "{}/mls-api/send",
+                                                state.delivery_service_url
+                                            ))
+                                            .json(&body)
+                                            .send()
+                                            .await
+                                        {
+                                            tracing::error!("Offline delivery failed: {}", e);
+                                        }
+                                    }
+                                }
+                            }
+
                             "mls" => {
                                 tracing::info!(
                                     "Processing MLS frame. GroupID: {:?}, recipients: {}",

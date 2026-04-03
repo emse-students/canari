@@ -24,6 +24,18 @@ function seenHistoryKey(userId: string, groupId: string): string {
   return `history_seen_cipher:${userId}:${groupId}`;
 }
 
+function lastStreamIdKey(userId: string, groupId: string): string {
+  return `history_last_stream_id:${userId}:${groupId}`;
+}
+
+function loadLastStreamId(userId: string, groupId: string): string | undefined {
+  return localStorage.getItem(lastStreamIdKey(userId, groupId)) ?? undefined;
+}
+
+function saveLastStreamId(userId: string, groupId: string, streamId: string): void {
+  localStorage.setItem(lastStreamIdKey(userId, groupId), streamId);
+}
+
 function loadSeenCipherHashes(userId: string, groupId: string): Set<string> {
   try {
     return new Set(JSON.parse(localStorage.getItem(seenHistoryKey(userId, groupId)) ?? '[]'));
@@ -127,8 +139,15 @@ export async function replayConversationHistory(params: {
   } = params;
 
   try {
-    const history = await mlsService.fetchHistory(groupId);
+    // Incremental fetch: only retrieve messages after the last processed stream ID.
+    // This avoids re-delivering messages whose ratchet keys have already been consumed
+    // (which would produce TooDistantInThePast / CiphertextGenerationOutOfBounds errors).
+    const afterStreamId = loadLastStreamId(userId, groupId);
+    const history = await mlsService.fetchHistory(groupId, afterStreamId);
     if (history.length === 0) return;
+
+    // Track the highest stream ID we process so the next sync starts from there.
+    let latestStreamId: string | undefined;
 
     const seenCipherHashes = loadSeenCipherHashes(userId, groupId);
     let seenUpdated = false;
@@ -137,6 +156,11 @@ export async function replayConversationHistory(params: {
     let mlsUpdated = false;
 
     for (const msg of history) {
+      // Update latest stream ID (Redis stream IDs sort lexicographically)
+      if (msg.id && (!latestStreamId || msg.id > latestStreamId)) {
+        latestStreamId = msg.id;
+      }
+
       const cipherFingerprint = hashStringDjb2(`${msg.timestamp}:${msg.content}`);
       if (seenCipherHashes.has(cipherFingerprint)) {
         continue;
@@ -358,6 +382,11 @@ export async function replayConversationHistory(params: {
 
     if (seenUpdated) {
       saveSeenCipherHashes(userId, groupId, seenCipherHashes);
+    }
+
+    // Persist the last processed Redis stream ID so the next sync is incremental.
+    if (latestStreamId) {
+      saveLastStreamId(userId, groupId, latestStreamId);
     }
 
     if (mlsUpdated) {

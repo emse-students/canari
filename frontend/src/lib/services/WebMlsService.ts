@@ -189,6 +189,19 @@ export class WebMlsService implements IMlsService {
             this.syncRequestCallback?.(senderDev);
             return;
           }
+          if (msg.type === 'epoch_rejected') {
+            console.warn(
+              `[WS RCV] Epoch rejected for group ${msg.groupId} (server epoch: ${msg.currentEpoch})`
+            );
+            // Notify via channel event so connection.ts can trigger recovery
+            if (this.onChannelEvent) {
+              this.onChannelEvent({
+                type: 'epoch_rejected',
+                data: { groupId: msg.groupId, currentEpoch: msg.currentEpoch },
+              });
+            }
+            return;
+          }
           if (msg.proto && this.messageCallback) {
             const binaryString = atob(msg.proto as string);
             const ciphertext = new Uint8Array(binaryString.length);
@@ -614,11 +627,10 @@ export class WebMlsService implements IMlsService {
   }
 
   async sendCommit(commitBytes: Uint8Array, groupId: string): Promise<void> {
+    const proto = btoa(String.fromCharCode(...commitBytes));
+    const baseEpoch = this.getEpoch(groupId);
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      // MLS commit is also an MlsFrame (opaque to the server)
-      this.ws.send(
-        JSON.stringify({ type: 'mls', groupId, proto: btoa(String.fromCharCode(...commitBytes)) })
-      );
+      this.ws.send(JSON.stringify({ type: 'commit', groupId, proto, baseEpoch }));
     } else {
       const base64 = btoa(String.fromCharCode(...commitBytes));
       await fetch(`${this.historyUrl}/api/mls-api/send`, {
@@ -894,10 +906,13 @@ export class WebMlsService implements IMlsService {
   }
 
   async fetchHistory(
-    groupId: string
-  ): Promise<{ sender_id: string; content: string; timestamp: string }[]> {
+    groupId: string,
+    afterStreamId?: string
+  ): Promise<{ id?: string; sender_id: string; content: string; timestamp: string }[]> {
     try {
-      const res = await fetch(`${this.historyUrl}/api/history/${groupId}`, {
+      const url = new URL(`${this.historyUrl}/api/history/${groupId}`);
+      if (afterStreamId) url.searchParams.set('after', afterStreamId);
+      const res = await fetch(url.toString(), {
         headers: this.withAuthHeaders(),
       });
       if (!res.ok) return [];
@@ -922,6 +937,15 @@ export class WebMlsService implements IMlsService {
   getLocalGroups(): string[] {
     if (!this.client) return [];
     return Array.from(this.client.get_groups() as Iterable<string>);
+  }
+
+  getEpoch(groupId: string): number {
+    if (!this.client) return 0;
+    try {
+      return this.client.get_epoch(groupId) as number;
+    } catch {
+      return 0;
+    }
   }
 
   forgetGroup(groupId: string, minEpoch = 0): void {

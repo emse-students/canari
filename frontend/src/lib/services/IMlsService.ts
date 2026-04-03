@@ -38,6 +38,8 @@ export interface IMlsService {
     targetDeviceId?: string,
     ratchetTreeBytes?: Uint8Array
   ): Promise<void>;
+  /** Returns the current MLS epoch for a group (needed for epoch-gating). */
+  getEpoch(groupId: string): number;
   sendCommit(commitBytes: Uint8Array, groupId: string): Promise<void>; // New Method for WS priority
   registerMember(groupId: string, userId: string, deviceId: string): Promise<void>;
   /** Acquiert un verrou distribué Redis pour éviter les commits MLS concurrents sur le même groupe.
@@ -46,8 +48,9 @@ export interface IMlsService {
   /** Libère le verrou acquis via acquireAddLock. */
   releaseAddLock(groupId: string): Promise<void>;
   fetchHistory(
-    groupId: string
-  ): Promise<{ sender_id: string; content: string; timestamp: string }[]>;
+    groupId: string,
+    afterStreamId?: string
+  ): Promise<{ id?: string; sender_id: string; content: string; timestamp: string }[]>;
   getDeviceId(): string;
 
   // Group management

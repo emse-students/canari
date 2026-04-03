@@ -24,7 +24,12 @@ import {
   processDevWelcome,
   syncOwnDevicesToGroups,
 } from '$lib/utils/chat/actions';
-import { setupMessageHandler, initializeConnection } from '$lib/utils/chat/connection';
+import {
+  setupMessageHandler,
+  initializeConnection,
+  initTabLeadershipAsync,
+  getIsTabLeader,
+} from '$lib/utils/chat/connection';
 import { BiometricService } from '$lib/services/biometric';
 import { CallService } from '$lib/services/CallService';
 import type { Conversation } from '$lib/types';
@@ -298,6 +303,9 @@ export function useChatSession() {
         }, waitMs);
       });
 
+      // Multi-tab leadership: only the leader tab opens the WebSocket.
+      await initTabLeadershipAsync(cb.log);
+
       await initializeConnection({
         mlsService,
         userId,
@@ -308,6 +316,9 @@ export function useChatSession() {
         syncOwnDevicesToGroupsLocally: () => syncOwnDevicesToGroupsLocally(cb),
         log: cb.log,
       });
+
+      // Only the leader tab syncs history and devices
+      if (!getIsTabLeader()) return;
 
       syncAllConversationHistories(cb, 'login').catch((e) =>
         cb.log(

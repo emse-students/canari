@@ -142,13 +142,13 @@ export async function syncOwnDevicesToGroups(params: {
           log(`[SYNC][WARN] Aucun Welcome retourne pour ${device.deviceId} dans ${convo.groupId}`);
         }
 
+        // Sauvegarder l'état MLS AVANT sendCommit (crash-safety)
+        const stBytes = await mlsService.saveState(pin);
+        localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
+
         if (result.commit) {
           await mlsService.sendCommit(result.commit, convo.groupId);
         }
-
-        // Sauvegarder l'état MLS après chaque groupe
-        const stBytes = await mlsService.saveState(pin);
-        localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
 
         // Court délai pour laisser le commit se propager
         await new Promise((r) => setTimeout(r, 100));
@@ -434,13 +434,14 @@ export async function discoverMissingGroups(params: {
           }
         }
 
+        // Sauvegarder l'état MLS AVANT sendCommit (crash-safety)
+        const stBytes = await mlsService.saveState(pin);
+        localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
+
         if (bulk.commit) {
           await mlsService.sendCommit(bulk.commit, convo.groupId);
         }
       }
-
-      const stBytes = await mlsService.saveState(pin);
-      localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
 
       conversations.set(key, { ...convo, isReady: true });
       if (saveConversation) await saveConversation(key);

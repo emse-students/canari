@@ -76,6 +76,100 @@ interface MessageHandlerDeps {
   log: (msg: string) => void;
 }
 
+// ─── Multi-tab coordination ─────────────────────────────────────────────
+// Only one browser tab should hold the WebSocket connection and run MLS
+// operations. Other tabs run in read-only mode and receive UI updates via
+// BroadcastChannel. This prevents two tabs from advancing the same MLS
+// ratchet concurrently (which would cause WrongEpoch / AeadError).
+
+const TAB_ID = crypto.randomUUID();
+let isTabLeader = false;
+let tabChannel: BroadcastChannel | null = null;
+
+/**
+ * Returns true if this tab is the active MLS leader (holds the WebSocket).
+ */
+export function getIsTabLeader(): boolean {
+  return isTabLeader;
+}
+
+const LEADER_KEY = 'canari_tab_leader';
+const HEARTBEAT_KEY = 'canari_tab_leader_heartbeat';
+let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Async leader election using localStorage heartbeat.
+ * First tab claims leadership; subsequent tabs become followers.
+ * Stale leader (>5s without heartbeat) is automatically replaced.
+ */
+export async function initTabLeadershipAsync(log: (msg: string) => void): Promise<boolean> {
+  // BroadcastChannel not available (e.g. Tauri desktop) — always leader.
+  if (typeof BroadcastChannel === 'undefined') {
+    isTabLeader = true;
+    return true;
+  }
+
+  if (!tabChannel) {
+    tabChannel = new BroadcastChannel('canari-mls-tab');
+    tabChannel.addEventListener('message', (ev: MessageEvent) => {
+      if (ev.data?.type === 'leader_closing' && !isTabLeader) {
+        // Leader is closing — try to promote
+        isTabLeader = true;
+        localStorage.setItem(LEADER_KEY, TAB_ID);
+        localStorage.setItem(HEARTBEAT_KEY, String(Date.now()));
+        startHeartbeat();
+        log('[TAB] Ancien leader fermé — promotion en leader.');
+      }
+    });
+  }
+
+  const now = Date.now();
+  const lastHeartbeat = parseInt(localStorage.getItem(HEARTBEAT_KEY) ?? '0', 10);
+  const currentLeader = localStorage.getItem(LEADER_KEY);
+
+  // Claim if no leader or heartbeat stale (>5s)
+  if (!currentLeader || now - lastHeartbeat > 5000) {
+    localStorage.setItem(LEADER_KEY, TAB_ID);
+    localStorage.setItem(HEARTBEAT_KEY, String(now));
+    isTabLeader = true;
+    startHeartbeat();
+    log('[TAB] Leadership acquise.');
+  } else if (currentLeader === TAB_ID) {
+    isTabLeader = true;
+    startHeartbeat();
+  } else {
+    isTabLeader = false;
+    log('[TAB] Autre onglet actif — mode lecture seule (pas de WebSocket).');
+  }
+
+  // Notify other tabs when this tab closes
+  if (typeof window !== 'undefined') {
+    window.addEventListener('beforeunload', () => {
+      if (isTabLeader) {
+        tabChannel?.postMessage({ type: 'leader_closing', tabId: TAB_ID });
+        if (localStorage.getItem(LEADER_KEY) === TAB_ID) {
+          localStorage.removeItem(LEADER_KEY);
+          localStorage.removeItem(HEARTBEAT_KEY);
+        }
+      }
+      if (heartbeatInterval) clearInterval(heartbeatInterval);
+    });
+  }
+
+  return isTabLeader;
+}
+
+function startHeartbeat(): void {
+  if (heartbeatInterval) clearInterval(heartbeatInterval);
+  heartbeatInterval = setInterval(() => {
+    if (!isTabLeader) {
+      if (heartbeatInterval) clearInterval(heartbeatInterval);
+      return;
+    }
+    localStorage.setItem(HEARTBEAT_KEY, String(Date.now()));
+  }, 2000);
+}
+
 /**
  * Configure le callback pour traiter les messages entrants MLS.
  * Gère les messages de contrôle (renommage, ajout/retrait membre, suppression groupe),
@@ -180,6 +274,23 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             log(`[ERROR] Key rotation failed for channel ${channelId}: ${e}`);
             console.error('[Key Rotation] failed for channel', channelId, e);
           }
+        }
+        return;
+      }
+
+      if (event.type === 'epoch_rejected') {
+        const data = event.data || {};
+        const groupId = String(data.groupId || '');
+        const currentEpoch = Number(data.currentEpoch || 0);
+        log(
+          `[EPOCH] Commit rejeté pour groupe ${groupId} (epoch serveur: ${currentEpoch}) — oubli MLS + sync_request`
+        );
+        if (groupId) {
+          epochRecoveryGroups.add(groupId);
+          mlsService.forgetGroup(groupId, currentEpoch);
+          const stBytes = await mlsService.saveState(pin);
+          localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
+          mlsService.sendSyncRequest();
         }
         return;
       }
@@ -302,6 +413,14 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           await mlsService.processWelcome(content, ratchetTreeBytes);
           const stBytes = await mlsService.saveState(pin);
           localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
+
+          // If this group was in epoch recovery, replay incremental history
+          // to recover messages sent during the forgetGroup recovery window.
+          if (epochRecoveryGroups.has(convoKey) || epochRecoveryGroups.has(groupId!)) {
+            epochRecoveryGroups.delete(convoKey);
+            epochRecoveryGroups.delete(groupId!);
+            loadHistoryForConversation(convoKey, groupId!).catch(() => {});
+          }
         } catch {
           // Welcome was for another device or already handled — ignore
         }
@@ -978,6 +1097,12 @@ export async function initializeConnection(deps: ConnectionDeps): Promise<void> 
     syncOwnDevicesToGroupsLocally,
     log,
   } = deps;
+
+  // Multi-tab guard: only the leader tab opens the WebSocket.
+  if (!isTabLeader) {
+    log('[TAB] Onglet follower — skip initializeConnection.');
+    return;
+  }
 
   log('Connexion Gateway...');
   try {

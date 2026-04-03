@@ -77,6 +77,17 @@ fn oublier_groupe(
 }
 
 #[tauri::command]
+fn obtenir_epoch(group_id: String, state: tauri::State<AppState>) -> Result<u32, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let epoch = manager.get_epoch(&group_id).map_err(|e| e.to_string())?;
+    Ok(epoch as u32)
+}
+
+#[tauri::command]
 fn ajouter_membre(
     group_id: String,
     key_package_bytes: Vec<u8>,
@@ -216,7 +227,12 @@ fn exporter_secret(
     let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
 
     manager
-        .export_secret(&group_id, &label, context.as_deref().unwrap_or(&[]), key_len)
+        .export_secret(
+            &group_id,
+            &label,
+            context.as_deref().unwrap_or(&[]),
+            key_len,
+        )
         .map_err(|e| e.to_string())
 }
 
@@ -243,6 +259,7 @@ pub fn run() {
             sauvegarder_mls,
             creer_groupe,
             oublier_groupe,
+            obtenir_epoch,
             generer_key_package,
             ajouter_membre,
             retirer_membres,

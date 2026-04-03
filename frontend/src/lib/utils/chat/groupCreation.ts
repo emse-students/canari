@@ -117,16 +117,23 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
           log('[GROUP] PAS DE WELCOME dans le bulk!');
         }
 
+        // Sauvegarder l'état MLS AVANT d'envoyer le commit au réseau.
+        // En cas de crash entre le saveState et le sendCommit, l'état local
+        // reste cohérent (post-addMember) et le commit peut être retenté.
+        const stateBytes = await mlsService.saveState(pin);
+        localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
+
         if (bulk.commit) {
           await mlsService.sendCommit(bulk.commit, groupId);
         }
       } catch (e) {
         log(`Erreur synchro propres appareils: ${e}`);
       }
+    } else {
+      // Pas d'autres appareils : sauvegarder quand même après createGroup
+      const stateBytes = await mlsService.saveState(pin);
+      localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
     }
-
-    const stateBytes = await mlsService.saveState(pin);
-    localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
 
     conversations.set(conversationKey, {
       contactName: groupDisplayName,
@@ -355,6 +362,10 @@ export async function startNewConversation(
         await mlsService.sendWelcome(bulk.welcome, contact, groupId, did, bulk.ratchetTree);
       }
     }
+
+    // Sauvegarder AVANT sendCommit (crash-safety)
+    let stBytes = await mlsService.saveState(pin);
+    localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
     if (bulk.commit) await mlsService.sendCommit(bulk.commit, groupId);
 
     // Now add own other devices (after contact is successfully added)
@@ -378,6 +389,9 @@ export async function startNewConversation(
             );
           }
         }
+        // Sauvegarder AVANT sendCommit (crash-safety)
+        stBytes = await mlsService.saveState(pin);
+        localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
         if (ownBulk.commit) await mlsService.sendCommit(ownBulk.commit, groupId);
       } catch (e) {
         log(
@@ -385,9 +399,6 @@ export async function startNewConversation(
         );
       }
     }
-
-    const stBytes = await mlsService.saveState(pin);
-    localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
 
     const convo = conversations.get(conversationKey)!;
     conversations.set(conversationKey, { ...convo, isReady: true });
@@ -445,6 +456,10 @@ export async function repairDirectConversation(
         await mlsService.sendWelcome(bulk.welcome, contact, groupId, did, bulk.ratchetTree);
       }
     }
+
+    // Sauvegarder AVANT sendCommit (crash-safety)
+    let stBytes = await mlsService.saveState(pin);
+    localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
     if (bulk.commit) await mlsService.sendCommit(bulk.commit, groupId);
 
     // Then add own other devices
@@ -468,6 +483,9 @@ export async function repairDirectConversation(
             );
           }
         }
+        // Sauvegarder AVANT sendCommit (crash-safety)
+        stBytes = await mlsService.saveState(pin);
+        localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
         if (ownBulk.commit) await mlsService.sendCommit(ownBulk.commit, groupId);
       } catch (e) {
         log(
@@ -475,9 +493,6 @@ export async function repairDirectConversation(
         );
       }
     }
-
-    const stBytes = await mlsService.saveState(pin);
-    localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
 
     conversations.set(conversationKey, { ...convo, groupId, isReady: true });
     await saveConversation(conversationKey);

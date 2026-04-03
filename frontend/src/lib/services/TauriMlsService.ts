@@ -166,6 +166,18 @@ export class TauriMlsService implements IMlsService {
             this.syncRequestCallback?.(senderDev);
             return;
           }
+          if (msg.type === 'epoch_rejected') {
+            console.warn(
+              `[WS RCV] Epoch rejected for group ${msg.groupId} (server epoch: ${msg.currentEpoch})`
+            );
+            if (this.onChannelEvent) {
+              this.onChannelEvent({
+                type: 'epoch_rejected',
+                data: { groupId: msg.groupId, currentEpoch: msg.currentEpoch },
+              });
+            }
+            return;
+          }
           if (msg.proto && this.messageCallback) {
             const binaryString = atob(msg.proto as string);
             const ciphertext = new Uint8Array(binaryString.length);
@@ -630,11 +642,15 @@ export class TauriMlsService implements IMlsService {
 
   async sendCommit(commitBytes: Uint8Array, groupId: string): Promise<void> {
     const base64 = btoa(String.fromCharCode(...commitBytes));
+    let baseEpoch = 0;
+    try {
+      baseEpoch = await invoke<number>('obtenir_epoch', { groupId });
+    } catch {
+      // If epoch retrieval fails, send 0 (gateway will skip validation)
+    }
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(
-        JSON.stringify({ type: 'mls', groupId, proto: btoa(String.fromCharCode(...commitBytes)) })
-      );
+      this.ws.send(JSON.stringify({ type: 'commit', groupId, proto: base64, baseEpoch }));
     } else {
       // Fallback HTTP
       await fetch(`${this.historyUrl}/api/mls-api/send`, {
@@ -821,10 +837,13 @@ export class TauriMlsService implements IMlsService {
   }
 
   async fetchHistory(
-    groupId: string
-  ): Promise<{ sender_id: string; content: string; timestamp: string }[]> {
+    groupId: string,
+    afterStreamId?: string
+  ): Promise<{ id?: string; sender_id: string; content: string; timestamp: string }[]> {
     try {
-      const res = await fetch(`${this.historyUrl}/api/history/${groupId}`, {
+      const url = new URL(`${this.historyUrl}/api/history/${groupId}`);
+      if (afterStreamId) url.searchParams.set('after', afterStreamId);
+      const res = await fetch(url.toString(), {
         headers: this.withAuthHeaders(),
       });
       if (!res.ok) return [];
@@ -847,6 +866,12 @@ export class TauriMlsService implements IMlsService {
     // Tauri uses the Rust MLS core directly; group list not exposed via IPC yet.
     // Return empty array as fallback — the mismatch detection will simply be skipped.
     return [];
+  }
+
+  getEpoch(groupId: string): number {
+    // Tauri invoke is async — for the synchronous interface we return 0.
+    // The actual epoch will be retrieved via an async pre-check in sendCommit.
+    return 0;
   }
 
   forgetGroup(groupId: string, minEpoch = 0): void {

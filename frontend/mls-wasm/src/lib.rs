@@ -109,6 +109,16 @@ impl WasmMlsClient {
         self.manager.forget_group(&group_id, min_epoch as u64);
     }
 
+    /// Returns the current MLS epoch for a group (capped to u32 for WASM boundary).
+    #[wasm_bindgen]
+    pub fn get_epoch(&self, group_id: String) -> Result<u32, JsValue> {
+        let epoch = self
+            .manager
+            .get_epoch(&group_id)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        Ok(epoch as u32)
+    }
+
     // Sauvegarder l'état (renvoie un Uint8Array en JS)
     #[wasm_bindgen]
     pub fn save_state(&self, pin: Option<String>) -> Result<Vec<u8>, JsValue> {

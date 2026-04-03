@@ -1205,6 +1205,79 @@ export class AppController {
     return { released: holder === deviceId };
   }
 
+  /**
+   * Epoch-gated commit: validates that the sender's baseEpoch matches the
+   * group's activeEpoch before allowing the commit through.
+   * Prevents MLS epoch forks caused by concurrent commits from multiple devices.
+   *
+   * Returns:
+   * - 200 { accepted: true, newEpoch } on success (activeEpoch incremented)
+   * - 200 { accepted: false, currentEpoch } when baseEpoch doesn't match (stale sender)
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Post('mls-api/commit')
+  async validateCommit(
+    @Body()
+    body: {
+      groupId: string;
+      deviceId: string;
+      baseEpoch: number;
+    },
+  ) {
+    const groupId = sanitizeQueryValue(body.groupId, 'groupId');
+    const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
+    const baseEpoch =
+      typeof body.baseEpoch === 'number' && Number.isFinite(body.baseEpoch)
+        ? Math.floor(body.baseEpoch)
+        : -1;
+
+    if (baseEpoch < 0) {
+      throw new BadRequestException('baseEpoch must be a non-negative integer');
+    }
+
+    // Serialize via Redis lock to prevent TOCTOU races.
+    // Two devices sending commits at the same epoch would both read the same
+    // activeEpoch — the lock ensures only one gets through.
+    const lockKey = `mls:commitlock:${groupId}`;
+    const lockAcquired = await this.redis.set(lockKey, deviceId, 'EX', 5, 'NX');
+    if (lockAcquired !== 'OK') {
+      // Another commit is being validated right now — reject to retry.
+      const group = await this.groupRepo.findOne({ where: { id: groupId } });
+      return {
+        accepted: false,
+        currentEpoch: group?.activeEpoch ?? 0,
+        reason: 'concurrent_commit',
+      };
+    }
+
+    try {
+      const group = await this.groupRepo.findOne({ where: { id: groupId } });
+      if (!group) {
+        throw new BadRequestException(`Group ${groupId} not found`);
+      }
+
+      if (baseEpoch !== group.activeEpoch) {
+        return {
+          accepted: false,
+          currentEpoch: group.activeEpoch,
+          reason: 'epoch_mismatch',
+        };
+      }
+
+      // Advance the epoch
+      group.activeEpoch = baseEpoch + 1;
+      await this.groupRepo.save(group);
+
+      return { accepted: true, newEpoch: group.activeEpoch };
+    } finally {
+      // Always release the commit lock
+      const holder = await this.redis.get(lockKey);
+      if (holder === deviceId) {
+        await this.redis.del(lockKey);
+      }
+    }
+  }
+
   @UseGuards(HeaderAuthGuard)
   @Post('mls-api/welcome')
   async sendWelcome(
@@ -1479,11 +1552,14 @@ export class AppController {
   @Get('history/:groupId')
   async getHistory(
     @Param('groupId') groupId: string,
+    @Query('after') after?: string,
   ): Promise<Record<string, unknown>[]> {
     const streamKey = `history:${groupId}`;
     try {
-      // ioredis xrange returns [id, [key, value, key, value...]]
-      const entries = await this.redis.xrange(streamKey, '-', '+');
+      // `after` = exclusive Redis stream ID (e.g. "1712345678901-0").
+      // Using `(${after}` makes XRANGE exclusive (skips the entry itself).
+      const startId = after ? `(${after}` : '-';
+      const entries = await this.redis.xrange(streamKey, startId, '+');
       return entries.map(([id, fields]) => {
         const msg: Record<string, unknown> = { id };
         for (let i = 0; i < fields.length; i += 2) {

@@ -177,17 +177,28 @@ impl MlsManager {
         self.groups.keys().cloned().collect()
     }
 
+    /// Returns the current MLS epoch of a group (u64).
+    pub fn get_epoch(&self, group_id: &str) -> Result<u64, MlsError> {
+        let group = self
+            .groups
+            .get(group_id)
+            .ok_or_else(|| MlsError::OpenMls(format!("Group {} not found", group_id)))?;
+        Ok(group.epoch().as_u64())
+    }
+
     /// Oublie l'état MLS local d'un groupe sans toucher au stockage de clés.
     /// `min_epoch` : epoch minimale qu'un Welcome doit atteindre pour être accepté.
     /// Passer 0 pour ne pas imposer de minimum (aucune restriction).
     pub fn forget_group(&mut self, group_id: &str, min_epoch: u64) {
         self.groups.remove(group_id);
         if min_epoch > 0 {
-            self.forgotten_group_min_epochs.insert(group_id.to_string(), min_epoch);
+            self.forgotten_group_min_epochs
+                .insert(group_id.to_string(), min_epoch);
         }
         log::info!(
             "forget_group: groupe {} oublié (min_epoch={}, re-Welcome attendu)",
-            group_id, min_epoch
+            group_id,
+            min_epoch
         );
     }
 
@@ -411,7 +422,9 @@ impl MlsManager {
             if welcome_epoch < min_ep {
                 log::warn!(
                     "process_welcome: Welcome rejeté pour {} — epoch {} < minimum attendu {}",
-                    group_id, welcome_epoch, min_ep
+                    group_id,
+                    welcome_epoch,
+                    min_ep
                 );
                 return Err(MlsError::OpenMls(format!(
                     "Welcome stale: epoch {} < min_epoch {}",
