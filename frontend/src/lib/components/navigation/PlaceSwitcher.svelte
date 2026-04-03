@@ -11,6 +11,7 @@
   } from 'lucide-svelte';
   import { goto } from '$app/navigation';
   import { APP_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
+  import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
 
   interface Props {
     pathname: string;
@@ -22,6 +23,15 @@
 
   let activePlaceId = $derived(resolveActivePlaceId(pathname));
   let isOpen = $state(false);
+
+  const totalUnread = $derived(
+    globalSession.isLoggedIn
+      ? [...globalConvs.conversations.values()].reduce(
+          (sum, c) => sum + (c.unreadCount ?? 0),
+          0
+        )
+      : 0
+  );
 
   const ICONS = {
     'message-circle': MessageCircle,
@@ -77,6 +87,12 @@
   >
     <ActiveIcon size={15} />
     <span>{activePlace.label}</span>
+    {#if totalUnread > 0 && activePlaceId !== 'chat'}
+      <span
+        class="ml-auto h-2 w-2 rounded-full bg-cn-yellow shrink-0"
+        aria-label="{totalUnread} messages non lus"
+      ></span>
+    {/if}
     <ChevronDown
       size={14}
       class={isOpen ? 'rotate-180 transition-transform' : 'transition-transform'}
@@ -111,7 +127,11 @@
             <span class="min-w-0 flex-1">
               <span class="block text-sm font-semibold leading-4">
                 {place.label}
-                {#if place.badge}
+                {#if place.id === 'chat' && totalUnread > 0 && activePlaceId !== 'chat'}
+                  <span
+                    class="ml-2 inline-flex items-center justify-center rounded-full bg-cn-yellow px-1.5 py-0.5 text-[0.63rem] font-bold text-cn-dark leading-none"
+                  >{totalUnread > 99 ? '99+' : totalUnread}</span>
+                {:else if place.badge}
                   <span
                     class="ml-2 rounded-full border border-cn-border bg-white/80 px-1.5 py-0.5 text-[0.63rem] font-bold uppercase tracking-wide"
                     >{place.badge}</span

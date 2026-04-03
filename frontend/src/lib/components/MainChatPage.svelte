@@ -1,20 +1,20 @@
 <script lang="ts">
-  import { goto } from '$app/navigation';
-  import { BiometricService } from '$lib/services/biometric';
   import { onMount, tick, untrack } from 'svelte';
   import { fade } from 'svelte/transition';
   import { Users } from 'lucide-svelte';
   import { sendReadReceipt } from '$lib/utils/chat/messaging';
   import { forceSyncReset } from '$lib/utils/chat/actions';
-  import { useChatSession } from '$lib/composables/useChatSession.svelte';
-  import { useConversations } from '$lib/composables/useConversations.svelte';
-  import { useMessaging } from '$lib/composables/useMessaging.svelte';
-  import { useChannelWorkspaces } from '$lib/composables/useChannelWorkspaces.svelte';
-  import { useSyncSession } from '$lib/composables/useSyncSession.svelte';
-  import { useNotifications } from '$lib/composables/useNotifications.svelte';
-  import { loadPersistedArchivedIds } from '$lib/utils/chat/conversations';
-  import { currentUserId } from '$lib/stores/user';
   import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
+  import { useSyncSession } from '$lib/composables/useSyncSession.svelte';
+  import {
+    globalSession as session,
+    globalConvs as convs,
+    globalMessaging as messaging,
+    globalChannels as channels,
+    globalNotifs as notifs,
+    appendLog,
+    getStatusLog,
+  } from '$lib/stores/globalChatSingleton.svelte';
   import Modal from './shared/Modal.svelte';
   import Navbar from './navigation/Navbar.svelte';
   import Sidebar from './sidebar/Sidebar.svelte';
@@ -23,8 +23,6 @@
   import SyncSessionModal from './chat/SyncSessionModal.svelte';
   import ChatArea from './chat/ChatArea.svelte';
   import LogsPanel from './dev/LogsPanel.svelte';
-  import CallOverlay from '$lib/components/chat/CallOverlay.svelte';
-  import PinModal from '$lib/components/auth/PinModal.svelte';
 
   interface Props {
     routeMode?: 'chat' | 'communities';
@@ -32,31 +30,26 @@
 
   let { routeMode = 'chat' }: Props = $props();
 
-  // ─── Composables ──────────────────────────────────────────────────────────
-  const session = useChatSession();
-  const convs = useConversations();
-  const messaging = useMessaging();
-  const channels = useChannelWorkspaces();
+  // ─── Sync session (local — ne concerne que la page /chat) ─────────────────
   const sync = useSyncSession();
-  const notifs = useNotifications();
 
   // ─── Dev / log state ──────────────────────────────────────────────────────
-  let statusLog = $state<string[]>([]);
   let showLogs = $state(false);
   let messageText = $state('');
   let isWindowFocused = $state(true);
   let isTabVisible = $state(true);
-  let showPinModal = $state(false);
 
-  // ─── Helpers ─────────────────────────────────────────────────────────────
-
+  // Log local (écrit aussi dans le buffer global pour le LogsPanel)
   function log(msg: string) {
-    statusLog = [...statusLog, `[${new Date().toLocaleTimeString()}] ${msg}`];
+    appendLog(msg);
     tick().then(() => {
       const el = document.getElementById('logContainer');
       if (el) el.scrollTop = el.scrollHeight;
     });
   }
+
+  // Lecture réactive des logs globaux pour le LogsPanel
+  const statusLog = $derived(getStatusLog());
 
   /** Context object for channel workspace operations. */
   function channelsCtx() {
@@ -331,66 +324,15 @@
   });
 
   // ─── Mount ────────────────────────────────────────────────────────────────
+  // La session est déjà gérée par ChatBackgroundService (monté dans le layout).
+  // Ici, on gère uniquement les événements propres à la vue /chat.
   onMount(() => {
-    void notifs.requestSystemNotificationPermission();
-
-    const w = window as Window & {
-      wasm_bindings_log?: (level: string, msg: string) => void;
-      __TAURI_INTERNALS__?: unknown;
-    };
-    w.wasm_bindings_log = (level: string, msg: string) => log(`[RUST::${level}] ${msg}`);
-
-    // Initialise MLS + CallService via session composable
-    session.initServices(log);
-
-    if (w.__TAURI_INTERNALS__) {
-      void (async () => {
-        const configured = await BiometricService.isConfigured();
-        if (configured) {
-          await session.biometricLogin(sessionCb());
-          return;
-        }
-        const savedUser = currentUserId();
-        const savedPin = localStorage.getItem('canari_saved_pin');
-        if (savedUser && savedPin) {
-          session.userId = savedUser;
-          session.pin = savedPin;
-          void session.login(sessionCb());
-        } else if (savedUser) {
-          // Authenticated but no PIN yet — ask for it.
-          session.userId = savedUser;
-          showPinModal = true;
-        } else {
-          const cur = window.location.pathname + window.location.search;
-          void goto(`/login?returnTo=${encodeURIComponent(cur)}`, { replaceState: true });
-        }
-      })();
-    } else {
-      const savedUser = currentUserId();
-      const savedPin = localStorage.getItem('canari_saved_pin');
-      if (savedUser && savedPin) {
-        session.userId = savedUser;
-        session.pin = savedPin;
-        void session.login(sessionCb());
-      } else if (savedUser) {
-        // Authenticated but no PIN yet — ask for it.
-        session.userId = savedUser;
-        showPinModal = true;
-      } else {
-        const cur = window.location.pathname + window.location.search;
-        void goto(`/login?returnTo=${encodeURIComponent(cur)}`, { replaceState: true });
-      }
-    }
-
     isWindowFocused = document.hasFocus();
     isTabVisible = document.visibilityState === 'visible';
 
     const handleVisibilityChange = () => {
       isTabVisible = document.visibilityState === 'visible';
-      if (document.visibilityState === 'visible' && session.isLoggedIn && !session.isWsConnected) {
-        log('Page visible de nouveau — reconnexion...');
-        void session.attemptReconnect(sessionCb());
-      }
+      // La reconnexion est gérée de façon globale par ChatBackgroundService.
     };
     const handleWindowFocus = () => {
       isWindowFocused = true;
@@ -421,14 +363,10 @@
     };
   });
 
-  // ─── Post-login init (load channels + archived ids) ───────────────────────
+  // ─── Post-login : sélection de conversation en attente ───────────────────
   $effect(() => {
     if (!session.isLoggedIn) return;
     untrack(() => {
-      convs.archivedConversationIds = loadPersistedArchivedIds(session.userId);
-      convs.showArchivedConversations = false;
-      void channels.loadChannelWorkspacesFromBackend(channelsCtx());
-
       // Apply any pending conversation selection (from ConversationsMiniPanel cross-navigation)
       const pending = sessionStorage.getItem('canari_pending_contact');
       if (pending) {
@@ -457,25 +395,14 @@
     convs.showSyncGuidePrompt = false;
     sync.openJoinSyncModal();
   }
-  function handlePinSubmit(pin: string) {
-    showPinModal = false;
-    session.pin = pin;
-    void session.login(sessionCb());
-  } // ─── END ──────────────────────────────────────────────────────────────────
+  // ─── END ──────────────────────────────────────────────────────────────────
 </script>
 
 <!-- ==================== UI ==================== -->
 
-<PinModal open={showPinModal} onSubmit={handlePinSubmit} />
-
 {#if !session.isLoggedIn}
   <div class="min-h-screen flex items-center justify-center text-sm text-text-muted">
-    {#if showPinModal}
-      <!-- PIN modal is visible — don't show redirect text -->
-    {:else}
-      Redirection vers la page de connexion...
-    {/if}
-  </div>
+    Connexion en cours...</div>
 {:else}
   <div class="app-layout" in:fade>
     <Navbar
@@ -485,85 +412,8 @@
     />
 
     {#if notifs.channelMembershipNotice}
-      <div
-        class="pointer-events-none fixed left-1/2 top-[calc(env(safe-area-inset-top,0px)+4.5rem)] z-40 w-[min(92vw,42rem)] -translate-x-1/2"
-      >
-        <div
-          class="pointer-events-auto flex items-center gap-3 rounded-2xl border border-cn-border bg-white/95 px-4 py-3 text-sm font-semibold text-text-main shadow-lg backdrop-blur"
-        >
-          <p class="flex-1">{notifs.channelMembershipNotice}</p>
-          {#if notifs.channelMembershipActionChannelId}
-            <button
-              type="button"
-              class="rounded-lg border border-cn-border bg-white px-3 py-1.5 text-xs font-bold text-text-main hover:border-cn-yellow"
-              onclick={() =>
-                notifs.openJoinedChannelFromNotice(
-                  convs.selectConversation,
-                  (id) => (channels.selectedChannelConversationId = id)
-                )}
-            >
-              Rejoindre
-            </button>
-          {/if}
-        </div>
-      </div>
-    {/if}
-
-    {#if session.callService && session.callState !== 'idle'}
-      <CallOverlay
-        callService={session.callService}
-        remoteName={convs.currentConvo?.name ?? 'Correspondant'}
-      />
-    {/if}
-
-    {#if session.showBiometricEnrollPrompt}
-      <div
-        class="fixed bottom-[env(safe-area-inset-bottom,0px)] left-0 right-0 z-50 mx-4 mb-4 p-4 rounded-2xl border border-cn-border shadow-lg flex items-center gap-3"
-        style="background: color-mix(in srgb, var(--cn-surface) 95%, transparent); backdrop-filter: blur(10px);"
-      >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="24"
-          height="24"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          class="shrink-0 text-cn-yellow"
-        >
-          <path d="M12 10a2 2 0 0 0-2 2c0 1.02.5 1.93 1.27 2.49" />
-          <path d="M12 2a10 10 0 0 1 9.39 6.52" />
-          <path d="M12 22C6.48 22 2 17.52 2 12" />
-          <path d="M4.93 4.93a10 10 0 0 0-.93 3" />
-          <path d="M19.07 4.93A10 10 0 0 1 22 12" />
-          <path d="M15.36 17.12A5 5 0 0 1 7 14" />
-          <path d="M12 7a5 5 0 0 1 4.9 4" />
-        </svg>
-        <div class="flex-1 min-w-0">
-          <p class="text-sm font-semibold text-text-main">
-            Activer le deverrouillage par empreinte ?
-          </p>
-          <p class="text-xs text-text-muted">
-            Votre PIN sera stocke de facon securisee et recuperable uniquement par biometrie.
-          </p>
-        </div>
-        <div class="flex gap-2 shrink-0">
-          <button
-            onclick={() => (session.showBiometricEnrollPrompt = false)}
-            class="px-3 py-1.5 text-xs text-text-muted rounded-xl border border-cn-border hover:border-cn-yellow transition-colors"
-          >
-            Plus tard
-          </button>
-          <button
-            onclick={() => session.enrollBiometric()}
-            class="px-3 py-1.5 text-xs font-bold text-cn-dark bg-cn-yellow rounded-xl hover:bg-cn-yellow-hover transition-colors"
-          >
-            Activer
-          </button>
-        </div>
-      </div>
+      <!-- La notice est aussi affichée dans ChatBackgroundService ; ce bloc est
+           conservé pour la compatibilité visuelle quand on est déjà sur /chat. -->
     {/if}
 
     <main class="main-content">

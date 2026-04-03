@@ -7,17 +7,48 @@
   import { deriveConversationIdentity } from '$lib/utils/chat/conversations';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import { MessageCircle, ChevronRight } from 'lucide-svelte';
+  import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
 
   interface ConvItem {
     meta: ConversationMeta;
     contactId: string;
     displayName: string;
     isGroup: boolean;
+    unreadCount?: number;
   }
 
   let items = $state<ConvItem[]>([]);
   let loading = $state(true);
   let resolvedNames = $state<Record<string, string>>({});
+
+  // ── Live data from global session (reactive when logged in) ──────────────
+  const liveItems = $derived(
+    globalSession.isLoggedIn
+      ? [...globalConvs.conversations.entries()]
+          .map(([key, conv]) => {
+            const uid = globalSession.userId ?? getSavedUserId() ?? '';
+            const identity = deriveConversationIdentity(key, uid, conv.groupId);
+            const contactId =
+              identity.conversationType === 'direct'
+                ? (identity.directPeerId ?? identity.contactName)
+                : conv.groupId;
+            return {
+              meta: { id: key, name: conv.name, updatedAt: 0 } as ConversationMeta,
+              contactId,
+              displayName:
+                identity.conversationType === 'direct'
+                  ? getUserDisplayNameSync(contactId, identity.displayName)
+                  : conv.name,
+              isGroup: identity.conversationType !== 'direct',
+              unreadCount: conv.unreadCount ?? 0,
+            };
+          })
+          .slice(0, 20)
+      : []
+  );
+
+  const displayItems = $derived(globalSession.isLoggedIn ? liveItems : items);
+  const isLoading = $derived(globalSession.isLoggedIn ? false : loading);
 
   onMount(async () => {
     const uid = getSavedUserId();
@@ -110,13 +141,13 @@
 
   <!-- Conversation list -->
   <div class="flex-1 overflow-y-auto py-2">
-    {#if loading}
+    {#if isLoading}
       <div class="flex justify-center items-center py-8">
         <div
           class="w-5 h-5 border-2 border-cn-yellow border-t-transparent rounded-full animate-spin"
         ></div>
       </div>
-    {:else if items.length === 0}
+    {:else if displayItems.length === 0}
       <div class="text-center py-8 px-4">
         <MessageCircle size={32} class="mx-auto mb-2 text-text-muted opacity-30" />
         <p class="text-xs text-text-muted">Aucune discussion</p>
@@ -128,18 +159,29 @@
         </a>
       </div>
     {:else}
-      {#each items as item (item.meta.id)}
+      {#each displayItems as item (item.meta.id)}
         <button
           type="button"
           class="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-white/30 dark:hover:bg-black/20 transition-colors text-left rounded-xl mx-1 my-0.5"
           style="width: calc(100% - 8px);"
           onclick={() => navigateToConversation(item.meta.id)}
         >
-          <div class="flex-shrink-0">
+          <div class="flex-shrink-0 relative">
             <Avatar userId={getAvatarUserId(item)} size="sm" />
+            {#if (item.unreadCount ?? 0) > 0}
+              <span
+                class="absolute -top-0.5 -right-0.5 min-w-[1rem] h-4 rounded-full bg-cn-yellow text-cn-dark text-[0.6rem] font-bold flex items-center justify-center px-0.5 leading-none"
+              >
+                {item.unreadCount! > 9 ? '9+' : item.unreadCount}
+              </span>
+            {/if}
           </div>
           <div class="flex-1 min-w-0">
-            <div class="text-sm font-semibold text-text-main truncate">
+            <div
+              class="text-sm font-semibold text-text-main truncate {(item.unreadCount ?? 0) > 0
+                ? 'text-text-main'
+                : ''}"
+            >
               {getEffectiveName(item)}
             </div>
             {#if item.isGroup}

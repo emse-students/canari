@@ -2,6 +2,7 @@
   import '../app.css';
   import { goto } from '$app/navigation';
   import BackgroundBlobs from '$lib/components/shared/BackgroundBlobs.svelte';
+  import ChatBackgroundService from '$lib/components/layout/ChatBackgroundService.svelte';
   import CanariBrand from '$lib/components/navigation/CanariBrand.svelte';
   import PlaceSwitcher from '$lib/components/navigation/PlaceSwitcher.svelte';
   import ThemeToggleButton from '$lib/components/navigation/ThemeToggleButton.svelte';
@@ -71,6 +72,8 @@
 </script>
 
 <div class="relative min-h-dvh">
+  <ChatBackgroundService />
+
   <div class="fixed inset-0 z-0 pointer-events-none">
     <BackgroundBlobs />
   </div>
