@@ -8,7 +8,7 @@
   }
 
   let { userId, size = 'md' }: Props = $props();
-  
+
   function getCoreUrl(): string {
     const url =
       typeof import.meta !== 'undefined'
@@ -20,7 +20,7 @@
 
   const avatarSrc = $derived(`${getCoreUrl()}/api/users/${encodeURIComponent(userId)}/avatar`);
   const fallbackSrc = $derived(generateAvatarPlaceholder(userId));
-  
+
   let imageFailed = $state(false);
   let displayLabel = $state('');
   const initials = $derived(getInitials(displayLabel));
