@@ -616,6 +616,15 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             return true; // ACK it so it isn't resent
           }
 
+          // Ratchet de génération dépassé : message déjà traité ou rélivraison de l'historique
+          // après reconnexion. La clé symétrique est consommée, aucune récupération possible.
+          if (
+            errMsg.includes('TooDistantInThePast') ||
+            errMsg.includes('CiphertextGenerationOutOfBounds')
+          ) {
+            return true; // ACK silencieux — irrecuperable
+          }
+
           // Stale message (msg_epoch < group_epoch): our own echoed commit or a
           // commit already applied by another path.  The Rust layer handles most of
           // these, but some slip through (e.g. PublicMessage commits).  ACK silently.
