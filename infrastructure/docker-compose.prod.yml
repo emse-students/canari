@@ -183,6 +183,8 @@ services:
       DB_PASSWORD: password
       DB_DATABASE: auth_db
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      AVATAR_API_URL: ${AVATAR_API_URL:-https://gallery.mitv.fr}
+      AVATAR_API_KEY: ${AVATAR_API_KEY:-}
     depends_on:
       postgres:
         condition: service_started

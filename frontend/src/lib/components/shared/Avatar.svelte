@@ -8,7 +8,19 @@
   }
 
   let { userId, size = 'md' }: Props = $props();
-  const avatarSrc = $derived(generateAvatarPlaceholder(userId));
+  
+  function getCoreUrl(): string {
+    const url =
+      typeof import.meta !== 'undefined'
+        ? ((import.meta as any).env?.VITE_CORE_URL as string | undefined)
+        : undefined;
+    if (url?.trim()) return url.trim();
+    return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3012';
+  }
+
+  const avatarSrc = $derived(`${getCoreUrl()}/api/users/${encodeURIComponent(userId)}/avatar`);
+  const fallbackSrc = $derived(generateAvatarPlaceholder(userId));
+  
   let imageFailed = $state(false);
   let displayLabel = $state('');
   const initials = $derived(getInitials(displayLabel));

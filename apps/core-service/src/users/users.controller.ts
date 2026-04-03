@@ -9,8 +9,11 @@ import {
   Req,
   Query,
   Post,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { UsersService } from './users.service';
+import { AvatarService } from './avatar.service';
 import { CreateUserDto, UpdateUserDto } from './dto/user.dto';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 
@@ -25,7 +28,10 @@ interface RequestWithUser {
 
 @Controller('users')
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly avatarService: AvatarService,
+  ) {}
 
   /**
    * Search users by id or displayName for autocomplete.
@@ -36,6 +42,21 @@ export class UsersController {
     // Exclude current user from results if authenticated
     const currentUserId = req.user?.sub || req.user?.id;
     return this.usersService.search(query, currentUserId);
+  }
+
+  /**
+   * Get user avatar from external service.
+   * Usage: GET /users/{id}/avatar
+   */
+  @Get(':id/avatar')
+  async getAvatar(@Param('id') userId: string, @Res() res: Response) {
+    const avatarBuffer = await this.avatarService.fetchUserAvatar(userId);
+    res.set({
+      'Content-Type': 'image/jpeg',
+      'Content-Length': avatarBuffer.length,
+      'Cache-Control': 'public, max-age=86400',
+    });
+    res.send(avatarBuffer);
   }
 
   @Post()
