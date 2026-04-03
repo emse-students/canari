@@ -75,6 +75,7 @@ function makeMlsService(overrides: Partial<IMlsService> = {}): IMlsService {
     fetchHistory: vi.fn().mockResolvedValue([]),
     getDeviceId: vi.fn().mockReturnValue('dev-jolan-01'),
     getLocalGroups: vi.fn().mockReturnValue([]),
+    forgetGroup: vi.fn(),
     renameGroup: vi.fn().mockResolvedValue(undefined),
     deleteGroupOnServer: vi.fn().mockResolvedValue(undefined),
     removeMemberFromServer: vi.fn().mockResolvedValue(undefined),
