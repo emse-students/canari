@@ -644,7 +644,10 @@ export class TauriMlsService implements IMlsService {
     const base64 = btoa(String.fromCharCode(...commitBytes));
     let baseEpoch = 0;
     try {
-      baseEpoch = await invoke<number>('obtenir_epoch', { groupId });
+      // Rust merges pending commit before returning bytes, so local epoch is already advanced.
+      // The backend validates against the pre-commit epoch.
+      const currentEpoch = await invoke<number>('obtenir_epoch', { groupId });
+      baseEpoch = Math.max(0, currentEpoch - 1);
     } catch {
       // If epoch retrieval fails, send 0 (gateway will skip validation)
     }

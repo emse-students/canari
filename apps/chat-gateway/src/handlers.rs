@@ -315,7 +315,7 @@ async fn handle_socket(
                                     base_epoch
                                 );
 
-                                // Call epoch-commit endpoint
+                                // Call commit validation endpoint
                                 let epoch_body = serde_json::json!({
                                     "groupId": group_id,
                                     "deviceId": format!("{}:{}", user_id, device_id),
@@ -324,10 +324,7 @@ async fn handle_socket(
 
                                 let epoch_result = state
                                     .http_client
-                                    .post(format!(
-                                        "{}/mls-api/epoch-commit",
-                                        state.delivery_service_url
-                                    ))
+                                    .post(format!("{}/mls-api/commit", state.delivery_service_url))
                                     .json(&epoch_body)
                                     .send()
                                     .await;

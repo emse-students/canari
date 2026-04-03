@@ -628,7 +628,10 @@ export class WebMlsService implements IMlsService {
 
   async sendCommit(commitBytes: Uint8Array, groupId: string): Promise<void> {
     const proto = btoa(String.fromCharCode(...commitBytes));
-    const baseEpoch = this.getEpoch(groupId);
+    // Rust merges pending commit before returning bytes, so local epoch is already advanced.
+    // The backend validates against the pre-commit epoch.
+    const currentEpoch = this.getEpoch(groupId);
+    const baseEpoch = Math.max(0, currentEpoch - 1);
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({ type: 'commit', groupId, proto, baseEpoch }));
     } else {
