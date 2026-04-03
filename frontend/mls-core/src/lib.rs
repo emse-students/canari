@@ -62,6 +62,11 @@ pub struct MlsManager {
     credential: BasicCredential,
 
     groups: HashMap<String, MlsGroup>,
+
+    /// Epoch minimum attendu pour accepter un Welcome (par groupId).
+    /// Défini par forget_group pour éviter qu'un Welcome périmé (d'un appareil
+    /// lui-même en retard d'epoch) ne remette ce device sur la mauvaise branche.
+    forgotten_group_min_epochs: HashMap<String, u64>,
 }
 
 impl MlsManager {
@@ -117,6 +122,7 @@ impl MlsManager {
                 keypair,
                 credential,
                 groups,
+                forgotten_group_min_epochs: HashMap::new(),
             })
         } else {
             // CAS 2 : Première création
@@ -131,6 +137,7 @@ impl MlsManager {
                 keypair,
                 credential,
                 groups: HashMap::new(),
+                forgotten_group_min_epochs: HashMap::new(),
             })
         }
     }
@@ -171,10 +178,17 @@ impl MlsManager {
     }
 
     /// Oublie l'état MLS local d'un groupe sans toucher au stockage de clés.
-    /// Permet de forcer une re-synchronisation via un nouveau Welcome (ex : epoch périmée).
-    pub fn forget_group(&mut self, group_id: &str) {
+    /// `min_epoch` : epoch minimale qu'un Welcome doit atteindre pour être accepté.
+    /// Passer 0 pour ne pas imposer de minimum (aucune restriction).
+    pub fn forget_group(&mut self, group_id: &str, min_epoch: u64) {
         self.groups.remove(group_id);
-        log::info!("forget_group: groupe {} oublié (re-Welcome attendu)", group_id);
+        if min_epoch > 0 {
+            self.forgotten_group_min_epochs.insert(group_id.to_string(), min_epoch);
+        }
+        log::info!(
+            "forget_group: groupe {} oublié (min_epoch={}, re-Welcome attendu)",
+            group_id, min_epoch
+        );
     }
 
     // --- C0. SUPPRESSION DE MEMBRE(S) ---
@@ -388,6 +402,24 @@ impl MlsManager {
                 group_id
             );
             return Ok(group_id);
+        }
+
+        // Check min_epoch: if forget_group was called with a minimum expected epoch,
+        // reject Welcomes that come from a device still at a stale epoch (diverged branch).
+        if let Some(&min_ep) = self.forgotten_group_min_epochs.get(&group_id) {
+            let welcome_epoch = group.epoch().as_u64();
+            if welcome_epoch < min_ep {
+                log::warn!(
+                    "process_welcome: Welcome rejeté pour {} — epoch {} < minimum attendu {}",
+                    group_id, welcome_epoch, min_ep
+                );
+                return Err(MlsError::OpenMls(format!(
+                    "Welcome stale: epoch {} < min_epoch {}",
+                    welcome_epoch, min_ep
+                )));
+            }
+            // Welcome epoch is acceptable — clear the minimum
+            self.forgotten_group_min_epochs.remove(&group_id);
         }
 
         self.groups.insert(group_id.clone(), group);

@@ -924,10 +924,10 @@ export class WebMlsService implements IMlsService {
     return Array.from(this.client.get_groups() as Iterable<string>);
   }
 
-  forgetGroup(groupId: string): void {
+  forgetGroup(groupId: string, minEpoch = 0): void {
     if (!this.client) return;
     try {
-      this.client.forget_group(groupId);
+      this.client.forget_group(groupId, minEpoch);
     } catch (e) {
       console.warn('[MLS] forgetGroup error:', e);
     }

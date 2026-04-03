@@ -64,6 +64,7 @@ fn generer_key_package(state: tauri::State<AppState>) -> Result<Vec<u8>, String>
 #[tauri::command]
 fn oublier_groupe(
     group_id: String,
+    min_epoch: u32,
     state: tauri::State<AppState>,
 ) -> Result<(), String> {
     let mut lock = state
@@ -71,7 +72,7 @@ fn oublier_groupe(
         .lock()
         .map_err(|_| "Failed to lock state")?;
     let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
-    manager.forget_group(&group_id);
+    manager.forget_group(&group_id, min_epoch as u64);
     Ok(())
 }
 

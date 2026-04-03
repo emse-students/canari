@@ -849,8 +849,10 @@ export class TauriMlsService implements IMlsService {
     return [];
   }
 
-  forgetGroup(groupId: string): void {
-    invoke('oublier_groupe', { groupId }).catch((e) => console.warn('[MLS] forgetGroup error:', e));
+  forgetGroup(groupId: string, minEpoch = 0): void {
+    invoke('oublier_groupe', { groupId, minEpoch }).catch((e) =>
+      console.warn('[MLS] forgetGroup error:', e)
+    );
   }
 
   async renameGroup(groupId: string, name: string): Promise<void> {

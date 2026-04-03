@@ -52,7 +52,9 @@ export interface IMlsService {
 
   // Group management
   getLocalGroups(): string[];
-  forgetGroup(groupId: string): void;
+  /** Oublie l'état MLS local d'un groupe pour forcer une re-synchronisation via Welcome.
+   *  `minEpoch` : l'époch minimale que le nouveau Welcome doit atteindre (0 = pas de restriction). */
+  forgetGroup(groupId: string, minEpoch?: number): void;
   renameGroup(groupId: string, name: string): Promise<void>;
   deleteGroupOnServer(groupId: string): Promise<void>;
   removeMemberFromServer(groupId: string, userId: string): Promise<void>;

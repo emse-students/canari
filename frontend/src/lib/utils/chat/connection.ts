@@ -634,7 +634,22 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               log(
                 `[RECOVER] Epoch périmée sur "${convoKey}" (local: ${ge}, msg: ${me}) — oubli MLS + sync_request`
               );
-              mlsService.forgetGroup(convo.groupId);
+              mlsService.forgetGroup(convo.groupId, me); // Fix F: min_epoch = me
+              conversations.set(convoKey, { ...convo, isReady: false });
+              if (storage) saveConversation(convoKey).catch(() => {});
+              mlsService.sendSyncRequest();
+            }
+            // Fix E: me === ge + SenderDataDecryption = secrets divergés (race condition)
+            if (
+              me === ge &&
+              errMsg.toLowerCase().includes('senderdata') &&
+              !epochRecoveryGroups.has(convoKey)
+            ) {
+              epochRecoveryGroups.add(convoKey);
+              log(
+                `[RECOVER] Divergence secrets (SenderDataDecryption) sur "${convoKey}" (epoch: ${ge}) — oubli MLS + sync_request`
+              );
+              mlsService.forgetGroup(convo.groupId, ge); // Fix F: min_epoch = ge
               conversations.set(convoKey, { ...convo, isReady: false });
               if (storage) saveConversation(convoKey).catch(() => {});
               mlsService.sendSyncRequest();
@@ -646,6 +661,19 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             return true; // WrongEpoch sans numéros parsables — ACK silencieux
           }
 
+          // Fix E fallback: SenderDataDecryption sans epoch parsable — même récupération
+          if (errMsg.toLowerCase().includes('senderdata') && !epochRecoveryGroups.has(convoKey)) {
+            epochRecoveryGroups.add(convoKey);
+            log(
+              `[RECOVER] Divergence secrets (SenderDataDecryption) sur "${convoKey}" — oubli MLS + sync_request`
+            );
+            mlsService.forgetGroup(convo.groupId);
+            conversations.set(convoKey, { ...convo, isReady: false });
+            if (storage) saveConversation(convoKey).catch(() => {});
+            mlsService.sendSyncRequest();
+            return true;
+          }
+
           log(`Erreur message de ${senderNorm} (groupe connu): ${errMsg}`);
 
           // Détection de groupe fantôme : le groupId existe dans nos conversations
@@ -653,7 +681,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           const isPhantom =
             errMsg.toLowerCase().includes('groupe introuvable') ||
             errMsg.toLowerCase().includes('group not found');
-          if (isPhantom) {
+          // Fix D: ignorer la détection fantôme pour les groupes en attente de re-Welcome
+          if (isPhantom && !epochRecoveryGroups.has(convoKey)) {
             const failures = (groupMlsFailures.get(convoKey) ?? 0) + 1;
             groupMlsFailures.set(convoKey, failures);
             log(
