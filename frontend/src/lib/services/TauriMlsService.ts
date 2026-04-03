@@ -42,7 +42,7 @@ export class TauriMlsService implements IMlsService {
       ) => Promise<boolean>)
     | null = null;
   private disconnectCallback: (() => void) | null = null;
-  private syncRequestCallback: (() => void) | null = null;
+  private syncRequestCallback: ((senderDeviceId: string) => void) | null = null;
   private baseUrl: string;
   private historyUrl: string;
   private authToken = '';
@@ -161,8 +161,9 @@ export class TauriMlsService implements IMlsService {
             return;
           }
           if (msg.type === 'sync_request') {
-            console.log(`[WS RCV] sync_request from ${msg.senderDeviceId}`);
-            this.syncRequestCallback?.();
+            const senderDev = (msg.senderDeviceId as string) || '';
+            console.log(`[WS RCV] sync_request from ${senderDev}`);
+            this.syncRequestCallback?.(senderDev);
             return;
           }
           if (msg.proto && this.messageCallback) {
@@ -437,7 +438,7 @@ export class TauriMlsService implements IMlsService {
     }
   }
 
-  onSyncRequest(callback: () => void): void {
+  onSyncRequest(callback: (senderDeviceId: string) => void): void {
     this.syncRequestCallback = callback;
   }
 

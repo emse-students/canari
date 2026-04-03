@@ -276,17 +276,26 @@ export function useChatSession() {
 
       // When another device of this user sends a sync_request (new device just connected),
       // re-run syncOwnDevicesToGroups so we add the new device and send it a Welcome.
-      mlsService.onSyncRequest(() => {
-        cb.log('[SYNC] sync_request reçu — recherche de nouveaux appareils...');
-        // Clear the known-devices cache so the new device is detected
-        localStorage.removeItem(`known_own_devices:${userId}`);
-        syncOwnDevicesToGroupsLocally(cb)
-          .then(() => syncAllConversationHistories(cb, 'sync_request'))
-          .catch((e) =>
-            cb.log(
-              `[WARN] Echec sync appareils (sync_request): ${e instanceof Error ? e.message : String(e)}`
-            )
-          );
+      // Jitter déterministe pour éviter la race condition : si plusieurs appareils reçoivent
+      // le sync_request simultanément, seul le "plus petit" deviceId (lexicographique) agit
+      // immédiatement ; les autres attendent 2 s pour constater que l'ajout a déjà eu lieu.
+      mlsService.onSyncRequest((senderDeviceId: string) => {
+        const myDeviceId = mlsService.getDeviceId();
+        const waitMs = myDeviceId <= senderDeviceId ? 0 : 2000;
+        cb.log(
+          `[SYNC] sync_request reçu de ${senderDeviceId} — jitter ${waitMs}ms (moi: ${myDeviceId})`
+        );
+        setTimeout(() => {
+          // Clear the known-devices cache so the new device is detected
+          localStorage.removeItem(`known_own_devices:${userId}`);
+          syncOwnDevicesToGroupsLocally(cb)
+            .then(() => syncAllConversationHistories(cb, 'sync_request'))
+            .catch((e) =>
+              cb.log(
+                `[WARN] Echec sync appareils (sync_request): ${e instanceof Error ? e.message : String(e)}`
+              )
+            );
+        }, waitMs);
       });
 
       await initializeConnection({

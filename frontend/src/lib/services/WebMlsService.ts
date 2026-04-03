@@ -24,7 +24,7 @@ export class WebMlsService implements IMlsService {
       ) => Promise<boolean>)
     | null = null;
   private disconnectCallback: (() => void) | null = null;
-  private syncRequestCallback: (() => void) | null = null;
+  private syncRequestCallback: ((senderDeviceId: string) => void) | null = null;
   private baseUrl: string; // Chat Gateway URL
   private historyUrl: string; // Chat Delivery Service URL
   private authToken: string | null = null;
@@ -184,8 +184,9 @@ export class WebMlsService implements IMlsService {
             return;
           }
           if (msg.type === 'sync_request') {
-            console.log(`[WS RCV] sync_request from ${msg.senderDeviceId}`);
-            this.syncRequestCallback?.();
+            const senderDev = (msg.senderDeviceId as string) || '';
+            console.log(`[WS RCV] sync_request from ${senderDev}`);
+            this.syncRequestCallback?.(senderDev);
             return;
           }
           if (msg.proto && this.messageCallback) {
@@ -323,7 +324,7 @@ export class WebMlsService implements IMlsService {
     }
   }
 
-  onSyncRequest(callback: () => void): void {
+  onSyncRequest(callback: (senderDeviceId: string) => void): void {
     this.syncRequestCallback = callback;
   }
 

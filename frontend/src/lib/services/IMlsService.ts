@@ -70,5 +70,5 @@ export interface IMlsService {
 
   // Device sync notification
   sendSyncRequest(): void;
-  onSyncRequest(callback: () => void): void;
+  onSyncRequest(callback: (senderDeviceId: string) => void): void;
 }
