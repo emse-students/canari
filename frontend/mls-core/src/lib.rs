@@ -170,6 +170,13 @@ impl MlsManager {
         self.groups.keys().cloned().collect()
     }
 
+    /// Oublie l'état MLS local d'un groupe sans toucher au stockage de clés.
+    /// Permet de forcer une re-synchronisation via un nouveau Welcome (ex : epoch périmée).
+    pub fn forget_group(&mut self, group_id: &str) {
+        self.groups.remove(group_id);
+        log::info!("forget_group: groupe {} oublié (re-Welcome attendu)", group_id);
+    }
+
     // --- C0. SUPPRESSION DE MEMBRE(S) ---
 
     /// Remove all leaf nodes whose credential identity matches any of the provided user IDs.

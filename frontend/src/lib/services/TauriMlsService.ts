@@ -822,6 +822,10 @@ export class TauriMlsService implements IMlsService {
     return [];
   }
 
+  forgetGroup(groupId: string): void {
+    invoke('oublier_groupe', { groupId }).catch((e) => console.warn('[MLS] forgetGroup error:', e));
+  }
+
   async renameGroup(groupId: string, name: string): Promise<void> {
     const res = await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}`, {
       method: 'PATCH',

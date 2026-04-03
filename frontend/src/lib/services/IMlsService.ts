@@ -47,6 +47,7 @@ export interface IMlsService {
 
   // Group management
   getLocalGroups(): string[];
+  forgetGroup(groupId: string): void;
   renameGroup(groupId: string, name: string): Promise<void>;
   deleteGroupOnServer(groupId: string): Promise<void>;
   removeMemberFromServer(groupId: string, userId: string): Promise<void>;

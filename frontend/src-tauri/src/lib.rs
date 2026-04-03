@@ -62,6 +62,20 @@ fn generer_key_package(state: tauri::State<AppState>) -> Result<Vec<u8>, String>
 }
 
 #[tauri::command]
+fn oublier_groupe(
+    group_id: String,
+    state: tauri::State<AppState>,
+) -> Result<(), String> {
+    let mut lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    manager.forget_group(&group_id);
+    Ok(())
+}
+
+#[tauri::command]
 fn ajouter_membre(
     group_id: String,
     key_package_bytes: Vec<u8>,
@@ -227,6 +241,7 @@ pub fn run() {
             initialiser_mls,
             sauvegarder_mls,
             creer_groupe,
+            oublier_groupe,
             generer_key_package,
             ajouter_membre,
             retirer_membres,

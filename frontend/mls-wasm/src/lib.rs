@@ -103,6 +103,12 @@ impl WasmMlsClient {
         arr
     }
 
+    #[wasm_bindgen]
+    pub fn forget_group(&mut self, group_id: String) {
+        log::info!("forget_group: {}", group_id);
+        self.manager.forget_group(&group_id);
+    }
+
     // Sauvegarder l'état (renvoie un Uint8Array en JS)
     #[wasm_bindgen]
     pub fn save_state(&self, pin: Option<String>) -> Result<Vec<u8>, JsValue> {

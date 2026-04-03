@@ -111,6 +111,10 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   const groupMlsFailures = new Map<string, number>();
   const PHANTOM_THRESHOLD = 3;
 
+  // Groupes pour lesquels une récupération d'epoch a déjà été déclenchée
+  // (évite de spammer sync_request en cas de rafale de messages future-epoch).
+  const epochRecoveryGroups = new Set<string>();
+
   // Buffer pour les messages (commits) qui arrivent AVANT leur Welcome.
   // Clé = groupId, Valeur = messages en attente de replay.
   const pendingGroupMessages = new Map<string, Array<{ sender: string; content: Uint8Array }>>();
@@ -608,13 +612,15 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           return true;
         } catch (_e) {
           const errMsg = String(_e);
-          if (errMsg.includes('CannotDecryptOwnMessage') || errMsg.includes('WrongEpoch')) {
+          if (errMsg.includes('CannotDecryptOwnMessage')) {
             return true; // ACK it so it isn't resent
           }
 
           // Stale message (msg_epoch < group_epoch): our own echoed commit or a
           // commit already applied by another path.  The Rust layer handles most of
           // these, but some slip through (e.g. PublicMessage commits).  ACK silently.
+          // Future epoch (msg_epoch > group_epoch): our local state is behind — drop
+          // the stale MLS state and trigger a re-sync via sync_request.
           const meMatch = errMsg.match(/msg_epoch=(\d+)/);
           const geMatch = errMsg.match(/group_epoch=(\d+)/);
           if (meMatch && geMatch) {
@@ -623,6 +629,21 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             if (me < ge) {
               return true; // Stale — already processed
             }
+            if (me > ge && !epochRecoveryGroups.has(convoKey)) {
+              epochRecoveryGroups.add(convoKey);
+              log(
+                `[RECOVER] Epoch périmée sur "${convoKey}" (local: ${ge}, msg: ${me}) — oubli MLS + sync_request`
+              );
+              mlsService.forgetGroup(convo.groupId);
+              conversations.set(convoKey, { ...convo, isReady: false });
+              if (storage) saveConversation(convoKey).catch(() => {});
+              mlsService.sendSyncRequest();
+            }
+            return true; // ACK toujours pour les erreurs d'epoch
+          }
+
+          if (errMsg.includes('WrongEpoch')) {
+            return true; // WrongEpoch sans numéros parsables — ACK silencieux
           }
 
           log(`Erreur message de ${senderNorm} (groupe connu): ${errMsg}`);
@@ -800,6 +821,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             name: isDirect ? directPeerId : groupName,
             isReady: true,
           });
+          // Annuler la récupération d'epoch en cours pour ce groupe (Welcome reçu)
+          epochRecoveryGroups.delete(newConvoKey);
           if (storage) await saveConversation(newConvoKey);
         } else {
           // Create new conversation

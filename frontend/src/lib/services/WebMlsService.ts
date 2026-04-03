@@ -896,6 +896,15 @@ export class WebMlsService implements IMlsService {
     return Array.from(this.client.get_groups() as Iterable<string>);
   }
 
+  forgetGroup(groupId: string): void {
+    if (!this.client) return;
+    try {
+      this.client.forget_group(groupId);
+    } catch (e) {
+      console.warn('[MLS] forgetGroup error:', e);
+    }
+  }
+
   async renameGroup(groupId: string, name: string): Promise<void> {
     const res = await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}`, {
       method: 'PATCH',
