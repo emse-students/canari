@@ -868,6 +868,19 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           // Non-blocking: worst case we miss commits until next sync repairs it
         }
 
+        // Mark this device as welcome_received so it can later process
+        // pending invitations for future new devices via getPendingInvitations.
+        try {
+          await mlsService.updateInvitationStatus(
+            mlsService.getDeviceId(),
+            userId,
+            joinedGroupId,
+            'welcome_received'
+          );
+        } catch {
+          // Non-blocking: status will be corrected on next sync
+        }
+
         // Persist MLS state immediately after Welcome — a crash before this
         // would lose the joined group and require a fresh Welcome.
         try {

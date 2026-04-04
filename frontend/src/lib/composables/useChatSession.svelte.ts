@@ -295,6 +295,16 @@ export function useChatSession() {
         );
         setTimeout(() => {
           processDeviceInvitationsLocally(cb)
+            .then(() =>
+              discoverMissingGroups({
+                mlsService: ensureMls(),
+                userId,
+                pin,
+                conversations: cb.conversations,
+                saveConversation: cb.saveConversation,
+                log: cb.log,
+              })
+            )
             .then(() => syncAllConversationHistories(cb, 'sync_request'))
             .catch((e) =>
               cb.log(
@@ -435,6 +445,16 @@ export function useChatSession() {
       reconnectAttempts = 0;
       cb.log('[OK] Reconnecte au reseau.');
       processDeviceInvitationsLocally(cb)
+        .then(() =>
+          discoverMissingGroups({
+            mlsService: ensureMls(),
+            userId,
+            pin,
+            conversations: cb.conversations,
+            saveConversation: cb.saveConversation,
+            log: cb.log,
+          })
+        )
         .then(() => syncAllConversationHistories(cb, 'reconnect'))
         .catch((e) =>
           cb.log(

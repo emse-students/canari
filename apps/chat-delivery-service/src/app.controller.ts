@@ -1490,6 +1490,28 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       keyPackage.createdAt = new Date();
     }
     await this.keyPackageRepo.save(keyPackage);
+
+    // Create pending DeviceGroupMembership entries for all groups this user
+    // already belongs to.  Without this, getPendingInvitations on other
+    // devices won't see the new device and will never send it a Welcome.
+    const userGroups = await this.groupMemberRepo.find({
+      where: { userId: body.userId },
+    });
+    for (const gm of userGroups) {
+      const existing = await this.deviceGroupRepo.findOne({
+        where: { deviceId: body.deviceId, groupId: gm.groupId },
+      });
+      if (!existing) {
+        const membership = this.deviceGroupRepo.create({
+          userId: body.userId,
+          deviceId: body.deviceId,
+          groupId: gm.groupId,
+          status: 'pending' as const,
+        });
+        await this.deviceGroupRepo.save(membership);
+      }
+    }
+
     return { status: 'registered' };
   }
 
