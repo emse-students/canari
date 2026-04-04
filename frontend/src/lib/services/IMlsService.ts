@@ -106,6 +106,9 @@ export interface IMlsService {
   /** Reset all devices of a user in a group to pending (after MLS remove commit). */
   kickStaleUser(userId: string, groupId: string): Promise<void>;
 
+  /** Reset the server-side activeEpoch of a group to 0 (used during re-bootstrap). */
+  resetGroupEpoch(groupId: string): Promise<void>;
+
   /** Delete a specific device-group membership */
   deleteDeviceMembership(
     userId: string,

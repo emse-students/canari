@@ -1,6 +1,6 @@
 <script lang="ts">
   import { SvelteMap } from 'svelte/reactivity';
-  import { Hand, RotateCcw, Hash, Lock, Plus } from 'lucide-svelte';
+  import { Hand, Hash, Lock, Plus } from 'lucide-svelte';
   import Avatar from '../shared/Avatar.svelte';
   import ConversationTile from '../chat/ConversationTile.svelte';
   import SidebarHeaderControls from './SidebarHeaderControls.svelte';
@@ -39,8 +39,6 @@
     viewMode?: 'chat' | 'communities';
     conversations: SvelteMap<string, Conversation>;
     channelWorkspaces?: ChannelWorkspace[];
-    archivedConversationIds?: string[];
-    showArchivedConversations?: boolean;
     selectedContact: string | null;
     newContactInput: string;
     newGroupInput: string;
@@ -65,8 +63,6 @@
     onSelectConversation: (name: string) => void;
     onSelectChannelConversation?: (channelId: string) => void;
     selectedChannelId?: string;
-    onToggleArchivedView?: () => void;
-    onRestoreConversation?: (name: string) => void;
     onExport: () => void;
     onImport: (file: File) => void;
     onStartSync: () => void;
@@ -85,8 +81,6 @@
     viewMode = 'chat',
     conversations,
     channelWorkspaces = [],
-    archivedConversationIds = [],
-    showArchivedConversations = false,
     selectedContact,
     newContactInput,
     newGroupInput,
@@ -102,8 +96,6 @@
     onSelectConversation,
     onSelectChannelConversation,
     selectedChannelId = '',
-    onToggleArchivedView,
-    onRestoreConversation,
     onExport,
     onImport,
     onStartSync,
@@ -149,17 +141,11 @@
   }
 
   let filteredConversationEntries = $derived.by(() => {
-    const archived = new Set(archivedConversationIds.map((id) => id.toLowerCase()));
     const query = searchQuery.trim().toLowerCase();
 
     return [...conversations.entries()].filter(([id, convo]) => {
       // Hide channels from the discussions tab
       if (id.startsWith('channel_')) {
-        return false;
-      }
-
-      const isArchived = archived.has(id.toLowerCase());
-      if (showArchivedConversations ? !isArchived : isArchived) {
         return false;
       }
 
@@ -302,14 +288,12 @@
     {#if viewMode === 'chat'}
       <SidebarHeaderControls
         {activeSidebarTab}
-        {showArchivedConversations}
         {searchQuery}
         {drawerMode}
         {onCloseDrawer}
         onSearchQueryChange={(value) => {
           searchQuery = value;
         }}
-        onToggleArchivedView={() => onToggleArchivedView?.()}
         onOpenNewChat={() => openNewChatModal('contact')}
       />
     {:else}
@@ -385,20 +369,6 @@
               unreadCount={convo.unreadCount ?? 0}
               onClick={() => onSelectConversation(name)}
             />
-            {#if showArchivedConversations}
-              <button
-                type="button"
-                class="absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white/75 dark:bg-black/45 border border-white/50 dark:border-white/10 text-text-main inline-flex items-center justify-center hover:bg-white dark:hover:bg-black/60 transition-colors"
-                aria-label="Restaurer la discussion"
-                title="Restaurer"
-                onclick={(event) => {
-                  event.stopPropagation();
-                  onRestoreConversation?.(name);
-                }}
-              >
-                <RotateCcw size={14} />
-              </button>
-            {/if}
           </div>
         {/each}
 
@@ -410,9 +380,7 @@
             <p class="text-sm">
               {searchQuery.trim()
                 ? 'Aucune discussion correspondante.'
-                : showArchivedConversations
-                  ? 'Votre corbeille est vide.'
-                  : 'Votre messagerie est vide. Cliquez sur + pour demarrer.'}
+                : 'Votre messagerie est vide. Cliquez sur + pour demarrer.'}
             </p>
           </div>
         {/if}

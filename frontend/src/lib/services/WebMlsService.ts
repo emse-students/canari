@@ -1125,6 +1125,17 @@ export class WebMlsService implements IMlsService {
     if (!res.ok) throw new Error(`kickStaleUser failed: ${res.status}`);
   }
 
+  async resetGroupEpoch(groupId: string): Promise<void> {
+    const res = await fetch(
+      `${this.historyUrl}/api/mls-api/groups/${encodeURIComponent(groupId)}/reset-epoch`,
+      {
+        method: 'POST',
+        headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
+      }
+    );
+    if (!res.ok) throw new Error(`resetGroupEpoch failed: ${res.status}`);
+  }
+
   async deleteDeviceMembership(
     userId: string,
     deviceId: string,

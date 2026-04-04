@@ -1541,6 +1541,25 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Reset a group's activeEpoch to 0.
+   * Called during re-bootstrap when a new MLS session replaces the old one
+   * for the same server groupId. Without this reset the first commit would
+   * be rejected because the server still remembers the old epoch.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Post('mls-api/groups/:groupId/reset-epoch')
+  async resetGroupEpoch(@Param('groupId') groupId: string) {
+    const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
+    const group = await this.groupRepo.findOne({ where: { id: safeGroupId } });
+    if (!group) {
+      throw new BadRequestException(`Group ${safeGroupId} not found`);
+    }
+    group.activeEpoch = 0;
+    await this.groupRepo.save(group);
+    return { groupId: safeGroupId, activeEpoch: 0 };
+  }
+
+  /**
    * Epoch-gated commit: validates that the sender's baseEpoch matches the
    * group's activeEpoch before allowing the commit through.
    * Prevents MLS epoch forks caused by concurrent commits from multiple devices.

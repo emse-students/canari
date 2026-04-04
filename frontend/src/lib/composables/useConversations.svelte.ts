@@ -21,11 +21,7 @@ import {
   startNewConversation as startConversation,
   repairDirectConversation,
 } from '$lib/utils/chat/groupCreation';
-import {
-  loadExistingConversations,
-  loadPersistedArchivedIds,
-  persistArchivedConversations,
-} from '$lib/utils/chat/conversations';
+import { loadExistingConversations } from '$lib/utils/chat/conversations';
 
 export interface ConversationContext {
   /** The live storage instance (null until logged in) */
@@ -57,8 +53,6 @@ export function useConversations() {
   let isConversationDrawerOpen = $state(false);
   let isChannelMembersDrawerOpen = $state(false);
   let isChannelSettingsModalOpen = $state(false);
-  let archivedConversationIds = $state<string[]>([]);
-  let showArchivedConversations = $state(false);
   let showSyncGuidePrompt = $state(false);
   let groupMembers = $state<string[]>([]);
   let sendError = $state('');
@@ -195,7 +189,6 @@ export function useConversations() {
 
   async function loadAndRestoreConversations(ctx: ConversationContext) {
     if (!ctx.storage) return;
-    archivedConversationIds = loadPersistedArchivedIds(ctx.userId);
     await loadExistingConversations({
       userId: ctx.userId,
       pin: ctx.pin,
@@ -203,12 +196,10 @@ export function useConversations() {
       mlsService: ctx.ensureMls(),
       conversations,
       messageReactions: ctx.messageReactions,
-      archivedConversationIds,
+      archivedConversationIds: [],
       historyBaseUrl: ctx.historyBaseUrl,
       log: ctx.log,
-      onArchivedIdsChange: (ids) => {
-        archivedConversationIds = ids;
-      },
+      onArchivedIdsChange: () => {},
       addMessageToChat: ctx.addMessageToChat,
     });
   }
@@ -244,29 +235,6 @@ export function useConversations() {
   function goBackToMenu() {
     mobileView = 'list';
     isConversationDrawerOpen = false;
-  }
-
-  // ── Archive ───────────────────────────────────────────────────────────────
-
-  function archiveConversation(conversationId: string, userId: string) {
-    const normalized = conversationId.toLowerCase();
-    if (archivedConversationIds.includes(normalized)) return;
-    archivedConversationIds = [...archivedConversationIds, normalized];
-    persistArchivedConversations(userId, archivedConversationIds);
-    if (selectedContact === normalized) {
-      selectedContact = null;
-      mobileView = 'list';
-      isConversationDrawerOpen = false;
-      sendError = '';
-      groupMembers = [];
-    }
-  }
-
-  function restoreConversation(conversationId: string, userId: string) {
-    const normalized = conversationId.toLowerCase();
-    if (!archivedConversationIds.includes(normalized)) return;
-    archivedConversationIds = archivedConversationIds.filter((id) => id !== normalized);
-    persistArchivedConversations(userId, archivedConversationIds);
   }
 
   // ── Group members ─────────────────────────────────────────────────────────
@@ -429,11 +397,37 @@ export function useConversations() {
     }
   }
 
-  function handleDeleteGroup(userId: string) {
+  async function handleDeleteGroup(ctx: ConversationContext) {
     if (!selectedContact) return;
     const convo = conversations.get(selectedContact);
     if (!convo) return;
-    archiveConversation(selectedContact, userId);
+    const contactKey = selectedContact;
+
+    // Forget MLS state
+    try {
+      ctx.ensureMls().forgetGroup(convo.groupId, 0);
+    } catch {
+      /* non-blocking */
+    }
+
+    // Delete from persistent storage
+    if (ctx.storage) {
+      try {
+        await ctx.storage.deleteConversation(contactKey);
+      } catch {
+        /* non-blocking */
+      }
+    }
+
+    // Remove from local map
+    conversations.delete(contactKey);
+
+    // Clean up selection
+    selectedContact = null;
+    mobileView = 'list';
+    isConversationDrawerOpen = false;
+    sendError = '';
+    groupMembers = [];
   }
 
   async function handleRemoveMember(memberId: string, ctx: ConversationContext) {
@@ -500,18 +494,6 @@ export function useConversations() {
     set isChannelSettingsModalOpen(v: boolean) {
       isChannelSettingsModalOpen = v;
     },
-    get archivedConversationIds() {
-      return archivedConversationIds;
-    },
-    set archivedConversationIds(v: string[]) {
-      archivedConversationIds = v;
-    },
-    get showArchivedConversations() {
-      return showArchivedConversations;
-    },
-    set showArchivedConversations(v: boolean) {
-      showArchivedConversations = v;
-    },
     get showSyncGuidePrompt() {
       return showSyncGuidePrompt;
     },
@@ -565,8 +547,6 @@ export function useConversations() {
     selectConversation,
     selectConversationWithCtx,
     goBackToMenu,
-    archiveConversation,
-    restoreConversation,
     loadGroupMembers,
     verifyCurrentUserMembership,
     createNewGroup,

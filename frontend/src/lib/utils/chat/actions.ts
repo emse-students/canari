@@ -478,6 +478,11 @@ export async function discoverMissingGroups(params: {
         localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
 
         if (bulk.commit) {
+          // Reset the server-side epoch to 0 before the first commit of the new
+          // MLS session. The server still remembers the old activeEpoch from the
+          // previous session — without this reset, baseEpoch=0 would mismatch
+          // and the gateway would reject the commit with epoch_rejected.
+          await mlsService.resetGroupEpoch(convo.groupId);
           await mlsService.sendCommit(bulk.commit, convo.groupId);
         }
       }

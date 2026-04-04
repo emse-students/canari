@@ -456,8 +456,6 @@
       <Sidebar
         viewMode={routeMode === 'communities' ? 'communities' : 'chat'}
         conversations={convs.conversations}
-        archivedConversationIds={convs.archivedConversationIds}
-        showArchivedConversations={convs.showArchivedConversations}
         selectedContact={convs.selectedContact}
         newContactInput={convs.newContactInput}
         newGroupInput={convs.newGroupInput}
@@ -506,10 +504,6 @@
           channels.selectedChannelConversationId = channelId;
           convs.selectConversation(channelId);
         }}
-        onToggleArchivedView={() => {
-          convs.showArchivedConversations = !convs.showArchivedConversations;
-        }}
-        onRestoreConversation={(id) => convs.restoreConversation(id, session.userId)}
         onExport={() => session.handleExport(log)}
         onImport={(file) =>
           session.handleImport(
@@ -543,7 +537,7 @@
         groupMembers={convs.groupMembers}
         sendError={convs.sendError}
         onGroupRename={(name) => void convs.handleRenameGroup(name, convCtx())}
-        onGroupDelete={() => convs.handleDeleteGroup(session.userId)}
+        onGroupDelete={() => void convs.handleDeleteGroup(convCtx())}
         onGroupRemoveMember={(memberId) => void convs.handleRemoveMember(memberId, convCtx())}
         messageReactions={messaging.messageReactions}
         replyingTo={messaging.replyingTo}
@@ -629,8 +623,6 @@
         <Sidebar
           viewMode={routeMode === 'communities' ? 'communities' : 'chat'}
           conversations={convs.conversations}
-          archivedConversationIds={convs.archivedConversationIds}
-          showArchivedConversations={convs.showArchivedConversations}
           selectedContact={convs.selectedContact}
           newContactInput={convs.newContactInput}
           newGroupInput={convs.newGroupInput}
@@ -679,10 +671,6 @@
             channels.selectedChannelConversationId = channelId;
             convs.selectConversation(channelId);
           }}
-          onToggleArchivedView={() => {
-            convs.showArchivedConversations = !convs.showArchivedConversations;
-          }}
-          onRestoreConversation={(id) => convs.restoreConversation(id, session.userId)}
           onExport={() => session.handleExport(log)}
           onImport={(file) =>
             session.handleImport(

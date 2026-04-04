@@ -16,7 +16,6 @@
   import { BiometricService } from '$lib/services/biometric';
   import { currentUserId } from '$lib/stores/user';
   import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
-  import { loadPersistedArchivedIds } from '$lib/utils/chat/conversations';
   import {
     globalSession,
     globalConvs,
@@ -213,12 +212,10 @@
     };
   }
 
-  // ── Post-login : chargement des canaux et ids archivés ───────────────────
+  // ── Post-login : chargement des canaux ─────────────────────────────────
   $effect(() => {
     if (!globalSession.isLoggedIn) return;
     untrack(() => {
-      globalConvs.archivedConversationIds = loadPersistedArchivedIds(globalSession.userId);
-      globalConvs.showArchivedConversations = false;
       void globalChannels.loadChannelWorkspacesFromBackend(channelsCtx());
     });
   });
