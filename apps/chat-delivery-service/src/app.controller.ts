@@ -528,6 +528,13 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   private staleDeviceInterval: ReturnType<typeof setInterval>;
   private cleanupMessagesInterval: ReturnType<typeof setInterval>;
 
+  /**
+   * Single source of truth for message retention / stale device TTL.
+   * A device is "stale" when its queued messages have expired (7 days),
+   * meaning it can no longer catch up by processing missed commits.
+   */
+  private static readonly MESSAGE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
   constructor(
     @InjectRepository(QueuedMessage)
     private queuedMessageRepo: Repository<QueuedMessage>,
@@ -546,29 +553,27 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit() {
-    // Detect stale devices every 5 minutes: devices where lastEpochSeen is far behind
-    // the group's activeEpoch get removed and re-invited (status reset to pending)
-    this.staleDeviceInterval = setInterval(
-      () => {
-        void this.detectStaleDevices().catch((e) =>
-          this.logger.error('[CRON] detectStaleDevices failed', e),
-        );
-      },
-      5 * 60 * 1000,
-    );
+    // Both crons run hourly — there's no point detecting staleness more
+    // frequently than the message cleanup that defines it.
+    const ONE_HOUR = 60 * 60 * 1000;
 
-    // Cleanup expired queued messages older than 7 days — once per hour
-    this.cleanupMessagesInterval = setInterval(
-      () => {
-        void this.cleanupExpiredQueuedMessages().catch((e) =>
-          this.logger.error('[CRON] cleanupExpiredQueuedMessages failed', e),
-        );
-      },
-      60 * 60 * 1000,
-    );
+    // Detect stale devices: devices whose membership hasn't been updated
+    // within MESSAGE_RETENTION_MS are reset to pending for re-invite.
+    this.staleDeviceInterval = setInterval(() => {
+      void this.detectStaleDevices().catch((e) =>
+        this.logger.error('[CRON] detectStaleDevices failed', e),
+      );
+    }, ONE_HOUR);
+
+    // Cleanup expired queued messages older than MESSAGE_RETENTION_MS
+    this.cleanupMessagesInterval = setInterval(() => {
+      void this.cleanupExpiredQueuedMessages().catch((e) =>
+        this.logger.error('[CRON] cleanupExpiredQueuedMessages failed', e),
+      );
+    }, ONE_HOUR);
 
     this.logger.log(
-      '[CRON] Stale device detection (5min) and message cleanup (1h) scheduled',
+      '[CRON] Stale device detection (1h) and message cleanup (1h) scheduled',
     );
   }
 
@@ -578,54 +583,45 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Detect devices whose lastEpochSeen is too far behind the group's activeEpoch.
-   * These "stale" devices are removed from the MLS group and get re-invited
-   * (their DeviceGroupMembership status is reset to "pending").
+   * Detect devices whose membership hasn't been touched within the message
+   * retention window.  Once their queued messages have been garbage-collected,
+   * they can no longer catch up by processing missed commits — the only
+   * recovery path is a full re-invite (reset to "pending").
+   *
+   * Only devices in "welcome_received" state are candidates: they were once
+   * active but have gone silent for longer than the retention TTL.
    */
   private async detectStaleDevices() {
-    const STALE_EPOCH_THRESHOLD = 10; // More than 10 epochs behind = stale
+    const staleDate = new Date(Date.now() - AppController.MESSAGE_RETENTION_MS);
 
-    const groups = await this.groupRepo.find();
-    let resetCount = 0;
+    const staleMembers = await this.deviceGroupRepo
+      .createQueryBuilder('dgm')
+      .where('dgm.status = :status', { status: 'welcome_received' })
+      .andWhere('dgm.updatedAt < :staleDate', { staleDate })
+      .getMany();
 
-    for (const group of groups) {
-      if (group.activeEpoch < STALE_EPOCH_THRESHOLD) continue;
-
-      const staleThreshold = group.activeEpoch - STALE_EPOCH_THRESHOLD;
-      const staleMembers = await this.deviceGroupRepo
-        .createQueryBuilder('dgm')
-        .where('dgm.groupId = :groupId', { groupId: group.id })
-        .andWhere('dgm.status = :status', { status: 'welcome_received' })
-        .andWhere('dgm.lastEpochSeen < :threshold', {
-          threshold: staleThreshold,
-        })
-        .getMany();
-
-      for (const member of staleMembers) {
-        // Reset to pending — the next online device will re-invite them
-        member.status = 'pending';
-        member.lastEpochSeen = 0;
-        await this.deviceGroupRepo.save(member);
-        resetCount++;
-        this.logger.log(
-          `[CRON] Stale device reset: device=${member.deviceId} group=${group.id} ` +
-            `(lastEpoch=${staleThreshold}, groupEpoch=${group.activeEpoch})`,
-        );
-      }
+    for (const member of staleMembers) {
+      member.status = 'pending';
+      member.lastEpochSeen = 0;
+      await this.deviceGroupRepo.save(member);
+      this.logger.log(
+        `[CRON] Stale device reset: device=${member.deviceId} group=${member.groupId} ` +
+          `(lastUpdate=${member.updatedAt.toISOString()})`,
+      );
     }
 
-    if (resetCount > 0) {
+    if (staleMembers.length > 0) {
       this.logger.log(
-        `[CRON] detectStaleDevices: ${resetCount} device(s) reset to pending`,
+        `[CRON] detectStaleDevices: ${staleMembers.length} device(s) reset to pending`,
       );
     }
   }
 
   /**
-   * Delete queued messages older than 7 days.
+   * Delete queued messages older than MESSAGE_RETENTION_MS.
    */
   private async cleanupExpiredQueuedMessages() {
-    const expiry = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const expiry = new Date(Date.now() - AppController.MESSAGE_RETENTION_MS);
     const result = await this.queuedMessageRepo.delete({
       createdAt: LessThan(expiry),
     });

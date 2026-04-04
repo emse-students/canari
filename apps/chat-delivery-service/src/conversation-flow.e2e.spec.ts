@@ -1822,13 +1822,9 @@ describe('PARTIE C - DeviceGroupMembership lifecycle', () => {
   // ---- C.3 : Stale device detection and re-invitation ----------------------
 
   describe('C.3 - Stale device removed and re-invited', () => {
-    it('detectStaleDevices resets devices far behind group epoch to pending', async () => {
-      // Group at epoch 20
-      env.groupModel.find.mockResolvedValueOnce([
-        { id: 'g-stale', activeEpoch: 20 },
-      ]);
-
-      // createQueryBuilder returns stale member (lastEpochSeen = 3 < 20 - 10 = 10)
+    it('detectStaleDevices resets devices inactive longer than MESSAGE_RETENTION_MS', async () => {
+      // A device whose updatedAt is older than 7 days → stale
+      const staleDate = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000); // 8 days ago
       const mockQb = {
         where: jest.fn().mockReturnThis(),
         andWhere: jest.fn().mockReturnThis(),
@@ -1839,12 +1835,12 @@ describe('PARTIE C - DeviceGroupMembership lifecycle', () => {
             groupId: 'g-stale',
             status: 'welcome_received',
             lastEpochSeen: 3,
+            updatedAt: staleDate,
           },
         ]),
       };
       env.deviceGroupModel.createQueryBuilder.mockReturnValueOnce(mockQb);
 
-      // Call the private method via any-cast
       await (env.ctrl as any).detectStaleDevices();
 
       // The stale device should be saved with status 'pending' and lastEpochSeen 0
@@ -1858,22 +1854,7 @@ describe('PARTIE C - DeviceGroupMembership lifecycle', () => {
       );
     });
 
-    it('detectStaleDevices skips groups with low activeEpoch', async () => {
-      env.groupModel.find.mockResolvedValueOnce([
-        { id: 'g-young', activeEpoch: 5 }, // < STALE_EPOCH_THRESHOLD (10)
-      ]);
-
-      await (env.ctrl as any).detectStaleDevices();
-
-      // createQueryBuilder should not have been called — group skipped
-      expect(env.deviceGroupModel.createQueryBuilder).not.toHaveBeenCalled();
-    });
-
     it('detectStaleDevices does nothing when no stale devices found', async () => {
-      env.groupModel.find.mockResolvedValueOnce([
-        { id: 'g-healthy', activeEpoch: 15 },
-      ]);
-
       const mockQb = {
         where: jest.fn().mockReturnThis(),
         andWhere: jest.fn().mockReturnThis(),

@@ -637,14 +637,16 @@ Pour chaque invitation pending (groupée par groupId) :
 - `WrongEpoch` → Vérifier si un autre appareil a déjà traité → skip si `welcome_sent`/`welcome_received`
 - KeyPackage introuvable → skip (appareil potentiellement supprimé)
 
-**Détection des appareils obsolètes** (cron serveur toutes les 5 min) :
+**Détection des appareils obsolètes** (cron serveur toutes les heures) :
 
-- Groupes avec `activeEpoch > 10` : appareils avec `lastEpochSeen < activeEpoch - 10` → reset à `pending`
-- L'appareil sera automatiquement ré-invité au prochain passage de `processPendingInvitations`
+- Un appareil est considéré obsolète quand il ne peut plus rattraper ses messages en file d'attente, c'est-à-dire quand son `updatedAt` dépasse la durée de rétention des messages (`MESSAGE_RETENTION_MS` = 7 jours).
+- Seuls les appareils en statut `welcome_received` (ayant déjà été actifs) sont ciblés → reset à `pending`.
+- L'appareil sera automatiquement ré-invité au prochain passage de `processPendingInvitations`.
 
 **Nettoyage automatique** (cron serveur toutes les heures) :
 
-- Messages en file d'attente (QueuedMessage) de plus de 7 jours → supprimés
+- Messages en file d'attente (QueuedMessage) de plus de 7 jours (`MESSAGE_RETENTION_MS`) → supprimés.
+- Les deux crons partagent la même constante `MESSAGE_RETENTION_MS` pour que les TTL ne divergent jamais.
 
 ### 8.2 Découverte de groupes manquants
 
