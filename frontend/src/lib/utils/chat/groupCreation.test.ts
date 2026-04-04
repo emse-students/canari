@@ -90,6 +90,9 @@ function makeMlsService(overrides: Partial<IMlsService> = {}): IMlsService {
     onDisconnect: vi.fn(),
     sendSyncRequest: vi.fn(),
     onSyncRequest: vi.fn(),
+    getPendingInvitations: vi.fn().mockResolvedValue([]),
+    getDeviceMemberships: vi.fn().mockResolvedValue([]),
+    updateInvitationStatus: vi.fn().mockResolvedValue({ status: 'added' }),
     ...overrides,
   };
 }

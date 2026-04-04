@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { discoverMissingGroups, forceSyncReset, syncOwnDevicesToGroups } from './actions';
+import { discoverMissingGroups, forceSyncReset, processPendingInvitations } from './actions';
 import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
 
@@ -51,6 +51,9 @@ function makeMls(overrides: Partial<IMlsService> = {}): IMlsService {
     onDisconnect: vi.fn(),
     sendSyncRequest: vi.fn(),
     onSyncRequest: vi.fn(),
+    getPendingInvitations: vi.fn().mockResolvedValue([]),
+    getDeviceMemberships: vi.fn().mockResolvedValue([]),
+    updateInvitationStatus: vi.fn().mockResolvedValue({ status: 'added' }),
     ...overrides,
   } as unknown as IMlsService;
 }
@@ -371,82 +374,20 @@ describe('discoverMissingGroups', () => {
   });
 });
 
-describe('syncOwnDevicesToGroups', () => {
+describe('processPendingInvitations', () => {
   beforeEach(() => {
     localStorage.clear();
     vi.useFakeTimers();
   });
 
-  it('ne met pas en cache un appareil si toutes les tentatives echouent', async () => {
-    const mls = makeMls({
-      fetchUserDevices: vi
-        .fn()
-        .mockResolvedValueOnce([{ keyPackage: new Uint8Array([1]), deviceId: 'dev-2' }])
-        .mockResolvedValue([{ keyPackage: new Uint8Array([2]), deviceId: 'dev-2' }]),
-      getGroupMembers: vi.fn().mockResolvedValue([]),
-      addMember: vi.fn().mockRejectedValue(new Error('network boom')),
-    });
-
-    const convs = new Map<string, Conversation>();
-    convs.set('grp_1', makeConversation({ groupId: 'g-1', isReady: true }));
-
-    const promise = syncOwnDevicesToGroups({
-      mlsService: mls,
-      userId: 'jolan',
-      pin: '1234',
-      conversations: convs,
-      log: vi.fn(),
-    });
-
-    await vi.runAllTimersAsync();
-    await promise;
-
-    const cache = localStorage.getItem('known_own_devices:jolan');
-    expect(cache).toBeNull();
-  });
-
-  it('met en cache un appareil deja membre (DuplicateSignature) pour eviter une boucle de retries', async () => {
-    const mls = makeMls({
-      fetchUserDevices: vi
-        .fn()
-        .mockResolvedValueOnce([{ keyPackage: new Uint8Array([1]), deviceId: 'dev-2' }])
-        .mockResolvedValue([{ keyPackage: new Uint8Array([2]), deviceId: 'dev-2' }]),
-      getGroupMembers: vi.fn().mockResolvedValue([]),
-      addMember: vi.fn().mockRejectedValue(new Error('DuplicateSignatureKey already exists')),
-    });
-
-    const convs = new Map<string, Conversation>();
-    convs.set('grp_1', makeConversation({ groupId: 'g-1', isReady: true }));
-
-    const promise = syncOwnDevicesToGroups({
-      mlsService: mls,
-      userId: 'jolan',
-      pin: '1234',
-      conversations: convs,
-      log: vi.fn(),
-    });
-
-    await vi.runAllTimersAsync();
-    await promise;
-
-    const cacheRaw = localStorage.getItem('known_own_devices:jolan');
-    expect(cacheRaw).not.toBeNull();
-    expect(JSON.parse(cacheRaw as string)).toContain('dev-2');
-  });
-
-  it('ne met pas en cache si seules des conversations placeholders non pretes existent', async () => {
+  it('ne fait rien quand aucune invitation en attente', async () => {
     const log = vi.fn();
     const mls = makeMls({
-      fetchUserDevices: vi
-        .fn()
-        .mockResolvedValueOnce([{ keyPackage: new Uint8Array([1]), deviceId: 'dev-2' }])
-        .mockResolvedValue([{ keyPackage: new Uint8Array([2]), deviceId: 'dev-2' }]),
+      getPendingInvitations: vi.fn().mockResolvedValue([]),
     });
-
     const convs = new Map<string, Conversation>();
-    convs.set('placeholder', makeConversation({ groupId: 'g-missing', isReady: false }));
 
-    const promise = syncOwnDevicesToGroups({
+    const promise = processPendingInvitations({
       mlsService: mls,
       userId: 'jolan',
       pin: '1234',
@@ -457,33 +398,60 @@ describe('syncOwnDevicesToGroups', () => {
     await vi.runAllTimersAsync();
     await promise;
 
-    const cacheRaw = localStorage.getItem('known_own_devices:jolan');
-    expect(cacheRaw).toBeNull();
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('Aucune conversation prete'));
+    expect(mls.acquireAddLock).not.toHaveBeenCalled();
   });
 
-  it('log un diagnostic explicite quand addMember ne retourne pas de welcome', async () => {
+  it('skip un groupe sans conversation locale prête', async () => {
     const log = vi.fn();
     const mls = makeMls({
+      getPendingInvitations: vi.fn().mockResolvedValue([
+        {
+          id: '1',
+          userId: 'alice',
+          deviceId: 'dev-alice',
+          groupId: 'g-unknown',
+          status: 'pending',
+        },
+      ]),
+    });
+    const convs = new Map<string, Conversation>();
+
+    const promise = processPendingInvitations({
+      mlsService: mls,
+      userId: 'jolan',
+      pin: '1234',
+      conversations: convs,
+      log,
+    });
+
+    await vi.runAllTimersAsync();
+    await promise;
+
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('pas de conversation locale'));
+  });
+
+  it('traite une invitation pending et envoie un Welcome', async () => {
+    const log = vi.fn();
+    const mls = makeMls({
+      getPendingInvitations: vi
+        .fn()
+        .mockResolvedValue([
+          { id: '1', userId: 'alice', deviceId: 'dev-alice', groupId: 'g-1', status: 'pending' },
+        ]),
       fetchUserDevices: vi
         .fn()
-        .mockResolvedValueOnce([{ keyPackage: new Uint8Array([1]), deviceId: 'dev-2' }])
-        .mockResolvedValue([{ keyPackage: new Uint8Array([2]), deviceId: 'dev-2' }]),
+        .mockResolvedValue([{ keyPackage: new Uint8Array([1]), deviceId: 'dev-alice' }]),
       getGroupMembers: vi.fn().mockResolvedValue([]),
       addMember: vi.fn().mockResolvedValue({
         commit: new Uint8Array([0x01]),
-        welcome: undefined,
-        ratchetTree: undefined,
+        welcome: new Uint8Array([0x02]),
+        ratchetTree: new Uint8Array([0x03]),
       }),
-      registerMember: vi.fn().mockResolvedValue(undefined),
-      sendCommit: vi.fn().mockResolvedValue(undefined),
-      saveState: vi.fn().mockResolvedValue(new Uint8Array([0xaa])),
     });
-
     const convs = new Map<string, Conversation>();
     convs.set('grp_1', makeConversation({ groupId: 'g-1', isReady: true }));
 
-    const promise = syncOwnDevicesToGroups({
+    const promise = processPendingInvitations({
       mlsService: mls,
       userId: 'jolan',
       pin: '1234',
@@ -494,28 +462,67 @@ describe('syncOwnDevicesToGroups', () => {
     await vi.runAllTimersAsync();
     await promise;
 
-    expect(log).toHaveBeenCalledWith(
-      expect.stringContaining('Aucun Welcome retourne pour dev-2 dans g-1')
+    expect(mls.addMember).toHaveBeenCalledWith('g-1', new Uint8Array([1]));
+    expect(mls.registerMember).toHaveBeenCalledWith('g-1', 'alice', 'dev-alice');
+    expect(mls.sendWelcome).toHaveBeenCalled();
+    expect(mls.sendCommit).toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Welcome'));
+  });
+
+  it('skip un device déjà membre (idempotence)', async () => {
+    const log = vi.fn();
+    const mls = makeMls({
+      getPendingInvitations: vi
+        .fn()
+        .mockResolvedValue([
+          { id: '1', userId: 'alice', deviceId: 'dev-alice', groupId: 'g-1', status: 'pending' },
+        ]),
+      fetchUserDevices: vi
+        .fn()
+        .mockResolvedValue([{ keyPackage: new Uint8Array([1]), deviceId: 'dev-alice' }]),
+      getGroupMembers: vi.fn().mockResolvedValue([{ deviceId: 'dev-alice', userId: 'alice' }]),
+    });
+    const convs = new Map<string, Conversation>();
+    convs.set('grp_1', makeConversation({ groupId: 'g-1', isReady: true }));
+
+    const promise = processPendingInvitations({
+      mlsService: mls,
+      userId: 'jolan',
+      pin: '1234',
+      conversations: convs,
+      log,
+    });
+
+    await vi.runAllTimersAsync();
+    await promise;
+
+    expect(mls.addMember).not.toHaveBeenCalled();
+    expect(mls.updateInvitationStatus).toHaveBeenCalledWith(
+      'dev-alice',
+      'alice',
+      'g-1',
+      'welcome_received'
     );
   });
 
-  it('enregistre un membre côté serveur quand addMember echoue avec DuplicateSignatureKey', async () => {
+  it('gère DuplicateSignature en mettant à jour le statut', async () => {
     const log = vi.fn();
-    const registerMember = vi.fn().mockResolvedValue(undefined);
     const mls = makeMls({
+      getPendingInvitations: vi
+        .fn()
+        .mockResolvedValue([
+          { id: '1', userId: 'alice', deviceId: 'dev-alice', groupId: 'g-1', status: 'pending' },
+        ]),
       fetchUserDevices: vi
         .fn()
-        .mockResolvedValueOnce([{ keyPackage: new Uint8Array([1]), deviceId: 'dev-2' }])
-        .mockResolvedValue([{ keyPackage: new Uint8Array([2]), deviceId: 'dev-2' }]),
+        .mockResolvedValue([{ keyPackage: new Uint8Array([1]), deviceId: 'dev-alice' }]),
       getGroupMembers: vi.fn().mockResolvedValue([]),
       addMember: vi.fn().mockRejectedValue(new Error('DuplicateSignatureKey already exists')),
-      registerMember,
     });
-
     const convs = new Map<string, Conversation>();
     convs.set('grp_1', makeConversation({ groupId: 'g-1', isReady: true }));
 
-    const promise = syncOwnDevicesToGroups({
+    const promise = processPendingInvitations({
       mlsService: mls,
       userId: 'jolan',
       pin: '1234',
@@ -526,25 +533,34 @@ describe('syncOwnDevicesToGroups', () => {
     await vi.runAllTimersAsync();
     await promise;
 
-    // Should log about DuplicateSignature and register server-side
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("deja dans l'arbre MLS de g-1"));
-    expect(registerMember).toHaveBeenCalledWith('g-1', 'jolan', 'dev-2');
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("déjà dans l'arbre MLS"));
+    expect(mls.updateInvitationStatus).toHaveBeenCalledWith(
+      'dev-alice',
+      'alice',
+      'g-1',
+      'welcome_received'
+    );
   });
 
-  it('enregistre le device courant côté serveur pour les conversations prêtes au premier sync', async () => {
+  it('gère WrongEpoch et vérifie si déjà traité', async () => {
     const log = vi.fn();
-    const registerMember = vi.fn().mockResolvedValue(undefined);
     const mls = makeMls({
-      fetchUserDevices: vi.fn().mockResolvedValue([]),
-      getDeviceId: vi.fn().mockReturnValue('dev-main'),
-      registerMember,
+      getPendingInvitations: vi
+        .fn()
+        .mockResolvedValue([
+          { id: '1', userId: 'alice', deviceId: 'dev-alice', groupId: 'g-1', status: 'pending' },
+        ]),
+      fetchUserDevices: vi
+        .fn()
+        .mockResolvedValue([{ keyPackage: new Uint8Array([1]), deviceId: 'dev-alice' }]),
+      getGroupMembers: vi.fn().mockResolvedValue([]),
+      addMember: vi.fn().mockRejectedValue(new Error('WrongEpoch')),
+      getDeviceMemberships: vi.fn().mockResolvedValue([{ groupId: 'g-1', status: 'welcome_sent' }]),
     });
-
     const convs = new Map<string, Conversation>();
     convs.set('grp_1', makeConversation({ groupId: 'g-1', isReady: true }));
-    convs.set('grp_2', makeConversation({ groupId: 'g-2', isReady: true, name: 'room2' }));
 
-    const promise = syncOwnDevicesToGroups({
+    const promise = processPendingInvitations({
       mlsService: mls,
       userId: 'jolan',
       pin: '1234',
@@ -555,11 +571,35 @@ describe('syncOwnDevicesToGroups', () => {
     await vi.runAllTimersAsync();
     await promise;
 
-    // Self-registration should have been called for both ready conversations
-    expect(registerMember).toHaveBeenCalledWith('g-1', 'jolan', 'dev-main');
-    expect(registerMember).toHaveBeenCalledWith('g-2', 'jolan', 'dev-main');
-    // Flag should be cached to avoid repeating on next sync cycle
-    expect(localStorage.getItem('self_registered:jolan:dev-main')).toBe('1');
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('déjà traité'));
+  });
+
+  it('skip quand le verrou est pris par un autre appareil', async () => {
+    const log = vi.fn();
+    const mls = makeMls({
+      getPendingInvitations: vi
+        .fn()
+        .mockResolvedValue([
+          { id: '1', userId: 'alice', deviceId: 'dev-alice', groupId: 'g-1', status: 'pending' },
+        ]),
+      acquireAddLock: vi.fn().mockResolvedValue(false),
+    });
+    const convs = new Map<string, Conversation>();
+    convs.set('grp_1', makeConversation({ groupId: 'g-1', isReady: true }));
+
+    const promise = processPendingInvitations({
+      mlsService: mls,
+      userId: 'jolan',
+      pin: '1234',
+      conversations: convs,
+      log,
+    });
+
+    await vi.runAllTimersAsync();
+    await promise;
+
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('verrou tenu'));
+    expect(mls.addMember).not.toHaveBeenCalled();
   });
 });
 
