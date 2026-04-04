@@ -93,6 +93,7 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
     );
 
     if (ownDevices.length > 0) {
+      const lockAcquired = await mlsService.acquireAddLock(groupId).catch(() => false);
       try {
         const bulk = await mlsService.addMembersBulk(groupId, ownDevices);
         log(
@@ -128,6 +129,8 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
         }
       } catch (e) {
         log(`Erreur synchro propres appareils: ${e}`);
+      } finally {
+        if (lockAcquired) await mlsService.releaseAddLock(groupId).catch(() => {});
       }
     } else {
       // Pas d'autres appareils : sauvegarder quand même après createGroup
@@ -200,53 +203,64 @@ async function processBulkAddition(
       return;
     }
 
-    // Add all devices in bulk (single MLS commit)
-    const bulk = await mlsService.addMembersBulk(conversation.groupId, allDevices);
+    const lockAcquired = await mlsService
+      .acquireAddLock(conversation.groupId, 15_000)
+      .catch(() => false);
+    if (!lockAcquired) {
+      log(`[WARN] Verrou occupé pour ${conversation.groupId}, tentative quand même...`);
+    }
 
     // Track delivery success per user. We only register server membership when a
     // Welcome has been successfully accepted by delivery service for that device.
     const deliveredUsers = new Set<string>();
 
-    const stateBytes = await mlsService.saveState(pin);
-    localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
+    try {
+      // Add all devices in bulk (single MLS commit)
+      const bulk = await mlsService.addMembersBulk(conversation.groupId, allDevices);
 
-    // Send welcomes per-device; do not abort all recipients on one failure.
-    log(
-      `[SYNC] bulk.welcome exists: ${!!bulk.welcome}, bulk.welcome length: ${bulk.welcome?.length ?? 0}`
-    );
-    log(`[SYNC] bulk.addedDeviceIds: ${bulk.addedDeviceIds.join(', ')}`);
+      const stateBytes = await mlsService.saveState(pin);
+      localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
 
-    if (bulk.welcome) {
-      for (const did of bulk.addedDeviceIds) {
-        const tUser = userMap.get(did);
-        if (!tUser) continue;
-        try {
-          log(`[SYNC] Envoi Welcome a ${tUser}:${did} pour groupe ${conversation.groupId}...`);
-          await mlsService.sendWelcome(
-            bulk.welcome,
-            tUser,
-            conversation.groupId,
-            did,
-            bulk.ratchetTree
-          );
-          await mlsService.registerMember(conversation.groupId, tUser, did);
-          deliveredUsers.add(tUser);
-          log(`[SYNC] Welcome envoye avec succes a ${tUser}:${did}`);
-        } catch (err) {
-          log(
-            `[WARN] Welcome non livre pour ${tUser}:${did} - ${
-              err instanceof Error ? err.message : String(err)
-            }`
-          );
+      // Send welcomes per-device; do not abort all recipients on one failure.
+      log(
+        `[SYNC] bulk.welcome exists: ${!!bulk.welcome}, bulk.welcome length: ${bulk.welcome?.length ?? 0}`
+      );
+      log(`[SYNC] bulk.addedDeviceIds: ${bulk.addedDeviceIds.join(', ')}`);
+
+      if (bulk.welcome) {
+        for (const did of bulk.addedDeviceIds) {
+          const tUser = userMap.get(did);
+          if (!tUser) continue;
+          try {
+            log(`[SYNC] Envoi Welcome a ${tUser}:${did} pour groupe ${conversation.groupId}...`);
+            await mlsService.sendWelcome(
+              bulk.welcome,
+              tUser,
+              conversation.groupId,
+              did,
+              bulk.ratchetTree
+            );
+            await mlsService.registerMember(conversation.groupId, tUser, did);
+            deliveredUsers.add(tUser);
+            log(`[SYNC] Welcome envoye avec succes a ${tUser}:${did}`);
+          } catch (err) {
+            log(
+              `[WARN] Welcome non livre pour ${tUser}:${did} - ${
+                err instanceof Error ? err.message : String(err)
+              }`
+            );
+          }
         }
       }
+
+      if (bulk.commit) await mlsService.sendCommit(bulk.commit, conversation.groupId);
+
+      log(
+        `[OK] Ajoutes: ${targetUsers.join(', ')} (${bulk.addedDeviceIds.length} appareils). (${deliveredUsers.size} utilisateur(s) livrés)`
+      );
+    } finally {
+      if (lockAcquired) await mlsService.releaseAddLock(conversation.groupId).catch(() => {});
     }
-
-    if (bulk.commit) await mlsService.sendCommit(bulk.commit, conversation.groupId);
-
-    log(
-      `[OK] Ajoutes: ${targetUsers.join(', ')} (${bulk.addedDeviceIds.length} appareils). (${deliveredUsers.size} utilisateur(s) livrés)`
-    );
 
     // Broadcast member addition notification (one generic or multiple specific?)
     // Let's send one generic message listing all new users
@@ -350,54 +364,41 @@ export async function startNewConversation(
     await mlsService.createGroup(groupId);
     await mlsService.registerMember(groupId, userId, mlsService.getDeviceId());
 
-    // First add target contact's devices (they are already verified available)
-    const bulk = await mlsService.addMembersBulk(groupId, contactDevices);
-
-    for (const did of bulk.addedDeviceIds) {
-      await mlsService.registerMember(groupId, contact, did);
-    }
-
-    if (bulk.welcome) {
-      for (const did of bulk.addedDeviceIds) {
-        await mlsService.sendWelcome(bulk.welcome, contact, groupId, did, bulk.ratchetTree);
-      }
-    }
-
-    // Sauvegarder AVANT sendCommit (crash-safety)
-    let stBytes = await mlsService.saveState(pin);
-    localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
-    if (bulk.commit) await mlsService.sendCommit(bulk.commit, groupId);
-
-    // Now add own other devices (after contact is successfully added)
+    // Collect ALL devices (contact + own) for a single bulk add
     const ownDevices = (await mlsService.fetchUserDevices(userId)).filter(
       (d) => d.deviceId !== mlsService.getDeviceId()
     );
-    if (ownDevices.length > 0) {
-      try {
-        const ownBulk = await mlsService.addMembersBulk(groupId, ownDevices);
-        for (const did of ownBulk.addedDeviceIds) {
-          await mlsService.registerMember(groupId, userId, did);
-        }
-        if (ownBulk.welcome) {
-          for (const did of ownBulk.addedDeviceIds) {
-            await mlsService.sendWelcome(
-              ownBulk.welcome,
-              userId,
-              groupId,
-              did,
-              ownBulk.ratchetTree
+    const allDevices = [...contactDevices, ...ownDevices];
+    const contactDeviceIds = new Set(contactDevices.map((d) => d.deviceId));
+
+    const lockAcquired = await mlsService.acquireAddLock(groupId).catch(() => false);
+    try {
+      const bulk = await mlsService.addMembersBulk(groupId, allDevices);
+
+      for (const did of bulk.addedDeviceIds) {
+        const owner = contactDeviceIds.has(did) ? contact : userId;
+        await mlsService.registerMember(groupId, owner, did);
+      }
+
+      if (bulk.welcome) {
+        for (const did of bulk.addedDeviceIds) {
+          const owner = contactDeviceIds.has(did) ? contact : userId;
+          try {
+            await mlsService.sendWelcome(bulk.welcome, owner, groupId, did, bulk.ratchetTree);
+          } catch (e) {
+            log(
+              `[DM] Welcome echoue ${owner}:${did}: ${e instanceof Error ? e.message : String(e)}`
             );
           }
         }
-        // Sauvegarder AVANT sendCommit (crash-safety)
-        stBytes = await mlsService.saveState(pin);
-        localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
-        if (ownBulk.commit) await mlsService.sendCommit(ownBulk.commit, groupId);
-      } catch (e) {
-        log(
-          `[WARN] Echec sync propres appareils (createNewGroup): ${e instanceof Error ? e.message : String(e)}`
-        );
       }
+
+      // Sauvegarder AVANT sendCommit (crash-safety)
+      const stBytes = await mlsService.saveState(pin);
+      localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
+      if (bulk.commit) await mlsService.sendCommit(bulk.commit, groupId);
+    } finally {
+      if (lockAcquired) await mlsService.releaseAddLock(groupId).catch(() => {});
     }
 
     const convo = conversations.get(conversationKey)!;
@@ -447,51 +448,41 @@ export async function repairDirectConversation(
     await mlsService.createGroup(groupId);
     await mlsService.registerMember(groupId, userId, mlsService.getDeviceId());
 
-    // First add contact's devices (already verified available)
-    const bulk = await mlsService.addMembersBulk(groupId, devices);
-    for (const did of bulk.addedDeviceIds) await mlsService.registerMember(groupId, contact, did);
-
-    if (bulk.welcome) {
-      for (const did of bulk.addedDeviceIds) {
-        await mlsService.sendWelcome(bulk.welcome, contact, groupId, did, bulk.ratchetTree);
-      }
-    }
-
-    // Sauvegarder AVANT sendCommit (crash-safety)
-    let stBytes = await mlsService.saveState(pin);
-    localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
-    if (bulk.commit) await mlsService.sendCommit(bulk.commit, groupId);
-
-    // Then add own other devices
+    // Collect ALL devices (contact + own) for a single bulk add
     const ownDevices = (await mlsService.fetchUserDevices(userId)).filter(
       (d) => d.deviceId !== mlsService.getDeviceId()
     );
-    if (ownDevices.length > 0) {
-      try {
-        const ownBulk = await mlsService.addMembersBulk(groupId, ownDevices);
-        for (const did of ownBulk.addedDeviceIds) {
-          await mlsService.registerMember(groupId, userId, did);
-        }
-        if (ownBulk.welcome) {
-          for (const did of ownBulk.addedDeviceIds) {
-            await mlsService.sendWelcome(
-              ownBulk.welcome,
-              userId,
-              groupId,
-              did,
-              ownBulk.ratchetTree
+    const allDevices = [...devices, ...ownDevices];
+    const contactDeviceIds = new Set(devices.map((d) => d.deviceId));
+
+    const lockAcquired = await mlsService.acquireAddLock(groupId).catch(() => false);
+    try {
+      const bulk = await mlsService.addMembersBulk(groupId, allDevices);
+
+      for (const did of bulk.addedDeviceIds) {
+        const owner = contactDeviceIds.has(did) ? contact : userId;
+        await mlsService.registerMember(groupId, owner, did);
+      }
+
+      if (bulk.welcome) {
+        for (const did of bulk.addedDeviceIds) {
+          const owner = contactDeviceIds.has(did) ? contact : userId;
+          try {
+            await mlsService.sendWelcome(bulk.welcome, owner, groupId, did, bulk.ratchetTree);
+          } catch (e) {
+            log(
+              `[REPAIR] Welcome echoue ${owner}:${did}: ${e instanceof Error ? e.message : String(e)}`
             );
           }
         }
-        // Sauvegarder AVANT sendCommit (crash-safety)
-        stBytes = await mlsService.saveState(pin);
-        localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
-        if (ownBulk.commit) await mlsService.sendCommit(ownBulk.commit, groupId);
-      } catch (e) {
-        log(
-          `[WARN] Echec sync propres appareils (repairDirect): ${e instanceof Error ? e.message : String(e)}`
-        );
       }
+
+      // Sauvegarder AVANT sendCommit (crash-safety)
+      const stBytes = await mlsService.saveState(pin);
+      localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
+      if (bulk.commit) await mlsService.sendCommit(bulk.commit, groupId);
+    } finally {
+      if (lockAcquired) await mlsService.releaseAddLock(groupId).catch(() => {});
     }
 
     conversations.set(conversationKey, { ...convo, groupId, isReady: true });
