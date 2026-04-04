@@ -63,6 +63,11 @@ export class FormsController {
     return this.service.getSubmissions(id);
   }
 
+  @Post('submissions/:submissionId/mark-paid')
+  markPaid(@Param('submissionId') submissionId: string, @Body() body: { sessionId?: string }) {
+    return this.service.markPaid(submissionId, body.sessionId);
+  }
+
   @Get(':id/export')
   async export(@Param('id') id: string, @Res() res: Response) {
     const buffer = await this.service.exportSubmissions(id);

@@ -140,9 +140,9 @@
     stripeLoading = true;
     try {
       const result = await startStripeOnboarding(asso.id, asso.stripeAccountId ?? undefined);
-      // Save the Stripe account ID on the association
-      if (result.accountId && !asso.stripeAccountId) {
-        await updateAssociation(asso.id, {});
+      // The core-service saves the stripeAccountId to the association automatically
+      if (result.accountId) {
+        asso = { ...asso, stripeAccountId: result.accountId };
       }
       window.location.href = result.url;
     } catch (err) {

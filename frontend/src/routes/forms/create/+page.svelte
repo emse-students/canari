@@ -1,6 +1,8 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { createForm, type CreateFormPayload } from '$lib/forms/api';
+  import { listAssociations, type Association } from '$lib/associations/api';
   import FormBuilder from '$lib/components/forms/FormBuilder.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
@@ -14,6 +16,19 @@
   let submitLabel = $state('Envoyer');
   let maxSubmissions = $state<number | undefined>(undefined);
   let requiresPayment = $state(false);
+  let associationId = $state('');
+
+  // Associations with Stripe account (eligible as recipients)
+  let associations = $state<Association[]>([]);
+
+  onMount(async () => {
+    try {
+      const all = await listAssociations();
+      associations = all.filter((a) => a.stripeAccountId);
+    } catch {
+      // Ignore — user may not have access
+    }
+  });
 
   let items = $state<any[]>([
     {
@@ -56,6 +71,7 @@
         })),
         maxSubmissions,
         requiresPayment,
+        associationId: requiresPayment && associationId ? associationId : undefined,
       };
       await createForm(payload);
       goto('/forms');
@@ -219,6 +235,28 @@
           </select>
         </div>
       </div>
+
+      <!-- Recipient Association -->
+      {#if associations.length > 0}
+        <div class="mt-4">
+          <label for="association-select" class="block text-sm font-bold text-text-main mb-2 ml-1"
+            >Bénéficiaire (association)</label
+          >
+          <select
+            id="association-select"
+            bind:value={associationId}
+            class="w-full px-4 py-3 border-2 border-cn-border rounded-2xl text-base text-text-main bg-[var(--cn-surface)] outline-none transition-all focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)]"
+          >
+            <option value="">Aucune — paiement vers le compte principal</option>
+            {#each associations as a (a.id)}
+              <option value={a.id}>{a.name}</option>
+            {/each}
+          </select>
+          <p class="text-xs text-text-muted mt-1 ml-1">
+            Les paiements seront transférés au compte Stripe de l'association sélectionnée.
+          </p>
+        </div>
+      {/if}
     {/if}
   </section>
 

@@ -250,8 +250,6 @@ export class AuthController {
       formation?: string;
     };
 
-    console.log('[oidcCallback] userinfo from Authentik:', userinfo);
-
     if (!userinfo.sub) {
       throw new UnauthorizedException(
         'Invalid userinfo response from Authentik',

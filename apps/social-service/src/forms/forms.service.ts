@@ -168,6 +168,15 @@ export class FormsService {
     return { message: 'Form submitted successfully', submissionId: savedSubmission.id };
   }
 
+  async markPaid(submissionId: string, sessionId?: string) {
+    const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
+    if (!submission) throw new NotFoundException('Submission not found');
+    submission.paymentStatus = 'paid';
+    if (sessionId) submission.stripeSessionId = sessionId;
+    await this.submissionRepo.save(submission);
+    return { ok: true };
+  }
+
   private hasValue(val: any): boolean {
     if (Array.isArray(val)) return val.length > 0;
     if (val && typeof val === 'object') return Object.keys(val).length > 0;

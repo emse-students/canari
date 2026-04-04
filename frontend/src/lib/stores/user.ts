@@ -101,3 +101,37 @@ export async function updateMyProfile(data: {
   }
   return (await res.json()) as UserProfile;
 }
+
+// ── Payment Methods ─────────────────────────────────────────────────────
+
+export interface PaymentMethod {
+  id: string;
+  brand: string;
+  last4: string;
+  expMonth: number;
+  expYear: number;
+}
+
+export async function setupPaymentMethod(): Promise<{ ok: boolean; url?: string }> {
+  const res = await apiFetch(`${coreUrl()}/api/payments/setup-payment-method`, {
+    method: 'POST',
+  });
+  if (!res.ok) throw new Error(`Failed to start payment setup (${res.status})`);
+  return (await res.json()) as { ok: boolean; url?: string };
+}
+
+export async function listPaymentMethods(): Promise<PaymentMethod[]> {
+  const res = await apiFetch(`${coreUrl()}/api/payments/payment-methods`);
+  if (!res.ok) throw new Error(`Failed to fetch payment methods (${res.status})`);
+  return (await res.json()) as PaymentMethod[];
+}
+
+export async function deletePaymentMethod(id: string): Promise<void> {
+  const res = await apiFetch(
+    `${coreUrl()}/api/payments/payment-methods/${encodeURIComponent(id)}`,
+    {
+      method: 'DELETE',
+    }
+  );
+  if (!res.ok) throw new Error(`Failed to delete payment method (${res.status})`);
+}

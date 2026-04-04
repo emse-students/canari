@@ -103,7 +103,12 @@ export class AssociationsController {
     return this.service.removeMember(id, targetUserId);
   }
 
-  // ── Internal (called by core-service webhook) ─────────────────────────────
+  // ── Internal (called by core-service) ───────────────────────────────────
+
+  @Post(':id/stripe-account')
+  setStripeAccount(@Param('id') id: string, @Body() body: { stripeAccountId: string }) {
+    return this.service.setStripeAccountId(id, body.stripeAccountId);
+  }
 
   @Post(':id/stripe-complete')
   markStripeComplete(@Param('id') id: string) {

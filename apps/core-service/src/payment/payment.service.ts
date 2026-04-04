@@ -85,4 +85,77 @@ export class PaymentService {
     const account = await this.stripe.accounts.retrieve(accountId);
     return { chargesEnabled: account.charges_enabled ?? false };
   }
+
+  // ── Customer & Payment Methods ────────────────────────────────────────────
+
+  async getOrCreateCustomer(
+    existingCustomerId: string | null,
+    meta: { userId: string; displayName?: string | null },
+  ): Promise<string> {
+    if (!this.stripe) throw new BadRequestException('Stripe not configured');
+
+    if (existingCustomerId) {
+      try {
+        const customer =
+          await this.stripe.customers.retrieve(existingCustomerId);
+        if (!customer.deleted) return existingCustomerId;
+      } catch {
+        // Customer no longer exists — create a new one
+      }
+    }
+
+    const customer = await this.stripe.customers.create({
+      metadata: { userId: meta.userId },
+      name: meta.displayName ?? undefined,
+    });
+    return customer.id;
+  }
+
+  async createSetupCheckoutSession(params: {
+    customerId: string;
+    successUrl: string;
+    cancelUrl: string;
+  }): Promise<{ url: string; sessionId: string }> {
+    if (!this.stripe) throw new BadRequestException('Stripe not configured');
+
+    const session = await this.stripe.checkout.sessions.create({
+      mode: 'setup',
+      customer: params.customerId,
+      payment_method_types: ['card'],
+      success_url: params.successUrl,
+      cancel_url: params.cancelUrl,
+    });
+
+    return { url: session.url!, sessionId: session.id };
+  }
+
+  async listPaymentMethods(customerId: string): Promise<
+    {
+      id: string;
+      brand: string;
+      last4: string;
+      expMonth: number;
+      expYear: number;
+    }[]
+  > {
+    if (!this.stripe) throw new BadRequestException('Stripe not configured');
+
+    const methods = await this.stripe.paymentMethods.list({
+      customer: customerId,
+      type: 'card',
+    });
+
+    return methods.data.map((pm) => ({
+      id: pm.id,
+      brand: pm.card?.brand ?? 'unknown',
+      last4: pm.card?.last4 ?? '????',
+      expMonth: pm.card?.exp_month ?? 0,
+      expYear: pm.card?.exp_year ?? 0,
+    }));
+  }
+
+  async detachPaymentMethod(paymentMethodId: string): Promise<void> {
+    if (!this.stripe) throw new BadRequestException('Stripe not configured');
+    await this.stripe.paymentMethods.detach(paymentMethodId);
+  }
 }

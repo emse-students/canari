@@ -1,7 +1,16 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { fetchMyProfile, updateMyProfile, type UserProfile } from '$lib/stores/user';
+  import {
+    fetchMyProfile,
+    updateMyProfile,
+    setupPaymentMethod,
+    listPaymentMethods,
+    deletePaymentMethod,
+    type UserProfile,
+    type PaymentMethod,
+  } from '$lib/stores/user';
   import Avatar from '$lib/components/shared/Avatar.svelte';
+  import { CreditCard, Trash2 } from 'lucide-svelte';
 
   let profile = $state<UserProfile | null>(null);
   let loading = $state(true);
@@ -9,6 +18,13 @@
   let editingBio = $state(false);
   let bioInput = $state('');
   let saving = $state(false);
+
+  // Payment methods
+  let paymentMethods = $state<PaymentMethod[]>([]);
+  let paymentLoading = $state(false);
+  let paymentSetupLoading = $state(false);
+  let paymentError = $state('');
+  let paymentSuccess = $state('');
 
   onMount(async () => {
     try {
@@ -19,7 +35,60 @@
     } finally {
       loading = false;
     }
+
+    // Check for payment setup redirect result
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('payment_setup') === 'success') {
+      paymentSuccess = 'Moyen de paiement enregistré avec succès.';
+      history.replaceState(null, '', '/profile');
+    }
+
+    loadPaymentMethods();
   });
+
+  async function loadPaymentMethods() {
+    paymentLoading = true;
+    try {
+      paymentMethods = await listPaymentMethods();
+    } catch {
+      // Ignore — Stripe may not be configured
+    } finally {
+      paymentLoading = false;
+    }
+  }
+
+  async function handleSetupPayment() {
+    paymentSetupLoading = true;
+    paymentError = '';
+    try {
+      const result = await setupPaymentMethod();
+      if (result.url) {
+        window.location.href = result.url;
+      }
+    } catch (err) {
+      paymentError = err instanceof Error ? err.message : 'Erreur Stripe';
+      paymentSetupLoading = false;
+    }
+  }
+
+  async function handleDeletePaymentMethod(id: string) {
+    if (!confirm('Supprimer ce moyen de paiement ?')) return;
+    try {
+      await deletePaymentMethod(id);
+      paymentMethods = paymentMethods.filter((m) => m.id !== id);
+    } catch (err) {
+      paymentError = err instanceof Error ? err.message : 'Erreur lors de la suppression';
+    }
+  }
+
+  function brandLabel(brand: string): string {
+    const labels: Record<string, string> = {
+      visa: 'Visa',
+      mastercard: 'Mastercard',
+      amex: 'American Express',
+    };
+    return labels[brand] ?? brand;
+  }
 
   async function saveBio() {
     saving = true;
@@ -163,6 +232,67 @@
           </dd>
         </div>
       </dl>
+    </div>
+
+    <!-- Payment Methods -->
+    <div class="rounded-2xl border border-cn-border bg-white/80 p-6">
+      <div class="flex items-center gap-2.5 mb-4">
+        <div class="p-2 rounded-xl bg-cn-yellow/15 text-cn-dark">
+          <CreditCard size={18} />
+        </div>
+        <h2 class="text-base font-bold text-text-main">Moyens de paiement</h2>
+      </div>
+
+      {#if paymentSuccess}
+        <div class="rounded-xl bg-green-50 border border-green-200 text-green-700 p-3 text-sm mb-4">
+          {paymentSuccess}
+        </div>
+      {/if}
+
+      {#if paymentError}
+        <div class="rounded-xl bg-red-50 border border-red-200 text-red-700 p-3 text-sm mb-4">
+          {paymentError}
+        </div>
+      {/if}
+
+      {#if paymentLoading}
+        <p class="text-sm text-text-muted">Chargement…</p>
+      {:else}
+        {#if paymentMethods.length > 0}
+          <div class="space-y-2 mb-4">
+            {#each paymentMethods as pm (pm.id)}
+              <div class="flex items-center justify-between rounded-xl bg-cn-bg/50 px-4 py-3">
+                <div class="flex items-center gap-3">
+                  <CreditCard size={16} class="text-text-muted" />
+                  <span class="text-sm font-medium text-text-main">
+                    {brandLabel(pm.brand)} •••• {pm.last4}
+                  </span>
+                  <span class="text-xs text-text-muted">
+                    {String(pm.expMonth).padStart(2, '0')}/{pm.expYear}
+                  </span>
+                </div>
+                <button
+                  onclick={() => handleDeletePaymentMethod(pm.id)}
+                  class="text-red-400 hover:text-red-600 transition-colors p-1"
+                  title="Supprimer"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <p class="text-sm text-text-muted mb-4">Aucun moyen de paiement enregistré.</p>
+        {/if}
+
+        <button
+          onclick={handleSetupPayment}
+          disabled={paymentSetupLoading}
+          class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover transition-colors disabled:opacity-50"
+        >
+          {paymentSetupLoading ? 'Redirection…' : 'Ajouter une carte'}
+        </button>
+      {/if}
     </div>
   {/if}
 </div>
