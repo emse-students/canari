@@ -21,6 +21,7 @@
   import ChannelMembersSidebar from './chat/ChannelMembersSidebar.svelte';
   import ChannelSettingsModal from './chat/ChannelSettingsModal.svelte';
   import SyncSessionModal from './chat/SyncSessionModal.svelte';
+  import DeviceManagementPanel from './chat/DeviceManagementPanel.svelte';
   import ChatArea from './chat/ChatArea.svelte';
   import LogsPanel from './dev/LogsPanel.svelte';
 
@@ -38,6 +39,8 @@
   let messageText = $state('');
   let isWindowFocused = $state(true);
   let isTabVisible = $state(true);
+  let showDevicePanel = $state(false);
+  let pendingInvitationCount = $state(0);
 
   // Log local (écrit aussi dans le buffer global pour le LogsPanel)
   function log(msg: string) {
@@ -71,7 +74,7 @@
       storage: session.storage,
       log,
       loadExistingConversations: () => convs.loadAndRestoreConversations(convCtx()),
-      syncOwnDevicesToGroupsLocally: () => session.syncOwnDevicesToGroupsLocally(sessionCb()),
+      processDeviceInvitationsLocally: () => session.processDeviceInvitationsLocally(sessionCb()),
     };
   }
 
@@ -326,6 +329,38 @@
   // ─── Mount ────────────────────────────────────────────────────────────────
   // La session est déjà gérée par ChatBackgroundService (monté dans le layout).
   // Ici, on gère uniquement les événements propres à la vue /chat.
+
+  // ─── Pending invitations polling ──────────────────────────────────────────
+  $effect(() => {
+    if (!session.isLoggedIn || !session.myDeviceId) return;
+    const userId = session.userId;
+    const deviceId = session.myDeviceId;
+    let cancelled = false;
+
+    async function pollPendingInvitations() {
+      try {
+        const mls = session.ensureMls();
+        const memberships = await mls.getDeviceMemberships(userId, deviceId);
+        if (!cancelled) {
+          const pending = memberships.filter((m) => m.status === 'pending' || m.status === 'added');
+          pendingInvitationCount = pending.length;
+          if (pending.length > 0) {
+            console.log(`[DevicePanel] ${pending.length} pending invitation(s) detected`);
+          }
+        }
+      } catch {
+        // MLS not ready yet
+      }
+    }
+
+    void pollPendingInvitations();
+    const interval = setInterval(pollPendingInvitations, 30_000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  });
+
   onMount(() => {
     isWindowFocused = document.hasFocus();
     isTabVisible = document.visibilityState === 'visible';
@@ -402,7 +437,8 @@
 
 {#if !session.isLoggedIn}
   <div class="min-h-screen flex items-center justify-center text-sm text-text-muted">
-    Connexion en cours...</div>
+    Connexion en cours...
+  </div>
 {:else}
   <div class="app-layout" in:fade>
     <Navbar
@@ -484,6 +520,8 @@
           )}
         onStartSync={() => sync.handleStartSyncSession(syncCtx())}
         onJoinSync={() => sync.openJoinSyncModal()}
+        onOpenDevicePanel={() => (showDevicePanel = true)}
+        {pendingInvitationCount}
         isHidden={convs.mobileView === 'chat'}
       />
 
@@ -649,6 +687,8 @@
             )}
           onStartSync={() => sync.handleStartSyncSession(syncCtx())}
           onJoinSync={() => sync.openJoinSyncModal()}
+          onOpenDevicePanel={() => (showDevicePanel = true)}
+          {pendingInvitationCount}
           isHidden={false}
           drawerMode={true}
           onCloseDrawer={() => {
@@ -681,6 +721,16 @@
         onCopyPayload={sync.copySyncPayload}
         onClose={sync.closeModal}
       />
+
+      {#if session.isLoggedIn}
+        <DeviceManagementPanel
+          open={showDevicePanel}
+          userId={session.userId}
+          myDeviceId={session.myDeviceId}
+          mlsService={session.ensureMls()}
+          onClose={() => (showDevicePanel = false)}
+        />
+      {/if}
 
       <Modal
         open={convs.showSyncGuidePrompt}

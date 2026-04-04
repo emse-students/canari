@@ -103,6 +103,19 @@ export interface IMlsService {
     lastEpochSeen?: number
   ): Promise<void>;
 
+  /** Delete a specific device-group membership */
+  deleteDeviceMembership(
+    userId: string,
+    deviceId: string,
+    groupId: string
+  ): Promise<{ status: string; affected: number }>;
+
+  /** Delete ALL device-group memberships for a device */
+  deleteAllDeviceMemberships(
+    userId: string,
+    deviceId: string
+  ): Promise<{ status: string; affected: number }>;
+
   // Callbacks
   onChannelEvent?: (event: { type: string; data: any }) => void;
   onMessage(

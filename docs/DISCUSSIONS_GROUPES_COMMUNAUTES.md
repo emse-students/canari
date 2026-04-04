@@ -135,10 +135,13 @@ Message de contrôle MLS diffusé aux membres existants pour qu'ils fassent avan
    │       ├── 7b. generateKeyPackage(pin)
    │       │       → Publication du KeyPackage sur le serveur
    │       ├── 7c. Délai 500ms (propagation du KeyPackage)
-   │       └── 7d. syncOwnDevicesToGroupsLocally()
+   │       └── 7d. processDeviceInvitationsLocally()
    │
-   ├── 8. syncOwnDevicesToGroups(params)             [actions.ts]
-   │       → Ajoute les nouveaux appareils du même utilisateur à tous les groupes existants
+   ├── 8. processPendingInvitations(params)          [actions.ts]
+   │       → Paradigme "Any member bootstraps" : n'importe quel appareil en ligne
+   │         traite les DeviceGroupMembership en attente (pending) pour les groupes
+   │         auxquels il appartient.
+   │       → Fetch serveur → addMember → sendWelcome → updateInvitationStatus
    │
    └── 9. discoverMissingGroups(params)              [actions.ts]
            → Détecte les groupes serveur absents localement → crée des placeholders
@@ -149,7 +152,7 @@ Message de contrôle MLS diffusé aux membres existants pour qu'ils fassent avan
 Gérée par `scheduleReconnect()` dans `useChatSession.svelte.ts` :
 
 - Backoff exponentiel : `[1s, 2s, 4s, 8s, 16s, 30s]` (plafonné à 30s)
-- À chaque reconnexion réussie : `fetchPendingMessages()` + `syncOwnDevicesToGroups()` + `generateKeyPackage()`
+- À chaque reconnexion réussie : `fetchPendingMessages()` + `processPendingInvitations()` + `generateKeyPackage()`
 
 ---
 
@@ -570,40 +573,40 @@ Frontend (AES-256-GCM)  ←→  Social Service (MongoDB)  ←→  Redis PubSub
 
 ## 8. Synchronisation multi-appareils
 
-### 8.1 Ajout des propres appareils aux groupes existants
+### 8.1 Paradigme "Any member bootstraps" (processPendingInvitations)
 
-**Fonction** : `syncOwnDevicesToGroups(params)` → `actions.ts`
+**Fonction** : `processPendingInvitations(params)` → `actions.ts`
 
-Règle de sécurité MLS : le nouvel appareil rejoint via un Welcome émis par un appareil déjà membre du groupe. Dans Canari, c'est généralement l'appareil courant (déjà membre) qui invite les autres appareils du même utilisateur.
+**Principe** : N'importe quel appareil d'un membre du groupe, déjà en ligne et en état `welcome_received`, peut traiter les invitations en attente (status `pending`) des autres appareils. Cela élimine les deadlocks : le premier appareil à se reconnecter invite automatiquement tous les appareils en attente.
+
+**Entité serveur** : `DeviceGroupMembership` avec machine à états :
+- `pending` → L'appareil est enregistré mais n'a pas encore reçu de Welcome
+- `added` → Un appareil a commité un Add MLS pour cet appareil  
+- `welcome_sent` → Le Welcome a été stocké sur le serveur
+- `welcome_received` → L'appareil a récupéré et traité son Welcome
 
 ```
-Pour chaque nouvel appareil :
-  Pour chaque conversation isReady :
-    En ── vérifier si déjà membre (serveur) ── skip si oui
-    En ── addMember(groupId, freshKeyPackage) ──→ En+1
-    En+1 ── sendWelcome + sendCommit ── attente 100ms entre groupes
-  Attente 2000ms entre appareils (propagation Welcome)
+Pour chaque invitation pending (groupée par groupId) :
+  ── Vérifier conversation locale ready ── skip si absente
+  ── acquireAddLock(groupId, 15s) ── skip si verrou pris
+  ── fetchUserDevices(inv.userId) ── récupérer KeyPackage frais
+  ── getGroupMembers(groupId) ── vérifier idempotence
+  ── addMember(groupId, keyPackage) → Epoch+1
+  ── registerMember + sendWelcome + saveState + sendCommit
+  ── releaseAddLock(groupId)
 ```
 
-**Étapes détaillées** :
+**Gestion des erreurs** :
+- `DuplicateSignatureKey` → Appareil déjà membre → `updateInvitationStatus(welcome_received)`
+- `WrongEpoch` → Vérifier si un autre appareil a déjà traité → skip si `welcome_sent`/`welcome_received`
+- KeyPackage introuvable → skip (appareil potentiellement supprimé)
 
-1. **Récupération des appareils distants** : `fetchUserDevices(userId)` → filtre le deviceId courant
-2. **Cache** : `localStorage['known_own_devices:{userId}']` → évite de re-sync des appareils déjà connus
-3. **Pour chaque NOUVEL appareil** (séquentiel, un à la fois) :
-   a. **Rafraîchissement KeyPackage** : re-fetch le KeyPackage le plus récent
-   b. **Pour chaque conversation ready** :
-   - `getGroupMembers(groupId)` → vérifie si l'appareil est déjà membre
-   - Si déjà membre → skip
-   - `addMember(groupId, keyPackage)` → **Epoch +1**
-   - `registerMember(groupId, userId, deviceId)`
-   - `sendWelcome(...)` + `sendCommit(...)`
-   - `saveState(pin)`
-   - **Délai 100ms** entre groupes
-     c. **Gestion des erreurs** :
-   - `DuplicateSignatureKey` → traité comme "déjà membre" (pas un échec)
-   - `WrongEpoch` → ignoré silencieusement
-     d. **Délai 2000ms** entre appareils (attente propagation Welcome)
-     e. **Cache conditionnel** : L'appareil n'est mis en cache que si au moins un Welcome a réussi ou s'il n'y avait rien à sync
+**Détection des appareils obsolètes** (cron serveur toutes les 5 min) :
+- Groupes avec `activeEpoch > 10` : appareils avec `lastEpochSeen < activeEpoch - 10` → reset à `pending`
+- L'appareil sera automatiquement ré-invité au prochain passage de `processPendingInvitations`
+
+**Nettoyage automatique** (cron serveur toutes les heures) :
+- Messages en file d'attente (QueuedMessage) de plus de 7 jours → supprimés
 
 ### 8.2 Découverte de groupes manquants
 
@@ -615,14 +618,12 @@ Pour chaque nouvel appareil :
 4. Pour chaque groupe manquant : crée un placeholder avec `isReady: false`
 5. Le groupe deviendra fonctionnel quand un Welcome sera reçu
 
-Cas limite : si aucun appareil déjà membre n'émet de Welcome (ou si la livraison échoue), le groupe peut apparaître en placeholder mais restera non utilisable tant qu'une ré-invitation MLS n'a pas lieu.
-
 ### 8.3 Reset de sync forcé
 
 **Fonction** : `forceSyncReset(userId, log)` → `actions.ts`
 
-- Efface `localStorage['known_own_devices:{userId}']`
-- Au prochain rechargement, `syncOwnDevicesToGroups` re-traitera tous les appareils
+- Outil de debugging : force le rechargement complet
+- Au prochain rechargement, `processPendingInvitations` retraite toutes les invitations pending
 
 ---
 
@@ -733,7 +734,7 @@ processIncomingMessage(groupId, content) → ERREUR
 | Envoyer message      | `sendMessage`               | `send_message_bytes`                                                |          n           |        0        |
 | Recevoir message     | `setupMessageHandler`       | `processIncomingMessage`                                            | n (ou n+1 si commit) |        0        |
 | Recevoir Welcome     | `setupMessageHandler`       | `processWelcome`                                                    |  → epoch du Welcome  |        0        |
-| Sync appareils       | `syncOwnDevicesToGroups`    | `addMember` × N groupes × M appareils                               |    +1 pour chaque    |    1 par add    |
+| Sync appareils       | `processPendingInvitations` | `addMember` par invitation pending (avec verrou)                     |    +1 par invitation |    1 par add    |
 | Réparer discussion   | `repairDirectConversation`  | `createGroup` + `addMembersBulk` ×2                                 |      0 → 1 → 2       |        2        |
 | Rejeu historique     | `replayConversationHistory` | `processIncomingMessage` × N                                        |       variable       |        0        |
 | Discovery            | `discoverMissingGroups`     | Aucune                                                              |          —           |        0        |
@@ -768,8 +769,8 @@ processIncomingMessage(groupId, content) → ERREUR
 
 | Fonction                         | Exportée | Rôle                                                                      |
 | -------------------------------- | :------: | ------------------------------------------------------------------------- |
-| `syncOwnDevicesToGroups(params)` |    ✅    | Synchronise les nouveaux appareils du même utilisateur à tous les groupes |
-| `forceSyncReset(userId, log)`    |    ✅    | Efface le cache d'appareils connus (⚠️ **inutilisée**)                    |
+| `processPendingInvitations(params)` |    ✅    | Traite les invitations pending via paradigme "any member bootstraps" |
+| `forceSyncReset(userId, log)`    |    ✅    | Outil de debugging : force un rechargement complet des invitations        |
 | `discoverMissingGroups(params)`  |    ✅    | Détecte les groupes serveur absents localement                            |
 | `exportUserBackup(params)`       |    ✅    | Exporte une sauvegarde chiffrée                                           |
 | `importUserBackup(params)`       |    ✅    | Importe une sauvegarde                                                    |
@@ -857,25 +858,25 @@ processIncomingMessage(groupId, content) → ERREUR
 - **Raison probable** : L'UI de suppression de groupe n'est pas implémentée. La suppression se fait par le mécanisme de détection de groupes fantômes (§10) ou côté serveur.
 - **Recommandation** : Supprimer ou implémenter l'UI correspondante.
 
-### ❌ `forceSyncReset` — `actions.ts`
+### ✅ `forceSyncReset` — `actions.ts`
 
 - **Exportée** : Oui
-- **Importée quelque part** : Non
-- **Appelée** : Jamais
-- **Raison probable** : Conçue comme outil de debug manuel mais jamais intégrée dans l'UI.
-- **Recommandation** : Supprimer ou exposer dans les dev tools.
+- **Importée** : `MainChatPage.svelte` (raccourci Ctrl+Shift+S)
+- **Appelée** : Via raccourci clavier pour debugging
+- **Rôle** : Force un rechargement complet, `processPendingInvitations` retraitera toutes les invitations pending au prochain cycle.
 
 ---
 
 ## 15. Incohérences temporelles et risques identifiés
 
-### 🔴 Risque 1 : Race condition sur les Welcome dans syncOwnDevicesToGroups
+### � Risque 1 (RÉSOLU) : Race condition sur les Welcome — anciennement syncOwnDevicesToGroups
 
-**Contexte** : `syncOwnDevicesToGroups` traite les appareils **séquentiellement** avec un délai de 2000ms entre chaque appareil, mais seulement 100ms entre chaque groupe.
+**Contexte historique** : L'ancien `syncOwnDevicesToGroups` traitait les appareils séquentiellement avec des délais fixes (100ms entre groupes, 2000ms entre appareils).
 
-**Problème** : Si l'appareil cible n'a pas encore traité le Welcome d'un groupe quand le prochain groupe est ajouté (100ms peut être insuffisant pour un appareil lent ou avec une latence réseau élevée), l'appareil cible recevra des messages pour un groupe qu'il n'a pas encore rejoint.
-
-**Atténuation existante** : Le système de file d'attente (`pendingWelcomeGroups`) dans `WebMlsService` bufferise les messages pour les groupes en cours de join. Cependant, cela ne fonctionne que si le Welcome arrive AVANT les messages applicatifs dans la file.
+**Résolution** : Le nouveau paradigme "any member bootstraps" (`processPendingInvitations`) utilise un **système de verrous distribués** (`acquireAddLock/releaseAddLock` avec TTL 15s) et traite les invitations **une par une** avec vérification d'idempotence. Les race conditions sont gérées par :
+- Vérification `getGroupMembers` avant chaque ajout
+- Gestion explicite de `DuplicateSignatureKey` et `WrongEpoch`
+- Détection des appareils obsolètes par cron (epoch threshold > 10)
 
 ### 🔴 Risque 2 : Epoch divergence lors du rejeu d'historique
 
@@ -885,13 +886,11 @@ processIncomingMessage(groupId, content) → ERREUR
 
 **Atténuation existante** : Le code traite `WrongEpoch` comme non-fatal (retourne `true` pour acquitter). Mais cela signifie que certains messages historiques peuvent être **silencieusement perdus**.
 
-### 🟡 Risque 3 : addMember séquentiel dans syncOwnDevicesToGroups vs addMembersBulk dans groupCreation
+### � Risque 3 (RÉSOLU) : addMember séquentiel — anciennement syncOwnDevicesToGroups
 
-**Contexte** : `syncOwnDevicesToGroups` utilise `addMember` (un appareil à la fois, un commit par groupe) tandis que `createNewGroup`, `startNewConversation`, et `inviteMembersToGroup` utilisent `addMembersBulk` (un commit pour tous).
+**Contexte historique** : `syncOwnDevicesToGroups` créait un commit par groupe par appareil, multipliant les changements d'epoch.
 
-**Problème** : L'utilisation de `addMember` séquentiel dans `syncOwnDevicesToGroups` crée **un commit par groupe par appareil**, ce qui multiplie les changements d'epoch. Avec 3 appareils et 10 groupes, cela génère 30 commits vs potentiellement 10 avec du bulk.
-
-**Impact** : Fragmentation d'epoch plus élevée pendant le sync, risque accru de `WrongEpoch` sur les autres appareils qui reçoivent les commits.
+**Résolution** : `processPendingInvitations` traite les invitations pending individuellement avec verrou. Chaque invitation = 1 addMember + 1 commit, mais le verrou distribué empêche les conflits d'epoch entre appareils traitant simultanément. La détection d'appareils obsolètes (cron staleDevices) recycle automatiquement les invitations échouées.
 
 ### 🟡 Risque 4 : Ordre Welcome → Commit non garanti
 
@@ -920,7 +919,7 @@ addMembersBulk(ownDevices) → Epoch 1→2 → sendWelcome + sendCommit
 
 ### 🟢 Point positif : DuplicateSignatureKey bien géré
 
-Le code dans `syncOwnDevicesToGroups` traite correctement `DuplicateSignatureKey` comme un cas "déjà membre" non-fatal, et vérifie les membres serveur avant d'essayer l'ajout.
+Le code dans `processPendingInvitations` traite correctement `DuplicateSignatureKey` comme un cas "déjà membre" non-fatal (→ update status `welcome_received`), et vérifie les membres serveur avant d'essayer l'ajout.
 
 ### 🟢 Point positif : Bulk operations
 

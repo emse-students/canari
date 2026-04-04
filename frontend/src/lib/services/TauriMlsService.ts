@@ -1001,4 +1001,39 @@ export class TauriMlsService implements IMlsService {
       console.error('Failed to update invitation status', e);
     }
   }
+
+  async deleteDeviceMembership(
+    userId: string,
+    deviceId: string,
+    groupId: string
+  ): Promise<{ status: string; affected: number }> {
+    try {
+      const res = await fetch(
+        `${this.historyUrl}/api/mls-api/device-memberships/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}/${encodeURIComponent(groupId)}`,
+        { method: 'DELETE' }
+      );
+      if (!res.ok) return { status: 'error', affected: 0 };
+      return await res.json();
+    } catch (e) {
+      console.error('Failed to delete device membership', e);
+      return { status: 'error', affected: 0 };
+    }
+  }
+
+  async deleteAllDeviceMemberships(
+    userId: string,
+    deviceId: string
+  ): Promise<{ status: string; affected: number }> {
+    try {
+      const res = await fetch(
+        `${this.historyUrl}/api/mls-api/device-memberships/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}`,
+        { method: 'DELETE' }
+      );
+      if (!res.ok) return { status: 'error', affected: 0 };
+      return await res.json();
+    } catch (e) {
+      console.error('Failed to delete all device memberships', e);
+      return { status: 'error', affected: 0 };
+    }
+  }
 }

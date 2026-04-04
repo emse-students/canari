@@ -21,7 +21,7 @@ export interface SyncSessionContext {
   storage: IStorage | null;
   log: (msg: string) => void;
   loadExistingConversations: () => Promise<void>;
-  syncOwnDevicesToGroupsLocally: () => Promise<void>;
+  processDeviceInvitationsLocally: () => Promise<void>;
 }
 
 export function useSyncSession() {
@@ -47,17 +47,7 @@ export function useSyncSession() {
     });
 
     await ctx.loadExistingConversations();
-
-    // Remove peer from the known-devices cache so Welcome messages are re-sent.
-    try {
-      const cacheKey = `known_own_devices:${ctx.userId}`;
-      const known: string[] = JSON.parse(localStorage.getItem(cacheKey) ?? '[]');
-      localStorage.setItem(cacheKey, JSON.stringify(known.filter((id) => id !== peerDeviceId)));
-    } catch {
-      /* ignore */
-    }
-
-    await ctx.syncOwnDevicesToGroupsLocally();
+    await ctx.processDeviceInvitationsLocally();
 
     ctx.log(
       `[SYNC] Terminée. Envoyés: ${result.uploadedMessageCount}, importés: ${result.importedMessageCount}.`

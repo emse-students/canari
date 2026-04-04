@@ -1388,6 +1388,50 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     return { status: membership.status };
   }
 
+  /**
+   * Delete a specific device-group membership (e.g. when removing a device).
+   * Also deletes ALL memberships for the device if no groupId is provided.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Delete('mls-api/device-memberships/:userId/:deviceId/:groupId')
+  async deleteDeviceMembership(
+    @Param('userId') userId: string,
+    @Param('deviceId') deviceId: string,
+    @Param('groupId') groupId: string,
+  ) {
+    const safeUserId = sanitizeQueryValue(userId, 'userId');
+    const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
+    const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
+
+    const result = await this.deviceGroupRepo.delete({
+      userId: safeUserId,
+      deviceId: safeDeviceId,
+      groupId: safeGroupId,
+    });
+
+    return { status: 'deleted', affected: result.affected ?? 0 };
+  }
+
+  /**
+   * Delete ALL device-group memberships for a specific device.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Delete('mls-api/device-memberships/:userId/:deviceId')
+  async deleteAllDeviceMemberships(
+    @Param('userId') userId: string,
+    @Param('deviceId') deviceId: string,
+  ) {
+    const safeUserId = sanitizeQueryValue(userId, 'userId');
+    const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
+
+    const result = await this.deviceGroupRepo.delete({
+      userId: safeUserId,
+      deviceId: safeDeviceId,
+    });
+
+    return { status: 'deleted', affected: result.affected ?? 0 };
+  }
+
   @UseGuards(HeaderAuthGuard)
   @Post('mls-api/register-device')
   async registerDevice(

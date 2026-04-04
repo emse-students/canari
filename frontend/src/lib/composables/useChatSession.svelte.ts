@@ -234,21 +234,24 @@ export function useChatSession() {
           (c) => c.isReady && !localMlsGroups.has(c.groupId)
         );
         if (hasMissing) {
-          cb.log('[WARN] Groupes sans etat MLS detectes — reinitialisation du cache.');
-          localStorage.removeItem(`known_own_devices:${userId}`);
+          cb.log('[WARN] Groupes sans etat MLS detectes.');
         }
       } catch {
         /* non-blocking diagnostic */
       }
 
-      syncOwnDevicesToGroupsLocally(cb).catch((e) =>
+      processDeviceInvitationsLocally(cb).catch((e) =>
         cb.log(`[WARN] Echec sync appareils (login): ${e instanceof Error ? e.message : String(e)}`)
       );
 
       const syncGuideKey = `canari_sync_guide_seen_${userId}`;
-      const knownDevicesKey = `known_own_devices:${userId}`;
-      const knownDevices = localStorage.getItem(knownDevicesKey);
-      const hasOtherDevices = !!knownDevices && JSON.parse(knownDevices).length > 0;
+      let hasOtherDevices = false;
+      try {
+        const otherDevices = await mlsService.fetchUserDevices(userId);
+        hasOtherDevices = otherDevices.filter((d) => d.deviceId !== myDeviceId).length > 0;
+      } catch {
+        /* non-blocking */
+      }
 
       if (!hadLocalState && hasOtherDevices && localStorage.getItem(syncGuideKey) !== '1') {
         cb.onShowSyncGuidePrompt();
@@ -280,7 +283,7 @@ export function useChatSession() {
       });
 
       // When another device of this user sends a sync_request (new device just connected),
-      // re-run syncOwnDevicesToGroups so we add the new device and send it a Welcome.
+      // re-run processPendingInvitations so we add the new device and send it a Welcome.
       // Jitter déterministe pour éviter la race condition : si plusieurs appareils reçoivent
       // le sync_request simultanément, seul le "plus petit" deviceId (lexicographique) agit
       // immédiatement ; les autres attendent 2 s pour constater que l'ajout a déjà eu lieu.
@@ -291,9 +294,7 @@ export function useChatSession() {
           `[SYNC] sync_request reçu de ${senderDeviceId} — jitter ${waitMs}ms (moi: ${myDeviceId})`
         );
         setTimeout(() => {
-          // Clear the known-devices cache so the new device is detected
-          localStorage.removeItem(`known_own_devices:${userId}`);
-          syncOwnDevicesToGroupsLocally(cb)
+          processDeviceInvitationsLocally(cb)
             .then(() => syncAllConversationHistories(cb, 'sync_request'))
             .catch((e) =>
               cb.log(
@@ -313,7 +314,7 @@ export function useChatSession() {
         scheduleReconnect: () => scheduleReconnect(cb),
         setIsWsConnected: (v) => (isWsConnected = v),
         setReconnectAttempts: (v) => (reconnectAttempts = v),
-        syncOwnDevicesToGroupsLocally: () => syncOwnDevicesToGroupsLocally(cb),
+        processDeviceInvitationsLocally: () => processDeviceInvitationsLocally(cb),
         log: cb.log,
       });
 
@@ -433,7 +434,7 @@ export function useChatSession() {
       isWsConnected = true;
       reconnectAttempts = 0;
       cb.log('[OK] Reconnecte au reseau.');
-      syncOwnDevicesToGroupsLocally(cb)
+      processDeviceInvitationsLocally(cb)
         .then(() => syncAllConversationHistories(cb, 'reconnect'))
         .catch((e) =>
           cb.log(
@@ -450,7 +451,7 @@ export function useChatSession() {
 
   // ── Device sync ───────────────────────────────────────────────────────────
 
-  async function syncOwnDevicesToGroupsLocally(cb: ChatSessionCallbacks) {
+  async function processDeviceInvitationsLocally(cb: ChatSessionCallbacks) {
     if (isSyncing) return;
     isSyncing = true;
     try {
@@ -657,7 +658,7 @@ export function useChatSession() {
     logout,
     scheduleReconnect,
     attemptReconnect,
-    syncOwnDevicesToGroupsLocally,
+    processDeviceInvitationsLocally,
     handleExport,
     handleImport,
     devGenerateKeyPackage,

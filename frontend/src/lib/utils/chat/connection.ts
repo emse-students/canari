@@ -1078,7 +1078,7 @@ interface ConnectionDeps {
   scheduleReconnect: () => void;
   setIsWsConnected: (value: boolean) => void;
   setReconnectAttempts: (value: number) => void;
-  syncOwnDevicesToGroupsLocally: () => Promise<void>;
+  processDeviceInvitationsLocally: () => Promise<void>;
   log: (msg: string) => void;
 }
 
@@ -1094,7 +1094,7 @@ export async function initializeConnection(deps: ConnectionDeps): Promise<void> 
     scheduleReconnect,
     setIsWsConnected,
     setReconnectAttempts,
-    syncOwnDevicesToGroupsLocally,
+    processDeviceInvitationsLocally,
     log,
   } = deps;
 
@@ -1128,7 +1128,7 @@ export async function initializeConnection(deps: ConnectionDeps): Promise<void> 
   }
 
   // Notify other devices of this user that a new device is available.
-  // This triggers syncOwnDevicesToGroups on those devices so they add us to
+  // This triggers processPendingInvitations on those devices so they add us to
   // their groups and send us a Welcome.
   mlsService.sendSyncRequest();
 
@@ -1137,5 +1137,5 @@ export async function initializeConnection(deps: ConnectionDeps): Promise<void> 
   await new Promise((r) => setTimeout(r, 500));
 
   // Sync own devices to existing groups AFTER publishing our KeyPackage
-  syncOwnDevicesToGroupsLocally().catch(() => {});
+  processDeviceInvitationsLocally().catch(() => {});
 }

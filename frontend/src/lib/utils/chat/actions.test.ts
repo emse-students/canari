@@ -54,6 +54,8 @@ function makeMls(overrides: Partial<IMlsService> = {}): IMlsService {
     getPendingInvitations: vi.fn().mockResolvedValue([]),
     getDeviceMemberships: vi.fn().mockResolvedValue([]),
     updateInvitationStatus: vi.fn().mockResolvedValue({ status: 'added' }),
+    deleteDeviceMembership: vi.fn().mockResolvedValue({ status: 'deleted', affected: 1 }),
+    deleteAllDeviceMemberships: vi.fn().mockResolvedValue({ status: 'deleted', affected: 0 }),
     ...overrides,
   } as unknown as IMlsService;
 }
@@ -604,13 +606,11 @@ describe('processPendingInvitations', () => {
 });
 
 describe('forceSyncReset', () => {
-  it('supprime le cache known_own_devices', () => {
-    localStorage.setItem('known_own_devices:jolan', JSON.stringify(['dev-2']));
+  it('logs reset instructions', () => {
     const log = vi.fn();
 
     forceSyncReset('jolan', log);
 
-    expect(localStorage.getItem('known_own_devices:jolan')).toBeNull();
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('Cache efface'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Reset forcé'));
   });
 });

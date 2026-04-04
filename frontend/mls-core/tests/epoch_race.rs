@@ -220,7 +220,7 @@ fn test_scenario2_race_condition() {
     // RACE : les deux génèrent un commit concurrent depuis la même base
     let kp_jolan3 = jolan3.generate_key_package().expect("kp jolan3");
 
-    // jolan-dev1 ajoute jolan3 PREMIER (côté jolan, syncOwnDevicesToGroups)
+    // jolan-dev1 ajoute jolan3 PREMIER (côté jolan, processPendingInvitations)
     let (commit_a, welcome_a, _, rt_a) = jolan1
         .add_members_bulk(gid, &[&kp_jolan3])
         .expect("jolan1 add jolan3");
@@ -307,7 +307,7 @@ fn test_scenario2_race_condition() {
 ///
 /// Simule le comportement APRÈS correction de `syncPeerDevicesToGroups` :
 /// test-dev1 vérifie d'abord si jolan est déjà membre enregistré → oui → SKIP.
-/// Donc seul jolan-dev1 (via syncOwnDevicesToGroups) ajoute jolan-dev3.
+/// Donc seul jolan-dev1 (via processPendingInvitations) ajoute jolan-dev3.
 ///
 /// Actions :
 ///  1-5. Identiques au scénario 2 (setup + génération KP jolan-dev3)
@@ -329,7 +329,7 @@ fn test_scenario3_fix_single_adder_guard() {
             "test-dev1 rejoint à epoch 1",
             "jolan-dev3 génère son KeyPackage",
             "jolan-dev1 ajoute jolan-dev3 → commit-A + Welcome-A  (epoch 1→2)",
-            "test-dev1 SKIP (guard: 'jolan' déjà membre → syncOwnDevicesToGroups de jolan gère)",
+            "test-dev1 SKIP (guard: 'jolan' déjà membre → processPendingInvitations de jolan gère)",
             "test-dev1 traite commit-A → epoch 2 aligné",
             "jolan-dev3 reçoit Welcome-A → rejoint à epoch 2 aligné",
             "jolan-dev3 envoie un message (epoch 2)",
@@ -360,7 +360,7 @@ fn test_scenario3_fix_single_adder_guard() {
     // Génération KP jolan-dev3
     let kp_jolan3 = jolan3.generate_key_package().expect("kp jolan3");
 
-    // jolan-dev1 ajoute jolan-dev3 (via syncOwnDevicesToGroups)
+    // jolan-dev1 ajoute jolan-dev3 (via processPendingInvitations)
     let (commit_a, welcome_a, added, rt_a) = jolan1
         .add_members_bulk(gid, &[&kp_jolan3])
         .expect("jolan1 add jolan3");

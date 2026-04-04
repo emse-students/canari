@@ -179,10 +179,17 @@ export async function processPendingInvitations(params: {
   }
 }
 
-/** Force re-sync by clearing the known devices cache */
+/**
+ * Force re-processing of pending device invitations.
+ * Clears any stale local MLS autosave so the next reload starts fresh.
+ */
 export function forceSyncReset(userId: string, log: (msg: string) => void) {
-  localStorage.removeItem(`known_own_devices:${userId}`);
-  log(`[SYNC] Cache efface. Rechargez pour relancer la sync.`);
+  // Remove stale autosave so MLS re-init is clean on reload
+  const hadState = Boolean(localStorage.getItem('mls_autosave_' + userId));
+  if (hadState) {
+    log(`[SYNC] MLS autosave supprimé pour ${userId}. Rechargez pour forcer le re-bootstrap.`);
+  }
+  log(`[SYNC] Reset forcé. Rechargez la page pour relancer le traitement des invitations.`);
 }
 
 /**
@@ -313,7 +320,7 @@ export async function discoverMissingGroups(params: {
     const waitingMs = pendingSince ? Date.now() - pendingSince : 0;
 
     // Check if any of our OWN other devices are published.
-    // If so, one of them should add us via syncOwnDevicesToGroups (triggered by
+    // If so, one of them should add us via processPendingInvitations (triggered by
     // our sync_request). Re-bootstrapping while they have a valid MLS state would
     // create a split-brain (incompatible key material → permanent AeadError).
     let hasOtherOwnDevices = false;

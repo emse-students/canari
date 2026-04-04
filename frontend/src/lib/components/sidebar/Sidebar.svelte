@@ -71,9 +71,11 @@
     onImport: (file: File) => void;
     onStartSync: () => void;
     onJoinSync: () => void;
+    onOpenDevicePanel?: () => void;
     isExporting?: boolean;
     isImporting?: boolean;
     isSyncing?: boolean;
+    pendingInvitationCount?: number;
     isHidden?: boolean;
     drawerMode?: boolean;
     onCloseDrawer?: () => void;
@@ -112,6 +114,8 @@
     isHidden = false,
     drawerMode = false,
     onCloseDrawer,
+    onOpenDevicePanel,
+    pendingInvitationCount = 0,
   }: Props = $props();
 
   let showNewChatModal = $state(false);
@@ -468,9 +472,11 @@
         {onExport}
         {onStartSync}
         {onJoinSync}
+        onOpenDevicePanel={onOpenDevicePanel ?? (() => {})}
         {isExporting}
         {isImporting}
         {isSyncing}
+        {pendingInvitationCount}
       />
     {/if}
   </div>
