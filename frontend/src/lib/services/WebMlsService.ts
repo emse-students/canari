@@ -782,7 +782,7 @@ export class WebMlsService implements IMlsService {
         throw new Error(`Binaire WASM invalide (${wasmUrl}) : signature incorrecte.`);
       }
 
-      await initWasm.default(wasmResponse);
+      await initWasm.default({ module_or_path: wasmResponse });
 
       const w = window as Window & { wasm_bindings_log?: (level: string, msg: string) => void };
       if (typeof w.wasm_bindings_log !== 'function') {

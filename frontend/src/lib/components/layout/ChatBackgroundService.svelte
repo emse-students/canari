@@ -12,7 +12,7 @@
    * connexion persiste sur toutes les routes et non seulement sur /chat.
    */
   import { onMount, untrack } from 'svelte';
-  import { goto } from '$app/navigation';
+  import { goto, afterNavigate } from '$app/navigation';
   import { BiometricService } from '$lib/services/biometric';
   import { currentUserId } from '$lib/stores/user';
   import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
@@ -30,6 +30,9 @@
   import type { MessagingContext } from '$lib/composables/useMessaging.svelte';
 
   let showPinModal = $state(false);
+
+  // Guard against concurrent login attempts (e.g. onMount + afterNavigate both firing).
+  let _loginInProgress = false;
 
   // ── Context builders ──────────────────────────────────────────────────────
   // Mirror de MainChatPage mais référence les singletons globaux.
@@ -236,23 +239,32 @@
     globalSession.initServices(appendLog);
 
     const tryLogin = async () => {
-      const configured = await BiometricService.isConfigured().catch(() => false);
-      if (configured && w.__TAURI_INTERNALS__) {
-        await globalSession.biometricLogin(sessionCb());
-        return;
-      }
-      const savedUser = currentUserId();
-      const savedPin = localStorage.getItem('canari_saved_pin');
-      if (savedUser && savedPin) {
-        globalSession.userId = savedUser;
-        globalSession.pin = savedPin;
-        void globalSession.login(sessionCb());
-      } else if (savedUser) {
-        globalSession.userId = savedUser;
-        showPinModal = true;
-      } else {
-        const cur = window.location.pathname + window.location.search;
-        void goto(`/login?returnTo=${encodeURIComponent(cur)}`, { replaceState: true });
+      // Prevent concurrent calls from onMount + afterNavigate.
+      if (_loginInProgress || globalSession.isLoggedIn) return;
+      _loginInProgress = true;
+      try {
+        const configured = await BiometricService.isConfigured().catch(() => false);
+        if (configured && w.__TAURI_INTERNALS__) {
+          await globalSession.biometricLogin(sessionCb());
+          return;
+        }
+        const savedUser = currentUserId();
+        const savedPin = localStorage.getItem('canari_saved_pin');
+        if (savedUser && savedPin) {
+          globalSession.userId = savedUser;
+          globalSession.pin = savedPin;
+          void globalSession.login(sessionCb());
+        } else if (savedUser) {
+          globalSession.userId = savedUser;
+          showPinModal = true;
+        } else {
+          const cur = window.location.pathname + window.location.search;
+          void goto(`/login?returnTo=${encodeURIComponent(cur)}`, { replaceState: true });
+        }
+      } finally {
+        // Reset flag so afterNavigate can re-try if this invocation did nothing
+        // useful (e.g. redirected to /login because no user was available yet).
+        if (!globalSession.isLoggedIn && !showPinModal) _loginInProgress = false;
       }
     };
 
@@ -279,8 +291,39 @@
   function handlePinSubmit(pin: string) {
     showPinModal = false;
     globalSession.pin = pin;
+    _loginInProgress = true;
     void globalSession.login(sessionCb());
   }
+
+  // Safety net for the OIDC / dev-login race condition:
+  // `onMount` runs once on the initial page load.  When the user first arrives
+  // via the OIDC callback (`/auth/callback`) or via `devLogin()` on `/login`,
+  // `onMount` fires before `currentUserId()` is set, so `tryLogin()` does
+  // nothing useful.  After the callback/login sets the user and navigates to
+  // `/chat`, this `afterNavigate` hook re-tries the login flow.
+  afterNavigate(({ to }) => {
+    const path = to?.url.pathname ?? window.location.pathname;
+    const isAuthRoute = path === '/login' || path.startsWith('/login') || path.startsWith('/auth/');
+    if (isAuthRoute) return;
+    if (globalSession.isLoggedIn || _loginInProgress) return;
+
+    const uid = currentUserId();
+    if (!uid) return;
+
+    // Arriving on a non-auth route with a user but not yet logged in:
+    // trigger the login flow that onMount missed.
+    globalSession.initServices(appendLog);
+    const savedPin = localStorage.getItem('canari_saved_pin');
+    if (savedPin) {
+      globalSession.userId = uid;
+      globalSession.pin = savedPin;
+      _loginInProgress = true;
+      void globalSession.login(sessionCb());
+    } else {
+      globalSession.userId = uid;
+      showPinModal = true;
+    }
+  });
 </script>
 
 <!-- PIN modal global (visible sur toutes les routes) -->
@@ -352,9 +395,7 @@
       <path d="M12 7a5 5 0 0 1 4.9 4" />
     </svg>
     <div class="flex-1 min-w-0">
-      <p class="text-sm font-semibold text-text-main">
-        Activer le deverrouillage par empreinte ?
-      </p>
+      <p class="text-sm font-semibold text-text-main">Activer le deverrouillage par empreinte ?</p>
       <p class="text-xs text-text-muted">
         Votre PIN sera stocke de facon securisee et recuperable uniquement par biometrie.
       </p>
