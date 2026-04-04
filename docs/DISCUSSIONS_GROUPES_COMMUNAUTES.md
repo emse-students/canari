@@ -500,25 +500,53 @@ encodeAppMessage(mkMedia({ kind, mediaId, key, iv, mimeType, size, fileName }, c
 
 ## 7. Actions détaillées — Communautés (Channels)
 
+### Différence fondamentale avec les Discussions
+
+Les **Discussions** (1-to-1 et groupes) utilisent MLS pour chiffrer **chaque message individuellement** : seuls les membres présents au moment de l'envoi peuvent déchiffrer. Un nouvel appareil ou un nouveau membre ne peut pas lire les messages antérieurs à son Welcome.
+
+Les **Communautés** (Channels) utilisent un paradigme différent : **une clé symétrique AES-256-GCM par channel**, partagée entre tous les membres. Un nouvel utilisateur qui rejoint un channel reçoit la clé et peut **déchiffrer l'intégralité de l'historique**. MLS n'est pas utilisé pour chiffrer les messages des channels, mais sera utilisé à terme comme **mécanisme de distribution sécurisée des clés de channel** (Key Distribution via MLS Welcome/Commit).
+
+| Aspect                        | Discussions (MLS)            | Communautés (AES-256-GCM)          |
+| ----------------------------- | ---------------------------- | ----------------------------------- |
+| Chiffrement                   | MLS par message              | AES-256-GCM clé partagée           |
+| Accès historique              | ❌ Pas d'accès rétroactif    | ✅ Accès complet à l'historique     |
+| Distribution de clé           | Welcome MLS                  | Dérivation SHA-256 (→ MLS prévu)   |
+| Rotation de clé               | Epoch MLS automatique        | Manuelle via `channel.key.rotated`  |
+| Stockage messages             | chat-delivery-service        | social-service (PostgreSQL)         |
+| Transport                     | WebSocket MLS + fallback HTTP| REST API + WebSocket events         |
+| Réactions / Édition / Suppression | ✅ Via MLS                | ❌ Non supporté (lecture seule)     |
+| Backend                       | chat-delivery-service (NestJS)| social-service (NestJS)            |
+
 Les communautés utilisent un système de chiffrement **différent de MLS** : chiffrement AES-256-GCM avec rotation de clé par epoch.
 
 ### 7.1 Architecture Channel
 
 ```
-Frontend (AES-256-GCM)  ←→  Social Service (MongoDB)  ←→  Redis PubSub
+Frontend (AES-256-GCM)  ←→  Social Service (PostgreSQL) ←→  Redis PubSub
        ↕                                                         ↕
   ChannelKeyVault                                          Chat Gateway
   (clés par epoch)                                       (diffusion WS)
 ```
+
+**Fichiers clés** :
+
+| Fichier                                               | Rôle                                         |
+| ----------------------------------------------------- | -------------------------------------------- |
+| `frontend/src/lib/crypto/ChannelKeyVault.ts`          | Gestion des clés AES-256-GCM par channel     |
+| `frontend/src/lib/services/ChannelService.ts`         | Client REST pour le social-service            |
+| `frontend/src/lib/composables/useChannelWorkspaces.svelte.ts` | Composable gestion des workspaces/channels |
+| `apps/social-service/src/channels/channel.service.ts` | Service backend channels (NestJS)            |
+| `apps/social-service/src/channels/channels.controller.ts` | Contrôleur REST channels                 |
 
 ### 7.2 Créer un channel
 
 **Fonction** : `createNewChannel(workspaceId, name, ctx)` → `useChannelWorkspaces.svelte.ts`
 
 1. `POST` au social-service avec `{ workspaceId, name, visibility: 'public' }`
-2. Le backend crée le channel en MongoDB
+2. Le backend crée le channel en PostgreSQL
 3. Frontend crée une conversation locale avec clé `channel_{channelId}`
-4. Pas de MLS impliqué
+4. La clé AES est dérivée de `SHA-256(channelId)` (placeholder — à remplacer par distribution MLS)
+5. Pas de MLS impliqué
 
 ### 7.3 Rejoindre un channel
 
@@ -527,13 +555,15 @@ Frontend (AES-256-GCM)  ←→  Social Service (MongoDB)  ←→  Redis PubSub
 1. Vérifie/crée l'utilisateur comme membre du workspace (rôle `Member` par défaut)
 2. Publie `channel.member.joined` via Redis
 3. Frontend reçoit via `onChannelEvent` → callback `onChannelMemberJoined`
+4. Le nouvel utilisateur dérive la même clé AES et peut déchiffrer tout l'historique
 
 ### 7.4 Envoyer un message dans un channel
 
 1. **Chiffrement** : `channelKeyManager.encryptMessage(channelId, plaintext)` → AES-256-GCM avec clé de l'epoch courant
-2. **Envoi** : `POST` au social-service avec `{ ciphertext, nonce, keyVersion }`
+2. **Envoi** : `POST /api/channels/{channelId}/messages` avec `{ ciphertext, nonce, keyVersion }`
 3. Backend stocke et publie `channel.message.created` via Redis
 4. Tous les membres reçoivent le message via WebSocket
+5. **Pas d'UI optimiste** : le message n'apparaît qu'à réception de l'événement WebSocket
 
 ### 7.5 Recevoir un message dans un channel
 
@@ -568,6 +598,27 @@ Frontend (AES-256-GCM)  ←→  Social Service (MongoDB)  ←→  Redis PubSub
 ### 7.8 Expulsion d'un channel
 
 **Événement** : `channel.member.kicked` → callback `onChannelMemberKicked`
+
+### 7.9 Lister les membres d'un channel
+
+**Backend** : `GET /api/channels/{channelId}/members` → `channels.controller.ts`
+
+1. Vérifie que l'utilisateur est membre du workspace
+2. Retourne la liste des membres du workspace avec leur rôle le plus élevé
+3. Format de réponse : `{ id, userId, role, joinedAt }`
+
+**Frontend** : `channelService.listMembers(channelId)` → `ChannelService.ts`
+- Appelé par `ChannelMembersSidebar` à chaque changement de channel sélectionné
+
+### 7.10 Actions non supportées pour les channels
+
+Les actions suivantes sont spécifiques à MLS et **ne sont pas disponibles** dans les channels :
+- **Réactions** (`onReact`) : les réactions requièrent un message MLS système
+- **Suppression de message** (`onDelete`) : la suppression requiert un message MLS système
+- **Édition de message** (`onEdit`) : l'édition requiert un message MLS système
+- **Appels vocaux** (`onStartCall`) : les appels passent par les groupes MLS
+
+Ces handlers sont conditionnellement désactivés quand l'utilisateur est dans une conversation de type channel (`selectedContact?.startsWith('channel_')`).
 
 ---
 

@@ -3,7 +3,7 @@
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import UserName from '$lib/components/shared/UserName.svelte';
   import { presenceMap, watchUsers } from '$lib/stores/presenceStore';
-  import { onMount } from 'svelte';
+  import { channelService, type ChannelMemberDto } from '$lib/services/ChannelService';
 
   interface Props {
     selectedChannelId: string;
@@ -12,10 +12,29 @@
     onClose?: () => void;
   }
 
-  let { currentUserId, mode = 'desktop', onClose }: Props = $props();
+  let { selectedChannelId, currentUserId, mode = 'desktop', onClose }: Props = $props();
+
+  let fetchedMembers: ChannelMemberDto[] = $state([]);
+
+  async function loadMembers(channelId: string) {
+    try {
+      fetchedMembers = await channelService.listMembers(channelId);
+    } catch {
+      // Fallback to current user only
+      fetchedMembers = currentUserId
+        ? [{ id: currentUserId, userId: currentUserId, role: 'admin', joinedAt: '' }]
+        : [];
+    }
+  }
+
+  $effect(() => {
+    if (selectedChannelId) {
+      loadMembers(selectedChannelId);
+    }
+  });
 
   let channelMembers = $derived(
-    currentUserId ? [{ id: currentUserId, name: currentUserId, role: 'admin' }] : []
+    fetchedMembers.map((m) => ({ id: m.id, name: m.userId, role: m.role }))
   );
 
   const members = $derived(
@@ -25,8 +44,10 @@
     }))
   );
 
-  onMount(() => {
-    watchUsers(channelMembers.map((m) => m.name));
+  $effect(() => {
+    if (channelMembers.length > 0) {
+      watchUsers(channelMembers.map((m) => m.name));
+    }
   });
 
   const admins = $derived(members.filter((m) => m.role === 'admin' || m.role === 'moderator'));

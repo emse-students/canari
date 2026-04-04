@@ -361,6 +361,35 @@ export class ChannelService {
     return { success: true };
   }
 
+  // ================= CHANNEL MEMBERS =================
+
+  async listChannelMembers(channelId: string, actorUserId: string) {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
+
+    const actorMember = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId: actorUserId },
+    });
+    if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
+
+    const members = await this.memberRepo.find({ where: { workspaceId: channel.workspaceId } });
+    const roles = await this.roleRepo.find({ where: { workspaceId: channel.workspaceId } });
+    const roleMap = new Map(roles.map((r) => [r.id, r]));
+
+    return members.map((m) => {
+      const memberRoles = (m.roleIds || [])
+        .map((rid) => roleMap.get(rid))
+        .filter(Boolean);
+      const highestRole = memberRoles.sort((a, b) => (b!.priority ?? 0) - (a!.priority ?? 0))[0];
+      return {
+        id: m.id,
+        userId: m.userId,
+        role: highestRole?.name?.toLowerCase() ?? 'member',
+        joinedAt: m.createdAt,
+      };
+    });
+  }
+
   // ================= MESSAGES =================
 
   async sendMessage(channelId: string, input: SendChannelMessageDto) {

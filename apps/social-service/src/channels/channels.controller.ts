@@ -139,6 +139,15 @@ export class ChannelsController {
   }
 
   @UseGuards(NginxAuthGuard)
+  @Get(':channelId/members')
+  listChannelMembers(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string
+  ) {
+    return this.service.listChannelMembers(channelId, xUserId.trim().toLowerCase());
+  }
+
+  @UseGuards(NginxAuthGuard)
   @Post(':channelId/messages')
   async sendMessage(
     @Headers('x-user-id') xUserId: string,

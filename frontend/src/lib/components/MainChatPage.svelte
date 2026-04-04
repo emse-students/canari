@@ -528,7 +528,7 @@
       <ChatArea
         conversation={convs.currentConvo}
         {messageText}
-        isChannel={routeMode === 'communities'}
+        isChannel={convs.selectedContact?.startsWith('channel_') ?? false}
         onMessageChange={(value) => (messageText = value)}
         onSend={handleSendChat}
         onInviteMembers={(ids) => void convs.inviteMembersToCurrentGroup(ids, convCtx())}
@@ -536,7 +536,7 @@
         onOpenConversations={() => {
           convs.isConversationDrawerOpen = true;
         }}
-        onOpenSettings={routeMode === 'communities'
+        onOpenSettings={convs.selectedContact?.startsWith('channel_')
           ? () => (convs.isChannelSettingsModalOpen = true)
           : undefined}
         isHidden={convs.mobileView === 'list'}
@@ -548,9 +548,15 @@
         messageReactions={messaging.messageReactions}
         replyingTo={messaging.replyingTo}
         onReply={messaging.handleReply}
-        onReact={(msgId, emoji) => void messaging.handleAddReaction(msgId, emoji, msgCtx())}
-        onDelete={(msgId) => void messaging.handleDeleteMessage(msgId, msgCtx())}
-        onEdit={(msgId, text) => void messaging.handleEditMessage(msgId, text, msgCtx())}
+        onReact={convs.selectedContact?.startsWith('channel_')
+          ? undefined
+          : (msgId, emoji) => void messaging.handleAddReaction(msgId, emoji, msgCtx())}
+        onDelete={convs.selectedContact?.startsWith('channel_')
+          ? undefined
+          : (msgId) => void messaging.handleDeleteMessage(msgId, msgCtx())}
+        onEdit={convs.selectedContact?.startsWith('channel_')
+          ? undefined
+          : (msgId, text) => void messaging.handleEditMessage(msgId, text, msgCtx())}
         onCancelReply={messaging.cancelReply}
         authToken={session.authToken}
         onFilesSelected={handleFilesSelected}

@@ -52,6 +52,13 @@ export interface SendChannelMessageDto {
   keyVersion?: number;
 }
 
+export interface ChannelMemberDto {
+  id: string;
+  userId: string;
+  role: string;
+  joinedAt: string;
+}
+
 import { apiFetch } from '$lib/utils/apiFetch';
 
 export class ChannelService {
@@ -180,6 +187,12 @@ export class ChannelService {
     const res = await this.fetchWithAuth(
       `${this.baseUrl}/api/channels/${channelId}/messages?limit=${limit}`
     );
+    await this.handleError(res);
+    return res.json();
+  }
+
+  async listMembers(channelId: string): Promise<ChannelMemberDto[]> {
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${channelId}/members`);
     await this.handleError(res);
     return res.json();
   }

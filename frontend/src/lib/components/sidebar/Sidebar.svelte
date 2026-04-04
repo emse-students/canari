@@ -466,8 +466,7 @@
       {/if}
     </div>
 
-    {#if viewMode !== 'communities'}
-      <SidebarFooterTools
+    <SidebarFooterTools
         {onImport}
         {onExport}
         {onStartSync}
@@ -478,7 +477,6 @@
         {isSyncing}
         {pendingInvitationCount}
       />
-    {/if}
   </div>
 </aside>
 
