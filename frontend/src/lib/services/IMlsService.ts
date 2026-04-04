@@ -130,7 +130,8 @@ export interface IMlsService {
       content: Uint8Array,
       groupId?: string,
       isWelcome?: boolean,
-      ratchetTreeBytes?: Uint8Array
+      ratchetTreeBytes?: Uint8Array,
+      isCommit?: boolean
     ) => Promise<boolean>
   ): void;
   onDisconnect(callback: () => void): void;

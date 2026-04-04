@@ -459,6 +459,7 @@ async fn handle_socket(
                                         "senderDeviceId": device_id,
                                         "groupId": group_id,
                                         "isWelcome": false,
+                                        "isCommit": true,
                                         "proto": B64.encode(&ciphertext)
                                     });
                                     if let Err(e) = state
@@ -564,6 +565,7 @@ async fn handle_socket(
                                         "senderDeviceId": device_id,
                                         "groupId": group_id,
                                         "isWelcome": false,
+                                        "isCommit": false,
                                         "proto": B64.encode(&ciphertext)
                                     });
                                     if let Err(e) = state

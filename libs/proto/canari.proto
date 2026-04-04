@@ -54,6 +54,7 @@ message InboundMsg {
   string sender_device_id = 3;
   string group_id         = 4;
   bool   is_welcome       = 5; // true → process as MLS Welcome, not as application msg
+  bool   is_commit        = 6; // true → MLS structural commit (add/remove member); sender should skip self-processing
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

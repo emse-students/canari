@@ -1785,6 +1785,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       senderDeviceId?: string;
       groupId?: string;
       isWelcome?: boolean;
+      isCommit?: boolean;
       // legacy fields (frontend fallback / group fan-out)
       content?: string;
       type?: string;
@@ -1820,6 +1821,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
             senderDeviceId: body.senderDeviceId,
             groupId: body.groupId,
             isWelcome: body.isWelcome,
+            isCommit: body.isCommit,
             proto,
             createdAt: new Date(),
           }),
@@ -1916,6 +1918,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
           senderDeviceId: body.senderDeviceId ?? '',
           groupId: body.groupId ?? '',
           isWelcome: body.isWelcome ?? false,
+          isCommit: body.isCommit ?? false,
           proto: queued.proto ?? queued.content ?? '',
           queuedMessageId: queued.id,
         });

@@ -6,6 +6,7 @@ interface QueuedMessage {
   ciphertext: Uint8Array;
   groupId?: string;
   isWelcome: boolean;
+  isCommit: boolean;
   ratchetTreeBytes?: Uint8Array;
   /** ID from the delivery service queue — used for at-least-once ACK */
   queuedMessageId?: string;
@@ -22,7 +23,8 @@ export class WebMlsService implements IMlsService {
         content: Uint8Array,
         groupId?: string,
         isWelcome?: boolean,
-        ratchetTreeBytes?: Uint8Array
+        ratchetTreeBytes?: Uint8Array,
+        isCommit?: boolean
       ) => Promise<boolean>)
     | null = null;
   private disconnectCallback: (() => void) | null = null;
@@ -221,6 +223,7 @@ export class WebMlsService implements IMlsService {
                 ciphertext,
                 groupId: (msg.groupId as string) || undefined,
                 isWelcome: msg.isWelcome === true,
+                isCommit: msg.isCommit === true,
                 ratchetTreeBytes,
                 queuedMessageId: (msg.queuedMessageId as string) || undefined,
               });
@@ -241,7 +244,8 @@ export class WebMlsService implements IMlsService {
       content: Uint8Array,
       groupId?: string,
       isWelcome?: boolean,
-      ratchetTreeBytes?: Uint8Array
+      ratchetTreeBytes?: Uint8Array,
+      isCommit?: boolean
     ) => Promise<boolean>
   ) {
     this.messageCallback = callback;
@@ -304,7 +308,8 @@ export class WebMlsService implements IMlsService {
           msg.ciphertext,
           msg.groupId,
           msg.isWelcome,
-          msg.ratchetTreeBytes
+          msg.ratchetTreeBytes,
+          msg.isCommit
         );
 
         // Track for batch ACK
@@ -479,7 +484,8 @@ export class WebMlsService implements IMlsService {
             data.isWelcome === true,
             typeof data.ratchetTree === 'string' && data.ratchetTree.length > 0
               ? Uint8Array.from(atob(data.ratchetTree as string), (c) => c.charCodeAt(0))
-              : undefined
+              : undefined,
+            data.isCommit === true
           );
         }
       } catch (e) {
@@ -501,7 +507,8 @@ export class WebMlsService implements IMlsService {
           data.type === 'mlsWelcome',
           typeof data.ratchetTree === 'string' && data.ratchetTree.length > 0
             ? Uint8Array.from(atob(data.ratchetTree as string), (c) => c.charCodeAt(0))
-            : undefined
+            : undefined,
+          data.isCommit === true
         );
       } catch (e) {
         console.error('Message processing failed', e);

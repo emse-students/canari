@@ -25,6 +25,9 @@ export class QueuedMessage {
   isWelcome?: boolean;
 
   @Column({ nullable: true })
+  isCommit?: boolean;
+
+  @Column({ nullable: true })
   senderId?: string;
 
   @Column({ nullable: true })

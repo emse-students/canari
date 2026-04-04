@@ -372,11 +372,20 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   }
 
   mlsService.onMessage(
-    async (sender, content, groupId, isWelcome, ratchetTreeBytes): Promise<boolean> => {
+    async (sender, content, groupId, isWelcome, ratchetTreeBytes, isCommit): Promise<boolean> => {
       log(
-        `Message de ${sender} (${content.length} octets) - Grp: ${groupId} (isWelcome: ${!!isWelcome})`
+        `Message de ${sender} (${content.length} octets) - Grp: ${groupId} (isWelcome: ${!!isWelcome}, isCommit: ${!!isCommit})`
       );
       const senderNorm = sender.toLowerCase();
+
+      // Commits are structural MLS operations (add/remove member). The sender
+      // device already applied the commit locally via merge_pending_commit(),
+      // so it must not try to process its own commit as an incoming message
+      // (doing so would cause a wrong-epoch / ratchet-type error).
+      if (isCommit && senderNorm === userId.toLowerCase()) {
+        log(`[COMMIT] Skipping self-commit echo for group ${groupId}`);
+        return true;
+      }
 
       // Find conversation by groupId or sender
       let convoKey: string | undefined;

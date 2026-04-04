@@ -8,6 +8,7 @@ interface QueuedMessage {
   ciphertext: Uint8Array;
   groupId?: string;
   isWelcome: boolean;
+  isCommit: boolean;
   ratchetTreeBytes?: Uint8Array;
 }
 
@@ -38,7 +39,8 @@ export class TauriMlsService implements IMlsService {
         content: Uint8Array,
         groupId?: string,
         isWelcome?: boolean,
-        ratchetTreeBytes?: Uint8Array
+        ratchetTreeBytes?: Uint8Array,
+        isCommit?: boolean
       ) => Promise<boolean>)
     | null = null;
   private disconnectCallback: (() => void) | null = null;
@@ -195,6 +197,7 @@ export class TauriMlsService implements IMlsService {
                 ciphertext,
                 groupId: (msg.groupId as string) || undefined,
                 isWelcome: msg.isWelcome === true,
+                isCommit: msg.isCommit === true,
                 ratchetTreeBytes,
               });
             }
@@ -314,7 +317,8 @@ export class TauriMlsService implements IMlsService {
             data.isWelcome === true,
             typeof data.ratchetTree === 'string' && data.ratchetTree.length > 0
               ? Uint8Array.from(atob(data.ratchetTree as string), (c) => c.charCodeAt(0))
-              : undefined
+              : undefined,
+            data.isCommit === true
           );
         }
       } catch (e) {
@@ -336,7 +340,8 @@ export class TauriMlsService implements IMlsService {
           data.type === 'mlsWelcome',
           typeof data.ratchetTree === 'string' && data.ratchetTree.length > 0
             ? Uint8Array.from(atob(data.ratchetTree as string), (c) => c.charCodeAt(0))
-            : undefined
+            : undefined,
+          data.isCommit === true
         );
       } catch (e) {
         console.error('Message processing failed', e);
@@ -351,7 +356,8 @@ export class TauriMlsService implements IMlsService {
       content: Uint8Array,
       groupId?: string,
       isWelcome?: boolean,
-      ratchetTreeBytes?: Uint8Array
+      ratchetTreeBytes?: Uint8Array,
+      isCommit?: boolean
     ) => Promise<boolean>
   ) {
     this.messageCallback = callback;
@@ -412,7 +418,8 @@ export class TauriMlsService implements IMlsService {
           msg.ciphertext,
           msg.groupId,
           msg.isWelcome,
-          msg.ratchetTreeBytes
+          msg.ratchetTreeBytes,
+          msg.isCommit
         );
 
         // If this was a Welcome, process buffered messages for this group
