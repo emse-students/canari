@@ -22,7 +22,7 @@ import {
   generateDevKeyPackage,
   importUserBackup,
   processDevWelcome,
-  syncOwnDevicesToGroups,
+  processPendingInvitations,
 } from '$lib/utils/chat/actions';
 import {
   setupMessageHandler,
@@ -454,7 +454,7 @@ export function useChatSession() {
     if (isSyncing) return;
     isSyncing = true;
     try {
-      await syncOwnDevicesToGroups({
+      await processPendingInvitations({
         mlsService: ensureMls(),
         userId,
         pin,

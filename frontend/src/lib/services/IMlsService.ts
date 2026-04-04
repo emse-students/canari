@@ -66,6 +66,43 @@ export interface IMlsService {
   getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]>;
   getUserGroups(userId: string): Promise<{ groupId: string; name: string; isGroup: boolean }[]>;
 
+  // DeviceGroupMembership tracking
+  /** Get all pending device-group invitations in groups where this device is a full member */
+  getPendingInvitations(
+    userId: string,
+    deviceId: string
+  ): Promise<
+    Array<{
+      id: string;
+      userId: string;
+      deviceId: string;
+      groupId: string;
+      status: string;
+    }>
+  >;
+  /** Get all device-group memberships for the current device */
+  getDeviceMemberships(
+    userId: string,
+    deviceId: string
+  ): Promise<
+    Array<{
+      id: string;
+      userId: string;
+      deviceId: string;
+      groupId: string;
+      status: string;
+      lastEpochSeen: number;
+    }>
+  >;
+  /** Update the status of a device-group membership on the server */
+  updateInvitationStatus(
+    deviceId: string,
+    userId: string,
+    groupId: string,
+    status: 'pending' | 'added' | 'welcome_sent' | 'welcome_received',
+    lastEpochSeen?: number
+  ): Promise<void>;
+
   // Callbacks
   onChannelEvent?: (event: { type: string; data: any }) => void;
   onMessage(

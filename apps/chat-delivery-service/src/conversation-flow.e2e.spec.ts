@@ -41,6 +41,7 @@ import { WelcomeMessage } from './entities/welcome-message.entity';
 import { GroupMember } from './entities/group-member.entity';
 import { Group } from './entities/group.entity';
 import { PinVerifier } from './entities/pin-verifier.entity';
+import { DeviceGroupMembership } from './entities/device-group-membership.entity';
 import { encodeInboundMsgEnvelope } from '@canari/shared-ts';
 
 // ---- Fixtures de test -------------------------------------------------------
@@ -84,6 +85,7 @@ function buildModelMock(overrides: Record<string, jest.Mock> = {}) {
     findOneBy: jest.fn().mockResolvedValue(null),
     findBy: jest.fn().mockResolvedValue([]),
     save: jest.fn().mockImplementation((val) => Promise.resolve(val)),
+    create: jest.fn().mockImplementation((val) => val),
     update: jest.fn().mockResolvedValue({ affected: 1 }),
     delete: jest.fn().mockResolvedValue({ affected: 1 }),
     createQueryBuilder: jest.fn().mockReturnValue({
@@ -125,6 +127,7 @@ interface TestEnv {
   memberModel: ReturnType<typeof buildModelMock>;
   queueModel: ReturnType<typeof buildModelMock>;
   pinModel: ReturnType<typeof buildModelMock>;
+  deviceGroupModel: ReturnType<typeof buildModelMock>;
   redis: ReturnType<typeof buildRedisMock>;
   app: TestingModule;
 }
@@ -136,6 +139,7 @@ async function buildTestEnv(): Promise<TestEnv> {
   const memberModel = buildModelMock();
   const queueModel = buildModelMock();
   const pinModel = buildModelMock();
+  const deviceGroupModel = buildModelMock();
   const redis = buildRedisMock();
 
   const moduleRef = await Test.createTestingModule({
@@ -147,6 +151,10 @@ async function buildTestEnv(): Promise<TestEnv> {
       { provide: getRepositoryToken(GroupMember), useValue: memberModel },
       { provide: getRepositoryToken(Group), useValue: groupModel },
       { provide: getRepositoryToken(PinVerifier), useValue: pinModel },
+      {
+        provide: getRepositoryToken(DeviceGroupMembership),
+        useValue: deviceGroupModel,
+      },
       { provide: 'REDIS_CLIENT', useValue: redis },
     ],
   }).compile();
@@ -159,6 +167,7 @@ async function buildTestEnv(): Promise<TestEnv> {
     memberModel,
     queueModel,
     pinModel,
+    deviceGroupModel,
     redis,
     app: moduleRef,
   };
@@ -1519,5 +1528,488 @@ describe.skip('PARTIE C - Cleanup des users de test', () => {
     expect(env.groupModel.deleteOne).toHaveBeenCalledTimes(2);
     expect(env.memberModel.deleteMany).toHaveBeenCalledWith({ groupId: gid2 });
     expect(env.memberModel.deleteMany).toHaveBeenCalledWith({ groupId: gid3 });
+  });
+});
+
+// ============================================================================
+// PARTIE C - DeviceGroupMembership : "Any member bootstraps" paradigm
+// ============================================================================
+
+describe('PARTIE C - DeviceGroupMembership lifecycle', () => {
+  let env: TestEnv;
+
+  beforeEach(async () => {
+    env = await buildTestEnv();
+  });
+  afterEach(async () => {
+    await env.app.close();
+  });
+
+  // ---- C.1 : Online member bootstraps new device ----------------------------
+
+  describe('C.1 - Online member bootstraps new device', () => {
+    it('createGroup creates a welcome_received membership for creator device', async () => {
+      const result = await env.ctrl.createGroup({
+        name: 'group-bootstrap',
+        createdBy: USERS.u1.userId,
+        creatorDeviceId: USERS.u1.deviceId,
+      });
+
+      expect(result.groupId).toBeDefined();
+      expect(env.deviceGroupModel.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: USERS.u1.userId,
+          deviceId: USERS.u1.deviceId,
+          groupId: result.groupId,
+          status: 'welcome_received',
+          lastEpochSeen: 0,
+        }),
+      );
+    });
+
+    it('addGroupMember creates pending DeviceGroupMemberships for other devices', async () => {
+      const groupId = 'g-bootstrap-1';
+
+      // Mock: user has 2 devices
+      env.kpModel.find.mockResolvedValueOnce([
+        { deviceId: USERS.u2.deviceId, userId: USERS.u2.userId },
+        { deviceId: 'dev-t2-02', userId: USERS.u2.userId },
+      ]);
+      // Mock: no existing memberships
+      env.deviceGroupModel.findOne.mockResolvedValue(null);
+
+      await env.ctrl.addGroupMember(groupId, {
+        userId: USERS.u2.userId,
+        deviceId: USERS.u2.deviceId,
+      });
+
+      // Direct device gets 'added', other device gets 'pending'
+      expect(env.deviceGroupModel.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: USERS.u2.userId,
+          deviceId: USERS.u2.deviceId,
+          groupId,
+          status: 'added',
+        }),
+      );
+      expect(env.deviceGroupModel.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: USERS.u2.userId,
+          deviceId: 'dev-t2-02',
+          groupId,
+          status: 'pending',
+        }),
+      );
+    });
+
+    it('getPendingInvitations returns pending devices in groups I belong to', async () => {
+      // Mock: device is welcome_received in group-A
+      env.deviceGroupModel.find
+        .mockResolvedValueOnce([
+          {
+            userId: USERS.u1.userId,
+            deviceId: USERS.u1.deviceId,
+            groupId: 'group-A',
+            status: 'welcome_received',
+          },
+        ])
+        // Mock: pending members found in group-A
+        .mockResolvedValueOnce([
+          {
+            userId: USERS.u2.userId,
+            deviceId: USERS.u2.deviceId,
+            groupId: 'group-A',
+            status: 'pending',
+          },
+          {
+            userId: USERS.u2.userId,
+            deviceId: 'dev-t2-02',
+            groupId: 'group-A',
+            status: 'pending',
+          },
+        ]);
+
+      const result = await env.ctrl.getPendingInvitations(
+        USERS.u1.userId,
+        USERS.u1.deviceId,
+      );
+
+      expect(result).toHaveLength(2);
+      expect(result[0].status).toBe('pending');
+      expect(result[1].deviceId).toBe('dev-t2-02');
+    });
+
+    it('getPendingInvitations returns empty when device has no groups', async () => {
+      env.deviceGroupModel.find.mockResolvedValueOnce([]);
+
+      const result = await env.ctrl.getPendingInvitations(
+        USERS.u1.userId,
+        USERS.u1.deviceId,
+      );
+      expect(result).toEqual([]);
+    });
+
+    it('updateInvitationStatus creates new membership if none exists', async () => {
+      env.deviceGroupModel.findOne.mockResolvedValueOnce(null);
+
+      const result = await env.ctrl.updateInvitationStatus({
+        deviceId: USERS.u2.deviceId,
+        userId: USERS.u2.userId,
+        groupId: 'group-A',
+        status: 'added',
+      });
+
+      expect(result).toEqual({ status: 'added' });
+      expect(env.deviceGroupModel.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          deviceId: USERS.u2.deviceId,
+          userId: USERS.u2.userId,
+          groupId: 'group-A',
+          status: 'added',
+        }),
+      );
+    });
+
+    it('updateInvitationStatus transitions existing membership', async () => {
+      env.deviceGroupModel.findOne.mockResolvedValueOnce({
+        deviceId: USERS.u2.deviceId,
+        userId: USERS.u2.userId,
+        groupId: 'group-A',
+        status: 'added',
+        lastEpochSeen: 0,
+      });
+
+      const result = await env.ctrl.updateInvitationStatus({
+        deviceId: USERS.u2.deviceId,
+        userId: USERS.u2.userId,
+        groupId: 'group-A',
+        status: 'welcome_sent',
+      });
+
+      expect(result).toEqual({ status: 'welcome_sent' });
+    });
+
+    it('updateInvitationStatus rejects invalid status', async () => {
+      await expect(
+        env.ctrl.updateInvitationStatus({
+          deviceId: USERS.u2.deviceId,
+          userId: USERS.u2.userId,
+          groupId: 'group-A',
+          status: 'invalid_status' as any,
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('updateInvitationStatus updates lastEpochSeen', async () => {
+      env.deviceGroupModel.findOne.mockResolvedValueOnce({
+        deviceId: USERS.u2.deviceId,
+        userId: USERS.u2.userId,
+        groupId: 'group-A',
+        status: 'welcome_received',
+        lastEpochSeen: 0,
+      });
+
+      await env.ctrl.updateInvitationStatus({
+        deviceId: USERS.u2.deviceId,
+        userId: USERS.u2.userId,
+        groupId: 'group-A',
+        status: 'welcome_received',
+        lastEpochSeen: 5,
+      });
+
+      expect(env.deviceGroupModel.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          lastEpochSeen: 5,
+        }),
+      );
+    });
+
+    it('getDeviceMemberships returns all memberships for a device', async () => {
+      env.deviceGroupModel.find.mockResolvedValueOnce([
+        {
+          deviceId: USERS.u1.deviceId,
+          groupId: 'g-1',
+          status: 'welcome_received',
+        },
+        { deviceId: USERS.u1.deviceId, groupId: 'g-2', status: 'pending' },
+      ]);
+
+      const result = await env.ctrl.getDeviceMemberships(
+        USERS.u1.userId,
+        USERS.u1.deviceId,
+      );
+      expect(result).toHaveLength(2);
+    });
+  });
+
+  // ---- C.2 : Race condition — 2 devices try to add simultaneously -----------
+
+  describe('C.2 - Race condition handling', () => {
+    it('addGroupMember is idempotent — second call does not duplicate membership', async () => {
+      const groupId = 'g-race-1';
+
+      // First call: no existing membership
+      env.kpModel.find.mockResolvedValueOnce([
+        { deviceId: USERS.u2.deviceId, userId: USERS.u2.userId },
+      ]);
+      env.deviceGroupModel.findOne.mockResolvedValueOnce(null);
+      await env.ctrl.addGroupMember(groupId, {
+        userId: USERS.u2.userId,
+        deviceId: USERS.u2.deviceId,
+      });
+
+      // Second call: membership already exists
+      env.kpModel.find.mockResolvedValueOnce([
+        { deviceId: USERS.u2.deviceId, userId: USERS.u2.userId },
+      ]);
+      env.deviceGroupModel.findOne.mockResolvedValueOnce({
+        deviceId: USERS.u2.deviceId,
+        groupId,
+        status: 'added',
+      });
+      await env.ctrl.addGroupMember(groupId, {
+        userId: USERS.u2.userId,
+        deviceId: USERS.u2.deviceId,
+      });
+
+      // deviceGroupModel.create should have been called only once (first time)
+      const createCalls = env.deviceGroupModel.create.mock.calls.filter(
+        (call) =>
+          call[0]?.deviceId === USERS.u2.deviceId &&
+          call[0]?.groupId === groupId,
+      );
+      expect(createCalls).toHaveLength(1);
+    });
+
+    it('updateInvitationStatus upserts — concurrent updates converge to same state', async () => {
+      // Both devices try to set status to welcome_sent for same target
+      env.deviceGroupModel.findOne.mockResolvedValueOnce({
+        deviceId: 'dev-target',
+        userId: 'user-target',
+        groupId: 'g-race-2',
+        status: 'added',
+        lastEpochSeen: 0,
+      });
+
+      const r1 = await env.ctrl.updateInvitationStatus({
+        deviceId: 'dev-target',
+        userId: 'user-target',
+        groupId: 'g-race-2',
+        status: 'welcome_sent',
+      });
+
+      env.deviceGroupModel.findOne.mockResolvedValueOnce({
+        deviceId: 'dev-target',
+        userId: 'user-target',
+        groupId: 'g-race-2',
+        status: 'welcome_sent', // Already updated by first
+        lastEpochSeen: 0,
+      });
+
+      const r2 = await env.ctrl.updateInvitationStatus({
+        deviceId: 'dev-target',
+        userId: 'user-target',
+        groupId: 'g-race-2',
+        status: 'welcome_sent',
+      });
+
+      // Both succeed, converge to same status
+      expect(r1).toEqual({ status: 'welcome_sent' });
+      expect(r2).toEqual({ status: 'welcome_sent' });
+    });
+  });
+
+  // ---- C.3 : Stale device detection and re-invitation ----------------------
+
+  describe('C.3 - Stale device removed and re-invited', () => {
+    it('detectStaleDevices resets devices far behind group epoch to pending', async () => {
+      // Group at epoch 20
+      env.groupModel.find.mockResolvedValueOnce([
+        { id: 'g-stale', activeEpoch: 20 },
+      ]);
+
+      // createQueryBuilder returns stale member (lastEpochSeen = 3 < 20 - 10 = 10)
+      const mockQb = {
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValueOnce([
+          {
+            deviceId: USERS.u2.deviceId,
+            userId: USERS.u2.userId,
+            groupId: 'g-stale',
+            status: 'welcome_received',
+            lastEpochSeen: 3,
+          },
+        ]),
+      };
+      env.deviceGroupModel.createQueryBuilder.mockReturnValueOnce(mockQb);
+
+      // Call the private method via any-cast
+      await (env.ctrl as any).detectStaleDevices();
+
+      // The stale device should be saved with status 'pending' and lastEpochSeen 0
+      expect(env.deviceGroupModel.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          deviceId: USERS.u2.deviceId,
+          groupId: 'g-stale',
+          status: 'pending',
+          lastEpochSeen: 0,
+        }),
+      );
+    });
+
+    it('detectStaleDevices skips groups with low activeEpoch', async () => {
+      env.groupModel.find.mockResolvedValueOnce([
+        { id: 'g-young', activeEpoch: 5 }, // < STALE_EPOCH_THRESHOLD (10)
+      ]);
+
+      await (env.ctrl as any).detectStaleDevices();
+
+      // createQueryBuilder should not have been called — group skipped
+      expect(env.deviceGroupModel.createQueryBuilder).not.toHaveBeenCalled();
+    });
+
+    it('detectStaleDevices does nothing when no stale devices found', async () => {
+      env.groupModel.find.mockResolvedValueOnce([
+        { id: 'g-healthy', activeEpoch: 15 },
+      ]);
+
+      const mockQb = {
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValueOnce([]), // no stale devices
+      };
+      env.deviceGroupModel.createQueryBuilder.mockReturnValueOnce(mockQb);
+
+      await (env.ctrl as any).detectStaleDevices();
+
+      expect(env.deviceGroupModel.save).not.toHaveBeenCalled();
+    });
+  });
+
+  // ---- C.4 : All offline → first reconnects → bootstraps -------------------
+
+  describe('C.4 - All offline then first reconnects and bootstraps', () => {
+    it('full bootstrap flow: create group → add member → query pending → update statuses', async () => {
+      // Step 1: Create group with creator device
+      const { groupId } = await env.ctrl.createGroup({
+        name: 'g-offline-test',
+        createdBy: USERS.u1.userId,
+        creatorDeviceId: USERS.u1.deviceId,
+      });
+
+      // Step 2: Add u2 to the group (u2 has 2 devices)
+      env.kpModel.find.mockResolvedValueOnce([
+        { deviceId: USERS.u2.deviceId, userId: USERS.u2.userId },
+        { deviceId: 'dev-t2-02', userId: USERS.u2.userId },
+      ]);
+      env.deviceGroupModel.findOne
+        .mockResolvedValueOnce(null) // dev-t2-01: no existing
+        .mockResolvedValueOnce(null); // dev-t2-02: no existing
+
+      await env.ctrl.addGroupMember(groupId, {
+        userId: USERS.u2.userId,
+        deviceId: USERS.u2.deviceId,
+      });
+
+      // Step 3: u1 reconnects, queries pending invitations
+      env.deviceGroupModel.find
+        .mockResolvedValueOnce([
+          {
+            userId: USERS.u1.userId,
+            deviceId: USERS.u1.deviceId,
+            groupId,
+            status: 'welcome_received',
+          },
+        ])
+        .mockResolvedValueOnce([
+          {
+            userId: USERS.u2.userId,
+            deviceId: 'dev-t2-02',
+            groupId,
+            status: 'pending',
+          },
+        ]);
+
+      const pending = await env.ctrl.getPendingInvitations(
+        USERS.u1.userId,
+        USERS.u1.deviceId,
+      );
+      expect(pending).toHaveLength(1);
+      expect(pending[0].deviceId).toBe('dev-t2-02');
+      expect(pending[0].status).toBe('pending');
+
+      // Step 4: u1 processes the pending device — updates to 'added'
+      env.deviceGroupModel.findOne.mockResolvedValueOnce({
+        userId: USERS.u2.userId,
+        deviceId: 'dev-t2-02',
+        groupId,
+        status: 'pending',
+        lastEpochSeen: 0,
+      });
+
+      const addResult = await env.ctrl.updateInvitationStatus({
+        deviceId: 'dev-t2-02',
+        userId: USERS.u2.userId,
+        groupId,
+        status: 'added',
+      });
+      expect(addResult).toEqual({ status: 'added' });
+
+      // Step 5: After Welcome is sent, update to 'welcome_sent'
+      env.deviceGroupModel.findOne.mockResolvedValueOnce({
+        userId: USERS.u2.userId,
+        deviceId: 'dev-t2-02',
+        groupId,
+        status: 'added',
+        lastEpochSeen: 0,
+      });
+
+      const sentResult = await env.ctrl.updateInvitationStatus({
+        deviceId: 'dev-t2-02',
+        userId: USERS.u2.userId,
+        groupId,
+        status: 'welcome_sent',
+      });
+      expect(sentResult).toEqual({ status: 'welcome_sent' });
+
+      // Step 6: dev-t2-02 comes online, fetches Welcome, membership → welcome_received
+      env.deviceGroupModel.findOne.mockResolvedValueOnce({
+        userId: USERS.u2.userId,
+        deviceId: 'dev-t2-02',
+        groupId,
+        status: 'welcome_sent',
+        lastEpochSeen: 0,
+      });
+
+      const receivedResult = await env.ctrl.updateInvitationStatus({
+        deviceId: 'dev-t2-02',
+        userId: USERS.u2.userId,
+        groupId,
+        status: 'welcome_received',
+        lastEpochSeen: 1,
+      });
+      expect(receivedResult).toEqual({ status: 'welcome_received' });
+
+      // Verify lastEpochSeen was updated
+      expect(env.deviceGroupModel.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          deviceId: 'dev-t2-02',
+          lastEpochSeen: 1,
+        }),
+      );
+    });
+
+    it('cleanupExpiredQueuedMessages removes messages older than 7 days', async () => {
+      env.queueModel.delete.mockResolvedValueOnce({ affected: 5 });
+
+      await (env.ctrl as any).cleanupExpiredQueuedMessages();
+
+      expect(env.queueModel.delete).toHaveBeenCalledWith(
+        expect.objectContaining({
+          createdAt: expect.anything(), // LessThan(date)
+        }),
+      );
+    });
   });
 });

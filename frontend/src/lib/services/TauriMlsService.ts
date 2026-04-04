@@ -629,7 +629,12 @@ export class TauriMlsService implements IMlsService {
       const res = await fetch(`${this.historyUrl}/api/mls-api/groups`, {
         method: 'POST',
         headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ name, createdBy: this.userId, isGroup }),
+        body: JSON.stringify({
+          name,
+          createdBy: this.userId,
+          isGroup,
+          creatorDeviceId: this.deviceId,
+        }),
       });
       if (!res.ok) throw new Error('Failed to create remote group');
       const data = await res.json();
@@ -935,6 +940,65 @@ export class TauriMlsService implements IMlsService {
       return await res.json();
     } catch {
       return [];
+    }
+  }
+
+  async getPendingInvitations(
+    userId: string,
+    deviceId: string
+  ): Promise<
+    Array<{ id: string; userId: string; deviceId: string; groupId: string; status: string }>
+  > {
+    try {
+      const res = await fetch(
+        `${this.historyUrl}/api/mls-api/pending-invitations/${userId}/${deviceId}`
+      );
+      if (!res.ok) return [];
+      return await res.json();
+    } catch {
+      return [];
+    }
+  }
+
+  async getDeviceMemberships(
+    userId: string,
+    deviceId: string
+  ): Promise<
+    Array<{
+      id: string;
+      userId: string;
+      deviceId: string;
+      groupId: string;
+      status: string;
+      lastEpochSeen: number;
+    }>
+  > {
+    try {
+      const res = await fetch(
+        `${this.historyUrl}/api/mls-api/device-memberships/${userId}/${deviceId}`
+      );
+      if (!res.ok) return [];
+      return await res.json();
+    } catch {
+      return [];
+    }
+  }
+
+  async updateInvitationStatus(
+    deviceId: string,
+    userId: string,
+    groupId: string,
+    status: 'pending' | 'added' | 'welcome_sent' | 'welcome_received',
+    lastEpochSeen?: number
+  ): Promise<void> {
+    try {
+      await fetch(`${this.historyUrl}/api/mls-api/invitation-status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceId, userId, groupId, status, lastEpochSeen }),
+      });
+    } catch (e) {
+      console.error('Failed to update invitation status', e);
     }
   }
 }

@@ -11,15 +11,19 @@ import {
   BadRequestException,
   UseGuards,
   Headers,
+  OnModuleInit,
+  OnModuleDestroy,
+  Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, MoreThanOrEqual } from 'typeorm';
+import { Repository, In, MoreThanOrEqual, LessThan } from 'typeorm';
 import { QueuedMessage } from './entities/queued-message.entity';
 import { KeyPackage } from './entities/key-package.entity';
 import { WelcomeMessage } from './entities/welcome-message.entity';
 import { GroupMember } from './entities/group-member.entity';
 import { Group } from './entities/group.entity';
 import { PinVerifier } from './entities/pin-verifier.entity';
+import { DeviceGroupMembership } from './entities/device-group-membership.entity';
 import Redis from 'ioredis';
 import * as crypto from 'crypto';
 import { lookup } from 'node:dns/promises';
@@ -519,7 +523,11 @@ function computeManifestDiff(
 }
 
 @Controller()
-export class AppController {
+export class AppController implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(AppController.name);
+  private staleDeviceInterval: ReturnType<typeof setInterval>;
+  private cleanupMessagesInterval: ReturnType<typeof setInterval>;
+
   constructor(
     @InjectRepository(QueuedMessage)
     private queuedMessageRepo: Repository<QueuedMessage>,
@@ -532,8 +540,101 @@ export class AppController {
     @InjectRepository(Group) private groupRepo: Repository<Group>,
     @InjectRepository(PinVerifier)
     private pinVerifierRepo: Repository<PinVerifier>,
+    @InjectRepository(DeviceGroupMembership)
+    private deviceGroupRepo: Repository<DeviceGroupMembership>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
   ) {}
+
+  onModuleInit() {
+    // Detect stale devices every 5 minutes: devices where lastEpochSeen is far behind
+    // the group's activeEpoch get removed and re-invited (status reset to pending)
+    this.staleDeviceInterval = setInterval(
+      () => {
+        void this.detectStaleDevices().catch((e) =>
+          this.logger.error('[CRON] detectStaleDevices failed', e),
+        );
+      },
+      5 * 60 * 1000,
+    );
+
+    // Cleanup expired queued messages older than 7 days — once per hour
+    this.cleanupMessagesInterval = setInterval(
+      () => {
+        void this.cleanupExpiredQueuedMessages().catch((e) =>
+          this.logger.error('[CRON] cleanupExpiredQueuedMessages failed', e),
+        );
+      },
+      60 * 60 * 1000,
+    );
+
+    this.logger.log(
+      '[CRON] Stale device detection (5min) and message cleanup (1h) scheduled',
+    );
+  }
+
+  onModuleDestroy() {
+    clearInterval(this.staleDeviceInterval);
+    clearInterval(this.cleanupMessagesInterval);
+  }
+
+  /**
+   * Detect devices whose lastEpochSeen is too far behind the group's activeEpoch.
+   * These "stale" devices are removed from the MLS group and get re-invited
+   * (their DeviceGroupMembership status is reset to "pending").
+   */
+  private async detectStaleDevices() {
+    const STALE_EPOCH_THRESHOLD = 10; // More than 10 epochs behind = stale
+
+    const groups = await this.groupRepo.find();
+    let resetCount = 0;
+
+    for (const group of groups) {
+      if (group.activeEpoch < STALE_EPOCH_THRESHOLD) continue;
+
+      const staleThreshold = group.activeEpoch - STALE_EPOCH_THRESHOLD;
+      const staleMembers = await this.deviceGroupRepo
+        .createQueryBuilder('dgm')
+        .where('dgm.groupId = :groupId', { groupId: group.id })
+        .andWhere('dgm.status = :status', { status: 'welcome_received' })
+        .andWhere('dgm.lastEpochSeen < :threshold', {
+          threshold: staleThreshold,
+        })
+        .getMany();
+
+      for (const member of staleMembers) {
+        // Reset to pending — the next online device will re-invite them
+        member.status = 'pending';
+        member.lastEpochSeen = 0;
+        await this.deviceGroupRepo.save(member);
+        resetCount++;
+        this.logger.log(
+          `[CRON] Stale device reset: device=${member.deviceId} group=${group.id} ` +
+            `(lastEpoch=${staleThreshold}, groupEpoch=${group.activeEpoch})`,
+        );
+      }
+    }
+
+    if (resetCount > 0) {
+      this.logger.log(
+        `[CRON] detectStaleDevices: ${resetCount} device(s) reset to pending`,
+      );
+    }
+  }
+
+  /**
+   * Delete queued messages older than 7 days.
+   */
+  private async cleanupExpiredQueuedMessages() {
+    const expiry = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const result = await this.queuedMessageRepo.delete({
+      createdAt: LessThan(expiry),
+    });
+    if (result.affected && result.affected > 0) {
+      this.logger.log(
+        `[CRON] cleanupExpiredQueuedMessages: deleted ${result.affected} message(s)`,
+      );
+    }
+  }
 
   @Post('mls-api/sync/session/start')
   async startSyncSession(
@@ -1008,15 +1109,34 @@ export class AppController {
   @UseGuards(HeaderAuthGuard)
   @Post('mls-api/groups')
   async createGroup(
-    @Body() body: { name: string; createdBy: string; isGroup?: boolean },
+    @Body()
+    body: {
+      name: string;
+      createdBy: string;
+      isGroup?: boolean;
+      creatorDeviceId?: string;
+    },
   ) {
     const groupId = uuidv4();
     const newGroup = this.groupRepo.create({
       id: groupId,
       name: body.name,
-      isGroup: body.isGroup ?? true, // Default to true (group) if not specified
+      isGroup: body.isGroup ?? true,
     });
     await this.groupRepo.save(newGroup);
+
+    // Mark the creator's device as welcome_received (they created the group locally)
+    if (body.createdBy && body.creatorDeviceId) {
+      const creatorMembership = this.deviceGroupRepo.create({
+        userId: body.createdBy,
+        deviceId: body.creatorDeviceId,
+        groupId,
+        status: 'welcome_received' as const,
+        lastEpochSeen: 0,
+      });
+      await this.deviceGroupRepo.save(creatorMembership);
+    }
+
     return {
       groupId,
       name: body.name,
@@ -1071,6 +1191,28 @@ export class AppController {
       member.joinedAt = new Date();
     }
     await this.groupMemberRepo.save(member);
+
+    // Create DeviceGroupMembership for all devices of this user
+    const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const userDevices = await this.keyPackageRepo.find({
+      where: { userId: safeUserId, createdAt: MoreThanOrEqual(cutoff) },
+    });
+    for (const device of userDevices) {
+      const existing = await this.deviceGroupRepo.findOne({
+        where: { deviceId: device.deviceId, groupId: safeGroupId },
+      });
+      if (!existing) {
+        // The device that's being added directly gets 'added', others get 'pending'
+        const status = device.deviceId === safeDeviceId ? 'added' : 'pending';
+        const membership = this.deviceGroupRepo.create({
+          userId: safeUserId,
+          deviceId: device.deviceId,
+          groupId: safeGroupId,
+          status: status as any,
+        });
+        await this.deviceGroupRepo.save(membership);
+      }
+    }
 
     // Sync to Redis for Gateway access
     await this.redis.sadd(
@@ -1133,6 +1275,117 @@ export class AppController {
     await this.groupMemberRepo.delete({ groupId: safeGroupId });
     await this.redis.del(`group:members:${safeGroupId}`);
     return { status: 'deleted' };
+  }
+
+  // ─── DeviceGroupMembership endpoints ──────────────────────────────────
+
+  /**
+   * Returns all pending device-group memberships for groups this device belongs to.
+   * Any online device can then process these by committing Add + sending Welcome.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Get('mls-api/pending-invitations/:userId/:deviceId')
+  async getPendingInvitations(
+    @Param('userId') userId: string,
+    @Param('deviceId') deviceId: string,
+  ) {
+    const safeUserId = sanitizeQueryValue(userId, 'userId');
+    const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
+
+    // 1. Get groups where this device is already a full member (welcome_received)
+    const myMemberships = await this.deviceGroupRepo.find({
+      where: {
+        userId: safeUserId,
+        deviceId: safeDeviceId,
+        status: 'welcome_received' as const,
+      },
+    });
+    const myGroupIds = myMemberships.map((m) => m.groupId);
+    if (myGroupIds.length === 0) return [];
+
+    // 2. Find all pending memberships in those groups
+    const pending = await this.deviceGroupRepo.find({
+      where: myGroupIds.map((gid) => ({
+        groupId: gid,
+        status: 'pending' as const,
+      })),
+    });
+    return pending;
+  }
+
+  /**
+   * Returns all device-group memberships for a specific device (so the device
+   * knows which groups it's pending/added/welcomed for).
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Get('mls-api/device-memberships/:userId/:deviceId')
+  async getDeviceMemberships(
+    @Param('userId') userId: string,
+    @Param('deviceId') deviceId: string,
+  ) {
+    const safeUserId = sanitizeQueryValue(userId, 'userId');
+    const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
+    return this.deviceGroupRepo.find({
+      where: { userId: safeUserId, deviceId: safeDeviceId },
+    });
+  }
+
+  /**
+   * Update the status of a device-group membership.
+   * Transitions: pending→added, added→welcome_sent, welcome_sent→welcome_received
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Post('mls-api/invitation-status')
+  async updateInvitationStatus(
+    @Body()
+    body: {
+      deviceId: string;
+      userId: string;
+      groupId: string;
+      status: 'pending' | 'added' | 'welcome_sent' | 'welcome_received';
+      lastEpochSeen?: number;
+    },
+  ) {
+    const safeDeviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
+    const safeUserId = sanitizeQueryValue(body.userId, 'userId');
+    const safeGroupId = sanitizeQueryValue(body.groupId, 'groupId');
+
+    const validStatuses = [
+      'pending',
+      'added',
+      'welcome_sent',
+      'welcome_received',
+    ];
+    if (!validStatuses.includes(body.status)) {
+      throw new BadRequestException(
+        `status must be one of: ${validStatuses.join(', ')}`,
+      );
+    }
+
+    let membership = await this.deviceGroupRepo.findOne({
+      where: { deviceId: safeDeviceId, groupId: safeGroupId },
+    });
+
+    if (!membership) {
+      membership = this.deviceGroupRepo.create({
+        deviceId: safeDeviceId,
+        userId: safeUserId,
+        groupId: safeGroupId,
+        status: body.status,
+      });
+    } else {
+      membership.status = body.status;
+    }
+
+    if (
+      typeof body.lastEpochSeen === 'number' &&
+      Number.isFinite(body.lastEpochSeen)
+    ) {
+      membership.lastEpochSeen = Math.floor(body.lastEpochSeen);
+    }
+
+    await this.deviceGroupRepo.save(membership);
+    return { status: membership.status };
   }
 
   @UseGuards(HeaderAuthGuard)
@@ -1353,6 +1606,21 @@ export class AppController {
       console.log(`[DELIVERY] Target ${redisKey} is OFFLINE, message queued.`);
     }
 
+    // Update DeviceGroupMembership status to welcome_sent
+    await this.deviceGroupRepo
+      .createQueryBuilder()
+      .update()
+      .set({ status: 'welcome_sent' as const })
+      .where(
+        'deviceId = :deviceId AND groupId = :groupId AND status IN (:...statuses)',
+        {
+          deviceId: targetDeviceId,
+          groupId: safeGroupId,
+          statuses: ['pending', 'added'],
+        },
+      )
+      .execute();
+
     return { status: 'queued' };
   }
 
@@ -1366,6 +1634,19 @@ export class AppController {
     // consumed once. Re-processing the same welcome on reconnect would always fail.
     if (messages.length > 0) {
       await this.welcomeMessageRepo.delete({ deviceId });
+
+      // Update DeviceGroupMembership status to welcome_received for each group
+      for (const msg of messages) {
+        await this.deviceGroupRepo
+          .createQueryBuilder()
+          .update()
+          .set({ status: 'welcome_received' as const })
+          .where('deviceId = :deviceId AND groupId = :groupId', {
+            deviceId: msg.deviceId,
+            groupId: msg.groupId,
+          })
+          .execute();
+      }
     }
     return messages;
   }
