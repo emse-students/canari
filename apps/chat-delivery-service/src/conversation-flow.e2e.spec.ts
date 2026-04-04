@@ -1843,12 +1843,12 @@ describe('PARTIE C - DeviceGroupMembership lifecycle', () => {
 
       await (env.ctrl as any).detectStaleDevices();
 
-      // The stale device should be saved with status 'pending' and lastEpochSeen 0
+      // The stale device should be saved with status 'stale' and lastEpochSeen 0
       expect(env.deviceGroupModel.save).toHaveBeenCalledWith(
         expect.objectContaining({
           deviceId: USERS.u2.deviceId,
           groupId: 'g-stale',
-          status: 'pending',
+          status: 'stale',
           lastEpochSeen: 0,
         }),
       );

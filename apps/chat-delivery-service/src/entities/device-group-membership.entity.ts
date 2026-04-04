@@ -12,7 +12,8 @@ export type DeviceGroupStatus =
   | 'pending'
   | 'added'
   | 'welcome_sent'
-  | 'welcome_received';
+  | 'welcome_received'
+  | 'stale';
 
 @Entity('dm_device_group_memberships')
 @Unique(['deviceId', 'groupId'])
@@ -33,7 +34,7 @@ export class DeviceGroupMembership {
 
   @Column({
     type: 'enum',
-    enum: ['pending', 'added', 'welcome_sent', 'welcome_received'],
+    enum: ['pending', 'added', 'welcome_sent', 'welcome_received', 'stale'],
     default: 'pending',
   })
   status: DeviceGroupStatus;

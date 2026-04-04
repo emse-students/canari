@@ -420,7 +420,9 @@ async fn handle_socket(
                                     }
                                 }
 
-                                // Route to recipients (same logic as "mls")
+                                // Route ALL recipients through delivery service (queue-first).
+                                // The delivery service persists every message before attempting
+                                // real-time delivery, preventing loss from timing races.
                                 let mut target_recipients: Vec<Recipient> = recipients;
 
                                 if target_recipients.is_empty() && !group_id.is_empty() {
@@ -445,78 +447,31 @@ async fn handle_socket(
                                 }
 
                                 if !target_recipients.is_empty() {
-                                    let mut offline_list: Vec<Recipient> = Vec::new();
-
-                                    for recipient in target_recipients {
-                                        if recipient.device_id.is_empty() {
-                                            offline_list.push(recipient);
-                                            continue;
-                                        }
-
-                                        let target_key = format!(
-                                            "{}:{}",
-                                            recipient.user_id, recipient.device_id
-                                        );
-                                        let redis_presence_key =
-                                            format!("user:online:{}", target_key);
-                                        let mut is_online = false;
-
-                                        if let Ok(mut con) = state
-                                            .redis_client
-                                            .get_multiplexed_async_connection()
-                                            .await
-                                        {
-                                            if let Ok(true) =
-                                                con.exists::<_, bool>(&redis_presence_key).await
-                                            {
-                                                is_online = true;
-                                                let routing = serde_json::json!({
-                                                    "recipientId": recipient.user_id,
-                                                    "deviceId": recipient.device_id,
-                                                    "senderId": user_id,
-                                                    "senderDeviceId": device_id,
-                                                    "groupId": group_id,
-                                                    "isWelcome": false,
-                                                    "proto": B64.encode(&ciphertext)
-                                                })
-                                                .to_string();
-                                                let _: Result<(), _> =
-                                                    con.publish("chat:messages", &routing).await;
-                                            }
-                                        }
-
-                                        if !is_online {
-                                            offline_list.push(recipient);
-                                        }
-                                    }
-
-                                    if !offline_list.is_empty() {
-                                        let body = serde_json::json!({
-                                            "recipients": offline_list
-                                                .iter()
-                                                .map(|r| serde_json::json!({
-                                                    "userId": r.user_id,
-                                                    "deviceId": if r.device_id.is_empty() { serde_json::Value::Null } else { r.device_id.clone().into() }
-                                                }))
-                                                .collect::<Vec<_>>(),
-                                            "senderId": user_id,
-                                            "senderDeviceId": device_id,
-                                            "groupId": group_id,
-                                            "isWelcome": false,
-                                            "proto": B64.encode(&ciphertext)
-                                        });
-                                        if let Err(e) = state
-                                            .http_client
-                                            .post(format!(
-                                                "{}/mls-api/send",
-                                                state.delivery_service_url
-                                            ))
-                                            .json(&body)
-                                            .send()
-                                            .await
-                                        {
-                                            tracing::error!("Offline delivery failed: {}", e);
-                                        }
+                                    let body = serde_json::json!({
+                                        "recipients": target_recipients
+                                            .iter()
+                                            .map(|r| serde_json::json!({
+                                                "userId": r.user_id,
+                                                "deviceId": if r.device_id.is_empty() { serde_json::Value::Null } else { r.device_id.clone().into() }
+                                            }))
+                                            .collect::<Vec<_>>(),
+                                        "senderId": user_id,
+                                        "senderDeviceId": device_id,
+                                        "groupId": group_id,
+                                        "isWelcome": false,
+                                        "proto": B64.encode(&ciphertext)
+                                    });
+                                    if let Err(e) = state
+                                        .http_client
+                                        .post(format!(
+                                            "{}/mls-api/send",
+                                            state.delivery_service_url
+                                        ))
+                                        .json(&body)
+                                        .send()
+                                        .await
+                                    {
+                                        tracing::error!("Delivery failed: {}", e);
                                     }
                                 }
                             }
@@ -570,7 +525,7 @@ async fn handle_socket(
                                     }
                                 }
 
-                                // Route to recipients
+                                // Route ALL recipients through delivery service (queue-first)
                                 let mut target_recipients: Vec<Recipient> = recipients;
 
                                 if target_recipients.is_empty() && !group_id.is_empty() {
@@ -597,78 +552,31 @@ async fn handle_socket(
                                 tracing::info!("Target recipients: {}", target_recipients.len());
 
                                 if !target_recipients.is_empty() {
-                                    let mut offline_list: Vec<Recipient> = Vec::new();
-
-                                    for recipient in target_recipients {
-                                        if recipient.device_id.is_empty() {
-                                            offline_list.push(recipient);
-                                            continue;
-                                        }
-
-                                        let target_key = format!(
-                                            "{}:{}",
-                                            recipient.user_id, recipient.device_id
-                                        );
-                                        let redis_presence_key =
-                                            format!("user:online:{}", target_key);
-                                        let mut is_online = false;
-
-                                        if let Ok(mut con) = state
-                                            .redis_client
-                                            .get_multiplexed_async_connection()
-                                            .await
-                                        {
-                                            if let Ok(true) =
-                                                con.exists::<_, bool>(&redis_presence_key).await
-                                            {
-                                                is_online = true;
-                                                let routing = serde_json::json!({
-                                                    "recipientId": recipient.user_id,
-                                                    "deviceId": recipient.device_id,
-                                                    "senderId": user_id,
-                                                    "senderDeviceId": device_id,
-                                                    "groupId": group_id,
-                                                    "isWelcome": false,
-                                                    "proto": B64.encode(&ciphertext)
-                                                })
-                                                .to_string();
-                                                let _: Result<(), _> =
-                                                    con.publish("chat:messages", &routing).await;
-                                            }
-                                        }
-
-                                        if !is_online {
-                                            offline_list.push(recipient);
-                                        }
-                                    }
-
-                                    if !offline_list.is_empty() {
-                                        let body = serde_json::json!({
-                                            "recipients": offline_list
-                                                .iter()
-                                                .map(|r| serde_json::json!({
-                                                    "userId": r.user_id,
-                                                    "deviceId": if r.device_id.is_empty() { serde_json::Value::Null } else { r.device_id.clone().into() }
-                                                }))
-                                                .collect::<Vec<_>>(),
-                                            "senderId": user_id,
-                                            "senderDeviceId": device_id,
-                                            "groupId": group_id,
-                                            "isWelcome": false,
-                                            "proto": B64.encode(&ciphertext)
-                                        });
-                                        if let Err(e) = state
-                                            .http_client
-                                            .post(format!(
-                                                "{}/mls-api/send",
-                                                state.delivery_service_url
-                                            ))
-                                            .json(&body)
-                                            .send()
-                                            .await
-                                        {
-                                            tracing::error!("Offline delivery failed: {}", e);
-                                        }
+                                    let body = serde_json::json!({
+                                        "recipients": target_recipients
+                                            .iter()
+                                            .map(|r| serde_json::json!({
+                                                "userId": r.user_id,
+                                                "deviceId": if r.device_id.is_empty() { serde_json::Value::Null } else { r.device_id.clone().into() }
+                                            }))
+                                            .collect::<Vec<_>>(),
+                                        "senderId": user_id,
+                                        "senderDeviceId": device_id,
+                                        "groupId": group_id,
+                                        "isWelcome": false,
+                                        "proto": B64.encode(&ciphertext)
+                                    });
+                                    if let Err(e) = state
+                                        .http_client
+                                        .post(format!(
+                                            "{}/mls-api/send",
+                                            state.delivery_service_url
+                                        ))
+                                        .json(&body)
+                                        .send()
+                                        .await
+                                    {
+                                        tracing::error!("Delivery failed: {}", e);
                                     }
                                 }
                             }
@@ -676,77 +584,34 @@ async fn handle_socket(
                             "welcome" => {
                                 tracing::info!("Processing Welcome frame for group {}", group_id);
 
-                                for recipient in recipients {
-                                    if recipient.device_id.is_empty() {
-                                        // Fan-out via delivery service
-                                        let body = serde_json::json!({
-                                            "recipients": [{ "userId": recipient.user_id, "deviceId": serde_json::Value::Null }],
-                                            "senderId": user_id,
-                                            "senderDeviceId": device_id,
-                                            "groupId": group_id,
-                                            "isWelcome": true,
-                                            "proto": B64.encode(&ciphertext),
-                                            "ratchetTree": ratchet_tree.clone()
-                                        });
-                                        let _ = state
-                                            .http_client
-                                            .post(format!(
-                                                "{}/mls-api/send",
-                                                state.delivery_service_url
-                                            ))
-                                            .json(&body)
-                                            .send()
-                                            .await;
-                                        continue;
-                                    }
-
-                                    let target_key =
-                                        format!("{}:{}", recipient.user_id, recipient.device_id);
-                                    let redis_presence_key = format!("user:online:{}", target_key);
-                                    let mut sent = false;
-
-                                    if let Ok(mut con) =
-                                        state.redis_client.get_multiplexed_async_connection().await
+                                // Route ALL welcome recipients through delivery service (queue-first)
+                                if !recipients.is_empty() {
+                                    let body = serde_json::json!({
+                                        "recipients": recipients
+                                            .iter()
+                                            .map(|r| serde_json::json!({
+                                                "userId": r.user_id,
+                                                "deviceId": if r.device_id.is_empty() { serde_json::Value::Null } else { r.device_id.clone().into() }
+                                            }))
+                                            .collect::<Vec<_>>(),
+                                        "senderId": user_id,
+                                        "senderDeviceId": device_id,
+                                        "groupId": group_id,
+                                        "isWelcome": true,
+                                        "proto": B64.encode(&ciphertext),
+                                        "ratchetTree": ratchet_tree.clone()
+                                    });
+                                    if let Err(e) = state
+                                        .http_client
+                                        .post(format!(
+                                            "{}/mls-api/send",
+                                            state.delivery_service_url
+                                        ))
+                                        .json(&body)
+                                        .send()
+                                        .await
                                     {
-                                        if let Ok(true) =
-                                            con.exists::<_, bool>(&redis_presence_key).await
-                                        {
-                                            let routing = serde_json::json!({
-                                                "recipientId": recipient.user_id,
-                                                "deviceId": recipient.device_id,
-                                                "senderId": user_id,
-                                                "senderDeviceId": device_id,
-                                                "groupId": group_id,
-                                                "isWelcome": true,
-                                                "proto": B64.encode(&ciphertext),
-                                                "ratchetTree": ratchet_tree.clone()
-                                            })
-                                            .to_string();
-                                            let _: Result<(), _> =
-                                                con.publish("chat:messages", &routing).await;
-                                            sent = true;
-                                        }
-                                    }
-
-                                    if !sent {
-                                        let body = serde_json::json!({
-                                            "recipients": [{ "userId": recipient.user_id, "deviceId": recipient.device_id }],
-                                            "senderId": user_id,
-                                            "senderDeviceId": device_id,
-                                            "groupId": group_id,
-                                            "isWelcome": true,
-                                            "proto": B64.encode(&ciphertext),
-                                            "ratchetTree": ratchet_tree.clone()
-                                        });
-                                        let _ = state
-                                            .http_client
-                                            .post(format!(
-                                                "{}/mls-api/send",
-                                                state.delivery_service_url
-                                            ))
-                                            .json(&body)
-                                            .send()
-                                            .await;
+                                        tracing::error!("Welcome delivery failed: {}", e);
                                     }
                                 }
                             }

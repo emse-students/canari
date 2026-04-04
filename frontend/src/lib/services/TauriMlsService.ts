@@ -988,7 +988,7 @@ export class TauriMlsService implements IMlsService {
     deviceId: string,
     userId: string,
     groupId: string,
-    status: 'pending' | 'added' | 'welcome_sent' | 'welcome_received',
+    status: 'pending' | 'added' | 'welcome_sent' | 'welcome_received' | 'stale',
     lastEpochSeen?: number
   ): Promise<void> {
     try {
@@ -1000,6 +1000,15 @@ export class TauriMlsService implements IMlsService {
     } catch (e) {
       console.error('Failed to update invitation status', e);
     }
+  }
+
+  async kickStaleUser(userId: string, groupId: string): Promise<void> {
+    const res = await fetch(`${this.historyUrl}/api/mls-api/kick-stale-user`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, groupId }),
+    });
+    if (!res.ok) throw new Error(`kickStaleUser failed: ${res.status}`);
   }
 
   async deleteDeviceMembership(

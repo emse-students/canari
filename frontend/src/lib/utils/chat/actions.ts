@@ -85,7 +85,51 @@ export async function processPendingInvitations(params: {
     }
 
     try {
-      for (const inv of invitations) {
+      // ── Phase 0: Kick stale devices ──────────────────────────────────────
+      // A stale device's leaf is still in the MLS tree.  We must remove it
+      // (commit de "kick") before re-adding (commit + welcome d'ajout).
+      const staleInvs = invitations.filter((inv) => inv.status === 'stale');
+      const kickedUserIds = new Set<string>();
+
+      for (const inv of staleInvs) {
+        if (kickedUserIds.has(inv.userId)) continue; // already kicked this user in this group
+
+        try {
+          // Remove ALL leaves of the stale user from the MLS tree
+          await mlsService.removeMember(groupId, [inv.userId]);
+          log(`[PENDING] Kicked stale user ${inv.userId} from ${groupId}`);
+
+          // Reset all their devices in this group to pending on the server
+          await mlsService.kickStaleUser(inv.userId, groupId);
+          kickedUserIds.add(inv.userId);
+
+          // Persist MLS state after the remove commit
+          const stBytes = await mlsService.saveState(pin);
+          localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
+
+          // Short delay for commit propagation
+          await new Promise((r) => setTimeout(r, 150));
+        } catch (e) {
+          log(`[PENDING] Erreur kick stale user ${inv.userId}: ${String(e).slice(0, 100)}`);
+        }
+      }
+
+      // ── Phase 1: Add pending devices ─────────────────────────────────────
+      // If we just kicked stale users, re-fetch this group's pending list
+      // (the kicked devices are now pending).
+      let currentPending: typeof invitations;
+      if (kickedUserIds.size > 0) {
+        try {
+          const allPending = await mlsService.getPendingInvitations(userId, myDeviceId);
+          currentPending = allPending.filter((inv) => inv.groupId === groupId);
+        } catch {
+          currentPending = invitations.filter((inv) => inv.status === 'pending');
+        }
+      } else {
+        currentPending = invitations.filter((inv) => inv.status === 'pending');
+      }
+
+      for (const inv of currentPending) {
         try {
           // Fetch fresh KeyPackage for the pending device
           const devices = await mlsService.fetchUserDevices(inv.userId);

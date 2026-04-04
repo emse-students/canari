@@ -28,7 +28,6 @@ import Redis from 'ioredis';
 import * as crypto from 'crypto';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
-import { encodeInboundMsgEnvelope } from '@canari/shared-ts';
 
 const SAFE_QUERY_VALUE_REGEX = /^[a-zA-Z0-9_.:@-]{1,128}$/;
 
@@ -601,7 +600,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       .getMany();
 
     for (const member of staleMembers) {
-      member.status = 'pending';
+      member.status = 'stale';
       member.lastEpochSeen = 0;
       await this.deviceGroupRepo.save(member);
       this.logger.log(
@@ -1299,12 +1298,12 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     const myGroupIds = myMemberships.map((m) => m.groupId);
     if (myGroupIds.length === 0) return [];
 
-    // 2. Find all pending memberships in those groups
+    // 2. Find all pending AND stale memberships in those groups
     const pending = await this.deviceGroupRepo.find({
-      where: myGroupIds.map((gid) => ({
-        groupId: gid,
-        status: 'pending' as const,
-      })),
+      where: myGroupIds.flatMap((gid) => [
+        { groupId: gid, status: 'pending' as const },
+        { groupId: gid, status: 'stale' as const },
+      ]),
     });
     return pending;
   }
@@ -1338,7 +1337,12 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       deviceId: string;
       userId: string;
       groupId: string;
-      status: 'pending' | 'added' | 'welcome_sent' | 'welcome_received';
+      status:
+        | 'pending'
+        | 'added'
+        | 'welcome_sent'
+        | 'welcome_received'
+        | 'stale';
       lastEpochSeen?: number;
     },
   ) {
@@ -1351,6 +1355,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       'added',
       'welcome_sent',
       'welcome_received',
+      'stale',
     ];
     if (!validStatuses.includes(body.status)) {
       throw new BadRequestException(
@@ -1382,6 +1387,43 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
     await this.deviceGroupRepo.save(membership);
     return { status: membership.status };
+  }
+
+  /**
+   * Reset all device-group memberships of a user in a group to "pending".
+   * Called by a client after it has performed the MLS remove commit for a
+   * stale user.  All devices of that user are kicked and will be re-invited.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Post('mls-api/kick-stale-user')
+  async kickStaleUser(@Body() body: { userId: string; groupId: string }) {
+    const safeUserId = sanitizeQueryValue(body.userId, 'userId');
+    const safeGroupId = sanitizeQueryValue(body.groupId, 'groupId');
+
+    const memberships = await this.deviceGroupRepo.find({
+      where: { userId: safeUserId, groupId: safeGroupId },
+    });
+
+    for (const m of memberships) {
+      m.status = 'pending';
+      m.lastEpochSeen = 0;
+    }
+
+    if (memberships.length > 0) {
+      await this.deviceGroupRepo.save(memberships);
+      this.logger.log(
+        `[KICK] Reset ${memberships.length} device(s) of user ${safeUserId} in group ${safeGroupId} to pending`,
+      );
+    }
+
+    return {
+      status: 'kicked',
+      affected: memberships.length,
+      devices: memberships.map((m) => ({
+        deviceId: m.deviceId,
+        groupId: m.groupId,
+      })),
+    };
   }
 
   /**
@@ -1707,6 +1749,12 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       type?: string;
     },
   ) {
+    // ── Queue-first delivery ──────────────────────────────────────────────
+    // Every message is persisted first so it survives timing races between
+    // the online-check and the actual WebSocket send.  After queuing we
+    // attempt real-time delivery via Redis pub/sub; the client ACKs by
+    // queuedMessageId which deletes the entry from the queue.
+
     const ops: QueuedMessage[] = [];
     let sentCount = 0;
 
@@ -1723,40 +1771,18 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
           r.deviceId,
           'recipients.deviceId',
         );
-        const redisKey = `user:online:${recipientUserId}:${recipientDeviceId}`;
-        const isOnline = await this.redis.exists(redisKey);
-        console.log(
-          `[DELIVERY] Checking presence for ${redisKey} -> ${isOnline}`,
-        );
-        if (isOnline) {
-          const envelope = JSON.stringify({
+        ops.push(
+          this.queuedMessageRepo.create({
             recipientId: recipientUserId,
             deviceId: recipientDeviceId,
-            senderId: body.senderId ?? '',
-            senderDeviceId: body.senderDeviceId ?? '',
-            groupId: body.groupId ?? '',
-            isWelcome: body.isWelcome ?? false,
+            senderId: body.senderId,
+            senderDeviceId: body.senderDeviceId,
+            groupId: body.groupId,
+            isWelcome: body.isWelcome,
             proto,
-          });
-          console.log(
-            `[DELIVERY] Publishing proto message to ${redisKey}, envelope length: ${envelope.length}`,
-          );
-          await this.redis.publish('chat:messages', envelope);
-          sentCount++;
-        } else {
-          ops.push(
-            this.queuedMessageRepo.create({
-              recipientId: recipientUserId,
-              deviceId: recipientDeviceId,
-              senderId: body.senderId,
-              senderDeviceId: body.senderDeviceId,
-              groupId: body.groupId,
-              isWelcome: body.isWelcome,
-              proto,
-              createdAt: new Date(),
-            }),
-          );
-        }
+            createdAt: new Date(),
+          }),
+        );
       }
     } else {
       // ── Legacy path (frontend fallback / group fan-out) ───────────────────
@@ -1817,54 +1843,44 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       }
 
       for (const r of targetList) {
-        const redisKey = `user:online:${r.userId}:${r.deviceId}`;
-        const isOnline = await this.redis.exists(redisKey);
-        console.log(
-          `[DELIVERY] Checking presence for ${redisKey} -> ${isOnline}`,
+        ops.push(
+          this.queuedMessageRepo.create({
+            recipientId: r.userId,
+            deviceId: r.deviceId,
+            senderId,
+            senderDeviceId,
+            groupId,
+            content: safeContent,
+            type: safeType,
+            createdAt: new Date(),
+          }),
         );
-        if (isOnline) {
-          const ciphertext = Buffer.from(safeContent, 'base64');
-          const isWelcome = safeType === 'mlsWelcome';
-          console.log(
-            `[DELIVERY] Encoding message for ${redisKey}, isWelcome: ${isWelcome}`,
-          );
-          const envelopeRaw = await Promise.resolve(
-            encodeInboundMsgEnvelope(r.userId, r.deviceId, {
-              ciphertext,
-              senderId,
-              senderDeviceId: senderDeviceId ?? '',
-              groupId,
-              isWelcome,
-            }),
-          );
-          if (typeof envelopeRaw !== 'string') {
-            throw new BadRequestException('Encoded envelope must be a string');
-          }
-          const envelope: string = envelopeRaw;
-          console.log(
-            `[DELIVERY] Publishing Message to ${redisKey}, envelope length: ${envelope.length}`,
-          );
-          await this.redis.publish('chat:messages', envelope);
-          sentCount++;
-        } else {
-          ops.push(
-            this.queuedMessageRepo.create({
-              recipientId: r.userId,
-              deviceId: r.deviceId,
-              senderId,
-              senderDeviceId,
-              groupId,
-              content: safeContent,
-              type: safeType,
-              createdAt: new Date(),
-            }),
-          );
-        }
       }
     }
 
+    // 1. Persist ALL messages first (survives crashes / timing races)
     if (ops.length > 0) {
       await this.queuedMessageRepo.save(ops);
+    }
+
+    // 2. Best-effort real-time delivery for online recipients
+    for (const queued of ops) {
+      const redisKey = `user:online:${queued.recipientId}:${queued.deviceId}`;
+      const isOnline = await this.redis.exists(redisKey);
+      if (isOnline) {
+        const envelope = JSON.stringify({
+          recipientId: queued.recipientId,
+          deviceId: queued.deviceId,
+          senderId: body.senderId ?? '',
+          senderDeviceId: body.senderDeviceId ?? '',
+          groupId: body.groupId ?? '',
+          isWelcome: body.isWelcome ?? false,
+          proto: queued.proto ?? queued.content ?? '',
+          queuedMessageId: queued.id,
+        });
+        await this.redis.publish('chat:messages', envelope);
+        sentCount++;
+      }
     }
 
     return { status: 'processed', queued: ops.length, sent: sentCount };

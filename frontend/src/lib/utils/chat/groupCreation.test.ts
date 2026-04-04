@@ -93,6 +93,7 @@ function makeMlsService(overrides: Partial<IMlsService> = {}): IMlsService {
     getPendingInvitations: vi.fn().mockResolvedValue([]),
     getDeviceMemberships: vi.fn().mockResolvedValue([]),
     updateInvitationStatus: vi.fn().mockResolvedValue({ status: 'added' }),
+    kickStaleUser: vi.fn().mockResolvedValue(undefined),
     deleteDeviceMembership: vi.fn().mockResolvedValue({ status: 'deleted', affected: 1 }),
     deleteAllDeviceMemberships: vi.fn().mockResolvedValue({ status: 'deleted', affected: 0 }),
     ...overrides,

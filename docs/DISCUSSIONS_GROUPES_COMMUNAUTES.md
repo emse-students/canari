@@ -640,13 +640,24 @@ Pour chaque invitation pending (groupée par groupId) :
 **Détection des appareils obsolètes** (cron serveur toutes les heures) :
 
 - Un appareil est considéré obsolète quand il ne peut plus rattraper ses messages en file d'attente, c'est-à-dire quand son `updatedAt` dépasse la durée de rétention des messages (`MESSAGE_RETENTION_MS` = 7 jours).
-- Seuls les appareils en statut `welcome_received` (ayant déjà été actifs) sont ciblés → reset à `pending`.
-- L'appareil sera automatiquement ré-invité au prochain passage de `processPendingInvitations`.
+- Seuls les appareils en statut `welcome_received` (ayant déjà été actifs) sont ciblés → statut `stale`.
+- Au prochain passage de `processPendingInvitations`, un appareil actif exécute :
+  1. **Commit de « kick »** : `removeMember(groupId, [userId])` supprime toutes les feuilles MLS de l'utilisateur obsolète, puis `POST /mls-api/kick-stale-user` remet tous les devices à `pending`.
+  2. **Commit d'ajout + Welcome** : ajoute chaque device avec un nouveau KeyPackage via le flux `addMember` classique.
+- Cela garantit la forward secrecy (la feuille orpheline ne reste pas dans l'arbre MLS).
 
 **Nettoyage automatique** (cron serveur toutes les heures) :
 
 - Messages en file d'attente (QueuedMessage) de plus de 7 jours (`MESSAGE_RETENTION_MS`) → supprimés.
 - Les deux crons partagent la même constante `MESSAGE_RETENTION_MS` pour que les TTL ne divergent jamais.
+
+**Livraison queue-first** (fiabilité des messages) :
+
+- Le gateway envoie **tous** les destinataires au delivery service, qu'ils soient en ligne ou non.
+- Le delivery service **persiste chaque message d'abord** (QueuedMessage), puis tente la livraison temps-réel via Redis pub/sub si le device est en ligne.
+- Le payload temps-réel inclut un `queuedMessageId` ; le client l'acquitte (ACK) après traitement → supprime l'entrée de la file.
+- À la reconnexion, `fetchPendingMessages` récupère les messages non acquittés et les traite.
+- Ce modèle élimine la race condition entre la vérification de présence Redis et l'envoi réel via WebSocket : même si le device se déconnecte entre les deux, le message est déjà en file.
 
 ### 8.2 Découverte de groupes manquants
 

@@ -7,6 +7,8 @@ interface QueuedMessage {
   groupId?: string;
   isWelcome: boolean;
   ratchetTreeBytes?: Uint8Array;
+  /** ID from the delivery service queue — used for at-least-once ACK */
+  queuedMessageId?: string;
 }
 
 // Implémentation pour le Site Web (WASM)
@@ -220,6 +222,7 @@ export class WebMlsService implements IMlsService {
                 groupId: (msg.groupId as string) || undefined,
                 isWelcome: msg.isWelcome === true,
                 ratchetTreeBytes,
+                queuedMessageId: (msg.queuedMessageId as string) || undefined,
               });
             }
           } else {
@@ -286,6 +289,8 @@ export class WebMlsService implements IMlsService {
     this.isProcessingQueue = true;
     console.log(`[QUEUE] Starting queue processing (${this.messageQueue.length} messages)`);
 
+    const ackIds: string[] = [];
+
     while (this.messageQueue.length > 0) {
       const msg = this.messageQueue.shift()!;
       const groupId = msg.groupId;
@@ -302,6 +307,11 @@ export class WebMlsService implements IMlsService {
           msg.ratchetTreeBytes
         );
 
+        // Track for batch ACK
+        if (msg.queuedMessageId) {
+          ackIds.push(msg.queuedMessageId);
+        }
+
         // If this was a Welcome, process buffered messages for this group
         if (msg.isWelcome && groupId && this.pendingWelcomeGroups.has(groupId)) {
           const buffered = this.pendingWelcomeGroups.get(groupId)!;
@@ -315,11 +325,29 @@ export class WebMlsService implements IMlsService {
         }
       } catch (e) {
         console.error(`[QUEUE] Error processing message:`, e);
+        // ACK even on error to avoid infinite retry — MLS state has likely
+        // already advanced past this message (e.g. duplicate commit).
+        if (msg.queuedMessageId) {
+          ackIds.push(msg.queuedMessageId);
+        }
         // Clean up pending Welcome state on error to prevent buffering forever
         if (groupId) {
           this.pendingWelcomeGroups.delete(groupId);
         }
       }
+    }
+
+    // Batch-ACK all processed real-time messages
+    if (ackIds.length > 0) {
+      fetch(`${this.historyUrl}/api/mls-api/messages/ack`, {
+        method: 'POST',
+        headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          userId: this.userId,
+          deviceId: this.deviceId,
+          messageIds: ackIds,
+        }),
+      }).catch((e) => console.error('[QUEUE] Failed to ACK real-time messages:', e));
     }
 
     this.isProcessingQueue = false;
@@ -394,30 +422,31 @@ export class WebMlsService implements IMlsService {
         if (Array.isArray(messages) && messages.length > 0) {
           console.log(`Fetched ${messages.length} pending messages`);
 
-          const successfullyProcessedIds: string[] = [];
+          // Collect ALL message IDs for ACK — even messages that fail to
+          // process (they were likely already processed in real-time via the
+          // queue-first pipeline and MLS state has moved on).
+          const allIds: string[] = [];
 
           for (const msg of messages) {
-            const success = await this.simulateMessageReceive(msg);
             const msgId = msg.id || msg._id;
-            if (success && msgId) {
-              successfullyProcessedIds.push(msgId);
-            }
+            if (msgId) allIds.push(msgId);
+            await this.simulateMessageReceive(msg);
           }
 
-          if (successfullyProcessedIds.length > 0) {
+          if (allIds.length > 0) {
             const ackRes = await fetch(`${this.historyUrl}/api/mls-api/messages/ack`, {
               method: 'POST',
               headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
               body: JSON.stringify({
                 userId: this.userId,
                 deviceId: this.deviceId,
-                messageIds: successfullyProcessedIds,
+                messageIds: allIds,
               }),
             });
             if (!ackRes.ok) {
               console.error(`Message ACK failed: ${ackRes.status}`);
             } else {
-              console.log(`Acknowledged ${successfullyProcessedIds.length} messages`);
+              console.log(`Acknowledged ${allIds.length} messages`);
             }
           }
         } else {
@@ -1073,7 +1102,7 @@ export class WebMlsService implements IMlsService {
     deviceId: string,
     userId: string,
     groupId: string,
-    status: 'pending' | 'added' | 'welcome_sent' | 'welcome_received',
+    status: 'pending' | 'added' | 'welcome_sent' | 'welcome_received' | 'stale',
     lastEpochSeen?: number
   ): Promise<void> {
     try {
@@ -1085,6 +1114,15 @@ export class WebMlsService implements IMlsService {
     } catch (e) {
       console.error('Failed to update invitation status', e);
     }
+  }
+
+  async kickStaleUser(userId: string, groupId: string): Promise<void> {
+    const res = await fetch(`${this.historyUrl}/api/mls-api/kick-stale-user`, {
+      method: 'POST',
+      headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ userId, groupId }),
+    });
+    if (!res.ok) throw new Error(`kickStaleUser failed: ${res.status}`);
   }
 
   async deleteDeviceMembership(

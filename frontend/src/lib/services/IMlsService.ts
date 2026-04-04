@@ -99,9 +99,12 @@ export interface IMlsService {
     deviceId: string,
     userId: string,
     groupId: string,
-    status: 'pending' | 'added' | 'welcome_sent' | 'welcome_received',
+    status: 'pending' | 'added' | 'welcome_sent' | 'welcome_received' | 'stale',
     lastEpochSeen?: number
   ): Promise<void>;
+
+  /** Reset all devices of a user in a group to pending (after MLS remove commit). */
+  kickStaleUser(userId: string, groupId: string): Promise<void>;
 
   /** Delete a specific device-group membership */
   deleteDeviceMembership(
