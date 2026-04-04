@@ -410,6 +410,15 @@ export async function startNewConversation(
     log(`Erreur création: ${toUiDiscussionError(msg)}`);
     conversations.delete(conversationKey);
 
+    // Clean up local MLS state (epoch may have advanced after addMembersBulk)
+    if (groupId) {
+      try {
+        mlsService.forgetGroup(groupId, 0);
+      } catch {
+        // Non-blocking
+      }
+    }
+
     // Best-effort: clean up the orphan remote group to avoid server-side litter
     if (groupId) {
       try {
@@ -491,6 +500,15 @@ export async function repairDirectConversation(
     return true;
   } catch (e) {
     log(`Erreur de réparation : ${toUiDiscussionError(e)}`);
+
+    // Clean up local MLS state (epoch may have advanced after addMembersBulk)
+    if (groupId) {
+      try {
+        mlsService.forgetGroup(groupId, 0);
+      } catch {
+        // Non-blocking
+      }
+    }
 
     // Best-effort: clean up the orphan remote group
     if (groupId) {

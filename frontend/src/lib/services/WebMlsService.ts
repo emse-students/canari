@@ -661,10 +661,34 @@ export class WebMlsService implements IMlsService {
     // The backend validates against the pre-commit epoch.
     const currentEpoch = this.getEpoch(groupId);
     const baseEpoch = Math.max(0, currentEpoch - 1);
+
+    // Step 1: Validate epoch synchronously via HTTP — the caller will know
+    // immediately whether the commit was accepted or rejected.
+    const validateRes = await fetch(`${this.historyUrl}/api/mls-api/commit`, {
+      method: 'POST',
+      headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        groupId,
+        deviceId: `${this.userId}:${this.deviceId}`,
+        baseEpoch,
+      }),
+    });
+    if (!validateRes.ok) {
+      throw new Error(`Commit validation HTTP error: ${validateRes.status}`);
+    }
+    const validation = await validateRes.json();
+    if (!validation.accepted) {
+      throw new Error(
+        `Commit rejected: ${validation.reason || 'epoch_mismatch'} (server epoch: ${validation.currentEpoch}, sent: ${baseEpoch})`
+      );
+    }
+
+    // Step 2: Epoch advanced server-side — broadcast the commit to other
+    // members.  We send as type 'mls' so the gateway broadcasts directly
+    // without re-running epoch validation.
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: 'commit', groupId, proto, baseEpoch }));
+      this.ws.send(JSON.stringify({ type: 'mls', groupId, proto }));
     } else {
-      const base64 = btoa(String.fromCharCode(...commitBytes));
       await fetch(`${this.historyUrl}/api/mls-api/send`, {
         method: 'POST',
         headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
@@ -672,7 +696,7 @@ export class WebMlsService implements IMlsService {
           senderId: this.userId,
           senderDeviceId: this.deviceId,
           groupId,
-          content: base64,
+          content: proto,
           type: 'handshake',
         }),
       });

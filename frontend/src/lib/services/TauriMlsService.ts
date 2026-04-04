@@ -654,13 +654,36 @@ export class TauriMlsService implements IMlsService {
       const currentEpoch = await invoke<number>('obtenir_epoch', { groupId });
       baseEpoch = Math.max(0, currentEpoch - 1);
     } catch {
-      // If epoch retrieval fails, send 0 (gateway will skip validation)
+      // If epoch retrieval fails, send 0 (server will validate)
     }
 
+    // Step 1: Validate epoch synchronously via HTTP — the caller will know
+    // immediately whether the commit was accepted or rejected.
+    const validateRes = await fetch(`${this.historyUrl}/api/mls-api/commit`, {
+      method: 'POST',
+      headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        groupId,
+        deviceId: `${this.userId}:${this.deviceId}`,
+        baseEpoch,
+      }),
+    });
+    if (!validateRes.ok) {
+      throw new Error(`Commit validation HTTP error: ${validateRes.status}`);
+    }
+    const validation = await validateRes.json();
+    if (!validation.accepted) {
+      throw new Error(
+        `Commit rejected: ${validation.reason || 'epoch_mismatch'} (server epoch: ${validation.currentEpoch}, sent: ${baseEpoch})`
+      );
+    }
+
+    // Step 2: Epoch advanced server-side — broadcast the commit to other
+    // members.  We send as type 'mls' so the gateway broadcasts directly
+    // without re-running epoch validation.
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: 'commit', groupId, proto: base64, baseEpoch }));
+      this.ws.send(JSON.stringify({ type: 'mls', groupId, proto: base64 }));
     } else {
-      // Fallback HTTP
       await fetch(`${this.historyUrl}/api/mls-api/send`, {
         method: 'POST',
         headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
