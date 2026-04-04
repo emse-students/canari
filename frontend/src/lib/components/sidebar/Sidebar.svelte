@@ -467,16 +467,16 @@
     </div>
 
     <SidebarFooterTools
-        {onImport}
-        {onExport}
-        {onStartSync}
-        {onJoinSync}
-        onOpenDevicePanel={onOpenDevicePanel ?? (() => {})}
-        {isExporting}
-        {isImporting}
-        {isSyncing}
-        {pendingInvitationCount}
-      />
+      {onImport}
+      {onExport}
+      {onStartSync}
+      {onJoinSync}
+      onOpenDevicePanel={onOpenDevicePanel ?? (() => {})}
+      {isExporting}
+      {isImporting}
+      {isSyncing}
+      {pendingInvitationCount}
+    />
   </div>
 </aside>
 

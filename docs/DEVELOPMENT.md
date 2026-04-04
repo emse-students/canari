@@ -65,16 +65,6 @@ Les services sont accessibles via Nginx (port 80) ou directement (nouveaux ports
 
 - **Frontend**: http://localhost:1420 (dev) ou http://localhost (prod/docker)
 
-- **Backend Chat Gateway (Rust)**: `apps/chat-gateway`
-  - Lancer: `cargo run`
-- **Backend Call Service (Rust)**: `apps/call-service` (non utilisé actuellement, Dockerfile archivé dans `infrastructure/local/_archived/`)
-- **Frontend (SvelteKit + Tauri)**: `frontend/`
-  - Dépend de `libs/shared-ts` et `mls-wasm` (Rust)
-  - Lancer Web: `npm run dev`
-  - Lancer Desktop: `npm run tauri dev`
-- **Infrastructure**: `infrastructure/local/`
-  - Lancer: `docker compose up -d`
-
 ## Initialisation Manuelle
 
 Si vous ne souhaitez pas utiliser le script, respectez cet ordre :

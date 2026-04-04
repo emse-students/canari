@@ -1,7 +1,7 @@
 @startuml
 actor Utilisateur as User
 participant "Client App (Front)" as Client
-participant "Auth Service (Java)" as Auth
+participant "Core Service (NestJS)" as Auth
 participant "User DB (PostgreSQL)" as DB
 participant "Chat Gateway (Rust)" as Gateway
 

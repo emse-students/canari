@@ -1,4 +1,4 @@
-# Documentation technique : Discussions, Groupes et Communautés
+﻿# Documentation technique : Discussions, Groupes et Communautés
 
 > Documentation exhaustive du système de messagerie Canari, détaillant chaque action possible, les fonctions impliquées, la gestion des epochs MLS, et les incohérences potentielles identifiées.
 
@@ -19,9 +19,7 @@
 11. [Sauvegarde / Restauration](#11-sauvegarde--restauration)
 12. [Tableau récapitulatif des opérations MLS et epochs](#12-tableau-récapitulatif-des-opérations-mls-et-epochs)
 13. [Inventaire complet des fonctions](#13-inventaire-complet-des-fonctions)
-14. [Fonctions inutilisées / code mort](#14-fonctions-inutilisées--code-mort)
-15. [Incohérences temporelles et risques identifiés](#15-incohérences-temporelles-et-risques-identifiés)
-16. [Corrections de résilience (Cycles 1-8)](#16-corrections-de-résilience-cycles-1-8)
+14. [Risques identifiés](#14-risques-identifiés)
 
 ---
 
@@ -319,24 +317,7 @@ Epoch Timeline :
 
 **Important** : Le renommage ne touche PAS l'arbre MLS → pas de changement d'epoch.
 
-### 5.5 Supprimer un groupe
-
-**Fonction** : `deleteGroupAndBroadcast(params)` → `groupActions.ts`
-
-```
-Epoch Timeline :
-  En ─── sendMessage(groupDeleted) ──→ En (message applicatif)
-  ─── deleteGroupOnServer ──→ DELETE HTTP
-```
-
-**Étapes** :
-
-1. `sendMessage(...)` → message système `groupDeleted` (best effort, try/catch silencieux)
-2. `mlsService.deleteGroupOnServer(groupId)` → `DELETE /api/mls-api/groups/{groupId}`
-
-**⚠️ ATTENTION** : Cette fonction est **inutilisée** (voir §14).
-
-### 5.6 Retirer un membre
+### 5.5 Retirer un membre
 
 **Fonction** : `removeMemberAndBroadcast(params)` → `groupActions.ts`
 
@@ -506,16 +487,16 @@ Les **Discussions** (1-to-1 et groupes) utilisent MLS pour chiffrer **chaque mes
 
 Les **Communautés** (Channels) utilisent un paradigme différent : **une clé symétrique AES-256-GCM par channel**, partagée entre tous les membres. Un nouvel utilisateur qui rejoint un channel reçoit la clé et peut **déchiffrer l'intégralité de l'historique**. MLS n'est pas utilisé pour chiffrer les messages des channels, mais sera utilisé à terme comme **mécanisme de distribution sécurisée des clés de channel** (Key Distribution via MLS Welcome/Commit).
 
-| Aspect                        | Discussions (MLS)            | Communautés (AES-256-GCM)          |
-| ----------------------------- | ---------------------------- | ----------------------------------- |
-| Chiffrement                   | MLS par message              | AES-256-GCM clé partagée           |
-| Accès historique              | ❌ Pas d'accès rétroactif    | ✅ Accès complet à l'historique     |
-| Distribution de clé           | Welcome MLS                  | Dérivation SHA-256 (→ MLS prévu)   |
-| Rotation de clé               | Epoch MLS automatique        | Manuelle via `channel.key.rotated`  |
-| Stockage messages             | chat-delivery-service        | social-service (PostgreSQL)         |
-| Transport                     | WebSocket MLS + fallback HTTP| REST API + WebSocket events         |
-| Réactions / Édition / Suppression | ✅ Via MLS                | ❌ Non supporté (lecture seule)     |
-| Backend                       | chat-delivery-service (NestJS)| social-service (NestJS)            |
+| Aspect                            | Discussions (MLS)              | Communautés (AES-256-GCM)          |
+| --------------------------------- | ------------------------------ | ---------------------------------- |
+| Chiffrement                       | MLS par message                | AES-256-GCM clé partagée           |
+| Accès historique                  | ❌ Pas d'accès rétroactif      | ✅ Accès complet à l'historique    |
+| Distribution de clé               | Welcome MLS                    | Dérivation SHA-256 (→ MLS prévu)   |
+| Rotation de clé                   | Epoch MLS automatique          | Manuelle via `channel.key.rotated` |
+| Stockage messages                 | chat-delivery-service          | social-service (PostgreSQL)        |
+| Transport                         | WebSocket MLS + fallback HTTP  | REST API + WebSocket events        |
+| Réactions / Édition / Suppression | ✅ Via MLS                     | ❌ Non supporté (lecture seule)    |
+| Backend                           | chat-delivery-service (NestJS) | social-service (NestJS)            |
 
 Les communautés utilisent un système de chiffrement **différent de MLS** : chiffrement AES-256-GCM avec rotation de clé par epoch.
 
@@ -530,13 +511,13 @@ Frontend (AES-256-GCM)  ←→  Social Service (PostgreSQL) ←→  Redis PubSub
 
 **Fichiers clés** :
 
-| Fichier                                               | Rôle                                         |
-| ----------------------------------------------------- | -------------------------------------------- |
-| `frontend/src/lib/crypto/ChannelKeyVault.ts`          | Gestion des clés AES-256-GCM par channel     |
-| `frontend/src/lib/services/ChannelService.ts`         | Client REST pour le social-service            |
+| Fichier                                                       | Rôle                                       |
+| ------------------------------------------------------------- | ------------------------------------------ |
+| `frontend/src/lib/crypto/ChannelKeyVault.ts`                  | Gestion des clés AES-256-GCM par channel   |
+| `frontend/src/lib/services/ChannelService.ts`                 | Client REST pour le social-service         |
 | `frontend/src/lib/composables/useChannelWorkspaces.svelte.ts` | Composable gestion des workspaces/channels |
-| `apps/social-service/src/channels/channel.service.ts` | Service backend channels (NestJS)            |
-| `apps/social-service/src/channels/channels.controller.ts` | Contrôleur REST channels                 |
+| `apps/social-service/src/channels/channel.service.ts`         | Service backend channels (NestJS)          |
+| `apps/social-service/src/channels/channels.controller.ts`     | Contrôleur REST channels                   |
 
 ### 7.2 Créer un channel
 
@@ -608,11 +589,13 @@ Frontend (AES-256-GCM)  ←→  Social Service (PostgreSQL) ←→  Redis PubSub
 3. Format de réponse : `{ id, userId, role, joinedAt }`
 
 **Frontend** : `channelService.listMembers(channelId)` → `ChannelService.ts`
+
 - Appelé par `ChannelMembersSidebar` à chaque changement de channel sélectionné
 
 ### 7.10 Actions non supportées pour les channels
 
 Les actions suivantes sont spécifiques à MLS et **ne sont pas disponibles** dans les channels :
+
 - **Réactions** (`onReact`) : les réactions requièrent un message MLS système
 - **Suppression de message** (`onDelete`) : la suppression requiert un message MLS système
 - **Édition de message** (`onEdit`) : l'édition requiert un message MLS système
@@ -631,8 +614,9 @@ Ces handlers sont conditionnellement désactivés quand l'utilisateur est dans u
 **Principe** : N'importe quel appareil d'un membre du groupe, déjà en ligne et en état `welcome_received`, peut traiter les invitations en attente (status `pending`) des autres appareils. Cela élimine les deadlocks : le premier appareil à se reconnecter invite automatiquement tous les appareils en attente.
 
 **Entité serveur** : `DeviceGroupMembership` avec machine à états :
+
 - `pending` → L'appareil est enregistré mais n'a pas encore reçu de Welcome
-- `added` → Un appareil a commité un Add MLS pour cet appareil  
+- `added` → Un appareil a commité un Add MLS pour cet appareil
 - `welcome_sent` → Le Welcome a été stocké sur le serveur
 - `welcome_received` → L'appareil a récupéré et traité son Welcome
 
@@ -648,15 +632,18 @@ Pour chaque invitation pending (groupée par groupId) :
 ```
 
 **Gestion des erreurs** :
+
 - `DuplicateSignatureKey` → Appareil déjà membre → `updateInvitationStatus(welcome_received)`
 - `WrongEpoch` → Vérifier si un autre appareil a déjà traité → skip si `welcome_sent`/`welcome_received`
 - KeyPackage introuvable → skip (appareil potentiellement supprimé)
 
 **Détection des appareils obsolètes** (cron serveur toutes les 5 min) :
+
 - Groupes avec `activeEpoch > 10` : appareils avec `lastEpochSeen < activeEpoch - 10` → reset à `pending`
 - L'appareil sera automatiquement ré-invité au prochain passage de `processPendingInvitations`
 
 **Nettoyage automatique** (cron serveur toutes les heures) :
+
 - Messages en file d'attente (QueuedMessage) de plus de 7 jours → supprimés
 
 ### 8.2 Découverte de groupes manquants
@@ -781,11 +768,10 @@ processIncomingMessage(groupId, content) → ERREUR
 | Inviter membres      | `inviteMembersToGroup`      | `addMembersBulk`                                                    |       n → n+1        |        1        |
 | Retirer un membre    | `removeMemberAndBroadcast`  | `removeMember`                                                      |       n → n+1        |        1        |
 | Renommer groupe      | `renameGroupAndBroadcast`   | Aucune (HTTP PATCH)                                                 |          n           |        0        |
-| Supprimer groupe     | `deleteGroupAndBroadcast`   | Aucune (HTTP DELETE)                                                |          n           |        0        |
 | Envoyer message      | `sendMessage`               | `send_message_bytes`                                                |          n           |        0        |
 | Recevoir message     | `setupMessageHandler`       | `processIncomingMessage`                                            | n (ou n+1 si commit) |        0        |
 | Recevoir Welcome     | `setupMessageHandler`       | `processWelcome`                                                    |  → epoch du Welcome  |        0        |
-| Sync appareils       | `processPendingInvitations` | `addMember` par invitation pending (avec verrou)                     |    +1 par invitation |    1 par add    |
+| Sync appareils       | `processPendingInvitations` | `addMember` par invitation pending (avec verrou)                    |  +1 par invitation   |    1 par add    |
 | Réparer discussion   | `repairDirectConversation`  | `createGroup` + `addMembersBulk` ×2                                 |      0 → 1 → 2       |        2        |
 | Rejeu historique     | `replayConversationHistory` | `processIncomingMessage` × N                                        |       variable       |        0        |
 | Discovery            | `discoverMissingGroups`     | Aucune                                                              |          —           |        0        |
@@ -813,21 +799,20 @@ processIncomingMessage(groupId, content) → ERREUR
 | ---------------------------------------------- | :------: | ----------------------------------------------------- |
 | `fetchUniqueGroupMembers(mlsService, groupId)` |    ✅    | Récupère la liste dédupliquée des userId d'un groupe  |
 | `renameGroupAndBroadcast(params)`              |    ✅    | Renomme un groupe + diffuse notification système      |
-| `deleteGroupAndBroadcast(params)`              |    ✅    | Supprime un groupe (⚠️ **inutilisée**)                |
 | `removeMemberAndBroadcast(params)`             |    ✅    | Retire un membre MLS + notification + cleanup serveur |
 
 ### `actions.ts`
 
-| Fonction                         | Exportée | Rôle                                                                      |
-| -------------------------------- | :------: | ------------------------------------------------------------------------- |
+| Fonction                            | Exportée | Rôle                                                                 |
+| ----------------------------------- | :------: | -------------------------------------------------------------------- |
 | `processPendingInvitations(params)` |    ✅    | Traite les invitations pending via paradigme "any member bootstraps" |
-| `forceSyncReset(userId, log)`    |    ✅    | Outil de debugging : force un rechargement complet des invitations        |
-| `discoverMissingGroups(params)`  |    ✅    | Détecte les groupes serveur absents localement                            |
-| `exportUserBackup(params)`       |    ✅    | Exporte une sauvegarde chiffrée                                           |
-| `importUserBackup(params)`       |    ✅    | Importe une sauvegarde                                                    |
-| `generateDevKeyPackage(params)`  |    ✅    | Génère un KeyPackage (outil dev)                                          |
-| `addDevMember(params)`           |    ✅    | Ajoute un membre manuellement par hex (outil dev)                         |
-| `processDevWelcome(params)`      |    ✅    | Traite un Welcome manuellement par hex (outil dev)                        |
+| `forceSyncReset(userId, log)`       |    ✅    | Outil de debugging : force un rechargement complet des invitations   |
+| `discoverMissingGroups(params)`     |    ✅    | Détecte les groupes serveur absents localement                       |
+| `exportUserBackup(params)`          |    ✅    | Exporte une sauvegarde chiffrée                                      |
+| `importUserBackup(params)`          |    ✅    | Importe une sauvegarde                                               |
+| `generateDevKeyPackage(params)`     |    ✅    | Génère un KeyPackage (outil dev)                                     |
+| `addDevMember(params)`              |    ✅    | Ajoute un membre manuellement par hex (outil dev)                    |
+| `processDevWelcome(params)`         |    ✅    | Traite un Welcome manuellement par hex (outil dev)                   |
 
 ### `connection.ts`
 
@@ -899,37 +884,9 @@ processIncomingMessage(groupId, content) → ERREUR
 
 ---
 
-## 14. Fonctions inutilisées / code mort
+## 14. Risques identifiés
 
-### ❌ `deleteGroupAndBroadcast` — `groupActions.ts`
-
-- **Exportée** : Oui
-- **Importée quelque part** : Non
-- **Appelée** : Jamais
-- **Raison probable** : L'UI de suppression de groupe n'est pas implémentée. La suppression se fait par le mécanisme de détection de groupes fantômes (§10) ou côté serveur.
-- **Recommandation** : Supprimer ou implémenter l'UI correspondante.
-
-### ✅ `forceSyncReset` — `actions.ts`
-
-- **Exportée** : Oui
-- **Importée** : `MainChatPage.svelte` (raccourci Ctrl+Shift+S)
-- **Appelée** : Via raccourci clavier pour debugging
-- **Rôle** : Force un rechargement complet, `processPendingInvitations` retraitera toutes les invitations pending au prochain cycle.
-
----
-
-## 15. Incohérences temporelles et risques identifiés
-
-### � Risque 1 (RÉSOLU) : Race condition sur les Welcome — anciennement syncOwnDevicesToGroups
-
-**Contexte historique** : L'ancien `syncOwnDevicesToGroups` traitait les appareils séquentiellement avec des délais fixes (100ms entre groupes, 2000ms entre appareils).
-
-**Résolution** : Le nouveau paradigme "any member bootstraps" (`processPendingInvitations`) utilise un **système de verrous distribués** (`acquireAddLock/releaseAddLock` avec TTL 15s) et traite les invitations **une par une** avec vérification d'idempotence. Les race conditions sont gérées par :
-- Vérification `getGroupMembers` avant chaque ajout
-- Gestion explicite de `DuplicateSignatureKey` et `WrongEpoch`
-- Détection des appareils obsolètes par cron (epoch threshold > 10)
-
-### 🔴 Risque 2 : Epoch divergence lors du rejeu d'historique
+### 🔴 Risque 1 : Epoch divergence lors du rejeu d'historique
 
 **Contexte** : `replayConversationHistory` appelle `processIncomingMessage` pour chaque message de l'historique. Si certains de ces messages sont des commits (handshake), ils font avancer l'epoch.
 
@@ -937,13 +894,7 @@ processIncomingMessage(groupId, content) → ERREUR
 
 **Atténuation existante** : Le code traite `WrongEpoch` comme non-fatal (retourne `true` pour acquitter). Mais cela signifie que certains messages historiques peuvent être **silencieusement perdus**.
 
-### � Risque 3 (RÉSOLU) : addMember séquentiel — anciennement syncOwnDevicesToGroups
-
-**Contexte historique** : `syncOwnDevicesToGroups` créait un commit par groupe par appareil, multipliant les changements d'epoch.
-
-**Résolution** : `processPendingInvitations` traite les invitations pending individuellement avec verrou. Chaque invitation = 1 addMember + 1 commit, mais le verrou distribué empêche les conflits d'epoch entre appareils traitant simultanément. La détection d'appareils obsolètes (cron staleDevices) recycle automatiquement les invitations échouées.
-
-### 🟡 Risque 4 : Ordre Welcome → Commit non garanti
+### 🟡 Risque 2 : Ordre Welcome → Commit non garanti
 
 **Contexte** : Dans `startNewConversation` et `repairDirectConversation` :
 
@@ -955,7 +906,7 @@ processIncomingMessage(groupId, content) → ERREUR
 
 **Atténuation existante** : Le système de file d'attente prioritise les Welcome et bufferise les messages des groupes en cours de join. Mais si le Commit arrive en premier (via WS plus rapide que HTTP POST), il sera traité avant que le récepteur n'ait rejoint le groupe → erreur.
 
-### 🟡 Risque 5 : Deux addMembersBulk consécutifs sans délai
+### 🟡 Risque 3 : Deux addMembersBulk consécutifs sans délai
 
 **Contexte** : Dans `startNewConversation` :
 
@@ -968,122 +919,7 @@ addMembersBulk(ownDevices) → Epoch 1→2 → sendWelcome + sendCommit
 
 **Atténuation** : Le contact process le Welcome (qui l'amène à E1), puis le commit E1→E2 arrive. Comme le commit est dans la file après le Welcome (grâce au buffering), cela devrait fonctionner. Mais en cas de latence réseau, l'ordre n'est pas garanti.
 
-### 🟢 Point positif : DuplicateSignatureKey bien géré
-
-Le code dans `processPendingInvitations` traite correctement `DuplicateSignatureKey` comme un cas "déjà membre" non-fatal (→ update status `welcome_received`), et vérifie les membres serveur avant d'essayer l'ajout.
-
-### 🟢 Point positif : Bulk operations
-
-L'utilisation de `addMembersBulk` dans la plupart des flux de création évite la fragmentation d'epoch (un seul commit pour N appareils).
-
-### 🟢 Point positif : Vérification pré-création des appareils
-
-`startNewConversation` vérifie que le contact a des appareils disponibles AVANT de créer le groupe serveur, évitant les groupes orphelins.
-
----
-
-## 16. Corrections de résilience (Cycles 1-8)
-
-> Audit systématique de tous les scénarios de défaillance identifiés et corrigés à travers 8 cycles d'analyse.
-
-### Cycle 1 — Persistance et nettoyage fondamental
-
-| #   | Sévérité    | Fichier            | Problème                                                                                | Correction                                                                           |
-| --- | ----------- | ------------------ | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| 1   | 🔴 CRITIQUE | `connection.ts`    | `saveState` manquant après `processWelcome` → état MLS perdu au rechargement            | Ajout `saveState` après chaque Welcome traité                                        |
-| 2   | 🔴 CRITIQUE | `connection.ts`    | delete_message/edit_message non persistés en DB → modifications perdues au rechargement | Ajout persistance DB des messages supprimés/édités avec flags `isDeleted`/`isEdited` |
-| 3   | 🟠 HAUT     | `db.ts`            | Interface `StoredMessage` sans champs `isDeleted`/`isEdited`                            | Extension du type avec champs optionnels                                             |
-| 4   | 🟠 HAUT     | `history.ts`       | `mapStoredMessagesToChatMessages` ne propageait pas `isDeleted`/`isEdited`              | Propagation des flags dans le mapper                                                 |
-| 5   | 🟠 HAUT     | `conversations.ts` | Race condition Phase 2 : async IIFEs sans `await`                                       | Collecte dans `phase2Promises` + `Promise.allSettled`                                |
-| 6   | 🟠 HAUT     | `connection.ts`    | `loadHistoryForConversation` non appelé après Welcome join                              | Ajout appel après création de la conversation                                        |
-| 7   | 🟡 MOYEN    | `groupActions.ts`  | `deleteGroupAndBroadcast` code mort                                                     | Suppression                                                                          |
-| 8   | 🟡 MOYEN    | `history.ts`       | `replayConversationHistory` avale les erreurs silencieusement                           | Ajout logging des erreurs                                                            |
-| 9   | 🟡 MOYEN    | `groupActions.ts`  | `removeMemberAndBroadcast` non résilient (crash si notification échoue)                 | Best-effort notification + cleanup                                                   |
-| 10  | 🟡 MOYEN    | `groupActions.ts`  | `renameGroupAndBroadcast` non résilient                                                 | Best-effort broadcast                                                                |
-| 11  | 🟡 MOYEN    | `actions.ts`       | `discoverMissingGroups` placeholders non persistés en DB                                | Persist via `saveConversation` optionnel                                             |
-| 12  | 🟡 MOYEN    | `groupCreation.ts` | `startNewConversation` groupes orphelins si échec                                       | Cleanup remote group via `deleteGroupOnServer`                                       |
-
-### Cycle 2 — Closures, compteurs et doublons
-
-| #   | Sévérité    | Fichier            | Problème                                                                                                     | Correction                                                  |
-| --- | ----------- | ------------------ | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------- |
-| 13  | 🔴 CRITIQUE | `connection.ts`    | Closure stale de `selectedContact` dans phantom group cleanup                                                | Lambda `getSelectedContact = () => deps.selectedContact`    |
-| 14  | 🟠 HAUT     | `connection.ts`    | Compteur `groupMlsFailures` jamais réinitialisé après succès                                                 | `groupMlsFailures.delete(convoKey)` sur message traité      |
-| 15  | 🟠 HAUT     | `connection.ts`    | Welcome handler duplique conversations (discoverMissingGroups crée un placeholder, Welcome en crée un autre) | Recherche par `joinedGroupId` dans conversations existantes |
-| 16  | 🟡 MOYEN    | `groupCreation.ts` | `createNewGroup` : `saveConversation` non await, pas de cleanup orphelins                                    | `await saveConversation` + cleanup on failure               |
-| 17  | 🟡 MOYEN    | `groupCreation.ts` | `repairDirectConversation` : pas de cleanup orphelins                                                        | Cleanup remote group on failure                             |
-
-### Cycle 3 — Stabilité WebSocket et logging
-
-| #   | Sévérité    | Fichier                    | Problème                                                                      | Correction                                               |
-| --- | ----------- | -------------------------- | ----------------------------------------------------------------------------- | -------------------------------------------------------- |
-| 18  | 🔴 CRITIQUE | `WebMlsService.ts`         | `connect()` bloque indéfiniment si `fetchPendingMessages` lance une exception | try/catch autour de `fetchPendingMessages` dans `onopen` |
-| 19  | 🟠 HAUT     | `WebMlsService.ts`         | `ws.send()` race condition (WS pas encore OPEN)                               | try/catch + fallback HTTP via `sendViaHttp`              |
-| 20  | 🟠 HAUT     | `WebMlsService.ts`         | `sendViaHttp` ne vérifie pas `response.ok`                                    | Vérification du code retour                              |
-| 21  | 🟡 MOYEN    | `useChatSession.svelte.ts` | Errors sync/discovery silencieusement avalées (`.catch(() => {})`)            | Remplacement par logging via `cb.log`                    |
-| 22  | 🟡 MOYEN    | `useChatSession.svelte.ts` | Reconnexion échouée sans détail d'erreur                                      | Log du message d'erreur complet                          |
-
-### Cycle 4 — Persistance cryptée et sécurité
-
-| #   | Sévérité    | Fichier                  | Problème                                                                                         | Correction                                                 |
-| --- | ----------- | ------------------------ | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------- |
-| 23  | 🔴 CRITIQUE | `db.ts`                  | `isDeleted`/`isEdited` absents du payload chiffré (IndexedDB ET SQLite) → perdus au rechargement | Persistance dans le payload chiffré pour les deux backends |
-| 24  | 🔴 SÉCURITÉ | `useMessaging.svelte.ts` | `handleDeleteMessage`/`handleEditMessage` sans vérification de propriété                         | Validation `senderId === userId` avant modification        |
-| 25  | 🟠 HAUT     | `TauriMlsService.ts`     | Même bug `connect()` hang que WebMlsService                                                      | try/catch autour de `fetchPendingMessages`                 |
-| 26  | 🟠 HAUT     | `TauriMlsService.ts`     | Même race condition `ws.send()`                                                                  | try/catch + fallback HTTP                                  |
-
-### Cycle 5 — Validation entrées et parsing robuste
-
-| #   | Sévérité    | Fichier              | Problème                                                                 | Correction                                                             |
-| --- | ----------- | -------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------- |
-| 27  | 🔴 CRITIQUE | `backup.ts`          | Aucune validation des données importées (conversations, messages)        | Validation arrays + types + limites (10K conversations, 500K messages) |
-| 28  | 🟠 HAUT     | `migration.ts`       | `saveConversation` sans try/catch → migration s'arrête sur erreur        | try/catch + skip conversation en erreur                                |
-| 29  | 🟠 HAUT     | `migration.ts`       | `isDeleted`/`isEdited` perdus lors de la migration localStorage          | Préservation des champs dans saveMessage                               |
-| 30  | 🟠 HAUT     | `connection.ts`      | Welcome matchedExisting ne met pas à jour le nom → nom placeholder stale | Mise à jour `name` dans le spread                                      |
-| 31  | 🟠 HAUT     | `connection.ts`      | `channel.key.rotated` sans validation base64/format clé                  | Regex base64 + validation longueur 32 bytes minimum                    |
-| 32  | 🟠 HAUT     | `ChannelKeyVault.ts` | `rotateKey` accepte clé invalide (taille, epoch négatif)                 | Validation epoch `>= 0` + clé exactement 32 bytes                      |
-| 33  | 🟡 MOYEN    | `ChannelKeyVault.ts` | Messages d'erreur non informatifs                                        | Epoch courant et epochs disponibles dans le message                    |
-| 34  | 🟡 MOYEN    | `envelope.ts`        | Parsing protobuf hors limites (bytes[3] sans vérification)               | Bounds check `bytes.length >= 4` + `4 + textLen <= bytes.length`       |
-| 35  | 🟡 MOYEN    | `envelope.ts`        | `replyTo` non validé structurellement (cast unsafe)                      | Validation stricte des champs `id`, `senderId`, `content`              |
-
-### Cycle 6 — Timeout WebSocket et fuite mémoire
-
-| #   | Sévérité    | Fichier                                   | Problème                                                                 | Correction                                               |
-| --- | ----------- | ----------------------------------------- | ------------------------------------------------------------------------ | -------------------------------------------------------- |
-| 36  | 🔴 CRITIQUE | `WebMlsService.ts`                        | `connect()` bloque indéfiniment si réseau ne répond pas (pas de timeout) | Timeout 15s avec `clearTimeout` sur open/error/close     |
-| 37  | 🔴 CRITIQUE | `WebMlsService.ts`                        | Ancien WebSocket non fermé avant reconnexion → fuite mémoire             | Close old WS (null handlers + close) avant new WebSocket |
-| 38  | 🔴 CRITIQUE | `TauriMlsService.ts`                      | Mêmes bugs connect() timeout + close-before-create                       | Mêmes corrections                                        |
-| 39  | 🟠 HAUT     | `WebMlsService.ts` / `TauriMlsService.ts` | `processQueue` ne nettoie `pendingWelcomeGroups` que sur erreur Welcome  | Nettoyage sur TOUTE erreur (messages réguliers aussi)    |
-| 40  | 🟡 MOYEN    | `useChatSession.svelte.ts`                | `reconnectTimer` stale d'une session précédente non nettoyé au login     | `clearTimeout` + reset au début de `login()`             |
-
-### Cycle 7 — Timeout fetch et validation ACK
-
-| #   | Sévérité | Fichier              | Problème                                                                               | Correction                                        |
-| --- | -------- | -------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------- |
-| 41  | 🟠 HAUT  | `WebMlsService.ts`   | `fetchPendingMessages` sans timeout → hang indéfini si serveur lent                    | AbortController 10s sur toutes les requêtes fetch |
-| 42  | 🟠 HAUT  | `TauriMlsService.ts` | Même absence de timeout                                                                | Mêmes AbortController 10s                         |
-| 43  | 🟡 MOYEN | `WebMlsService.ts`   | ACK response non vérifiée → messages considérés comme acquittés même si serveur refuse | Vérification `ackRes.ok` avec log d'erreur        |
-| 44  | 🟡 MOYEN | `TauriMlsService.ts` | Même absence de vérification ACK                                                       | Même correction                                   |
-
-### Cycle 8 — Cohérence cross-plateforme et diagnostic
-
-| #   | Sévérité | Fichier                                   | Problème                                                                | Correction                                            |
-| --- | -------- | ----------------------------------------- | ----------------------------------------------------------------------- | ----------------------------------------------------- |
-| 45  | 🟠 HAUT  | `WebMlsService.ts` / `TauriMlsService.ts` | Champ ID message inconsistant (`msg.id` vs `msg._id`)                   | Fallback `msg.id \|\| msg._id` dans les deux services |
-| 46  | 🟡 MOYEN | `groupCreation.ts`                        | Erreurs sync propres appareils avalées silencieusement (2 emplacements) | Log `[WARN]` avec message d'erreur                    |
-
-### Correctifs additionnels (post-cycle)
-
-| #   | Sévérité | Fichier                              | Problème                                                                                         | Correction                                                                                        |
-| --- | -------- | ------------------------------------ | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
-| 47  | 🟠 HAUT  | `actions.ts`                         | `discoverMissingGroups` recrée des placeholders car seuls les groupes `isReady` étaient comparés | Détection des absents basée sur **tous** les `groupId` locaux (ready + pending)                   |
-| 48  | 🟠 HAUT  | `actions.ts`                         | Placeholder direct affiché en brut (`jolan::test`)                                               | Extraction du pair (`test`) pour `contactName`/`name` + `directPeerId`                            |
-| 49  | 🟡 MOYEN | `actions.ts`                         | Réponse serveur de groupes potentiellement dupliquée                                             | Déduplication par `groupId` côté client avant traitement                                          |
-| 50  | 🟡 MOYEN | `conversations.ts` / `connection.ts` | Parsing direct fragile pour noms legacy (`user::peer::user`)                                     | Parsing robuste (normalisation + unicité + extraction du pair ≠ user courant)                     |
-| 51  | 🟡 MOYEN | `conversations.ts` / `history.ts`    | Erreurs non fatales insuffisamment diagnostiquées                                                | Logging explicite au chargement + `SecretReuseError` traité comme erreur historique non bloquante |
-| 52  | 🟡 MOYEN | `TauriMlsService.ts`                 | Incohérence auth headers vs WebMlsService (welcome/messages/ack)                                 | Ajout `authToken` + `withAuthHeaders()` sur les fetchs de pending et ACK                          |
-
-### Risques architecturaux identifiés (non corrigés — requièrent refactoring backend)
+### Risques architecturaux (requièrent refactoring backend)
 
 | #   | Sévérité    | Composant                  | Problème                                                             |
 | --- | ----------- | -------------------------- | -------------------------------------------------------------------- |
