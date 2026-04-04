@@ -418,10 +418,35 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       // while preventing a stale or parallel-commit Welcome from corrupting
       // the epoch key schedule (root cause of AeadError at equal epochs).
       if (convoKey && isWelcome) {
+        const convo = conversations.get(convoKey)!;
         try {
           await mlsService.processWelcome(content, ratchetTreeBytes);
           const stBytes = await mlsService.saveState(pin);
           localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
+
+          // If the conversation was a placeholder (created by discoverMissingGroups
+          // before the Welcome arrived), activate it now — no page reload needed.
+          if (!convo.isReady) {
+            try {
+              await mlsService.registerMember(groupId!, userId, mlsService.getDeviceId());
+            } catch {
+              /* non-blocking */
+            }
+            try {
+              await mlsService.updateInvitationStatus(
+                mlsService.getDeviceId(),
+                userId,
+                groupId!,
+                'welcome_received'
+              );
+            } catch {
+              /* non-blocking */
+            }
+            conversations.set(convoKey, { ...convo, isReady: true });
+            localStorage.removeItem(`discovery_pending:${groupId}`);
+            if (storage) await saveConversation(convoKey);
+            loadHistoryForConversation(convoKey, groupId!).catch(() => {});
+          }
 
           // If this group was in epoch recovery, replay incremental history
           // to recover messages sent during the forgetGroup recovery window.
