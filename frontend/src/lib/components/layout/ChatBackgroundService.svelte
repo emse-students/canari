@@ -203,7 +203,7 @@
       },
       onNoPeerOnline: (_groupId: string) => {
         globalNotifs.showChannelMembershipNotice(
-          'Connectez un de vos appareils pour ajouter celui-ci au groupe'
+          'Aucun membre en ligne — nouvelle tentative automatique toutes les 30s'
         );
       },
       log: appendLog,
