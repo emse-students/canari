@@ -1,6 +1,12 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use mls_core::MlsManager;
 use std::sync::Mutex;
+use tauri::{
+    image::Image,
+    menu::{MenuBuilder, MenuItemBuilder},
+    tray::TrayIconBuilder,
+    Manager, WindowEvent,
+};
 
 // State wrapper
 struct AppState {
@@ -253,6 +259,68 @@ pub fn run() {
     builder
         .manage(AppState {
             mls_manager: Mutex::new(None),
+        })
+        .setup(|app| {
+            // ── System tray (desktop only) ──────────────────────────────
+            #[cfg(desktop)]
+            {
+                let show_item = MenuItemBuilder::with_id("show", "Afficher Canari").build(app)?;
+                let quit_item = MenuItemBuilder::with_id("quit", "Quitter").build(app)?;
+                let menu = MenuBuilder::new(app)
+                    .item(&show_item)
+                    .separator()
+                    .item(&quit_item)
+                    .build()?;
+
+                let icon = Image::from_path("icons/icon.png")
+                    .or_else(|_| Image::from_path("icons/32x32.png"))
+                    .unwrap_or_else(|_| {
+                        app.default_window_icon().cloned().expect("no default icon")
+                    });
+
+                let _tray = TrayIconBuilder::new()
+                    .icon(icon)
+                    .menu(&menu)
+                    .show_menu_on_left_click(false)
+                    .tooltip("Canari")
+                    .on_menu_event(|app_handle, event| match event.id().as_ref() {
+                        "show" => {
+                            if let Some(win) = app_handle.get_webview_window("main") {
+                                let _ = win.show();
+                                let _ = win.unminimize();
+                                let _ = win.set_focus();
+                            }
+                        }
+                        "quit" => {
+                            app_handle.exit(0);
+                        }
+                        _ => {}
+                    })
+                    .on_tray_icon_event(|tray, event| {
+                        if let tauri::tray::TrayIconEvent::Click { button, .. } = event {
+                            if button == tauri::tray::MouseButton::Left {
+                                let app_handle = tray.app_handle();
+                                if let Some(win) = app_handle.get_webview_window("main") {
+                                    let _ = win.show();
+                                    let _ = win.unminimize();
+                                    let _ = win.set_focus();
+                                }
+                            }
+                        }
+                    })
+                    .build(app)?;
+            }
+
+            Ok(())
+        })
+        // Intercept window close → hide to tray on desktop
+        .on_window_event(|window, event| {
+            #[cfg(desktop)]
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                // Hide the window instead of closing it
+                let _ = window.hide();
+                api.prevent_close();
+            }
         })
         .invoke_handler(tauri::generate_handler![
             initialiser_mls,

@@ -153,6 +153,22 @@ export function useNotifications() {
     if ('Notification' in window && Notification.permission === 'granted') {
       try {
         const n = new Notification(title, { body, tag: 'canari-message' });
+        n.onclick = async () => {
+          try {
+            if ((window as any).__TAURI_INTERNALS__) {
+              const { getCurrentWindow } = await import('@tauri-apps/api/window');
+              const win = getCurrentWindow();
+              await win.show();
+              await win.unminimize();
+              await win.setFocus();
+            } else {
+              window.focus();
+            }
+          } catch {
+            /* ignore */
+          }
+          n.close();
+        };
         setTimeout(() => n.close(), 5000);
       } catch {
         /* ignore */

@@ -297,15 +297,37 @@
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
+    // ── Tauri notification click → show & focus window ─────────────────────
+    let unlistenNotif: (() => void) | null = null;
+    if ((window as any).__TAURI_INTERNALS__) {
+      import('@tauri-apps/plugin-notification')
+        .then(({ onAction }) => {
+          onAction((notification) => {
+            import('@tauri-apps/api/window')
+              .then(({ getCurrentWindow }) => {
+                const win = getCurrentWindow();
+                win.show().catch(() => {});
+                win.unminimize().catch(() => {});
+                win.setFocus().catch(() => {});
+              })
+              .catch(() => {});
+          });
+        })
+        .catch(() => {});
+    }
+
     // ── IndexedDB garbage collection: delete messages older than 90 days ───
     const GC_INTERVAL = 6 * 60 * 60 * 1000; // 6 hours
     const MESSAGE_MAX_AGE = 90 * 24 * 60 * 60 * 1000; // 90 days
     const gcTimer = setInterval(() => {
       const storage = globalSession.storage;
       if (storage) {
-        storage.deleteOldMessages(MESSAGE_MAX_AGE).then((n) => {
-          if (n > 0) appendLog(`[GC] ${n} ancien(s) message(s) supprimé(s) de IndexedDB`);
-        }).catch(() => {});
+        storage
+          .deleteOldMessages(MESSAGE_MAX_AGE)
+          .then((n) => {
+            if (n > 0) appendLog(`[GC] ${n} ancien(s) message(s) supprimé(s) de IndexedDB`);
+          })
+          .catch(() => {});
       }
     }, GC_INTERVAL);
 
