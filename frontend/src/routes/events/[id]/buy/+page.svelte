@@ -20,7 +20,9 @@
       let token = '';
       try {
         token = await getToken();
-      } catch { /* empty */ }
+      } catch {
+        /* empty */
+      }
 
       const response = await fetch('/api/payments/create-checkout-session', {
         method: 'POST',

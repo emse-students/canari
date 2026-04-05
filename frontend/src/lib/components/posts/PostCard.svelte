@@ -198,7 +198,11 @@
         email: currentUserEmail?.trim() || undefined,
       });
       if (response.checkoutUrl) {
-        window.open(response.checkoutUrl, '_blank', 'noopener,noreferrer');
+        if ((window as any).__TAURI_INTERNALS__) {
+          window.location.href = response.checkoutUrl;
+        } else {
+          window.open(response.checkoutUrl, '_blank', 'noopener,noreferrer');
+        }
       }
       actionMessage =
         response.message ||

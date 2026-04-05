@@ -32,7 +32,16 @@
   }
 
   function openBlob(url: string) {
-    window.open(url, '_blank', 'noopener,noreferrer');
+    if ((window as any).__TAURI_INTERNALS__) {
+      // Tauri webview doesn't support window.open for blob URLs;
+      // open the blob in the same window as a fallback.
+      const win = window.open('', '_blank');
+      if (win) {
+        win.location.href = url;
+      }
+    } else {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    }
   }
 
   function downloadBlob(url: string, fileName: string) {
