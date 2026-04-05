@@ -36,7 +36,12 @@ export async function sendChatMessage(
 ): Promise<{ success: boolean; error?: string }> {
   const { mlsService, userId, pin, conversation, addMessageToChat } = deps;
 
+  deps.log(
+    `[SEND] sendChatMessage: contact="${contactName}" groupId="${conversation.groupId}" isReady=${conversation.isReady} text="${text.slice(0, 40)}" reply=${!!replyingTo}`
+  );
+
   if (!text.trim() || !conversation.isReady) {
+    deps.log(`[SEND] Abort: text vide ou convo non prête (isReady=${conversation.isReady})`);
     return { success: false };
   }
 
@@ -94,9 +99,12 @@ export async function sendChatMessage(
       // We do not add the message optimistically for channels:
       // We wait for the 'channel.message.created' WebSocket event instead!
     } else {
+      deps.log(`[SEND] Appel mlsService.sendMessage groupId="${conversation.groupId}"...`);
       await mlsService.sendMessage(conversation.groupId, payload);
+      deps.log(`[SEND] mlsService.sendMessage OK — sauvegarde état MLS...`);
       const stateBytes = await mlsService.saveState(pin);
       localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
+      deps.log(`[SEND] État MLS sauvegardé — UI optimiste...`);
 
       // Optimistic UI for direct messages and MLS groups (users cannot decrypt their own echo)
       await addMessageToChat(
@@ -107,6 +115,7 @@ export async function sendChatMessage(
         false,
         messageId
       );
+      deps.log(`[SEND] UI optimiste appliquée pour messageId=${messageId}`);
     }
     return { success: true };
   } catch (error: any) {

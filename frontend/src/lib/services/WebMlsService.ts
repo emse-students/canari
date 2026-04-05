@@ -1011,7 +1011,11 @@ export class WebMlsService implements IMlsService {
   }
 
   async sendMessage(groupId: string, messageBytes: Uint8Array) {
+    console.log(
+      `[WS SEND] sendMessage: groupId=${groupId} input=${messageBytes.length}b wsState=${this.ws?.readyState ?? 'null'} (OPEN=1)`
+    );
     const encryptedBytes: Uint8Array = this.client.send_message_bytes(groupId, messageBytes);
+    console.log(`[WS SEND] WASM encrypted: ${encryptedBytes.length}b`);
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       // Binary proto WsEnvelope { mls: { ciphertext, groupId } }
@@ -1023,12 +1027,16 @@ export class WebMlsService implements IMlsService {
             proto: btoa(String.fromCharCode(...encryptedBytes)),
           })
         );
+        console.log(`[WS SEND] Sent via WebSocket OK (${encryptedBytes.length}b)`);
       } catch (wsErr) {
         // WebSocket closed between readyState check and send — fall through to HTTP
-        console.warn('WebSocket send failed, falling back to HTTP:', wsErr);
+        console.warn('[WS SEND] WebSocket send failed, falling back to HTTP:', wsErr);
         await this.sendViaHttp(encryptedBytes, groupId);
       }
     } else {
+      console.warn(
+        `[WS SEND] WebSocket not open (state=${this.ws?.readyState ?? 'null'}), falling back to HTTP`
+      );
       await this.sendViaHttp(encryptedBytes, groupId);
     }
 
@@ -1036,7 +1044,9 @@ export class WebMlsService implements IMlsService {
   }
 
   private async sendViaHttp(encryptedBytes: Uint8Array, groupId: string): Promise<void> {
-    console.warn('Sending via HTTP fallback...');
+    console.warn(
+      `[WS SEND] HTTP fallback: groupId=${groupId} ${encryptedBytes.length}b → ${this.historyUrl}/api/mls-api/send`
+    );
     const base64 = btoa(String.fromCharCode(...encryptedBytes));
     const res = await fetch(`${this.historyUrl}/api/mls-api/send`, {
       method: 'POST',
@@ -1051,6 +1061,7 @@ export class WebMlsService implements IMlsService {
     if (!res.ok) {
       throw new Error(`HTTP send failed: ${res.status} ${res.statusText}`);
     }
+    console.log(`[WS SEND] HTTP fallback OK: ${res.status}`);
   }
 
   async processIncomingMessage(

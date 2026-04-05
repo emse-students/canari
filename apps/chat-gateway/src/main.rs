@@ -175,7 +175,8 @@ async fn main() {
                                     "isWelcome": json.get("isWelcome").and_then(|v| v.as_bool()).unwrap_or(false),
                                     "isCommit": json.get("isCommit").and_then(|v| v.as_bool()).unwrap_or(false),
                                     "ratchetTree": json.get("ratchetTree").cloned().unwrap_or(serde_json::Value::Null),
-                                    "proto": proto_b64
+                                    "proto": proto_b64,
+                                    "queuedMessageId": json.get("queuedMessageId").and_then(|v| v.as_str()).unwrap_or("")
                                 })
                                 .to_string();
 

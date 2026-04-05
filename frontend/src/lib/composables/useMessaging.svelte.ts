@@ -166,16 +166,34 @@ export function useMessaging() {
     const mediaCaption = text || undefined;
     let sentMediaMessageCount = 0;
 
-    if (!text && filesToSend.length === 0) return;
-    if (!ctx.selectedContact) return;
+    ctx.log(
+      `[SEND] handleSendChat: contact="${ctx.selectedContact}" text="${text.slice(0, 40)}" files=${filesToSend.length}`
+    );
+
+    if (!text && filesToSend.length === 0) {
+      ctx.log('[SEND] Abort: pas de texte ni de fichier');
+      return;
+    }
+    if (!ctx.selectedContact) {
+      ctx.log('[SEND] Abort: aucun contact sélectionné');
+      return;
+    }
     const convo = ctx.conversations.get(ctx.selectedContact);
-    if (!convo) return;
+    if (!convo) {
+      ctx.log(`[SEND] Abort: pas de conversation trouvée pour "${ctx.selectedContact}"`);
+      return;
+    }
 
     const isChannel = ctx.selectedContact.startsWith('channel_');
+    ctx.log(
+      `[SEND] convo: groupId="${convo.groupId}" isReady=${convo.isReady} isChannel=${isChannel}`
+    );
 
     // Channels don't use MLS — skip MLS membership verification
     if (!isChannel) {
+      ctx.log('[SEND] Vérification membership MLS...');
       const stillMember = await ctx.verifyCurrentUserMembership(ctx.selectedContact);
+      ctx.log(`[SEND] membership: stillMember=${stillMember} convo.isReady=${convo.isReady}`);
       if (!stillMember || !convo.isReady) {
         ctx.setSendError(
           'Vous avez ete retire de ce groupe. Vous ne pouvez plus envoyer de messages.'
@@ -300,9 +318,11 @@ export function useMessaging() {
 
     if (!result.success) {
       ctx.setSendError(result.error || "Echec de l'envoi");
+      ctx.log(`[SEND] Échec: ${result.error}`);
       return;
     }
 
+    ctx.log(`[SEND] handleSendChat terminé avec succès`);
     ctx.playSendTone?.();
   }
 

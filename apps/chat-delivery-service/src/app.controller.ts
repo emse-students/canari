@@ -1953,6 +1953,9 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     for (const queued of ops) {
       const redisKey = `user:online:${queued.recipientId}:${queued.deviceId}`;
       const isOnline = await this.redis.exists(redisKey);
+      this.logger.log(
+        `[SEND] recipient=${queued.recipientId}:${queued.deviceId} online=${!!isOnline} queuedId=${queued.id}`,
+      );
       if (isOnline) {
         const envelope = JSON.stringify({
           recipientId: queued.recipientId,
@@ -1969,6 +1972,10 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         sentCount++;
       }
     }
+
+    this.logger.log(
+      `[SEND] Total: ${ops.length} message(s) en queue, ${sentCount} publié(s) en temps réel`,
+    );
 
     return { status: 'processed', queued: ops.length, sent: sentCount };
   }
