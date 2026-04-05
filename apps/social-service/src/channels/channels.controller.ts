@@ -140,11 +140,20 @@ export class ChannelsController {
 
   @UseGuards(NginxAuthGuard)
   @Get(':channelId/members')
-  listChannelMembers(
-    @Headers('x-user-id') xUserId: string,
-    @Param('channelId') channelId: string
-  ) {
+  listChannelMembers(@Headers('x-user-id') xUserId: string, @Param('channelId') channelId: string) {
     return this.service.listChannelMembers(channelId, xUserId.trim().toLowerCase());
+  }
+
+  @UseGuards(NginxAuthGuard)
+  @Get(':channelId/key')
+  getChannelKey(@Headers('x-user-id') xUserId: string, @Param('channelId') channelId: string) {
+    return this.service.getChannelKey(channelId, xUserId.trim().toLowerCase());
+  }
+
+  @UseGuards(NginxAuthGuard)
+  @Post(':channelId/key/rotate')
+  rotateChannelKey(@Headers('x-user-id') xUserId: string, @Param('channelId') channelId: string) {
+    return this.service.rotateChannelKey(channelId, xUserId.trim().toLowerCase());
   }
 
   @UseGuards(NginxAuthGuard)

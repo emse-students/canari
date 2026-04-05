@@ -526,6 +526,8 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AppController.name);
   private staleDeviceInterval: ReturnType<typeof setInterval>;
   private cleanupMessagesInterval: ReturnType<typeof setInterval>;
+  private cleanupKeyPackagesInterval: ReturnType<typeof setInterval>;
+  private cleanupOrphanedRedisGroupsInterval: ReturnType<typeof setInterval>;
 
   /**
    * Single source of truth for message retention / stale device TTL.
@@ -571,14 +573,31 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       );
     }, ONE_HOUR);
 
+    // Cleanup KeyPackages older than 30 days whose device has no active membership
+    this.cleanupKeyPackagesInterval = setInterval(() => {
+      void this.cleanupExpiredKeyPackages().catch((e) =>
+        this.logger.error('[CRON] cleanupExpiredKeyPackages failed', e),
+      );
+    }, ONE_HOUR);
+
+    // Cleanup orphaned Redis group:members:* keys with no matching DB group
+    this.cleanupOrphanedRedisGroupsInterval = setInterval(() => {
+      void this.cleanupOrphanedRedisGroups().catch((e) =>
+        this.logger.error('[CRON] cleanupOrphanedRedisGroups failed', e),
+      );
+    }, 6 * ONE_HOUR);
+
     this.logger.log(
-      '[CRON] Stale device detection (1h) and message cleanup (1h) scheduled',
+      '[CRON] Stale device detection (1h), message cleanup (1h), ' +
+        'key-package cleanup (1h), orphaned Redis groups cleanup (6h) scheduled',
     );
   }
 
   onModuleDestroy() {
     clearInterval(this.staleDeviceInterval);
     clearInterval(this.cleanupMessagesInterval);
+    clearInterval(this.cleanupKeyPackagesInterval);
+    clearInterval(this.cleanupOrphanedRedisGroupsInterval);
   }
 
   /**
@@ -627,6 +646,85 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     if (result.affected && result.affected > 0) {
       this.logger.log(
         `[CRON] cleanupExpiredQueuedMessages: deleted ${result.affected} message(s)`,
+      );
+    }
+  }
+
+  /**
+   * Delete KeyPackages older than 30 days whose device has no active
+   * group membership (status = welcome_received). These are leftover
+   * packages published by devices that went offline permanently.
+   */
+  private async cleanupExpiredKeyPackages() {
+    const KEY_PACKAGE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+    const expiry = new Date(Date.now() - KEY_PACKAGE_MAX_AGE_MS);
+
+    const expiredPackages = await this.keyPackageRepo.find({
+      where: { createdAt: LessThan(expiry) },
+    });
+
+    if (expiredPackages.length === 0) return;
+
+    // Keep packages for devices that still have active group memberships
+    const deviceIds = [...new Set(expiredPackages.map((kp) => kp.deviceId))];
+    const activeDevices = await this.deviceGroupRepo
+      .createQueryBuilder('dgm')
+      .select('DISTINCT dgm.deviceId', 'deviceId')
+      .where('dgm.deviceId IN (:...deviceIds)', { deviceIds })
+      .andWhere('dgm.status = :status', { status: 'welcome_received' })
+      .getRawMany<{ deviceId: string }>();
+
+    const activeDeviceIds = new Set(activeDevices.map((d) => d.deviceId));
+    const toDelete = expiredPackages.filter(
+      (kp) => !activeDeviceIds.has(kp.deviceId),
+    );
+
+    if (toDelete.length > 0) {
+      await this.keyPackageRepo.delete(toDelete.map((kp) => kp.id));
+      this.logger.log(
+        `[CRON] cleanupExpiredKeyPackages: deleted ${toDelete.length} package(s)`,
+      );
+    }
+  }
+
+  /**
+   * Cleanup orphaned Redis `group:members:*` keys that reference groups
+   * no longer present in the database. Uses SCAN to avoid blocking Redis.
+   */
+  private async cleanupOrphanedRedisGroups() {
+    const orphanedKeys: string[] = [];
+    let cursor = '0';
+
+    do {
+      const [nextCursor, keys] = await this.redis.scan(
+        cursor,
+        'MATCH',
+        'group:members:*',
+        'COUNT',
+        100,
+      );
+      cursor = nextCursor;
+
+      if (keys.length === 0) continue;
+
+      const groupIds = keys.map((k) => k.replace('group:members:', ''));
+      const existingGroups = await this.groupRepo.find({
+        where: { id: In(groupIds) },
+        select: ['id'],
+      });
+      const existingIds = new Set(existingGroups.map((g) => g.id));
+
+      for (let i = 0; i < keys.length; i++) {
+        if (!existingIds.has(groupIds[i])) {
+          orphanedKeys.push(keys[i]);
+        }
+      }
+    } while (cursor !== '0');
+
+    if (orphanedKeys.length > 0) {
+      await this.redis.del(...orphanedKeys);
+      this.logger.log(
+        `[CRON] cleanupOrphanedRedisGroups: deleted ${orphanedKeys.length} key(s)`,
       );
     }
   }

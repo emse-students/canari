@@ -28,6 +28,9 @@ export class Channel {
   @Column({ default: 1 })
   keyVersion: number;
 
+  @Column({ nullable: true })
+  masterSecret: string;
+
   @Column({ default: false })
   archived: boolean;
 

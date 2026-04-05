@@ -5,6 +5,7 @@
   import { sendReadReceipt } from '$lib/utils/chat/messaging';
   import { forceSyncReset } from '$lib/utils/chat/actions';
   import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
+  import { ChannelService } from '$lib/services/ChannelService';
   import { useSyncSession } from '$lib/composables/useSyncSession.svelte';
   import {
     globalSession as session,
@@ -148,9 +149,16 @@
     } catch {
       // no key yet
     }
-    const encoded = new TextEncoder().encode(`canari-channel-key:${rawChannelId}`);
-    const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', encoded));
-    await vault.rotateKey(0, hash);
+    try {
+      const svc = new ChannelService();
+      const { epochKey, keyVersion } = await svc.getChannelKey(rawChannelId);
+      const rawKeyMat = Uint8Array.from(atob(epochKey), (c) => c.charCodeAt(0));
+      await vault.rotateKey(keyVersion, rawKeyMat);
+    } catch {
+      const encoded = new TextEncoder().encode(`canari-channel-key:${rawChannelId}`);
+      const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', encoded));
+      await vault.rotateKey(0, hash);
+    }
   }
 
   /** Callbacks object for session composable operations. */

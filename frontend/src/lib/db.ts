@@ -46,6 +46,12 @@ export interface IStorage {
   saveMessages(msgs: StoredMessage[], pin: string): Promise<void>;
   getMessages(conversationId: string, pin: string): Promise<StoredMessage[]>;
 
+  // Garbage collection – delete messages older than the given threshold.
+  deleteOldMessages(maxAgeMs: number): Promise<number>;
+
+  // Garbage collection – delete messages older than the given threshold.
+  deleteOldMessages(maxAgeMs: number): Promise<number>;
+
   // Backup helpers – expose raw encrypted rows so backups don't require
   // re-encryption and can be imported to a new device with the same PIN.
   getAllEncryptedRows(): Promise<EncryptedMessageRow[]>;
@@ -283,6 +289,31 @@ export class IndexedDbStorage implements IStorage {
     });
   }
 
+  // -- Garbage Collection --------------------------------------------------
+
+  async deleteOldMessages(maxAgeMs: number): Promise<number> {
+    const db = this.ensureDb();
+    const cutoff = Date.now() - maxAgeMs;
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('messages', 'readwrite');
+      const store = tx.objectStore('messages');
+      const req = store.openCursor();
+      let deleted = 0;
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (cursor) {
+          if (cursor.value.timestamp < cutoff) {
+            cursor.delete();
+            deleted++;
+          }
+          cursor.continue();
+        }
+      };
+      tx.oncomplete = () => resolve(deleted);
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
   // -- Misc ----------------------------------------------------------------
 
   async clear(): Promise<void> {
@@ -472,6 +503,15 @@ export class SqliteStorage implements IStorage {
         Array.from(row.cipherText),
       ]
     );
+  }
+
+  // -- Garbage Collection --------------------------------------------------
+
+  async deleteOldMessages(maxAgeMs: number): Promise<number> {
+    const result = await this.db.execute('DELETE FROM messages WHERE timestamp < $1', [
+      Date.now() - maxAgeMs,
+    ]);
+    return result?.rowsAffected ?? 0;
   }
 
   // -- Misc ----------------------------------------------------------------

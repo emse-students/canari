@@ -196,6 +196,22 @@ export class ChannelService {
     await this.handleError(res);
     return res.json();
   }
+
+  async getChannelKey(
+    channelId: string
+  ): Promise<{ channelId: string; keyVersion: number; epochKey: string }> {
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${channelId}/key`);
+    await this.handleError(res);
+    return res.json();
+  }
+
+  async rotateChannelKey(channelId: string): Promise<{ channelId: string; keyVersion: number }> {
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${channelId}/key/rotate`, {
+      method: 'POST',
+    });
+    await this.handleError(res);
+    return res.json();
+  }
 }
 
 export const channelService = new ChannelService();

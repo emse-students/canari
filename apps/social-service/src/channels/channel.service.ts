@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, ForbiddenException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
+import * as crypto from 'crypto';
 import { Workspace } from './entities/workspace.entity';
 import { Channel } from './entities/channel.entity';
 import { ChannelRole } from './entities/channel-role.entity';
@@ -23,6 +24,25 @@ import {
 @Injectable()
 export class ChannelService {
   private readonly logger = new Logger(ChannelService.name);
+
+  /**
+   * Derive a 32-byte AES-256 key from the channel's master secret + version.
+   * Uses HKDF-SHA256 to produce a unique key per epoch.
+   */
+  private deriveEpochKey(masterSecret: string, channelId: string, version: number): Buffer {
+    const salt = crypto
+      .createHash('sha256')
+      .update(`channel-epoch:${channelId}:${version}`)
+      .digest();
+    const raw = crypto.hkdfSync(
+      'sha256',
+      Buffer.from(masterSecret, 'base64'),
+      salt,
+      Buffer.from('canari-channel-e2ee-v1'),
+      32
+    );
+    return Buffer.from(raw);
+  }
 
   constructor(
     @InjectRepository(Workspace) private readonly workspaceRepo: Repository<Workspace>,
@@ -129,13 +149,111 @@ export class ChannelService {
   // ================= CHANNELS =================
 
   async createChannel(input: CreateChannelDto) {
+    const masterSecret = crypto.randomBytes(32).toString('base64');
     const channel = this.channelRepo.create({
       workspaceId: input.workspaceId,
       name: input.name,
       isPrivate: input.visibility === 'private',
       allowedRoles: [],
+      masterSecret,
+      keyVersion: 1,
     });
     return this.channelRepo.save(channel);
+  }
+
+  /**
+   * Return the derived epoch key for the given channel.
+   * The raw master secret never leaves the backend.
+   */
+  async getChannelKey(channelId: string, userId: string) {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
+
+    const member = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId },
+    });
+    if (!member) throw new ForbiddenException('Not a member of this workspace');
+
+    // Backfill master secret for channels created before this feature
+    if (!channel.masterSecret) {
+      channel.masterSecret = crypto.randomBytes(32).toString('base64');
+      await this.channelRepo.save(channel);
+    }
+
+    const epochKey = this.deriveEpochKey(channel.masterSecret, channelId, channel.keyVersion);
+    return {
+      channelId,
+      keyVersion: channel.keyVersion,
+      epochKey: epochKey.toString('base64'),
+    };
+  }
+
+  /**
+   * Rotate the channel key: increment keyVersion, derive a new epoch key,
+   * and broadcast to all workspace members.
+   */
+  async rotateChannelKey(channelId: string, actorUserId: string) {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
+
+    const actorMember = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId: actorUserId },
+    });
+    if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
+
+    let hasPerm = false;
+    if (actorMember.roleIds?.length > 0) {
+      const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
+      hasPerm = roles.some(
+        (r) =>
+          r.permissions.includes('MANAGE_WORKSPACE') || r.permissions.includes('MANAGE_CHANNELS')
+      );
+    }
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNELS permission');
+
+    // Backfill master secret if missing
+    if (!channel.masterSecret) {
+      channel.masterSecret = crypto.randomBytes(32).toString('base64');
+    }
+
+    channel.keyVersion += 1;
+    await this.channelRepo.save(channel);
+
+    const epochKey = this.deriveEpochKey(channel.masterSecret, channelId, channel.keyVersion);
+
+    const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
+    await this.redis.publishChannelEvent(
+      'channel.key.rotated',
+      {
+        channelId,
+        newEpochBaseKey: epochKey.toString('base64'),
+        keyVersion: channel.keyVersion,
+      },
+      workspaceMemberIds
+    );
+
+    return { channelId, keyVersion: channel.keyVersion };
+  }
+
+  /**
+   * Push `channel.key.rotated` for a specific user (e.g. on join).
+   */
+  private async pushKeyToUser(channel: Channel, userId: string) {
+    if (!channel.masterSecret) {
+      channel.masterSecret = crypto.randomBytes(32).toString('base64');
+      await this.channelRepo.save(channel);
+    }
+
+    const epochKey = this.deriveEpochKey(channel.masterSecret, channel.id, channel.keyVersion);
+    await this.redis.publishChannelEvent(
+      'channel.key.rotated',
+      {
+        channelId: channel.id,
+        newEpochBaseKey: epochKey.toString('base64'),
+        keyVersion: channel.keyVersion,
+      },
+      [userId]
+    );
   }
 
   async listChannelsForUser(workspaceId: string, userId: string) {
@@ -190,6 +308,9 @@ export class ChannelService {
         workspaceMemberIds
       );
     }
+
+    // Push channel encryption key to the joining user
+    await this.pushKeyToUser(channel, input.userId);
 
     return { success: true };
   }
@@ -260,6 +381,9 @@ export class ChannelService {
         workspaceMemberIds
       );
     }
+
+    // Push channel encryption key to the invited user
+    await this.pushKeyToUser(channel, input.targetUserId);
 
     return { success: true, userId: input.targetUserId };
   }
@@ -377,9 +501,7 @@ export class ChannelService {
     const roleMap = new Map(roles.map((r) => [r.id, r]));
 
     return members.map((m) => {
-      const memberRoles = (m.roleIds || [])
-        .map((rid) => roleMap.get(rid))
-        .filter(Boolean);
+      const memberRoles = (m.roleIds || []).map((rid) => roleMap.get(rid)).filter(Boolean);
       const highestRole = memberRoles.sort((a, b) => (b!.priority ?? 0) - (a!.priority ?? 0))[0];
       return {
         id: m.id,

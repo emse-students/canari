@@ -58,11 +58,18 @@ export function useChannelWorkspaces() {
       // Key already exists – nothing to do
       return;
     } catch {
-      // No key yet – derive one from the channelId
+      // No key yet – fetch from backend
     }
-    const encoded = new TextEncoder().encode(`canari-channel-key:${rawChannelId}`);
-    const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', encoded));
-    await vault.rotateKey(0, hash);
+    try {
+      const { epochKey, keyVersion } = await service.getChannelKey(rawChannelId);
+      const rawKeyMat = Uint8Array.from(atob(epochKey), (c) => c.charCodeAt(0));
+      await vault.rotateKey(keyVersion, rawKeyMat);
+    } catch {
+      // Fallback: derive deterministically (legacy/offline mode)
+      const encoded = new TextEncoder().encode(`canari-channel-key:${rawChannelId}`);
+      const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', encoded));
+      await vault.rotateKey(0, hash);
+    }
   }
 
   // ---------- Workspace helpers ----------

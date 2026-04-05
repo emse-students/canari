@@ -16,6 +16,7 @@
   import { BiometricService } from '$lib/services/biometric';
   import { currentUserId } from '$lib/stores/user';
   import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
+  import { ChannelService } from '$lib/services/ChannelService';
   import {
     globalSession,
     globalConvs,
@@ -106,9 +107,16 @@
     } catch {
       // no key yet
     }
-    const encoded = new TextEncoder().encode(`canari-channel-key:${rawChannelId}`);
-    const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', encoded));
-    await vault.rotateKey(0, hash);
+    try {
+      const svc = new ChannelService();
+      const { epochKey, keyVersion } = await svc.getChannelKey(rawChannelId);
+      const rawKeyMat = Uint8Array.from(atob(epochKey), (c) => c.charCodeAt(0));
+      await vault.rotateKey(keyVersion, rawKeyMat);
+    } catch {
+      const encoded = new TextEncoder().encode(`canari-channel-key:${rawChannelId}`);
+      const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', encoded));
+      await vault.rotateKey(0, hash);
+    }
   }
 
   /** Callbacks complets pour globalSession.login() / session callbacks. */
@@ -288,8 +296,22 @@
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // ── IndexedDB garbage collection: delete messages older than 90 days ───
+    const GC_INTERVAL = 6 * 60 * 60 * 1000; // 6 hours
+    const MESSAGE_MAX_AGE = 90 * 24 * 60 * 60 * 1000; // 90 days
+    const gcTimer = setInterval(() => {
+      const storage = globalSession.storage;
+      if (storage) {
+        storage.deleteOldMessages(MESSAGE_MAX_AGE).then((n) => {
+          if (n > 0) appendLog(`[GC] ${n} ancien(s) message(s) supprimé(s) de IndexedDB`);
+        }).catch(() => {});
+      }
+    }, GC_INTERVAL);
+
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      clearInterval(gcTimer);
     };
   });
 
