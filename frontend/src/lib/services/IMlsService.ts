@@ -40,7 +40,12 @@ export interface IMlsService {
   ): Promise<void>;
   /** Returns the current MLS epoch for a group (needed for epoch-gating). */
   getEpoch(groupId: string): number;
-  sendCommit(commitBytes: Uint8Array, groupId: string): Promise<void>; // New Method for WS priority
+  /**
+   * Broadcast a structural commit to all group members.
+   * `excludeDeviceIds` — optional list of "userId:deviceId" pairs to skip
+   * (typically the inviter and the newly-welcomed invitee).
+   */
+  sendCommit(commitBytes: Uint8Array, groupId: string, excludeDeviceIds?: string[]): Promise<void>;
   registerMember(groupId: string, userId: string, deviceId: string): Promise<void>;
   /** Acquiert un verrou distribué Redis pour éviter les commits MLS concurrents sur le même groupe.
    *  Retourne true si le verrou a été acquis, false si un autre appareil le détient déjà. */
@@ -137,6 +142,27 @@ export interface IMlsService {
   onDisconnect(callback: () => void): void;
 
   // Device sync notification
-  sendSyncRequest(): void;
-  onSyncRequest(callback: (senderDeviceId: string) => void): void;
+  sendReinviteRequest(): void;
+  onReinviteRequest(callback: (senderDeviceId: string) => void): void;
+
+  /**
+   * Announce to all online members of `groupId` that this device needs a Welcome.
+   * Called once per pending group on connect, after KeyPackage publication.
+   */
+  sendWelcomeRequest(groupId: string): void;
+
+  /**
+   * Register a callback invoked when another device broadcasts a welcome_request
+   * for a group this device is a member of.
+   */
+  onWelcomeRequest(
+    callback: (requesterUserId: string, requesterDeviceId: string, groupId: string) => void
+  ): void;
+
+  /**
+   * Register a callback invoked when the gateway reports that no online peer
+   * could be reached for a welcome_request (i.e. the device should ask the user
+   * to connect another device first).
+   */
+  onNoPeerOnline(callback: (groupId: string) => void): void;
 }

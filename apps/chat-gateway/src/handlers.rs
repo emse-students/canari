@@ -550,6 +550,24 @@ async fn handle_socket(
                                     }
                                 }
 
+                                // Filter out explicitly excluded devices (e.g. inviter + invitee
+                                // when broadcasting a Welcome commit).
+                                let exclude_ids: std::collections::HashSet<String> = json
+                                    .get("excludeDeviceIds")
+                                    .and_then(|v| v.as_array())
+                                    .map(|arr| {
+                                        arr.iter()
+                                            .filter_map(|v| v.as_str().map(String::from))
+                                            .collect()
+                                    })
+                                    .unwrap_or_default();
+                                if !exclude_ids.is_empty() {
+                                    target_recipients.retain(|r| {
+                                        !exclude_ids
+                                            .contains(&format!("{}:{}", r.user_id, r.device_id))
+                                    });
+                                }
+
                                 tracing::info!("Target recipients: {}", target_recipients.len());
 
                                 if !target_recipients.is_empty() {
@@ -626,15 +644,74 @@ async fn handle_socket(
                                 tracing::info!("Read receipt for message {}", message_id);
                             }
 
-                            "sync_request" => {
+                            "welcome_request" => {
                                 tracing::info!(
-                                    "Processing sync_request from {}:{}",
+                                    "Processing welcome_request from {}:{} for group {}",
+                                    user_id,
+                                    device_id,
+                                    group_id
+                                );
+
+                                let notification = serde_json::json!({
+                                    "type": "welcome_request",
+                                    "groupId": group_id,
+                                    "requesterUserId": user_id,
+                                    "requesterDeviceId": device_id,
+                                })
+                                .to_string();
+
+                                let requester_key = format!("{}:{}", user_id, device_id);
+                                let mut forwarded = 0usize;
+                                if let Ok(mut con) =
+                                    state.redis_client.get_multiplexed_async_connection().await
+                                {
+                                    let key = format!("group:members:{}", group_id);
+                                    if let Ok(members) = con.smembers::<_, Vec<String>>(&key).await
+                                    {
+                                        let map = state.connected_users.lock().unwrap();
+                                        for member in &members {
+                                            if *member == requester_key {
+                                                continue;
+                                            }
+                                            if let Some(senders) = map.get(member) {
+                                                for sender in senders {
+                                                    let _ = sender.try_send(notification.clone());
+                                                }
+                                                forwarded += 1;
+                                                tracing::info!(
+                                                    "welcome_request forwarded to {}",
+                                                    member
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                                // Notify the requester if no peer was reachable online.
+                                if forwarded == 0 {
+                                    let no_peer_msg = serde_json::json!({
+                                        "type": "no_peer_online",
+                                        "groupId": group_id,
+                                    })
+                                    .to_string();
+                                    let _ = tx.send(no_peer_msg).await;
+                                    tracing::info!(
+                                        "no_peer_online sent back to {}:{} for group {}",
+                                        user_id,
+                                        device_id,
+                                        group_id
+                                    );
+                                }
+                            }
+
+                            "reinvite_request" => {
+                                tracing::info!(
+                                    "Processing reinvite_request from {}:{}",
                                     user_id,
                                     device_id
                                 );
 
                                 let notification = serde_json::json!({
-                                    "type": "sync_request",
+                                    "type": "reinvite_request",
                                     "senderId": user_id,
                                     "senderDeviceId": device_id,
                                 })
@@ -649,7 +726,7 @@ async fn handle_socket(
                                         for sender in senders {
                                             let _ = sender.try_send(notification.clone());
                                         }
-                                        tracing::info!("sync_request forwarded to {}", key);
+                                        tracing::info!("reinvite_request forwarded to {}", key);
                                     }
                                 }
                             }

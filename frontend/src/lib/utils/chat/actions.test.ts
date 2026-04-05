@@ -49,8 +49,8 @@ function makeMls(overrides: Partial<IMlsService> = {}): IMlsService {
     exportSecret: vi.fn(),
     onMessage: vi.fn(),
     onDisconnect: vi.fn(),
-    sendSyncRequest: vi.fn(),
-    onSyncRequest: vi.fn(),
+    sendReinviteRequest: vi.fn(),
+    onReinviteRequest: vi.fn(),
     getPendingInvitations: vi.fn().mockResolvedValue([]),
     getDeviceMemberships: vi.fn().mockResolvedValue([]),
     updateInvitationStatus: vi.fn().mockResolvedValue({ status: 'added' }),
@@ -241,7 +241,7 @@ describe('discoverMissingGroups', () => {
     expect(conv?.isReady).toBe(false);
   });
 
-  it("le leader attend quand d'autres appareils propres existent (attente Welcome via sync_request)", async () => {
+  it("le leader attend quand d'autres appareils propres existent (attente Welcome via reinvite_request)", async () => {
     const convs = new Map<string, Conversation>();
     const createGroup = vi.fn();
 
@@ -250,7 +250,7 @@ describe('discoverMissingGroups', () => {
         .fn()
         .mockResolvedValue([{ groupId: 'g-1', name: 'alice::jolan', isGroup: false }]),
       getGroupMembers: vi.fn().mockResolvedValue([{ userId: 'alice' }, { userId: 'jolan' }]),
-      // alice has another device (dev-alice-2) that can send a Welcome via sync_request
+      // alice has another device (dev-alice-2) that can send a Welcome via reinvite_request
       fetchUserDevices: vi.fn().mockImplementation((uid: string) =>
         uid === 'alice'
           ? Promise.resolve([
@@ -272,7 +272,7 @@ describe('discoverMissingGroups', () => {
     });
 
     // Even though alice is the leader, should NOT bootstrap because
-    // another own device (dev-alice-2) exists and will handle sync via sync_request
+    // another own device (dev-alice-2) exists and will handle sync via reinvite_request
     expect(createGroup).not.toHaveBeenCalled();
     const conv = [...convs.values()].find((c) => c.groupId === 'g-1');
     expect(conv?.isReady).toBe(false);

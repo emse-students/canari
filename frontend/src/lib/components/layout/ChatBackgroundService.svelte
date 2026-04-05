@@ -201,6 +201,11 @@
       onShowSyncGuidePrompt: () => {
         globalConvs.showSyncGuidePrompt = true;
       },
+      onNoPeerOnline: (_groupId: string) => {
+        globalNotifs.showChannelMembershipNotice(
+          'Connectez un de vos appareils pour ajouter celui-ci au groupe'
+        );
+      },
       log: appendLog,
       messageReactions: globalMessaging.messageReactions,
       getSelectedContact: () => globalConvs.selectedContact,

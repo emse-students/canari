@@ -205,8 +205,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   const groupMlsFailures = new Map<string, number>();
   const PHANTOM_THRESHOLD = 3;
 
-  // Groupes pour lesquels une récupération d'epoch a déjà été déclenchée
-  // (évite de spammer sync_request en cas de rafale de messages future-epoch).
+  // Groups for which an epoch recovery has already been triggered
+  // (avoids spamming reinvite_request on a burst of future-epoch messages).
   const epochRecoveryGroups = new Set<string>();
 
   // Buffer pour les messages (commits) qui arrivent AVANT leur Welcome.
@@ -283,14 +283,14 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         const groupId = String(data.groupId || '');
         const currentEpoch = Number(data.currentEpoch || 0);
         log(
-          `[EPOCH] Commit rejeté pour groupe ${groupId} (epoch serveur: ${currentEpoch}) — oubli MLS + sync_request`
+          `[EPOCH] Commit rejeté pour groupe ${groupId} (epoch serveur: ${currentEpoch}) — oubli MLS + reinvite_request`
         );
         if (groupId) {
           epochRecoveryGroups.add(groupId);
           mlsService.forgetGroup(groupId, currentEpoch);
           const stBytes = await mlsService.saveState(pin);
           localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
-          mlsService.sendSyncRequest();
+          mlsService.sendReinviteRequest();
         }
         return;
       }
@@ -445,7 +445,6 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             conversations.set(convoKey, { ...convo, isReady: true });
             localStorage.removeItem(`discovery_pending:${groupId}`);
             if (storage) await saveConversation(convoKey);
-            loadHistoryForConversation(convoKey, groupId!).catch(() => {});
           }
 
           // If this group was in epoch recovery, replay incremental history
@@ -453,7 +452,6 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           if (epochRecoveryGroups.has(convoKey) || epochRecoveryGroups.has(groupId!)) {
             epochRecoveryGroups.delete(convoKey);
             epochRecoveryGroups.delete(groupId!);
-            loadHistoryForConversation(convoKey, groupId!).catch(() => {});
           }
         } catch {
           // Welcome was for another device or already handled — ignore
@@ -782,7 +780,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           // commit already applied by another path.  The Rust layer handles most of
           // these, but some slip through (e.g. PublicMessage commits).  ACK silently.
           // Future epoch (msg_epoch > group_epoch): our local state is behind — drop
-          // the stale MLS state and trigger a re-sync via sync_request.
+          // the stale MLS state and trigger a re-sync via reinvite_request.
           const meMatch = errMsg.match(/msg_epoch=(\d+)/);
           const geMatch = errMsg.match(/group_epoch=(\d+)/);
           if (meMatch && geMatch) {
@@ -794,12 +792,12 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             if (me > ge && !epochRecoveryGroups.has(convoKey)) {
               epochRecoveryGroups.add(convoKey);
               log(
-                `[RECOVER] Epoch périmée sur "${convoKey}" (local: ${ge}, msg: ${me}) — oubli MLS + sync_request`
+                `[RECOVER] Epoch périmée sur "${convoKey}" (local: ${ge}, msg: ${me}) — oubli MLS + reinvite_request`
               );
               mlsService.forgetGroup(convo.groupId, me); // Fix F: min_epoch = me
               conversations.set(convoKey, { ...convo, isReady: false });
               if (storage) saveConversation(convoKey).catch(() => {});
-              mlsService.sendSyncRequest();
+              mlsService.sendReinviteRequest();
             }
             // Fix E: me === ge + SenderDataDecryption = secrets divergés (race condition)
             if (
@@ -809,12 +807,12 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             ) {
               epochRecoveryGroups.add(convoKey);
               log(
-                `[RECOVER] Divergence secrets (SenderDataDecryption) sur "${convoKey}" (epoch: ${ge}) — oubli MLS + sync_request`
+                `[RECOVER] Divergence secrets (SenderDataDecryption) sur "${convoKey}" (epoch: ${ge}) — oubli MLS + reinvite_request`
               );
               mlsService.forgetGroup(convo.groupId, ge); // Fix F: min_epoch = ge
               conversations.set(convoKey, { ...convo, isReady: false });
               if (storage) saveConversation(convoKey).catch(() => {});
-              mlsService.sendSyncRequest();
+              mlsService.sendReinviteRequest();
             }
             return true; // ACK toujours pour les erreurs d'epoch
           }
@@ -827,12 +825,12 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           if (errMsg.toLowerCase().includes('senderdata') && !epochRecoveryGroups.has(convoKey)) {
             epochRecoveryGroups.add(convoKey);
             log(
-              `[RECOVER] Divergence secrets (SenderDataDecryption) sur "${convoKey}" — oubli MLS + sync_request`
+              `[RECOVER] Divergence secrets (SenderDataDecryption) sur "${convoKey}" — oubli MLS + reinvite_request`
             );
             mlsService.forgetGroup(convo.groupId);
             conversations.set(convoKey, { ...convo, isReady: false });
             if (storage) saveConversation(convoKey).catch(() => {});
-            mlsService.sendSyncRequest();
+            mlsService.sendReinviteRequest();
             return true;
           }
 
@@ -1174,10 +1172,35 @@ export async function initializeConnection(deps: ConnectionDeps): Promise<void> 
     // Silent fallback if key package generation fails
   }
 
-  // Notify other devices of this user that a new device is available.
-  // This triggers processPendingInvitations on those devices so they add us to
-  // their groups and send us a Welcome.
-  mlsService.sendSyncRequest();
+  // On every connect, cross-check server-side membership status with local MLS state:
+  //   • pending            → send a welcome_request so any online group member can invite us
+  //   • stale              → send a reinvite_request so own online devices re-invite us
+  //   • welcome_received   → normally do nothing, BUT if local state is missing (e.g. storage
+  //                          cleared, reinstall) reset to pending and send a welcome_request so
+  //                          we get re-invited instead of being silently stuck
+  try {
+    const memberships = await mlsService.getDeviceMemberships(_userId, mlsService.getDeviceId());
+    const localGroups = new Set(mlsService.getLocalGroups());
+    for (const m of memberships) {
+      if (m.status === 'pending') {
+        mlsService.sendWelcomeRequest(m.groupId);
+        log(`[SYNC] welcome_request envoyé pour groupe ${m.groupId}`);
+      } else if (m.status === 'stale') {
+        mlsService.sendReinviteRequest();
+        log(`[SYNC] reinvite_request envoyé (stale sur groupe ${m.groupId})`);
+      } else if (m.status === 'welcome_received' && !localGroups.has(m.groupId)) {
+        // Server believes we are a full member but local MLS state is gone.
+        // Reset to pending so the receiving device accepts the welcome_request.
+        await mlsService
+          .updateInvitationStatus(mlsService.getDeviceId(), _userId, m.groupId, 'pending')
+          .catch(() => {});
+        mlsService.sendWelcomeRequest(m.groupId);
+        log(`[SYNC] welcome_request envoyé (état local manquant pour ${m.groupId})`);
+      }
+    }
+  } catch (e) {
+    log(`[SYNC] Échec récupération memberships: ${e}`);
+  }
 
   // Small delay to allow KeyPackage propagation before syncing
   // This helps avoid race conditions where we fetch stale KeyPackages

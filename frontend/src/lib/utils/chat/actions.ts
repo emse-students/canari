@@ -352,7 +352,6 @@ export async function discoverMissingGroups(params: {
 
     const memberUserIds = [...new Set(members.map((m) => m.userId.toLowerCase()))].sort();
     const isLeader = memberUserIds[0] === userId.toLowerCase();
-    const otherMemberIds = memberUserIds.filter((m) => m !== userId.toLowerCase());
 
     // Track how long this placeholder has been pending
     const pendingKey = `discovery_pending:${convo.groupId}`;
@@ -362,56 +361,34 @@ export async function discoverMissingGroups(params: {
     }
     const waitingMs = pendingSince ? Date.now() - pendingSince : 0;
 
-    // Check if any of our OWN other devices are published.
-    // If so, one of them should add us via processPendingInvitations (triggered by
-    // our sync_request). Re-bootstrapping while they have a valid MLS state would
-    // create a split-brain (incompatible key material → permanent AeadError).
-    let hasOtherOwnDevices = false;
-    try {
-      const ownDevices = await mlsService.fetchUserDevices(userId);
-      hasOtherOwnDevices = ownDevices.some((d) => d.deviceId !== mlsService.getDeviceId());
-    } catch {
-      // ignore
-    }
-
-    let otherMemberIsActive = false;
-    if (!hasOtherOwnDevices) {
-      // Only check other members when we have no own devices that can send us a Welcome.
-      for (const memberId of otherMemberIds) {
-        try {
-          const devices = await mlsService.fetchUserDevices(memberId);
-          if (devices.length > 0) {
-            otherMemberIsActive = true;
-            break;
-          }
-        } catch {
-          // ignore
+    // Check if any device (own or other member) is published and can send a Welcome.
+    // Re-bootstrapping while another device has a valid MLS state would create
+    // split-brain (incompatible key material → permanent AeadError).
+    let hasAnyActiveDevice = false;
+    const allMemberIds = memberUserIds; // own userId is included
+    for (const memberId of allMemberIds) {
+      try {
+        const devices = await mlsService.fetchUserDevices(memberId);
+        if (devices.some((d) => d.deviceId !== mlsService.getDeviceId())) {
+          hasAnyActiveDevice = true;
+          break;
         }
+      } catch {
+        // ignore
       }
     }
 
-    // Decision logic:
-    // 1. Own devices exist → ALWAYS wait for Welcome (they handle sync via sync_request)
-    // 2. No own devices, other members active → they can't add us (single-writer),
-    //    but leader can re-bootstrap; non-leader waits 120s
-    // 3. No own devices, nobody active → truly orphaned; leader bootstraps, others wait 30s
-    let shouldBootstrap: boolean;
-    if (hasOtherOwnDevices) {
-      // Only re-bootstrap as extreme fallback if Welcome never arrives
-      shouldBootstrap = waitingMs > 120_000;
-    } else if (otherMemberIsActive) {
-      shouldBootstrap = isLeader || waitingMs > 120_000;
-    } else {
-      shouldBootstrap = isLeader || waitingMs > 30_000;
-    }
+    // Decision: if any device is reachable, wait up to 120s for a Welcome.
+    // If truly orphaned, the leader re-bootstraps immediately; others wait 30s.
+    const shouldBootstrap = hasAnyActiveDevice
+      ? waitingMs > 120_000
+      : isLeader || waitingMs > 30_000;
 
     if (!shouldBootstrap) {
       log(
-        hasOtherOwnDevices
-          ? `[DISCOVERY] "${convo.name}": autre(s) appareil(s) propre(s) detecte(s), attente Welcome via sync_request... (${Math.round(waitingMs / 1000)}s / 120s)`
-          : otherMemberIsActive
-            ? `[DISCOVERY] "${convo.name}": ${otherMemberIds[0] ?? 'membre'} actif, attente re-invitation... (${Math.round(waitingMs / 1000)}s / 120s)`
-            : `[DISCOVERY] "${convo.name}": attente bootstrap par ${memberUserIds[0]} (${Math.round(waitingMs / 1000)}s / 30s)`
+        hasAnyActiveDevice
+          ? `[DISCOVERY] "${convo.name}": appareil(s) actif(s) détecté(s), attente Welcome via welcome_request... (${Math.round(waitingMs / 1000)}s / 120s)`
+          : `[DISCOVERY] "${convo.name}": attente bootstrap par ${memberUserIds[0]} (${Math.round(waitingMs / 1000)}s / 30s)`
       );
       continue;
     }
@@ -595,4 +572,103 @@ export async function processDevWelcome(params: {
 }) {
   const { mlsService, incomingBytesHex } = params;
   await mlsService.processWelcome(fromHex(incomingBytesHex));
+}
+
+export async function handleWelcomeRequest(params: {
+  mlsService: IMlsService;
+  userId: string;
+  pin: string;
+  conversations: Map<string, Conversation>;
+  log: (msg: string) => void;
+  requesterUserId: string;
+  requesterDeviceId: string;
+  groupId: string;
+}) {
+  const {
+    mlsService,
+    userId,
+    pin,
+    conversations,
+    log,
+    requesterUserId,
+    requesterDeviceId,
+    groupId,
+  } = params;
+
+  // Only handle if we have a ready conversation for this group
+  const convo = [...conversations.values()].find((c) => c.groupId === groupId && c.isReady);
+  if (!convo) {
+    log(`[WELCOME_REQ] Pas de conversation prête pour ${groupId} — skip`);
+    return;
+  }
+
+  // Acquire distributed lock — first device to win becomes the "leader"
+  const lockAcquired = await mlsService.acquireAddLock(groupId, 15_000).catch(() => false);
+  if (!lockAcquired) {
+    log(`[WELCOME_REQ] Verrou tenu par un autre appareil pour ${groupId} — skip`);
+    return;
+  }
+
+  try {
+    // Fetch fresh KeyPackage for the requesting device
+    const devices = await mlsService.fetchUserDevices(requesterUserId);
+    const targetDevice = devices.find((d) => d.deviceId === requesterDeviceId);
+    if (!targetDevice) {
+      log(`[WELCOME_REQ] KeyPackage introuvable pour ${requesterDeviceId} — skip`);
+      return;
+    }
+
+    // Idempotency: skip if device is already an MLS member
+    try {
+      const members = await mlsService.getGroupMembers(groupId);
+      if (members.some((m) => m.deviceId === requesterDeviceId)) {
+        log(`[WELCOME_REQ] ${requesterDeviceId} déjà membre MLS de ${groupId}`);
+        await mlsService
+          .updateInvitationStatus(requesterDeviceId, requesterUserId, groupId, 'welcome_received')
+          .catch(() => {});
+        return;
+      }
+    } catch {
+      // proceed if member list unavailable
+    }
+
+    // Add the device to the MLS group
+    const result = await mlsService.addMember(groupId, targetDevice.keyPackage);
+    await mlsService.registerMember(groupId, requesterUserId, requesterDeviceId);
+
+    // Send Welcome to the requesting device
+    if (result.welcome) {
+      await mlsService.sendWelcome(
+        result.welcome,
+        requesterUserId,
+        groupId,
+        requesterDeviceId,
+        result.ratchetTree
+      );
+      log(`[WELCOME_REQ] Welcome → ${requesterUserId}:${requesterDeviceId} pour ${groupId}`);
+    }
+
+    // Persist MLS state before broadcasting the commit
+    const stBytes = await mlsService.saveState(pin);
+    localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
+
+    // Broadcast commit, excluding the inviter (self) and the invitee (requester)
+    if (result.commit) {
+      await mlsService.sendCommit(result.commit, groupId, [
+        `${userId}:${mlsService.getDeviceId()}`,
+        `${requesterUserId}:${requesterDeviceId}`,
+      ]);
+    }
+  } catch (e) {
+    const errStr = String(e);
+    if (errStr.includes('DuplicateSignatur') || errStr.includes('already')) {
+      await mlsService
+        .updateInvitationStatus(requesterDeviceId, requesterUserId, groupId, 'welcome_received')
+        .catch(() => {});
+    } else {
+      log(`[WELCOME_REQ] Erreur pour ${requesterDeviceId}: ${errStr.slice(0, 100)}`);
+    }
+  } finally {
+    await mlsService.releaseAddLock(groupId).catch(() => {});
+  }
 }

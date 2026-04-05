@@ -44,7 +44,11 @@ export class TauriMlsService implements IMlsService {
       ) => Promise<boolean>)
     | null = null;
   private disconnectCallback: (() => void) | null = null;
-  private syncRequestCallback: ((senderDeviceId: string) => void) | null = null;
+  private reinviteRequestCallback: ((senderDeviceId: string) => void) | null = null;
+  private welcomeRequestCallback:
+    | ((requesterUserId: string, requesterDeviceId: string, groupId: string) => void)
+    | null = null;
+  private noPeerOnlineCallback: ((groupId: string) => void) | null = null;
   private baseUrl: string;
   private historyUrl: string;
   private authToken = '';
@@ -162,10 +166,26 @@ export class TauriMlsService implements IMlsService {
             }
             return;
           }
-          if (msg.type === 'sync_request') {
+          if (msg.type === 'reinvite_request') {
             const senderDev = (msg.senderDeviceId as string) || '';
-            console.log(`[WS RCV] sync_request from ${senderDev}`);
-            this.syncRequestCallback?.(senderDev);
+            console.log(`[WS RCV] reinvite_request from ${senderDev}`);
+            this.reinviteRequestCallback?.(senderDev);
+            return;
+          }
+          if (msg.type === 'welcome_request') {
+            const requesterUserId = (msg.requesterUserId as string) || '';
+            const requesterDeviceId = (msg.requesterDeviceId as string) || '';
+            const groupId = (msg.groupId as string) || '';
+            console.log(
+              `[WS RCV] welcome_request from ${requesterUserId}:${requesterDeviceId} for group ${groupId}`
+            );
+            this.welcomeRequestCallback?.(requesterUserId, requesterDeviceId, groupId);
+            return;
+          }
+          if (msg.type === 'no_peer_online') {
+            const groupId = (msg.groupId as string) || '';
+            console.log(`[WS RCV] no_peer_online for group ${groupId}`);
+            this.noPeerOnlineCallback?.(groupId);
             return;
           }
           if (msg.type === 'epoch_rejected') {
@@ -196,8 +216,8 @@ export class TauriMlsService implements IMlsService {
                 senderId: (msg.senderId as string) || 'unknown',
                 ciphertext,
                 groupId: (msg.groupId as string) || undefined,
-                isWelcome: msg.isWelcome === true,
-                isCommit: msg.isCommit === true,
+                isWelcome: !!msg.isWelcome,
+                isCommit: !!msg.isCommit,
                 ratchetTreeBytes,
               });
             }
@@ -264,11 +284,9 @@ export class TauriMlsService implements IMlsService {
           const successfullyProcessedIds: string[] = [];
 
           for (const msg of messages) {
-            const success = await this.simulateMessageReceive(msg);
-            const msgId = msg.id || msg._id;
-            if (success && msgId) {
-              successfullyProcessedIds.push(msgId);
-            }
+            const msgId = (msg.id || msg._id) as string | undefined;
+            const processed = await this.simulateMessageReceive(msg);
+            if (msgId && processed) successfullyProcessedIds.push(msgId);
           }
 
           if (successfullyProcessedIds.length > 0) {
@@ -450,15 +468,32 @@ export class TauriMlsService implements IMlsService {
     this.disconnectCallback = callback;
   }
 
-  sendSyncRequest(): void {
+  sendReinviteRequest(): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: 'sync_request', proto: '' }));
-      console.log('[WS] sync_request sent');
+      this.ws.send(JSON.stringify({ type: 'reinvite_request', proto: '' }));
+      console.log('[WS] reinvite_request sent');
     }
   }
 
-  onSyncRequest(callback: (senderDeviceId: string) => void): void {
-    this.syncRequestCallback = callback;
+  onReinviteRequest(callback: (senderDeviceId: string) => void): void {
+    this.reinviteRequestCallback = callback;
+  }
+
+  sendWelcomeRequest(groupId: string): void {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: 'welcome_request', groupId, proto: '' }));
+      console.log(`[WS] welcome_request sent for group ${groupId}`);
+    }
+  }
+
+  onWelcomeRequest(
+    callback: (requesterUserId: string, requesterDeviceId: string, groupId: string) => void
+  ): void {
+    this.welcomeRequestCallback = callback;
+  }
+
+  onNoPeerOnline(callback: (groupId: string) => void): void {
+    this.noPeerOnlineCallback = callback;
   }
 
   getDeviceId(): string {
@@ -652,7 +687,11 @@ export class TauriMlsService implements IMlsService {
     }
   }
 
-  async sendCommit(commitBytes: Uint8Array, groupId: string): Promise<void> {
+  async sendCommit(
+    commitBytes: Uint8Array,
+    groupId: string,
+    excludeDeviceIds?: string[]
+  ): Promise<void> {
     const base64 = btoa(String.fromCharCode(...commitBytes));
     let baseEpoch = 0;
     try {
@@ -689,7 +728,14 @@ export class TauriMlsService implements IMlsService {
     // members.  We send as type 'mls' so the gateway broadcasts directly
     // without re-running epoch validation.
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: 'mls', groupId, proto: base64 }));
+      this.ws.send(
+        JSON.stringify({
+          type: 'mls',
+          groupId,
+          proto: base64,
+          ...(excludeDeviceIds?.length ? { excludeDeviceIds } : {}),
+        })
+      );
     } else {
       await fetch(`${this.historyUrl}/api/mls-api/send`, {
         method: 'POST',

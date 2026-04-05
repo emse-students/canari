@@ -20,6 +20,7 @@ import {
   discoverMissingGroups,
   exportUserBackup,
   generateDevKeyPackage,
+  handleWelcomeRequest,
   importUserBackup,
   processDevWelcome,
   processPendingInvitations,
@@ -58,6 +59,7 @@ export interface ChatSessionCallbacks {
   }) => void;
   onSendError: (msg: string) => void;
   onShowSyncGuidePrompt: () => void;
+  onNoPeerOnline?: (groupId: string) => void;
   log: (msg: string) => void;
   messageReactions: SvelteMap<string, any[]>;
   getSelectedContact: () => string | null;
@@ -91,8 +93,6 @@ export function useChatSession() {
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let isReconnecting = false;
   let isSyncing = false;
-  let isHistorySyncing = false;
-  let historySyncPending = false;
 
   // ── Backup ────────────────────────────────────────────────────────────────
   let isExporting = $state(false);
@@ -119,45 +119,6 @@ export function useChatSession() {
       mls = w.__TAURI_INTERNALS__ ? new TauriMlsService() : new WebMlsService();
     }
     return mls;
-  }
-
-  async function syncAllConversationHistories(
-    cb: ChatSessionCallbacks,
-    trigger: 'login' | 'reconnect' | 'sync_request' | 'post_discovery'
-  ) {
-    if (isHistorySyncing) {
-      historySyncPending = true;
-      return;
-    }
-
-    isHistorySyncing = true;
-    try {
-      do {
-        historySyncPending = false;
-
-        const readyConversations = [...cb.conversations.entries()].filter(
-          ([, convo]) => convo.isReady && !!convo.groupId
-        );
-
-        if (readyConversations.length === 0) return;
-
-        cb.log(
-          `[HISTORY] Synchronisation (${trigger}) de ${readyConversations.length} conversation(s)...`
-        );
-
-        for (const [conversationKey, convo] of readyConversations) {
-          try {
-            await cb.onLoadHistoryForConversation(conversationKey, convo.groupId);
-          } catch (e) {
-            cb.log(
-              `[WARN] Echec historique ${convo.groupId}: ${e instanceof Error ? e.message : String(e)}`
-            );
-          }
-        }
-      } while (historySyncPending);
-    } finally {
-      isHistorySyncing = false;
-    }
   }
 
   // ── Login ─────────────────────────────────────────────────────────────────
@@ -234,7 +195,9 @@ export function useChatSession() {
           (c) => c.isReady && !localMlsGroups.has(c.groupId)
         );
         if (hasMissing) {
-          cb.log('[WARN] Groupes sans etat MLS detectes.');
+          cb.log(
+            '[WARN] Groupes sans etat MLS local detectes — reinvite declenchee au prochain connect.'
+          );
         }
       } catch {
         /* non-blocking diagnostic */
@@ -282,36 +245,49 @@ export function useChatSession() {
         log: cb.log,
       });
 
-      // When another device of this user sends a sync_request (new device just connected),
-      // re-run processPendingInvitations so we add the new device and send it a Welcome.
-      // Jitter déterministe pour éviter la race condition : si plusieurs appareils reçoivent
-      // le sync_request simultanément, seul le "plus petit" deviceId (lexicographique) agit
-      // immédiatement ; les autres attendent 2 s pour constater que l'ajout a déjà eu lieu.
-      mlsService.onSyncRequest((senderDeviceId: string) => {
-        const myDeviceId = mlsService.getDeviceId();
-        const waitMs = myDeviceId <= senderDeviceId ? 0 : 2000;
-        cb.log(
-          `[SYNC] sync_request reçu de ${senderDeviceId} — jitter ${waitMs}ms (moi: ${myDeviceId})`
+      // When a device in MLS recovery sends a reinvite_request, re-run
+      // processPendingInvitations so we re-invite it and send a fresh Welcome.
+      // The add-lock inside processPendingInvitations handles concurrent calls.
+      mlsService.onReinviteRequest((senderDeviceId: string) => {
+        cb.log(`[SYNC] reinvite_request reçu de ${senderDeviceId}`);
+        processDeviceInvitationsLocally(cb).catch((e) =>
+          cb.log(
+            `[WARN] Echec sync appareils (reinvite_request): ${e instanceof Error ? e.message : String(e)}`
+          )
         );
-        setTimeout(() => {
-          processDeviceInvitationsLocally(cb)
-            .then(() =>
-              discoverMissingGroups({
-                mlsService: ensureMls(),
-                userId,
-                pin,
-                conversations: cb.conversations,
-                saveConversation: cb.saveConversation,
-                log: cb.log,
-              })
-            )
-            .then(() => syncAllConversationHistories(cb, 'sync_request'))
-            .catch((e) =>
-              cb.log(
-                `[WARN] Echec sync appareils (sync_request): ${e instanceof Error ? e.message : String(e)}`
-              )
+      });
+
+      // When a device (from any user) sends a welcome_request for a group we belong to,
+      // race to acquire the add-lock and, if we win, invite the device and send a commit.
+      mlsService.onWelcomeRequest(
+        async (requesterUserId: string, requesterDeviceId: string, groupId: string) => {
+          cb.log(
+            `[SYNC] welcome_request reçu de ${requesterUserId}:${requesterDeviceId} pour ${groupId}`
+          );
+          try {
+            await handleWelcomeRequest({
+              mlsService: ensureMls(),
+              userId,
+              pin,
+              conversations: cb.conversations,
+              log: cb.log,
+              requesterUserId,
+              requesterDeviceId,
+              groupId,
+            });
+          } catch (e) {
+            cb.log(
+              `[WARN] Echec handleWelcomeRequest: ${e instanceof Error ? e.message : String(e)}`
             );
-        }, waitMs);
+          }
+        }
+      );
+
+      // When no online peer was reachable for a welcome_request, prompt the user
+      // to connect another device so it can invite this one.
+      mlsService.onNoPeerOnline((groupId: string) => {
+        cb.log(`[SYNC] no_peer_online pour groupe ${groupId}`);
+        cb.onNoPeerOnline?.(groupId);
       });
 
       // Multi-tab leadership: only the leader tab opens the WebSocket.
@@ -331,11 +307,8 @@ export function useChatSession() {
       // Only the leader tab syncs history and devices
       if (!getIsTabLeader()) return;
 
-      syncAllConversationHistories(cb, 'login').catch((e) =>
-        cb.log(
-          `[WARN] Echec synchronisation historique (login): ${e instanceof Error ? e.message : String(e)}`
-        )
-      );
+      // MLS message history is fetched automatically from the delivery service
+      // (fetchPendingMessages) on WS open — no separate MLS replay needed here.
 
       // Discover groups the user belongs to on the server but doesn't have locally.
       // This catches cases where Welcomes were lost (device offline, state cleared, etc.)
@@ -346,11 +319,9 @@ export function useChatSession() {
         conversations: cb.conversations,
         saveConversation: cb.saveConversation,
         log: cb.log,
-      })
-        .then(() => syncAllConversationHistories(cb, 'post_discovery'))
-        .catch((e) =>
-          cb.log(`[WARN] Echec decouverte groupes: ${e instanceof Error ? e.message : String(e)}`)
-        );
+      }).catch((e) =>
+        cb.log(`[WARN] Echec decouverte groupes: ${e instanceof Error ? e.message : String(e)}`)
+      );
 
       const isTauri = !!(window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
       if (isTauri && !(await BiometricService.isConfigured())) {
@@ -455,7 +426,6 @@ export function useChatSession() {
             log: cb.log,
           })
         )
-        .then(() => syncAllConversationHistories(cb, 'reconnect'))
         .catch((e) =>
           cb.log(
             `[WARN] Echec sync appareils (reconnect): ${e instanceof Error ? e.message : String(e)}`
