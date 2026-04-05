@@ -97,6 +97,7 @@ export function useChatSession() {
   // ── Backup ────────────────────────────────────────────────────────────────
   let isExporting = $state(false);
   let isImporting = $state(false);
+  let isLoginInProgress = false; // plain boolean — guards against concurrent login() calls
 
   // ── Dev tools ─────────────────────────────────────────────────────────────
   let lastKeyPackage = $state('');
@@ -128,6 +129,10 @@ export function useChatSession() {
       loginError = 'Veuillez remplir tous les champs.';
       return;
     }
+
+    // Guard against concurrent calls (e.g. onMount + afterNavigate firing together).
+    if (isLoggedIn || isReconnecting || isLoginInProgress) return;
+    isLoginInProgress = true;
 
     loginError = '';
     userId = userId.trim().toLowerCase();
@@ -335,6 +340,8 @@ export function useChatSession() {
       localStorage.removeItem('canari_saved_pin');
       const cur = window.location.pathname + window.location.search;
       void goto(`/login?returnTo=${encodeURIComponent(cur)}`, { replaceState: true });
+    } finally {
+      isLoginInProgress = false;
     }
   }
 

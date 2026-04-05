@@ -55,6 +55,8 @@ export class TauriMlsService implements IMlsService {
   private authToken = '';
   private userId: string = 'unknown';
   private deviceId: string;
+  /** Resolved when init() completes; shared across concurrent callers to avoid double native init. */
+  private initPromise: Promise<void> | null = null;
 
   // Message queue for sequential processing
   private messageQueue: QueuedMessage[] = [];
@@ -642,6 +644,12 @@ export class TauriMlsService implements IMlsService {
   }
 
   async init(userId: string, pin: string, state?: Uint8Array) {
+    if (this.initPromise) return this.initPromise;
+    this.initPromise = this._initImpl(userId, pin, state);
+    await this.initPromise;
+  }
+
+  private async _initImpl(userId: string, pin: string, state?: Uint8Array) {
     this.userId = userId;
 
     // Per-user device ID (same rationale as WebMlsService)
@@ -712,7 +720,7 @@ export class TauriMlsService implements IMlsService {
       headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         groupId,
-        deviceId: `${this.userId}:${this.deviceId}`,
+        deviceId: this.deviceId,
         baseEpoch,
       }),
     });

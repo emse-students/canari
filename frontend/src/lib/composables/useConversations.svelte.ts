@@ -214,7 +214,7 @@ export function useConversations() {
     const convo = conversations.get(name);
     if (convo) conversations.set(name, { ...convo, unreadCount: 0 });
     if (convo?.groupId) {
-      void loadGroupMembers(convo.groupId, null as any); // ctx injected by parent
+      void loadGroupMembers(convo.groupId, null);
     }
   }
 
@@ -239,7 +239,8 @@ export function useConversations() {
 
   // ── Group members ─────────────────────────────────────────────────────────
 
-  async function loadGroupMembers(groupId: string, ctx: ConversationContext) {
+  async function loadGroupMembers(groupId: string, ctx: ConversationContext | null) {
+    if (!ctx) return;
     if (groupId.startsWith('channel_')) {
       groupMembers = [];
       return;

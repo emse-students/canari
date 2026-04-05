@@ -39,6 +39,8 @@ export class WebMlsService implements IMlsService {
   private authToken: string | null = null;
   private userId: string = 'unknown';
   private deviceId: string;
+  /** Resolved when init() completes; shared across concurrent callers to avoid double WASM init. */
+  private initPromise: Promise<void> | null = null;
 
   // Message queue for sequential processing
   private messageQueue: QueuedMessage[] = [];
@@ -719,7 +721,7 @@ export class WebMlsService implements IMlsService {
       headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         groupId,
-        deviceId: `${this.userId}:${this.deviceId}`,
+        deviceId: this.deviceId,
         baseEpoch,
       }),
     });
@@ -789,6 +791,18 @@ export class WebMlsService implements IMlsService {
   }
 
   async init(userId: string, pin: string, state?: Uint8Array) {
+    // If already initialized or initialization is in flight, reuse the same promise.
+    if (this.client) return;
+    if (this.initPromise) return this.initPromise;
+    this.initPromise = this._initImpl(userId, pin, state);
+    try {
+      await this.initPromise;
+    } finally {
+      // Keep initPromise set so late callers still short-circuit via `this.client`.
+    }
+  }
+
+  private async _initImpl(userId: string, pin: string, state?: Uint8Array) {
     this.userId = userId;
 
     // Per-user device ID — prevents two users in the same browser from sharing a
