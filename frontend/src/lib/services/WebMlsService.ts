@@ -28,7 +28,8 @@ export class WebMlsService implements IMlsService {
       ) => Promise<boolean>)
     | null = null;
   private disconnectCallback: (() => void) | null = null;
-  private reinviteRequestCallback: ((senderDeviceId: string) => void) | null = null;
+  private reinviteRequestCallback: ((senderDeviceId: string, groupId: string) => void) | null =
+    null;
   private welcomeRequestCallback:
     | ((requesterUserId: string, requesterDeviceId: string, groupId: string) => void)
     | null = null;
@@ -193,8 +194,9 @@ export class WebMlsService implements IMlsService {
           }
           if (msg.type === 'reinvite_request') {
             const senderDev = (msg.senderDeviceId as string) || '';
-            console.log(`[WS RCV] reinvite_request from ${senderDev}`);
-            this.reinviteRequestCallback?.(senderDev);
+            const groupId = (msg.groupId as string) || '';
+            console.log(`[WS RCV] reinvite_request from ${senderDev} for group ${groupId}`);
+            this.reinviteRequestCallback?.(senderDev, groupId);
             return;
           }
           if (msg.type === 'welcome_request') {
@@ -383,14 +385,14 @@ export class WebMlsService implements IMlsService {
     this.disconnectCallback = callback;
   }
 
-  sendReinviteRequest(): void {
+  sendReinviteRequest(groupId: string): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: 'reinvite_request', proto: '' }));
-      console.log('[WS] reinvite_request sent');
+      this.ws.send(JSON.stringify({ type: 'reinvite_request', groupId, proto: '' }));
+      console.log(`[WS] reinvite_request sent for group ${groupId}`);
     }
   }
 
-  onReinviteRequest(callback: (senderDeviceId: string) => void): void {
+  onReinviteRequest(callback: (senderDeviceId: string, groupId: string) => void): void {
     this.reinviteRequestCallback = callback;
   }
 

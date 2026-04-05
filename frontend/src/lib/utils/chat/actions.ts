@@ -361,34 +361,45 @@ export async function discoverMissingGroups(params: {
     }
     const waitingMs = pendingSince ? Date.now() - pendingSince : 0;
 
-    // Check if any device (own or other member) is published and can send a Welcome.
-    // Re-bootstrapping while another device has a valid MLS state would create
-    // split-brain (incompatible key material → permanent AeadError).
-    let hasAnyActiveDevice = false;
-    const allMemberIds = memberUserIds; // own userId is included
-    for (const memberId of allMemberIds) {
+    // Two separate checks with different semantics:
+    //   • hasOtherOwnDevices: another alice-device is online → it will reinvite us, wait.
+    //   • otherMemberIsActive: another member (non-alice) has a published key package →
+    //     only non-leaders need to wait for their Welcome; leaders still bootstrap.
+    let hasOtherOwnDevices = false;
+    let otherMemberIsActive = false;
+    for (const memberId of memberUserIds) {
       try {
         const devices = await mlsService.fetchUserDevices(memberId);
-        if (devices.some((d) => d.deviceId !== mlsService.getDeviceId())) {
-          hasAnyActiveDevice = true;
-          break;
+        if (memberId === userId.toLowerCase()) {
+          if (devices.some((d) => d.deviceId !== mlsService.getDeviceId())) {
+            hasOtherOwnDevices = true;
+          }
+        } else {
+          if (devices.length > 0) {
+            otherMemberIsActive = true;
+          }
         }
       } catch {
         // ignore
       }
     }
 
-    // Decision: if any device is reachable, wait up to 120s for a Welcome.
-    // If truly orphaned, the leader re-bootstraps immediately; others wait 30s.
-    const shouldBootstrap = hasAnyActiveDevice
-      ? waitingMs > 120_000
-      : isLeader || waitingMs > 30_000;
+    // Decision tree:
+    //   1. Own other device exists → wait for reinvite_request to arrive (any role)
+    //   2. Leader with no other own device → bootstrap immediately
+    //   3. Non-leader, other member active → wait up to 120s for a Welcome
+    //   4. Non-leader, no active member → wait 30s then bootstrap as fallback
+    const shouldBootstrap = hasOtherOwnDevices
+      ? false
+      : isLeader || (otherMemberIsActive ? waitingMs > 120_000 : waitingMs > 30_000);
 
     if (!shouldBootstrap) {
       log(
-        hasAnyActiveDevice
-          ? `[DISCOVERY] "${convo.name}": appareil(s) actif(s) détecté(s), attente Welcome via welcome_request... (${Math.round(waitingMs / 1000)}s / 120s)`
-          : `[DISCOVERY] "${convo.name}": attente bootstrap par ${memberUserIds[0]} (${Math.round(waitingMs / 1000)}s / 30s)`
+        hasOtherOwnDevices
+          ? `[DISCOVERY] "${convo.name}": autre appareil propre détecté, attente reinvite...`
+          : otherMemberIsActive
+            ? `[DISCOVERY] "${convo.name}": appareil(s) actif(s) détecté(s), attente Welcome via welcome_request... (${Math.round(waitingMs / 1000)}s / 120s)`
+            : `[DISCOVERY] "${convo.name}": attente bootstrap par ${memberUserIds[0]} (${Math.round(waitingMs / 1000)}s / 30s)`
       );
       continue;
     }

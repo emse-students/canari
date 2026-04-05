@@ -704,16 +704,23 @@ async fn handle_socket(
                             }
 
                             "reinvite_request" => {
+                                let group_id = json
+                                    .get("groupId")
+                                    .and_then(|v: &serde_json::Value| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
                                 tracing::info!(
-                                    "Processing reinvite_request from {}:{}",
+                                    "Processing reinvite_request from {}:{} for group {}",
                                     user_id,
-                                    device_id
+                                    device_id,
+                                    group_id
                                 );
 
                                 let notification = serde_json::json!({
                                     "type": "reinvite_request",
                                     "senderId": user_id,
                                     "senderDeviceId": device_id,
+                                    "groupId": group_id,
                                 })
                                 .to_string();
 

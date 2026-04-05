@@ -290,7 +290,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           mlsService.forgetGroup(groupId, currentEpoch);
           const stBytes = await mlsService.saveState(pin);
           localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
-          mlsService.sendReinviteRequest();
+          mlsService.sendReinviteRequest(groupId);
         }
         return;
       }
@@ -797,7 +797,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               mlsService.forgetGroup(convo.groupId, me); // Fix F: min_epoch = me
               conversations.set(convoKey, { ...convo, isReady: false });
               if (storage) saveConversation(convoKey).catch(() => {});
-              mlsService.sendReinviteRequest();
+              mlsService.sendReinviteRequest(convo.groupId);
             }
             // Fix E: me === ge + SenderDataDecryption = secrets divergés (race condition)
             if (
@@ -812,7 +812,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               mlsService.forgetGroup(convo.groupId, ge); // Fix F: min_epoch = ge
               conversations.set(convoKey, { ...convo, isReady: false });
               if (storage) saveConversation(convoKey).catch(() => {});
-              mlsService.sendReinviteRequest();
+              mlsService.sendReinviteRequest(convo.groupId);
             }
             return true; // ACK toujours pour les erreurs d'epoch
           }
@@ -830,7 +830,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             mlsService.forgetGroup(convo.groupId);
             conversations.set(convoKey, { ...convo, isReady: false });
             if (storage) saveConversation(convoKey).catch(() => {});
-            mlsService.sendReinviteRequest();
+            mlsService.sendReinviteRequest(convo.groupId);
             return true;
           }
 
@@ -1186,7 +1186,7 @@ export async function initializeConnection(deps: ConnectionDeps): Promise<void> 
         mlsService.sendWelcomeRequest(m.groupId);
         log(`[SYNC] welcome_request envoyé pour groupe ${m.groupId}`);
       } else if (m.status === 'stale') {
-        mlsService.sendReinviteRequest();
+        mlsService.sendReinviteRequest(m.groupId);
         log(`[SYNC] reinvite_request envoyé (stale sur groupe ${m.groupId})`);
       } else if (m.status === 'welcome_received' && !localGroups.has(m.groupId)) {
         // Server believes we are a full member but local MLS state is gone.
