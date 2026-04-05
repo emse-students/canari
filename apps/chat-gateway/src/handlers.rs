@@ -391,7 +391,10 @@ async fn handle_socket(
 
                                 let epoch_result = state
                                     .http_client
-                                    .post(format!("{}/mls-api/commit", state.delivery_service_url))
+                                    .post(format!(
+                                        "{}/api/mls-api/commit",
+                                        state.delivery_service_url
+                                    ))
                                     .header("x-user-logged-in", "true")
                                     .json(&epoch_body)
                                     .send()
@@ -533,7 +536,7 @@ async fn handle_socket(
                                     match state
                                         .http_client
                                         .post(format!(
-                                            "{}/mls-api/send",
+                                            "{}/api/mls-api/send",
                                             state.delivery_service_url
                                         ))
                                         .header("x-user-logged-in", "true")
@@ -668,7 +671,7 @@ async fn handle_socket(
                                     match state
                                         .http_client
                                         .post(format!(
-                                            "{}/mls-api/send",
+                                            "{}/api/mls-api/send",
                                             state.delivery_service_url
                                         ))
                                         .header("x-user-logged-in", "true")
@@ -714,7 +717,7 @@ async fn handle_socket(
                                     match state
                                         .http_client
                                         .post(format!(
-                                            "{}/mls-api/send",
+                                            "{}/api/mls-api/send",
                                             state.delivery_service_url
                                         ))
                                         .header("x-user-logged-in", "true")
