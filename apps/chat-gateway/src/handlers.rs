@@ -831,13 +831,75 @@ async fn handle_socket(
                                 let prefix = format!("{}:", user_id);
                                 let my_key = format!("{}:{}", user_id, device_id);
 
-                                let map = state.connected_users.lock().unwrap();
-                                for (key, senders) in map.iter() {
-                                    if key.starts_with(&prefix) && *key != my_key {
-                                        for sender in senders {
-                                            let _ = sender.try_send(notification.clone());
+                                // Step 1: forward to own other devices (same user_id prefix).
+                                let mut forwarded = 0usize;
+                                {
+                                    let map = state.connected_users.lock().unwrap();
+                                    for (key, senders) in map.iter() {
+                                        if key.starts_with(&prefix) && *key != my_key {
+                                            for sender in senders {
+                                                let _ = sender.try_send(notification.clone());
+                                            }
+                                            forwarded += 1;
+                                            tracing::info!(
+                                                "reinvite_request forwarded to own device {}",
+                                                key
+                                            );
                                         }
-                                        tracing::info!("reinvite_request forwarded to {}", key);
+                                    }
+                                } // lock released before async
+
+                                // Step 2: if no own device online, escalate to all group members
+                                // as a welcome_request so the other party can re-add this device.
+                                if forwarded == 0 {
+                                    let welcome_notification = serde_json::json!({
+                                        "type": "welcome_request",
+                                        "groupId": group_id,
+                                        "requesterUserId": user_id,
+                                        "requesterDeviceId": device_id,
+                                    })
+                                    .to_string();
+
+                                    if let Ok(mut con) =
+                                        state.redis_client.get_multiplexed_async_connection().await
+                                    {
+                                        let members_key = format!("group:members:{}", group_id);
+                                        if let Ok(members) =
+                                            con.smembers::<_, Vec<String>>(&members_key).await
+                                        {
+                                            let map = state.connected_users.lock().unwrap();
+                                            for member in &members {
+                                                if *member == my_key {
+                                                    continue;
+                                                }
+                                                if let Some(senders) = map.get(member) {
+                                                    for sender in senders {
+                                                        let _ = sender
+                                                            .try_send(welcome_notification.clone());
+                                                    }
+                                                    forwarded += 1;
+                                                    tracing::info!(
+                                                        "reinvite_request escalated to welcome_request for {}",
+                                                        member
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    if forwarded == 0 {
+                                        let no_peer_msg = serde_json::json!({
+                                            "type": "no_peer_online",
+                                            "groupId": group_id,
+                                        })
+                                        .to_string();
+                                        let _ = tx.send(no_peer_msg).await;
+                                        tracing::info!(
+                                            "no_peer_online sent back to {}:{} for group {}",
+                                            user_id,
+                                            device_id,
+                                            group_id
+                                        );
                                     }
                                 }
                             }
