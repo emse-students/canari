@@ -398,6 +398,18 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         }
       }
 
+      // Log de la décision de routage
+      if (convoKey) {
+        log(`[ROUTE] groupId="${groupId ?? 'N/A'}" → convoKey="${convoKey}"`);
+      } else if (groupId) {
+        log(
+          `[ROUTE] groupId="${groupId}" inconnu — ${conversations.size} convos locales, isWelcome=${!!isWelcome}` +
+            (isWelcome ? ' → nouveau groupe' : ' → message bufferisé')
+        );
+      } else {
+        log(`[ROUTE] Pas de groupId, fallback par sender="${senderNorm}"`);
+      }
+
       // Only fall back to sender-based routing when no groupId is provided.
       // If a groupId is present but unknown, it is likely a Welcome for a new group
       // — routing it to an existing 1-to-1 conversation would silently discard it.
@@ -419,6 +431,9 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       // the epoch key schedule (root cause of AeadError at equal epochs).
       if (convoKey && isWelcome) {
         const convo = conversations.get(convoKey)!;
+        log(
+          `[WELCOME] Welcome pour groupe connu "${convoKey}" (groupId=${groupId}) isReady=${convo.isReady}`
+        );
         try {
           await mlsService.processWelcome(content, ratchetTreeBytes);
           const stBytes = await mlsService.saveState(pin);
@@ -464,6 +479,9 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         const convo = conversations.get(convoKey)!;
         try {
           const decryptedBytes = await mlsService.processIncomingMessage(convo.groupId, content);
+          log(
+            `[MLS] processIncomingMessage(${convo.groupId}) → ${decryptedBytes ? decryptedBytes.length + ' octets déchiffrés' : 'null (commit structural ou payload vide)'}`
+          );
 
           // Auto-save MLS state
           try {
@@ -475,6 +493,22 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
 
           if (decryptedBytes) {
             const msg = decodeAppMessage(decryptedBytes);
+            const msgType = msg?.text
+              ? 'text'
+              : msg?.reply
+                ? 'reply'
+                : msg?.reaction
+                  ? 'reaction'
+                  : msg?.media
+                    ? 'media'
+                    : msg?.system
+                      ? 'system'
+                      : msg?.call
+                        ? 'call'
+                        : 'inconnu';
+            log(
+              `[MLS] Type décodé: ${msgType}${msg?.messageId ? ` id=${msg.messageId}` : ''} pour "${convoKey}"`
+            );
 
             if (msg?.text) {
               await addMessageToChat(

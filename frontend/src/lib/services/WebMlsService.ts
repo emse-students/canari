@@ -312,10 +312,19 @@ export class WebMlsService implements IMlsService {
    * This ensures Welcome messages complete before regular messages.
    */
   private async processQueue() {
-    if (this.isProcessingQueue || !this.messageCallback) return;
+    if (this.isProcessingQueue) {
+      console.log('[QUEUE] Déjà en cours de traitement — déclenchement ignoré');
+      return;
+    }
+    if (!this.messageCallback) {
+      console.warn(
+        '[QUEUE] messageCallback non défini — messages en attente ne seront pas traités'
+      );
+      return;
+    }
 
     this.isProcessingQueue = true;
-    console.log(`[QUEUE] Starting queue processing (${this.messageQueue.length} messages)`);
+    console.log(`[QUEUE] Démarrage traitement (${this.messageQueue.length} messages en file)`);
 
     const ackIds: string[] = [];
 
@@ -325,15 +334,18 @@ export class WebMlsService implements IMlsService {
 
       try {
         console.log(
-          `[QUEUE] Processing ${msg.isWelcome ? 'Welcome' : 'message'} for group ${groupId ?? 'unknown'}`
+          `[QUEUE] Traitement ${msg.isWelcome ? 'Welcome' : msg.isCommit ? 'Commit' : 'message'} groupe=${groupId ?? 'inconnu'} sender=${msg.senderId}${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`
         );
-        await this.messageCallback(
+        const cbResult = await this.messageCallback(
           msg.senderId,
           msg.ciphertext,
           msg.groupId,
           msg.isWelcome,
           msg.ratchetTreeBytes,
           msg.isCommit
+        );
+        console.log(
+          `[QUEUE] messageCallback → ${cbResult} (groupe=${groupId ?? 'inconnu'})${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`
         );
 
         // Track for batch ACK
@@ -479,8 +491,18 @@ export class WebMlsService implements IMlsService {
 
           for (const msg of messages) {
             const msgId = msg.id || msg._id;
+            console.log(
+              `[PENDING] → id=${msgId ?? '?'} groupId=${msg.groupId ?? '?'} isWelcome=${!!msg.isWelcome} isCommit=${!!msg.isCommit} senderId=${msg.senderId ?? '?'}`
+            );
             const ok = await this.simulateMessageReceive(msg);
-            if (ok && msgId) allIds.push(msgId);
+            if (ok && msgId) {
+              console.log(`[PENDING] ✓ ACK enqueued pour id=${msgId}`);
+              allIds.push(msgId);
+            } else if (!ok) {
+              console.warn(
+                `[PENDING] ✗ Traitement échoué id=${msgId ?? '?'} — ${msgId ? 'laissé en queue pour retry' : "pas d'id, non ACKable"}`
+              );
+            }
           }
 
           if (allIds.length > 0) {
@@ -513,7 +535,15 @@ export class WebMlsService implements IMlsService {
   }
 
   private async simulateMessageReceive(data: any): Promise<boolean> {
-    if (!this.messageCallback) return false;
+    if (!this.messageCallback) {
+      console.warn('[SIM] messageCallback absent — simulateMessageReceive skipped');
+      return false;
+    }
+
+    const shape = data.proto ? 'proto' : data.content ? 'content' : 'unknown';
+    console.log(
+      `[SIM] Traitement: shape=${shape} groupId=${data.groupId ?? data.session_id ?? '?'} isWelcome=${data.type === 'mlsWelcome' || !!data.isWelcome} isCommit=${!!data.isCommit} id=${data.id ?? data._id ?? '?'}`
+    );
 
     // Flat format: proto = base64(raw ciphertext), metadata fields alongside
     if (data.proto) {

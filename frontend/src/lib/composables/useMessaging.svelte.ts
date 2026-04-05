@@ -73,7 +73,12 @@ export function useMessaging() {
   ) {
     const normalized = contactName.toLowerCase();
     const convo = ctx.conversations.get(normalized);
-    if (!convo) return;
+    if (!convo) {
+      console.warn(
+        `[ADD_MSG] conversation "${normalized}" introuvable (${ctx.conversations.size} convos dans la map) — message de ${senderId} ignoré`
+      );
+      return;
+    }
 
     const isOwn = senderId.toLowerCase() === ctx.userId.toLowerCase();
     const newMsg: ChatMessage = {
@@ -86,7 +91,12 @@ export function useMessaging() {
       isSystem,
     };
 
-    if (convo.messages.some((m) => m.id === newMsg.id)) return;
+    if (convo.messages.some((m) => m.id === newMsg.id)) {
+      console.log(
+        `[ADD_MSG] Doublon ignoré id=${newMsg.id} dans "${normalized}" (${convo.messages.length} msgs existants)`
+      );
+      return;
+    }
 
     const isConversationOpen = ctx.selectedContact === normalized;
     const shouldMarkUnread = !isOwn && !isConversationOpen;
@@ -101,6 +111,9 @@ export function useMessaging() {
       unreadCount: nextUnreadCount,
       messages: insertMessageOrdered(convo.messages, newMsg),
     });
+    console.log(
+      `[ADD_MSG] ✓ Message ajouté: id=${newMsg.id} conversation="${normalized}" senderId=${newMsg.senderId} isOwn=${isOwn} (total ${convo.messages.length + 1} messages)`
+    );
 
     if (!isOwn && !isSystem) {
       (ctx.playReceiveTone ?? ctx.playNotificationTone)();
