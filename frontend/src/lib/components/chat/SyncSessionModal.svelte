@@ -35,6 +35,8 @@
   let videoEl = $state<HTMLVideoElement | null>(null);
   let isScanning = $state(false);
   let scanError = $state('');
+  let showPayloadFallback = $state(false);
+  let showManualPaste = $state(false);
 
   let mediaStream: MediaStream | null = null;
   let scanAnimationFrame: number | null = null;
@@ -110,6 +112,7 @@
 
       if (value) {
         onJoinPayloadChange(value);
+        onConfirmJoin();
         cleanupStream();
         return;
       }
@@ -167,7 +170,8 @@
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       cleanupStream();
-      scanError = `Impossible d'activer la camera: ${msg}`;
+      scanError = `Impossible d'activer la caméra: ${msg}`;
+      showManualPaste = true;
     }
   }
 
@@ -179,6 +183,8 @@
   $effect(() => {
     if (!isOpen) {
       cleanupStream();
+      showPayloadFallback = false;
+      showManualPaste = false;
     }
   });
 
@@ -217,36 +223,45 @@
 
       {#if mode === 'offer'}
         <p class="text-sm text-cn-muted">
-          Scannez ce payload QR avec l'autre appareil, puis attendez la fin de la synchronisation.
+          Scannez ce QR avec l'autre appareil, puis attendez la fin de la synchronisation.
         </p>
         {#if qrDataUrl}
           <div class="rounded-xl border border-cn-border bg-white p-3 flex justify-center">
             <img src={qrDataUrl} alt="QR code de synchronisation" class="w-64 h-64 max-w-full" />
           </div>
         {/if}
-        <textarea
-          readonly
-          value={qrPayload}
-          rows="5"
-          class="w-full text-xs font-mono px-3 py-2 border border-cn-border rounded-xl bg-cn-bg text-cn-dark"
-        ></textarea>
-        <button
-          onclick={onCopyPayload}
-          class="w-full px-3 py-2 rounded-xl bg-cn-dark text-white inline-flex items-center justify-center gap-2"
-        >
-          <Copy size={14} /> Copier le payload
-        </button>
+        <div class="text-center">
+          <button
+            onclick={() => (showPayloadFallback = !showPayloadFallback)}
+            class="text-xs text-cn-muted hover:text-cn-dark underline transition-colors"
+          >
+            {showPayloadFallback ? 'Masquer le payload texte' : 'Impossible de scanner le QR ?'}
+          </button>
+        </div>
+        {#if showPayloadFallback}
+          <textarea
+            readonly
+            value={qrPayload}
+            rows="5"
+            class="w-full text-xs font-mono px-3 py-2 border border-cn-border rounded-xl bg-cn-bg text-cn-dark"
+          ></textarea>
+          <button
+            onclick={onCopyPayload}
+            class="w-full px-3 py-2 rounded-xl border border-cn-border bg-cn-bg text-cn-dark text-sm inline-flex items-center justify-center gap-2 hover:bg-cn-surface transition-colors"
+          >
+            <Copy size={14} /> Copier le payload (dernier recours)
+          </button>
+        {/if}
       {:else}
-        <p class="text-sm text-cn-muted">
-          Collez ici le payload obtenu après scan du QR sur l'appareil source.
-        </p>
-        <button
-          onclick={toggleScanner}
-          class="w-full px-3 py-2 rounded-xl border border-cn-border bg-cn-bg text-cn-dark inline-flex items-center justify-center gap-2"
-        >
-          <Camera size={14} />
-          {isScanning ? 'Arreter le scan camera' : 'Scanner le QR avec la camera'}
-        </button>
+        {#if hasScannerSupport}
+          <button
+            onclick={toggleScanner}
+            class="w-full px-3 py-2 rounded-xl border border-cn-border bg-cn-bg text-cn-dark inline-flex items-center justify-center gap-2"
+          >
+            <Camera size={14} />
+            {isScanning ? 'Arrêter le scan caméra' : 'Scanner le QR avec la caméra'}
+          </button>
+        {/if}
 
         {#if isScanning}
           <div class="rounded-xl border border-cn-border bg-black/90 p-2">
@@ -268,23 +283,34 @@
           </div>
         {/if}
 
-        <textarea
-          value={joinPayload}
-          rows="5"
-          oninput={(e) => onJoinPayloadChange(e.currentTarget.value)}
-          placeholder="Collez ici le payload JSON de synchronisation"
-          class="w-full text-xs font-mono px-3 py-2 border border-cn-border rounded-xl bg-cn-bg text-cn-dark"
-        ></textarea>
-        <button
-          onclick={onConfirmJoin}
-          disabled={isBusy || !joinPayload.trim()}
-          class="w-full px-3 py-2 rounded-xl bg-cn-dark text-white inline-flex items-center justify-center gap-2 disabled:opacity-50"
-        >
-          {#if isBusy}
-            <Loader2 size={14} class="animate-spin" />
-          {/if}
-          Lancer la synchronisation
-        </button>
+        {#if !hasScannerSupport || showManualPaste}
+          <textarea
+            value={joinPayload}
+            rows="5"
+            oninput={(e) => onJoinPayloadChange(e.currentTarget.value)}
+            placeholder="Collez ici le payload JSON de synchronisation"
+            class="w-full text-xs font-mono px-3 py-2 border border-cn-border rounded-xl bg-cn-bg text-cn-dark"
+          ></textarea>
+          <button
+            onclick={onConfirmJoin}
+            disabled={isBusy || !joinPayload.trim()}
+            class="w-full px-3 py-2 rounded-xl bg-cn-dark text-white inline-flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            {#if isBusy}
+              <Loader2 size={14} class="animate-spin" />
+            {/if}
+            Lancer la synchronisation
+          </button>
+        {:else}
+          <div class="text-center">
+            <button
+              onclick={() => (showManualPaste = true)}
+              class="text-xs text-cn-muted hover:text-cn-dark underline transition-colors"
+            >
+              Je ne peux pas scanner — coller le payload manuellement
+            </button>
+          </div>
+        {/if}
       {/if}
 
       {#if statusText}
