@@ -513,7 +513,7 @@ async fn handle_socket(
                                     }
                                 }
 
-                                if !target_recipients.is_empty() {
+                                if !group_id.is_empty() {
                                     let body = serde_json::json!({
                                         "recipients": target_recipients
                                             .iter()
@@ -637,7 +637,7 @@ async fn handle_socket(
 
                                 tracing::info!("Target recipients: {}", target_recipients.len());
 
-                                if !target_recipients.is_empty() {
+                                if !group_id.is_empty() {
                                     let body = serde_json::json!({
                                         "recipients": target_recipients
                                             .iter()

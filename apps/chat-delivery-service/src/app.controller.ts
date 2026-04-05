@@ -1832,6 +1832,44 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
           }),
         );
       }
+
+      // ── Fallback: recipients not provided (Redis cache miss) ─────────────
+      // Resolve from DB and repopulate group:members so subsequent messages
+      // no longer need this round-trip.
+      if (ops.length === 0 && body.groupId) {
+        const fallbackGroupId = body.groupId;
+        const memberships = await this.deviceGroupRepo.find({
+          where: {
+            groupId: fallbackGroupId,
+            status: In(['added', 'welcome_sent', 'welcome_received']),
+          },
+        });
+        const fallback = memberships.filter(
+          (m) =>
+            !(m.userId === body.senderId && m.deviceId === body.senderDeviceId),
+        );
+        for (const m of fallback) {
+          ops.push(
+            this.queuedMessageRepo.create({
+              recipientId: m.userId,
+              deviceId: m.deviceId,
+              senderId: body.senderId,
+              senderDeviceId: body.senderDeviceId,
+              groupId: fallbackGroupId,
+              isWelcome: body.isWelcome,
+              isCommit: body.isCommit,
+              proto,
+              createdAt: new Date(),
+            }),
+          );
+        }
+        if (fallback.length > 0) {
+          await this.redis.sadd(
+            `group:members:${fallbackGroupId}`,
+            ...fallback.map((m) => `${m.userId}:${m.deviceId}`),
+          );
+        }
+      }
     } else {
       // ── Legacy path (frontend fallback / group fan-out) ───────────────────
       const senderId = sanitizeQueryValue(body.senderId, 'senderId');
