@@ -468,15 +468,19 @@ export class WebMlsService implements IMlsService {
         if (Array.isArray(messages) && messages.length > 0) {
           console.log(`Fetched ${messages.length} pending messages`);
 
-          // Collect ALL message IDs for ACK — even messages that fail to
-          // process (they were likely already processed in real-time via the
-          // queue-first pipeline and MLS state has moved on).
+          // Only ACK messages that were successfully processed (simulateMessageReceive
+          // returns true). Messages that fail (e.g. group not found in WASM state,
+          // unrecoverable MLS error) are left in the queue so the next reconnect can
+          // retry them — the caller must fix the MLS state first (epoch recovery,
+          // re-invite, etc.).  Known-irrecoverable errors (TooDistantInThePast,
+          // WrongEpoch, CannotDecryptOwnMessage) still return true in connection.ts
+          // so they are ACK'd and won't accumulate.
           const allIds: string[] = [];
 
           for (const msg of messages) {
             const msgId = msg.id || msg._id;
-            if (msgId) allIds.push(msgId);
-            await this.simulateMessageReceive(msg);
+            const ok = await this.simulateMessageReceive(msg);
+            if (ok && msgId) allIds.push(msgId);
           }
 
           if (allIds.length > 0) {

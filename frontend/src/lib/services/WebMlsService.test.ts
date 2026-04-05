@@ -80,6 +80,37 @@ describe('WebMlsService.fetchPendingMessages', () => {
     logSpy.mockRestore();
   });
 
+  it("ne soumet pas d'ACK pour un message dont le traitement a echoue (callback retourne false)", async () => {
+    const service = new WebMlsService();
+    (service as any).userId = 'jolan';
+    (service as any).deviceId = 'dev-1';
+    (service as any).historyUrl = 'http://history.local';
+    (service as any).authToken = 'token-abc';
+    // callback retourne false → traitement échoué
+    service.onMessage(async () => false);
+
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, json: vi.fn().mockResolvedValue([]) })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue([
+          {
+            id: 'msg-fail',
+            senderId: 'alice',
+            groupId: 'g-1',
+            proto: btoa('abc'),
+          },
+        ]),
+      });
+
+    await service.fetchPendingMessages();
+
+    const ackCall = fetchMock.mock.calls.find((args) =>
+      String(args[0]).includes('/api/mls-api/messages/ack')
+    );
+    expect(ackCall).toBeUndefined();
+  });
+
   it('applique les headers auth sur welcome, messages et ack', async () => {
     const service = setupService();
 
