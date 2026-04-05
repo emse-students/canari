@@ -168,10 +168,16 @@
     >
       <Hash size={24} />
     </div>
+  {:else if isGroupConversation}
+    <div
+      class="flex h-10 w-10 items-center justify-center rounded-xl bg-cn-dark text-cn-yellow shadow-sm"
+    >
+      <Users size={22} />
+    </div>
   {:else}
     <div class="relative">
       <Avatar userId={contactName} size="lg" />
-      {#if !isGroupConversation && isOnline}
+      {#if isOnline}
         <span
           class="absolute bottom-0 right-0 block h-3 w-3 rounded-full ring-2 ring-white bg-green-500"
         ></span>
@@ -266,7 +272,15 @@
           <div
             class="rounded-2xl border border-white/60 dark:border-white/10 bg-white/65 dark:bg-black/25 px-4 py-3 flex items-center gap-3"
           >
-            <Avatar userId={contactName} size="lg" />
+            {#if isGroupConversation}
+              <div
+                class="w-12 h-12 rounded-2xl flex-shrink-0 bg-cn-dark text-cn-yellow flex items-center justify-center"
+              >
+                <Users size={22} />
+              </div>
+            {:else}
+              <Avatar userId={contactName} size="lg" />
+            {/if}
             <div class="min-w-0 flex-1">
               <div class="text-base font-bold text-cn-dark truncate">{effectiveDisplayName}</div>
               <div class="text-xs text-text-muted mt-0.5 inline-flex items-center gap-1.5">

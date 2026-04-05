@@ -19,6 +19,8 @@
     isReady: boolean;
     mlsStateHex: string | null;
     unreadCount?: number;
+    conversationType?: 'direct' | 'group' | 'channel';
+    directPeerId?: string;
   }
 
   interface ChannelItem {
@@ -361,6 +363,7 @@
             <ConversationTile
               contactName={convo.contactName}
               displayName={convo.name}
+              conversationType={convo.conversationType}
               lastMessage={convo.messages.length > 0
                 ? convo.messages[convo.messages.length - 1].content
                 : undefined}

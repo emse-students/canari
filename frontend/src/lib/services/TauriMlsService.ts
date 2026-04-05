@@ -962,7 +962,7 @@ export class TauriMlsService implements IMlsService {
     return [];
   }
 
-  getEpoch(groupId: string): number {
+  getEpoch(_groupId: string): number {
     // Tauri invoke is async — for the synchronous interface we return 0.
     // The actual epoch will be retrieved via an async pre-check in sendCommit.
     return 0;

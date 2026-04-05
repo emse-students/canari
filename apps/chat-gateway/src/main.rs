@@ -189,8 +189,10 @@ async fn main() {
                                     map.get(&key).cloned()
                                 };
 
+                                let mut found = false;
                                 let mut to_remove = false;
                                 if let Some(senders) = senders {
+                                    found = true;
                                     for tx in &senders {
                                         if tx.try_send(json_frame.clone()).is_ok() {
                                             tracing::info!(
@@ -211,9 +213,9 @@ async fn main() {
                                 if to_remove {
                                     let mut map = connected_users.lock().unwrap();
                                     map.remove(&key);
-                                } else {
+                                } else if !found {
                                     tracing::warn!(
-                                        "User {} not connected to this gateway instance.",
+                                        "[PubSub] {} not connected to this gateway instance — message kept in queue.",
                                         key
                                     );
                                 }

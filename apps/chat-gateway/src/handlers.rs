@@ -155,7 +155,10 @@ async fn handle_socket(
     };
 
     if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await {
-        let _: Result<(), _> = con.set_ex(&redis_key, "true", 3600).await;
+        // TTL of 120 s — the ping task refreshes it every 30 s so it only
+        // expires if the WS closes without a clean shutdown, giving accurate
+        // presence within ~2 minutes.
+        let _: Result<(), _> = con.set_ex(&redis_key, "true", 120).await;
 
         // Connect to Pending Welcomes (Legacy/Upstream compatibility)
         let welcome_key = format!("pending_welcomes:{}", user_id);
@@ -207,6 +210,8 @@ async fn handle_socket(
 
     // Task to receive all messages from Redis/Backend and send to this client
     let conn_key_ping = conn_key.clone();
+    let redis_key_ping = redis_key.clone();
+    let redis_client_ping = state.redis_client.clone();
     let mut send_task = tokio::spawn(async move {
         let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(30));
 
@@ -223,6 +228,13 @@ async fn handle_socket(
                 }
               }
               _ = ping_interval.tick() => {
+                // Refresh the presence key TTL so the delivery service continues
+                // routing real-time messages to this device.  Without this the key
+                // expires after its initial TTL and all messages silently fall back
+                // to the queue (appearing only on the next page load).
+                if let Ok(mut con) = redis_client_ping.get_multiplexed_async_connection().await {
+                    let _: Result<(), _> = con.set_ex(&redis_key_ping, "true", 120).await;
+                }
                 tracing::debug!("Sending ping to {} to keep connection alive", conn_key_ping);
                 if sender.send(Message::Ping(vec![].into())).await.is_err() {
                     break;
@@ -243,7 +255,7 @@ async fn handle_socket(
                 // Refresh presence on ANY activity
                 let redis_key = format!("user:online:{}:{}", user_id, device_id);
                 if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await {
-                    let _: Result<(), _> = con.set_ex(&redis_key, "true", 3600).await;
+                    let _: Result<(), _> = con.set_ex(&redis_key, "true", 120).await;
                 }
 
                 match msg {
@@ -300,6 +312,61 @@ async fn handle_socket(
                             .get("ratchetTree")
                             .cloned()
                             .unwrap_or(serde_json::Value::Null);
+
+                        // ── Routing diagnostics ──────────────────────────────────────────
+                        // For every incoming frame, log the type + group + online/offline
+                        // status of each registered member so routing issues are visible.
+                        if !group_id.is_empty() {
+                            // Collect the set of online keys inside a tightly-scoped block so
+                            // the MutexGuard is dropped before any .await boundary.
+                            let online_all: Vec<String> = {
+                                let map = state.connected_users.lock().unwrap();
+                                map.keys().cloned().collect()
+                            };
+
+                            // Registered group members come from Redis; read them best-effort.
+                            let member_status: Vec<String> = if let Ok(mut con) =
+                                state.redis_client.get_multiplexed_async_connection().await
+                            {
+                                let key = format!("group:members:{}", group_id);
+                                let members: Vec<String> =
+                                    con.smembers(&key).await.unwrap_or_default();
+                                members
+                                    .iter()
+                                    .map(|m| {
+                                        let status = if online_all.contains(m) {
+                                            "ONLINE"
+                                        } else {
+                                            "OFFLINE"
+                                        };
+                                        format!("{} [{}]", m, status)
+                                    })
+                                    .collect()
+                            } else {
+                                vec!["<redis-unavailable>".to_string()]
+                            };
+
+                            tracing::info!(
+                                "[ROUTE] type={} group={} from={}:{} | members: {}",
+                                msg_type,
+                                group_id,
+                                user_id,
+                                device_id,
+                                if member_status.is_empty() {
+                                    "<none registered>".to_string()
+                                } else {
+                                    member_status.join(", ")
+                                }
+                            );
+                        } else {
+                            tracing::info!(
+                                "[ROUTE] type={} from={}:{} (no groupId)",
+                                msg_type,
+                                user_id,
+                                device_id
+                            );
+                        }
+                        // ─────────────────────────────────────────────────────────────────
 
                         match msg_type {
                             "commit" => {

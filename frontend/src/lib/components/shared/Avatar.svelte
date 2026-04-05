@@ -19,7 +19,7 @@
   }
 
   const avatarSrc = $derived(`${getCoreUrl()}/api/users/${encodeURIComponent(userId)}/avatar`);
-  const fallbackSrc = $derived(generateAvatarPlaceholder(userId));
+  const _fallbackSrc = $derived(generateAvatarPlaceholder(userId));
 
   let imageFailed = $state(false);
   let displayLabel = $state('');

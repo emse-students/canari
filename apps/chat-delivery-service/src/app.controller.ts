@@ -1632,7 +1632,12 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         throw new BadRequestException(`Group ${groupId} not found`);
       }
 
-      if (baseEpoch !== group.activeEpoch) {
+      // When activeEpoch is 0 the server has no prior tracking for this group
+      // (e.g. all previous commit validations failed with HTTP 400 due to the
+      // old userId:deviceId length bug).  Treat this as "uninitialized" and
+      // fast-forward to baseEpoch + 1 so the client state and server state
+      // converge without requiring a full re-bootstrap.
+      if (baseEpoch !== group.activeEpoch && group.activeEpoch !== 0) {
         return {
           accepted: false,
           currentEpoch: group.activeEpoch,
@@ -1640,7 +1645,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         };
       }
 
-      // Advance the epoch
+      // Advance the epoch (from wherever the server currently is)
       group.activeEpoch = baseEpoch + 1;
       await this.groupRepo.save(group);
 
