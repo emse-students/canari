@@ -392,6 +392,7 @@ async fn handle_socket(
                                 let epoch_result = state
                                     .http_client
                                     .post(format!("{}/mls-api/commit", state.delivery_service_url))
+                                    .header("x-user-logged-in", "true")
                                     .json(&epoch_body)
                                     .send()
                                     .await;
@@ -529,17 +530,28 @@ async fn handle_socket(
                                         "isCommit": true,
                                         "proto": B64.encode(&ciphertext)
                                     });
-                                    if let Err(e) = state
+                                    match state
                                         .http_client
                                         .post(format!(
                                             "{}/mls-api/send",
                                             state.delivery_service_url
                                         ))
+                                        .header("x-user-logged-in", "true")
                                         .json(&body)
                                         .send()
                                         .await
                                     {
-                                        tracing::error!("Delivery failed: {}", e);
+                                        Ok(resp) if !resp.status().is_success() => {
+                                            tracing::error!(
+                                                "Delivery HTTP error: {} {}",
+                                                resp.status(),
+                                                resp.text().await.unwrap_or_default()
+                                            );
+                                        }
+                                        Err(e) => {
+                                            tracing::error!("Delivery failed: {}", e);
+                                        }
+                                        _ => {}
                                     }
                                 }
                             }
@@ -653,17 +665,28 @@ async fn handle_socket(
                                         "isCommit": false,
                                         "proto": B64.encode(&ciphertext)
                                     });
-                                    if let Err(e) = state
+                                    match state
                                         .http_client
                                         .post(format!(
                                             "{}/mls-api/send",
                                             state.delivery_service_url
                                         ))
+                                        .header("x-user-logged-in", "true")
                                         .json(&body)
                                         .send()
                                         .await
                                     {
-                                        tracing::error!("Delivery failed: {}", e);
+                                        Ok(resp) if !resp.status().is_success() => {
+                                            tracing::error!(
+                                                "Delivery HTTP error: {} {}",
+                                                resp.status(),
+                                                resp.text().await.unwrap_or_default()
+                                            );
+                                        }
+                                        Err(e) => {
+                                            tracing::error!("Delivery failed: {}", e);
+                                        }
+                                        _ => {}
                                     }
                                 }
                             }
@@ -688,17 +711,28 @@ async fn handle_socket(
                                         "proto": B64.encode(&ciphertext),
                                         "ratchetTree": ratchet_tree.clone()
                                     });
-                                    if let Err(e) = state
+                                    match state
                                         .http_client
                                         .post(format!(
                                             "{}/mls-api/send",
                                             state.delivery_service_url
                                         ))
+                                        .header("x-user-logged-in", "true")
                                         .json(&body)
                                         .send()
                                         .await
                                     {
-                                        tracing::error!("Welcome delivery failed: {}", e);
+                                        Ok(resp) if !resp.status().is_success() => {
+                                            tracing::error!(
+                                                "Welcome delivery HTTP error: {} {}",
+                                                resp.status(),
+                                                resp.text().await.unwrap_or_default()
+                                            );
+                                        }
+                                        Err(e) => {
+                                            tracing::error!("Welcome delivery failed: {}", e);
+                                        }
+                                        _ => {}
                                     }
                                 }
                             }
