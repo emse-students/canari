@@ -385,18 +385,18 @@ export async function discoverMissingGroups(params: {
     }
 
     // Decision tree:
-    //   1. Own other device exists → wait for reinvite_request to arrive (any role)
+    //   1. Own other device exists → wait for reinvite_request (up to 30s, then bootstrap)
     //   2. Leader with no other own device → bootstrap immediately
     //   3. Non-leader, other member active → wait up to 120s for a Welcome
     //   4. Non-leader, no active member → wait 30s then bootstrap as fallback
     const shouldBootstrap = hasOtherOwnDevices
-      ? false
+      ? waitingMs > 30_000
       : isLeader || (otherMemberIsActive ? waitingMs > 120_000 : waitingMs > 30_000);
 
     if (!shouldBootstrap) {
       log(
         hasOtherOwnDevices
-          ? `[DISCOVERY] "${convo.name}": autre appareil propre détecté, attente reinvite...`
+          ? `[DISCOVERY] "${convo.name}": autre appareil propre détecté, attente reinvite... (${Math.round(waitingMs / 1000)}s / 30s)`
           : otherMemberIsActive
             ? `[DISCOVERY] "${convo.name}": appareil(s) actif(s) détecté(s), attente Welcome via welcome_request... (${Math.round(waitingMs / 1000)}s / 120s)`
             : `[DISCOVERY] "${convo.name}": attente bootstrap par ${memberUserIds[0]} (${Math.round(waitingMs / 1000)}s / 30s)`
