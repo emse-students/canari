@@ -877,7 +877,11 @@ export class TauriMlsService implements IMlsService {
     return groupId;
   }
 
-  async sendMessage(groupId: string, messageBytes: Uint8Array) {
+  async sendMessage(
+    groupId: string,
+    messageBytes: Uint8Array,
+    messageId?: string
+  ): Promise<Uint8Array> {
     const res = await invoke<number[]>('envoyer_message_bytes', {
       groupId,
       messageBytes: Array.from(messageBytes),
@@ -893,6 +897,7 @@ export class TauriMlsService implements IMlsService {
             type: 'mls',
             groupId,
             proto: btoa(String.fromCharCode(...encryptedBytes)),
+            ...(messageId ? { messageId } : {}),
           })
         );
       } catch (wsErr) {

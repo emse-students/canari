@@ -100,13 +100,15 @@ export async function sendChatMessage(
       // We wait for the 'channel.message.created' WebSocket event instead!
     } else {
       deps.log(`[SEND] Appel mlsService.sendMessage groupId="${conversation.groupId}"...`);
-      await mlsService.sendMessage(conversation.groupId, payload);
-      deps.log(`[SEND] mlsService.sendMessage OK — sauvegarde état MLS...`);
+      // Passes messageId so WebMlsService can wait for the gateway ACK (message_sent event)
+      // before resolving — the UI will only show the message after the gateway confirms delivery.
+      await mlsService.sendMessage(conversation.groupId, payload, messageId);
+      deps.log(`[SEND] mlsService.sendMessage confirmé — sauvegarde état MLS...`);
       const stateBytes = await mlsService.saveState(pin);
       localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
-      deps.log(`[SEND] État MLS sauvegardé — UI optimiste...`);
+      deps.log(`[SEND] État MLS sauvegardé — affichage message confirmé...`);
 
-      // Optimistic UI for direct messages and MLS groups (users cannot decrypt their own echo)
+      // Display only after gateway confirmed delivery
       await addMessageToChat(
         userId,
         serializeEnvelope(mkTextEnvelope(text, replyToData)),
@@ -115,7 +117,7 @@ export async function sendChatMessage(
         false,
         messageId
       );
-      deps.log(`[SEND] UI optimiste appliquée pour messageId=${messageId}`);
+      deps.log(`[SEND] Message affiché (confirmé gateway) pour messageId=${messageId}`);
     }
     return { success: true };
   } catch (error: any) {

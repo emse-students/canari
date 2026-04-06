@@ -47,6 +47,7 @@ export class WebMlsService implements IMlsService {
   private isProcessingQueue = false;
   // Groups currently being joined (Welcome in progress) - buffer messages for these
   private pendingWelcomeGroups = new Map<string, QueuedMessage[]>();
+  private pendingAcks = new Map<string, () => void>();
 
   private withAuthHeaders(extra: Record<string, string> = {}): Record<string, string> {
     const headers: Record<string, string> = { ...extra };
@@ -215,6 +216,14 @@ export class WebMlsService implements IMlsService {
             const groupId = (msg.groupId as string) || '';
             console.log(`[WS RCV] no_peer_online for group ${groupId}`);
             this.noPeerOnlineCallback?.(groupId);
+            return;
+          }
+          if (msg.type === 'message_sent') {
+            const msgId = (msg.messageId as string) || '';
+            if (msgId) {
+              this.pendingAcks.get(msgId)?.();
+              this.pendingAcks.delete(msgId);
+            }
             return;
           }
           if (msg.type === 'epoch_rejected') {
@@ -1014,7 +1023,11 @@ export class WebMlsService implements IMlsService {
     return this.client.process_welcome(welcomeBytes, ratchetTreeBytes);
   }
 
-  async sendMessage(groupId: string, messageBytes: Uint8Array) {
+  async sendMessage(
+    groupId: string,
+    messageBytes: Uint8Array,
+    messageId?: string
+  ): Promise<Uint8Array> {
     console.log(
       `[WS SEND] sendMessage: groupId=${groupId} input=${messageBytes.length}b wsState=${this.ws?.readyState ?? 'null'} (OPEN=1)`
     );
@@ -1022,16 +1035,36 @@ export class WebMlsService implements IMlsService {
     console.log(`[WS SEND] WASM encrypted: ${encryptedBytes.length}b`);
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      // Binary proto WsEnvelope { mls: { ciphertext, groupId } }
       try {
+        // If messageId provided, register a pending ACK before sending so the
+        // gateway's `message_sent` reply can resolve it.
+        const ackPromise: Promise<void> = messageId
+          ? new Promise<void>((resolve) => {
+              const timer = setTimeout(() => {
+                this.pendingAcks.delete(messageId!);
+                console.warn(`[WS SEND] ACK timeout for messageId=${messageId}`);
+                resolve(); // resolve anyway — don't freeze the UI on timeout
+              }, 5_000);
+              this.pendingAcks.set(messageId!, () => {
+                clearTimeout(timer);
+                resolve();
+              });
+            })
+          : Promise.resolve();
+
         this.ws.send(
           JSON.stringify({
             type: 'mls',
             groupId,
             proto: btoa(String.fromCharCode(...encryptedBytes)),
+            ...(messageId ? { messageId } : {}),
           })
         );
-        console.log(`[WS SEND] Sent via WebSocket OK (${encryptedBytes.length}b)`);
+        console.log(
+          `[WS SEND] Sent via WebSocket OK (${encryptedBytes.length}b)${messageId ? ', awaiting ACK...' : ''}`
+        );
+        await ackPromise;
+        if (messageId) console.log(`[WS SEND] ACK received for messageId=${messageId}`);
       } catch (wsErr) {
         // WebSocket closed between readyState check and send — fall through to HTTP
         console.warn('[WS SEND] WebSocket send failed, falling back to HTTP:', wsErr);

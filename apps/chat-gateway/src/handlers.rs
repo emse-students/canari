@@ -689,7 +689,24 @@ async fn handle_socket(
                                         Err(e) => {
                                             tracing::error!("Delivery failed: {}", e);
                                         }
-                                        _ => {}
+                                        _ => {
+                                            // Delivery accepted — ACK to sender so the frontend
+                                            // knows the message was queued/delivered and can
+                                            // display it (no optimistic UI).
+                                            if let Some(msg_id) = json
+                                                .get("messageId")
+                                                .and_then(|v| v.as_str())
+                                                .filter(|s| !s.is_empty())
+                                            {
+                                                let ack = serde_json::json!({
+                                                    "type": "message_sent",
+                                                    "messageId": msg_id,
+                                                    "groupId": group_id,
+                                                })
+                                                .to_string();
+                                                let _ = tx.send(ack).await;
+                                            }
+                                        }
                                     }
                                 }
                             }

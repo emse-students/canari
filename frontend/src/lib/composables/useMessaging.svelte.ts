@@ -267,7 +267,7 @@ export function useMessaging() {
               });
             }
           } else if (mlsService) {
-            await mlsService.sendMessage(convo.groupId, protoBytes);
+            await mlsService.sendMessage(convo.groupId, protoBytes, messageId);
             const stateBytes = await mlsService.saveState(ctx.pin);
             localStorage.setItem('mls_autosave_' + ctx.userId, toHex(stateBytes));
           }

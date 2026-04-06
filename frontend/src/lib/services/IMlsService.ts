@@ -20,7 +20,7 @@ export interface IMlsService {
     ratchetTree?: Uint8Array;
   }>;
   processWelcome(welcomeBytes: Uint8Array, ratchetTreeBytes?: Uint8Array): Promise<string>;
-  sendMessage(groupId: string, messageBytes: Uint8Array): Promise<Uint8Array>;
+  sendMessage(groupId: string, messageBytes: Uint8Array, messageId?: string): Promise<Uint8Array>;
   processIncomingMessage(groupId: string, messageBytes: Uint8Array): Promise<Uint8Array | null>;
   exportSecret(
     groupId: string,
