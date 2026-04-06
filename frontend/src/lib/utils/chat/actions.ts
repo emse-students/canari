@@ -410,7 +410,25 @@ export async function discoverMissingGroups(params: {
 
     try {
       // Create MLS group locally with the existing server groupId
-      await mlsService.createGroup(convo.groupId);
+      try {
+        await mlsService.createGroup(convo.groupId);
+      } catch (createErr) {
+        const msg = createErr instanceof Error ? createErr.message : String(createErr);
+        if (msg.includes('GroupAlreadyExists')) {
+          // Rust already has this group — cache was stale. Just register and activate.
+          log(`[DISCOVERY] "${convo.name}": groupe déjà présent dans Rust — activation directe.`);
+          try {
+            await mlsService.registerMember(convo.groupId, userId, mlsService.getDeviceId());
+          } catch {
+            /* non-blocking */
+          }
+          conversations.set(key, { ...convo, isReady: true });
+          if (saveConversation) await saveConversation(key);
+          localStorage.removeItem(pendingKey);
+          continue;
+        }
+        throw createErr;
+      }
       await mlsService.registerMember(convo.groupId, userId, mlsService.getDeviceId());
 
       // Collect all members' current devices

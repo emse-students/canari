@@ -83,6 +83,16 @@ fn oublier_groupe(
 }
 
 #[tauri::command]
+fn lister_groupes(state: tauri::State<AppState>) -> Result<Vec<String>, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    Ok(manager.get_known_groups())
+}
+
+#[tauri::command]
 fn obtenir_epoch(group_id: String, state: tauri::State<AppState>) -> Result<u32, String> {
     let lock = state
         .mls_manager
@@ -326,6 +336,7 @@ pub fn run() {
             initialiser_mls,
             sauvegarder_mls,
             creer_groupe,
+            lister_groupes,
             oublier_groupe,
             obtenir_epoch,
             generer_key_package,

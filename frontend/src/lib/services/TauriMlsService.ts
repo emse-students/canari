@@ -55,6 +55,8 @@ export class TauriMlsService implements IMlsService {
   private authToken = '';
   private userId: string = 'unknown';
   private deviceId: string;
+  /** Cache of locally known MLS group IDs, populated after init and updated on group changes. */
+  private _knownGroups: Set<string> = new Set();
   /** Resolved when init() completes; shared across concurrent callers to avoid double native init. */
   private initPromise: Promise<void> | null = null;
 
@@ -670,10 +672,19 @@ export class TauriMlsService implements IMlsService {
 
     const encryptedState = state ? Array.from(state) : null;
     await invoke('initialiser_mls', { userId, pin, encryptedState });
+
+    // Populate the local groups cache from Rust after init.
+    try {
+      const groups = await invoke<string[]>('lister_groupes');
+      this._knownGroups = new Set(groups);
+    } catch {
+      // Non-blocking: cache stays empty, GroupAlreadyExists fallback will handle it.
+    }
   }
 
   async createGroup(groupId: string) {
     await invoke('creer_groupe', { groupId });
+    this._knownGroups.add(groupId);
   }
 
   async createRemoteGroup(name: string, isGroup: boolean = true): Promise<string> {
@@ -851,10 +862,12 @@ export class TauriMlsService implements IMlsService {
   }
 
   async processWelcome(welcomeBytes: Uint8Array, ratchetTreeBytes?: Uint8Array) {
-    return await invoke<string>('trailer_welcome', {
+    const groupId = await invoke<string>('trailer_welcome', {
       welcomeBytes: Array.from(welcomeBytes),
       ratchetTreeBytes: ratchetTreeBytes ? Array.from(ratchetTreeBytes) : null,
     });
+    this._knownGroups.add(groupId);
+    return groupId;
   }
 
   async sendMessage(groupId: string, messageBytes: Uint8Array) {
@@ -957,9 +970,7 @@ export class TauriMlsService implements IMlsService {
   }
 
   getLocalGroups(): string[] {
-    // Tauri uses the Rust MLS core directly; group list not exposed via IPC yet.
-    // Return empty array as fallback — the mismatch detection will simply be skipped.
-    return [];
+    return [...this._knownGroups];
   }
 
   getEpoch(_groupId: string): number {
