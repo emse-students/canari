@@ -209,7 +209,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   // Si cela se répète, l'état local est probablement divergent même sans exception
   // (ex: SenderDataDecryption traité côté Rust comme message non-applicable).
   const groupNullAppFailures = new Map<string, number>();
-  const NULL_APP_THRESHOLD = 2;
+  const NULL_APP_THRESHOLD = 1;
 
   // Groups for which an epoch recovery has already been triggered
   // (avoids spamming reinvite_request on a burst of future-epoch messages).

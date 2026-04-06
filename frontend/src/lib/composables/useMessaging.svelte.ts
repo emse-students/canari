@@ -195,9 +195,7 @@ export function useMessaging() {
       const stillMember = await ctx.verifyCurrentUserMembership(ctx.selectedContact);
       ctx.log(`[SEND] membership: stillMember=${stillMember} convo.isReady=${convo.isReady}`);
       if (!stillMember || !convo.isReady) {
-        ctx.setSendError(
-          'Vous avez ete retire de ce groupe. Vous ne pouvez plus envoyer de messages.'
-        );
+        ctx.setSendError('Le groupe est en cours de resynchronisation. Réessaie plus tard');
         return;
       }
     }

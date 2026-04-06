@@ -320,24 +320,6 @@ export async function discoverMissingGroups(params: {
   for (const [key, convo] of pendingConvos) {
     // Re-read local MLS groups inside the loop: a Welcome may have been processed
     // during the async operations above and already joined the group.
-    const localMlsGroupIds = new Set(mlsService.getLocalGroups());
-
-    // ── Fast path : l'état MLS existe déjà (ex: nouvel onglet ayant chargé le state) ──
-    if (localMlsGroupIds.has(convo.groupId)) {
-      log(
-        `[DISCOVERY] "${convo.name}": etat MLS present localement — activation sans re-bootstrap.`
-      );
-      // S'enregistrer auprès du gateway pour que les futurs messages soient routés ici
-      try {
-        await mlsService.registerMember(convo.groupId, userId, mlsService.getDeviceId());
-      } catch {
-        /* non-blocking */
-      }
-      conversations.set(key, { ...convo, isReady: true });
-      if (saveConversation) await saveConversation(key);
-      localStorage.removeItem(`discovery_pending:${convo.groupId}`);
-      continue;
-    }
 
     let members: { userId: string }[];
     try {
