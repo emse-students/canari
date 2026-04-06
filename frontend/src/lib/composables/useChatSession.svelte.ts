@@ -202,13 +202,18 @@ export function useChatSession() {
 
       try {
         const localMlsGroups = new SvelteSet(mlsService.getLocalGroups());
-        const hasMissing = [...cb.conversations.values()].some(
-          (c) => c.isReady && !localMlsGroups.has(c.groupId)
-        );
-        if (hasMissing) {
+        const missingKeys: string[] = [];
+        for (const [key, c] of cb.conversations.entries()) {
+          if (c.isReady && !localMlsGroups.has(c.groupId)) {
+            cb.conversations.set(key, { ...c, isReady: false });
+            missingKeys.push(key);
+          }
+        }
+        if (missingKeys.length > 0) {
           cb.log(
-            '[WARN] Groupes sans etat MLS local detectes — reinvite declenchee au prochain connect.'
+            `[WARN] Groupes sans etat MLS local detectes — ${missingKeys.length} conversation(s) marquees non-pretes, reinvite declenchee au prochain connect.`
           );
+          await Promise.all(missingKeys.map((key) => cb.saveConversation(key).catch(() => {})));
         }
       } catch {
         /* non-blocking diagnostic */
