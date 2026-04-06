@@ -3,16 +3,9 @@ import { resolve } from 'path';
 
 export default defineConfig({
   test: {
-    environment: 'jsdom',
+    environment: 'happy-dom',
     globals: true,
     include: ['src/**/*.{test,spec}.ts'],
-    server: {
-      deps: {
-        // jsdom uses require() on this ESM-only package with top-level await,
-        // which breaks on Node 22+. Forcing inline lets Vite handle the transform.
-        inline: ['@asamuzakjp/css-color'],
-      },
-    },
   },
   resolve: {
     alias: {
