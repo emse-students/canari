@@ -78,6 +78,15 @@ export class WasmMlsClient {
         return v4;
     }
     /**
+     * @param {string} group_id
+     * @param {number} min_epoch
+     */
+    forget_group(group_id, min_epoch) {
+        const ptr0 = passStringToWasm0(group_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.wasmmlsclient_forget_group(this.__wbg_ptr, ptr0, len0, min_epoch);
+    }
+    /**
      * @returns {Uint8Array}
      */
     generate_key_package() {
@@ -88,6 +97,20 @@ export class WasmMlsClient {
         var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
         wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
         return v1;
+    }
+    /**
+     * Returns the current MLS epoch for a group (capped to u32 for WASM boundary).
+     * @param {string} group_id
+     * @returns {number}
+     */
+    get_epoch(group_id) {
+        const ptr0 = passStringToWasm0(group_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmmlsclient_get_epoch(this.__wbg_ptr, ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return ret[0] >>> 0;
     }
     /**
      * @returns {Array<any>}

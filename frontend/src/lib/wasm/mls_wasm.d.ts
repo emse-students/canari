@@ -13,7 +13,12 @@ export class WasmMlsClient {
     add_members_bulk(group_id: string, key_packages: Array<any>): Array<any>;
     create_group(group_id: string): void;
     export_secret(group_id: string, label: string, context: Uint8Array | null | undefined, key_len: number): Uint8Array;
+    forget_group(group_id: string, min_epoch: number): void;
     generate_key_package(): Uint8Array;
+    /**
+     * Returns the current MLS epoch for a group (capped to u32 for WASM boundary).
+     */
+    get_epoch(group_id: string): number;
     get_groups(): Array<any>;
     constructor(user_id: string, state_bytes?: Uint8Array | null, pin?: string | null);
     process_incoming_message(group_id: string, message_bytes: Uint8Array): string | undefined;
@@ -54,7 +59,9 @@ export interface InitOutput {
     readonly wasmmlsclient_add_members_bulk: (a: number, b: number, c: number, d: any) => [number, number, number];
     readonly wasmmlsclient_create_group: (a: number, b: number, c: number) => [number, number];
     readonly wasmmlsclient_export_secret: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly wasmmlsclient_forget_group: (a: number, b: number, c: number, d: number) => void;
     readonly wasmmlsclient_generate_key_package: (a: number) => [number, number, number, number];
+    readonly wasmmlsclient_get_epoch: (a: number, b: number, c: number) => [number, number, number];
     readonly wasmmlsclient_get_groups: (a: number) => any;
     readonly wasmmlsclient_new: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly wasmmlsclient_process_incoming_message: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];

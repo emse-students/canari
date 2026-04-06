@@ -160,17 +160,45 @@ impl MlsManager {
         };
 
         // Create the group using the provider and forcing the GROUP ID
-        let group = MlsGroup::new_with_group_id(
+        let result = MlsGroup::new_with_group_id(
             &self.provider,
-            &self.keypair, // <--- SIGNER
+            &self.keypair,
             &group_config,
-            group_id,
+            group_id.clone(),
             credential_with_key,
-        )
-        .map_err(|e| MlsError::OpenMls(format!("Creation error: {:?}", e)))?;
+        );
 
-        self.groups.insert(group_id_str, group);
-        Ok(())
+        match result {
+            Ok(group) => {
+                self.groups.insert(group_id_str, group);
+                Ok(())
+            }
+            Err(e) => {
+                let err_str = format!("{:?}", e);
+                if err_str.contains("GroupAlreadyExists") {
+                    // Orphan state: the group lives in OpenMLS storage (from a previous session)
+                    // but was not loaded into self.groups (e.g. after forget_group without a full
+                    // save, or a partial state deserialization). Recover it so that send_message
+                    // can use it, then signal GroupAlreadyExists so callers can skip re-bootstrap.
+                    match MlsGroup::load(self.provider.storage(), &group_id) {
+                        Ok(Some(recovered)) => {
+                            log::info!(
+                                "create_group: {} recovered from orphan OpenMLS storage",
+                                group_id_str
+                            );
+                            self.groups.insert(group_id_str.clone(), recovered);
+                        }
+                        _ => {
+                            log::warn!(
+                                "create_group: GroupAlreadyExists for {} but load failed",
+                                group_id_str
+                            );
+                        }
+                    }
+                }
+                Err(MlsError::OpenMls(format!("Creation error: {:?}", e)))
+            }
+        }
     }
 
     pub fn get_known_groups(&self) -> Vec<String> {
