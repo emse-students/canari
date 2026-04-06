@@ -928,6 +928,10 @@ export class WebMlsService implements IMlsService {
     this.client.create_group(groupId);
   }
 
+  async forceCreateGroup(groupId: string) {
+    this.client.force_create_group(groupId);
+  }
+
   async createRemoteGroup(name: string, isGroup: boolean = true): Promise<string> {
     try {
       const res = await fetch(`${this.historyUrl}/api/mls-api/groups`, {

@@ -78,6 +78,19 @@ export class WasmMlsClient {
         return v4;
     }
     /**
+     * Wipes any existing orphan state for this groupId then creates a fresh group.
+     * Use for re-bootstrap after losing local MLS state (phantom group recovery).
+     * @param {string} group_id
+     */
+    force_create_group(group_id) {
+        const ptr0 = passStringToWasm0(group_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmmlsclient_force_create_group(this.__wbg_ptr, ptr0, len0);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
      * @param {string} group_id
      * @param {number} min_epoch
      */

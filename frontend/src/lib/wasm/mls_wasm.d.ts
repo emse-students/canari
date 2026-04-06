@@ -13,6 +13,11 @@ export class WasmMlsClient {
     add_members_bulk(group_id: string, key_packages: Array<any>): Array<any>;
     create_group(group_id: string): void;
     export_secret(group_id: string, label: string, context: Uint8Array | null | undefined, key_len: number): Uint8Array;
+    /**
+     * Wipes any existing orphan state for this groupId then creates a fresh group.
+     * Use for re-bootstrap after losing local MLS state (phantom group recovery).
+     */
+    force_create_group(group_id: string): void;
     forget_group(group_id: string, min_epoch: number): void;
     generate_key_package(): Uint8Array;
     /**
@@ -59,6 +64,7 @@ export interface InitOutput {
     readonly wasmmlsclient_add_members_bulk: (a: number, b: number, c: number, d: any) => [number, number, number];
     readonly wasmmlsclient_create_group: (a: number, b: number, c: number) => [number, number];
     readonly wasmmlsclient_export_secret: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly wasmmlsclient_force_create_group: (a: number, b: number, c: number) => [number, number];
     readonly wasmmlsclient_forget_group: (a: number, b: number, c: number, d: number) => void;
     readonly wasmmlsclient_generate_key_package: (a: number) => [number, number, number, number];
     readonly wasmmlsclient_get_epoch: (a: number, b: number, c: number) => [number, number, number];

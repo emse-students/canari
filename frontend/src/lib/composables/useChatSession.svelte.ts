@@ -366,6 +366,30 @@ export function useChatSession() {
         cb.log(`[WARN] Echec decouverte groupes: ${e instanceof Error ? e.message : String(e)}`)
       );
 
+      // discoverMissingGroups uses time-based thresholds (10s, 30s, 120s) before
+      // triggering a bootstrap. Since it runs only once, schedule retries just
+      // after each threshold so the bootstrap actually fires when the wait expires.
+      for (const delay of [12_000, 35_000, 130_000]) {
+        setTimeout(() => {
+          const hasPending = [...cb.conversations.values()].some((c) => !c.isReady);
+          if (!hasPending) return;
+          const svc = mlsService;
+          if (!svc) return;
+          discoverMissingGroups({
+            mlsService: svc,
+            userId,
+            pin,
+            conversations: cb.conversations,
+            saveConversation: cb.saveConversation,
+            log: cb.log,
+          }).catch((e) =>
+            cb.log(
+              `[WARN] Echec decouverte groupes (retry): ${e instanceof Error ? e.message : String(e)}`
+            )
+          );
+        }, delay);
+      }
+
       const isTauri = !!(window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
       if (isTauri && !(await BiometricService.isConfigured())) {
         showBiometricEnrollPrompt = true;

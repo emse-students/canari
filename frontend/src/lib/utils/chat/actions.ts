@@ -409,13 +409,16 @@ export async function discoverMissingGroups(params: {
     );
 
     try {
-      // Create MLS group locally with the existing server groupId
+      // Create MLS group locally with the existing server groupId.
+      // Use forceCreateGroup to wipe any orphan OpenMLS state from a previous
+      // session before creating fresh — avoids recovering stale-epoch state.
       try {
-        await mlsService.createGroup(convo.groupId);
+        await mlsService.forceCreateGroup(convo.groupId);
       } catch (createErr) {
         const msg = createErr instanceof Error ? createErr.message : String(createErr);
         if (msg.includes('GroupAlreadyExists')) {
-          // Rust already has this group — cache was stale. Just register and activate.
+          // Orphan recovered from storage (forceCreateGroup fell back to createGroup).
+          // Activate directly — the recovered state may have the correct epoch.
           log(`[DISCOVERY] "${convo.name}": groupe déjà présent dans Rust — activation directe.`);
           try {
             await mlsService.registerMember(convo.groupId, userId, mlsService.getDeviceId());
@@ -647,15 +650,33 @@ export async function handleWelcomeRequest(params: {
       return;
     }
 
-    // Idempotency: skip if device is already an MLS member
+    // Idempotency: skip if device is already an MLS member —
+    // UNLESS it is a different user's device that sent welcome_request,
+    // which signals it lost its local MLS state. In that case, force
+    // remove + re-add so it receives a fresh Welcome with current epoch.
     try {
       const members = await mlsService.getGroupMembers(groupId);
       if (members.some((m) => m.deviceId === requesterDeviceId)) {
-        log(`[WELCOME_REQ] ${requesterDeviceId} déjà membre MLS de ${groupId}`);
-        await mlsService
-          .updateInvitationStatus(requesterDeviceId, requesterUserId, groupId, 'welcome_received')
-          .catch(() => {});
-        return;
+        if (requesterUserId === userId) {
+          // Same-user device — skip here; the periodic discovery retry will
+          // bootstrap the group from the requester side after the timeout.
+          log(
+            `[WELCOME_REQ] ${requesterDeviceId} (own device) déjà membre — bootstrap côté demandeur`
+          );
+          return;
+        }
+        // Different user's device lost its local state — force remove + re-add.
+        log(
+          `[WELCOME_REQ] ${requesterDeviceId} déjà membre mais a perdu son état — force remove+re-add`
+        );
+        try {
+          await mlsService.removeMember(groupId, [requesterUserId]);
+          await mlsService.removeMemberFromServer(groupId, requesterUserId);
+        } catch (removeErr) {
+          log(`[WELCOME_REQ] Force-remove échoué: ${String(removeErr).slice(0, 80)} — skip`);
+          return;
+        }
+        // Fall through to re-add the device below.
       }
     } catch {
       // proceed if member list unavailable

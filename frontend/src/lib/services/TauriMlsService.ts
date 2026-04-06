@@ -687,6 +687,13 @@ export class TauriMlsService implements IMlsService {
     this._knownGroups.add(groupId);
   }
 
+  async forceCreateGroup(groupId: string) {
+    // Tauri: use the same creer_groupe — orphan recovery in Rust handles the wipe.
+    // A dedicated force_creer_groupe IPC command could be added later if needed.
+    await invoke('creer_groupe', { groupId }).catch(() => {});
+    this._knownGroups.add(groupId);
+  }
+
   async createRemoteGroup(name: string, isGroup: boolean = true): Promise<string> {
     try {
       const res = await fetch(`${this.historyUrl}/api/mls-api/groups`, {

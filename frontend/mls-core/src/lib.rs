@@ -144,6 +144,9 @@ impl MlsManager {
 
     // --- B. CRÉATION DE GROUPE ---
 
+    /// Creates a fresh MLS group with the given ID.
+    /// Returns Err("GroupAlreadyExists") if an orphan state is found in OpenMLS storage.
+    /// Callers that want a guaranteed-fresh group should use `force_create_group`.
     pub fn create_group(&mut self, group_id_str: String) -> Result<(), MlsError> {
         let group_id = GroupId::from_slice(group_id_str.as_bytes());
 
@@ -199,6 +202,39 @@ impl MlsManager {
                 Err(MlsError::OpenMls(format!("Creation error: {:?}", e)))
             }
         }
+    }
+
+    /// Wipes any existing MLS state for `group_id_str` from both the in-memory HashMap
+    /// and the OpenMLS storage, then creates a brand-new group.
+    /// Use this when re-bootstrapping a phantom group (lost local state) to avoid
+    /// recovering a stale-epoch orphan via `create_group`.
+    pub fn force_create_group(&mut self, group_id_str: String) -> Result<(), MlsError> {
+        let group_id = GroupId::from_slice(group_id_str.as_bytes());
+
+        // 1. Remove from in-memory map if present.
+        self.groups.remove(&group_id_str);
+        self.forgotten_group_min_epochs.remove(&group_id_str);
+
+        // 2. Wipe OpenMLS storage for this group if an orphan exists there.
+        match MlsGroup::load(self.provider.storage(), &group_id) {
+            Ok(Some(mut orphan)) => {
+                if let Err(e) = orphan.delete(self.provider.storage()) {
+                    log::warn!(
+                        "force_create_group: delete orphan {} failed: {:?}",
+                        group_id_str,
+                        e
+                    );
+                    // Continue anyway — worst case the create below will hit GroupAlreadyExists
+                    // and we fall back to the legacy orphan-recovery path.
+                }
+            }
+            _ => {
+                // Nothing in storage — nothing to wipe.
+            }
+        }
+
+        // 3. Create fresh group.
+        self.create_group(group_id_str)
     }
 
     pub fn get_known_groups(&self) -> Vec<String> {

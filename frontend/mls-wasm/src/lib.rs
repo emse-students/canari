@@ -93,6 +93,16 @@ impl WasmMlsClient {
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
+    /// Wipes any existing orphan state for this groupId then creates a fresh group.
+    /// Use for re-bootstrap after losing local MLS state (phantom group recovery).
+    #[wasm_bindgen]
+    pub fn force_create_group(&mut self, group_id: String) -> Result<(), JsValue> {
+        log::info!("force_create_group: {}", group_id);
+        self.manager
+            .force_create_group(group_id)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
     #[wasm_bindgen]
     pub fn get_groups(&self) -> js_sys::Array {
         let groups = self.manager.get_known_groups();

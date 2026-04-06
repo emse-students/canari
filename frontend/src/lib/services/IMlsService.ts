@@ -1,6 +1,8 @@
 export interface IMlsService {
   init(userId: string, pin: string, state?: Uint8Array): Promise<void>;
   createGroup(groupId: string): Promise<void>;
+  /** Wipes any orphan OpenMLS state for groupId then creates a fresh group. */
+  forceCreateGroup(groupId: string): Promise<void>;
   createRemoteGroup(name: string, isGroup?: boolean): Promise<string>;
   saveState(pin: string): Promise<Uint8Array>;
   generateKeyPackage(pin: string): Promise<Uint8Array>;

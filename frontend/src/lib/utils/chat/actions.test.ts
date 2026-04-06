@@ -20,6 +20,7 @@ function makeMls(overrides: Partial<IMlsService> = {}): IMlsService {
   return {
     init: vi.fn(),
     createGroup: vi.fn(),
+    forceCreateGroup: vi.fn(),
     createRemoteGroup: vi.fn(),
     saveState: vi.fn().mockResolvedValue(new Uint8Array([0xaa])),
     generateKeyPackage: vi.fn(),
@@ -129,7 +130,7 @@ describe('discoverMissingGroups', () => {
 
   it("active un placeholder sans re-bootstrap quand le groupe existe deja dans l'etat MLS local", async () => {
     const convs = new Map<string, Conversation>();
-    const createGroup = vi.fn();
+    const forceCreateGroup = vi.fn();
     const registerMember = vi.fn().mockResolvedValue(undefined);
     const saveConversation = vi.fn().mockResolvedValue(undefined);
 
@@ -138,7 +139,7 @@ describe('discoverMissingGroups', () => {
       // The group already exists in MLS memory (loaded from localStorage backup)
       getLocalGroups: vi.fn().mockReturnValue(['g-1']),
       registerMember,
-      createGroup,
+      forceCreateGroup,
     });
 
     await discoverMissingGroups({
@@ -150,8 +151,8 @@ describe('discoverMissingGroups', () => {
       log: vi.fn(),
     });
 
-    // Should NOT re-bootstrap (create_group would destroy the existing state)
-    expect(createGroup).not.toHaveBeenCalled();
+    // Should NOT re-bootstrap (force_create_group would destroy the existing state)
+    expect(forceCreateGroup).not.toHaveBeenCalled();
     // Should register this device on the gateway
     expect(registerMember).toHaveBeenCalledWith('g-1', 'jolan', 'dev-main');
     // Conversation should be ready
@@ -163,7 +164,7 @@ describe('discoverMissingGroups', () => {
 
   it('le leader re-bootstrap un groupe orphelin en creant le groupe et envoyant les Welcomes', async () => {
     const convs = new Map<string, Conversation>();
-    const createGroup = vi.fn().mockResolvedValue(undefined);
+    const forceCreateGroup = vi.fn().mockResolvedValue(undefined);
     const registerMember = vi.fn().mockResolvedValue(undefined);
     const addMembersBulk = vi.fn().mockResolvedValue({
       commit: new Uint8Array([0x01]),
@@ -188,7 +189,7 @@ describe('discoverMissingGroups', () => {
             ? Promise.resolve([{ keyPackage: new Uint8Array([10]), deviceId: 'dev-jolan' }])
             : Promise.resolve([])
         ),
-      createGroup,
+      forceCreateGroup,
       registerMember,
       addMembersBulk,
       sendWelcome,
@@ -206,7 +207,7 @@ describe('discoverMissingGroups', () => {
     });
 
     // Leader should have bootstrapped the group
-    expect(createGroup).toHaveBeenCalledWith('g-1');
+    expect(forceCreateGroup).toHaveBeenCalledWith('g-1');
     // The conversation should now be ready
     const conv = [...convs.values()].find((c) => c.groupId === 'g-1');
     expect(conv?.isReady).toBe(true);
@@ -214,14 +215,14 @@ describe('discoverMissingGroups', () => {
 
   it('le non-leader attend le bootstrap sans creer le groupe', async () => {
     const convs = new Map<string, Conversation>();
-    const createGroup = vi.fn();
+    const forceCreateGroup = vi.fn();
 
     const mls = makeMls({
       getUserGroups: vi
         .fn()
         .mockResolvedValue([{ groupId: 'g-1', name: 'alice::jolan', isGroup: false }]),
       getGroupMembers: vi.fn().mockResolvedValue([{ userId: 'alice' }, { userId: 'jolan' }]),
-      createGroup,
+      forceCreateGroup,
     });
 
     // 'alice' < 'jolan', so jolan is NOT the leader
@@ -235,7 +236,7 @@ describe('discoverMissingGroups', () => {
     });
 
     // Non-leader should NOT have created the group
-    expect(createGroup).not.toHaveBeenCalled();
+    expect(forceCreateGroup).not.toHaveBeenCalled();
     // Conversation should still be a placeholder
     const conv = [...convs.values()].find((c) => c.groupId === 'g-1');
     expect(conv?.isReady).toBe(false);
@@ -243,7 +244,7 @@ describe('discoverMissingGroups', () => {
 
   it("le leader attend quand d'autres appareils propres existent (attente Welcome via reinvite_request)", async () => {
     const convs = new Map<string, Conversation>();
-    const createGroup = vi.fn();
+    const forceCreateGroup = vi.fn();
 
     const mls = makeMls({
       getUserGroups: vi
@@ -259,7 +260,7 @@ describe('discoverMissingGroups', () => {
             ])
           : Promise.resolve([{ keyPackage: new Uint8Array([12]), deviceId: 'dev-jolan' }])
       ),
-      createGroup,
+      forceCreateGroup,
     });
 
     await discoverMissingGroups({
@@ -273,14 +274,14 @@ describe('discoverMissingGroups', () => {
 
     // Even though alice is the leader, should NOT bootstrap because
     // another own device (dev-alice-2) exists and will handle sync via reinvite_request
-    expect(createGroup).not.toHaveBeenCalled();
+    expect(forceCreateGroup).not.toHaveBeenCalled();
     const conv = [...convs.values()].find((c) => c.groupId === 'g-1');
     expect(conv?.isReady).toBe(false);
   });
 
   it("le non-leader re-bootstrap apres le timeout de 30s quand aucun autre membre n'est actif", async () => {
     const convs = new Map<string, Conversation>();
-    const createGroup = vi.fn().mockResolvedValue(undefined);
+    const forceCreateGroup = vi.fn().mockResolvedValue(undefined);
     const registerMember = vi.fn().mockResolvedValue(undefined);
     const addMembersBulk = vi.fn().mockResolvedValue({
       commit: new Uint8Array([0x01]),
@@ -296,7 +297,7 @@ describe('discoverMissingGroups', () => {
       getGroupMembers: vi.fn().mockResolvedValue([{ userId: 'alice' }, { userId: 'jolan' }]),
       // alice has NO active devices (offline) → short 30s timeout applies
       fetchUserDevices: vi.fn().mockResolvedValue([]),
-      createGroup,
+      forceCreateGroup,
       registerMember,
       addMembersBulk,
       sendWelcome,
@@ -326,14 +327,14 @@ describe('discoverMissingGroups', () => {
     });
 
     // Non-leader bootstraps after 30s when no other member is active
-    expect(createGroup).toHaveBeenCalledWith('g-1');
+    expect(forceCreateGroup).toHaveBeenCalledWith('g-1');
     const conv = convs.get('dm_old');
     expect(conv?.isReady).toBe(true);
   });
 
   it("le non-leader attend plus longtemps (120s) quand l'autre membre est actif", async () => {
     const convs = new Map<string, Conversation>();
-    const createGroup = vi.fn();
+    const forceCreateGroup = vi.fn();
 
     const mls = makeMls({
       getUserGroups: vi.fn().mockResolvedValue([]),
@@ -346,7 +347,7 @@ describe('discoverMissingGroups', () => {
             ? Promise.resolve([{ keyPackage: new Uint8Array([10]), deviceId: 'dev-alice' }])
             : Promise.resolve([])
         ),
-      createGroup,
+      forceCreateGroup,
     });
 
     // Pending 60s — beyond 30s but below 120s extended timeout
@@ -372,7 +373,7 @@ describe('discoverMissingGroups', () => {
     });
 
     // Should NOT bootstrap — waiting for alice's sync to re-invite us
-    expect(createGroup).not.toHaveBeenCalled();
+    expect(forceCreateGroup).not.toHaveBeenCalled();
     const conv = convs.get('dm_old');
     expect(conv?.isReady).toBe(false);
   });
