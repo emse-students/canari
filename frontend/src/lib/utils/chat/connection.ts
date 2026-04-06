@@ -205,6 +205,12 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   const groupMlsFailures = new Map<string, number>();
   const PHANTOM_THRESHOLD = 3;
 
+  // Compteur des retours `null` sur messages applicatifs (non-commit).
+  // Si cela se répète, l'état local est probablement divergent même sans exception
+  // (ex: SenderDataDecryption traité côté Rust comme message non-applicable).
+  const groupNullAppFailures = new Map<string, number>();
+  const NULL_APP_THRESHOLD = 2;
+
   // Groups for which an epoch recovery has already been triggered
   // (avoids spamming reinvite_request on a burst of future-epoch messages).
   const epochRecoveryGroups = new Set<string>();
@@ -492,6 +498,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           }
 
           if (decryptedBytes) {
+            // Any decrypted payload means local state is healthy again.
+            groupNullAppFailures.delete(convoKey);
             const msg = decodeAppMessage(decryptedBytes);
             const msgType = msg?.text
               ? 'text'
@@ -791,6 +799,22 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               serializeEnvelope(mkTextEnvelope(legacyText)),
               convoKey
             );
+          } else if (!isCommit && !epochRecoveryGroups.has(convoKey)) {
+            // Repeated null on non-commit traffic is a strong signal of local MLS
+            // divergence (message is routed but cannot be decrypted into app payload).
+            const nullCount = (groupNullAppFailures.get(convoKey) ?? 0) + 1;
+            groupNullAppFailures.set(convoKey, nullCount);
+            log(
+              `[RECOVER] Message non-commit non déchiffrable sur "${convoKey}" (${nullCount}/${NULL_APP_THRESHOLD})`
+            );
+            if (nullCount >= NULL_APP_THRESHOLD) {
+              epochRecoveryGroups.add(convoKey);
+              log(`[RECOVER] Etat MLS suspect sur "${convoKey}" — oubli MLS + reinvite_request`);
+              mlsService.forgetGroup(convo.groupId);
+              conversations.set(convoKey, { ...convo, isReady: false });
+              if (storage) saveConversation(convoKey).catch(() => {});
+              mlsService.sendReinviteRequest(convo.groupId);
+            }
           }
           // Reset phantom failure counter on any successful processing
           groupMlsFailures.delete(convoKey);
@@ -869,6 +893,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           }
 
           log(`Erreur message de ${senderNorm} (groupe connu): ${errMsg}`);
+          groupNullAppFailures.delete(convoKey);
 
           // Détection de groupe fantôme : le groupId existe dans nos conversations
           // mais n'est plus dans l'état WASM MLS → nettoyage automatique après N échecs
@@ -893,6 +918,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               }
               conversations.delete(convoKey);
               groupMlsFailures.delete(convoKey);
+              groupNullAppFailures.delete(convoKey);
               if (getSelectedContact() === convoKey) {
                 setSelectedContact(null);
                 setMobileView('list');
