@@ -51,6 +51,7 @@ function makeMlsService(overrides: Partial<IMlsService> = {}): IMlsService {
   return {
     init: vi.fn().mockResolvedValue(undefined),
     createGroup: vi.fn().mockResolvedValue(undefined),
+    forceCreateGroup: vi.fn().mockResolvedValue(undefined),
     createRemoteGroup: vi.fn().mockResolvedValue('group-test-uuid'),
     saveState: vi.fn().mockResolvedValue(new Uint8Array([0xab, 0xcd])),
     generateKeyPackage: vi.fn().mockResolvedValue(new Uint8Array()),
