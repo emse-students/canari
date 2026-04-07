@@ -93,6 +93,20 @@ export class TauriMlsService implements IMlsService {
     return { Authorization: `Bearer ${token}`, ...extra };
   }
 
+  /**
+   * Fire-and-forget POST to the delivery service.
+   * `keepalive: true` lets the request complete even when the page is being
+   * unloaded, so ack/signal calls are never dropped.
+   */
+  private async deliveryPost(path: string, body: Record<string, unknown>): Promise<void> {
+    await fetch(`${this.historyUrl}/api/mls-api/${path}`, {
+      method: 'POST',
+      headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(body),
+      keepalive: true,
+    }).catch((e) => console.warn(`[HTTP] ${path} failed:`, e));
+  }
+
   async connect(): Promise<void> {
     // Close existing socket before creating a new one
     if (this.ws) {
@@ -266,6 +280,7 @@ export class TauriMlsService implements IMlsService {
                 deviceId: this.deviceId,
                 messageIds: successfullyProcessedIds,
               }),
+              keepalive: true,
             });
             if (!ackRes.ok) {
               console.error(`Message ACK failed: ${ackRes.status}`);
@@ -436,22 +451,24 @@ export class TauriMlsService implements IMlsService {
     this.disconnectCallback = callback;
   }
 
-  sendReinviteRequest(groupId: string): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: 'reinvite_request', groupId, proto: '' }));
-      console.log(`[WS] reinvite_request sent for group ${groupId}`);
-    }
+  async sendReinviteRequest(groupId: string): Promise<void> {
+    await this.deliveryPost('reinvite-request', {
+      groupId,
+      requesterUserId: this.userId,
+      requesterDeviceId: this.deviceId,
+    });
   }
 
   onReinviteRequest(callback: (senderDeviceId: string, groupId: string) => void): void {
     this.reinviteRequestCallback = callback;
   }
 
-  sendWelcomeRequest(groupId: string): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: 'welcome_request', groupId, proto: '' }));
-      console.log(`[WS] welcome_request sent for group ${groupId}`);
-    }
+  async sendWelcomeRequest(groupId: string): Promise<void> {
+    await this.deliveryPost('welcome-request', {
+      groupId,
+      requesterUserId: this.userId,
+      requesterDeviceId: this.deviceId,
+    });
   }
 
   onWelcomeRequest(

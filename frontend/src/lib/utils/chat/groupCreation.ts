@@ -124,7 +124,8 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
         localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
 
         if (bulk.commit) {
-          await mlsService.sendCommit(bulk.commit, groupId);
+          const excludeIds = bulk.addedDeviceIds.map((did) => `${userId}:${did}`);
+          await mlsService.sendCommit(bulk.commit, groupId, excludeIds);
         }
       } catch (e) {
         log(`Erreur synchro propres appareils: ${e}`);
@@ -252,7 +253,15 @@ async function processBulkAddition(
         }
       }
 
-      if (bulk.commit) await mlsService.sendCommit(bulk.commit, conversation.id);
+      if (bulk.commit) {
+        const excludeIds = bulk.addedDeviceIds
+          .map((did) => {
+            const uid = userMap.get(did);
+            return uid ? `${uid}:${did}` : null;
+          })
+          .filter((s): s is string => s !== null);
+        await mlsService.sendCommit(bulk.commit, conversation.id, excludeIds);
+      }
 
       log(
         `[OK] Ajoutes: ${targetUsers.join(', ')} (${bulk.addedDeviceIds.length} appareils). (${deliveredUsers.size} utilisateur(s) livrés)`
@@ -395,7 +404,13 @@ export async function startNewConversation(
       // Sauvegarder AVANT sendCommit (crash-safety)
       const stBytes = await mlsService.saveState(pin);
       localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
-      if (bulk.commit) await mlsService.sendCommit(bulk.commit, groupId);
+      if (bulk.commit) {
+        const excludeIds = bulk.addedDeviceIds.map((did) => {
+          const owner = contactDeviceIds.has(did) ? contact : userId;
+          return `${owner}:${did}`;
+        });
+        await mlsService.sendCommit(bulk.commit, groupId, excludeIds);
+      }
     } finally {
       if (lockAcquired) await mlsService.releaseAddLock(groupId).catch(() => {});
     }
@@ -488,7 +503,13 @@ export async function repairDirectConversation(
       // Sauvegarder AVANT sendCommit (crash-safety)
       const stBytes = await mlsService.saveState(pin);
       localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
-      if (bulk.commit) await mlsService.sendCommit(bulk.commit, groupId);
+      if (bulk.commit) {
+        const excludeIds = bulk.addedDeviceIds.map((did) => {
+          const owner = contactDeviceIds.has(did) ? contact : userId;
+          return `${owner}:${did}`;
+        });
+        await mlsService.sendCommit(bulk.commit, groupId, excludeIds);
+      }
     } finally {
       if (lockAcquired) await mlsService.releaseAddLock(groupId).catch(() => {});
     }

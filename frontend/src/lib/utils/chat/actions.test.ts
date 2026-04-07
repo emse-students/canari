@@ -50,7 +50,7 @@ function makeMls(overrides: Partial<IMlsService> = {}): IMlsService {
     exportSecret: vi.fn(),
     onMessage: vi.fn(),
     onDisconnect: vi.fn(),
-    sendReinviteRequest: vi.fn(),
+    sendReinviteRequest: vi.fn().mockResolvedValue(undefined),
     onReinviteRequest: vi.fn(),
     getPendingInvitations: vi.fn().mockResolvedValue([]),
     getDeviceMemberships: vi.fn().mockResolvedValue([]),

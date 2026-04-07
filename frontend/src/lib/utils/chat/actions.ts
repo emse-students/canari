@@ -611,9 +611,9 @@ export async function processDevWelcome(params: {
   await mlsService.processWelcome(fromHex(incomingBytesHex));
 }
 
-// Local guard: only one welcome_request per group can be processed at a time on this device.
-// A distributed lock is not needed because the gateway already routes each welcome_request
-// to exactly one peer, so no two devices can race on the same request.
+// In-process guard: prevents the same tab from handling two welcome_requests
+// for the same group concurrently (e.g. rapid retries arriving before the
+// first one finishes).  Cross-device races are handled by acquireAddLock below.
 const welcomeRequestInProgress = new Set<string>();
 
 export async function handleWelcomeRequest(params: {
@@ -649,6 +649,15 @@ export async function handleWelcomeRequest(params: {
     return;
   }
   welcomeRequestInProgress.add(groupId);
+
+  // Acquire the distributed add-lock so we don't race with processPendingInvitations
+  // running on another device (or another user's device in the same group).
+  const lockAcquired = await mlsService.acquireAddLock(groupId, 15_000).catch(() => false);
+  if (!lockAcquired) {
+    log(`[WELCOME_REQ] Verrou occupé pour ${groupId} — autre appareil en cours, skip`);
+    welcomeRequestInProgress.delete(groupId);
+    return;
+  }
 
   try {
     // Fetch fresh KeyPackage for the requesting device
@@ -714,6 +723,7 @@ export async function handleWelcomeRequest(params: {
       log(`[WELCOME_REQ] Erreur pour ${requesterDeviceId}: ${errStr.slice(0, 100)}`);
     }
   } finally {
+    await mlsService.releaseAddLock(groupId).catch(() => {});
     welcomeRequestInProgress.delete(groupId);
   }
 }

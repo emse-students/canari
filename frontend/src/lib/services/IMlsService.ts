@@ -146,14 +146,14 @@ export interface IMlsService {
   onDisconnect(callback: () => void): void;
 
   // Device sync notification
-  sendReinviteRequest(groupId: string): void;
+  sendReinviteRequest(groupId: string): Promise<void>;
   onReinviteRequest(callback: (senderDeviceId: string, groupId: string) => void): void;
 
   /**
    * Announce to all online members of `groupId` that this device needs a Welcome.
    * Called once per pending group on connect, after KeyPackage publication.
    */
-  sendWelcomeRequest(groupId: string): void;
+  sendWelcomeRequest(groupId: string): Promise<void>;
 
   /**
    * Register a callback invoked when another device broadcasts a welcome_request

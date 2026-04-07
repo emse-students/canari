@@ -9,6 +9,7 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use futures::stream::StreamExt;
 use std::{net::SocketAddr, sync::Arc};
 use tower_http::cors::{Any, CorsLayer};
@@ -16,6 +17,12 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::handlers::{get_presence, ws_handler};
 use crate::state::AppState;
+
+/// Decode a standard base64 string to a UTF-8 string, returning None on any error.
+fn base64_decode_to_string(input: &str) -> Option<String> {
+    let bytes = BASE64.decode(input).ok()?;
+    String::from_utf8(bytes).ok()
+}
 
 async fn health_check() -> impl IntoResponse {
     (StatusCode::OK, "OK")
@@ -129,18 +136,41 @@ async fn main() {
                                     None => continue,
                                 };
 
-                                let proto_b64 = match json.get("proto").and_then(|v| v.as_str()) {
-                                    Some(v) if !v.is_empty() => v,
-                                    _ => {
-                                        tracing::warn!(
-                                            "Redis message missing 'proto' field, dropping"
-                                        );
-                                        continue;
+                                // welcome_request / reinvite_request control frames: proto is
+                                // base64(JSON notification). Decode and relay as plain WS text;
+                                // do NOT wrap in the MLS envelope.
+                                let is_control = json
+                                    .get("isWelcomeRequest")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false)
+                                    || json
+                                        .get("isReinviteRequest")
+                                        .and_then(|v| v.as_bool())
+                                        .unwrap_or(false);
+                                let json_frame = if is_control {
+                                    let proto_b64 = match json.get("proto").and_then(|v| v.as_str())
+                                    {
+                                        Some(v) => v,
+                                        None => continue,
+                                    };
+                                    match base64_decode_to_string(proto_b64) {
+                                        Some(s) => s,
+                                        None => continue,
                                     }
-                                };
+                                } else {
+                                    let proto_b64 = match json.get("proto").and_then(|v| v.as_str())
+                                    {
+                                        Some(v) if !v.is_empty() => v,
+                                        _ => {
+                                            tracing::warn!(
+                                                "Redis message missing 'proto' field, dropping"
+                                            );
+                                            continue;
+                                        }
+                                    };
 
-                                // Forward flat JSON to the WS client — no proto decode needed.
-                                let json_frame = serde_json::json!({
+                                    // Forward flat JSON to the WS client — no proto decode needed.
+                                    serde_json::json!({
                                     "senderId": json.get("senderId").and_then(|v| v.as_str()).unwrap_or(""),
                                     "senderDeviceId": json.get("senderDeviceId").and_then(|v| v.as_str()).unwrap_or(""),
                                     "groupId": json.get("groupId").and_then(|v| v.as_str()).unwrap_or(""),
@@ -150,7 +180,8 @@ async fn main() {
                                     "proto": proto_b64,
                                     "queuedMessageId": json.get("queuedMessageId").and_then(|v| v.as_str()).unwrap_or("")
                                 })
-                                .to_string();
+                                .to_string()
+                                };
 
                                 let key = format!("{}:{}", recipient_id, device_id);
 

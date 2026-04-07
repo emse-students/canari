@@ -245,12 +245,6 @@ async fn handle_socket(
                         };
 
                         match frame.msg_type.as_str() {
-                            "welcome_request" => {
-                                crate::ws_dispatch::handle_welcome_request(&conn, &frame).await;
-                            }
-                            "reinvite_request" => {
-                                crate::ws_dispatch::handle_reinvite_request(&conn, &frame).await;
-                            }
                             "read" => {
                                 // No-op: read receipts are handled at the application layer.
                             }

@@ -1783,6 +1783,141 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @UseGuards(HeaderAuthGuard)
+  @Post('mls-api/welcome-request')
+  async notifyWelcomeRequest(
+    @Body()
+    body: {
+      groupId: string;
+      requesterUserId: string;
+      requesterDeviceId: string;
+    },
+  ) {
+    const groupId = sanitizeQueryValue(body.groupId, 'groupId');
+    const requesterUserId = sanitizeQueryValue(
+      body.requesterUserId,
+      'requesterUserId',
+    );
+    const requesterDeviceId = sanitizeQueryValue(
+      body.requesterDeviceId,
+      'requesterDeviceId',
+    );
+
+    // Atomically pick one online group member that is not the requester.
+    // Using a single server-side selection avoids the multi-connection race that
+    // occurs when the gateway forwards the WS frame: each concurrent connection
+    // from the requester's device would call forward_to_one_peer independently,
+    // and since SMEMBERS returns an unordered set each call can pick a different
+    // peer, causing multiple devices to concurrently commit an add for the same
+    // invitation.
+    const members: string[] = await this.redis.smembers(
+      `group:members:${groupId}`,
+    );
+    const senderKey = `${requesterUserId}:${requesterDeviceId}`;
+
+    const notification = JSON.stringify({
+      type: 'welcome_request',
+      groupId,
+      requesterUserId,
+      requesterDeviceId,
+    });
+
+    for (const member of members) {
+      if (member === senderKey) continue;
+      const [memberUserId, memberDeviceId] = member.split(':');
+      const onlineKey = `user:online:${memberUserId}:${memberDeviceId}`;
+      const isOnline = await this.redis.exists(onlineKey);
+      if (isOnline) {
+        await this.redis.publish(
+          'chat:messages',
+          JSON.stringify({
+            recipientId: memberUserId,
+            deviceId: memberDeviceId,
+            // Re-use the proto field as a JSON-encoded control payload so the
+            // gateway can relay it as a plain text WS frame without extra decoding.
+            proto: Buffer.from(notification).toString('base64'),
+            isWelcomeRequest: true,
+            groupId,
+            senderId: requesterUserId,
+            senderDeviceId: requesterDeviceId,
+          }),
+        );
+        this.logger.log(
+          `[WELCOME_REQ] Notified ${member} for group ${groupId} (requester: ${senderKey})`,
+        );
+        return { status: 'forwarded', target: member };
+      }
+    }
+
+    this.logger.log(
+      `[WELCOME_REQ] No online peer for group ${groupId} — processPendingInvitations will handle on next connect`,
+    );
+    return { status: 'no_peer_online' };
+  }
+
+  @UseGuards(HeaderAuthGuard)
+  @Post('mls-api/reinvite-request')
+  async notifyReinviteRequest(
+    @Body()
+    body: {
+      groupId: string;
+      requesterUserId: string;
+      requesterDeviceId: string;
+    },
+  ) {
+    const groupId = sanitizeQueryValue(body.groupId, 'groupId');
+    const requesterUserId = sanitizeQueryValue(
+      body.requesterUserId,
+      'requesterUserId',
+    );
+    const requesterDeviceId = sanitizeQueryValue(
+      body.requesterDeviceId,
+      'requesterDeviceId',
+    );
+
+    const members: string[] = await this.redis.smembers(
+      `group:members:${groupId}`,
+    );
+    const senderKey = `${requesterUserId}:${requesterDeviceId}`;
+
+    const notification = JSON.stringify({
+      type: 'reinvite_request',
+      groupId,
+      senderId: requesterUserId,
+      senderDeviceId: requesterDeviceId,
+    });
+
+    for (const member of members) {
+      if (member === senderKey) continue;
+      const [memberUserId, memberDeviceId] = member.split(':');
+      const onlineKey = `user:online:${memberUserId}:${memberDeviceId}`;
+      const isOnline = await this.redis.exists(onlineKey);
+      if (isOnline) {
+        await this.redis.publish(
+          'chat:messages',
+          JSON.stringify({
+            recipientId: memberUserId,
+            deviceId: memberDeviceId,
+            proto: Buffer.from(notification).toString('base64'),
+            isReinviteRequest: true,
+            groupId,
+            senderId: requesterUserId,
+            senderDeviceId: requesterDeviceId,
+          }),
+        );
+        this.logger.log(
+          `[REINVITE_REQ] Notified ${member} for group ${groupId} (requester: ${senderKey})`,
+        );
+        return { status: 'forwarded', target: member };
+      }
+    }
+
+    this.logger.log(
+      `[REINVITE_REQ] No online peer for group ${groupId} — will retry on next connect`,
+    );
+    return { status: 'no_peer_online' };
+  }
+
+  @UseGuards(HeaderAuthGuard)
   @Post('mls-api/welcome')
   async sendWelcome(
     @Body()
