@@ -14,7 +14,7 @@ use tokio::sync::mpsc;
 
 use crate::models::{AuthParams, Claims};
 use crate::state::AppState;
-use crate::ws_dispatch::{WsConn, WsFrame};
+use crate::ws_dispatch::WsFrame;
 
 // ── ConnectionGuard — cleanup on drop ────────────────────────────────────
 

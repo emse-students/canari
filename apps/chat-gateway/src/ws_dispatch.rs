@@ -8,21 +8,6 @@
 // Remaining inbound frame types:
 //   • read — no-op  (read receipts are handled at the application layer)
 
-use std::sync::Arc;
-use tokio::sync::mpsc;
-
-use crate::state::AppState;
-
-// ── Connection context (one per WebSocket session) ────────────────────────
-
-pub struct WsConn<'a> {
-    pub state: &'a Arc<AppState>,
-    pub user_id: &'a str,
-    pub device_id: &'a str,
-    /// Channel to push frames back to this client.
-    pub tx: &'a mpsc::Sender<String>,
-}
-
 // ── Parsed incoming frame ─────────────────────────────────────────────────
 
 pub struct WsFrame {
