@@ -1,4 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('$lib/stores/auth', () => ({
+  getToken: vi.fn(async () => 'token-abc'),
+}));
+
 import { WebMlsService } from './WebMlsService';
 
 describe('WebMlsService.fetchPendingMessages', () => {
