@@ -168,3 +168,4 @@ gh workflow run cd-dev.yml -r dev
 # Vérifier les images disponibles
 docker pull ghcr.io/emse-students/canari/frontend:dev
 ```
+# Dev branch ready for development
