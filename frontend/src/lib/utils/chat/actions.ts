@@ -380,12 +380,15 @@ export async function discoverMissingGroups(params: {
     }
 
     // Decision tree:
-    //   1. Own other device exists → it will Welcome us via reinvite_request, skip
-    //   2. Leader + no other own device → bootstrap immediately
-    //   3. Non-leader + active peer devices → wait 120s then bootstrap as fallback
-    //   4. Non-leader + no active peer devices → wait 30s then bootstrap as fallback
+    //   1. Leader + no other own device → bootstrap immediately
+    //   2. Any device after timeout → bootstrap as fallback, even if the server still
+    //      knows about other devices. Registered devices are not proof that some
+    //      peer is connected or still holds valid MLS state.
+    //   3. The distributed add-lock below serializes re-bootstrap attempts so this
+    //      availability fallback does not reintroduce concurrent MLS commits.
     const timeoutMs = otherMembersHaveDevices ? 120_000 : 30_000;
-    const shouldBootstrap = !hasOtherOwnDevice && (isLeader || waitingMs > timeoutMs);
+    const timeoutReached = waitingMs > timeoutMs;
+    const shouldBootstrap = (!hasOtherOwnDevice && isLeader) || timeoutReached;
 
     if (!shouldBootstrap) {
       log(
@@ -394,8 +397,18 @@ export async function discoverMissingGroups(params: {
       continue;
     }
 
+    const bootstrapLockAcquired = await mlsService
+      .acquireAddLock(convo.id, 15_000)
+      .catch(() => false);
+    if (!bootstrapLockAcquired) {
+      log(
+        `[DISCOVERY] "${convo.name}": re-bootstrap deja en cours sur un autre appareil — attente.`
+      );
+      continue;
+    }
+
     log(
-      `[DISCOVERY] Re-bootstrap "${convo.name}" (${isLeader ? 'leader' : `fallback ${Math.round(waitingMs / 1000)}s`})...`
+      `[DISCOVERY] Re-bootstrap "${convo.name}" (${!timeoutReached && isLeader ? 'leader' : `fallback ${Math.round(waitingMs / 1000)}s`})...`
     );
 
     try {
@@ -496,6 +509,8 @@ export async function discoverMissingGroups(params: {
       log(
         `[DISCOVERY] Echec re-bootstrap "${convo.name}": ${e instanceof Error ? e.message : String(e)}`
       );
+    } finally {
+      await mlsService.releaseAddLock(convo.id).catch(() => {});
     }
   }
 }
