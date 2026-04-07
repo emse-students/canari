@@ -107,7 +107,7 @@ export function mapStoredMessagesToChatMessages(storedMessages: StoredMessage[],
 
 export async function replayConversationHistory(params: {
   mlsService: IMlsService;
-  groupId: string;
+  id: string;
   contactName: string;
   userId: string;
   pin: string;
@@ -127,7 +127,7 @@ export async function replayConversationHistory(params: {
 }) {
   const {
     mlsService,
-    groupId,
+    id,
     contactName,
     userId,
     pin,
@@ -142,14 +142,14 @@ export async function replayConversationHistory(params: {
     // Incremental fetch: only retrieve messages after the last processed stream ID.
     // This avoids re-delivering messages whose ratchet keys have already been consumed
     // (which would produce TooDistantInThePast / CiphertextGenerationOutOfBounds errors).
-    const afterStreamId = loadLastStreamId(userId, groupId);
-    const history = await mlsService.fetchHistory(groupId, afterStreamId);
+    const afterStreamId = loadLastStreamId(userId, id);
+    const history = await mlsService.fetchHistory(id, afterStreamId);
     if (history.length === 0) return;
 
     // Track the highest stream ID we process so the next sync starts from there.
     let latestStreamId: string | undefined;
 
-    const seenCipherHashes = loadSeenCipherHashes(userId, groupId);
+    const seenCipherHashes = loadSeenCipherHashes(userId, id);
     let seenUpdated = false;
 
     let addedMsg = 0;
@@ -171,7 +171,7 @@ export async function replayConversationHistory(params: {
         const bytes = new Uint8Array(bytesStr.length);
         for (let i = 0; i < bytesStr.length; i++) bytes[i] = bytesStr.charCodeAt(i);
 
-        const decryptedBytes = await mlsService.processIncomingMessage(groupId, bytes);
+        const decryptedBytes = await mlsService.processIncomingMessage(id, bytes);
         if (!decryptedBytes) continue;
 
         const parsed = decodeAppMessage(decryptedBytes);
@@ -381,12 +381,12 @@ export async function replayConversationHistory(params: {
     }
 
     if (seenUpdated) {
-      saveSeenCipherHashes(userId, groupId, seenCipherHashes);
+      saveSeenCipherHashes(userId, id, seenCipherHashes);
     }
 
     // Persist the last processed Redis stream ID so the next sync is incremental.
     if (latestStreamId) {
-      saveLastStreamId(userId, groupId, latestStreamId);
+      saveLastStreamId(userId, id, latestStreamId);
     }
 
     if (mlsUpdated) {

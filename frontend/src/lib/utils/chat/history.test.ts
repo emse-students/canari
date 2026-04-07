@@ -72,7 +72,7 @@ describe('replayConversationHistory', () => {
 
     await replayConversationHistory({
       mlsService: mls,
-      groupId: 'g-1',
+      id: 'g-1',
       contactName: 'dm_1',
       userId: 'jolan',
       pin: '1234',
@@ -106,7 +106,7 @@ describe('replayConversationHistory', () => {
 
     await replayConversationHistory({
       mlsService: mls,
-      groupId: 'g-1',
+      id: 'g-1',
       contactName: 'grp_1',
       userId: 'jolan',
       pin: '1234',
@@ -155,7 +155,7 @@ describe('replayConversationHistory', () => {
 
     await replayConversationHistory({
       mlsService: mls,
-      groupId: 'g-1',
+      id: 'g-1',
       contactName: 'grp_1',
       userId: 'jolan',
       pin: '1234',
@@ -176,7 +176,7 @@ describe('replayConversationHistory', () => {
     const convo: Conversation = {
       contactName: 'grp',
       name: 'grp',
-      groupId: 'g-1',
+      id: 'g-1',
       messages: [
         {
           id: 'm-1',
@@ -209,7 +209,7 @@ describe('replayConversationHistory', () => {
 
     await replayConversationHistory({
       mlsService: mls,
-      groupId: 'g-1',
+      id: 'g-1',
       contactName: 'grp_1',
       userId: 'jolan',
       pin: '1234',

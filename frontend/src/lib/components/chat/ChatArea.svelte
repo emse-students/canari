@@ -131,7 +131,7 @@
   }
 
   $effect(() => {
-    const convoKey = conversation ? `${conversation.groupId}-${conversation.contactName}` : '';
+    const convoKey = conversation ? `${conversation.id}-${conversation.contactName}` : '';
     const messageCount = conversation?.messages.length ?? 0;
 
     untrack(() => {

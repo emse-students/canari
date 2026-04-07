@@ -197,7 +197,7 @@ export function useChatSession() {
         const localMlsGroups = new SvelteSet(mlsService.getLocalGroups());
         const missingKeys: string[] = [];
         for (const [key, c] of cb.conversations.entries()) {
-          if (c.isReady && !localMlsGroups.has(c.groupId)) {
+          if (c.isReady && !localMlsGroups.has(c.id)) {
             cb.conversations.set(key, { ...c, isReady: false });
             missingKeys.push(key);
           }

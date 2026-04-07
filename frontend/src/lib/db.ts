@@ -5,8 +5,8 @@ import { encryptData, decryptData } from './encryption';
 // ---------------------------------------------------------------------------
 
 export interface ConversationMeta {
-  id: string; // contactName – primary key
-  groupId: string;
+  /** Primary key — equals the MLS groupId UUID (e.g. "g-abc123", "channel_xyz", "dm_uuid"). */
+  id: string;
   name: string;
   isReady: boolean;
   updatedAt: number;
@@ -87,8 +87,10 @@ export class IndexedDbStorage implements IStorage {
 
   async init(): Promise<void> {
     return new Promise((resolve, reject) => {
-      // Version 2: adds conversations store + conversationId index on messages.
-      const request = indexedDB.open(this.dbName, 2);
+      // Version 3: conversation.id is now the MLS groupId UUID (was human-readable contactName).
+      // Migration: the conversations store is recreated (same keyPath 'id') and all existing
+      // rows are migrated by setting id = groupId (old rows had a separate groupId field).
+      const request = indexedDB.open(this.dbName, 3);
 
       request.onerror = () => reject('IndexedDB open error');
       request.onsuccess = () => {
@@ -99,6 +101,7 @@ export class IndexedDbStorage implements IStorage {
       request.onupgradeneeded = (event) => {
         const db = (event.target as IDBOpenDBRequest).result;
         const oldVersion = event.oldVersion;
+        const tx = (event.target as IDBOpenDBRequest).transaction!;
 
         if (oldVersion < 2) {
           // Drop legacy v1 messages store (no conversation support)
@@ -112,6 +115,54 @@ export class IndexedDbStorage implements IStorage {
 
           const msgStore = db.createObjectStore('messages', { keyPath: 'id' });
           msgStore.createIndex('byConversation', 'conversationId', { unique: false });
+        }
+
+        if (oldVersion < 3 && oldVersion >= 2) {
+          // Migrate v2→v3: set conversation.id = conversation.groupId for all existing rows,
+          // and update messages.conversationId accordingly.
+          const convStore = tx.objectStore('conversations');
+          const msgStore = tx.objectStore('messages');
+
+          const oldToNew = new Map<string, string>();
+
+          const cursorReq = convStore.openCursor();
+          cursorReq.onsuccess = () => {
+            const cursor = cursorReq.result;
+            if (cursor) {
+              const old = cursor.value as ConversationMeta & { groupId?: string };
+              const newId = old.groupId ?? old.id;
+              if (newId !== old.id) {
+                oldToNew.set(old.id, newId);
+                // Insert with new key; delete old
+                const { groupId: _drop, ...rest } = old as any;
+                convStore.add({ ...rest, id: newId });
+                cursor.delete();
+              } else {
+                // Same key — just strip groupId field if present
+                if ('groupId' in old) {
+                  const { groupId: _drop, ...rest } = old as any;
+                  cursor.update(rest);
+                }
+              }
+              cursor.continue();
+            } else {
+              // After conversations are migrated, update messages.conversationId
+              if (oldToNew.size > 0) {
+                const msgCursorReq = msgStore.openCursor();
+                msgCursorReq.onsuccess = () => {
+                  const c = msgCursorReq.result;
+                  if (c) {
+                    const row = c.value;
+                    const mapped = oldToNew.get(row.conversationId);
+                    if (mapped) {
+                      c.update({ ...row, conversationId: mapped });
+                    }
+                    c.continue();
+                  }
+                };
+              }
+            }
+          };
         }
       };
     });
@@ -348,7 +399,6 @@ export class SqliteStorage implements IStorage {
     await this.db.execute(`
             CREATE TABLE IF NOT EXISTS conversations (
                 id         TEXT    PRIMARY KEY,
-                group_id   TEXT    NOT NULL,
                 name       TEXT    NOT NULL,
                 is_ready   INTEGER DEFAULT 0,
                 updated_at INTEGER DEFAULT 0
@@ -376,8 +426,8 @@ export class SqliteStorage implements IStorage {
 
   async saveConversation(conv: ConversationMeta): Promise<void> {
     await this.db.execute(
-      'INSERT OR REPLACE INTO conversations (id, group_id, name, is_ready, updated_at) VALUES ($1, $2, $3, $4, $5)',
-      [conv.id, conv.groupId, conv.name, conv.isReady ? 1 : 0, conv.updatedAt]
+      'INSERT OR REPLACE INTO conversations (id, name, is_ready, updated_at) VALUES ($1, $2, $3, $4)',
+      [conv.id, conv.name, conv.isReady ? 1 : 0, conv.updatedAt]
     );
   }
 
@@ -387,7 +437,6 @@ export class SqliteStorage implements IStorage {
     );
     return rows.map((r) => ({
       id: r.id,
-      groupId: r.group_id,
       name: r.name,
       isReady: r.is_ready === 1,
       updatedAt: r.updated_at,
@@ -484,8 +533,8 @@ export class SqliteStorage implements IStorage {
   async mergeConversation(conv: ConversationMeta): Promise<void> {
     // INSERT OR IGNORE: only insert if no row with this id already exists.
     await this.db.execute(
-      'INSERT OR IGNORE INTO conversations (id, group_id, name, is_ready, updated_at) VALUES ($1, $2, $3, $4, $5)',
-      [conv.id, conv.groupId, conv.name, conv.isReady ? 1 : 0, conv.updatedAt]
+      'INSERT OR IGNORE INTO conversations (id, name, is_ready, updated_at) VALUES ($1, $2, $3, $4)',
+      [conv.id, conv.name, conv.isReady ? 1 : 0, conv.updatedAt]
     );
   }
 

@@ -231,9 +231,9 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
   for (const meta of mergedConvMetas) {
     const identity = deriveConversationIdentity(meta.name, ctx.userId, meta.id);
     ctx.conversations.set(meta.id, {
+      id: meta.id,
       contactName: identity.contactName,
       name: identity.displayName,
-      groupId: meta.groupId,
       messages: [],
       isReady: meta.isReady,
       mlsStateHex: null,
@@ -253,7 +253,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
           if (
             existingConvo &&
             (existingConvo.conversationType ?? 'group') === 'group' &&
-            !meta.groupId.startsWith('channel_')
+            !meta.id.startsWith('channel_')
           ) {
             try {
               // First check the explicit isGroup flag from the backend — this is
@@ -261,9 +261,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
               // from being misclassified as direct conversations.
               let isGroupFromApi: boolean | null = null;
               try {
-                const gRes = await apiFetch(
-                  `${ctx.historyBaseUrl}/api/mls-api/groups/${meta.groupId}`
-                );
+                const gRes = await apiFetch(`${ctx.historyBaseUrl}/api/mls-api/groups/${meta.id}`);
                 if (gRes.ok) {
                   const gData = await gRes.json();
                   if (typeof gData?.isGroup === 'boolean') {
@@ -277,7 +275,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
               // If the backend explicitly says this is a group, skip member-count heuristic.
               if (isGroupFromApi !== true) {
                 const res = await apiFetch(
-                  `${ctx.historyBaseUrl}/api/mls-api/groups/${meta.groupId}/members`
+                  `${ctx.historyBaseUrl}/api/mls-api/groups/${meta.id}/members`
                 );
                 if (res.ok) {
                   const contentType = res.headers.get('content-type')?.toLowerCase() ?? '';
@@ -330,7 +328,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
           }
           await replayConversationHistory({
             mlsService: ctx.mlsService,
-            groupId: meta.groupId,
+            id: meta.id,
             contactName: meta.id,
             userId: ctx.userId,
             pin: ctx.pin,

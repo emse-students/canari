@@ -169,7 +169,7 @@ describe('startNewConversation', () => {
     convs.set(existingKey, {
       contactName: 'jolan2',
       name: 'jolan & jolan2',
-      groupId: 'g-existing',
+      id: 'g-existing',
       messages: [],
       isReady: true,
       mlsStateHex: null,
@@ -299,9 +299,9 @@ describe('startNewConversation', () => {
     const convo = Array.from(convs.values()).find((c) => c.contactName === 'jolan2');
     expect(convo).toBeDefined();
     expect(convo!.isReady).toBe(true);
-    expect(convo!.groupId).toBe('group-test-uuid');
-    // saveConversation doit être appelé pour persistance avec la clé UUID
-    expect(saveConversation).toHaveBeenCalledWith(expect.stringMatching(/^dm_/));
+    expect(convo!.id).toBe('group-test-uuid');
+    // saveConversation doit être appelé pour persistance avec la clé UUID (= groupId)
+    expect(saveConversation).toHaveBeenCalledWith('group-test-uuid');
   });
 
   it('log [OK] Canal sécurisé avec le nom du contact', async () => {
@@ -413,7 +413,7 @@ describe('createNewGroup', () => {
     convs.set('grp_existing_uuid', {
       contactName: 'dev team',
       name: 'Dev Team',
-      groupId: 'g-old',
+      id: 'g-old',
       messages: [],
       isReady: true,
       mlsStateHex: null,
@@ -450,7 +450,7 @@ describe('createNewGroup', () => {
     const convo = Array.from(convs.values()).find((c) => c.name === 'Projet Alpha');
     expect(convo).toBeDefined();
     expect(convo!.isReady).toBe(true);
-    expect(convo!.groupId).toBe('group-test-uuid');
+    expect(convo!.id).toBe('group-test-uuid');
     expect(convo!.name).toBe('Projet Alpha'); // nom d'affichage préservé
 
     // Verif selectConversation appelé avec une clé UUID
@@ -498,7 +498,7 @@ describe('inviteMemberToGroup', () => {
   const existingConvo: Conversation = {
     contactName: 'dev-team',
     name: 'Dev Team',
-    groupId: 'group-dev-team',
+    id: 'group-dev-team',
     messages: [],
     isReady: true,
     mlsStateHex: null,

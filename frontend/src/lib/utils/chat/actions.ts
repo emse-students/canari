@@ -71,8 +71,8 @@ export async function processPendingInvitations(params: {
 
   for (const [groupId, invitations] of byGroup) {
     // Only process groups where we have a ready local conversation
-    const convo = [...conversations.values()].find((c) => c.groupId === groupId && c.isReady);
-    if (!convo) {
+    const convo = conversations.get(groupId);
+    if (!convo?.isReady) {
       log(`[PENDING] Groupe ${groupId}: pas de conversation locale prête — skip`);
       continue;
     }
@@ -270,7 +270,7 @@ export async function discoverMissingGroups(params: {
 
   // Include both ready and placeholder conversations to avoid recreating
   // the same pending entry on each login.
-  const localGroupIds = new Set([...conversations.values()].map((c) => c.groupId));
+  const localGroupIds = new Set([...conversations.values()].map((c) => c.id));
   const missing = uniqueServerGroups.filter((g) => !localGroupIds.has(g.groupId));
 
   if (missing.length > 0) {
@@ -280,17 +280,16 @@ export async function discoverMissingGroups(params: {
   }
 
   for (const g of missing) {
-    const existingEntry = [...conversations.entries()].find(([, c]) => c.groupId === g.groupId);
-    if (existingEntry) continue;
+    if (conversations.has(g.groupId)) continue;
 
     const directPeer = !g.isGroup ? parseDirectPeerFromName(g.name || '', userId) : null;
     const displayName = directPeer || g.name || g.groupId;
 
-    const key = g.isGroup ? `grp_${crypto.randomUUID()}` : `dm_${crypto.randomUUID()}`;
+    const key = g.groupId; // map key = groupId
     conversations.set(key, {
+      id: g.groupId,
       contactName: displayName,
       name: displayName,
-      groupId: g.groupId,
       messages: [],
       isReady: false, // Not ready until Welcome is processed
       mlsStateHex: null,
@@ -318,16 +317,16 @@ export async function discoverMissingGroups(params: {
     // Fast-path: group already present in local MLS state (restored from backup, etc.)
     // Check this BEFORE hitting the server — no need for member list to activate.
     const localGroups = mlsService.getLocalGroups();
-    if (localGroups.includes(convo.groupId)) {
+    if (localGroups.includes(convo.id)) {
       log(`[DISCOVERY] "${convo.name}": groupe présent dans MLS local — activation directe.`);
       try {
-        await mlsService.registerMember(convo.groupId, userId);
+        await mlsService.registerMember(convo.id, userId);
       } catch {
         /* non-blocking */
       }
       conversations.set(key, { ...convo, isReady: true });
       if (saveConversation) await saveConversation(key);
-      localStorage.removeItem(`discovery_pending:${convo.groupId}`);
+      localStorage.removeItem(`discovery_pending:${convo.id}`);
       continue;
     }
 
@@ -336,7 +335,7 @@ export async function discoverMissingGroups(params: {
 
     let members: { userId: string }[];
     try {
-      members = await mlsService.getGroupMembers(convo.groupId);
+      members = await mlsService.getGroupMembers(convo.id);
     } catch {
       continue;
     }
@@ -349,7 +348,7 @@ export async function discoverMissingGroups(params: {
     const isLeader = memberUserIds[0] === userId.toLowerCase();
 
     // Track how long this placeholder has been pending
-    const pendingKey = `discovery_pending:${convo.groupId}`;
+    const pendingKey = `discovery_pending:${convo.id}`;
     const pendingSince = parseInt(localStorage.getItem(pendingKey) ?? '0', 10);
     if (!pendingSince) {
       localStorage.setItem(pendingKey, String(Date.now()));
@@ -404,7 +403,7 @@ export async function discoverMissingGroups(params: {
       // Use forceCreateGroup to wipe any orphan OpenMLS state from a previous
       // session before creating fresh — avoids recovering stale-epoch state.
       try {
-        await mlsService.forceCreateGroup(convo.groupId);
+        await mlsService.forceCreateGroup(convo.id);
       } catch (createErr) {
         const msg = createErr instanceof Error ? createErr.message : String(createErr);
         if (msg.includes('GroupAlreadyExists')) {
@@ -412,7 +411,7 @@ export async function discoverMissingGroups(params: {
           // Activate directly — the recovered state may have the correct epoch.
           log(`[DISCOVERY] "${convo.name}": groupe déjà présent dans Rust — activation directe.`);
           try {
-            await mlsService.registerMember(convo.groupId, userId);
+            await mlsService.registerMember(convo.id, userId);
           } catch {
             /* non-blocking */
           }
@@ -423,7 +422,7 @@ export async function discoverMissingGroups(params: {
         }
         throw createErr;
       }
-      await mlsService.registerMember(convo.groupId, userId);
+      await mlsService.registerMember(convo.id, userId);
 
       // Collect all members' current devices
       const allDevices: { keyPackage: Uint8Array; deviceId: string }[] = [];
@@ -442,12 +441,12 @@ export async function discoverMissingGroups(params: {
       }
 
       if (allDevices.length > 0) {
-        const bulk = await mlsService.addMembersBulk(convo.groupId, allDevices);
+        const bulk = await mlsService.addMembersBulk(convo.id, allDevices);
 
         for (const did of bulk.addedDeviceIds) {
           const memberUserId = deviceUserMap.get(did);
           if (memberUserId) {
-            await mlsService.registerMember(convo.groupId, memberUserId);
+            await mlsService.registerMember(convo.id, memberUserId);
           }
         }
 
@@ -459,7 +458,7 @@ export async function discoverMissingGroups(params: {
                 await mlsService.sendWelcome(
                   bulk.welcome,
                   memberUserId,
-                  convo.groupId,
+                  convo.id,
                   did,
                   bulk.ratchetTree
                 );
@@ -481,8 +480,8 @@ export async function discoverMissingGroups(params: {
           // MLS session. The server still remembers the old activeEpoch from the
           // previous session — without this reset, baseEpoch=0 would mismatch
           // and the gateway would reject the commit with epoch_rejected.
-          await mlsService.resetGroupEpoch(convo.groupId);
-          await mlsService.sendCommit(bulk.commit, convo.groupId);
+          await mlsService.resetGroupEpoch(convo.id);
+          await mlsService.sendCommit(bulk.commit, convo.id);
         }
       }
 
@@ -624,8 +623,8 @@ export async function handleWelcomeRequest(params: {
   } = params;
 
   // Only handle if we have a ready conversation for this group
-  const convo = [...conversations.values()].find((c) => c.groupId === groupId && c.isReady);
-  if (!convo) {
+  const convo = conversations.get(groupId);
+  if (!convo?.isReady) {
     log(`[WELCOME_REQ] Pas de conversation prête pour ${groupId} — skip`);
     return;
   }

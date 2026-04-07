@@ -196,7 +196,7 @@ export function useChannelWorkspaces() {
             ctx.conversations.set(channelConversationId, {
               contactName: channelConversationId,
               name: channel.name,
-              groupId: channelConversationId,
+              id: channelConversationId,
               messages: [],
               isReady: true,
               mlsStateHex: null,
@@ -276,7 +276,7 @@ export function useChannelWorkspaces() {
         ctx.conversations.set(channelId, {
           contactName: channelId,
           name: normalizedChannelName,
-          groupId: channelId,
+          id: channelId,
           messages: [],
           isReady: true,
           mlsStateHex: null,

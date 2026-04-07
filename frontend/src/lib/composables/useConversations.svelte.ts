@@ -70,18 +70,16 @@ export function useConversations() {
 
   // ── Storage helpers ───────────────────────────────────────────────────────
 
-  async function saveConversation(contactName: string, ctx: ConversationContext) {
+  async function saveConversation(id: string, ctx: ConversationContext) {
     if (!ctx.storage) return;
-    const normalized = contactName.toLowerCase();
-    const convo = conversations.get(normalized);
+    const convo = conversations.get(id);
     if (!convo) return;
     const persistedName =
       (convo.conversationType ?? 'group') === 'direct'
         ? `${ctx.userId.toLowerCase()}::${(convo.directPeerId ?? convo.contactName).toLowerCase()}`
         : convo.name;
     await ctx.storage.saveConversation({
-      id: normalized,
-      groupId: convo.groupId,
+      id: id,
       name: persistedName,
       isReady: convo.isReady,
       updatedAt: Date.now(),
@@ -90,7 +88,7 @@ export function useConversations() {
 
   async function loadHistoryForConversation(
     contactName: string,
-    groupId: string,
+    id: string,
     ctx: ConversationContext
   ) {
     // Channel conversations: load via REST API instead of MLS replay
@@ -102,7 +100,7 @@ export function useConversations() {
     const { replayConversationHistory } = await import('$lib/utils/chat/history');
     await replayConversationHistory({
       mlsService: ctx.ensureMls(),
-      groupId,
+      id,
       contactName,
       userId: ctx.userId,
       pin: ctx.pin,
@@ -213,8 +211,8 @@ export function useConversations() {
     sendError = '';
     const convo = conversations.get(name);
     if (convo) conversations.set(name, { ...convo, unreadCount: 0 });
-    if (convo?.groupId) {
-      void loadGroupMembers(convo.groupId, null);
+    if (convo?.id) {
+      void loadGroupMembers(convo.id, null);
     }
   }
 
@@ -226,8 +224,8 @@ export function useConversations() {
     sendError = '';
     const convo = conversations.get(name);
     if (convo) conversations.set(name, { ...convo, unreadCount: 0 });
-    if (convo?.groupId) {
-      void loadGroupMembers(convo.groupId, ctx);
+    if (convo?.id) {
+      void loadGroupMembers(convo.id, ctx);
       void verifyCurrentUserMembership(name, ctx);
     }
   }
@@ -239,14 +237,14 @@ export function useConversations() {
 
   // ── Group members ─────────────────────────────────────────────────────────
 
-  async function loadGroupMembers(groupId: string, ctx: ConversationContext | null) {
+  async function loadGroupMembers(id: string, ctx: ConversationContext | null) {
     if (!ctx) return;
-    if (groupId.startsWith('channel_')) {
+    if (id.startsWith('channel_')) {
       groupMembers = [];
       return;
     }
     try {
-      groupMembers = await fetchUniqueGroupMembers(ctx.ensureMls(), groupId);
+      groupMembers = await fetchUniqueGroupMembers(ctx.ensureMls(), id);
     } catch (e) {
       console.warn('[GroupMembers]', e);
       groupMembers = [];
@@ -259,10 +257,10 @@ export function useConversations() {
   ): Promise<boolean> {
     const convo = conversations.get(contactName);
     if (!convo) return false;
-    if (convo.groupId.startsWith('channel_')) return true;
+    if (convo.id.startsWith('channel_')) return true;
     try {
       const mlsService = ctx.ensureMls();
-      const members = await fetchUniqueGroupMembers(mlsService, convo.groupId);
+      const members = await fetchUniqueGroupMembers(mlsService, convo.id);
       if (members.length === 0) return true;
       const stillMember = members.some((m) => m.toLowerCase() === ctx.userId.toLowerCase());
       if (stillMember) return true;
@@ -270,13 +268,13 @@ export function useConversations() {
       // Self-heal transient server drift first: re-register this device in the
       // gateway membership set, then re-check before attempting any heavy repair.
       try {
-        await mlsService.registerMember(convo.groupId, ctx.userId);
-        const repairedMembers = await fetchUniqueGroupMembers(mlsService, convo.groupId);
+        await mlsService.registerMember(convo.id, ctx.userId);
+        const repairedMembers = await fetchUniqueGroupMembers(mlsService, convo.id);
         const backInGroup = repairedMembers.some(
           (m) => m.toLowerCase() === ctx.userId.toLowerCase()
         );
         if (backInGroup) {
-          ctx.log(`[SYNC] Réinscription serveur réussie pour ${convo.groupId}.`);
+          ctx.log(`[SYNC] Réinscription serveur réussie pour ${convo.id}.`);
           return true;
         }
       } catch {
@@ -285,11 +283,11 @@ export function useConversations() {
 
       if (convo.conversationType === 'direct') {
         const localGroups = new SvelteSet(mlsService.getLocalGroups());
-        if (localGroups.has(convo.groupId)) {
+        if (localGroups.has(convo.id)) {
           // We still have valid local MLS state: avoid destructive auto-repair
           // (new group creation) and keep operating while sync converges.
           ctx.log(
-            `[WARN] Appartenance serveur absente pour ${convo.groupId}, réparation lourde ignorée (état MLS local présent).`
+            `[WARN] Appartenance serveur absente pour ${convo.id}, réparation lourde ignorée (état MLS local présent).`
           );
           return true;
         }
@@ -339,6 +337,7 @@ export function useConversations() {
     if (!selectedContact) return;
     const convo = conversations.get(selectedContact);
     if (!convo) return;
+    if ((convo.conversationType ?? 'group') !== 'group') return; // DMs and channels cannot be invaded
     const normalized = [
       ...new SvelteSet(memberIds.map((id) => id.trim().toLowerCase()).filter(Boolean)),
     ];
@@ -354,7 +353,7 @@ export function useConversations() {
       saveConversation: (name) => saveConversation(name, ctx),
       log: ctx.log,
     });
-    await loadGroupMembers(convo.groupId, ctx);
+    await loadGroupMembers(convo.id, ctx);
   }
 
   async function startNewConversation(contactNameRaw: string, ctx: ConversationContext) {
@@ -375,10 +374,11 @@ export function useConversations() {
     if (!selectedContact) return;
     const convo = conversations.get(selectedContact);
     if (!convo) return;
+    if ((convo.conversationType ?? 'group') !== 'group') return; // only named groups can be renamed
     try {
       await renameGroupAndBroadcast({
         mlsService: ctx.ensureMls(),
-        groupId: convo.groupId,
+        groupId: convo.id,
         newName: name,
         userId: ctx.userId,
         pin: ctx.pin,
@@ -406,7 +406,7 @@ export function useConversations() {
 
     // Forget MLS state
     try {
-      ctx.ensureMls().forgetGroup(convo.groupId, 0);
+      ctx.ensureMls().forgetGroup(convo.id, 0);
     } catch {
       /* non-blocking */
     }
@@ -438,7 +438,7 @@ export function useConversations() {
     try {
       await removeMemberAndBroadcast({
         mlsService: ctx.ensureMls(),
-        groupId: convo.groupId,
+        groupId: convo.id,
         memberId,
         userId: ctx.userId,
         pin: ctx.pin,
@@ -451,7 +451,7 @@ export function useConversations() {
         undefined,
         true
       );
-      await loadGroupMembers(convo.groupId, ctx);
+      await loadGroupMembers(convo.id, ctx);
       ctx.log(`${memberId} retire du groupe.`);
     } catch (e) {
       ctx.log(`Erreur retrait membre: ${e instanceof Error ? e.message : String(e)}`);

@@ -308,15 +308,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
 
         // We now rely on the backend echo for our own messages in channels
         // Check if we have this channel in our conversations list
-        let convoKey: string | undefined = conversations.has(channelId) ? channelId : undefined;
-        if (!convoKey) {
-          for (const [k, c] of conversations.entries()) {
-            if (c.groupId === channelId) {
-              convoKey = k;
-              break;
-            }
-          }
-        }
+        // Since the map is keyed by id (= groupId), a direct has() check is sufficient.
+        const convoKey: string | undefined = conversations.has(channelId) ? channelId : undefined;
 
         if (convoKey) {
           let content = '[Message chiffré]';
@@ -393,15 +386,10 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         return true;
       }
 
-      // Find conversation by groupId or sender
+      // Find conversation by groupId — the map is now keyed by id = groupId, so O(1) lookup.
       let convoKey: string | undefined;
       if (groupId) {
-        for (const [k, c] of conversations.entries()) {
-          if (c.groupId === groupId) {
-            convoKey = k;
-            break;
-          }
-        }
+        convoKey = conversations.has(groupId) ? groupId : undefined;
       }
 
       // Log de la décision de routage
@@ -484,9 +472,9 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       if (convoKey && !isWelcome) {
         const convo = conversations.get(convoKey)!;
         try {
-          const decryptedBytes = await mlsService.processIncomingMessage(convo.groupId, content);
+          const decryptedBytes = await mlsService.processIncomingMessage(convo.id, content);
           log(
-            `[MLS] processIncomingMessage(${convo.groupId}) → ${decryptedBytes ? decryptedBytes.length + ' octets déchiffrés' : 'null (commit structural ou payload vide)'}`
+            `[MLS] processIncomingMessage(${convo.id}) → ${decryptedBytes ? decryptedBytes.length + ' octets déchiffrés' : 'null (commit structural ou payload vide)'}`
           );
 
           // Auto-save MLS state
@@ -810,10 +798,10 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             if (nullCount >= NULL_APP_THRESHOLD) {
               epochRecoveryGroups.add(convoKey);
               log(`[RECOVER] Etat MLS suspect sur "${convoKey}" — oubli MLS + reinvite_request`);
-              mlsService.forgetGroup(convo.groupId);
+              mlsService.forgetGroup(convo.id);
               conversations.set(convoKey, { ...convo, isReady: false });
               if (storage) saveConversation(convoKey).catch(() => {});
-              mlsService.sendReinviteRequest(convo.groupId);
+              mlsService.sendReinviteRequest(convo.id);
             }
           }
           // Reset phantom failure counter on any successful processing
@@ -852,10 +840,10 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               log(
                 `[RECOVER] Epoch périmée sur "${convoKey}" (local: ${ge}, msg: ${me}) — oubli MLS + reinvite_request`
               );
-              mlsService.forgetGroup(convo.groupId, me); // Fix F: min_epoch = me
+              mlsService.forgetGroup(convo.id, me); // Fix F: min_epoch = me
               conversations.set(convoKey, { ...convo, isReady: false });
               if (storage) saveConversation(convoKey).catch(() => {});
-              mlsService.sendReinviteRequest(convo.groupId);
+              mlsService.sendReinviteRequest(convo.id);
             }
             // Fix E: me === ge + SenderDataDecryption = secrets divergés (race condition)
             if (
@@ -867,10 +855,10 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               log(
                 `[RECOVER] Divergence secrets (SenderDataDecryption) sur "${convoKey}" (epoch: ${ge}) — oubli MLS + reinvite_request`
               );
-              mlsService.forgetGroup(convo.groupId, ge); // Fix F: min_epoch = ge
+              mlsService.forgetGroup(convo.id, ge); // Fix F: min_epoch = ge
               conversations.set(convoKey, { ...convo, isReady: false });
               if (storage) saveConversation(convoKey).catch(() => {});
-              mlsService.sendReinviteRequest(convo.groupId);
+              mlsService.sendReinviteRequest(convo.id);
             }
             return true; // ACK toujours pour les erreurs d'epoch
           }
@@ -885,10 +873,10 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             log(
               `[RECOVER] Divergence secrets (SenderDataDecryption) sur "${convoKey}" — oubli MLS + reinvite_request`
             );
-            mlsService.forgetGroup(convo.groupId);
+            mlsService.forgetGroup(convo.id);
             conversations.set(convoKey, { ...convo, isReady: false });
             if (storage) saveConversation(convoKey).catch(() => {});
-            mlsService.sendReinviteRequest(convo.groupId);
+            mlsService.sendReinviteRequest(convo.id);
             return true;
           }
 
@@ -1049,7 +1037,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         }
         // If isGroupFromApi === true, it's explicitly a group, so isDirect stays false
 
-        let newConvoKey = `grp_${crypto.randomUUID()}`;
+        // Since the map is keyed by groupId, find directly.
+        let newConvoKey = joinedGroupId; // default — map key = groupId
         let matchedExisting = false;
 
         if (isDirect) {
@@ -1060,17 +1049,11 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           if (existingDirect) {
             newConvoKey = existingDirect[0];
             matchedExisting = true;
-          } else {
-            newConvoKey = `dm_${crypto.randomUUID()}`;
           }
         } else {
           // For groups: check if a placeholder already exists with this groupId
-          // (created by discoverMissingGroups or a previous partial Welcome)
-          const existingGroup = Array.from(conversations.entries()).find(
-            ([, convo]) => convo.groupId === joinedGroupId
-          );
-          if (existingGroup) {
-            newConvoKey = existingGroup[0];
+          if (conversations.has(joinedGroupId)) {
+            newConvoKey = joinedGroupId;
             matchedExisting = true;
           }
         }
@@ -1079,7 +1062,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           const convo = conversations.get(newConvoKey)!;
           conversations.set(newConvoKey, {
             ...convo,
-            groupId: joinedGroupId,
+            id: joinedGroupId,
             name: isDirect ? directPeerId : groupName,
             isReady: true,
           });
@@ -1087,11 +1070,11 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           epochRecoveryGroups.delete(newConvoKey);
           if (storage) await saveConversation(newConvoKey);
         } else {
-          // Create new conversation
+          // Create new conversation (key = joinedGroupId)
           conversations.set(newConvoKey, {
+            id: joinedGroupId,
             contactName: isDirect ? directPeerId : groupName,
             name: isDirect ? directPeerId : groupName,
-            groupId: joinedGroupId,
             messages: [],
             isReady: true,
             mlsStateHex: null,

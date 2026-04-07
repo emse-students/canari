@@ -73,7 +73,7 @@ export async function buildLocalSyncManifest(
       messages.sort(byTimestampThenId);
       return {
         conversationId: encodeConversationTransportId(normalizedId),
-        groupId: conv.groupId,
+        groupId: conv.id,
         updatedAt: conv.updatedAt,
         messageIds: messages.map((m) => m.id),
       };
@@ -169,7 +169,6 @@ export async function buildTransferChunksForMissing(
     const decoded = normalizeConversationId(decodeConversationTransportId(conversationId));
     return {
       id: decoded,
-      groupId: decoded,
       name: decoded,
       isReady: false,
       updatedAt: Date.now(),

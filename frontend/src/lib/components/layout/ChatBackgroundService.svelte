@@ -160,9 +160,9 @@
         });
         if (!globalConvs.conversations.has(channelConversationId)) {
           globalConvs.conversations.set(channelConversationId, {
+            id: channelConversationId,
             contactName: channelConversationId,
             name: (event.channelName || 'canal').toLowerCase(),
-            groupId: channelConversationId,
             messages: [],
             isReady: true,
             mlsStateHex: null,

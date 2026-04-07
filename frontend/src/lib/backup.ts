@@ -204,17 +204,32 @@ export async function importBackup(
   // exporterDeviceId are treated as same-device to preserve previous behaviour.
   const isSameDevice = !backup.exporterDeviceId || backup.exporterDeviceId === currentDeviceId;
 
+  // Build a set of groupIds already present locally so we can skip backup
+  // conversations that map to an already-tracked group (possibly under a
+  // different key / conversation name).  Without this guard, a backup made
+  // after a conversation rename would insert a second entry for the same MLS
+  // group, causing duplicated UI entries that share a single MLS state.
+  const existingConvs = await storage.getConversations();
+  const existingGroupIds = new Set(existingConvs.map((c) => c.id));
+
   // Merge conversation metadata: INSERT OR IGNORE so a device that already
   // has the conversation keeps its live (newer) state.
   // On a different device, force isReady = false: the device is not yet a
   // cryptographic member of these groups and must wait for Welcome messages.
   for (const conv of backup.conversations) {
+    // Skip if another local conversation already covers this MLS group.
+    if (existingGroupIds.has(conv.id)) continue;
     await storage.mergeConversation(isSameDevice ? conv : { ...conv, isReady: false });
   }
 
   // Merge message rows: INSERT OR IGNORE so messages received on this device
   // after the backup was taken are never overwritten.
+  // Only import rows whose conversationId is either already local or was just
+  // inserted from this backup (skip orphan rows for skipped conversations).
+  const allConvsAfterMerge = await storage.getConversations();
+  const knownConvIds = new Set(allConvsAfterMerge.map((c) => c.id));
   for (const msg of backup.messages) {
+    if (!knownConvIds.has(msg.conversationId)) continue;
     await storage.importEncryptedRow({
       id: msg.id,
       conversationId: msg.conversationId,
