@@ -236,26 +236,6 @@ async fn handle_socket(
                         };
 
                         log_routing_diagnostics(&state, &user_id, &device_id, &frame).await;
-
-                        let conn = WsConn {
-                            state: &state,
-                            user_id: &user_id,
-                            device_id: &device_id,
-                            tx: &tx,
-                        };
-
-                        match frame.msg_type.as_str() {
-                            "read" => {
-                                // No-op: read receipts are handled at the application layer.
-                            }
-                            _ => {
-                                tracing::warn!(
-                                    "Unknown message type '{}' from {}",
-                                    frame.msg_type,
-                                    user_id
-                                );
-                            }
-                        }
                     }
                     Ok(Message::Close(c)) => {
                         tracing::info!("Client closed connection: {:?}", c);
