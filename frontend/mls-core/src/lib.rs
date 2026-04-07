@@ -6,8 +6,8 @@ use openmls::prelude::*;
 use openmls::treesync::RatchetTreeIn;
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
-use openmls_traits::OpenMlsProvider;
 use openmls_traits::storage::StorageProvider; // Explicit import for write_key_package
+use openmls_traits::OpenMlsProvider;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
@@ -74,6 +74,7 @@ impl MlsManager {
 
     pub fn load_or_create(
         user_id: &str,
+        device_id: &str,
         decrypted_state: Option<Vec<u8>>,
     ) -> Result<Self, MlsError> {
         let provider = OpenMlsRustCrypto::default();
@@ -130,7 +131,8 @@ impl MlsManager {
             let keypair = SignatureKeyPair::new(ciphersuite.signature_algorithm())
                 .map_err(|e| MlsError::OpenMls(format!("{:?}", e)))?;
 
-            let credential = BasicCredential::new(user_id.as_bytes().to_vec());
+            let credential =
+                BasicCredential::new(format!("{}:{}", user_id, device_id).into_bytes());
 
             Ok(Self {
                 provider,
@@ -304,6 +306,57 @@ impl MlsManager {
             return Err(MlsError::OpenMls(format!(
                 "Aucun membre trouvé pour les identités : {:?}",
                 user_ids
+            )));
+        }
+
+        let (commit_msg_out, _welcome, _group_info) = group
+            .remove_members(&self.provider, &self.keypair, &leaf_indices)
+            .map_err(|e| MlsError::OpenMls(format!("RemoveMembers error: {:?}", e)))?;
+
+        group
+            .merge_pending_commit(&self.provider)
+            .map_err(|e| MlsError::OpenMls(format!("Merge error: {:?}", e)))?;
+
+        commit_msg_out
+            .tls_serialize_detached()
+            .map_err(|e| MlsError::OpenMls(e.to_string()))
+    }
+
+    /// Remove leaf nodes whose credential identity exactly matches any of the provided
+    /// `userId:deviceId` strings. Use this to remove a specific device without
+    /// affecting other devices of the same user.
+    pub fn remove_members_for_devices(
+        &mut self,
+        group_id: &str,
+        device_identities: &[&str],
+    ) -> Result<Vec<u8>, MlsError> {
+        let group = self
+            .groups
+            .get_mut(group_id)
+            .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
+
+        let leaf_indices: Vec<LeafNodeIndex> = group
+            .members()
+            .filter_map(|m| {
+                let identity = BasicCredential::try_from(m.credential.clone())
+                    .ok()
+                    .map(|bc| bc.identity().to_vec())
+                    .unwrap_or_default();
+                if device_identities
+                    .iter()
+                    .any(|did| did.as_bytes() == identity.as_slice())
+                {
+                    Some(m.index)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if leaf_indices.is_empty() {
+            return Err(MlsError::OpenMls(format!(
+                "Aucun membre trouvé pour les identités : {:?}",
+                device_identities
             )));
         }
 
@@ -705,6 +758,7 @@ impl MlsManager {
 
     pub fn load_encrypted(
         user_id: &str,
+        device_id: &str,
         encrypted_blob: Option<Vec<u8>>,
         pin: &str,
     ) -> Result<Self, MlsError> {
@@ -726,7 +780,7 @@ impl MlsManager {
             None
         };
 
-        Self::load_or_create(user_id, decrypted_state)
+        Self::load_or_create(user_id, device_id, decrypted_state)
     }
 
     // --- G. EXPORT SECRET (WebRTC / Call) ---

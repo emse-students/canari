@@ -55,7 +55,8 @@ function makeMls(overrides: Partial<IMlsService> = {}): IMlsService {
     getPendingInvitations: vi.fn().mockResolvedValue([]),
     getDeviceMemberships: vi.fn().mockResolvedValue([]),
     updateInvitationStatus: vi.fn().mockResolvedValue({ status: 'added' }),
-    kickStaleUser: vi.fn().mockResolvedValue(undefined),
+    kickStaleDevice: vi.fn().mockResolvedValue(undefined),
+    removeMemberDevice: vi.fn().mockResolvedValue(undefined),
     resetGroupEpoch: vi.fn().mockResolvedValue(undefined),
     deleteDeviceMembership: vi.fn().mockResolvedValue({ status: 'deleted', affected: 1 }),
     deleteAllDeviceMemberships: vi.fn().mockResolvedValue({ status: 'deleted', affected: 0 }),
@@ -154,7 +155,7 @@ describe('discoverMissingGroups', () => {
     // Should NOT re-bootstrap (force_create_group would destroy the existing state)
     expect(forceCreateGroup).not.toHaveBeenCalled();
     // Should register this device on the gateway
-    expect(registerMember).toHaveBeenCalledWith('g-1', 'jolan', 'dev-main');
+    expect(registerMember).toHaveBeenCalledWith('g-1', 'jolan');
     // Conversation should be ready
     const conv = [...convs.values()].find((c) => c.groupId === 'g-1');
     expect(conv?.isReady).toBe(true);
@@ -468,7 +469,7 @@ describe('processPendingInvitations', () => {
     await promise;
 
     expect(mls.addMember).toHaveBeenCalledWith('g-1', new Uint8Array([1]));
-    expect(mls.registerMember).toHaveBeenCalledWith('g-1', 'alice', 'dev-alice');
+    expect(mls.registerMember).toHaveBeenCalledWith('g-1', 'alice');
     expect(mls.sendWelcome).toHaveBeenCalled();
     expect(mls.sendCommit).toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith(expect.stringContaining('Welcome'));

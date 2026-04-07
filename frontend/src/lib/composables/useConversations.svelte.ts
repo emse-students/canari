@@ -270,7 +270,7 @@ export function useConversations() {
       // Self-heal transient server drift first: re-register this device in the
       // gateway membership set, then re-check before attempting any heavy repair.
       try {
-        await mlsService.registerMember(convo.groupId, ctx.userId, mlsService.getDeviceId());
+        await mlsService.registerMember(convo.groupId, ctx.userId);
         const repairedMembers = await fetchUniqueGroupMembers(mlsService, convo.groupId);
         const backInGroup = repairedMembers.some(
           (m) => m.toLowerCase() === ctx.userId.toLowerCase()

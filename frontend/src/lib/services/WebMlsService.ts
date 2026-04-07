@@ -33,7 +33,6 @@ export class WebMlsService implements IMlsService {
   private welcomeRequestCallback:
     | ((requesterUserId: string, requesterDeviceId: string, groupId: string) => void)
     | null = null;
-  private noPeerOnlineCallback: ((groupId: string) => void) | null = null;
   private baseUrl: string; // Chat Gateway URL
   private historyUrl: string; // Chat Delivery Service URL
   private authToken: string | null = null;
@@ -47,8 +46,6 @@ export class WebMlsService implements IMlsService {
   private isProcessingQueue = false;
   // Groups currently being joined (Welcome in progress) - buffer messages for these
   private pendingWelcomeGroups = new Map<string, QueuedMessage[]>();
-  private pendingAcks = new Map<string, () => void>();
-
   private withAuthHeaders(extra: Record<string, string> = {}): Record<string, string> {
     const headers: Record<string, string> = { ...extra };
     if (this.authToken) {
@@ -210,20 +207,6 @@ export class WebMlsService implements IMlsService {
               `[WS RCV] welcome_request from ${requesterUserId}:${requesterDeviceId} for group ${groupId}`
             );
             this.welcomeRequestCallback?.(requesterUserId, requesterDeviceId, groupId);
-            return;
-          }
-          if (msg.type === 'no_peer_online') {
-            const groupId = (msg.groupId as string) || '';
-            console.log(`[WS RCV] no_peer_online for group ${groupId}`);
-            this.noPeerOnlineCallback?.(groupId);
-            return;
-          }
-          if (msg.type === 'message_sent') {
-            const msgId = (msg.messageId as string) || '';
-            if (msgId) {
-              this.pendingAcks.get(msgId)?.();
-              this.pendingAcks.delete(msgId);
-            }
             return;
           }
           if (msg.type === 'epoch_rejected') {
@@ -432,49 +415,10 @@ export class WebMlsService implements IMlsService {
     this.welcomeRequestCallback = callback;
   }
 
-  onNoPeerOnline(callback: (groupId: string) => void): void {
-    this.noPeerOnlineCallback = callback;
-  }
-
   async fetchPendingMessages() {
     if (this.userId === 'unknown') return;
 
     const FETCH_TIMEOUT = 10_000;
-
-    // Fetch pending welcome messages (group invitations stored while offline)
-    try {
-      const ctrl = new AbortController();
-      const tid = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT);
-      const wRes = await fetch(`${this.historyUrl}/api/mls-api/welcome/${this.deviceId}`, {
-        headers: this.withAuthHeaders(),
-        signal: ctrl.signal,
-      });
-      clearTimeout(tid);
-      if (wRes.ok) {
-        const welcomes = await wRes.json();
-        if (Array.isArray(welcomes) && welcomes.length > 0) {
-          console.log(`Fetched ${welcomes.length} pending welcome message(s)`);
-          for (const w of welcomes) {
-            // Normalise the stored welcome into the same shape simulateMessageReceive expects
-            await this.simulateMessageReceive({
-              type: 'mlsWelcome',
-              content: w.message,
-              senderId: w.senderUserId ?? 'system', // senderUserId = the inviter, NOT the recipient
-              groupId: w.groupId,
-              ratchetTree: w.ratchetTree,
-            });
-          }
-        } else {
-          console.log(`[WELCOME][PENDING] No pending welcome for device ${this.deviceId}`);
-        }
-      } else {
-        console.warn(
-          `[WELCOME][PENDING] Welcome fetch failed: ${wRes.status} ${wRes.statusText} (device=${this.deviceId})`
-        );
-      }
-    } catch (e) {
-      console.error('Failed to fetch pending welcome messages', e);
-    }
 
     try {
       const ctrl2 = new AbortController();
@@ -625,12 +569,12 @@ export class WebMlsService implements IMlsService {
     }
   }
 
-  async registerMember(groupId: string, userId: string, deviceId: string): Promise<void> {
+  async registerMember(groupId: string, userId: string): Promise<void> {
     try {
       await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}/members`, {
         method: 'POST',
         headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ userId, deviceId }),
+        body: JSON.stringify({ userId }),
       });
     } catch (e) {
       console.error('Failed to register member', e);
@@ -662,88 +606,38 @@ export class WebMlsService implements IMlsService {
     targetDeviceId?: string,
     ratchetTreeBytes?: Uint8Array
   ): Promise<void> {
-    console.log(
-      `[MLS] sendWelcome called: target=${targetUserId}:${targetDeviceId}, group=${groupId}, welcomeLen=${welcomeBytes.length}, treeLen=${ratchetTreeBytes?.length ?? 0}`
-    );
     const base64 = btoa(String.fromCharCode(...welcomeBytes));
     const ratchetTreeBase64 = ratchetTreeBytes
       ? btoa(String.fromCharCode(...ratchetTreeBytes))
       : undefined;
 
-    if (targetDeviceId) {
-      // Dedicated welcome endpoint: persists to MongoDB (offline inbox) and pushes
-      // via Redis pubsub if the target device is currently online.
-      console.log(`[MLS] POSTing Welcome to ${this.historyUrl}/api/mls-api/welcome`);
-      const response = await fetch(`${this.historyUrl}/api/mls-api/welcome`, {
-        method: 'POST',
-        headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({
-          targetDeviceId,
-          targetUserId, // required to disambiguate when device IDs collide
-          senderUserId: this.userId,
-          welcomePayload: base64,
-          ratchetTreePayload: ratchetTreeBase64,
-          groupId,
-        }),
-      });
-      console.log(`[MLS] Welcome POST response: ${response.status}`);
-      await this.assertOkResponse(
-        response,
-        `Welcome delivery to ${targetUserId}:${targetDeviceId} (group ${groupId})`
-      );
-    } else if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      // WS path: we need a deviceId for the gateway to route properly.
-      // If caller didn't provide one, resolve it from the delivery service.
-      let resolvedDeviceId = targetDeviceId;
-      if (!resolvedDeviceId) {
-        const devices = await this.fetchUserDevices(targetUserId);
-        resolvedDeviceId = devices[0]?.deviceId;
-      }
-      if (!resolvedDeviceId) {
-        throw new Error(
-          `Impossible d'envoyer l'invitation sécurisée à ${targetUserId} : ` +
-            `aucun appareil actif trouvé.`
-        );
-      }
-      this.ws.send(
-        JSON.stringify({
-          type: 'welcome',
-          groupId,
-          proto: btoa(String.fromCharCode(...welcomeBytes)),
-          ratchetTree: ratchetTreeBase64,
-          recipients: [{ userId: targetUserId, deviceId: resolvedDeviceId }],
-        })
-      );
-    } else {
-      // WS closed fallback: resolve deviceId and use the dedicated REST endpoint.
-      let resolvedDeviceId = targetDeviceId;
-      if (!resolvedDeviceId) {
-        const devices = await this.fetchUserDevices(targetUserId);
-        resolvedDeviceId = devices[0]?.deviceId;
-      }
-      if (!resolvedDeviceId) {
-        throw new Error(
-          `Impossible d'envoyer l'invitation sécurisée à ${targetUserId} : ` +
-            `aucun appareil actif trouvé.`
-        );
-      }
-      const response = await fetch(`${this.historyUrl}/api/mls-api/welcome`, {
-        method: 'POST',
-        headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({
-          targetDeviceId: resolvedDeviceId,
-          targetUserId,
-          senderUserId: this.userId,
-          welcomePayload: base64,
-          ratchetTreePayload: ratchetTreeBase64,
-          groupId,
-        }),
-      });
-      await this.assertOkResponse(
-        response,
-        `Welcome fallback delivery to ${targetUserId}:${resolvedDeviceId} (group ${groupId})`
+    let resolvedDeviceId = targetDeviceId;
+    if (!resolvedDeviceId) {
+      const devices = await this.fetchUserDevices(targetUserId);
+      resolvedDeviceId = devices[0]?.deviceId;
+    }
+    if (!resolvedDeviceId) {
+      throw new Error(
+        `Impossible d'envoyer l'invitation sécurisée à ${targetUserId} : ` +
+          `aucun appareil actif trouvé.`
       );
     }
+    const response = await fetch(`${this.historyUrl}/api/mls-api/welcome`, {
+      method: 'POST',
+      headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        targetDeviceId: resolvedDeviceId,
+        targetUserId,
+        senderUserId: this.userId,
+        welcomePayload: base64,
+        ratchetTreePayload: ratchetTreeBase64,
+        groupId,
+      }),
+    });
+    await this.assertOkResponse(
+      response,
+      `Welcome delivery to ${targetUserId}:${resolvedDeviceId} (group ${groupId})`
+    );
   }
 
   async sendCommit(
@@ -757,16 +651,10 @@ export class WebMlsService implements IMlsService {
     const currentEpoch = this.getEpoch(groupId);
     const baseEpoch = Math.max(0, currentEpoch - 1);
 
-    // Step 1: Validate epoch synchronously via HTTP — the caller will know
-    // immediately whether the commit was accepted or rejected.
     const validateRes = await fetch(`${this.historyUrl}/api/mls-api/commit`, {
       method: 'POST',
       headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({
-        groupId,
-        deviceId: this.deviceId,
-        baseEpoch,
-      }),
+      body: JSON.stringify({ groupId, deviceId: this.deviceId, baseEpoch }),
     });
     if (!validateRes.ok) {
       throw new Error(`Commit validation HTTP error: ${validateRes.status}`);
@@ -778,30 +666,20 @@ export class WebMlsService implements IMlsService {
       );
     }
 
-    // Step 2: Epoch advanced server-side — broadcast the commit to other
-    // members.  We send as type 'mls' so the gateway broadcasts directly
-    // without re-running epoch validation.
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(
-        JSON.stringify({
-          type: 'mls',
-          groupId,
-          proto,
-          ...(excludeDeviceIds?.length ? { excludeDeviceIds } : {}),
-        })
-      );
-    } else {
-      await fetch(`${this.historyUrl}/api/mls-api/send`, {
-        method: 'POST',
-        headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({
-          senderId: this.userId,
-          senderDeviceId: this.deviceId,
-          groupId,
-          content: proto,
-          type: 'handshake',
-        }),
-      });
+    const res = await fetch(`${this.historyUrl}/api/mls-api/send`, {
+      method: 'POST',
+      headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        senderId: this.userId,
+        senderDeviceId: this.deviceId,
+        groupId,
+        proto,
+        isCommit: true,
+        ...(excludeDeviceIds?.length ? { excludeDeviceIds } : {}),
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`Commit delivery HTTP error: ${res.status}`);
     }
   }
 
@@ -926,7 +804,7 @@ export class WebMlsService implements IMlsService {
         initWasm.init_logger();
       }
 
-      this.client = new initWasm.WasmMlsClient(userId, state, pin);
+      this.client = new initWasm.WasmMlsClient(userId, this.deviceId, state, pin);
     } catch (e) {
       console.error('WASM Init Failed:', e);
       throw e;
@@ -1026,79 +904,24 @@ export class WebMlsService implements IMlsService {
   async sendMessage(
     groupId: string,
     messageBytes: Uint8Array,
-    messageId?: string
+    _messageId?: string
   ): Promise<Uint8Array> {
-    console.log(
-      `[WS SEND] sendMessage: groupId=${groupId} input=${messageBytes.length}b wsState=${this.ws?.readyState ?? 'null'} (OPEN=1)`
-    );
     const encryptedBytes: Uint8Array = this.client.send_message_bytes(groupId, messageBytes);
-    console.log(`[WS SEND] WASM encrypted: ${encryptedBytes.length}b`);
-
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      try {
-        // If messageId provided, register a pending ACK before sending so the
-        // gateway's `message_sent` reply can resolve it.
-        const ackPromise: Promise<void> = messageId
-          ? new Promise<void>((resolve) => {
-              const timer = setTimeout(() => {
-                this.pendingAcks.delete(messageId!);
-                console.warn(`[WS SEND] ACK timeout for messageId=${messageId}`);
-                resolve(); // resolve anyway — don't freeze the UI on timeout
-              }, 5_000);
-              this.pendingAcks.set(messageId!, () => {
-                clearTimeout(timer);
-                resolve();
-              });
-            })
-          : Promise.resolve();
-
-        this.ws.send(
-          JSON.stringify({
-            type: 'mls',
-            groupId,
-            proto: btoa(String.fromCharCode(...encryptedBytes)),
-            ...(messageId ? { messageId } : {}),
-          })
-        );
-        console.log(
-          `[WS SEND] Sent via WebSocket OK (${encryptedBytes.length}b)${messageId ? ', awaiting ACK...' : ''}`
-        );
-        await ackPromise;
-        if (messageId) console.log(`[WS SEND] ACK received for messageId=${messageId}`);
-      } catch (wsErr) {
-        // WebSocket closed between readyState check and send — fall through to HTTP
-        console.warn('[WS SEND] WebSocket send failed, falling back to HTTP:', wsErr);
-        await this.sendViaHttp(encryptedBytes, groupId);
-      }
-    } else {
-      console.warn(
-        `[WS SEND] WebSocket not open (state=${this.ws?.readyState ?? 'null'}), falling back to HTTP`
-      );
-      await this.sendViaHttp(encryptedBytes, groupId);
-    }
-
-    return encryptedBytes;
-  }
-
-  private async sendViaHttp(encryptedBytes: Uint8Array, groupId: string): Promise<void> {
-    console.warn(
-      `[WS SEND] HTTP fallback: groupId=${groupId} ${encryptedBytes.length}b → ${this.historyUrl}/api/mls-api/send`
-    );
-    const base64 = btoa(String.fromCharCode(...encryptedBytes));
+    const proto = btoa(String.fromCharCode(...encryptedBytes));
     const res = await fetch(`${this.historyUrl}/api/mls-api/send`, {
       method: 'POST',
       headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         senderId: this.userId,
         senderDeviceId: this.deviceId,
-        content: base64,
         groupId,
+        proto,
       }),
     });
     if (!res.ok) {
-      throw new Error(`HTTP send failed: ${res.status} ${res.statusText}`);
+      throw new Error(`Message send HTTP error: ${res.status}`);
     }
-    console.log(`[WS SEND] HTTP fallback OK: ${res.status}`);
+    return encryptedBytes;
   }
 
   async processIncomingMessage(
@@ -1206,6 +1029,15 @@ export class WebMlsService implements IMlsService {
     await this.sendCommit(commitBytes, groupId);
   }
 
+  async removeMemberDevice(groupId: string, deviceIdentities: string[]): Promise<void> {
+    const jsArray = deviceIdentities.reduce((arr, id) => {
+      arr.push(id);
+      return arr;
+    }, [] as string[]);
+    const commitBytes: Uint8Array = this.client.remove_members_by_device(groupId, jsArray);
+    await this.sendCommit(commitBytes, groupId);
+  }
+
   async getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]> {
     try {
       const res = await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}/members`, {
@@ -1279,7 +1111,7 @@ export class WebMlsService implements IMlsService {
     deviceId: string,
     userId: string,
     groupId: string,
-    status: 'pending' | 'added' | 'welcome_sent' | 'welcome_received' | 'stale',
+    status: 'pending' | 'welcome_sent' | 'welcome_received' | 'stale',
     lastEpochSeen?: number
   ): Promise<void> {
     try {
@@ -1293,13 +1125,13 @@ export class WebMlsService implements IMlsService {
     }
   }
 
-  async kickStaleUser(userId: string, groupId: string): Promise<void> {
-    const res = await fetch(`${this.historyUrl}/api/mls-api/kick-stale-user`, {
+  async kickStaleDevice(deviceId: string, userId: string, groupId: string): Promise<void> {
+    const res = await fetch(`${this.historyUrl}/api/mls-api/kick-stale-device`, {
       method: 'POST',
       headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ userId, groupId }),
+      body: JSON.stringify({ deviceId, userId, groupId }),
     });
-    if (!res.ok) throw new Error(`kickStaleUser failed: ${res.status}`);
+    if (!res.ok) throw new Error(`kickStaleDevice failed: ${res.status}`);
   }
 
   async resetGroupEpoch(groupId: string): Promise<void> {

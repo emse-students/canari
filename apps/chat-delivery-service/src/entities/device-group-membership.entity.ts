@@ -10,7 +10,6 @@ import {
 
 export type DeviceGroupStatus =
   | 'pending'
-  | 'added'
   | 'welcome_sent'
   | 'welcome_received'
   | 'stale';
@@ -34,7 +33,7 @@ export class DeviceGroupMembership {
 
   @Column({
     type: 'enum',
-    enum: ['pending', 'added', 'welcome_sent', 'welcome_received', 'stale'],
+    enum: ['pending', 'welcome_sent', 'welcome_received', 'stale'],
     default: 'pending',
   })
   status: DeviceGroupStatus;

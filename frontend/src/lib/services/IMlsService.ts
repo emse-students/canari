@@ -48,7 +48,7 @@ export interface IMlsService {
    * (typically the inviter and the newly-welcomed invitee).
    */
   sendCommit(commitBytes: Uint8Array, groupId: string, excludeDeviceIds?: string[]): Promise<void>;
-  registerMember(groupId: string, userId: string, deviceId: string): Promise<void>;
+  registerMember(groupId: string, userId: string): Promise<void>;
   /** Acquiert un verrou distribué Redis pour éviter les commits MLS concurrents sur le même groupe.
    *  Retourne true si le verrou a été acquis, false si un autre appareil le détient déjà. */
   acquireAddLock(groupId: string, ttlMs?: number): Promise<boolean>;
@@ -70,6 +70,8 @@ export interface IMlsService {
   removeMemberFromServer(groupId: string, userId: string): Promise<void>;
   /** Performs a real MLS remove commit for all devices of the given user(s) and broadcasts it. */
   removeMember(groupId: string, userIds: string[]): Promise<void>;
+  /** Performs a real MLS remove commit for specific devices by identity ("userId:deviceId") and broadcasts it. */
+  removeMemberDevice(groupId: string, deviceIdentities: string[]): Promise<void>;
   getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]>;
   getUserGroups(userId: string): Promise<{ groupId: string; name: string; isGroup: boolean }[]>;
 
@@ -106,12 +108,12 @@ export interface IMlsService {
     deviceId: string,
     userId: string,
     groupId: string,
-    status: 'pending' | 'added' | 'welcome_sent' | 'welcome_received' | 'stale',
+    status: 'pending' | 'welcome_sent' | 'welcome_received' | 'stale',
     lastEpochSeen?: number
   ): Promise<void>;
 
-  /** Reset all devices of a user in a group to pending (after MLS remove commit). */
-  kickStaleUser(userId: string, groupId: string): Promise<void>;
+  /** Reset a specific device in a group to pending (after MLS remove commit for that device). */
+  kickStaleDevice(deviceId: string, userId: string, groupId: string): Promise<void>;
 
   /** Reset the server-side activeEpoch of a group to 0 (used during re-bootstrap). */
   resetGroupEpoch(groupId: string): Promise<void>;
@@ -160,11 +162,4 @@ export interface IMlsService {
   onWelcomeRequest(
     callback: (requesterUserId: string, requesterDeviceId: string, groupId: string) => void
   ): void;
-
-  /**
-   * Register a callback invoked when the gateway reports that no online peer
-   * could be reached for a welcome_request (i.e. the device should ask the user
-   * to connect another device first).
-   */
-  onNoPeerOnline(callback: (groupId: string) => void): void;
 }

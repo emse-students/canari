@@ -18,12 +18,13 @@ struct AppState {
 #[tauri::command]
 fn initialiser_mls(
     user_id: String,
+    device_id: String,
     pin: String,
     encrypted_state: Option<Vec<u8>>,
     state: tauri::State<AppState>,
 ) -> Result<String, String> {
     let manager =
-        MlsManager::load_encrypted(&user_id, encrypted_state, &pin).map_err(|e| e.to_string())?;
+        MlsManager::load_encrypted(&user_id, &device_id, encrypted_state, &pin).map_err(|e| e.to_string())?;
 
     let mut lock = state
         .mls_manager
@@ -212,6 +213,24 @@ fn retirer_membres(
 }
 
 #[tauri::command]
+fn retirer_membres_par_appareil(
+    group_id: String,
+    device_identities: Vec<String>,
+    state: tauri::State<AppState>,
+) -> Result<Vec<u8>, String> {
+    let mut lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+
+    let id_slices: Vec<&str> = device_identities.iter().map(|s| s.as_str()).collect();
+    manager
+        .remove_members_for_devices(&group_id, &id_slices)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn recevoir_message_bytes(
     group_id: String,
     message_bytes: Vec<u8>,
@@ -342,6 +361,7 @@ pub fn run() {
             generer_key_package,
             ajouter_membre,
             retirer_membres,
+            retirer_membres_par_appareil,
             trailer_welcome,
             envoyer_message,
             envoyer_message_bytes,

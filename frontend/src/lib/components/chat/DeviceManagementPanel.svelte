@@ -103,8 +103,6 @@
         return 'ok';
       case 'welcome_sent':
         return 'sent';
-      case 'added':
-        return 'added';
       case 'pending':
         return 'pending';
       default:
@@ -113,7 +111,7 @@
   }
 
   function getStaleGroups(deviceMemberships: DeviceMembership[]): DeviceMembership[] {
-    return deviceMemberships.filter((m) => m.status === 'pending' || m.status === 'added');
+    return deviceMemberships.filter((m) => m.status === 'pending');
   }
 
   function getMembershipStats(deviceMemberships: DeviceMembership[]) {
@@ -121,7 +119,7 @@
     const active = deviceMemberships.filter((m) => m.status === 'welcome_received').length;
     const pending = deviceMemberships.filter((m) => m.status === 'pending').length;
     const inProgress = deviceMemberships.filter(
-      (m) => m.status === 'added' || m.status === 'welcome_sent'
+      (m) => m.status === 'welcome_sent'
     ).length;
     return { total, active, pending, inProgress };
   }

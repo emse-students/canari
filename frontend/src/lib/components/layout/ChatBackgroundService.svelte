@@ -209,11 +209,6 @@
       onShowSyncGuidePrompt: () => {
         globalConvs.showSyncGuidePrompt = true;
       },
-      onNoPeerOnline: (_groupId: string) => {
-        globalNotifs.showChannelMembershipNotice(
-          'Aucun membre en ligne — nouvelle tentative automatique toutes les 30s'
-        );
-      },
       log: appendLog,
       messageReactions: globalMessaging.messageReactions,
       getSelectedContact: () => globalConvs.selectedContact,

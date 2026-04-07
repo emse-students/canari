@@ -93,11 +93,11 @@ function makeMlsService(overrides: Partial<IMlsService> = {}): IMlsService {
     onReinviteRequest: vi.fn(),
     sendWelcomeRequest: vi.fn(),
     onWelcomeRequest: vi.fn(),
-    onNoPeerOnline: vi.fn(),
     getPendingInvitations: vi.fn().mockResolvedValue([]),
     getDeviceMemberships: vi.fn().mockResolvedValue([]),
     updateInvitationStatus: vi.fn().mockResolvedValue({ status: 'added' }),
-    kickStaleUser: vi.fn().mockResolvedValue(undefined),
+    kickStaleDevice: vi.fn().mockResolvedValue(undefined),
+    removeMemberDevice: vi.fn().mockResolvedValue(undefined),
     resetGroupEpoch: vi.fn().mockResolvedValue(undefined),
     deleteDeviceMembership: vi.fn().mockResolvedValue({ status: 'deleted', affected: 1 }),
     deleteAllDeviceMemberships: vi.fn().mockResolvedValue({ status: 'deleted', affected: 0 }),
@@ -216,7 +216,7 @@ describe('startNewConversation', () => {
     // isGroup=false pour conversation 1-to-1
     expect(mls.createRemoteGroup).toHaveBeenCalledWith('jolan::jolan2', false);
     expect(mls.createGroup).toHaveBeenCalledWith('group-test-uuid');
-    expect(mls.registerMember).toHaveBeenCalledWith('group-test-uuid', 'jolan', 'dev-jolan-01');
+    expect(mls.registerMember).toHaveBeenCalledWith('group-test-uuid', 'jolan');
   });
 
   it('ajoute les devices de jolan2 en bulk et les inscrit comme membres', async () => {
@@ -239,8 +239,8 @@ describe('startNewConversation', () => {
     await startNewConversation('jolan2', makeDeps(mls, convs));
 
     expect(mls.addMembersBulk).toHaveBeenCalledWith('group-test-uuid', devices);
-    expect(mls.registerMember).toHaveBeenCalledWith('group-test-uuid', 'jolan2', 'dev-jolan2-A');
-    expect(mls.registerMember).toHaveBeenCalledWith('group-test-uuid', 'jolan2', 'dev-jolan2-B');
+    expect(mls.registerMember).toHaveBeenCalledWith('group-test-uuid', 'jolan2');
+    expect(mls.registerMember).toHaveBeenCalledWith('group-test-uuid', 'jolan2');
   });
 
   it('envoie un Welcome pour chaque device de jolan2', async () => {
@@ -355,8 +355,8 @@ describe('startNewConversation', () => {
     expect(mls.addMembersBulk).toHaveBeenCalledTimes(1);
     expect(mls.addMembersBulk).toHaveBeenCalledWith('group-test-uuid', [jolan2Device, ownDevice2]);
     // registerMember pour chaque device avec le bon userId
-    expect(mls.registerMember).toHaveBeenCalledWith('group-test-uuid', 'jolan2', 'dev-jolan2-01');
-    expect(mls.registerMember).toHaveBeenCalledWith('group-test-uuid', 'jolan', 'dev-jolan-02');
+    expect(mls.registerMember).toHaveBeenCalledWith('group-test-uuid', 'jolan2');
+    expect(mls.registerMember).toHaveBeenCalledWith('group-test-uuid', 'jolan');
     // Welcomes envoyés aux deux appareils
     expect(mls.sendWelcome).toHaveBeenCalledWith(
       expect.any(Uint8Array),
@@ -433,7 +433,7 @@ describe('createNewGroup', () => {
     // isGroup=true pour groupe multi-membres
     expect(mls.createRemoteGroup).toHaveBeenCalledWith('Projet Alpha', true);
     expect(mls.createGroup).toHaveBeenCalledWith('group-test-uuid');
-    expect(mls.registerMember).toHaveBeenCalledWith('group-test-uuid', 'jolan', 'dev-jolan-01');
+    expect(mls.registerMember).toHaveBeenCalledWith('group-test-uuid', 'jolan');
   });
 
   it('ajoute le groupe à la map de conversations (isReady: true)', async () => {
@@ -481,7 +481,7 @@ describe('createNewGroup', () => {
     await createNewGroup('Projet Beta', makeDeps(mls, convs));
 
     expect(mls.addMembersBulk).toHaveBeenCalledWith('group-test-uuid', [ownDevice2]);
-    expect(mls.registerMember).toHaveBeenCalledWith('group-test-uuid', 'jolan', 'dev-jolan-02');
+    expect(mls.registerMember).toHaveBeenCalledWith('group-test-uuid', 'jolan');
     expect(mls.sendWelcome).toHaveBeenCalledWith(
       expect.any(Uint8Array),
       'jolan',
@@ -525,7 +525,7 @@ describe('inviteMemberToGroup', () => {
     await inviteMemberToGroup('jolan2', existingConvo, makeDeps(mls, convs));
 
     expect(mls.addMembersBulk).toHaveBeenCalledWith('group-dev-team', [jolan2Device]);
-    expect(mls.registerMember).toHaveBeenCalledWith('group-dev-team', 'jolan2', 'dev-jolan2-01');
+    expect(mls.registerMember).toHaveBeenCalledWith('group-dev-team', 'jolan2');
   });
 
   it('envoie un Welcome pour chaque device de jolan2', async () => {

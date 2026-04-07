@@ -13,7 +13,7 @@
 use mls_core::MlsManager;
 
 fn make_device(user_id: &str) -> MlsManager {
-    MlsManager::load_or_create(user_id, None)
+    MlsManager::load_or_create(user_id, user_id, None)
         .unwrap_or_else(|e| panic!("Impossible de créer le device '{user_id}': {e}"))
 }
 

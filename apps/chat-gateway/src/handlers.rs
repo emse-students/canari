@@ -1,61 +1,22 @@
 use axum::{
     extract::{
-        Path, Query, State,
+        Query, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
     http::StatusCode,
     response::{IntoResponse, Json, Response},
 };
-use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
-use chrono::Utc;
 use futures::{sink::SinkExt, stream::StreamExt};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
-use rdkafka::producer::FutureRecord;
 use redis::AsyncCommands;
-use shared_rust::{MessageSentEvent, TOPIC_CHAT_MESSAGES};
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use uuid::Uuid;
 
-use crate::models::{AuthParams, Claims, RatchetTreePayload, Recipient};
+use crate::models::{AuthParams, Claims};
 use crate::state::AppState;
+use crate::ws_dispatch::{WsConn, WsFrame};
 
-// --- REST Handlers for MLS ---
-
-pub async fn get_ratchet_tree(
-    Path(group_id): Path<String>,
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
-    let mut con = match state.redis_client.get_multiplexed_async_connection().await {
-        Ok(con) => con,
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "Redis error").into_response(),
-    };
-
-    let key = format!("group:{}:tree", group_id);
-    let result: Result<String, _> = con.get(key).await;
-
-    match result {
-        Ok(tree) => (StatusCode::OK, tree).into_response(),
-        Err(_) => (StatusCode::NOT_FOUND, "Tree not found").into_response(),
-    }
-}
-
-pub async fn post_ratchet_tree(
-    Path(group_id): Path<String>,
-    State(state): State<Arc<AppState>>,
-    Json(payload): Json<RatchetTreePayload>,
-) -> impl IntoResponse {
-    let mut con = match state.redis_client.get_multiplexed_async_connection().await {
-        Ok(con) => con,
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "Redis error").into_response(),
-    };
-
-    let key = format!("group:{}:tree", group_id);
-    let _: Result<(), _> = con.set(key, payload.data).await;
-    StatusCode::OK.into_response()
-}
-
-// --- WebSocket Handler ---
+// ── ConnectionGuard — cleanup on drop ────────────────────────────────────
 
 struct ConnectionGuard {
     state: Arc<AppState>,
@@ -70,18 +31,15 @@ impl Drop for ConnectionGuard {
             self.conn_key,
             self.redis_key
         );
-        // Clean HashMap
         {
             let mut map = self.state.connected_users.lock().unwrap();
             if let Some(senders) = map.get_mut(&self.conn_key) {
-                // Remove closed senders
                 senders.retain(|s| !s.is_closed());
                 if senders.is_empty() {
                     map.remove(&self.conn_key);
                 }
             }
         }
-        // Background Redis Clean
         let state = self.state.clone();
         let redis_key = self.redis_key.clone();
         tokio::spawn(async move {
@@ -94,6 +52,8 @@ impl Drop for ConnectionGuard {
         });
     }
 }
+
+// ── Public WS upgrade handler ─────────────────────────────────────────────
 
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
@@ -114,6 +74,8 @@ pub async fn ws_handler(
     }
 }
 
+// ── Socket lifecycle ──────────────────────────────────────────────────────
+
 #[allow(clippy::collapsible_if)]
 async fn handle_socket(
     socket: WebSocket,
@@ -127,13 +89,10 @@ async fn handle_socket(
         device_id
     );
 
-    let (mut sender, mut receiver) = socket.split();
-
-    // Create channel for this specific client
-    let (tx, mut rx) = mpsc::channel(256);
+    let (mut ws_sender, mut receiver) = socket.split();
+    let (tx, mut rx) = mpsc::channel::<String>(256);
     let conn_key = format!("{}:{}", user_id, device_id);
 
-    // Register connection — push into the list for this key (supports multiple tabs)
     {
         let mut map = state.connected_users.lock().unwrap();
         map.entry(conn_key.clone()).or_default().push(tx.clone());
@@ -144,23 +103,17 @@ async fn handle_socket(
         );
     }
 
-    // Register presence in Redis
     let redis_key = format!("user:online:{}", conn_key);
-
-    // Guard struct ensures Drop cleans up map + redis even on panics/early returns
     let _guard = ConnectionGuard {
         state: state.clone(),
         conn_key: conn_key.clone(),
         redis_key: redis_key.clone(),
     };
 
+    // Set initial presence + drain any legacy pending_welcomes from Redis.
     if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await {
-        // TTL of 120 s — the ping task refreshes it every 30 s so it only
-        // expires if the WS closes without a clean shutdown, giving accurate
-        // presence within ~2 minutes.
         let _: Result<(), _> = con.set_ex(&redis_key, "true", 120).await;
 
-        // Connect to Pending Welcomes (Legacy/Upstream compatibility)
         let welcome_key = format!("pending_welcomes:{}", user_id);
         let pending: Result<Vec<String>, _> = redis::cmd("LRANGE")
             .arg(&welcome_key)
@@ -171,8 +124,6 @@ async fn handle_socket(
 
         if let Ok(msgs) = pending {
             for msg in msgs {
-                // Legacy pending_welcomes entries are JSON strings.
-                // Build a JSON delivery frame directly.
                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&msg) {
                     let b64_payload = parsed["content"]
                         .as_str()
@@ -196,7 +147,11 @@ async fn handle_socket(
                         "proto": b64_payload
                     })
                     .to_string();
-                    if sender.send(Message::Text(json_msg.into())).await.is_err() {
+                    if ws_sender
+                        .send(Message::Text(json_msg.into()))
+                        .await
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -208,43 +163,38 @@ async fn handle_socket(
         }
     }
 
-    // Task to receive all messages from Redis/Backend and send to this client
+    // ── Send task: relay outbound frames + periodic presence refresh ──────
     let conn_key_ping = conn_key.clone();
     let redis_key_ping = redis_key.clone();
     let redis_client_ping = state.redis_client.clone();
     let mut send_task = tokio::spawn(async move {
         let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(30));
-
         loop {
             tokio::select! {
-              msg_opt = rx.recv() => {
-                if let Some(msg) = msg_opt {
-                    // msg is a JSON string: { senderId, senderDeviceId, groupId, isWelcome, proto: base64(ciphertext) }
-                    if sender.send(Message::Text(msg.into())).await.is_err() {
+                msg_opt = rx.recv() => {
+                    match msg_opt {
+                        Some(msg) => {
+                            if ws_sender.send(Message::Text(msg.into())).await.is_err() {
+                                break;
+                            }
+                        }
+                        None => break,
+                    }
+                }
+                _ = ping_interval.tick() => {
+                    if let Ok(mut con) = redis_client_ping.get_multiplexed_async_connection().await {
+                        let _: Result<(), _> = con.set_ex(&redis_key_ping, "true", 120).await;
+                    }
+                    tracing::debug!("Sending ping to {} to keep connection alive", conn_key_ping);
+                    if ws_sender.send(Message::Ping(vec![].into())).await.is_err() {
                         break;
                     }
-                } else {
-                    break; // Channel closed
                 }
-              }
-              _ = ping_interval.tick() => {
-                // Refresh the presence key TTL so the delivery service continues
-                // routing real-time messages to this device.  Without this the key
-                // expires after its initial TTL and all messages silently fall back
-                // to the queue (appearing only on the next page load).
-                if let Ok(mut con) = redis_client_ping.get_multiplexed_async_connection().await {
-                    let _: Result<(), _> = con.set_ex(&redis_key_ping, "true", 120).await;
-                }
-                tracing::debug!("Sending ping to {} to keep connection alive", conn_key_ping);
-                if sender.send(Message::Ping(vec![].into())).await.is_err() {
-                    break;
-                }
-              }
             }
         }
     });
 
-    // Task to receive messages fro this client
+    // ── Recv task: parse frames + dispatch ────────────────────────────────
     let mut recv_task = {
         let state = state.clone();
         let user_id = user_id.clone();
@@ -252,10 +202,13 @@ async fn handle_socket(
 
         tokio::spawn(async move {
             while let Some(msg) = receiver.next().await {
-                // Refresh presence on ANY activity
-                let redis_key = format!("user:online:{}:{}", user_id, device_id);
-                if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await {
-                    let _: Result<(), _> = con.set_ex(&redis_key, "true", 120).await;
+                // Refresh presence on any activity.
+                {
+                    let redis_key = format!("user:online:{}:{}", user_id, device_id);
+                    if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await
+                    {
+                        let _: Result<(), _> = con.set_ex(&redis_key, "true", 120).await;
+                    }
                 }
 
                 match msg {
@@ -265,6 +218,7 @@ async fn handle_socket(
                             user_id,
                             text.len()
                         );
+
                         let json = match serde_json::from_str::<serde_json::Value>(&text) {
                             Ok(v) => v,
                             Err(e) => {
@@ -273,628 +227,37 @@ async fn handle_socket(
                             }
                         };
 
-                        let msg_type = json.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                        let proto_b64 = json
-                            .get("proto")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or_default();
-                        let ciphertext = match B64.decode(proto_b64) {
-                            Ok(b) => b,
-                            Err(e) => {
-                                tracing::error!("Base64 decode error from {}: {}", user_id, e);
+                        let frame = match WsFrame::parse(&json) {
+                            Some(f) => f,
+                            None => {
+                                tracing::error!("Base64 decode error in frame from {}", user_id);
                                 continue;
                             }
                         };
-                        let group_id = json
-                            .get("groupId")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or_default()
-                            .to_string();
-                        let recipients: Vec<Recipient> = json
-                            .get("recipients")
-                            .and_then(|v| v.as_array())
-                            .map(|arr| {
-                                arr.iter()
-                                    .filter_map(|r| {
-                                        Some(Recipient {
-                                            user_id: r.get("userId")?.as_str()?.to_string(),
-                                            device_id: r
-                                                .get("deviceId")
-                                                .and_then(|v| v.as_str())
-                                                .unwrap_or_default()
-                                                .to_string(),
-                                        })
-                                    })
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-                        let ratchet_tree = json
-                            .get("ratchetTree")
-                            .cloned()
-                            .unwrap_or(serde_json::Value::Null);
 
-                        // ── Routing diagnostics ──────────────────────────────────────────
-                        // For every incoming frame, log the type + group + online/offline
-                        // status of each registered member so routing issues are visible.
-                        if !group_id.is_empty() {
-                            // Collect the set of online keys inside a tightly-scoped block so
-                            // the MutexGuard is dropped before any .await boundary.
-                            let online_all: Vec<String> = {
-                                let map = state.connected_users.lock().unwrap();
-                                map.keys().cloned().collect()
-                            };
+                        log_routing_diagnostics(&state, &user_id, &device_id, &frame).await;
 
-                            // Registered group members come from Redis; read them best-effort.
-                            let member_status: Vec<String> = if let Ok(mut con) =
-                                state.redis_client.get_multiplexed_async_connection().await
-                            {
-                                let key = format!("group:members:{}", group_id);
-                                let members: Vec<String> =
-                                    con.smembers(&key).await.unwrap_or_default();
-                                members
-                                    .iter()
-                                    .map(|m| {
-                                        let status = if online_all.contains(m) {
-                                            "ONLINE"
-                                        } else {
-                                            "OFFLINE"
-                                        };
-                                        format!("{} [{}]", m, status)
-                                    })
-                                    .collect()
-                            } else {
-                                vec!["<redis-unavailable>".to_string()]
-                            };
+                        let conn = WsConn {
+                            state: &state,
+                            user_id: &user_id,
+                            device_id: &device_id,
+                            tx: &tx,
+                        };
 
-                            tracing::info!(
-                                "[ROUTE] type={} group={} from={}:{} | members: {}",
-                                msg_type,
-                                group_id,
-                                user_id,
-                                device_id,
-                                if member_status.is_empty() {
-                                    "<none registered>".to_string()
-                                } else {
-                                    member_status.join(", ")
-                                }
-                            );
-                        } else {
-                            tracing::info!(
-                                "[ROUTE] type={} from={}:{} (no groupId)",
-                                msg_type,
-                                user_id,
-                                device_id
-                            );
-                        }
-                        // ─────────────────────────────────────────────────────────────────
-
-                        match msg_type {
-                            "commit" => {
-                                // Epoch-gated structural commit (addMember, removeMember, update).
-                                // Validate baseEpoch with delivery service before broadcasting.
-                                let base_epoch =
-                                    json.get("baseEpoch").and_then(|v| v.as_u64()).unwrap_or(0)
-                                        as i64;
-
-                                tracing::info!(
-                                    "Processing COMMIT frame. GroupID: {}, baseEpoch: {}",
-                                    group_id,
-                                    base_epoch
-                                );
-
-                                // Call commit validation endpoint
-                                let epoch_body = serde_json::json!({
-                                    "groupId": group_id,
-                                    "deviceId": format!("{}:{}", user_id, device_id),
-                                    "baseEpoch": base_epoch
-                                });
-
-                                let epoch_result = state
-                                    .http_client
-                                    .post(format!(
-                                        "{}/api/mls-api/commit",
-                                        state.delivery_service_url
-                                    ))
-                                    .header("x-user-logged-in", "true")
-                                    .json(&epoch_body)
-                                    .send()
-                                    .await;
-
-                                let accepted = match epoch_result {
-                                    Ok(resp) => {
-                                        if let Ok(body) = resp.json::<serde_json::Value>().await {
-                                            if body.get("accepted").and_then(|v| v.as_bool())
-                                                == Some(true)
-                                            {
-                                                true
-                                            } else {
-                                                let current_epoch = body
-                                                    .get("currentEpoch")
-                                                    .and_then(|v| v.as_i64())
-                                                    .unwrap_or(0);
-                                                // Send rejection back to client
-                                                let reject_msg = serde_json::json!({
-                                                    "type": "epoch_rejected",
-                                                    "groupId": group_id,
-                                                    "currentEpoch": current_epoch
-                                                })
-                                                .to_string();
-                                                let _ = tx.send(reject_msg).await;
-                                                tracing::warn!(
-                                                    "Epoch rejected for group {} (base={}, current={})",
-                                                    group_id,
-                                                    base_epoch,
-                                                    current_epoch
-                                                );
-                                                false
-                                            }
-                                        } else {
-                                            // Cannot parse response — let it through (fail-open)
-                                            tracing::warn!(
-                                                "Epoch-commit response unparseable, allowing commit"
-                                            );
-                                            true
-                                        }
-                                    }
-                                    Err(e) => {
-                                        // Network error to delivery service — fail-open
-                                        tracing::error!(
-                                            "Epoch-commit call failed: {}, allowing commit",
-                                            e
-                                        );
-                                        true
-                                    }
-                                };
-
-                                if !accepted {
-                                    continue;
-                                }
-
-                                // Accepted — broadcast like a normal MLS frame
-                                let payload_b64 = B64.encode(&ciphertext);
-                                if let Ok(serialized) = serde_json::to_string(&MessageSentEvent {
-                                    id: Uuid::new_v4(),
-                                    sender_id: user_id.clone(),
-                                    username: "Anonymous".to_string(),
-                                    content: payload_b64.clone(),
-                                    timestamp: Utc::now(),
-                                    conversation_id: Some(group_id.clone())
-                                        .filter(|s| !s.is_empty()),
-                                }) {
-                                    let record = FutureRecord::to(TOPIC_CHAT_MESSAGES)
-                                        .payload(&serialized)
-                                        .key(&user_id);
-                                    let _ = state
-                                        .kafka_producer
-                                        .send(record, std::time::Duration::from_secs(0))
-                                        .await;
-
-                                    if !group_id.is_empty() {
-                                        if let Ok(mut con) = state
-                                            .redis_client
-                                            .get_multiplexed_async_connection()
-                                            .await
-                                        {
-                                            let stream_key = format!("history:{}", group_id);
-                                            let _: Result<String, _> = redis::cmd("XADD")
-                                                .arg(&stream_key)
-                                                .arg("*")
-                                                .arg("sender_id")
-                                                .arg(user_id.clone())
-                                                .arg("content")
-                                                .arg(payload_b64)
-                                                .arg("timestamp")
-                                                .arg(Utc::now().to_rfc3339())
-                                                .query_async(&mut con)
-                                                .await;
-                                        }
-                                    }
-                                }
-
-                                // Route ALL recipients through delivery service (queue-first).
-                                // The delivery service persists every message before attempting
-                                // real-time delivery, preventing loss from timing races.
-                                let mut target_recipients: Vec<Recipient> = recipients;
-
-                                if target_recipients.is_empty() && !group_id.is_empty() {
-                                    if let Ok(mut con) =
-                                        state.redis_client.get_multiplexed_async_connection().await
-                                    {
-                                        let key = format!("group:members:{}", group_id);
-                                        if let Ok(members) =
-                                            con.smembers::<_, Vec<String>>(&key).await
-                                        {
-                                            for m in members {
-                                                let parts: Vec<&str> = m.split(':').collect();
-                                                if parts.len() == 2 {
-                                                    target_recipients.push(Recipient {
-                                                        user_id: parts[0].to_string(),
-                                                        device_id: parts[1].to_string(),
-                                                    });
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                if !group_id.is_empty() {
-                                    let body = serde_json::json!({
-                                        "recipients": target_recipients
-                                            .iter()
-                                            .map(|r| serde_json::json!({
-                                                "userId": r.user_id,
-                                                "deviceId": if r.device_id.is_empty() { serde_json::Value::Null } else { r.device_id.clone().into() }
-                                            }))
-                                            .collect::<Vec<_>>(),
-                                        "senderId": user_id,
-                                        "senderDeviceId": device_id,
-                                        "groupId": group_id,
-                                        "isWelcome": false,
-                                        "isCommit": true,
-                                        "proto": B64.encode(&ciphertext)
-                                    });
-                                    match state
-                                        .http_client
-                                        .post(format!(
-                                            "{}/api/mls-api/send",
-                                            state.delivery_service_url
-                                        ))
-                                        .header("x-user-logged-in", "true")
-                                        .json(&body)
-                                        .send()
-                                        .await
-                                    {
-                                        Ok(resp) if !resp.status().is_success() => {
-                                            tracing::error!(
-                                                "Delivery HTTP error: {} {}",
-                                                resp.status(),
-                                                resp.text().await.unwrap_or_default()
-                                            );
-                                        }
-                                        Err(e) => {
-                                            tracing::error!("Delivery failed: {}", e);
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                            }
-
-                            "mls" => {
-                                tracing::info!(
-                                    "Processing MLS frame. GroupID: {:?}, recipients: {}",
-                                    group_id,
-                                    recipients.len()
-                                );
-
-                                // Archive to Kafka (base64-encode for JSON compatibility)
-                                let payload_b64 = B64.encode(&ciphertext);
-                                if let Ok(serialized) = serde_json::to_string(&MessageSentEvent {
-                                    id: Uuid::new_v4(),
-                                    sender_id: user_id.clone(),
-                                    username: "Anonymous".to_string(),
-                                    content: payload_b64.clone(),
-                                    timestamp: Utc::now(),
-                                    conversation_id: Some(group_id.clone())
-                                        .filter(|s| !s.is_empty()),
-                                }) {
-                                    let record = FutureRecord::to(TOPIC_CHAT_MESSAGES)
-                                        .payload(&serialized)
-                                        .key(&user_id);
-                                    let _ = state
-                                        .kafka_producer
-                                        .send(record, std::time::Duration::from_secs(0))
-                                        .await;
-
-                                    // Archive to Redis Stream (base64 for history service compat)
-                                    if !group_id.is_empty() {
-                                        if let Ok(mut con) = state
-                                            .redis_client
-                                            .get_multiplexed_async_connection()
-                                            .await
-                                        {
-                                            let stream_key = format!("history:{}", group_id);
-                                            let _: Result<String, _> = redis::cmd("XADD")
-                                                .arg(&stream_key)
-                                                .arg("*")
-                                                .arg("sender_id")
-                                                .arg(user_id.clone())
-                                                .arg("content")
-                                                .arg(payload_b64)
-                                                .arg("timestamp")
-                                                .arg(Utc::now().to_rfc3339())
-                                                .query_async(&mut con)
-                                                .await;
-                                        }
-                                    }
-                                }
-
-                                // Route ALL recipients through delivery service (queue-first)
-                                let mut target_recipients: Vec<Recipient> = recipients;
-
-                                if target_recipients.is_empty() && !group_id.is_empty() {
-                                    if let Ok(mut con) =
-                                        state.redis_client.get_multiplexed_async_connection().await
-                                    {
-                                        let key = format!("group:members:{}", group_id);
-                                        if let Ok(members) =
-                                            con.smembers::<_, Vec<String>>(&key).await
-                                        {
-                                            for m in members {
-                                                let parts: Vec<&str> = m.split(':').collect();
-                                                if parts.len() == 2 {
-                                                    target_recipients.push(Recipient {
-                                                        user_id: parts[0].to_string(),
-                                                        device_id: parts[1].to_string(),
-                                                    });
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // Filter out explicitly excluded devices (e.g. inviter + invitee
-                                // when broadcasting a Welcome commit).
-                                let exclude_ids: std::collections::HashSet<String> = json
-                                    .get("excludeDeviceIds")
-                                    .and_then(|v| v.as_array())
-                                    .map(|arr| {
-                                        arr.iter()
-                                            .filter_map(|v| v.as_str().map(String::from))
-                                            .collect()
-                                    })
-                                    .unwrap_or_default();
-                                if !exclude_ids.is_empty() {
-                                    target_recipients.retain(|r| {
-                                        !exclude_ids
-                                            .contains(&format!("{}:{}", r.user_id, r.device_id))
-                                    });
-                                }
-
-                                tracing::info!("Target recipients: {}", target_recipients.len());
-
-                                if !group_id.is_empty() {
-                                    let body = serde_json::json!({
-                                        "recipients": target_recipients
-                                            .iter()
-                                            .map(|r| serde_json::json!({
-                                                "userId": r.user_id,
-                                                "deviceId": if r.device_id.is_empty() { serde_json::Value::Null } else { r.device_id.clone().into() }
-                                            }))
-                                            .collect::<Vec<_>>(),
-                                        "senderId": user_id,
-                                        "senderDeviceId": device_id,
-                                        "groupId": group_id,
-                                        "isWelcome": false,
-                                        "isCommit": false,
-                                        "proto": B64.encode(&ciphertext)
-                                    });
-                                    match state
-                                        .http_client
-                                        .post(format!(
-                                            "{}/api/mls-api/send",
-                                            state.delivery_service_url
-                                        ))
-                                        .header("x-user-logged-in", "true")
-                                        .json(&body)
-                                        .send()
-                                        .await
-                                    {
-                                        Ok(resp) if !resp.status().is_success() => {
-                                            tracing::error!(
-                                                "Delivery HTTP error: {} {}",
-                                                resp.status(),
-                                                resp.text().await.unwrap_or_default()
-                                            );
-                                        }
-                                        Err(e) => {
-                                            tracing::error!("Delivery failed: {}", e);
-                                        }
-                                        _ => {
-                                            // Delivery accepted — ACK to sender so the frontend
-                                            // knows the message was queued/delivered and can
-                                            // display it (no optimistic UI).
-                                            if let Some(msg_id) = json
-                                                .get("messageId")
-                                                .and_then(|v| v.as_str())
-                                                .filter(|s| !s.is_empty())
-                                            {
-                                                let ack = serde_json::json!({
-                                                    "type": "message_sent",
-                                                    "messageId": msg_id,
-                                                    "groupId": group_id,
-                                                })
-                                                .to_string();
-                                                let _ = tx.send(ack).await;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            "welcome" => {
-                                tracing::info!("Processing Welcome frame for group {}", group_id);
-
-                                // Route ALL welcome recipients through delivery service (queue-first)
-                                if !recipients.is_empty() {
-                                    let body = serde_json::json!({
-                                        "recipients": recipients
-                                            .iter()
-                                            .map(|r| serde_json::json!({
-                                                "userId": r.user_id,
-                                                "deviceId": if r.device_id.is_empty() { serde_json::Value::Null } else { r.device_id.clone().into() }
-                                            }))
-                                            .collect::<Vec<_>>(),
-                                        "senderId": user_id,
-                                        "senderDeviceId": device_id,
-                                        "groupId": group_id,
-                                        "isWelcome": true,
-                                        "proto": B64.encode(&ciphertext),
-                                        "ratchetTree": ratchet_tree.clone()
-                                    });
-                                    match state
-                                        .http_client
-                                        .post(format!(
-                                            "{}/api/mls-api/send",
-                                            state.delivery_service_url
-                                        ))
-                                        .header("x-user-logged-in", "true")
-                                        .json(&body)
-                                        .send()
-                                        .await
-                                    {
-                                        Ok(resp) if !resp.status().is_success() => {
-                                            tracing::error!(
-                                                "Welcome delivery HTTP error: {} {}",
-                                                resp.status(),
-                                                resp.text().await.unwrap_or_default()
-                                            );
-                                        }
-                                        Err(e) => {
-                                            tracing::error!("Welcome delivery failed: {}", e);
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                            }
-
-                            "read" => {
-                                let message_id = json
-                                    .get("messageId")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or_default();
-                                tracing::info!("Read receipt for message {}", message_id);
-                            }
-
+                        match frame.msg_type.as_str() {
                             "welcome_request" => {
-                                tracing::info!(
-                                    "Processing welcome_request from {}:{} for group {}",
-                                    user_id,
-                                    device_id,
-                                    group_id
-                                );
-
-                                let notification = serde_json::json!({
-                                    "type": "welcome_request",
-                                    "groupId": group_id,
-                                    "requesterUserId": user_id,
-                                    "requesterDeviceId": device_id,
-                                })
-                                .to_string();
-
-                                let requester_key = format!("{}:{}", user_id, device_id);
-                                let mut forwarded = 0usize;
-                                if let Ok(mut con) =
-                                    state.redis_client.get_multiplexed_async_connection().await
-                                {
-                                    let key = format!("group:members:{}", group_id);
-                                    if let Ok(members) = con.smembers::<_, Vec<String>>(&key).await
-                                    {
-                                        let map = state.connected_users.lock().unwrap();
-                                        for member in &members {
-                                            if *member == requester_key {
-                                                continue;
-                                            }
-                                            if let Some(senders) = map.get(member) {
-                                                for sender in senders {
-                                                    let _ = sender.try_send(notification.clone());
-                                                }
-                                                forwarded += 1;
-                                                tracing::info!(
-                                                    "welcome_request forwarded to {}",
-                                                    member
-                                                );
-                                            }
-                                        }
-                                    }
-                                }
-                                // Notify the requester if no peer was reachable online.
-                                if forwarded == 0 {
-                                    let no_peer_msg = serde_json::json!({
-                                        "type": "no_peer_online",
-                                        "groupId": group_id,
-                                    })
-                                    .to_string();
-                                    let _ = tx.send(no_peer_msg).await;
-                                    tracing::info!(
-                                        "no_peer_online sent back to {}:{} for group {}",
-                                        user_id,
-                                        device_id,
-                                        group_id
-                                    );
-                                }
+                                crate::ws_dispatch::handle_welcome_request(&conn, &frame).await;
                             }
-
                             "reinvite_request" => {
-                                let group_id = json
-                                    .get("groupId")
-                                    .and_then(|v: &serde_json::Value| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string();
-                                tracing::info!(
-                                    "Processing reinvite_request from {}:{} for group {}",
-                                    user_id,
-                                    device_id,
-                                    group_id
-                                );
-
-                                let notification = serde_json::json!({
-                                    "type": "reinvite_request",
-                                    "senderId": user_id,
-                                    "senderDeviceId": device_id,
-                                    "groupId": group_id,
-                                })
-                                .to_string();
-
-                                let my_key = format!("{}:{}", user_id, device_id);
-                                let mut forwarded = false;
-
-                                if let Ok(mut con) =
-                                    state.redis_client.get_multiplexed_async_connection().await
-                                {
-                                    let members_key = format!("group:members:{}", group_id);
-                                    if let Ok(members) =
-                                        con.smembers::<_, Vec<String>>(&members_key).await
-                                    {
-                                        let map = state.connected_users.lock().unwrap();
-                                        for member in &members {
-                                            if *member == my_key {
-                                                continue;
-                                            }
-                                            if let Some(senders) = map.get(member) {
-                                                if let Some(sender) = senders.first() {
-                                                    let _ = sender.try_send(notification.clone());
-                                                    forwarded = true;
-                                                    tracing::info!(
-                                                        "reinvite_request forwarded to {}",
-                                                        member
-                                                    );
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                if !forwarded {
-                                    let no_peer_msg = serde_json::json!({
-                                        "type": "no_peer_online",
-                                        "groupId": group_id,
-                                    })
-                                    .to_string();
-                                    let _ = tx.send(no_peer_msg).await;
-                                    tracing::info!(
-                                        "no_peer_online sent back to {}:{} for group {}",
-                                        user_id,
-                                        device_id,
-                                        group_id
-                                    );
-                                }
+                                crate::ws_dispatch::handle_reinvite_request(&conn, &frame).await;
                             }
-
+                            "read" => {
+                                // No-op: read receipts are handled at the application layer.
+                            }
                             _ => {
                                 tracing::warn!(
                                     "Unknown message type '{}' from {}",
-                                    msg_type,
+                                    frame.msg_type,
                                     user_id
                                 );
                             }
@@ -908,7 +271,7 @@ async fn handle_socket(
                         tracing::error!("WebSocket Error from {}: {}", user_id, e);
                         break;
                     }
-                    _ => {} // Non-text frames (binary, ping/pong) ignored
+                    _ => {}
                 }
             }
         })
@@ -918,9 +281,67 @@ async fn handle_socket(
         _ = (&mut send_task) => recv_task.abort(),
         _ = (&mut recv_task) => send_task.abort(),
     };
-
-    // Cleanup is now handled by ConnectionGuard's Drop.
+    // Cleanup handled by ConnectionGuard's Drop.
 }
+
+// ── Routing diagnostics ───────────────────────────────────────────────────
+
+async fn log_routing_diagnostics(
+    state: &Arc<AppState>,
+    user_id: &str,
+    device_id: &str,
+    frame: &WsFrame,
+) {
+    if frame.group_id.is_empty() {
+        tracing::info!(
+            "[ROUTE] type={} from={}:{} (no groupId)",
+            frame.msg_type,
+            user_id,
+            device_id
+        );
+        return;
+    }
+
+    let online_all: Vec<String> = {
+        let map = state.connected_users.lock().unwrap();
+        map.keys().cloned().collect()
+    };
+
+    let member_status: Vec<String> =
+        if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await {
+            let key = format!("group:members:{}", frame.group_id);
+            let members: Vec<String> = con.smembers(&key).await.unwrap_or_default();
+            members
+                .iter()
+                .map(|m| {
+                    let status = if online_all.contains(m) {
+                        "ONLINE"
+                    } else {
+                        "OFFLINE"
+                    };
+                    format!("{} [{}]", m, status)
+                })
+                .collect()
+        } else {
+            vec!["<redis-unavailable>".to_string()]
+        };
+
+    tracing::info!(
+        "[ROUTE] type={} group={} from={}:{} | members: {}",
+        frame.msg_type,
+        frame.group_id,
+        user_id,
+        device_id,
+        if member_status.is_empty() {
+            "<none registered>".to_string()
+        } else {
+            member_status.join(", ")
+        }
+    );
+}
+
+// ── Presence endpoint ─────────────────────────────────────────────────────
+
 #[derive(serde::Deserialize)]
 pub struct PresenceQuery {
     pub users: String,

@@ -80,7 +80,7 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
   try {
     groupId = await mlsService.createRemoteGroup(groupDisplayName, true); // true = multi-user group
     await mlsService.createGroup(groupId);
-    await mlsService.registerMember(groupId, userId, mlsService.getDeviceId());
+    await mlsService.registerMember(groupId, userId);
 
     // Add own other devices to the group — use a single bulk commit to avoid
     // epoch fragmentation (sequential addMember would create one commit per device,
@@ -100,9 +100,7 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
           `[GROUP] addMembersBulk result: welcome=${!!bulk.welcome} (${bulk.welcome?.length ?? 0} bytes), added=${bulk.addedDeviceIds.length} (${bulk.addedDeviceIds.join(', ')})`
         );
 
-        for (const did of bulk.addedDeviceIds) {
-          await mlsService.registerMember(groupId, userId, did);
-        }
+        await mlsService.registerMember(groupId, userId);
 
         if (bulk.welcome) {
           for (const did of bulk.addedDeviceIds) {
@@ -180,7 +178,7 @@ async function processBulkAddition(
   log(`Invitation de ${targetUsers.length} membres: ${targetUsers.join(', ')}...`);
 
   try {
-    await mlsService.registerMember(conversation.groupId, userId, mlsService.getDeviceId());
+    await mlsService.registerMember(conversation.groupId, userId);
 
     // Collect devices for ALL users
     const allDevices: any[] = [];
@@ -240,7 +238,7 @@ async function processBulkAddition(
               did,
               bulk.ratchetTree
             );
-            await mlsService.registerMember(conversation.groupId, tUser, did);
+            await mlsService.registerMember(conversation.groupId, tUser);
             deliveredUsers.add(tUser);
             log(`[SYNC] Welcome envoye avec succes a ${tUser}:${did}`);
           } catch (err) {
@@ -362,7 +360,7 @@ export async function startNewConversation(
     selectConversation(conversationKey);
 
     await mlsService.createGroup(groupId);
-    await mlsService.registerMember(groupId, userId, mlsService.getDeviceId());
+    await mlsService.registerMember(groupId, userId);
 
     // Collect ALL devices (contact + own) for a single bulk add
     const ownDevices = (await mlsService.fetchUserDevices(userId)).filter(
@@ -377,7 +375,7 @@ export async function startNewConversation(
 
       for (const did of bulk.addedDeviceIds) {
         const owner = contactDeviceIds.has(did) ? contact : userId;
-        await mlsService.registerMember(groupId, owner, did);
+        await mlsService.registerMember(groupId, owner);
       }
 
       if (bulk.welcome) {
@@ -455,7 +453,7 @@ export async function repairDirectConversation(
     groupId = await mlsService.createRemoteGroup(groupName, false); // false = 1-to-1 direct conversation
 
     await mlsService.createGroup(groupId);
-    await mlsService.registerMember(groupId, userId, mlsService.getDeviceId());
+    await mlsService.registerMember(groupId, userId);
 
     // Collect ALL devices (contact + own) for a single bulk add
     const ownDevices = (await mlsService.fetchUserDevices(userId)).filter(
@@ -470,7 +468,7 @@ export async function repairDirectConversation(
 
       for (const did of bulk.addedDeviceIds) {
         const owner = contactDeviceIds.has(did) ? contact : userId;
-        await mlsService.registerMember(groupId, owner, did);
+        await mlsService.registerMember(groupId, owner);
       }
 
       if (bulk.welcome) {

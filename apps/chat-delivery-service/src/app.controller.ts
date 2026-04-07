@@ -19,7 +19,6 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, MoreThanOrEqual, LessThan } from 'typeorm';
 import { QueuedMessage } from './entities/queued-message.entity';
 import { KeyPackage } from './entities/key-package.entity';
-import { WelcomeMessage } from './entities/welcome-message.entity';
 import { GroupMember } from './entities/group-member.entity';
 import { Group } from './entities/group.entity';
 import { PinVerifier } from './entities/pin-verifier.entity';
@@ -541,8 +540,6 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     private queuedMessageRepo: Repository<QueuedMessage>,
     @InjectRepository(KeyPackage)
     private keyPackageRepo: Repository<KeyPackage>,
-    @InjectRepository(WelcomeMessage)
-    private welcomeMessageRepo: Repository<WelcomeMessage>,
     @InjectRepository(GroupMember)
     private groupMemberRepo: Repository<GroupMember>,
     @InjectRepository(Group) private groupRepo: Repository<Group>,
@@ -622,6 +619,10 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       member.status = 'stale';
       member.lastEpochSeen = 0;
       await this.deviceGroupRepo.save(member);
+      await this.redis.srem(
+        `group:members:${member.groupId}`,
+        `${member.userId}:${member.deviceId}`,
+      );
       this.logger.log(
         `[CRON] Stale device reset: device=${member.deviceId} group=${member.groupId} ` +
           `(lastUpdate=${member.updatedAt.toISOString()})`,
@@ -1265,11 +1266,10 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   @Post('mls-api/groups/:groupId/members')
   async addGroupMember(
     @Param('groupId') groupId: string,
-    @Body() body: { userId: string; deviceId: string },
+    @Body() body: { userId: string },
   ) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
-    const safeDeviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
 
     let member = await this.groupMemberRepo.findOne({
       where: { groupId: safeGroupId, userId: safeUserId },
@@ -1295,23 +1295,18 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         where: { deviceId: device.deviceId, groupId: safeGroupId },
       });
       if (!existing) {
-        // The device that's being added directly gets 'added', others get 'pending'
-        const status = device.deviceId === safeDeviceId ? 'added' : 'pending';
         const membership = this.deviceGroupRepo.create({
           userId: safeUserId,
           deviceId: device.deviceId,
           groupId: safeGroupId,
-          status: status as any,
+          status: 'pending' as any,
         });
         await this.deviceGroupRepo.save(membership);
       }
     }
 
-    // Sync to Redis for Gateway access
-    await this.redis.sadd(
-      `group:members:${safeGroupId}`,
-      `${safeUserId}:${safeDeviceId}`,
-    );
+    // NB: NOT added to group:members Redis here — devices only enter the routing
+    // set once welcome_sent so pre-welcome devices never receive group messages.
     return { status: 'added' };
   }
 
@@ -1435,12 +1430,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       deviceId: string;
       userId: string;
       groupId: string;
-      status:
-        | 'pending'
-        | 'added'
-        | 'welcome_sent'
-        | 'welcome_received'
-        | 'stale';
+      status: 'pending' | 'welcome_sent' | 'welcome_received' | 'stale';
       lastEpochSeen?: number;
     },
   ) {
@@ -1450,7 +1440,6 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
     const validStatuses = [
       'pending',
-      'added',
       'welcome_sent',
       'welcome_received',
       'stale',
@@ -1522,6 +1511,42 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         groupId: m.groupId,
       })),
     };
+  }
+
+  @Post('mls-api/kick-stale-device')
+  async kickStaleDevice(
+    @Body() body: { deviceId: string; userId: string; groupId: string },
+  ) {
+    const safeDeviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
+    const safeUserId = sanitizeQueryValue(body.userId, 'userId');
+    const safeGroupId = sanitizeQueryValue(body.groupId, 'groupId');
+
+    const membership = await this.deviceGroupRepo.findOne({
+      where: {
+        deviceId: safeDeviceId,
+        userId: safeUserId,
+        groupId: safeGroupId,
+      },
+    });
+
+    if (!membership) {
+      return { status: 'not_found', affected: 0 };
+    }
+
+    membership.status = 'pending';
+    membership.lastEpochSeen = 0;
+    await this.deviceGroupRepo.save(membership);
+
+    await this.redis.srem(
+      `group:members:${safeGroupId}`,
+      `${safeUserId}:${safeDeviceId}`,
+    );
+
+    this.logger.log(
+      `[KICK] Reset device ${safeDeviceId} of user ${safeUserId} in group ${safeGroupId} to pending`,
+    );
+
+    return { status: 'kicked', affected: 1, deviceId: safeDeviceId };
   }
 
   /**
@@ -1797,16 +1822,17 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       );
     }
 
-    const welcomeMsg = this.welcomeMessageRepo.create({
+    const queuedWelcome = this.queuedMessageRepo.create({
+      recipientId: deviceInfo.userId,
       deviceId: targetDeviceId,
-      userId: deviceInfo.userId,
-      senderUserId,
+      senderId: senderUserId,
       groupId: safeGroupId,
-      message: body.welcomePayload,
+      proto: body.welcomePayload,
+      isWelcome: true,
       ratchetTree: body.ratchetTreePayload,
       createdAt: new Date(),
     });
-    await this.welcomeMessageRepo.save(welcomeMsg);
+    await this.queuedMessageRepo.save(queuedWelcome);
 
     // Real-time push via Gateway when the target device is currently online.
     const redisKey = `user:online:${deviceInfo.userId}:${targetDeviceId}`;
@@ -1838,43 +1864,22 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       .update()
       .set({ status: 'welcome_sent' as const })
       .where(
-        'deviceId = :deviceId AND groupId = :groupId AND status IN (:...statuses)',
+        'deviceId = :deviceId AND groupId = :groupId AND status = :status',
         {
           deviceId: targetDeviceId,
           groupId: safeGroupId,
-          statuses: ['pending', 'added'],
+          status: 'pending',
         },
       )
       .execute();
 
+    // Device can now decrypt — add it to the routing set.
+    await this.redis.sadd(
+      `group:members:${safeGroupId}`,
+      `${deviceInfo.userId}:${targetDeviceId}`,
+    );
+
     return { status: 'queued' };
-  }
-
-  @UseGuards(HeaderAuthGuard)
-  @Get('mls-api/welcome/:deviceId')
-  async getWelcomeMessages(@Param('deviceId') deviceId: string) {
-    const messages = await this.welcomeMessageRepo.find({
-      where: { deviceId },
-    });
-    // Delete immediately after reading: MLS init keys are ephemeral and can only be
-    // consumed once. Re-processing the same welcome on reconnect would always fail.
-    if (messages.length > 0) {
-      await this.welcomeMessageRepo.delete({ deviceId });
-
-      // Update DeviceGroupMembership status to welcome_received for each group
-      for (const msg of messages) {
-        await this.deviceGroupRepo
-          .createQueryBuilder()
-          .update()
-          .set({ status: 'welcome_received' as const })
-          .where('deviceId = :deviceId AND groupId = :groupId', {
-            deviceId: msg.deviceId,
-            groupId: msg.groupId,
-          })
-          .execute();
-      }
-    }
-    return messages;
   }
 
   @UseGuards(HeaderAuthGuard)
@@ -1889,6 +1894,8 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       groupId?: string;
       isWelcome?: boolean;
       isCommit?: boolean;
+      /** userId:deviceId pairs to skip (e.g. invitee already receiving a Welcome) */
+      excludeDeviceIds?: string[];
       // legacy fields (frontend fallback / group fan-out)
       content?: string;
       type?: string;
@@ -1939,12 +1946,15 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         const memberships = await this.deviceGroupRepo.find({
           where: {
             groupId: fallbackGroupId,
-            status: In(['added', 'welcome_sent', 'welcome_received']),
+            status: In(['welcome_sent', 'welcome_received']),
           },
         });
+        const excludeSet = new Set<string>(body.excludeDeviceIds ?? []);
         const fallback = memberships.filter(
           (m) =>
-            !(m.userId === body.senderId && m.deviceId === body.senderDeviceId),
+            !(
+              m.userId === body.senderId && m.deviceId === body.senderDeviceId
+            ) && !excludeSet.has(`${m.userId}:${m.deviceId}`),
         );
         for (const m of fallback) {
           ops.push(

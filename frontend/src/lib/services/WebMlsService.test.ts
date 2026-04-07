@@ -23,7 +23,6 @@ describe('WebMlsService.fetchPendingMessages', () => {
     const service = setupService();
 
     fetchMock
-      .mockResolvedValueOnce({ ok: true, json: vi.fn().mockResolvedValue([]) })
       .mockResolvedValueOnce({
         ok: true,
         json: vi.fn().mockResolvedValue([
@@ -48,33 +47,26 @@ describe('WebMlsService.fetchPendingMessages', () => {
     expect(ackBody.messageIds).toEqual(['legacy-123']);
   });
 
-  it('passe un AbortSignal aux fetch welcome et messages', async () => {
+  it('passe un AbortSignal au fetch messages', async () => {
     const service = setupService();
 
-    fetchMock
-      .mockResolvedValueOnce({ ok: true, json: vi.fn().mockResolvedValue([]) })
-      .mockResolvedValueOnce({ ok: true, json: vi.fn().mockResolvedValue([]) });
+    fetchMock.mockResolvedValueOnce({ ok: true, json: vi.fn().mockResolvedValue([]) });
 
     await service.fetchPendingMessages();
 
-    const welcomeCall = fetchMock.mock.calls[0];
-    const messagesCall = fetchMock.mock.calls[1];
+    const messagesCall = fetchMock.mock.calls[0];
 
-    expect(welcomeCall[1]?.signal).toBeDefined();
     expect(messagesCall[1]?.signal).toBeDefined();
   });
 
-  it('log un diagnostic explicite quand aucun pending welcome/message n est trouve', async () => {
+  it('log un diagnostic explicite quand aucun pending message n est trouve', async () => {
     const service = setupService();
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    fetchMock
-      .mockResolvedValueOnce({ ok: true, json: vi.fn().mockResolvedValue([]) })
-      .mockResolvedValueOnce({ ok: true, json: vi.fn().mockResolvedValue([]) });
+    fetchMock.mockResolvedValueOnce({ ok: true, json: vi.fn().mockResolvedValue([]) });
 
     await service.fetchPendingMessages();
 
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[WELCOME][PENDING] No pending'));
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[MSG][PENDING] No pending MLS'));
 
     logSpy.mockRestore();
@@ -89,19 +81,17 @@ describe('WebMlsService.fetchPendingMessages', () => {
     // callback retourne false → traitement échoué
     service.onMessage(async () => false);
 
-    fetchMock
-      .mockResolvedValueOnce({ ok: true, json: vi.fn().mockResolvedValue([]) })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: vi.fn().mockResolvedValue([
-          {
-            id: 'msg-fail',
-            senderId: 'alice',
-            groupId: 'g-1',
-            proto: btoa('abc'),
-          },
-        ]),
-      });
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: vi.fn().mockResolvedValue([
+        {
+          id: 'msg-fail',
+          senderId: 'alice',
+          groupId: 'g-1',
+          proto: btoa('abc'),
+        },
+      ]),
+    });
 
     await service.fetchPendingMessages();
 
@@ -111,11 +101,10 @@ describe('WebMlsService.fetchPendingMessages', () => {
     expect(ackCall).toBeUndefined();
   });
 
-  it('applique les headers auth sur welcome, messages et ack', async () => {
+  it('applique les headers auth sur messages et ack', async () => {
     const service = setupService();
 
     fetchMock
-      .mockResolvedValueOnce({ ok: true, json: vi.fn().mockResolvedValue([]) })
       .mockResolvedValueOnce({
         ok: true,
         json: vi.fn().mockResolvedValue([
@@ -131,9 +120,6 @@ describe('WebMlsService.fetchPendingMessages', () => {
 
     await service.fetchPendingMessages();
 
-    const welcomeCall = fetchMock.mock.calls.find((args) =>
-      String(args[0]).includes('/api/mls-api/welcome/')
-    );
     const messagesCall = fetchMock.mock.calls.find((args) =>
       String(args[0]).includes('/api/mls-api/messages/jolan/dev-1')
     );
@@ -141,7 +127,6 @@ describe('WebMlsService.fetchPendingMessages', () => {
       String(args[0]).includes('/api/mls-api/messages/ack')
     );
 
-    expect((welcomeCall as any)[1].headers.Authorization).toBe('Bearer token-abc');
     expect((messagesCall as any)[1].headers.Authorization).toBe('Bearer token-abc');
     expect((ackCall as any)[1].headers.Authorization).toBe('Bearer token-abc');
   });

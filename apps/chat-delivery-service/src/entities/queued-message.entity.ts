@@ -42,6 +42,9 @@ export class QueuedMessage {
   @Column({ nullable: true })
   content?: string;
 
+  @Column({ nullable: true })
+  ratchetTree?: string;
+
   @CreateDateColumn()
   createdAt: Date;
 }

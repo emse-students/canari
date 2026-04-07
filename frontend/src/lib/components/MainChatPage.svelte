@@ -350,7 +350,7 @@
         const mls = session.ensureMls();
         const memberships = await mls.getDeviceMemberships(userId, deviceId);
         if (!cancelled) {
-          const pending = memberships.filter((m) => m.status === 'pending' || m.status === 'added');
+          const pending = memberships.filter((m) => m.status === 'pending');
           pendingInvitationCount = pending.length;
           if (pending.length > 0) {
             console.log(`[DevicePanel] ${pending.length} pending invitation(s) detected`);

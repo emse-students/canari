@@ -277,7 +277,6 @@ describe.skip('PARTIE A - Groupe a 2 utilisateurs (user_test1 <> user_test2)', (
       groupId = res.groupId;
       const addRes = await env.ctrl.addGroupMember(groupId, {
         userId: USERS.u1.userId,
-        deviceId: USERS.u1.deviceId,
       });
       expect(addRes).toEqual({ status: 'added' });
       expect(env.memberModel.updateOne).toHaveBeenCalledWith(
@@ -299,7 +298,6 @@ describe.skip('PARTIE A - Groupe a 2 utilisateurs (user_test1 <> user_test2)', (
       groupId = res.groupId;
       await env.ctrl.addGroupMember(groupId, {
         userId: USERS.u2.userId,
-        deviceId: USERS.u2.deviceId,
       });
       expect(env.redis.sadd).toHaveBeenCalledWith(
         `group:members:${groupId}`,
@@ -391,25 +389,6 @@ describe.skip('PARTIE A - Groupe a 2 utilisateurs (user_test1 <> user_test2)', (
         'chat:messages',
         expectedEnvelope,
       );
-    });
-
-    it('user_test2 recupere son Welcome en attente (ephemere)', async () => {
-      const welcomeData = [
-        {
-          deviceId: USERS.u2.deviceId,
-          userId: USERS.u2.userId,
-          senderUserId: USERS.u1.userId,
-          groupId: 'g-x',
-          message: 'wlc==',
-        },
-      ];
-      env.welcomeModel.find.mockReturnThis();
-      env.welcomeModel.exec.mockResolvedValueOnce(welcomeData);
-      const result = await env.ctrl.getWelcomeMessages(USERS.u2.deviceId);
-      expect(result).toEqual(welcomeData);
-      expect(env.welcomeModel.deleteMany).toHaveBeenCalledWith({
-        deviceId: USERS.u2.deviceId,
-      });
     });
   });
 
@@ -909,15 +888,12 @@ describe.skip('PARTIE B - Groupe a 3 utilisateurs (user_test1, user_test2, user_
     });
     await env.ctrl.addGroupMember(gid, {
       userId: USERS.u1.userId,
-      deviceId: USERS.u1.deviceId,
     });
     await env.ctrl.addGroupMember(gid, {
       userId: USERS.u2.userId,
-      deviceId: USERS.u2.deviceId,
     });
     await env.ctrl.addGroupMember(gid, {
       userId: USERS.u3.userId,
-      deviceId: USERS.u3.deviceId,
     });
     return gid;
   }
@@ -1478,24 +1454,6 @@ describe.skip('PARTIE C - Cleanup des users de test', () => {
     expect(env.queueModel.deleteMany).toHaveBeenCalledTimes(3);
   });
 
-  it('messages Welcome des users de test sont consommes et supprimes', async () => {
-    for (const { deviceId } of [USERS.u1, USERS.u2, USERS.u3]) {
-      env.welcomeModel.find.mockReturnThis();
-      env.welcomeModel.exec.mockResolvedValueOnce([
-        {
-          deviceId,
-          userId: 'user_test_x',
-          senderUserId: 'user_test_y',
-          groupId: 'g-test',
-          message: 'w==',
-        },
-      ]);
-      const result = await env.ctrl.getWelcomeMessages(deviceId);
-      expect(result).toHaveLength(1);
-      expect(env.welcomeModel.deleteMany).toHaveBeenCalledWith({ deviceId });
-    }
-  });
-
   it("aucune donnee residuelle si les groupes n'existent pas (idempotence)", async () => {
     env.groupModel.deleteOne.mockResolvedValueOnce({ deletedCount: 0 });
     env.memberModel.deleteMany.mockResolvedValueOnce({ deletedCount: 0 });
@@ -1518,12 +1476,6 @@ describe.skip('PARTIE C - Cleanup des users de test', () => {
     for (const { userId, deviceId } of [USERS.u1, USERS.u2, USERS.u3]) {
       env.queueModel.deleteMany.mockResolvedValueOnce({ deletedCount: 0 });
       await env.ctrl.acknowledgeMessages({ userId, deviceId, messageIds: [] });
-    }
-    for (const { deviceId } of [USERS.u1, USERS.u2, USERS.u3]) {
-      env.welcomeModel.find.mockReturnThis();
-      env.welcomeModel.exec.mockResolvedValueOnce([]);
-      const welcomes = await env.ctrl.getWelcomeMessages(deviceId);
-      expect(welcomes).toHaveLength(0);
     }
     expect(env.groupModel.deleteOne).toHaveBeenCalledTimes(2);
     expect(env.memberModel.deleteMany).toHaveBeenCalledWith({ groupId: gid2 });
@@ -1567,7 +1519,7 @@ describe('PARTIE C - DeviceGroupMembership lifecycle', () => {
       );
     });
 
-    it('addGroupMember creates pending DeviceGroupMemberships for other devices', async () => {
+    it('addGroupMember creates pending DeviceGroupMemberships for all devices', async () => {
       const groupId = 'g-bootstrap-1';
 
       // Mock: user has 2 devices
@@ -1580,16 +1532,15 @@ describe('PARTIE C - DeviceGroupMembership lifecycle', () => {
 
       await env.ctrl.addGroupMember(groupId, {
         userId: USERS.u2.userId,
-        deviceId: USERS.u2.deviceId,
       });
 
-      // Direct device gets 'added', other device gets 'pending'
+      // All devices start as 'pending' — sendWelcome transitions them to welcome_sent
       expect(env.deviceGroupModel.save).toHaveBeenCalledWith(
         expect.objectContaining({
           userId: USERS.u2.userId,
           deviceId: USERS.u2.deviceId,
           groupId,
-          status: 'added',
+          status: 'pending',
         }),
       );
       expect(env.deviceGroupModel.save).toHaveBeenCalledWith(
@@ -1656,16 +1607,16 @@ describe('PARTIE C - DeviceGroupMembership lifecycle', () => {
         deviceId: USERS.u2.deviceId,
         userId: USERS.u2.userId,
         groupId: 'group-A',
-        status: 'added',
+        status: 'welcome_sent',
       });
 
-      expect(result).toEqual({ status: 'added' });
+      expect(result).toEqual({ status: 'welcome_sent' });
       expect(env.deviceGroupModel.save).toHaveBeenCalledWith(
         expect.objectContaining({
           deviceId: USERS.u2.deviceId,
           userId: USERS.u2.userId,
           groupId: 'group-A',
-          status: 'added',
+          status: 'welcome_sent',
         }),
       );
     });
@@ -1675,7 +1626,7 @@ describe('PARTIE C - DeviceGroupMembership lifecycle', () => {
         deviceId: USERS.u2.deviceId,
         userId: USERS.u2.userId,
         groupId: 'group-A',
-        status: 'added',
+        status: 'welcome_sent',
         lastEpochSeen: 0,
       });
 
@@ -1755,7 +1706,6 @@ describe('PARTIE C - DeviceGroupMembership lifecycle', () => {
       env.deviceGroupModel.findOne.mockResolvedValueOnce(null);
       await env.ctrl.addGroupMember(groupId, {
         userId: USERS.u2.userId,
-        deviceId: USERS.u2.deviceId,
       });
 
       // Second call: membership already exists
@@ -1765,11 +1715,10 @@ describe('PARTIE C - DeviceGroupMembership lifecycle', () => {
       env.deviceGroupModel.findOne.mockResolvedValueOnce({
         deviceId: USERS.u2.deviceId,
         groupId,
-        status: 'added',
+        status: 'welcome_sent',
       });
       await env.ctrl.addGroupMember(groupId, {
         userId: USERS.u2.userId,
-        deviceId: USERS.u2.deviceId,
       });
 
       // deviceGroupModel.create should have been called only once (first time)
@@ -1787,7 +1736,7 @@ describe('PARTIE C - DeviceGroupMembership lifecycle', () => {
         deviceId: 'dev-target',
         userId: 'user-target',
         groupId: 'g-race-2',
-        status: 'added',
+        status: 'welcome_sent',
         lastEpochSeen: 0,
       });
 
@@ -1890,7 +1839,6 @@ describe('PARTIE C - DeviceGroupMembership lifecycle', () => {
 
       await env.ctrl.addGroupMember(groupId, {
         userId: USERS.u2.userId,
-        deviceId: USERS.u2.deviceId,
       });
 
       // Step 3: u1 reconnects, queries pending invitations
@@ -1920,7 +1868,7 @@ describe('PARTIE C - DeviceGroupMembership lifecycle', () => {
       expect(pending[0].deviceId).toBe('dev-t2-02');
       expect(pending[0].status).toBe('pending');
 
-      // Step 4: u1 processes the pending device — updates to 'added'
+      // Step 4: u1 processes the pending device — updates to 'welcome_sent'
       env.deviceGroupModel.findOne.mockResolvedValueOnce({
         userId: USERS.u2.userId,
         deviceId: 'dev-t2-02',
@@ -1933,16 +1881,16 @@ describe('PARTIE C - DeviceGroupMembership lifecycle', () => {
         deviceId: 'dev-t2-02',
         userId: USERS.u2.userId,
         groupId,
-        status: 'added',
+        status: 'welcome_sent',
       });
-      expect(addResult).toEqual({ status: 'added' });
+      expect(addResult).toEqual({ status: 'welcome_sent' });
 
-      // Step 5: After Welcome is sent, update to 'welcome_sent'
+      // Step 5: Welcome already sent, confirm idempotency
       env.deviceGroupModel.findOne.mockResolvedValueOnce({
         userId: USERS.u2.userId,
         deviceId: 'dev-t2-02',
         groupId,
-        status: 'added',
+        status: 'welcome_sent',
         lastEpochSeen: 0,
       });
 

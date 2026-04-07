@@ -3,7 +3,6 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AppController } from './app.controller';
 import { QueuedMessage } from './entities/queued-message.entity';
 import { KeyPackage } from './entities/key-package.entity';
-import { WelcomeMessage } from './entities/welcome-message.entity';
 import { GroupMember } from './entities/group-member.entity';
 import { Group } from './entities/group.entity';
 import { PinVerifier } from './entities/pin-verifier.entity';
@@ -30,7 +29,6 @@ const RedisProvider: Provider = {
       entities: [
         QueuedMessage,
         KeyPackage,
-        WelcomeMessage,
         GroupMember,
         Group,
         PinVerifier,
@@ -41,7 +39,6 @@ const RedisProvider: Provider = {
     TypeOrmModule.forFeature([
       QueuedMessage,
       KeyPackage,
-      WelcomeMessage,
       GroupMember,
       Group,
       PinVerifier,

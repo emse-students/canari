@@ -1,6 +1,7 @@
 mod handlers;
 mod models;
 mod state;
+mod ws_dispatch;
 
 use axum::{
     Router,
@@ -9,13 +10,11 @@ use axum::{
     routing::get,
 };
 use futures::stream::StreamExt;
-use rdkafka::{ClientConfig, producer::FutureProducer};
-use reqwest::Client as HttpClient;
 use std::{net::SocketAddr, sync::Arc};
 use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::handlers::{get_presence, get_ratchet_tree, post_ratchet_tree, ws_handler};
+use crate::handlers::{get_presence, ws_handler};
 use crate::state::AppState;
 
 async fn health_check() -> impl IntoResponse {
@@ -64,37 +63,10 @@ async fn main() {
         }
     };
 
-    // Kafka Producer
-    let kafka_brokers =
-        std::env::var("KAFKA_BROKERS").unwrap_or_else(|_| "localhost:9092".to_string());
-    tracing::info!("Connexion Kafka: {}", kafka_brokers);
-    let kafka_producer: FutureProducer = match ClientConfig::new()
-        .set("bootstrap.servers", &kafka_brokers)
-        .set("message.timeout.ms", "5000")
-        .create()
-    {
-        Ok(p) => {
-            tracing::info!("Producteur Kafka créé");
-            p
-        }
-        Err(e) => {
-            tracing::error!("Erreur création producteur Kafka: {}", e);
-            std::process::exit(1);
-        }
-    };
+    // Kafka archival is handled by the delivery service; gateway no longer
+    // needs a producer or a direct HTTP channel to the delivery service.
 
-    let http_client = HttpClient::new();
-    let delivery_service_url = std::env::var("DELIVERY_SERVICE_URL")
-        .unwrap_or_else(|_| "http://localhost:3010".to_string());
-    tracing::info!("Delivery service URL: {}", delivery_service_url);
-
-    let app_state = Arc::new(AppState::new(
-        redis_client.clone(),
-        kafka_producer,
-        jwt_secret,
-        http_client,
-        delivery_service_url,
-    ));
+    let app_state = Arc::new(AppState::new(redis_client.clone(), jwt_secret));
 
     // Spawn Redis Subscriber Task (Direct Routing) — avec retry en cas d'échec
     {
@@ -413,11 +385,6 @@ async fn main() {
         .route("/api/health", get(health_check))
         .route("/api/ws", get(ws_handler))
         .route("/api/presence", get(get_presence))
-        // MLS Specific Routes
-        .route(
-            "/api/groups/{group_id}/tree",
-            get(get_ratchet_tree).post(post_ratchet_tree),
-        )
         .layer(cors)
         .with_state(app_state);
 

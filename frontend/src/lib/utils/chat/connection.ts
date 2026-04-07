@@ -449,7 +449,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           // before the Welcome arrived), activate it now — no page reload needed.
           if (!convo.isReady) {
             try {
-              await mlsService.registerMember(groupId!, userId, mlsService.getDeviceId());
+              await mlsService.registerMember(groupId!, userId);
             } catch {
               /* non-blocking */
             }
@@ -955,7 +955,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         // routes future commits/messages to us.  Without this, we join the MLS
         // tree locally but the gateway doesn't know we're a member.
         try {
-          await mlsService.registerMember(joinedGroupId, userId, mlsService.getDeviceId());
+          await mlsService.registerMember(joinedGroupId, userId);
         } catch {
           // Non-blocking: worst case we miss commits until next sync repairs it
         }
@@ -1233,11 +1233,14 @@ export async function initializeConnection(deps: ConnectionDeps): Promise<void> 
   }
 
   // On every connect, cross-check server-side membership status with local MLS state:
-  //   • pending            → send a welcome_request so any online group member can invite us
-  //   • stale              → send a reinvite_request so own online devices re-invite us
-  //   • welcome_received   → normally do nothing, BUT if local state is missing (e.g. storage
-  //                          cleared, reinstall) reset to pending and send a welcome_request so
-  //                          we get re-invited instead of being silently stuck
+  //   • pending          → send a welcome_request so any online group member can invite us
+  //   • stale            → send a reinvite_request; the receiving peer runs
+  //                        processPendingInvitations which kicks the stale leaf first (remove
+  //                        commit), then re-adds the device (add commit + Welcome). Cannot use
+  //                        welcome_request here because the leaf is still in the tree.
+  //   • welcome_received → normally do nothing, BUT if local state is missing (e.g. storage
+  //                        cleared, reinstall) reset to pending and send a welcome_request so
+  //                        we get re-invited instead of being silently stuck
   try {
     const memberships = await mlsService.getDeviceMemberships(_userId, mlsService.getDeviceId());
     const localGroups = new Set(mlsService.getLocalGroups());
@@ -1246,15 +1249,22 @@ export async function initializeConnection(deps: ConnectionDeps): Promise<void> 
         mlsService.sendWelcomeRequest(m.groupId);
         log(`[SYNC] welcome_request envoyé pour groupe ${m.groupId}`);
       } else if (m.status === 'stale') {
+        // Wipe local MLS state before requesting reinvite: the stale device's leaf
+        // is still in everyone's tree, so the peer will kick it (remove commit) and
+        // re-add it (add commit + Welcome). The Welcome can only be processed if the
+        // local group state is gone — otherwise processWelcome would find an existing
+        // group and fail.
+        mlsService.forgetGroup(m.groupId);
         mlsService.sendReinviteRequest(m.groupId);
-        log(`[SYNC] reinvite_request envoyé (stale sur groupe ${m.groupId})`);
+        log(`[SYNC] reinvite_request envoyé (stale sur groupe ${m.groupId}, état local effacé)`);
       } else if (m.status === 'welcome_received' && !localGroups.has(m.groupId)) {
         // Server believes we are a full member but local MLS state is gone.
+        // If the server belives so, the other devices too -> equivalent to stale / need to be reinvited
         // Reset to pending so the receiving device accepts the welcome_request.
         await mlsService
-          .updateInvitationStatus(mlsService.getDeviceId(), _userId, m.groupId, 'pending')
+          .updateInvitationStatus(mlsService.getDeviceId(), _userId, m.groupId, 'stale')
           .catch(() => {});
-        mlsService.sendWelcomeRequest(m.groupId);
+        mlsService.sendReinviteRequest(m.groupId);
         log(`[SYNC] welcome_request envoyé (état local manquant pour ${m.groupId})`);
       }
     }

@@ -59,7 +59,6 @@ export interface ChatSessionCallbacks {
   }) => void;
   onSendError: (msg: string) => void;
   onShowSyncGuidePrompt: () => void;
-  onNoPeerOnline?: (groupId: string) => void;
   log: (msg: string) => void;
   messageReactions: SvelteMap<string, any[]>;
   getSelectedContact: () => string | null;
@@ -93,12 +92,6 @@ export function useChatSession() {
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let isReconnecting = false;
   let isSyncing = false;
-
-  // ── no_peer_online retry timers (reinvite when peers come online) ─────────
-  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- not reactive state, internal bookkeeping
-  const noPeerRetryTimers = new Map<string, ReturnType<typeof setInterval>>();
-  const NO_PEER_RETRY_INTERVAL = 30_000; // 30s between retries
-  const NO_PEER_MAX_RETRIES = 20; // stop after ~10 min
 
   // ── Backup ────────────────────────────────────────────────────────────────
   let isExporting = $state(false);
@@ -299,40 +292,6 @@ export function useChatSession() {
         }
       );
 
-      // When no online peer was reachable for a welcome_request, prompt the user
-      // to connect another device so it can invite this one.
-      mlsService.onNoPeerOnline((groupId: string) => {
-        cb.log(`[SYNC] no_peer_online pour groupe ${groupId}`);
-        cb.onNoPeerOnline?.(groupId);
-
-        // Start periodic retry if not already running for this group
-        if (!noPeerRetryTimers.has(groupId)) {
-          let retries = 0;
-          const timer = setInterval(() => {
-            retries++;
-            // Stop if group is now ready (Welcome was received in the meantime)
-            const isGroupReady = [...cb.conversations.values()].some(
-              (c) => c.groupId === groupId && c.isReady
-            );
-            if (isGroupReady || retries > NO_PEER_MAX_RETRIES) {
-              clearInterval(timer);
-              noPeerRetryTimers.delete(groupId);
-              cb.log(
-                isGroupReady
-                  ? `[SYNC] Retry stoppé pour ${groupId} (groupe restauré)`
-                  : `[SYNC] Arrêt des tentatives pour ${groupId} (max atteint)`
-              );
-              return;
-            }
-            cb.log(
-              `[SYNC] Retry reinvite_request pour ${groupId} (${retries}/${NO_PEER_MAX_RETRIES})`
-            );
-            mlsService.sendReinviteRequest(groupId);
-          }, NO_PEER_RETRY_INTERVAL);
-          noPeerRetryTimers.set(groupId, timer);
-        }
-      });
-
       // Multi-tab leadership: only the leader tab opens the WebSocket.
       await initTabLeadershipAsync(cb.log);
 
@@ -443,8 +402,6 @@ export function useChatSession() {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
     }
-    for (const timer of noPeerRetryTimers.values()) clearInterval(timer);
-    noPeerRetryTimers.clear();
     reconnectAttempts = 0;
     isLoggedIn = false;
     isWsConnected = false;

@@ -27,11 +27,10 @@ describe('TauriMlsService welcome and pending flows', () => {
     return service;
   }
 
-  it('applique les headers auth sur welcome, messages et ack en pending fetch', async () => {
+  it('applique les headers auth sur messages et ack en pending fetch', async () => {
     const service = setupService();
 
     tauriFetchMock
-      .mockResolvedValueOnce({ ok: true, json: vi.fn().mockResolvedValue([]) })
       .mockResolvedValueOnce({
         ok: true,
         json: vi.fn().mockResolvedValue([
@@ -47,9 +46,6 @@ describe('TauriMlsService welcome and pending flows', () => {
 
     await service.fetchPendingMessages();
 
-    const welcomeCall = tauriFetchMock.mock.calls.find((args) =>
-      String(args[0]).includes('/api/mls-api/welcome/')
-    );
     const messagesCall = tauriFetchMock.mock.calls.find((args) =>
       String(args[0]).includes('/api/mls-api/messages/jolan/dev-1')
     );
@@ -57,22 +53,18 @@ describe('TauriMlsService welcome and pending flows', () => {
       String(args[0]).includes('/api/mls-api/messages/ack')
     );
 
-    expect((welcomeCall as any)[1].headers.Authorization).toBe('Bearer token-abc');
     expect((messagesCall as any)[1].headers.Authorization).toBe('Bearer token-abc');
     expect((ackCall as any)[1].headers.Authorization).toBe('Bearer token-abc');
   });
 
-  it('log un diagnostic explicite quand aucun pending welcome/message n est trouve', async () => {
+  it('log un diagnostic explicite quand aucun pending message n est trouve', async () => {
     const service = setupService();
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    tauriFetchMock
-      .mockResolvedValueOnce({ ok: true, json: vi.fn().mockResolvedValue([]) })
-      .mockResolvedValueOnce({ ok: true, json: vi.fn().mockResolvedValue([]) });
+    tauriFetchMock.mockResolvedValueOnce({ ok: true, json: vi.fn().mockResolvedValue([]) });
 
     await service.fetchPendingMessages();
 
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[WELCOME][PENDING] No pending'));
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[MSG][PENDING] No pending MLS'));
 
     logSpy.mockRestore();

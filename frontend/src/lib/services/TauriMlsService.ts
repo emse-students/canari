@@ -49,7 +49,6 @@ export class TauriMlsService implements IMlsService {
   private welcomeRequestCallback:
     | ((requesterUserId: string, requesterDeviceId: string, groupId: string) => void)
     | null = null;
-  private noPeerOnlineCallback: ((groupId: string) => void) | null = null;
   private baseUrl: string;
   private historyUrl: string;
   private authToken = '';
@@ -188,12 +187,6 @@ export class TauriMlsService implements IMlsService {
             this.welcomeRequestCallback?.(requesterUserId, requesterDeviceId, groupId);
             return;
           }
-          if (msg.type === 'no_peer_online') {
-            const groupId = (msg.groupId as string) || '';
-            console.log(`[WS RCV] no_peer_online for group ${groupId}`);
-            this.noPeerOnlineCallback?.(groupId);
-            return;
-          }
           if (msg.type === 'epoch_rejected') {
             console.warn(
               `[WS RCV] Epoch rejected for group ${msg.groupId} (server epoch: ${msg.currentEpoch})`
@@ -239,40 +232,6 @@ export class TauriMlsService implements IMlsService {
     if (this.userId === 'unknown') return;
 
     const FETCH_TIMEOUT = 10_000;
-
-    // Fetch pending welcome messages (group invitations stored while offline)
-    try {
-      const ctrl = new AbortController();
-      const tid = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT);
-      const wRes = await fetch(`${this.historyUrl}/api/mls-api/welcome/${this.deviceId}`, {
-        headers: this.withAuthHeaders(),
-        signal: ctrl.signal,
-      });
-      clearTimeout(tid);
-      if (wRes.ok) {
-        const welcomes = await wRes.json();
-        if (Array.isArray(welcomes) && welcomes.length > 0) {
-          console.log(`Fetched ${welcomes.length} pending welcome message(s)`);
-          for (const w of welcomes) {
-            await this.simulateMessageReceive({
-              type: 'mlsWelcome',
-              content: w.message,
-              senderId: w.senderUserId ?? 'system',
-              groupId: w.groupId,
-              ratchetTree: w.ratchetTree,
-            });
-          }
-        } else {
-          console.log(`[WELCOME][PENDING] No pending welcome for device ${this.deviceId}`);
-        }
-      } else {
-        console.warn(
-          `[WELCOME][PENDING] Welcome fetch failed: ${wRes.status} ${wRes.statusText} (device=${this.deviceId})`
-        );
-      }
-    } catch (e) {
-      console.error('Failed to fetch pending welcome messages', e);
-    }
 
     try {
       const ctrl2 = new AbortController();
@@ -498,10 +457,6 @@ export class TauriMlsService implements IMlsService {
     this.welcomeRequestCallback = callback;
   }
 
-  onNoPeerOnline(callback: (groupId: string) => void): void {
-    this.noPeerOnlineCallback = callback;
-  }
-
   getDeviceId(): string {
     return this.deviceId;
   }
@@ -530,12 +485,12 @@ export class TauriMlsService implements IMlsService {
     }
   }
 
-  async registerMember(groupId: string, userId: string, deviceId: string): Promise<void> {
+  async registerMember(groupId: string, userId: string): Promise<void> {
     try {
       await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}/members`, {
         method: 'POST',
         headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ userId, deviceId }),
+        body: JSON.stringify({ userId }),
       });
     } catch (e) {
       console.error('Failed to register member', e);
@@ -571,51 +526,6 @@ export class TauriMlsService implements IMlsService {
       ? btoa(String.fromCharCode(...ratchetTreeBytes))
       : undefined;
 
-    if (targetDeviceId) {
-      const response = await fetch(`${this.historyUrl}/api/mls-api/welcome`, {
-        method: 'POST',
-        headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({
-          targetDeviceId,
-          targetUserId,
-          senderUserId: this.userId,
-          welcomePayload: base64,
-          ratchetTreePayload: ratchetTreeBase64,
-          groupId,
-        }),
-      });
-      await this.assertOkResponse(
-        response,
-        `Welcome delivery to ${targetUserId}:${targetDeviceId} (group ${groupId})`
-      );
-      return;
-    }
-
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      let resolvedDeviceId = targetDeviceId;
-      if (!resolvedDeviceId) {
-        const devices = await this.fetchUserDevices(targetUserId);
-        resolvedDeviceId = devices[0]?.deviceId;
-      }
-      if (!resolvedDeviceId) {
-        throw new Error(
-          `Impossible d'envoyer l'invitation sécurisée à ${targetUserId} : ` +
-            `aucun appareil actif trouvé.`
-        );
-      }
-      this.ws.send(
-        JSON.stringify({
-          type: 'welcome',
-          groupId,
-          proto: base64,
-          ratchetTree: ratchetTreeBase64,
-          recipients: [{ userId: targetUserId, deviceId: resolvedDeviceId }],
-        })
-      );
-      return;
-    }
-
-    // WS closed fallback: resolve deviceId and use the dedicated REST endpoint.
     let resolvedDeviceId = targetDeviceId;
     if (!resolvedDeviceId) {
       const devices = await this.fetchUserDevices(targetUserId);
@@ -641,7 +551,7 @@ export class TauriMlsService implements IMlsService {
     });
     await this.assertOkResponse(
       response,
-      `Welcome fallback delivery to ${targetUserId}:${resolvedDeviceId} (group ${groupId})`
+      `Welcome delivery to ${targetUserId}:${resolvedDeviceId} (group ${groupId})`
     );
   }
 
@@ -671,7 +581,7 @@ export class TauriMlsService implements IMlsService {
     }
 
     const encryptedState = state ? Array.from(state) : null;
-    await invoke('initialiser_mls', { userId, pin, encryptedState });
+    await invoke('initialiser_mls', { userId, deviceId: this.deviceId, pin, encryptedState });
 
     // Populate the local groups cache from Rust after init.
     try {
@@ -720,7 +630,7 @@ export class TauriMlsService implements IMlsService {
     groupId: string,
     excludeDeviceIds?: string[]
   ): Promise<void> {
-    const base64 = btoa(String.fromCharCode(...commitBytes));
+    const proto = btoa(String.fromCharCode(...commitBytes));
     let baseEpoch = 0;
     try {
       // Rust merges pending commit before returning bytes, so local epoch is already advanced.
@@ -731,16 +641,10 @@ export class TauriMlsService implements IMlsService {
       // If epoch retrieval fails, send 0 (server will validate)
     }
 
-    // Step 1: Validate epoch synchronously via HTTP — the caller will know
-    // immediately whether the commit was accepted or rejected.
     const validateRes = await fetch(`${this.historyUrl}/api/mls-api/commit`, {
       method: 'POST',
       headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({
-        groupId,
-        deviceId: this.deviceId,
-        baseEpoch,
-      }),
+      body: JSON.stringify({ groupId, deviceId: this.deviceId, baseEpoch }),
     });
     if (!validateRes.ok) {
       throw new Error(`Commit validation HTTP error: ${validateRes.status}`);
@@ -752,30 +656,20 @@ export class TauriMlsService implements IMlsService {
       );
     }
 
-    // Step 2: Epoch advanced server-side — broadcast the commit to other
-    // members.  We send as type 'mls' so the gateway broadcasts directly
-    // without re-running epoch validation.
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(
-        JSON.stringify({
-          type: 'mls',
-          groupId,
-          proto: base64,
-          ...(excludeDeviceIds?.length ? { excludeDeviceIds } : {}),
-        })
-      );
-    } else {
-      await fetch(`${this.historyUrl}/api/mls-api/send`, {
-        method: 'POST',
-        headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({
-          senderId: this.userId,
-          senderDeviceId: this.deviceId,
-          groupId: groupId,
-          content: base64,
-          type: 'handshake',
-        }),
-      });
+    const res = await fetch(`${this.historyUrl}/api/mls-api/send`, {
+      method: 'POST',
+      headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        senderId: this.userId,
+        senderDeviceId: this.deviceId,
+        groupId,
+        proto,
+        isCommit: true,
+        ...(excludeDeviceIds?.length ? { excludeDeviceIds } : {}),
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`Commit delivery HTTP error: ${res.status}`);
     }
   }
 
@@ -880,53 +774,28 @@ export class TauriMlsService implements IMlsService {
   async sendMessage(
     groupId: string,
     messageBytes: Uint8Array,
-    messageId?: string
+    _messageId?: string
   ): Promise<Uint8Array> {
     const res = await invoke<number[]>('envoyer_message_bytes', {
       groupId,
       messageBytes: Array.from(messageBytes),
     });
     const encryptedBytes = Uint8Array.from(res);
-    const base64 = btoa(String.fromCharCode(...encryptedBytes));
-
-    // Send via WebSocket if connected
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      try {
-        this.ws.send(
-          JSON.stringify({
-            type: 'mls',
-            groupId,
-            proto: btoa(String.fromCharCode(...encryptedBytes)),
-            ...(messageId ? { messageId } : {}),
-          })
-        );
-      } catch (wsErr) {
-        // WebSocket closed between readyState check and send — fall through to HTTP
-        console.warn('WebSocket send failed (Tauri), falling back to HTTP:', wsErr);
-        await this.sendViaHttpFallback(base64, groupId);
-      }
-    } else {
-      await this.sendViaHttpFallback(base64, groupId);
-    }
-
-    return encryptedBytes;
-  }
-
-  private async sendViaHttpFallback(base64: string, groupId: string): Promise<void> {
-    console.warn('Sending via HTTP fallback (Tauri)...');
-    const response = await fetch(`${this.historyUrl}/api/mls-api/send`, {
+    const proto = btoa(String.fromCharCode(...encryptedBytes));
+    const httpRes = await fetch(`${this.historyUrl}/api/mls-api/send`, {
       method: 'POST',
       headers: this.withAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         senderId: this.userId,
         senderDeviceId: this.deviceId,
-        content: base64,
         groupId,
+        proto,
       }),
     });
-    if (!response.ok) {
-      throw new Error(`HTTP fallback failed: ${response.statusText}`);
+    if (!httpRes.ok) {
+      throw new Error(`Message send HTTP error: ${httpRes.status}`);
     }
+    return encryptedBytes;
   }
 
   async processIncomingMessage(
@@ -1030,6 +899,14 @@ export class TauriMlsService implements IMlsService {
     await this.sendCommit(new Uint8Array(commitBytes), groupId);
   }
 
+  async removeMemberDevice(groupId: string, deviceIdentities: string[]): Promise<void> {
+    const commitBytes = await invoke<number[]>('retirer_membres_par_appareil', {
+      groupId,
+      deviceIdentities,
+    });
+    await this.sendCommit(new Uint8Array(commitBytes), groupId);
+  }
+
   async getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]> {
     try {
       const res = await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}/members`);
@@ -1097,7 +974,7 @@ export class TauriMlsService implements IMlsService {
     deviceId: string,
     userId: string,
     groupId: string,
-    status: 'pending' | 'added' | 'welcome_sent' | 'welcome_received' | 'stale',
+    status: 'pending' | 'welcome_sent' | 'welcome_received' | 'stale',
     lastEpochSeen?: number
   ): Promise<void> {
     try {
@@ -1111,13 +988,13 @@ export class TauriMlsService implements IMlsService {
     }
   }
 
-  async kickStaleUser(userId: string, groupId: string): Promise<void> {
-    const res = await fetch(`${this.historyUrl}/api/mls-api/kick-stale-user`, {
+  async kickStaleDevice(deviceId: string, userId: string, groupId: string): Promise<void> {
+    const res = await fetch(`${this.historyUrl}/api/mls-api/kick-stale-device`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId, groupId }),
+      body: JSON.stringify({ deviceId, userId, groupId }),
     });
-    if (!res.ok) throw new Error(`kickStaleUser failed: ${res.status}`);
+    if (!res.ok) throw new Error(`kickStaleDevice failed: ${res.status}`);
   }
 
   async resetGroupEpoch(groupId: string): Promise<void> {

@@ -89,19 +89,16 @@ export async function processPendingInvitations(params: {
       // A stale device's leaf is still in the MLS tree.  We must remove it
       // (commit de "kick") before re-adding (commit + welcome d'ajout).
       const staleInvs = invitations.filter((inv) => inv.status === 'stale');
-      const kickedUserIds = new Set<string>();
 
       for (const inv of staleInvs) {
-        if (kickedUserIds.has(inv.userId)) continue; // already kicked this user in this group
-
         try {
-          // Remove ALL leaves of the stale user from the MLS tree
-          await mlsService.removeMember(groupId, [inv.userId]);
-          log(`[PENDING] Kicked stale user ${inv.userId} from ${groupId}`);
+          // Remove this specific device's leaf from the MLS tree by its identity
+          const deviceIdentity = `${inv.userId}:${inv.deviceId}`;
+          await mlsService.removeMemberDevice(groupId, [deviceIdentity]);
+          log(`[PENDING] Kicked stale device ${inv.userId}:${inv.deviceId} from ${groupId}`);
 
-          // Reset all their devices in this group to pending on the server
-          await mlsService.kickStaleUser(inv.userId, groupId);
-          kickedUserIds.add(inv.userId);
+          // Reset only this device in this group to pending on the server
+          await mlsService.kickStaleDevice(inv.deviceId, inv.userId, groupId);
 
           // Persist MLS state after the remove commit
           const stBytes = await mlsService.saveState(pin);
@@ -110,7 +107,7 @@ export async function processPendingInvitations(params: {
           // Short delay for commit propagation
           await new Promise((r) => setTimeout(r, 150));
         } catch (e) {
-          log(`[PENDING] Erreur kick stale user ${inv.userId}: ${String(e).slice(0, 100)}`);
+          log(`[PENDING] Erreur kick stale device ${inv.deviceId}: ${String(e).slice(0, 100)}`);
         }
       }
 
@@ -118,7 +115,7 @@ export async function processPendingInvitations(params: {
       // If we just kicked stale users, re-fetch this group's pending list
       // (the kicked devices are now pending).
       let currentPending: typeof invitations;
-      if (kickedUserIds.size > 0) {
+      if (staleInvs.length > 0) {
         try {
           const allPending = await mlsService.getPendingInvitations(userId, myDeviceId);
           currentPending = allPending.filter((inv) => inv.groupId === groupId);
@@ -159,8 +156,8 @@ export async function processPendingInvitations(params: {
           // Add the member to the MLS group
           const result = await mlsService.addMember(groupId, targetDevice.keyPackage);
 
-          // Register member on server
-          await mlsService.registerMember(groupId, inv.userId, inv.deviceId);
+          // Register member on server (upsert GroupMember row) (not strictly necessary to add before Welcome, but keeps server state more up-to-date in case of failure during the MLS flow)
+          await mlsService.registerMember(groupId, inv.userId);
 
           // Send Welcome
           if (result.welcome) {
@@ -318,6 +315,22 @@ export async function discoverMissingGroups(params: {
   if (pendingConvos.length === 0) return;
 
   for (const [key, convo] of pendingConvos) {
+    // Fast-path: group already present in local MLS state (restored from backup, etc.)
+    // Check this BEFORE hitting the server — no need for member list to activate.
+    const localGroups = mlsService.getLocalGroups();
+    if (localGroups.includes(convo.groupId)) {
+      log(`[DISCOVERY] "${convo.name}": groupe présent dans MLS local — activation directe.`);
+      try {
+        await mlsService.registerMember(convo.groupId, userId);
+      } catch {
+        /* non-blocking */
+      }
+      conversations.set(key, { ...convo, isReady: true });
+      if (saveConversation) await saveConversation(key);
+      localStorage.removeItem(`discovery_pending:${convo.groupId}`);
+      continue;
+    }
+
     // Re-read local MLS groups inside the loop: a Welcome may have been processed
     // during the async operations above and already joined the group.
 
@@ -343,45 +356,41 @@ export async function discoverMissingGroups(params: {
     }
     const waitingMs = pendingSince ? Date.now() - pendingSince : 0;
 
-    // Two separate checks with different semantics:
-    //   • hasOtherOwnDevices: another alice-device is online → it will reinvite us, wait.
-    //   • otherMemberIsActive: another member (non-alice) has a published key package →
-    //     only non-leaders need to wait for their Welcome; leaders still bootstrap.
-    let hasOtherOwnDevices = false;
-    let otherMemberIsActive = false;
-    for (const memberId of memberUserIds) {
+    // Check if current user has another own device → it can Welcome us via reinvite_request
+    let hasOtherOwnDevice = false;
+    try {
+      const ownDevices = await mlsService.fetchUserDevices(userId);
+      hasOtherOwnDevice = ownDevices.some((d) => d.deviceId !== mlsService.getDeviceId());
+    } catch {
+      /* ignore */
+    }
+
+    // Check if any other group member has active devices → use extended 120s timeout
+    const otherMemberIds = memberUserIds.filter((uid) => uid !== userId.toLowerCase());
+    let otherMembersHaveDevices = false;
+    for (const memberId of otherMemberIds) {
       try {
         const devices = await mlsService.fetchUserDevices(memberId);
-        if (memberId === userId.toLowerCase()) {
-          if (devices.some((d) => d.deviceId !== mlsService.getDeviceId())) {
-            hasOtherOwnDevices = true;
-          }
-        } else {
-          if (devices.length > 0) {
-            otherMemberIsActive = true;
-          }
+        if (devices.length > 0) {
+          otherMembersHaveDevices = true;
+          break;
         }
       } catch {
-        // ignore
+        /* ignore */
       }
     }
 
     // Decision tree:
-    //   1. Own other device exists → wait for reinvite_request (up to 10s, then bootstrap)
-    //   2. Leader with no other own device → bootstrap immediately
-    //   3. Non-leader, other member active → wait up to 120s for a Welcome
-    //   4. Non-leader, no active member → wait 30s then bootstrap as fallback
-    const shouldBootstrap = hasOtherOwnDevices
-      ? waitingMs > 10_000
-      : isLeader || (otherMemberIsActive ? waitingMs > 120_000 : waitingMs > 30_000);
+    //   1. Own other device exists → it will Welcome us via reinvite_request, skip
+    //   2. Leader + no other own device → bootstrap immediately
+    //   3. Non-leader + active peer devices → wait 120s then bootstrap as fallback
+    //   4. Non-leader + no active peer devices → wait 30s then bootstrap as fallback
+    const timeoutMs = otherMembersHaveDevices ? 120_000 : 30_000;
+    const shouldBootstrap = !hasOtherOwnDevice && (isLeader || waitingMs > timeoutMs);
 
     if (!shouldBootstrap) {
       log(
-        hasOtherOwnDevices
-          ? `[DISCOVERY] "${convo.name}": autre appareil propre détecté, attente reinvite... (${Math.round(waitingMs / 1000)}s / 10s)`
-          : otherMemberIsActive
-            ? `[DISCOVERY] "${convo.name}": appareil(s) actif(s) détecté(s), attente Welcome via welcome_request... (${Math.round(waitingMs / 1000)}s / 120s)`
-            : `[DISCOVERY] "${convo.name}": attente bootstrap par ${memberUserIds[0]} (${Math.round(waitingMs / 1000)}s / 30s)`
+        `[DISCOVERY] "${convo.name}": attente Welcome via service de livraison (${Math.round(waitingMs / 1000)}s / ${timeoutMs / 1000}s)`
       );
       continue;
     }
@@ -403,7 +412,7 @@ export async function discoverMissingGroups(params: {
           // Activate directly — the recovered state may have the correct epoch.
           log(`[DISCOVERY] "${convo.name}": groupe déjà présent dans Rust — activation directe.`);
           try {
-            await mlsService.registerMember(convo.groupId, userId, mlsService.getDeviceId());
+            await mlsService.registerMember(convo.groupId, userId);
           } catch {
             /* non-blocking */
           }
@@ -414,7 +423,7 @@ export async function discoverMissingGroups(params: {
         }
         throw createErr;
       }
-      await mlsService.registerMember(convo.groupId, userId, mlsService.getDeviceId());
+      await mlsService.registerMember(convo.groupId, userId);
 
       // Collect all members' current devices
       const allDevices: { keyPackage: Uint8Array; deviceId: string }[] = [];
@@ -438,7 +447,7 @@ export async function discoverMissingGroups(params: {
         for (const did of bulk.addedDeviceIds) {
           const memberUserId = deviceUserMap.get(did);
           if (memberUserId) {
-            await mlsService.registerMember(convo.groupId, memberUserId, did);
+            await mlsService.registerMember(convo.groupId, memberUserId);
           }
         }
 
@@ -588,6 +597,11 @@ export async function processDevWelcome(params: {
   await mlsService.processWelcome(fromHex(incomingBytesHex));
 }
 
+// Local guard: only one welcome_request per group can be processed at a time on this device.
+// A distributed lock is not needed because the gateway already routes each welcome_request
+// to exactly one peer, so no two devices can race on the same request.
+const welcomeRequestInProgress = new Set<string>();
+
 export async function handleWelcomeRequest(params: {
   mlsService: IMlsService;
   userId: string;
@@ -616,12 +630,11 @@ export async function handleWelcomeRequest(params: {
     return;
   }
 
-  // Acquire distributed lock — first device to win becomes the "leader"
-  const lockAcquired = await mlsService.acquireAddLock(groupId, 15_000).catch(() => false);
-  if (!lockAcquired) {
-    log(`[WELCOME_REQ] Verrou tenu par un autre appareil pour ${groupId} — skip`);
+  if (welcomeRequestInProgress.has(groupId)) {
+    log(`[WELCOME_REQ] Déjà en cours pour ${groupId} — skip`);
     return;
   }
+  welcomeRequestInProgress.add(groupId);
 
   try {
     // Fetch fresh KeyPackage for the requesting device
@@ -632,33 +645,19 @@ export async function handleWelcomeRequest(params: {
       return;
     }
 
-    // Idempotency: skip if device is already an MLS member —
-    // UNLESS it is a different user's device that sent welcome_request,
-    // which signals it lost its local MLS state. In that case, force
-    // remove + re-add so it receives a fresh Welcome with current epoch.
+    // Idempotency: if the device's leaf is already in the MLS tree, skip.
+    // This covers stale devices that reset themselves to 'pending' and send a
+    // welcome_request — their leaf is still present in every member's tree, so a
+    // bare addMember commit would create an epoch mismatch for everyone.
+    // processPendingInvitations handles this case correctly (kick commit first,
+    // then add commit), so we leave it to that path.
     try {
       const members = await mlsService.getGroupMembers(groupId);
       if (members.some((m) => m.deviceId === requesterDeviceId)) {
-        if (requesterUserId === userId) {
-          // Same-user device — skip here; the periodic discovery retry will
-          // bootstrap the group from the requester side after the timeout.
-          log(
-            `[WELCOME_REQ] ${requesterDeviceId} (own device) déjà membre — bootstrap côté demandeur`
-          );
-          return;
-        }
-        // Different user's device lost its local state — force remove + re-add.
         log(
-          `[WELCOME_REQ] ${requesterDeviceId} déjà membre mais a perdu son état — force remove+re-add`
+          `[WELCOME_REQ] ${requesterDeviceId} déjà dans l'arbre MLS de ${groupId} — délégué à processPendingInvitations`
         );
-        try {
-          await mlsService.removeMember(groupId, [requesterUserId]);
-          await mlsService.removeMemberFromServer(groupId, requesterUserId);
-        } catch (removeErr) {
-          log(`[WELCOME_REQ] Force-remove échoué: ${String(removeErr).slice(0, 80)} — skip`);
-          return;
-        }
-        // Fall through to re-add the device below.
+        return;
       }
     } catch {
       // proceed if member list unavailable
@@ -666,7 +665,7 @@ export async function handleWelcomeRequest(params: {
 
     // Add the device to the MLS group
     const result = await mlsService.addMember(groupId, targetDevice.keyPackage);
-    await mlsService.registerMember(groupId, requesterUserId, requesterDeviceId);
+    await mlsService.registerMember(groupId, requesterUserId);
 
     // Send Welcome to the requesting device
     if (result.welcome) {
@@ -701,6 +700,6 @@ export async function handleWelcomeRequest(params: {
       log(`[WELCOME_REQ] Erreur pour ${requesterDeviceId}: ${errStr.slice(0, 100)}`);
     }
   } finally {
-    await mlsService.releaseAddLock(groupId).catch(() => {});
+    welcomeRequestInProgress.delete(groupId);
   }
 }

@@ -62,6 +62,7 @@ impl WasmMlsClient {
     #[wasm_bindgen(constructor)]
     pub fn new(
         user_id: &str,
+        device_id: &str,
         state_bytes: Option<Vec<u8>>,
         pin: Option<String>,
     ) -> Result<WasmMlsClient, JsValue> {
@@ -69,15 +70,19 @@ impl WasmMlsClient {
         console_error_panic_hook::set_once();
 
         // We assume init_logger() was called, but we can log here too.
-        log::info!("WasmMlsClient::new called for user: {}", user_id);
+        log::info!(
+            "WasmMlsClient::new called for user: {} device: {}",
+            user_id,
+            device_id
+        );
 
         let manager = if let (Some(blob), Some(p)) = (state_bytes.clone(), pin) {
             log::info!("Loading encrypted state");
-            MlsManager::load_encrypted(user_id, Some(blob), &p)
+            MlsManager::load_encrypted(user_id, device_id, Some(blob), &p)
                 .map_err(|e| JsValue::from_str(&e.to_string()))?
         } else {
             log::info!("Loading/Creating clean state");
-            MlsManager::load_or_create(user_id, state_bytes)
+            MlsManager::load_or_create(user_id, device_id, state_bytes)
                 .map_err(|e| JsValue::from_str(&e.to_string()))?
         };
 
@@ -348,6 +353,29 @@ impl WasmMlsClient {
         let id_slices: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
         self.manager
             .remove_members_for_users(&group_id, &id_slices)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Remove specific device leaves by their `userId:deviceId` identity string.
+    /// Only removes the targeted leaves, leaving other devices of the same user intact.
+    #[wasm_bindgen]
+    pub fn remove_members_by_device(
+        &mut self,
+        group_id: String,
+        device_identities: js_sys::Array,
+    ) -> Result<Vec<u8>, JsValue> {
+        let ids: Vec<String> = device_identities
+            .iter()
+            .filter_map(|v| v.as_string())
+            .collect();
+        log::info!(
+            "remove_members_by_device from group: {} (devices: {:?})",
+            group_id,
+            ids
+        );
+        let id_slices: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+        self.manager
+            .remove_members_for_devices(&group_id, &id_slices)
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 }

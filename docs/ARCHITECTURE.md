@@ -149,7 +149,6 @@ Auth interne Nginx:
 - `GET /api/health`
 - `GET /api/ws` (WebSocket)
 - `GET /api/presence`
-- `GET/POST /api/groups/{group_id}/tree`
 
 ### 7.2 chat-delivery-service (port 3010, prefix global `/api`)
 

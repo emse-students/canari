@@ -55,7 +55,7 @@
         try {
           const sub = await getSubmission(f.id);
           if (sub?.answers) selections = sub.answers;
-        } catch (_e) {
+        } catch {
           // ignore
         }
       }

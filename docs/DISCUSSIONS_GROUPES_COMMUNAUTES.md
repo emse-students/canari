@@ -186,7 +186,7 @@ Epoch Timeline :
 
 5. **Création locale MLS** : `mlsService.createGroup(groupId)` → **Epoch 0** (groupe local vide)
 
-6. **Enregistrement créateur** : `mlsService.registerMember(groupId, userId, deviceId)`
+6. **Enregistrement créateur** : `mlsService.registerMember(groupId, userId)`
    - `POST /api/mls-api/groups/{groupId}/members`
 
 7. **Ajout du contact** (bulk) : `mlsService.addMembersBulk(groupId, contactDevices)` → **Epoch 0 → 1**
@@ -248,7 +248,7 @@ Epoch Timeline :
 
 4. **Création locale** : `mlsService.createGroup(groupId)` → **Epoch 0**
 
-5. **Enregistrement créateur** : `registerMember(groupId, userId, deviceId)`
+5. **Enregistrement créateur** : `registerMember(groupId, userId)`
 
 6. **Ajout des propres appareils** (bulk) : `addMembersBulk(groupId, ownDevices)` → **Epoch 0 → 1**
    - Welcome envoyé à chaque appareil distant
@@ -279,7 +279,7 @@ Epoch Timeline :
 2. **Ajout bulk unique** : `addMembersBulk(groupId, allDevices)` → **Un seul changement d'epoch**
    - Crucial : un commit unique évite les erreurs `WrongEpoch` qui surviendraient avec des ajouts séquentiels
 
-3. **Enregistrement serveur** : Pour chaque `addedDeviceId` → `registerMember(groupId, userId, deviceId)`
+3. **Enregistrement serveur** : Pour chaque `addedDeviceId` → `registerMember(groupId, userId)`
 
 4. **Sauvegarde état MLS**
 
@@ -879,7 +879,7 @@ processIncomingMessage(groupId, content) → ERREUR
 | `generateKeyPackage(pin)`                         | Génère + publie un KeyPackage                               |
 | `publishKeyPackage(keyPackageBytes)`              | POST /api/mls-api/register-device                           |
 | `fetchUserDevices(userId)`                        | GET /api/mls-api/devices/{userId}                           |
-| `registerMember(groupId, userId, deviceId)`       | POST /api/mls-api/groups/{groupId}/members                  |
+| `registerMember(groupId, userId)`       | POST /api/mls-api/groups/{groupId}/members                  |
 | `fetchHistory(groupId)`                           | GET /api/history/{groupId}                                  |
 | `saveState(pin)`                                  | Sérialise l'état MLS chiffré                                |
 | `renameGroup(groupId, name)`                      | PATCH /api/mls-api/groups/{groupId}                         |
