@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('$lib/stores/auth', () => ({
+  getToken: vi.fn(async () => 'token-abc'),
+}));
+
 const tauriFetchMock = vi.fn();
 
 vi.mock('@tauri-apps/plugin-http', () => ({

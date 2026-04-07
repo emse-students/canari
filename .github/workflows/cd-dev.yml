@@ -1,0 +1,577 @@
+name: CD - Deploy to Development
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch: # Permet déclenchement manuel
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }}
+  DOMAIN: dev.canari-emse.fr
+  DEPLOY_PATH: /home/canari/canari-dev
+
+jobs:
+  run-ci:
+    name: Run CI Checks
+    uses: ./.github/workflows/ci.yml
+
+  detect-changed-services:
+    name: Detect Changed Services
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.detect.outputs.matrix }}
+      services_csv: ${{ steps.detect.outputs.services_csv }}
+      services_args: ${{ steps.detect.outputs.services_args }}
+      any_changed: ${{ steps.detect.outputs.any_changed }}
+      frontend_changed: ${{ steps.detect.outputs.frontend_changed }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Detect modified services
+        id: detect
+        run: |
+          set -euo pipefail
+
+          declare -A SERVICE_DOCKERFILE=(
+            [core-service]="./infrastructure/local/Dockerfile.core-service"
+            [social-service]="./infrastructure/local/Dockerfile.social-service"
+            [chat-gateway]="./infrastructure/local/Dockerfile.chat-gateway"
+            [chat-delivery-service]="./infrastructure/local/Dockerfile.chat-delivery-service"
+            [frontend]="./infrastructure/local/Dockerfile.frontend"
+            [media-service]="./infrastructure/local/Dockerfile.media-service"
+          )
+
+          ALL_SERVICES=(
+            core-service
+            social-service
+            chat-gateway
+            chat-delivery-service
+            frontend
+            media-service
+          )
+
+          CHANGED_SERVICES=()
+
+          add_service() {
+            local service="$1"
+            for existing in "${CHANGED_SERVICES[@]}"; do
+              if [ "$existing" = "$service" ]; then
+                return 0
+              fi
+            done
+            CHANGED_SERVICES+=("$service")
+          }
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manual dispatch detected: building all services."
+            CHANGED_SERVICES=("${ALL_SERVICES[@]}")
+          else
+            BEFORE_SHA="${{ github.event.before }}"
+            HEAD_SHA="${{ github.sha }}"
+
+            if [ -z "$BEFORE_SHA" ] || [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
+              if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+                BEFORE_SHA="$(git rev-parse HEAD~1)"
+              else
+                BEFORE_SHA="$HEAD_SHA"
+              fi
+            fi
+
+            CHANGED_FILES="$(git diff --name-only "$BEFORE_SHA" "$HEAD_SHA")"
+
+            echo "Changed files between $BEFORE_SHA and $HEAD_SHA:"
+            if [ -n "$CHANGED_FILES" ]; then
+              echo "$CHANGED_FILES"
+            else
+              echo "(none)"
+            fi
+
+            while IFS= read -r file; do
+              [ -z "$file" ] && continue
+
+              case "$file" in
+                apps/core-service/*|infrastructure/local/Dockerfile.core-service)
+                  add_service core-service
+                  ;;
+                apps/social-service/*|infrastructure/local/Dockerfile.social-service)
+                  add_service social-service
+                  ;;
+                apps/chat-gateway/*|libs/shared-rust/*|libs/proto/*|infrastructure/local/Dockerfile.chat-gateway)
+                  add_service chat-gateway
+                  ;;
+                apps/chat-delivery-service/*|libs/shared-ts/*|infrastructure/local/Dockerfile.chat-delivery-service)
+                  add_service chat-delivery-service
+                  ;;
+                frontend/*|infrastructure/local/Dockerfile.frontend)
+                  add_service frontend
+                  ;;
+                apps/media-service/*|infrastructure/local/Dockerfile.media-service)
+                  add_service media-service
+                  ;;
+              esac
+            done <<< "$CHANGED_FILES"
+          fi
+
+          if [ ${#CHANGED_SERVICES[@]} -eq 0 ]; then
+            MATRIX='{"include":[]}'
+            SERVICES_CSV=""
+            SERVICES_ARGS=""
+            FRONTEND_CHANGED="false"
+            ANY_CHANGED="false"
+            echo "No image-producing service changes detected."
+          else
+            MATRIX_ITEMS=""
+            FRONTEND_CHANGED="false"
+            for service in "${CHANGED_SERVICES[@]}"; do
+              dockerfile="${SERVICE_DOCKERFILE[$service]}"
+              MATRIX_ITEMS+="{\"name\":\"$service\",\"context\":\".\",\"dockerfile\":\"$dockerfile\"},"
+              if [ "$service" = "frontend" ]; then
+                FRONTEND_CHANGED="true"
+              fi
+            done
+            MATRIX_ITEMS="${MATRIX_ITEMS%,}"
+            MATRIX="{\"include\":[${MATRIX_ITEMS}]}"
+            SERVICES_CSV="$(IFS=,; echo "${CHANGED_SERVICES[*]}")"
+            SERVICES_ARGS="$(IFS=' '; echo "${CHANGED_SERVICES[*]}")"
+            ANY_CHANGED="true"
+            echo "Services selected for image rebuild: ${SERVICES_ARGS}"
+          fi
+
+          {
+            echo "matrix=$MATRIX"
+            echo "services_csv=$SERVICES_CSV"
+            echo "services_args=$SERVICES_ARGS"
+            echo "any_changed=$ANY_CHANGED"
+            echo "frontend_changed=$FRONTEND_CHANGED"
+          } >> "$GITHUB_OUTPUT"
+
+  build-frontend:
+    name: Build Frontend
+    needs: detect-changed-services
+    if: needs.detect-changed-services.outputs.frontend_changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            frontend/node_modules
+            ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('frontend/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: |
+          bun install
+          bunx svelte-kit sync
+
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack
+
+      - name: Build WASM
+        working-directory: frontend/mls-wasm
+        run: wasm-pack build --target web --out-dir ../src/lib/wasm
+
+      - name: Generate protobuf bindings
+        working-directory: frontend
+        run: bun run proto:gen
+
+      - name: Validate frontend build secrets
+        env:
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          BASE_URL: ${{ secrets.BASE_URL }}
+          AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
+          AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
+        run: |
+          if [ -z "$JWT_SECRET" ]; then
+            echo "::error::Missing required GitHub secret: JWT_SECRET"
+            exit 1
+          fi
+          if [ -z "$BASE_URL" ]; then
+            echo "::error::Missing required GitHub secret: BASE_URL"
+            exit 1
+          fi
+          if [ -z "$AUTHENTIK_URL" ]; then
+            echo "::error::Missing required GitHub secret: AUTHENTIK_URL"
+            exit 1
+          fi
+          if [ -z "$AUTHENTIK_CLIENT_ID" ]; then
+            echo "::error::Missing required GitHub secret: AUTHENTIK_CLIENT_ID"
+            exit 1
+          fi
+
+      - name: Create frontend .env with JWT_SECRET
+        working-directory: frontend
+        env:
+          BASE_URL: ${{ secrets.BASE_URL }}
+          AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
+          AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
+        run: |
+          echo "VITE_GATEWAY_URL=${BASE_URL}" >> .env
+          echo "VITE_CALL_URL=${BASE_URL}" >> .env
+          echo "VITE_DELIVERY_URL=${BASE_URL}" >> .env
+          echo "VITE_MEDIA_URL=${BASE_URL}" >> .env
+          echo "VITE_SOCIAL_URL=${BASE_URL}" >> .env
+          echo "VITE_CORE_URL=${BASE_URL}" >> .env
+          echo "VITE_AUTHENTIK_URL=${AUTHENTIK_URL}" >> .env
+          echo "VITE_AUTHENTIK_CLIENT_ID=${AUTHENTIK_CLIENT_ID}" >> .env
+
+      - name: Build frontend
+        working-directory: frontend
+        run: bun run build
+
+      - name: Upload frontend build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-build
+          path: frontend/build/
+          retention-days: 7
+
+  build-docker-images:
+    name: Build & Push Docker Images
+    runs-on: ubuntu-latest
+    needs: [detect-changed-services, build-frontend]
+    if: |
+      always() &&
+      needs.detect-changed-services.result == 'success' &&
+      needs.detect-changed-services.outputs.any_changed == 'true' &&
+      (needs.build-frontend.result == 'success' || needs.build-frontend.result == 'skipped')
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix: ${{ fromJson(needs.detect-changed-services.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download frontend build artifact
+        if: matrix.name == 'frontend'
+        uses: actions/download-artifact@v8
+        with:
+          name: frontend-build
+          path: frontend/build/
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.name }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix={{branch}}-
+            type=raw,value=${{ github.sha }}
+            type=raw,value=dev
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+
+  deploy-to-server:
+    name: Deploy to Development Server
+    runs-on: self-hosted
+    needs: [run-ci, detect-changed-services, build-docker-images]
+    if: |
+      always() &&
+      github.ref == 'refs/heads/dev' &&
+      needs.run-ci.result == 'success' &&
+      needs.detect-changed-services.result == 'success' &&
+      (needs.build-docker-images.result == 'success' || needs.build-docker-images.result == 'skipped')
+    permissions:
+      contents: read
+      packages: read
+    environment:
+      name: development
+      url: https://${{ env.DOMAIN }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Log deployment start
+        run: |
+          echo "🚀 Starting DEV deployment on self-hosted runner..."
+          echo "User: $(whoami)"
+          echo "Working directory: $(pwd)"
+          echo "Deploy path: ${{ env.DEPLOY_PATH }}"
+
+      - name: Setup environment variables
+        run: |
+          echo "REGISTRY=${{ env.REGISTRY }}" >> $GITHUB_ENV
+          echo "IMAGE_PREFIX=${{ env.IMAGE_PREFIX }}" >> $GITHUB_ENV
+          echo "TAG=dev" >> $GITHUB_ENV
+
+      - name: Resolve Docker access
+        run: |
+          if docker info >/dev/null 2>&1; then
+            echo "DOCKER_CLI=docker" >> $GITHUB_ENV
+            echo "DOCKER_COMPOSE=docker compose" >> $GITHUB_ENV
+            echo "✅ Docker access available via docker"
+          elif sudo -n docker info >/dev/null 2>&1; then
+            echo "DOCKER_CLI=sudo docker" >> $GITHUB_ENV
+            echo "DOCKER_COMPOSE=sudo docker compose" >> $GITHUB_ENV
+            echo "✅ Docker access available via sudo docker"
+          else
+            echo "❌ Cannot access Docker daemon as current runner user"
+            id
+            ls -l /var/run/docker.sock || true
+            echo "Runner user must be in docker group or have passwordless sudo for docker"
+            exit 1
+          fi
+
+      - name: Authenticate to GHCR
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          echo "🔐 Logging into GHCR..."
+          if [ "$DOCKER_CLI" = "docker" ]; then
+            echo "$GHCR_TOKEN" | docker login "$REGISTRY" -u "$GHCR_USERNAME" --password-stdin
+          else
+            echo "$GHCR_TOKEN" | sudo docker login "$REGISTRY" -u "$GHCR_USERNAME" --password-stdin
+          fi
+          echo "✅ GHCR authentication successful"
+
+      - name: Navigate to deployment directory
+        run: |
+          mkdir -p ${{ env.DEPLOY_PATH }}
+          cd ${{ env.DEPLOY_PATH }}
+          echo "📂 Current directory: $(pwd)"
+
+      - name: Pull latest code
+        working-directory: ${{ env.DEPLOY_PATH }}
+        run: |
+          echo "📥 Updating repository (dev branch)..."
+          git init || true
+          git remote add origin https://github.com/emse-students/canari || true
+          git fetch origin dev
+          git reset --hard origin/dev
+          echo "✅ Code updated to $(git rev-parse --short HEAD)"
+
+      - name: Sync runtime secrets into infrastructure/.env
+        working-directory: ${{ env.DEPLOY_PATH }}
+        env:
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          AUTHENTIK_BASE_URL: ${{ secrets.AUTHENTIK_URL }}
+          AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
+          AUTHENTIK_CLIENT_SECRET: ${{ secrets.AUTHENTIK_CLIENT_SECRET }}
+        run: |
+          if [ -z "$JWT_SECRET" ]; then
+            echo "::error::Missing required GitHub secret: JWT_SECRET"
+            exit 1
+          fi
+
+          if [ ! -f infrastructure/.env ]; then
+            if [ -f infrastructure/.env.example ]; then
+              cp infrastructure/.env.example infrastructure/.env
+            else
+              echo "::error::infrastructure/.env and infrastructure/.env.example are both missing"
+              exit 1
+            fi
+          fi
+
+          upsert_env_var() {
+            key="$1"
+            value="$2"
+            grep -v "^${key}=" infrastructure/.env > infrastructure/.env.tmp || true
+            mv infrastructure/.env.tmp infrastructure/.env
+            printf '%s=%s\n' "$key" "$value" >> infrastructure/.env
+          }
+
+          upsert_env_var "JWT_SECRET" "$JWT_SECRET"
+          upsert_env_var "AUTHENTIK_BASE_URL" "$AUTHENTIK_BASE_URL"
+          upsert_env_var "AUTHENTIK_CLIENT_ID" "$AUTHENTIK_CLIENT_ID"
+          upsert_env_var "AUTHENTIK_CLIENT_SECRET" "$AUTHENTIK_CLIENT_SECRET"
+
+          if [ -n "$STRIPE_SECRET_KEY" ]; then
+            upsert_env_var "STRIPE_SECRET_KEY" "$STRIPE_SECRET_KEY"
+          else
+            echo "⚠️ STRIPE_SECRET_KEY is not set in GitHub secrets"
+          fi
+
+          echo "✅ Runtime secrets synced to infrastructure/.env"
+
+      - name: Check environment configuration
+        working-directory: ${{ env.DEPLOY_PATH }}
+        run: |
+          echo "🔍 Checking environment configuration..."
+
+          FRONTEND_HOST_PORT=3080
+          if [ -f infrastructure/.env ]; then
+            ENV_PORT=$(grep -E '^FRONTEND_HOST_PORT=' infrastructure/.env | cut -d= -f2 || true)
+            if [ -n "$ENV_PORT" ]; then
+              FRONTEND_HOST_PORT="$ENV_PORT"
+            fi
+          fi
+          echo "FRONTEND_HOST_PORT=$FRONTEND_HOST_PORT" >> $GITHUB_ENV
+
+          if [ ! -f infrastructure/.env ]; then
+            echo ""
+            echo "⚠️  CONFIGURATION MANQUANTE - DEV"
+            echo ""
+            echo "Vous devez configurer infrastructure/.env"
+            echo ""
+            exit 1
+          fi
+
+          echo "✅ Configuration .env présente"
+
+      - name: Pull Docker images
+        working-directory: ${{ env.DEPLOY_PATH }}
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_PREFIX: ${{ env.IMAGE_PREFIX }}
+          CHANGED_SERVICES: ${{ needs.detect-changed-services.outputs.services_args }}
+        run: |
+          if [ -n "$CHANGED_SERVICES" ]; then
+            echo "🔄 Pulling changed Docker images (dev): $CHANGED_SERVICES"
+            eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.dev.yml pull $CHANGED_SERVICES"
+            echo "✅ Changed images pulled successfully"
+          else
+            echo "ℹ️ No service image changes detected. Skipping docker pull."
+          fi
+
+      - name: Deploy services
+        working-directory: ${{ env.DEPLOY_PATH }}
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_PREFIX: ${{ env.IMAGE_PREFIX }}
+          TAG: dev
+        run: |
+          echo "🚀 Deploying DEV services with zero-downtime..."
+          set +e
+          eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.dev.yml up -d --remove-orphans"
+          DEPLOY_STATUS=$?
+          set -e
+
+          if [ "$DEPLOY_STATUS" -ne 0 ]; then
+            echo "⚠️ First deploy attempt failed. Checking for port conflicts..."
+
+            CONFLICTS=$(eval "$DOCKER_CLI ps --filter 'publish=$FRONTEND_HOST_PORT' --format '{{.ID}} {{.Image}} {{.Names}}'")
+
+            NON_CANARI_CONFLICT=0
+            if [ -n "$CONFLICTS" ]; then
+              while IFS= read -r row; do
+                [ -z "$row" ] && continue
+
+                cid=$(echo "$row" | awk '{print $1}')
+                image=$(echo "$row" | awk '{print $2}')
+                name=$(echo "$row" | awk '{print $3}')
+
+                if echo "$image" | grep -q "^${REGISTRY}/${IMAGE_PREFIX}/frontend:"; then
+                  echo "🧹 Removing stale Canari frontend container using host port: $name ($cid)"
+                  eval "$DOCKER_CLI rm -f $cid"
+                else
+                  echo "❌ Port conflict with non-Canari container: $name ($image)"
+                  NON_CANARI_CONFLICT=1
+                fi
+              done <<< "$CONFLICTS"
+            fi
+
+            if [ "$NON_CANARI_CONFLICT" -ne 0 ]; then
+              echo "Resolve host port ${FRONTEND_HOST_PORT} conflicts and retry deployment."
+              exit 1
+            fi
+
+            echo "🔁 Retrying deployment after cleanup..."
+            eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.dev.yml up -d --remove-orphans"
+          fi
+
+          echo "✅ DEV Services deployed"
+
+      - name: Wait for services to be healthy
+        working-directory: ${{ env.DEPLOY_PATH }}
+        run: |
+          echo "⏳ Waiting for critical DEV services to be running..."
+          critical_services=(
+            chat-gateway
+            chat-delivery-service
+            media-service
+            core-service
+            social-service
+          )
+
+          max_attempts=30
+          attempt=0
+
+          while [ $attempt -lt $max_attempts ]; do
+            all_healthy=true
+            for service in "${critical_services[@]}"; do
+              if ! eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.dev.yml ps --services --filter 'status=running' | grep -q ^$service\$"; then
+                echo "  ... $service is not yet running"
+                all_healthy=false
+              fi
+            done
+
+            if [ "$all_healthy" = true ]; then
+              echo "✅ All critical DEV services are running"
+              break
+            fi
+
+            attempt=$((attempt + 1))
+            if [ $attempt -lt $max_attempts ]; then
+              sleep 2
+            fi
+          done
+
+          if [ $attempt -eq $max_attempts ]; then
+            echo "⚠️ Warning: Timeout waiting for all services (some may still be starting)"
+            eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.dev.yml ps"
+          fi
+
+      - name: Deployment summary
+        if: success()
+        run: |
+          echo ""
+          echo "╔═══════════════════════════════════════════════════╗"
+          echo "║         ✅ DEV DEPLOYMENT SUCCESSFUL              ║"
+          echo "╚═══════════════════════════════════════════════════╝"
+          echo ""
+          echo "Environment: development"
+          echo "Domain: ${{ env.DOMAIN }}"
+          echo "Deployment path: ${{ env.DEPLOY_PATH }}"
+          echo ""
+          echo "Services are deployed and accessible via:"
+          echo "  - Frontend: https://${{ env.DOMAIN }}"
+          echo "  - Chat Gateway: http://localhost:3100"
+          echo "  - Chat Delivery: http://localhost:3110"
+          echo "  - Media Service: http://localhost:3111"
+          echo "  - Core Service: http://localhost:3112"
+          echo "  - Social Service: http://localhost:3114"
+          echo ""

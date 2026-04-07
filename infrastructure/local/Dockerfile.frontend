@@ -3,6 +3,7 @@
 # secrets injectés (VITE_JWT_SECRET). L'artifact compilé est téléchargé dans
 # frontend/build/ avant que cette image soit construite.
 # NE PAS rebuilder ici : le secret ne serait pas disponible dans ce contexte.
+# Dev branch build trigger
 FROM nginx:stable-alpine
 
 COPY frontend/build /usr/share/nginx/html
