@@ -74,11 +74,12 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
   );
   if (duplicateGroup) return log(`Groupe "${groupDisplayName}" existe déjà.`);
 
-  const conversationKey = `grp_${crypto.randomUUID()}`;
   let groupId: string | undefined;
+  let conversationKey: string | undefined;
 
   try {
     groupId = await mlsService.createRemoteGroup(groupDisplayName, true); // true = multi-user group
+    conversationKey = groupId;
     await mlsService.createGroup(groupId);
     await mlsService.registerMember(groupId, userId);
 
@@ -137,9 +138,9 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
     }
 
     conversations.set(conversationKey, {
+      id: groupId,
       contactName: groupDisplayName,
       name: groupDisplayName, // conserve la casse originale pour l'affichage
-      groupId,
       messages: [],
       isReady: true,
       mlsStateHex: null,
@@ -150,7 +151,7 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
     log(`[OK] Groupe "${groupDisplayName}" cree.`);
   } catch (e) {
     log(`Erreur création groupe: ${toUiDiscussionError(e)}`);
-    conversations.delete(conversationKey);
+    if (conversationKey) conversations.delete(conversationKey);
 
     // Best-effort: clean up the orphan remote group
     if (groupId) {
@@ -178,7 +179,7 @@ async function processBulkAddition(
   log(`Invitation de ${targetUsers.length} membres: ${targetUsers.join(', ')}...`);
 
   try {
-    await mlsService.registerMember(conversation.groupId, userId);
+    await mlsService.registerMember(conversation.id, userId);
 
     // Collect devices for ALL users
     const allDevices: any[] = [];
@@ -202,10 +203,10 @@ async function processBulkAddition(
     }
 
     const lockAcquired = await mlsService
-      .acquireAddLock(conversation.groupId, 15_000)
+      .acquireAddLock(conversation.id, 15_000)
       .catch(() => false);
     if (!lockAcquired) {
-      log(`[WARN] Verrou occupé pour ${conversation.groupId}, tentative quand même...`);
+      log(`[WARN] Verrou occupé pour ${conversation.id}, tentative quand même...`);
     }
 
     // Track delivery success per user. We only register server membership when a
@@ -214,7 +215,7 @@ async function processBulkAddition(
 
     try {
       // Add all devices in bulk (single MLS commit)
-      const bulk = await mlsService.addMembersBulk(conversation.groupId, allDevices);
+      const bulk = await mlsService.addMembersBulk(conversation.id, allDevices);
 
       const stateBytes = await mlsService.saveState(pin);
       localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
@@ -230,15 +231,15 @@ async function processBulkAddition(
           const tUser = userMap.get(did);
           if (!tUser) continue;
           try {
-            log(`[SYNC] Envoi Welcome a ${tUser}:${did} pour groupe ${conversation.groupId}...`);
+            log(`[SYNC] Envoi Welcome a ${tUser}:${did} pour groupe ${conversation.id}...`);
             await mlsService.sendWelcome(
               bulk.welcome,
               tUser,
-              conversation.groupId,
+              conversation.id,
               did,
               bulk.ratchetTree
             );
-            await mlsService.registerMember(conversation.groupId, tUser);
+            await mlsService.registerMember(conversation.id, tUser);
             deliveredUsers.add(tUser);
             log(`[SYNC] Welcome envoye avec succes a ${tUser}:${did}`);
           } catch (err) {
@@ -251,13 +252,13 @@ async function processBulkAddition(
         }
       }
 
-      if (bulk.commit) await mlsService.sendCommit(bulk.commit, conversation.groupId);
+      if (bulk.commit) await mlsService.sendCommit(bulk.commit, conversation.id);
 
       log(
         `[OK] Ajoutes: ${targetUsers.join(', ')} (${bulk.addedDeviceIds.length} appareils). (${deliveredUsers.size} utilisateur(s) livrés)`
       );
     } finally {
-      if (lockAcquired) await mlsService.releaseAddLock(conversation.groupId).catch(() => {});
+      if (lockAcquired) await mlsService.releaseAddLock(conversation.id).catch(() => {});
     }
 
     // Broadcast member addition notification (one generic or multiple specific?)
@@ -267,7 +268,7 @@ async function processBulkAddition(
         const controlMsg = encodeAppMessage(
           mkSystem('memberAdded', JSON.stringify({ newUsers: [...deliveredUsers] }))
         );
-        await mlsService.sendMessage(conversation.groupId, controlMsg);
+        await mlsService.sendMessage(conversation.id, controlMsg);
         const st = await mlsService.saveState(pin);
         localStorage.setItem('mls_autosave_' + userId, toHex(st));
       } catch (e) {
@@ -341,16 +342,16 @@ export async function startNewConversation(
     return;
   }
 
-  const conversationKey = `dm_${crypto.randomUUID()}`;
   const groupName = `${userId}::${contact}`;
   let groupId: string | undefined;
   try {
     groupId = await mlsService.createRemoteGroup(groupName, false); // false = 1-to-1 direct conversation
+    const conversationKey = groupId;
 
     conversations.set(conversationKey, {
+      id: groupId,
       contactName: contact,
       name: contact,
-      groupId,
       messages: [],
       isReady: false,
       mlsStateHex: null,
@@ -406,7 +407,7 @@ export async function startNewConversation(
   } catch (_e: unknown) {
     const msg = _e instanceof Error ? _e.message : String(_e);
     log(`Erreur création: ${toUiDiscussionError(msg)}`);
-    conversations.delete(conversationKey);
+    if (groupId) conversations.delete(groupId);
 
     // Clean up local MLS state (epoch may have advanced after addMembersBulk)
     if (groupId) {
@@ -492,8 +493,11 @@ export async function repairDirectConversation(
       if (lockAcquired) await mlsService.releaseAddLock(groupId).catch(() => {});
     }
 
-    conversations.set(conversationKey, { ...convo, groupId, isReady: true });
-    await saveConversation(conversationKey);
+    // The new groupId becomes the new conversation key.
+    // Remove the old entry and re-insert under the new key.
+    conversations.delete(conversationKey);
+    conversations.set(groupId, { ...convo, id: groupId, isReady: true });
+    await saveConversation(groupId);
     log(`[OK] Connexion réparée avec ${contact}.`);
     return true;
   } catch (e) {

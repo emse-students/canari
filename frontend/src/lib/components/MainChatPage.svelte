@@ -202,9 +202,9 @@
         });
         if (!convs.conversations.has(channelConversationId)) {
           convs.conversations.set(channelConversationId, {
+            id: channelConversationId,
             contactName: channelConversationId,
             name: (event.channelName || 'canal').toLowerCase(),
-            groupId: channelConversationId,
             messages: [],
             isReady: true,
             mlsStateHex: null,
@@ -569,7 +569,7 @@
           if (session.callService && convs.selectedContact) {
             const convo = convs.conversations.get(convs.selectedContact);
             if (convo) {
-              session.callService.startCall(convo.groupId).catch((e: unknown) => {
+              session.callService.startCall(convo.id).catch((e: unknown) => {
                 const msg = e instanceof Error ? e.message : String(e);
                 if (msg.includes('Groupe introuvable') || msg.includes('Group not found')) {
                   alert(
@@ -767,7 +767,7 @@
             onAddMember={() =>
               session.devAddMember(
                 convs.selectedContact
-                  ? (convs.conversations.get(convs.selectedContact)?.groupId ?? '')
+                  ? (convs.conversations.get(convs.selectedContact)?.id ?? '')
                   : '',
                 log
               )}

@@ -12,9 +12,9 @@
   import SidebarCommunityAdminModal from './SidebarCommunityAdminModal.svelte';
 
   interface Conversation {
+    id: string;
     contactName: string;
     name: string;
-    groupId: string;
     messages: any[];
     isReady: boolean;
     mlsStateHex: string | null;

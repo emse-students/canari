@@ -37,7 +37,7 @@ export async function sendChatMessage(
   const { mlsService, userId, pin, conversation, addMessageToChat } = deps;
 
   deps.log(
-    `[SEND] sendChatMessage: contact="${contactName}" groupId="${conversation.groupId}" isReady=${conversation.isReady} text="${text.slice(0, 40)}" reply=${!!replyingTo}`
+    `[SEND] sendChatMessage: contact="${contactName}" groupId="${conversation.id}" isReady=${conversation.isReady} text="${text.slice(0, 40)}" reply=${!!replyingTo}`
   );
 
   if (!text.trim() || !conversation.isReady) {
@@ -99,10 +99,10 @@ export async function sendChatMessage(
       // We do not add the message optimistically for channels:
       // We wait for the 'channel.message.created' WebSocket event instead!
     } else {
-      deps.log(`[SEND] Appel mlsService.sendMessage groupId="${conversation.groupId}"...`);
+      deps.log(`[SEND] Appel mlsService.sendMessage groupId="${conversation.id}"...`);
       // Passes messageId so WebMlsService can wait for the gateway ACK (message_sent event)
       // before resolving — the UI will only show the message after the gateway confirms delivery.
-      await mlsService.sendMessage(conversation.groupId, payload, messageId);
+      await mlsService.sendMessage(conversation.id, payload, messageId);
       deps.log(`[SEND] mlsService.sendMessage confirmé — sauvegarde état MLS...`);
       const stateBytes = await mlsService.saveState(pin);
       localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
@@ -157,7 +157,7 @@ export async function addReaction(
 
   try {
     const payload = encodeAppMessage(mkReaction(messageId, emoji));
-    await mlsService.sendMessage(conversation.groupId, payload);
+    await mlsService.sendMessage(conversation.id, payload);
     const stateBytes = await mlsService.saveState(pin);
     localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
   } catch (e) {
@@ -176,7 +176,7 @@ export async function editMessage(
     const payload = encodeAppMessage(
       mkSystem('edit_message', JSON.stringify({ messageId, newContent, editedAt }))
     );
-    await mlsService.sendMessage(conversation.groupId, payload);
+    await mlsService.sendMessage(conversation.id, payload);
     const stateBytes = await mlsService.saveState(pin);
     localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
   } catch (e) {
@@ -189,7 +189,7 @@ export async function deleteMessage(messageId: string, deps: AddReactionDeps): P
   if (!conversation.isReady) return;
   try {
     const payload = encodeAppMessage(mkSystem('delete_message', JSON.stringify({ messageId })));
-    await mlsService.sendMessage(conversation.groupId, payload);
+    await mlsService.sendMessage(conversation.id, payload);
     const stateBytes = await mlsService.saveState(pin);
     localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
   } catch (e) {
@@ -205,7 +205,7 @@ export async function sendReadReceipt(
   if (!conversation.isReady || messageIds.length === 0) return false;
   try {
     const payload = encodeAppMessage(mkSystem('read_receipt', JSON.stringify({ messageIds })));
-    await mlsService.sendMessage(conversation.groupId, payload);
+    await mlsService.sendMessage(conversation.id, payload);
     const stateBytes = await mlsService.saveState(pin);
     localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
     return true;

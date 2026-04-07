@@ -23,9 +23,12 @@ export interface ChatMessage {
 }
 
 export interface Conversation {
-  contactName: string;
+  /** Primary key — the MLS groupId UUID (same as ConversationMeta.id). */
+  id: string;
+  /** Display name shown in the UI (e.g. peer username, group name). */
   name: string;
-  groupId: string;
+  /** Human-readable auxiliary identifier (peer username for DMs, group display name for groups). */
+  contactName: string;
   messages: ChatMessage[];
   isReady: boolean;
   mlsStateHex: string | null;

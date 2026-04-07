@@ -7,7 +7,7 @@ function makeConversation(overrides: Partial<Conversation> = {}): Conversation {
   return {
     contactName: 'room',
     name: 'room',
-    groupId: 'group-1',
+    id: 'group-1',
     messages: [],
     isReady: true,
     mlsStateHex: null,
@@ -74,7 +74,7 @@ describe('discoverMissingGroups', () => {
     convs.set(
       'pending_local',
       makeConversation({
-        groupId: 'g-1',
+        id: 'g-1',
         isReady: false,
         conversationType: 'group',
       })
@@ -99,7 +99,7 @@ describe('discoverMissingGroups', () => {
       log: vi.fn(),
     });
 
-    const g2Entries = [...convs.values()].filter((c) => c.groupId === 'g-2');
+    const g2Entries = [...convs.values()].filter((c) => c.id === 'g-2');
     expect(g2Entries).toHaveLength(1);
     expect(g2Entries[0].isReady).toBe(false);
     expect(saveConversation).toHaveBeenCalledTimes(1);
@@ -157,7 +157,7 @@ describe('discoverMissingGroups', () => {
     // Should register this device on the gateway
     expect(registerMember).toHaveBeenCalledWith('g-1', 'jolan');
     // Conversation should be ready
-    const conv = [...convs.values()].find((c) => c.groupId === 'g-1');
+    const conv = [...convs.values()].find((c) => c.id === 'g-1');
     expect(conv?.isReady).toBe(true);
     // saveConversation called twice: once for placeholder (Phase 1) + once for activation (Phase 2)
     expect(saveConversation).toHaveBeenCalledTimes(2);
@@ -210,7 +210,7 @@ describe('discoverMissingGroups', () => {
     // Leader should have bootstrapped the group
     expect(forceCreateGroup).toHaveBeenCalledWith('g-1');
     // The conversation should now be ready
-    const conv = [...convs.values()].find((c) => c.groupId === 'g-1');
+    const conv = [...convs.values()].find((c) => c.id === 'g-1');
     expect(conv?.isReady).toBe(true);
   });
 
@@ -239,7 +239,7 @@ describe('discoverMissingGroups', () => {
     // Non-leader should NOT have created the group
     expect(forceCreateGroup).not.toHaveBeenCalled();
     // Conversation should still be a placeholder
-    const conv = [...convs.values()].find((c) => c.groupId === 'g-1');
+    const conv = [...convs.values()].find((c) => c.id === 'g-1');
     expect(conv?.isReady).toBe(false);
   });
 
@@ -276,7 +276,7 @@ describe('discoverMissingGroups', () => {
     // Even though alice is the leader, should NOT bootstrap because
     // another own device (dev-alice-2) exists and will handle sync via reinvite_request
     expect(forceCreateGroup).not.toHaveBeenCalled();
-    const conv = [...convs.values()].find((c) => c.groupId === 'g-1');
+    const conv = [...convs.values()].find((c) => c.id === 'g-1');
     expect(conv?.isReady).toBe(false);
   });
 
@@ -309,7 +309,7 @@ describe('discoverMissingGroups', () => {
     convs.set('dm_old', {
       contactName: 'alice',
       name: 'alice',
-      groupId: 'g-1',
+      id: 'g-1',
       messages: [],
       isReady: false,
       mlsStateHex: null,
@@ -355,7 +355,7 @@ describe('discoverMissingGroups', () => {
     convs.set('dm_old', {
       contactName: 'alice',
       name: 'alice',
-      groupId: 'g-1',
+      id: 'g-1',
       messages: [],
       isReady: false,
       mlsStateHex: null,
@@ -455,7 +455,7 @@ describe('processPendingInvitations', () => {
       }),
     });
     const convs = new Map<string, Conversation>();
-    convs.set('grp_1', makeConversation({ groupId: 'g-1', isReady: true }));
+    convs.set('g-1', makeConversation({ id: 'g-1', isReady: true }));
 
     const promise = processPendingInvitations({
       mlsService: mls,
@@ -489,7 +489,7 @@ describe('processPendingInvitations', () => {
       getGroupMembers: vi.fn().mockResolvedValue([{ deviceId: 'dev-alice', userId: 'alice' }]),
     });
     const convs = new Map<string, Conversation>();
-    convs.set('grp_1', makeConversation({ groupId: 'g-1', isReady: true }));
+    convs.set('g-1', makeConversation({ id: 'g-1', isReady: true }));
 
     const promise = processPendingInvitations({
       mlsService: mls,
@@ -526,7 +526,7 @@ describe('processPendingInvitations', () => {
       addMember: vi.fn().mockRejectedValue(new Error('DuplicateSignatureKey already exists')),
     });
     const convs = new Map<string, Conversation>();
-    convs.set('grp_1', makeConversation({ groupId: 'g-1', isReady: true }));
+    convs.set('g-1', makeConversation({ id: 'g-1', isReady: true }));
 
     const promise = processPendingInvitations({
       mlsService: mls,
@@ -564,7 +564,7 @@ describe('processPendingInvitations', () => {
       getDeviceMemberships: vi.fn().mockResolvedValue([{ groupId: 'g-1', status: 'welcome_sent' }]),
     });
     const convs = new Map<string, Conversation>();
-    convs.set('grp_1', makeConversation({ groupId: 'g-1', isReady: true }));
+    convs.set('g-1', makeConversation({ id: 'g-1', isReady: true }));
 
     const promise = processPendingInvitations({
       mlsService: mls,
@@ -591,7 +591,7 @@ describe('processPendingInvitations', () => {
       acquireAddLock: vi.fn().mockResolvedValue(false),
     });
     const convs = new Map<string, Conversation>();
-    convs.set('grp_1', makeConversation({ groupId: 'g-1', isReady: true }));
+    convs.set('g-1', makeConversation({ id: 'g-1', isReady: true }));
 
     const promise = processPendingInvitations({
       mlsService: mls,

@@ -30,7 +30,6 @@ export async function migrateFromLocalStorage(
     try {
       await storage.saveConversation({
         id: contactName,
-        groupId: data.groupId,
         name: data.name || contactName,
         isReady: data.isReady || false,
         updatedAt: data.updatedAt || Date.now(),

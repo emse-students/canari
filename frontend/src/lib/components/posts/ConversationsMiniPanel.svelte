@@ -27,11 +27,11 @@
       ? [...globalConvs.conversations.entries()]
           .map(([key, conv]) => {
             const uid = globalSession.userId ?? getSavedUserId() ?? '';
-            const identity = deriveConversationIdentity(key, uid, conv.groupId);
+            const identity = deriveConversationIdentity(key, uid, conv.id);
             const contactId =
               identity.conversationType === 'direct'
                 ? (identity.directPeerId ?? identity.contactName)
-                : conv.groupId;
+                : conv.id;
             return {
               meta: { id: key, name: conv.name, updatedAt: 0 } as ConversationMeta,
               contactId,

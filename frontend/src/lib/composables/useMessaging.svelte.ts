@@ -185,9 +185,7 @@ export function useMessaging() {
     }
 
     const isChannel = ctx.selectedContact.startsWith('channel_');
-    ctx.log(
-      `[SEND] convo: groupId="${convo.groupId}" isReady=${convo.isReady} isChannel=${isChannel}`
-    );
+    ctx.log(`[SEND] convo: groupId="${convo.id}" isReady=${convo.isReady} isChannel=${isChannel}`);
 
     // Channels don't use MLS — skip MLS membership verification
     if (!isChannel) {
@@ -265,7 +263,7 @@ export function useMessaging() {
               });
             }
           } else if (mlsService) {
-            await mlsService.sendMessage(convo.groupId, protoBytes, messageId);
+            await mlsService.sendMessage(convo.id, protoBytes, messageId);
             const stateBytes = await mlsService.saveState(ctx.pin);
             localStorage.setItem('mls_autosave_' + ctx.userId, toHex(stateBytes));
           }
