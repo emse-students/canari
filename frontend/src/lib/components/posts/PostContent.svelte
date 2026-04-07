@@ -1,5 +1,4 @@
 <script lang="ts">
-  import SvelteMarkdown from '@humanspeak/svelte-markdown';
   import PostImage from './PostImage.svelte';
   import type { PostEntity } from '$lib/posts/api';
 
@@ -18,7 +17,7 @@
       >{post.authorDisplayName || post.authorId}</a
     >
     <span class="prose prose-sm max-w-none inline [&_p]:inline [&_p]:m-0">
-      <SvelteMarkdown source={post.markdown} />
+      {post.markdown}
     </span>
   </div>
 </div>
