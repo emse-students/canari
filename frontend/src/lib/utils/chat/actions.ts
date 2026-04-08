@@ -497,7 +497,9 @@ export async function discoverMissingGroups(params: {
           // previous session — without this reset, baseEpoch=0 would mismatch
           // and the gateway would reject the commit with epoch_rejected.
           await mlsService.resetGroupEpoch(convo.id);
-          await mlsService.sendCommit(bulk.commit, convo.id);
+          await mlsService.sendCommit(bulk.commit, convo.id, [
+            `${userId}:${mlsService.getDeviceId()}`,
+          ]);
         }
       }
 
