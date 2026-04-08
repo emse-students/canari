@@ -615,6 +615,24 @@ export class WebMlsService implements IMlsService {
     }
   }
 
+  async publishKeyPackages(packages: Uint8Array[]): Promise<void> {
+    const keyPackages = packages.map((bytes) =>
+      btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(''))
+    );
+    const response = await fetch(`${this.historyUrl}/api/mls-api/register-device/prekeys`, {
+      method: 'POST',
+      headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        userId: this.userId,
+        deviceId: this.deviceId,
+        keyPackages,
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to publish key packages: ${response.status} ${response.statusText}`);
+    }
+  }
+
   async sendWelcome(
     welcomeBytes: Uint8Array,
     targetUserId: string,
@@ -863,13 +881,39 @@ export class WebMlsService implements IMlsService {
     return this.client.save_state(pin);
   }
 
-  async generateKeyPackage(pin: string) {
-    const kp = this.client.generate_key_package();
-    // WASM side persistence for web:
-    // Attempt to save state.
+  private async fetchPrekeyCount(): Promise<number> {
     try {
-      const stateBytes = this.client.save_state(pin); // Returns Encrypted Uint8Array
+      const res = await fetch(
+        `${this.historyUrl}/api/mls-api/devices/${this.userId}/${this.deviceId}/prekeys/count`,
+        { headers: await this.withAuthHeaders() }
+      );
+      if (!res.ok) return 0;
+      const data = await res.json();
+      return typeof data.count === 'number' ? data.count : 0;
+    } catch {
+      return 0;
+    }
+  }
 
+  async generateKeyPackage(pin: string) {
+    // Always generate a fresh static fallback KP for this device.
+    const fallback = this.client.generate_key_package() as Uint8Array;
+
+    // Replenish the one-time prekey pool up to 200 on each connection.
+    const existing = await this.fetchPrekeyCount();
+    const needed = Math.max(0, 200 - existing);
+
+    let poolPackages: Uint8Array[] = [];
+    if (needed > 0) {
+      // generate_key_packages returns a js_sys::Array of Uint8Array values.
+      poolPackages = [
+        ...(this.client.generate_key_packages(needed) as unknown as Iterable<Uint8Array>),
+      ];
+    }
+
+    // Save state once after all generations so the private key material is persisted.
+    try {
+      const stateBytes = this.client.save_state(pin);
       const hex = Array.from(stateBytes as Uint8Array)
         .map((b: number) => b.toString(16).padStart(2, '0'))
         .join('');
@@ -878,9 +922,15 @@ export class WebMlsService implements IMlsService {
       console.warn('Auto-save failed in WASM mode', e);
     }
 
-    await this.publishKeyPackage(kp as Uint8Array);
+    // Publish the static fallback KP (always refreshed on connection).
+    await this.publishKeyPackage(fallback);
 
-    return kp;
+    // Bulk-publish new pool prekeys if any.
+    if (poolPackages.length > 0) {
+      await this.publishKeyPackages(poolPackages);
+    }
+
+    return fallback;
   }
 
   async addMember(groupId: string, keyPackageBytes: Uint8Array) {

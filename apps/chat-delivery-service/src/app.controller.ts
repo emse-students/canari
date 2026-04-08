@@ -19,6 +19,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, MoreThanOrEqual, LessThan } from 'typeorm';
 import { QueuedMessage } from './entities/queued-message.entity';
 import { KeyPackage } from './entities/key-package.entity';
+import { OneTimeKeyPackage } from './entities/one-time-key-package.entity';
 import { GroupMember } from './entities/group-member.entity';
 import { Group } from './entities/group.entity';
 import { PinVerifier } from './entities/pin-verifier.entity';
@@ -544,6 +545,8 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     private queuedMessageRepo: Repository<QueuedMessage>,
     @InjectRepository(KeyPackage)
     private keyPackageRepo: Repository<KeyPackage>,
+    @InjectRepository(OneTimeKeyPackage)
+    private oneTimeKeyPackageRepo: Repository<OneTimeKeyPackage>,
     @InjectRepository(GroupMember)
     private groupMemberRepo: Repository<GroupMember>,
     @InjectRepository(Group) private groupRepo: Repository<Group>,
@@ -1653,6 +1656,52 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @UseGuards(HeaderAuthGuard)
+  @Get('mls-api/devices/:userId/:deviceId/prekeys/count')
+  async getPrekeyCount(
+    @Param('userId') userId: string,
+    @Param('deviceId') deviceId: string,
+  ) {
+    const safeUserId = sanitizeQueryValue(userId, 'userId');
+    const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
+    const count = await this.oneTimeKeyPackageRepo.count({
+      where: { userId: safeUserId, deviceId: safeDeviceId },
+    });
+    return { count };
+  }
+
+  @UseGuards(HeaderAuthGuard)
+  @Post('mls-api/register-device/prekeys')
+  async registerDevicePrekeys(
+    @Body() body: { userId: string; deviceId: string; keyPackages: unknown },
+  ) {
+    const userId = sanitizeQueryValue(body.userId, 'userId');
+    const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
+
+    if (!Array.isArray(body.keyPackages) || body.keyPackages.length === 0) {
+      throw new BadRequestException('keyPackages must be a non-empty array');
+    }
+    if (body.keyPackages.length > 200) {
+      throw new BadRequestException('keyPackages must not exceed 200 items');
+    }
+    for (const kp of body.keyPackages) {
+      if (typeof kp !== 'string' || kp.length === 0 || kp.length > 16384) {
+        throw new BadRequestException(
+          'Each keyPackage must be a non-empty base64 string',
+        );
+      }
+    }
+
+    const rows = (body.keyPackages as string[]).map((kp) =>
+      this.oneTimeKeyPackageRepo.create({ userId, deviceId, keyPackage: kp }),
+    );
+    await this.oneTimeKeyPackageRepo.save(rows);
+    this.logger.log(
+      `[REGISTER_PREKEYS] user=${userId} device=${deviceId} count=${rows.length}`,
+    );
+    return { status: 'registered', count: rows.length };
+  }
+
+  @UseGuards(HeaderAuthGuard)
   @Post('mls-api/register-device')
   async registerDevice(
     @Body() body: { userId: string; deviceId: string; keyPackage: string },
@@ -1707,13 +1756,32 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   @UseGuards(HeaderAuthGuard)
   @Get('mls-api/devices/:userId')
-  getUserDevices(@Param('userId') userId: string) {
+  async getUserDevices(@Param('userId') userId: string) {
     // Only return devices active in the last 30 days (avoids stale key packages)
     const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    return this.keyPackageRepo.find({
+    const registeredDevices = await this.keyPackageRepo.find({
       where: { userId, createdAt: MoreThanOrEqual(cutoff) },
       order: { createdAt: 'DESC' },
     });
+
+    // For each device, try to pop one one-time prekey from the pool (FIFO).
+    // Falls back to the static registration key package when the pool is empty.
+    const results = await Promise.all(
+      registeredDevices.map(async (device) => {
+        const otkp = await this.oneTimeKeyPackageRepo.findOne({
+          where: { userId: device.userId, deviceId: device.deviceId },
+          order: { createdAt: 'ASC' },
+        });
+        if (otkp) {
+          await this.oneTimeKeyPackageRepo.delete(otkp.id);
+          return { ...device, keyPackage: otkp.keyPackage };
+        }
+        // Pool exhausted — serve the static registration KP as a fallback, never delete it.
+        return device;
+      }),
+    );
+
+    return results;
   }
 
   @UseGuards(HeaderAuthGuard)

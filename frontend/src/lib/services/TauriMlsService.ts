@@ -534,6 +534,24 @@ export class TauriMlsService implements IMlsService {
     }
   }
 
+  async publishKeyPackages(packages: Uint8Array[]): Promise<void> {
+    const keyPackages = packages.map((bytes) =>
+      btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(''))
+    );
+    const response = await fetch(`${this.historyUrl}/api/mls-api/register-device/prekeys`, {
+      method: 'POST',
+      headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        userId: this.userId,
+        deviceId: this.deviceId,
+        keyPackages,
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to publish key packages: ${response.status} ${response.statusText}`);
+    }
+  }
+
   async sendWelcome(
     welcomeBytes: Uint8Array,
     targetUserId: string,
@@ -725,17 +743,47 @@ export class TauriMlsService implements IMlsService {
     return await invoke<Uint8Array>('sauvegarder_mls', { pin });
   }
 
+  private async fetchPrekeyCount(): Promise<number> {
+    try {
+      const res = await fetch(
+        `${this.historyUrl}/api/mls-api/devices/${this.userId}/${this.deviceId}/prekeys/count`,
+        { headers: await this.withAuthHeaders() }
+      );
+      if (!res.ok) return 0;
+      const data = await res.json();
+      return typeof data.count === 'number' ? data.count : 0;
+    } catch {
+      return 0;
+    }
+  }
+
   async generateKeyPackage(pin: string) {
-    // Generate the KP
-    const kp = await invoke<number[]>('generer_key_package');
-    // Force save state
+    // Always generate a fresh static fallback KP for this device.
+    const fallbackRaw = await invoke<number[]>('generer_key_package');
+    const fallback = Uint8Array.from(fallbackRaw);
+
+    // Replenish the one-time prekey pool up to 200 on each connection.
+    const existing = await this.fetchPrekeyCount();
+    const needed = Math.max(0, 200 - existing);
+
+    let poolPackages: Uint8Array[] = [];
+    if (needed > 0) {
+      const raw = await invoke<number[][]>('generer_key_packages', { count: needed });
+      poolPackages = raw.map((kp) => Uint8Array.from(kp));
+    }
+
+    // Force save state once after all generations.
     await this.saveState(pin);
 
-    // Publish via WS
-    const kpBytes = Uint8Array.from(kp);
-    await this.publishKeyPackage(kpBytes);
+    // Publish the static fallback KP (always refreshed on connection).
+    await this.publishKeyPackage(fallback);
 
-    return kpBytes;
+    // Bulk-publish new pool prekeys if any.
+    if (poolPackages.length > 0) {
+      await this.publishKeyPackages(poolPackages);
+    }
+
+    return fallback;
   }
 
   async addMember(groupId: string, keyPackageBytes: Uint8Array) {

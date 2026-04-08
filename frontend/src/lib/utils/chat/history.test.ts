@@ -29,6 +29,7 @@ function makeMls(overrides: Partial<IMlsService> = {}): IMlsService {
     connect: vi.fn(),
     fetchUserDevices: vi.fn(),
     publishKeyPackage: vi.fn(),
+    publishKeyPackages: vi.fn(),
     sendWelcome: vi.fn(),
     sendCommit: vi.fn(),
     registerMember: vi.fn(),

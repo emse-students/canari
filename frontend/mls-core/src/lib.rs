@@ -6,8 +6,8 @@ use openmls::prelude::*;
 use openmls::treesync::RatchetTreeIn;
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
-use openmls_traits::OpenMlsProvider;
 use openmls_traits::storage::StorageProvider; // Explicit import for write_key_package
+use openmls_traits::OpenMlsProvider;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
@@ -726,6 +726,10 @@ impl MlsManager {
         key_package
             .tls_serialize_detached()
             .map_err(|e| MlsError::OpenMls(format!("Serialization error: {:?}", e)))
+    }
+
+    pub fn generate_key_packages(&self, count: usize) -> Result<Vec<Vec<u8>>, MlsError> {
+        (0..count).map(|_| self.generate_key_package()).collect()
     }
 
     // --- F. CHIFFREMENT / DÉCHIFFREMENT (Helper) ---

@@ -158,6 +158,20 @@ impl WasmMlsClient {
     }
 
     #[wasm_bindgen]
+    pub fn generate_key_packages(&self, count: usize) -> Result<js_sys::Array, JsValue> {
+        log::info!("generate_key_packages count={}", count);
+        let packages = self
+            .manager
+            .generate_key_packages(count)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let arr = js_sys::Array::new();
+        for kp in packages {
+            arr.push(&js_sys::Uint8Array::from(kp.as_slice()));
+        }
+        Ok(arr)
+    }
+
+    #[wasm_bindgen]
     pub fn add_member(
         &mut self,
         group_id: String,

@@ -70,6 +70,7 @@ function makeMlsService(overrides: Partial<IMlsService> = {}): IMlsService {
     connect: vi.fn().mockResolvedValue(undefined),
     fetchUserDevices: vi.fn().mockResolvedValue([]),
     publishKeyPackage: vi.fn().mockResolvedValue(undefined),
+    publishKeyPackages: vi.fn().mockResolvedValue(undefined),
     sendWelcome: vi.fn().mockResolvedValue(undefined),
     sendCommit: vi.fn().mockResolvedValue(undefined),
     registerMember: vi.fn().mockResolvedValue(undefined),

@@ -23,8 +23,8 @@ fn initialiser_mls(
     encrypted_state: Option<Vec<u8>>,
     state: tauri::State<AppState>,
 ) -> Result<String, String> {
-    let manager =
-        MlsManager::load_encrypted(&user_id, &device_id, encrypted_state, &pin).map_err(|e| e.to_string())?;
+    let manager = MlsManager::load_encrypted(&user_id, &device_id, encrypted_state, &pin)
+        .map_err(|e| e.to_string())?;
 
     let mut lock = state
         .mls_manager
@@ -66,6 +66,22 @@ fn generer_key_package(state: tauri::State<AppState>) -> Result<Vec<u8>, String>
     let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
 
     manager.generate_key_package().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn generer_key_packages(
+    count: usize,
+    state: tauri::State<AppState>,
+) -> Result<Vec<Vec<u8>>, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+
+    manager
+        .generate_key_packages(count)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -359,6 +375,7 @@ pub fn run() {
             oublier_groupe,
             obtenir_epoch,
             generer_key_package,
+            generer_key_packages,
             ajouter_membre,
             retirer_membres,
             retirer_membres_par_appareil,
