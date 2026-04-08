@@ -300,6 +300,7 @@ async fn main() {
                                     temp
                                 };
 
+                                let targets_count = senders_to_notify.len();
                                 let mut to_remove = Vec::new();
                                 for (key, tx) in senders_to_notify {
                                     if let Err(e) = tx.try_send(frame.clone()) {
@@ -321,7 +322,7 @@ async fn main() {
 
                                 tracing::info!(
                                     "[Gateway] Channel event distributed to connected users (targets={}).",
-                                    senders_to_notify.len()
+                                    targets_count
                                 );
                             }
                         } else {
