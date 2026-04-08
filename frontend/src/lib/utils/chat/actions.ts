@@ -178,10 +178,7 @@ export async function processPendingInvitations(params: {
 
           // Send commit, excluding the inviter (self) and the newly-welcomed device
           if (result.commit) {
-            await mlsService.sendCommit(result.commit, groupId, [
-              `${userId}:${mlsService.getDeviceId()}`,
-              `${inv.userId}:${inv.deviceId}`,
-            ]);
+            await mlsService.sendCommit(result.commit, groupId, [`${inv.userId}:${inv.deviceId}`]);
           }
 
           // Short delay for commit propagation
@@ -712,7 +709,6 @@ export async function handleWelcomeRequest(params: {
     // Broadcast commit, excluding the inviter (self) and the invitee (requester)
     if (result.commit) {
       await mlsService.sendCommit(result.commit, groupId, [
-        `${userId}:${mlsService.getDeviceId()}`,
         `${requesterUserId}:${requesterDeviceId}`,
       ]);
     }
