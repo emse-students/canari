@@ -50,6 +50,9 @@ export class TauriMlsService implements IMlsService {
   private welcomeRequestCallback:
     | ((requesterUserId: string, requesterDeviceId: string, groupId: string) => void)
     | null = null;
+  // Callback déclenché quand le serveur signale qu'un groupe est mort.
+  // Même pattern que welcome_request/reinvite_request : signal hors-bande MLS.
+  private groupResetCallback: ((groupId: string, reason: string) => void) | null = null;
   private baseUrl: string;
   private historyUrl: string;
   private userId: string = 'unknown';
@@ -202,6 +205,16 @@ export class TauriMlsService implements IMlsService {
               `[WS RCV] welcome_request from ${requesterUserId}:${requesterDeviceId} for group ${groupId}`
             );
             this.welcomeRequestCallback?.(requesterUserId, requesterDeviceId, groupId);
+            return;
+          }
+          // ── group_reset : signal hors-bande MLS ──────────────────────────
+          // Le serveur indique que la session MLS du groupe est morte.
+          // Le client doit oublier tout état local et se faire ré-inviter.
+          if (msg.type === 'group_reset') {
+            const groupId = (msg.groupId as string) || '';
+            const reason = (msg.reason as string) || 'unknown';
+            console.log(`[WS RCV] group_reset for group ${groupId} reason=${reason}`);
+            this.groupResetCallback?.(groupId, reason);
             return;
           }
           if (msg.type === 'epoch_rejected') {
@@ -475,6 +488,21 @@ export class TauriMlsService implements IMlsService {
     callback: (requesterUserId: string, requesterDeviceId: string, groupId: string) => void
   ): void {
     this.welcomeRequestCallback = callback;
+  }
+
+  async sendGroupReset(groupId: string, reason = 'bootstrap'): Promise<void> {
+    const res = await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}/reset`, {
+      method: 'POST',
+      headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ reason, triggeredBy: `${this.userId}:${this.deviceId}` }),
+    });
+    if (!res.ok) {
+      throw new Error(`group_reset failed: ${res.status}`);
+    }
+  }
+
+  onGroupReset(callback: (groupId: string, reason: string) => void): void {
+    this.groupResetCallback = callback;
   }
 
   getDeviceId(): string {

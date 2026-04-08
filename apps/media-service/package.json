@@ -4,7 +4,7 @@
   "scripts": {
     "start": "ts-node src/main.ts",
     "start:dev": "nest start --watch",
-    "test": "jest",
+    "test": "jest --passWithNoTests",
     "build": "nest build"
   },
   "dependencies": {

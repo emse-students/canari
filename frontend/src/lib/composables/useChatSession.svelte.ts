@@ -292,6 +292,22 @@ export function useChatSession() {
         }
       );
 
+      // ── group_reset handler ──────────────────────────────────────────────
+      // Quand le serveur diffuse un group_reset (déclenché par un device qui
+      // re-bootstrap le groupe), chaque client doit :
+      //   1. Oublier son état MLS local pour ce groupe
+      //   2. Marquer la conversation comme non prête
+      // La ré-invitation se fait automatiquement : le device qui a lancé le
+      // reset va créer le groupe MLS et envoyer des Welcome à tous les devices.
+      mlsService.onGroupReset((groupId: string, reason: string) => {
+        cb.log(`[SYNC] group_reset reçu pour ${groupId} (raison: ${reason})`);
+        mlsService.forgetGroup(groupId);
+        const convo = cb.conversations.get(groupId);
+        if (convo) {
+          cb.conversations.set(groupId, { ...convo, isReady: false });
+        }
+      });
+
       // Multi-tab leadership: only the leader tab opens the WebSocket.
       await initTabLeadershipAsync(cb.log);
 
@@ -325,10 +341,12 @@ export function useChatSession() {
         cb.log(`[WARN] Echec decouverte groupes: ${e instanceof Error ? e.message : String(e)}`)
       );
 
-      // discoverMissingGroups uses time-based thresholds (10s, 30s, 120s) before
-      // triggering a bootstrap. Since it runs only once, schedule retries just
-      // after each threshold so the bootstrap actually fires when the wait expires.
-      for (const delay of [12_000, 35_000, 130_000]) {
+      // discoverMissingGroups attend 30s (BOOTSTRAP_TIMEOUT_MS) avant de
+      // tenter un re-bootstrap. On programme un retry à 35s pour que le
+      // bootstrap se déclenche effectivement quand le timeout expire.
+      // Un second retry à 70s couvre le cas où le premier a échoué
+      // (ex: lock pris par un autre device qui n'a pas réussi).
+      for (const delay of [35_000, 70_000]) {
         setTimeout(() => {
           const hasPending = [...cb.conversations.values()].some((c) => !c.isReady);
           if (!hasPending) return;

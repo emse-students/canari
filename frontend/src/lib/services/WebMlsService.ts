@@ -34,6 +34,10 @@ export class WebMlsService implements IMlsService {
   private welcomeRequestCallback:
     | ((requesterUserId: string, requesterDeviceId: string, groupId: string) => void)
     | null = null;
+  // Callback déclenché quand le serveur signale qu'un groupe est mort et doit
+  // être recréé. Le client fait forgetGroup() + isReady=false puis, à la
+  // reconnexion, envoie un welcome_request pour être ré-invité.
+  private groupResetCallback: ((groupId: string, reason: string) => void) | null = null;
   private baseUrl: string; // Chat Gateway URL
   private historyUrl: string; // Chat Delivery Service URL
   private userId: string = 'unknown';
@@ -225,6 +229,17 @@ export class WebMlsService implements IMlsService {
               `[WS RCV] welcome_request from ${requesterUserId}:${requesterDeviceId} for group ${groupId}`
             );
             this.welcomeRequestCallback?.(requesterUserId, requesterDeviceId, groupId);
+            return;
+          }
+          // ── group_reset : signal hors-bande MLS ──────────────────────────
+          // Le serveur a décidé que la session MLS de ce groupe est morte.
+          // Chaque client doit oublier son état local et attendre d'être
+          // ré-invité via welcome_request à la prochaine connexion.
+          if (msg.type === 'group_reset') {
+            const groupId = (msg.groupId as string) || '';
+            const reason = (msg.reason as string) || 'unknown';
+            console.log(`[WS RCV] group_reset for group ${groupId} reason=${reason}`);
+            this.groupResetCallback?.(groupId, reason);
             return;
           }
           if (msg.type === 'epoch_rejected') {
@@ -429,6 +444,26 @@ export class WebMlsService implements IMlsService {
     callback: (requesterUserId: string, requesterDeviceId: string, groupId: string) => void
   ): void {
     this.welcomeRequestCallback = callback;
+  }
+
+  /**
+   * Demande au serveur de déclencher un group_reset.
+   * Le serveur va : reset toutes les memberships → reset epoch → broadcast
+   * group_reset via WebSocket → chaque client oublie l'état MLS local.
+   */
+  async sendGroupReset(groupId: string, reason = 'bootstrap'): Promise<void> {
+    const res = await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}/reset`, {
+      method: 'POST',
+      headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ reason, triggeredBy: `${this.userId}:${this.deviceId}` }),
+    });
+    if (!res.ok) {
+      throw new Error(`group_reset failed: ${res.status}`);
+    }
+  }
+
+  onGroupReset(callback: (groupId: string, reason: string) => void): void {
+    this.groupResetCallback = callback;
   }
 
   async fetchPendingMessages() {

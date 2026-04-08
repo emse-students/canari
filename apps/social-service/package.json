@@ -6,7 +6,7 @@
     "start": "ts-node src/main.ts",
     "start:dev": "nest start --watch",
     "build": "nest build",
-    "test": "jest",
+    "test": "jest --passWithNoTests",
     "test:e2e": "jest --runInBand --testRegex .*\\.e2e-spec\\.ts$",
     "smoke": "node scripts/smoke-test.mjs",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",

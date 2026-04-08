@@ -1851,6 +1851,130 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * ─── Group Reset (hors-bande MLS) ────────────────────────────────────
+   *
+   * Signale à tous les appareils d'un groupe que la session MLS est morte
+   * et doit être recréée from scratch. Contrairement au bootstrap client-side
+   * qui écrasait unilatéralement le groupe (source de forks d'epoch),
+   * ce reset est **orchestré par le serveur** :
+   *
+   *   1. Toutes les DeviceGroupMembership passent à "pending"
+   *   2. L'epoch serveur est reset à 0
+   *   3. Le set Redis group:members est vidé (plus de routage)
+   *   4. **Un message WebSocket `group_reset` est diffusé** à tout appareil
+   *      en ligne → chaque client fait forgetGroup() + isReady=false
+   *   5. À la prochaine (re)connexion, chaque appareil enverra un
+   *      welcome_request et sera ré-invité par le bootstrapper
+   *
+   * Le message `group_reset` est un signal hors-bande (non chiffré, pas de
+   * dépendance MLS/KeyPackage). Il suit le même pattern que welcome_request
+   * et reinvite_request : JSON sur Redis pub/sub → WebSocket.
+   *
+   * ⚠️ Modèle de menace : un serveur compromis pourrait forcer un reset.
+   * C'est déjà le cas avec reinvite_request et la gestion des memberships —
+   * le modèle fait confiance au serveur pour le routage.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Post('mls-api/groups/:groupId/reset')
+  async resetGroup(
+    @Param('groupId') groupId: string,
+    @Body() body: { reason?: string; triggeredBy?: string },
+  ) {
+    const traceId = this.makeTraceId('group-reset');
+    const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
+    const reason = body.reason ?? 'bootstrap';
+    const triggeredBy =
+      sanitizeOptionalQueryValue(body.triggeredBy, 'triggeredBy') ?? 'unknown';
+
+    const group = await this.groupRepo.findOne({
+      where: { id: safeGroupId },
+    });
+    if (!group) {
+      throw new BadRequestException(`Group ${safeGroupId} not found`);
+    }
+
+    this.logger.log(
+      `[GROUP_RESET][${traceId}] START group=${safeGroupId} reason=${reason} triggeredBy=${triggeredBy} oldEpoch=${group.activeEpoch}`,
+    );
+
+    // ── 1. Reset toutes les memberships à "pending" ────────────────────
+    // Chaque appareil devra être ré-invité via welcome_request.
+    const memberships = await this.deviceGroupRepo.find({
+      where: { groupId: safeGroupId },
+    });
+    for (const m of memberships) {
+      m.status = 'pending';
+      m.lastEpochSeen = 0;
+    }
+    if (memberships.length > 0) {
+      await this.deviceGroupRepo.save(memberships);
+    }
+    this.logger.log(
+      `[GROUP_RESET][${traceId}] ${memberships.length} membership(s) reset to pending`,
+    );
+
+    // ── 2. Reset epoch serveur ─────────────────────────────────────────
+    group.activeEpoch = 0;
+    await this.groupRepo.save(group);
+
+    // ── 3. Vider le set Redis de routage ───────────────────────────────
+    // Plus aucun appareil ne doit recevoir de messages MLS pour ce groupe
+    // tant qu'il n'a pas été ré-invité.
+    const redisKey = `group:members:${safeGroupId}`;
+    const currentMembers: string[] = await this.redis.smembers(redisKey);
+    if (currentMembers.length > 0) {
+      await this.redis.del(redisKey);
+    }
+    this.logger.log(
+      `[GROUP_RESET][${traceId}] Redis routing cleared (was ${currentMembers.length} member(s))`,
+    );
+
+    // ── 4. Diffuser group_reset à tous les appareils en ligne ──────────
+    // On utilise la liste qu'on vient de vider (currentMembers) car ces
+    // appareils avaient encore la connexion WebSocket active.
+    const notification = JSON.stringify({
+      type: 'group_reset',
+      groupId: safeGroupId,
+      reason,
+      triggeredBy,
+    });
+
+    let notifiedCount = 0;
+    for (const member of currentMembers) {
+      const [memberUserId, memberDeviceId] = member.split(':');
+      if (!memberUserId || !memberDeviceId) continue;
+
+      const onlineKey = `user:online:${memberUserId}:${memberDeviceId}`;
+      const isOnline = await this.redis.exists(onlineKey);
+      if (isOnline) {
+        await this.redis.publish(
+          'chat:messages',
+          JSON.stringify({
+            recipientId: memberUserId,
+            deviceId: memberDeviceId,
+            proto: Buffer.from(notification).toString('base64'),
+            groupId: safeGroupId,
+            // Pas isWelcome, pas isCommit : le gateway relaye le JSON brut
+            // comme un control frame, identique à welcome_request.
+          }),
+        );
+        notifiedCount++;
+      }
+    }
+
+    this.logger.log(
+      `[GROUP_RESET][${traceId}] DONE group=${safeGroupId} notified=${notifiedCount}/${currentMembers.length} memberships=${memberships.length}`,
+    );
+
+    return {
+      status: 'reset',
+      groupId: safeGroupId,
+      membershipsReset: memberships.length,
+      notified: notifiedCount,
+    };
+  }
+
+  /**
    * Epoch-gated commit: validates that the sender's baseEpoch matches the
    * group's activeEpoch before allowing the commit through.
    * Prevents MLS epoch forks caused by concurrent commits from multiple devices.

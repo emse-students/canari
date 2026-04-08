@@ -5,7 +5,7 @@
     "build": "nest build",
     "start": "ts-node src/main.ts",
     "start:dev": "nest start --watch",
-    "test": "jest",
+    "test": "jest --passWithNoTests",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\""
   },

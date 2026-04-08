@@ -164,4 +164,17 @@ export interface IMlsService {
   onWelcomeRequest(
     callback: (requesterUserId: string, requesterDeviceId: string, groupId: string) => void
   ): void;
+
+  /**
+   * Demande au serveur de reset un groupe entier (hors-bande MLS).
+   * Le serveur passe toutes les memberships à pending, reset l'epoch,
+   * et diffuse un signal `group_reset` WebSocket à tous les appareils en ligne.
+   */
+  sendGroupReset(groupId: string, reason?: string): Promise<void>;
+
+  /**
+   * Callback invoqué quand le serveur diffuse un `group_reset`.
+   * Le client doit : forgetGroup() + isReady=false + attendre un welcome_request.
+   */
+  onGroupReset(callback: (groupId: string, reason: string) => void): void;
 }
