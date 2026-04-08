@@ -176,9 +176,12 @@ export async function processPendingInvitations(params: {
           const stBytes = await mlsService.saveState(pin);
           localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
 
-          // Send commit
+          // Send commit, excluding the inviter (self) and the newly-welcomed device
           if (result.commit) {
-            await mlsService.sendCommit(result.commit, groupId);
+            await mlsService.sendCommit(result.commit, groupId, [
+              `${userId}:${mlsService.getDeviceId()}`,
+              `${inv.userId}:${inv.deviceId}`,
+            ]);
           }
 
           // Short delay for commit propagation
