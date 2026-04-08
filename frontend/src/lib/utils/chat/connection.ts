@@ -296,7 +296,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           mlsService.forgetGroup(groupId, currentEpoch);
           const stBytes = await mlsService.saveState(pin);
           localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
-          void mlsService.sendReinviteRequest(groupId);
+          mlsService.sendReinviteRequest(groupId);
         }
         return;
       }
@@ -801,7 +801,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               mlsService.forgetGroup(convo.id);
               conversations.set(convoKey, { ...convo, isReady: false });
               if (storage) saveConversation(convoKey).catch(() => {});
-              void mlsService.sendReinviteRequest(convo.id);
+              mlsService.sendReinviteRequest(convo.id);
             }
           }
           // Reset phantom failure counter on any successful processing
@@ -843,7 +843,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               mlsService.forgetGroup(convo.id, me); // Fix F: min_epoch = me
               conversations.set(convoKey, { ...convo, isReady: false });
               if (storage) saveConversation(convoKey).catch(() => {});
-              void mlsService.sendReinviteRequest(convo.id);
+              mlsService.sendReinviteRequest(convo.id);
             }
             // Fix E: me === ge + SenderDataDecryption = secrets divergés (race condition)
             if (
@@ -858,7 +858,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               mlsService.forgetGroup(convo.id, ge); // Fix F: min_epoch = ge
               conversations.set(convoKey, { ...convo, isReady: false });
               if (storage) saveConversation(convoKey).catch(() => {});
-              void mlsService.sendReinviteRequest(convo.id);
+              mlsService.sendReinviteRequest(convo.id);
             }
             return true; // ACK toujours pour les erreurs d'epoch
           }
@@ -876,7 +876,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             mlsService.forgetGroup(convo.id);
             conversations.set(convoKey, { ...convo, isReady: false });
             if (storage) saveConversation(convoKey).catch(() => {});
-            void mlsService.sendReinviteRequest(convo.id);
+            mlsService.sendReinviteRequest(convo.id);
             return true;
           }
 
@@ -1170,11 +1170,6 @@ interface ConnectionDeps {
   log: (msg: string) => void;
 }
 
-// Groups for which a welcome_request has already been sent this session.
-// Once sent, if no peer was online to answer, processPendingInvitations on any
-// member's next connect will handle the invitation — there is no need to retry.
-const sentWelcomeRequests = new Set<string>();
-
 /**
  * Initialise la connexion WebSocket et génère un KeyPackage.
  * Gère la reconnexion automatique en cas de déconnexion.
@@ -1234,21 +1229,8 @@ export async function initializeConnection(deps: ConnectionDeps): Promise<void> 
     const localGroups = new Set(mlsService.getLocalGroups());
     for (const m of memberships) {
       if (m.status === 'pending') {
-        if (sentWelcomeRequests.has(m.groupId)) {
-          log(
-            `[SYNC] welcome_request déjà envoyé pour ${m.groupId} — skip (processPendingInvitations prend le relais)`
-          );
-        } else {
-          sentWelcomeRequests.add(m.groupId);
-          mlsService
-            .sendWelcomeRequest(m.groupId)
-            .then(() => {
-              log(`[SYNC] welcome_request envoyé pour groupe ${m.groupId}`);
-            })
-            .catch(() => {
-              sentWelcomeRequests.delete(m.groupId); // allow retry on next connect if HTTP failed
-            });
-        }
+        mlsService.sendWelcomeRequest(m.groupId);
+        log(`[SYNC] welcome_request envoyé pour groupe ${m.groupId}`);
       } else if (m.status === 'stale') {
         // Wipe local MLS state before requesting reinvite: the stale device's leaf
         // is still in everyone's tree, so the peer will kick it (remove commit) and
@@ -1256,7 +1238,7 @@ export async function initializeConnection(deps: ConnectionDeps): Promise<void> 
         // local group state is gone — otherwise processWelcome would find an existing
         // group and fail.
         mlsService.forgetGroup(m.groupId);
-        void mlsService.sendReinviteRequest(m.groupId);
+        mlsService.sendReinviteRequest(m.groupId);
         log(`[SYNC] reinvite_request envoyé (stale sur groupe ${m.groupId}, état local effacé)`);
       } else if (m.status === 'welcome_received' && !localGroups.has(m.groupId)) {
         // Server believes we are a full member but local MLS state is gone.
@@ -1265,7 +1247,7 @@ export async function initializeConnection(deps: ConnectionDeps): Promise<void> 
         await mlsService
           .updateInvitationStatus(mlsService.getDeviceId(), _userId, m.groupId, 'stale')
           .catch(() => {});
-        void mlsService.sendReinviteRequest(m.groupId);
+        mlsService.sendReinviteRequest(m.groupId);
         log(`[SYNC] welcome_request envoyé (état local manquant pour ${m.groupId})`);
       }
     }
