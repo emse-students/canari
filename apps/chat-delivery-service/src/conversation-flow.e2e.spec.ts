@@ -42,6 +42,7 @@ import { GroupMember } from './entities/group-member.entity';
 import { Group } from './entities/group.entity';
 import { PinVerifier } from './entities/pin-verifier.entity';
 import { DeviceGroupMembership } from './entities/device-group-membership.entity';
+import { OneTimeKeyPackage } from './entities/one-time-key-package.entity';
 import { encodeInboundMsgEnvelope } from '@canari/shared-ts';
 
 // ---- Fixtures de test -------------------------------------------------------
@@ -134,6 +135,7 @@ interface TestEnv {
 
 async function buildTestEnv(): Promise<TestEnv> {
   const kpModel = buildModelMock();
+  const otkpModel = buildModelMock();
   const welcomeModel = buildModelMock();
   const groupModel = buildModelMock();
   const memberModel = buildModelMock();
@@ -147,6 +149,7 @@ async function buildTestEnv(): Promise<TestEnv> {
     providers: [
       { provide: getRepositoryToken(QueuedMessage), useValue: queueModel },
       { provide: getRepositoryToken(KeyPackage), useValue: kpModel },
+      { provide: getRepositoryToken(OneTimeKeyPackage), useValue: otkpModel },
       { provide: getRepositoryToken(WelcomeMessage), useValue: welcomeModel },
       { provide: getRepositoryToken(GroupMember), useValue: memberModel },
       { provide: getRepositoryToken(Group), useValue: groupModel },
