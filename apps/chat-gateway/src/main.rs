@@ -118,22 +118,36 @@ async fn main() {
                 while let Some(msg) = stream.next().await {
                     let channel_name = msg.get_channel_name();
                     if let Ok(payload_str) = msg.get_payload::<String>() {
+                        let payload_len = payload_str.len();
                         tracing::debug!(
-                            "Received pub/sub message on {}: {}",
+                            "Received pub/sub message on {} ({} bytes)",
                             channel_name,
-                            payload_str
+                            payload_len
                         );
                         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&payload_str) {
                             if channel_name == "chat:messages" {
-                                let recipient_id =
-                                    match json.get("recipientId").and_then(|v| v.as_str()) {
-                                        Some(v) => v.to_string(),
-                                        None => continue,
-                                    };
+                                let recipient_id = match json
+                                    .get("recipientId")
+                                    .and_then(|v| v.as_str())
+                                {
+                                    Some(v) => v.to_string(),
+                                    None => {
+                                        tracing::warn!(
+                                            "[PubSub] chat:messages payload missing recipientId, dropping"
+                                        );
+                                        continue;
+                                    }
+                                };
                                 let device_id = match json.get("deviceId").and_then(|v| v.as_str())
                                 {
                                     Some(v) => v.to_string(),
-                                    None => continue,
+                                    None => {
+                                        tracing::warn!(
+                                            "[PubSub] chat:messages payload missing deviceId for recipient {}, dropping",
+                                            recipient_id
+                                        );
+                                        continue;
+                                    }
                                 };
 
                                 // welcome_request / reinvite_request control frames: proto is
@@ -151,11 +165,25 @@ async fn main() {
                                     let proto_b64 = match json.get("proto").and_then(|v| v.as_str())
                                     {
                                         Some(v) => v,
-                                        None => continue,
+                                        None => {
+                                            tracing::warn!(
+                                                "[PubSub] control frame missing proto for {}:{}, dropping",
+                                                recipient_id,
+                                                device_id
+                                            );
+                                            continue;
+                                        }
                                     };
                                     match base64_decode_to_string(proto_b64) {
                                         Some(s) => s,
-                                        None => continue,
+                                        None => {
+                                            tracing::warn!(
+                                                "[PubSub] control frame invalid base64 proto for {}:{}, dropping",
+                                                recipient_id,
+                                                device_id
+                                            );
+                                            continue;
+                                        }
                                     }
                                 } else {
                                     let proto_b64 = match json.get("proto").and_then(|v| v.as_str())
@@ -184,6 +212,18 @@ async fn main() {
                                 };
 
                                 let key = format!("{}:{}", recipient_id, device_id);
+                                let queue_id = json
+                                    .get("queuedMessageId")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+
+                                tracing::info!(
+                                    "[PubSub] route kind={} target={} group={} queuedId={}",
+                                    if is_control { "control" } else { "mls" },
+                                    key,
+                                    json.get("groupId").and_then(|v| v.as_str()).unwrap_or(""),
+                                    queue_id
+                                );
 
                                 tracing::info!("Looking for connected user: {}", key);
 
@@ -200,14 +240,16 @@ async fn main() {
                                     for tx in &senders {
                                         if tx.try_send(json_frame.clone()).is_ok() {
                                             tracing::info!(
-                                                "[Gateway] Message directly routed to {}, json_frame length: {} bytes",
+                                                "[Gateway] Message directly routed to {}, json_frame length: {} bytes, queuedId={}",
                                                 key,
-                                                json_frame.len()
+                                                json_frame.len(),
+                                                queue_id
                                             );
                                         } else {
                                             tracing::warn!(
-                                                "Backpressure/disconnected: dropping message for slow client {}",
-                                                key
+                                                "Backpressure/disconnected: dropping message for slow client {} (queuedId={})",
+                                                key,
+                                                queue_id
                                             );
                                             to_remove = true;
                                         }
@@ -219,8 +261,9 @@ async fn main() {
                                     map.remove(&key);
                                 } else if !found {
                                     tracing::warn!(
-                                        "[PubSub] {} not connected to this gateway instance — message kept in queue.",
-                                        key
+                                        "[PubSub] {} not connected to this gateway instance — message kept in queue (queuedId={}).",
+                                        key,
+                                        queue_id
                                     );
                                 }
                             } else if channel_name == "chat:channel_events" {
@@ -277,10 +320,19 @@ async fn main() {
                                 }
 
                                 tracing::info!(
-                                    "[Gateway] Channel event distributed to connected users."
+                                    "[Gateway] Channel event distributed to connected users (targets={}).",
+                                    senders_to_notify.len()
                                 );
                             }
+                        } else {
+                            tracing::warn!(
+                                "[PubSub] Invalid JSON payload on {} ({} bytes), dropping",
+                                channel_name,
+                                payload_len
+                            );
                         }
+                    } else {
+                        tracing::warn!("[PubSub] Non-string payload on {}, dropping", channel_name);
                     }
                 }
                 // Stream ended (Redis déconnecté), on réessaie

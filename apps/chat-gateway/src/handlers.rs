@@ -213,10 +213,11 @@ async fn handle_socket(
 
                 match msg {
                     Ok(Message::Text(text)) => {
+                        let raw_len = text.len();
                         tracing::info!(
                             "Received WS JSON frame from {} ({} bytes)",
                             user_id,
-                            text.len()
+                            raw_len
                         );
 
                         let json = match serde_json::from_str::<serde_json::Value>(&text) {
@@ -234,6 +235,30 @@ async fn handle_socket(
                                 continue;
                             }
                         };
+
+                        tracing::info!(
+                            "[WS RX] from={}:{} type={} group={} rawBytes={}",
+                            user_id,
+                            device_id,
+                            frame.msg_type,
+                            if frame.group_id.is_empty() {
+                                "<none>"
+                            } else {
+                                &frame.group_id
+                            },
+                            raw_len
+                        );
+
+                        if frame.msg_type == "welcome_request"
+                            || frame.msg_type == "reinvite_request"
+                        {
+                            tracing::warn!(
+                                "[WS RX] control frame '{}' received from {}:{} but WS dispatch is currently diagnostic-only",
+                                frame.msg_type,
+                                user_id,
+                                device_id
+                            );
+                        }
 
                         log_routing_diagnostics(&state, &user_id, &device_id, &frame).await;
                     }

@@ -535,6 +535,10 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    */
   private static readonly MESSAGE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
+  private makeTraceId(scope: string): string {
+    return `${scope}-${crypto.randomUUID().slice(0, 8)}`;
+  }
+
   constructor(
     @InjectRepository(QueuedMessage)
     private queuedMessageRepo: Repository<QueuedMessage>,
@@ -1377,8 +1381,12 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
   ) {
+    const traceId = this.makeTraceId('pending');
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
+    this.logger.log(
+      `[PENDING][${traceId}] START user=${safeUserId} device=${safeDeviceId}`,
+    );
 
     // 1. Get groups where this device is already a full member (welcome_received)
     const myMemberships = await this.deviceGroupRepo.find({
@@ -1389,7 +1397,12 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       },
     });
     const myGroupIds = myMemberships.map((m) => m.groupId);
-    if (myGroupIds.length === 0) return [];
+    if (myGroupIds.length === 0) {
+      this.logger.log(
+        `[PENDING][${traceId}] No welcome_received membership for ${safeUserId}:${safeDeviceId}`,
+      );
+      return [];
+    }
 
     // 2. Find all pending AND stale memberships in those groups
     const pending = await this.deviceGroupRepo.find({
@@ -1398,6 +1411,9 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         { groupId: gid, status: 'stale' as const },
       ]),
     });
+    this.logger.log(
+      `[PENDING][${traceId}] DONE groups=${myGroupIds.length} invitations=${pending.length}`,
+    );
     return pending;
   }
 
@@ -1723,6 +1739,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       baseEpoch: number;
     },
   ) {
+    const traceId = this.makeTraceId('commit');
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
     const baseEpoch =
@@ -1731,8 +1748,15 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         : -1;
 
     if (baseEpoch < 0) {
+      this.logger.warn(
+        `[COMMIT][${traceId}] Invalid baseEpoch=${body.baseEpoch} group=${groupId} device=${deviceId}`,
+      );
       throw new BadRequestException('baseEpoch must be a non-negative integer');
     }
+
+    this.logger.log(
+      `[COMMIT][${traceId}] START group=${groupId} device=${deviceId} baseEpoch=${baseEpoch}`,
+    );
 
     // Serialize via Redis lock to prevent TOCTOU races.
     // Two devices sending commits at the same epoch would both read the same
@@ -1742,6 +1766,9 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     if (lockAcquired !== 'OK') {
       // Another commit is being validated right now — reject to retry.
       const group = await this.groupRepo.findOne({ where: { id: groupId } });
+      this.logger.warn(
+        `[COMMIT][${traceId}] REJECT concurrent_commit group=${groupId} currentEpoch=${group?.activeEpoch ?? 0}`,
+      );
       return {
         accepted: false,
         currentEpoch: group?.activeEpoch ?? 0,
@@ -1752,6 +1779,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     try {
       const group = await this.groupRepo.findOne({ where: { id: groupId } });
       if (!group) {
+        this.logger.error(`[COMMIT][${traceId}] Group not found: ${groupId}`);
         throw new BadRequestException(`Group ${groupId} not found`);
       }
 
@@ -1761,6 +1789,9 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       // fast-forward to baseEpoch + 1 so the client state and server state
       // converge without requiring a full re-bootstrap.
       if (baseEpoch !== group.activeEpoch && group.activeEpoch !== 0) {
+        this.logger.warn(
+          `[COMMIT][${traceId}] REJECT epoch_mismatch group=${groupId} baseEpoch=${baseEpoch} activeEpoch=${group.activeEpoch}`,
+        );
         return {
           accepted: false,
           currentEpoch: group.activeEpoch,
@@ -1772,12 +1803,23 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       group.activeEpoch = baseEpoch + 1;
       await this.groupRepo.save(group);
 
+      this.logger.log(
+        `[COMMIT][${traceId}] ACCEPT group=${groupId} newEpoch=${group.activeEpoch}`,
+      );
+
       return { accepted: true, newEpoch: group.activeEpoch };
     } finally {
       // Always release the commit lock
       const holder = await this.redis.get(lockKey);
       if (holder === deviceId) {
         await this.redis.del(lockKey);
+        this.logger.log(
+          `[COMMIT][${traceId}] Lock released for group=${groupId}`,
+        );
+      } else {
+        this.logger.warn(
+          `[COMMIT][${traceId}] Lock holder changed (holder=${holder ?? 'none'}) for group=${groupId}`,
+        );
       }
     }
   }
@@ -1792,6 +1834,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       requesterDeviceId: string;
     },
   ) {
+    const traceId = this.makeTraceId('welcome-req');
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
     const requesterUserId = sanitizeQueryValue(
       body.requesterUserId,
@@ -1814,6 +1857,10 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     );
     const senderKey = `${requesterUserId}:${requesterDeviceId}`;
 
+    this.logger.log(
+      `[WELCOME_REQ][${traceId}] START group=${groupId} requester=${senderKey} members=${members.length}`,
+    );
+
     const notification = JSON.stringify({
       type: 'welcome_request',
       groupId,
@@ -1824,8 +1871,17 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     for (const member of members) {
       if (member === senderKey) continue;
       const [memberUserId, memberDeviceId] = member.split(':');
+      if (!memberUserId || !memberDeviceId) {
+        this.logger.warn(
+          `[WELCOME_REQ][${traceId}] Malformed group member entry='${member}' group=${groupId}`,
+        );
+        continue;
+      }
       const onlineKey = `user:online:${memberUserId}:${memberDeviceId}`;
       const isOnline = await this.redis.exists(onlineKey);
+      this.logger.log(
+        `[WELCOME_REQ][${traceId}] Candidate=${member} online=${!!isOnline}`,
+      );
       if (isOnline) {
         await this.redis.publish(
           'chat:messages',
@@ -1842,14 +1898,14 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
           }),
         );
         this.logger.log(
-          `[WELCOME_REQ] Notified ${member} for group ${groupId} (requester: ${senderKey})`,
+          `[WELCOME_REQ][${traceId}] FORWARDED target=${member} group=${groupId} requester=${senderKey}`,
         );
         return { status: 'forwarded', target: member };
       }
     }
 
     this.logger.log(
-      `[WELCOME_REQ] No online peer for group ${groupId} — processPendingInvitations will handle on next connect`,
+      `[WELCOME_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} — processPendingInvitations on next connect`,
     );
     return { status: 'no_peer_online' };
   }
@@ -1864,6 +1920,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       requesterDeviceId: string;
     },
   ) {
+    const traceId = this.makeTraceId('reinvite-req');
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
     const requesterUserId = sanitizeQueryValue(
       body.requesterUserId,
@@ -1879,6 +1936,10 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     );
     const senderKey = `${requesterUserId}:${requesterDeviceId}`;
 
+    this.logger.log(
+      `[REINVITE_REQ][${traceId}] START group=${groupId} requester=${senderKey} members=${members.length}`,
+    );
+
     const notification = JSON.stringify({
       type: 'reinvite_request',
       groupId,
@@ -1889,8 +1950,17 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     for (const member of members) {
       if (member === senderKey) continue;
       const [memberUserId, memberDeviceId] = member.split(':');
+      if (!memberUserId || !memberDeviceId) {
+        this.logger.warn(
+          `[REINVITE_REQ][${traceId}] Malformed group member entry='${member}' group=${groupId}`,
+        );
+        continue;
+      }
       const onlineKey = `user:online:${memberUserId}:${memberDeviceId}`;
       const isOnline = await this.redis.exists(onlineKey);
+      this.logger.log(
+        `[REINVITE_REQ][${traceId}] Candidate=${member} online=${!!isOnline}`,
+      );
       if (isOnline) {
         await this.redis.publish(
           'chat:messages',
@@ -1905,14 +1975,14 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
           }),
         );
         this.logger.log(
-          `[REINVITE_REQ] Notified ${member} for group ${groupId} (requester: ${senderKey})`,
+          `[REINVITE_REQ][${traceId}] FORWARDED target=${member} group=${groupId} requester=${senderKey}`,
         );
         return { status: 'forwarded', target: member };
       }
     }
 
     this.logger.log(
-      `[REINVITE_REQ] No online peer for group ${groupId} — will retry on next connect`,
+      `[REINVITE_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} — retry on next connect`,
     );
     return { status: 'no_peer_online' };
   }
@@ -1930,6 +2000,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       groupId: string;
     },
   ) {
+    const traceId = this.makeTraceId('welcome-send');
     const targetDeviceId = sanitizeQueryValue(
       body.targetDeviceId,
       'targetDeviceId',
@@ -1942,6 +2013,10 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       sanitizeOptionalQueryValue(body.senderUserId, 'senderUserId') || 'system';
     const safeGroupId = sanitizeQueryValue(body.groupId, 'groupId');
 
+    this.logger.log(
+      `[WELCOME][${traceId}] START group=${safeGroupId} sender=${senderUserId} target=${targetUserId ?? 'unknown'}:${targetDeviceId} payloadLen=${body.welcomePayload?.length ?? 0} ratchetTreeLen=${body.ratchetTreePayload?.length ?? 0}`,
+    );
+
     // Look up recipient device — include userId in the query when provided so the lookup
     // is unambiguous even if two users happen to share the same raw device ID string
     // (common in same-browser multi-tab testing).
@@ -1952,6 +2027,9 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     const deviceInfo = await this.keyPackageRepo.findOne({ where: query });
 
     if (!deviceInfo) {
+      this.logger.error(
+        `[WELCOME][${traceId}] Target device not found target=${targetUserId ?? 'unknown'}:${targetDeviceId}`,
+      );
       throw new Error(
         `Device ${targetDeviceId} (user: ${targetUserId ?? 'unknown'}) not found. Cannot deliver Welcome message.`,
       );
@@ -1968,11 +2046,16 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       createdAt: new Date(),
     });
     await this.queuedMessageRepo.save(queuedWelcome);
+    this.logger.log(
+      `[WELCOME][${traceId}] QUEUED id=${queuedWelcome.id} recipient=${deviceInfo.userId}:${targetDeviceId} group=${safeGroupId}`,
+    );
 
     // Real-time push via Gateway when the target device is currently online.
     const redisKey = `user:online:${deviceInfo.userId}:${targetDeviceId}`;
     const isOnline = await this.redis.exists(redisKey);
-    console.log(`[DELIVERY] Checking presence for ${redisKey} -> ${isOnline}`);
+    this.logger.log(
+      `[WELCOME][${traceId}] PRESENCE key=${redisKey} online=${!!isOnline}`,
+    );
     if (isOnline) {
       const ciphertext = Buffer.from(body.welcomePayload, 'base64');
       const envelope = JSON.stringify({
@@ -1985,12 +2068,17 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         ratchetTree: body.ratchetTreePayload,
         proto: ciphertext.toString('base64'),
       });
-      console.log(
-        `[DELIVERY] Publishing Welcome message to ${redisKey}, envelope length: ${envelope.length}`,
+      this.logger.log(
+        `[WELCOME][${traceId}] REALTIME_PUBLISH key=${redisKey} envelopeLen=${envelope.length}`,
       );
       await this.redis.publish('chat:messages', envelope);
+      this.logger.log(
+        `[WELCOME][${traceId}] REALTIME_PUBLISHED key=${redisKey} queuedId=${queuedWelcome.id}`,
+      );
     } else {
-      console.log(`[DELIVERY] Target ${redisKey} is OFFLINE, message queued.`);
+      this.logger.log(
+        `[WELCOME][${traceId}] OFFLINE_ONLY key=${redisKey} queuedId=${queuedWelcome.id}`,
+      );
     }
 
     // Update DeviceGroupMembership status to welcome_sent
@@ -2012,6 +2100,10 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     await this.redis.sadd(
       `group:members:${safeGroupId}`,
       `${deviceInfo.userId}:${targetDeviceId}`,
+    );
+
+    this.logger.log(
+      `[WELCOME][${traceId}] DONE group=${safeGroupId} target=${deviceInfo.userId}:${targetDeviceId}`,
     );
 
     return { status: 'queued' };
@@ -2036,6 +2128,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       type?: string;
     },
   ) {
+    const traceId = this.makeTraceId('send');
     // ── Queue-first delivery ──────────────────────────────────────────────
     // Every message is persisted first so it survives timing races between
     // the online-check and the actual WebSocket send.  After queuing we
@@ -2044,6 +2137,10 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
     const ops: QueuedMessage[] = [];
     let sentCount = 0;
+
+    this.logger.log(
+      `[SEND][${traceId}] START group=${body.groupId ?? 'none'} sender=${body.senderId ?? 'unknown'}:${body.senderDeviceId ?? 'unknown'} hasProto=${!!body.proto} recipients=${body.recipients?.length ?? 0} isWelcome=${!!body.isWelcome} isCommit=${!!body.isCommit}`,
+    );
 
     if (body.proto) {
       // ── Proto path (gateway): proto = base64(raw MLS ciphertext) ─────────
@@ -2110,6 +2207,9 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
           await this.redis.sadd(
             `group:members:${fallbackGroupId}`,
             ...fallback.map((m) => `${m.userId}:${m.deviceId}`),
+          );
+          this.logger.log(
+            `[SEND][${traceId}] FALLBACK_MEMBERS_CACHE group=${fallbackGroupId} count=${fallback.length}`,
           );
         }
       }
@@ -2190,6 +2290,9 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     // 1. Persist ALL messages first (survives crashes / timing races)
     if (ops.length > 0) {
       await this.queuedMessageRepo.save(ops);
+      this.logger.log(`[SEND][${traceId}] QUEUED count=${ops.length}`);
+    } else {
+      this.logger.warn(`[SEND][${traceId}] No message queued after validation`);
     }
 
     // 2. Best-effort real-time delivery for online recipients
@@ -2197,7 +2300,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       const redisKey = `user:online:${queued.recipientId}:${queued.deviceId}`;
       const isOnline = await this.redis.exists(redisKey);
       this.logger.log(
-        `[SEND] recipient=${queued.recipientId}:${queued.deviceId} online=${!!isOnline} queuedId=${queued.id}`,
+        `[SEND][${traceId}] recipient=${queued.recipientId}:${queued.deviceId} online=${!!isOnline} queuedId=${queued.id}`,
       );
       if (isOnline) {
         const envelope = JSON.stringify({
@@ -2213,11 +2316,14 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         });
         await this.redis.publish('chat:messages', envelope);
         sentCount++;
+        this.logger.log(
+          `[SEND][${traceId}] PUBLISHED recipient=${queued.recipientId}:${queued.deviceId} queuedId=${queued.id}`,
+        );
       }
     }
 
     this.logger.log(
-      `[SEND] Total: ${ops.length} message(s) en queue, ${sentCount} publié(s) en temps réel`,
+      `[SEND][${traceId}] DONE queued=${ops.length} realtime=${sentCount}`,
     );
 
     return { status: 'processed', queued: ops.length, sent: sentCount };
@@ -2252,14 +2358,23 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
   ) {
+    const traceId = this.makeTraceId('fetch-msg');
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
 
+    this.logger.log(
+      `[MSG_FETCH][${traceId}] START user=${safeUserId} device=${safeDeviceId}`,
+    );
+
     // On renvoie juste la liste
-    return this.queuedMessageRepo.find({
+    const messages = await this.queuedMessageRepo.find({
       where: { recipientId: safeUserId, deviceId: safeDeviceId },
       order: { createdAt: 'ASC' },
     });
+    this.logger.log(
+      `[MSG_FETCH][${traceId}] DONE user=${safeUserId} device=${safeDeviceId} count=${messages.length}`,
+    );
+    return messages;
   }
 
   // 2. Nouvelle route d'Acquittement (ACK)
@@ -2267,11 +2382,19 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   async acknowledgeMessages(
     @Body() body: { userId: string; deviceId: string; messageIds: string[] },
   ) {
+    const traceId = this.makeTraceId('ack');
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
     const safeMessageIds = sanitizeStringIdList(body.messageIds);
 
+    this.logger.log(
+      `[ACK][${traceId}] START user=${safeUserId} device=${safeDeviceId} requested=${safeMessageIds.length}`,
+    );
+
     if (safeMessageIds.length === 0) {
+      this.logger.warn(
+        `[ACK][${traceId}] IGNORE empty messageIds user=${safeUserId} device=${safeDeviceId}`,
+      );
       return { status: 'ignored' };
     }
 
@@ -2281,6 +2404,10 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       recipientId: safeUserId,
       deviceId: safeDeviceId, // Sécurité pour éviter qu'un device supprime les messages d'un autre
     });
+
+    this.logger.log(
+      `[ACK][${traceId}] DONE deleted=${result.affected || 0} user=${safeUserId} device=${safeDeviceId}`,
+    );
 
     return { status: 'deleted', count: result.affected || 0 };
   }
