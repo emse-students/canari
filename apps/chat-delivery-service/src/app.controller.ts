@@ -1215,7 +1215,11 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       creatorDeviceId?: string;
     },
   ) {
+    const traceId = this.makeTraceId('create-grp');
     const groupId = uuidv4();
+    this.logger.log(
+      `[CREATE_GROUP][${traceId}] name="${body.name}" createdBy=${body.createdBy} isGroup=${body.isGroup ?? true} creatorDevice=${body.creatorDeviceId ?? 'none'} groupId=${groupId}`,
+    );
     const newGroup = this.groupRepo.create({
       id: groupId,
       name: body.name,
@@ -1233,8 +1237,12 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         lastEpochSeen: 0,
       });
       await this.deviceGroupRepo.save(creatorMembership);
+      this.logger.log(
+        `[CREATE_GROUP][${traceId}] creator membership set to welcome_received`,
+      );
     }
 
+    this.logger.log(`[CREATE_GROUP][${traceId}] DONE groupId=${groupId}`);
     return {
       groupId,
       name: body.name,
@@ -1247,6 +1255,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   @Get('mls-api/groups/:groupId')
   async getGroup(@Param('groupId') groupId: string) {
     const g = await this.groupRepo.findOne({ where: { id: groupId } });
+    this.logger.log(`[GET_GROUP] groupId=${groupId} found=${!!g}`);
     return g ? { ...g, groupId: g.id } : null;
   }
 
@@ -1258,8 +1267,14 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       where: { userId: safeUserId },
     });
     const groupIds = [...new Set(memberships.map((m) => m.groupId))];
-    if (groupIds.length === 0) return [];
+    if (groupIds.length === 0) {
+      this.logger.log(`[USER_GROUPS] user=${safeUserId} groups=0`);
+      return [];
+    }
     const groups = await this.groupRepo.findByIds(groupIds);
+    this.logger.log(
+      `[USER_GROUPS] user=${safeUserId} groups=${groups.length} ids=${groups.map((g) => g.id).join(',')}`,
+    );
     return groups.map((g) => ({
       groupId: g.id,
       name: g.name,
@@ -1272,8 +1287,12 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     @Param('groupId') groupId: string,
     @Body() body: { userId: string },
   ) {
+    const traceId = this.makeTraceId('add-member');
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
+    this.logger.log(
+      `[ADD_MEMBER][${traceId}] START group=${safeGroupId} user=${safeUserId}`,
+    );
 
     let member = await this.groupMemberRepo.findOne({
       where: { groupId: safeGroupId, userId: safeUserId },
@@ -1311,6 +1330,9 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
     // NB: NOT added to group:members Redis here — devices only enter the routing
     // set once welcome_sent so pre-welcome devices never receive group messages.
+    this.logger.log(
+      `[ADD_MEMBER][${traceId}] DONE group=${safeGroupId} user=${safeUserId} devices=${userDevices.length}`,
+    );
     return { status: 'added' };
   }
 
@@ -1318,6 +1340,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   @Get('mls-api/groups/:groupId/members')
   async getGroupMembers(@Param('groupId') groupId: string) {
     const g = await this.groupMemberRepo.find({ where: { groupId } });
+    this.logger.log(`[GET_MEMBERS] group=${groupId} count=${g.length}`);
     return g;
   }
 
@@ -1334,6 +1357,9 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     await this.groupRepo.update(
       { id: safeGroupId },
       { name: body.name.trim() },
+    );
+    this.logger.log(
+      `[RENAME_GROUP] group=${safeGroupId} newName="${body.name.trim()}"`,
     );
     return { status: 'renamed' };
   }
@@ -1356,6 +1382,9 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     if (toRemove.length > 0) {
       await this.redis.srem(`group:members:${safeGroupId}`, ...toRemove);
     }
+    this.logger.log(
+      `[REMOVE_MEMBER] group=${safeGroupId} user=${safeUserId} redisRemoved=${toRemove.length}`,
+    );
     return { status: 'removed' };
   }
 
@@ -1366,6 +1395,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     await this.groupRepo.delete({ id: safeGroupId });
     await this.groupMemberRepo.delete({ groupId: safeGroupId });
     await this.redis.del(`group:members:${safeGroupId}`);
+    this.logger.log(`[DELETE_GROUP] group=${safeGroupId}`);
     return { status: 'deleted' };
   }
 
@@ -1429,9 +1459,13 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
-    return this.deviceGroupRepo.find({
+    const memberships = await this.deviceGroupRepo.find({
       where: { userId: safeUserId, deviceId: safeDeviceId },
     });
+    this.logger.log(
+      `[DEVICE_MEMBERSHIPS] user=${safeUserId} device=${safeDeviceId} count=${memberships.length} statuses=${memberships.map((m) => `${m.groupId}:${m.status}`).join(',')}`,
+    );
+    return memberships;
   }
 
   /**
@@ -1489,6 +1523,9 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     }
 
     await this.deviceGroupRepo.save(membership);
+    this.logger.log(
+      `[INVITATION_STATUS] device=${safeDeviceId} user=${safeUserId} group=${safeGroupId} newStatus=${body.status} epoch=${membership.lastEpochSeen ?? 'n/a'}`,
+    );
     return { status: membership.status };
   }
 
@@ -1586,6 +1623,9 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       groupId: safeGroupId,
     });
 
+    this.logger.log(
+      `[DEL_MEMBERSHIP] user=${safeUserId} device=${safeDeviceId} group=${safeGroupId} affected=${result.affected ?? 0}`,
+    );
     return { status: 'deleted', affected: result.affected ?? 0 };
   }
 
@@ -1606,6 +1646,9 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       deviceId: safeDeviceId,
     });
 
+    this.logger.log(
+      `[DEL_ALL_MEMBERSHIPS] user=${safeUserId} device=${safeDeviceId} affected=${result.affected ?? 0}`,
+    );
     return { status: 'deleted', affected: result.affected ?? 0 };
   }
 
@@ -1614,9 +1657,14 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   async registerDevice(
     @Body() body: { userId: string; deviceId: string; keyPackage: string },
   ) {
+    const traceId = this.makeTraceId('reg-device');
+    this.logger.log(
+      `[REGISTER_DEVICE][${traceId}] START user=${body.userId} device=${body.deviceId} kpLen=${body.keyPackage?.length ?? 0}`,
+    );
     let keyPackage = await this.keyPackageRepo.findOne({
       where: { userId: body.userId, deviceId: body.deviceId },
     });
+    const isNew = !keyPackage;
     if (!keyPackage) {
       keyPackage = this.keyPackageRepo.create({
         userId: body.userId,
@@ -1651,6 +1699,9 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       }
     }
 
+    this.logger.log(
+      `[REGISTER_DEVICE][${traceId}] DONE user=${body.userId} device=${body.deviceId} isNew=${isNew} pendingGroups=${userGroups.length}`,
+    );
     return { status: 'registered' };
   }
 
@@ -1684,6 +1735,9 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     // Redis SET NX EX : acquiert le verrou seulement si la clé n'existe pas encore
     const lockKey = `mls:addlock:${groupId}`;
     const result = await this.redis.set(lockKey, deviceId, 'EX', ttlSec, 'NX');
+    this.logger.log(
+      `[ADD_LOCK] group=${groupId} device=${deviceId} acquired=${result === 'OK'} ttl=${ttlSec}s`,
+    );
     return { acquired: result === 'OK' };
   }
 
@@ -1698,6 +1752,9 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     if (holder === deviceId) {
       await this.redis.del(lockKey);
     }
+    this.logger.log(
+      `[RELEASE_LOCK] group=${groupId} device=${deviceId} released=${holder === deviceId} holder=${holder ?? 'none'}`,
+    );
     return { released: holder === deviceId };
   }
 
@@ -1713,10 +1770,15 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     const group = await this.groupRepo.findOne({ where: { id: safeGroupId } });
     if (!group) {
+      this.logger.warn(`[RESET_EPOCH] Group not found: ${safeGroupId}`);
       throw new BadRequestException(`Group ${safeGroupId} not found`);
     }
+    const oldEpoch = group.activeEpoch;
     group.activeEpoch = 0;
     await this.groupRepo.save(group);
+    this.logger.log(
+      `[RESET_EPOCH] group=${safeGroupId} oldEpoch=${oldEpoch} → 0`,
+    );
     return { groupId: safeGroupId, activeEpoch: 0 };
   }
 
@@ -2340,6 +2402,9 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       // Using `(${after}` makes XRANGE exclusive (skips the entry itself).
       const startId = after ? `(${after}` : '-';
       const entries = await this.redis.xrange(streamKey, startId, '+');
+      this.logger.log(
+        `[HISTORY] group=${groupId} after=${after ?? 'start'} entries=${entries.length}`,
+      );
       return entries.map(([id, fields]) => {
         const msg: Record<string, unknown> = { id };
         for (let i = 0; i < fields.length; i += 2) {
@@ -2348,7 +2413,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         return msg;
       });
     } catch (e) {
-      console.error('History fetch error:', e);
+      this.logger.error(`[HISTORY] group=${groupId} error=${e}`);
       return [];
     }
   }
