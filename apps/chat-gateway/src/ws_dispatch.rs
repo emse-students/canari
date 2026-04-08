@@ -17,6 +17,7 @@ use crate::state::AppState;
 
 // ── Connection context (one per WebSocket session) ────────────────────────
 
+#[allow(dead_code)]
 pub struct WsConn<'a> {
     pub state: &'a Arc<AppState>,
     pub user_id: &'a str,
@@ -53,6 +54,7 @@ impl WsFrame {
 
 // ── Handler: "welcome_request" ────────────────────────────────────────────
 
+#[allow(dead_code)]
 pub async fn handle_welcome_request(conn: &WsConn<'_>, frame: &WsFrame) {
     tracing::info!(
         "Processing welcome_request from {}:{} for group {}",
@@ -75,6 +77,7 @@ pub async fn handle_welcome_request(conn: &WsConn<'_>, frame: &WsFrame) {
 
 // ── Handler: "reinvite_request" ───────────────────────────────────────────
 
+#[allow(dead_code)]
 pub async fn handle_reinvite_request(conn: &WsConn<'_>, frame: &WsFrame) {
     tracing::info!(
         "Processing reinvite_request from {}:{} for group {}",
@@ -99,6 +102,7 @@ pub async fn handle_reinvite_request(conn: &WsConn<'_>, frame: &WsFrame) {
 
 /// Forward a notification to exactly one online group member that is not the
 /// sender. Sends `no_peer_online` back to the sender if no peer is reachable.
+#[allow(dead_code)]
 async fn forward_to_one_peer(
     conn: &WsConn<'_>,
     group_id: &str,
