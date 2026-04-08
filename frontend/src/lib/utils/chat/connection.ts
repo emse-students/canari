@@ -296,7 +296,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           mlsService.forgetGroup(groupId, currentEpoch);
           const stBytes = await mlsService.saveState(pin);
           localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
-          await mlsService.sendReinviteRequest(groupId);
+          mlsService.sendReinviteRequest(groupId);
         }
         return;
       }
@@ -376,6 +376,15 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         `Message de ${sender} (${content.length} octets) - Grp: ${groupId} (isWelcome: ${!!isWelcome}, isCommit: ${!!isCommit})`
       );
       const senderNorm = sender.toLowerCase();
+
+      // Commits are structural MLS operations (add/remove member). The sender
+      // device already applied the commit locally via merge_pending_commit(),
+      // so it must not try to process its own commit as an incoming message
+      // (doing so would cause a wrong-epoch / ratchet-type error).
+      if (isCommit && senderNorm === userId.toLowerCase()) {
+        log(`[COMMIT] Skipping self-commit echo for group ${groupId}`);
+        return true;
+      }
 
       // Find conversation by groupId — the map is now keyed by id = groupId, so O(1) lookup.
       let convoKey: string | undefined;
@@ -792,7 +801,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               mlsService.forgetGroup(convo.id);
               conversations.set(convoKey, { ...convo, isReady: false });
               if (storage) saveConversation(convoKey).catch(() => {});
-              await mlsService.sendReinviteRequest(convo.id);
+              mlsService.sendReinviteRequest(convo.id);
             }
           }
           // Reset phantom failure counter on any successful processing
@@ -834,7 +843,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               mlsService.forgetGroup(convo.id, me); // Fix F: min_epoch = me
               conversations.set(convoKey, { ...convo, isReady: false });
               if (storage) saveConversation(convoKey).catch(() => {});
-              await mlsService.sendReinviteRequest(convo.id);
+              mlsService.sendReinviteRequest(convo.id);
             }
             // Fix E: me === ge + SenderDataDecryption = secrets divergés (race condition)
             if (
@@ -849,7 +858,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               mlsService.forgetGroup(convo.id, ge); // Fix F: min_epoch = ge
               conversations.set(convoKey, { ...convo, isReady: false });
               if (storage) saveConversation(convoKey).catch(() => {});
-              await mlsService.sendReinviteRequest(convo.id);
+              mlsService.sendReinviteRequest(convo.id);
             }
             return true; // ACK toujours pour les erreurs d'epoch
           }
@@ -867,7 +876,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             mlsService.forgetGroup(convo.id);
             conversations.set(convoKey, { ...convo, isReady: false });
             if (storage) saveConversation(convoKey).catch(() => {});
-            await mlsService.sendReinviteRequest(convo.id);
+            mlsService.sendReinviteRequest(convo.id);
             return true;
           }
 
@@ -1229,7 +1238,7 @@ export async function initializeConnection(deps: ConnectionDeps): Promise<void> 
         // local group state is gone — otherwise processWelcome would find an existing
         // group and fail.
         mlsService.forgetGroup(m.groupId);
-        await mlsService.sendReinviteRequest(m.groupId);
+        mlsService.sendReinviteRequest(m.groupId);
         log(`[SYNC] reinvite_request envoyé (stale sur groupe ${m.groupId}, état local effacé)`);
       } else if (m.status === 'welcome_received' && !localGroups.has(m.groupId)) {
         // Server believes we are a full member but local MLS state is gone.
@@ -1238,7 +1247,7 @@ export async function initializeConnection(deps: ConnectionDeps): Promise<void> 
         await mlsService
           .updateInvitationStatus(mlsService.getDeviceId(), _userId, m.groupId, 'stale')
           .catch(() => {});
-        await mlsService.sendReinviteRequest(m.groupId);
+        mlsService.sendReinviteRequest(m.groupId);
         log(`[SYNC] welcome_request envoyé (état local manquant pour ${m.groupId})`);
       }
     }

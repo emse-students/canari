@@ -916,9 +916,7 @@ export class TauriMlsService implements IMlsService {
       groupId,
       userIds,
     });
-    await this.sendCommit(new Uint8Array(commitBytes), groupId, [
-      `${this.userId}:${this.getDeviceId()}`,
-    ]);
+    await this.sendCommit(new Uint8Array(commitBytes), groupId);
   }
 
   async removeMemberDevice(groupId: string, deviceIdentities: string[]): Promise<void> {
@@ -926,9 +924,7 @@ export class TauriMlsService implements IMlsService {
       groupId,
       deviceIdentities,
     });
-    await this.sendCommit(new Uint8Array(commitBytes), groupId, [
-      `${this.userId}:${this.getDeviceId()}`,
-    ]);
+    await this.sendCommit(new Uint8Array(commitBytes), groupId);
   }
 
   async getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]> {

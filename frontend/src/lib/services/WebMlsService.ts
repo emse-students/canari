@@ -1042,7 +1042,7 @@ export class WebMlsService implements IMlsService {
       return arr;
     }, [] as string[]);
     const commitBytes: Uint8Array = this.client.remove_members(groupId, jsArray);
-    await this.sendCommit(commitBytes, groupId, [`${this.userId}:${this.getDeviceId()}`]);
+    await this.sendCommit(commitBytes, groupId);
   }
 
   async removeMemberDevice(groupId: string, deviceIdentities: string[]): Promise<void> {
@@ -1051,7 +1051,7 @@ export class WebMlsService implements IMlsService {
       return arr;
     }, [] as string[]);
     const commitBytes: Uint8Array = this.client.remove_members_by_device(groupId, jsArray);
-    await this.sendCommit(commitBytes, groupId, [`${this.userId}:${this.getDeviceId()}`]);
+    await this.sendCommit(commitBytes, groupId);
   }
 
   async getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]> {

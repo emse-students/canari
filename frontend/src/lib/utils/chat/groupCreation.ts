@@ -124,9 +124,7 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
         localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
 
         if (bulk.commit) {
-          const excludeIds = bulk.addedDeviceIds
-            .map((did) => `${userId}:${did}`)
-            .concat(`${userId}:${mlsService.getDeviceId()}`); // exclude self to avoid WrongEpoch
+          const excludeIds = bulk.addedDeviceIds.map((did) => `${userId}:${did}`);
           await mlsService.sendCommit(bulk.commit, groupId, excludeIds);
         }
       } catch (e) {
@@ -261,8 +259,7 @@ async function processBulkAddition(
             const uid = userMap.get(did);
             return uid ? `${uid}:${did}` : null;
           })
-          .filter((s): s is string => s !== null)
-          .concat(`${userId}:${mlsService.getDeviceId()}`); // exclude self to avoid WrongEpoch
+          .filter((s): s is string => s !== null);
         await mlsService.sendCommit(bulk.commit, conversation.id, excludeIds);
       }
 
@@ -408,12 +405,10 @@ export async function startNewConversation(
       const stBytes = await mlsService.saveState(pin);
       localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
       if (bulk.commit) {
-        const excludeIds = bulk.addedDeviceIds
-          .map((did) => {
-            const owner = contactDeviceIds.has(did) ? contact : userId;
-            return `${owner}:${did}`;
-          })
-          .concat(`${userId}:${mlsService.getDeviceId()}`); // exclude self to avoid WrongEpoch
+        const excludeIds = bulk.addedDeviceIds.map((did) => {
+          const owner = contactDeviceIds.has(did) ? contact : userId;
+          return `${owner}:${did}`;
+        });
         await mlsService.sendCommit(bulk.commit, groupId, excludeIds);
       }
     } finally {
@@ -509,12 +504,10 @@ export async function repairDirectConversation(
       const stBytes = await mlsService.saveState(pin);
       localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
       if (bulk.commit) {
-        const excludeIds = bulk.addedDeviceIds
-          .map((did) => {
-            const owner = contactDeviceIds.has(did) ? contact : userId;
-            return `${owner}:${did}`;
-          })
-          .concat(`${userId}:${mlsService.getDeviceId()}`); // exclude self to avoid WrongEpoch
+        const excludeIds = bulk.addedDeviceIds.map((did) => {
+          const owner = contactDeviceIds.has(did) ? contact : userId;
+          return `${owner}:${did}`;
+        });
         await mlsService.sendCommit(bulk.commit, groupId, excludeIds);
       }
     } finally {
