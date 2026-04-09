@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage",
+    "test:coverage": "vitest run --coverage --passWithNoTests",
     "prepare": "node ./scripts/install-husky.js",
     "proto:gen": "pbjs -t static-module -w es6 --es6 --no-service --force-number -o src/lib/proto/canari.js ../libs/proto/canari.proto && pbts -o src/lib/proto/canari.d.ts src/lib/proto/canari.js",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
