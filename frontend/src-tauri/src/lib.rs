@@ -3,9 +3,13 @@ use mls_core::MlsManager;
 use std::sync::Mutex;
 use tauri::{
     image::Image,
+    Manager, WindowEvent,
+};
+
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
-    Manager, WindowEvent,
 };
 
 // State wrapper
@@ -293,7 +297,24 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_sql::Builder::default().build());
+        .plugin(tauri_plugin_sql::Builder::default().build())
+        .plugin(tauri_plugin_push::init())
+        .plugin(tauri_plugin_background_task::init());
+// Commande appelée lors de la réception d'une notification push
+#[tauri::command]
+fn on_push_received(payload: String) {
+    println!("[PUSH] Notification reçue: {}", payload);
+    // Ici, tu peux déclencher une notification locale, stocker le message, etc.
+}
+
+// Exemple de tâche background
+#[tauri::command]
+fn run_background_task() {
+    tauri_plugin_background_task::spawn(|| {
+        println!("[BACKGROUND] Tâche background exécutée");
+        // Ici, tu peux faire du polling, du traitement, etc.
+    });
+}
 
     #[cfg(mobile)]
     let builder = builder.plugin(tauri_plugin_biometric::init());
@@ -384,7 +405,9 @@ pub fn run() {
             envoyer_message_bytes,
             recevoir_message,
             recevoir_message_bytes,
-            exporter_secret
+            exporter_secret,
+            on_push_received,
+            run_background_task
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
