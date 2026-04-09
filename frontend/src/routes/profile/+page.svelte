@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
   import {
     fetchMyProfile,
     updateMyProfile,
@@ -31,7 +32,12 @@
       profile = await fetchMyProfile();
       bioInput = profile.bio || '';
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Impossible de charger le profil';
+      const msg = err instanceof Error ? err.message : 'Impossible de charger le profil';
+      if (msg.toLowerCase().includes('session') || msg.includes('401')) {
+        await goto('/login?returnTo=/profile', { replaceState: true });
+        return;
+      }
+      error = msg;
     } finally {
       loading = false;
     }

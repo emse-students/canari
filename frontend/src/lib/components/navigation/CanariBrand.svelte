@@ -7,14 +7,30 @@
   let { compact = false, subtitle = 'Le réseau des Marteaux' }: Props = $props();
 </script>
 
-<div
-  class="relative flex h-10 w-10 items-center justify-center rounded-2xl bg-[oklch(37.2%_0.044_257.287)] shadow-sm border border-black/5 dark:border-white/10 overflow-hidden group-hover:scale-105 transition-transform duration-300"
->
-  <img src="/favicon.png" alt="Canari Logo" class="w-7 h-7 object-contain drop-shadow-sm" />
-</div>
-<div class="leading-tight {compact ? 'hidden sm:block' : ''}">
-  <p class="text-xl font-brand font-bold tracking-wide text-cn-dark dark:text-white capitalize">
-    Canari
-  </p>
-  <p class="text-[11px] font-medium text-text-muted mt-[2px] opacity-80">{subtitle}</p>
+<!-- Wrapper principal pour encapsuler l'état "group" et gérer l'espacement -->
+<div class="flex items-center gap-3 group select-none">
+  <!-- Conteneur de l'icône -->
+  <div
+    class="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-[14px] bg-[#151B2C] shadow-md shadow-black/10 border border-black/5 dark:border-white/10 overflow-hidden transition-all duration-300 group-hover:scale-105 group-hover:shadow-lg group-hover:shadow-black/20 dark:group-hover:shadow-white/5"
+  >
+    <!-- Le logo avec un léger effet de rotation au survol pour le dynamisme -->
+    <img
+      src="/favicon.png"
+      alt="Logo Canari"
+      class="w-[26px] h-[26px] object-contain drop-shadow-md transition-transform duration-300 group-hover:-rotate-3 group-hover:scale-110"
+    />
+  </div>
+
+  <!-- Conteneur du texte -->
+  <div class="leading-tight flex flex-col justify-center {compact ? 'hidden sm:flex' : 'flex'}">
+    <p class="text-xl font-brand font-bold tracking-wide text-text-main capitalize transition-colors duration-300 group-hover:text-amber-500 dark:group-hover:text-amber-400">
+      Canari
+    </p>
+
+    {#if subtitle}
+      <p class="text-[11px] font-medium text-text-muted mt-[1px] opacity-80 transition-opacity duration-300 group-hover:opacity-100">
+        {subtitle}
+      </p>
+    {/if}
+  </div>
 </div>

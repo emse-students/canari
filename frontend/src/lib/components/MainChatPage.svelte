@@ -14,7 +14,6 @@
     globalChannels as channels,
     globalNotifs as notifs,
     appendLog,
-    getStatusLog,
   } from '$lib/stores/globalChatSingleton.svelte';
   import Modal from './shared/Modal.svelte';
 
@@ -22,9 +21,7 @@
   import ChannelMembersSidebar from './chat/ChannelMembersSidebar.svelte';
   import ChannelSettingsModal from './chat/ChannelSettingsModal.svelte';
   import SyncSessionModal from './chat/SyncSessionModal.svelte';
-  import DeviceManagementPanel from './chat/DeviceManagementPanel.svelte';
   import ChatArea from './chat/ChatArea.svelte';
-  import LogsPanel from './dev/LogsPanel.svelte';
 
   interface Props {
     routeMode?: 'chat' | 'communities';
@@ -36,12 +33,10 @@
   const sync = useSyncSession();
 
   // ─── Dev / log state ──────────────────────────────────────────────────────
-  let showLogs = $state(false);
+
   let messageText = $state('');
   let isWindowFocused = $state(true);
   let isTabVisible = $state(true);
-  let showDevicePanel = $state(false);
-  let pendingInvitationCount = $state(0);
 
   // Log local (écrit aussi dans le buffer global pour le LogsPanel)
   function log(msg: string) {
@@ -51,9 +46,6 @@
       if (el) el.scrollTop = el.scrollHeight;
     });
   }
-
-  // Lecture réactive des logs globaux pour le LogsPanel
-  const statusLog = $derived(getStatusLog());
 
   /** Context object for channel workspace operations. */
   function channelsCtx() {
@@ -338,37 +330,6 @@
   // La session est déjà gérée par ChatBackgroundService (monté dans le layout).
   // Ici, on gère uniquement les événements propres à la vue /chat.
 
-  // ─── Pending invitations polling ──────────────────────────────────────────
-  $effect(() => {
-    if (!session.isLoggedIn || !session.myDeviceId) return;
-    const userId = session.userId;
-    const deviceId = session.myDeviceId;
-    let cancelled = false;
-
-    async function pollPendingInvitations() {
-      try {
-        const mls = session.ensureMls();
-        const memberships = await mls.getDeviceMemberships(userId, deviceId);
-        if (!cancelled) {
-          const pending = memberships.filter((m) => m.status === 'pending');
-          pendingInvitationCount = pending.length;
-          if (pending.length > 0) {
-            console.log(`[DevicePanel] ${pending.length} pending invitation(s) detected`);
-          }
-        }
-      } catch {
-        // MLS not ready yet
-      }
-    }
-
-    void pollPendingInvitations();
-    const interval = setInterval(pollPendingInvitations, 30_000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  });
-
   onMount(() => {
     isWindowFocused = document.hasFocus();
     isTabVisible = document.visibilityState === 'visible';
@@ -398,16 +359,11 @@
     window.addEventListener('focus', handleWindowFocus);
     window.addEventListener('blur', handleWindowBlur);
     window.addEventListener('keydown', handleKeyDown);
-    const toggleLogsListener = () => {
-      showLogs = !showLogs;
-    };
-    window.addEventListener('canari:toggle-logs', toggleLogsListener);
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('focus', handleWindowFocus);
       window.removeEventListener('blur', handleWindowBlur);
       window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('canari:toggle-logs', toggleLogsListener);
     };
   });
 
@@ -469,9 +425,6 @@
         newChannelInput={convs.newChannelInput}
         channelWorkspaces={channels.channelWorkspaces}
         selectedChannelId={channels.selectedChannelConversationId}
-        isExporting={session.isExporting}
-        isImporting={session.isImporting}
-        isSyncing={sync.isSyncSessionBusy}
         onContactInputChange={(v) => (convs.newContactInput = v)}
         onGroupInputChange={(v) => (convs.newGroupInput = v)}
         onChannelInputChange={(v) => (convs.newChannelInput = v)}
@@ -511,18 +464,6 @@
           channels.selectedChannelConversationId = channelId;
           convs.selectConversation(channelId);
         }}
-        onExport={() => session.handleExport(log)}
-        onImport={(file) =>
-          session.handleImport(
-            file,
-            log,
-            () => convs.conversations.clear(),
-            () => convs.loadAndRestoreConversations(convCtx())
-          )}
-        onStartSync={() => sync.handleStartSyncSession(syncCtx())}
-        onJoinSync={() => sync.openJoinSyncModal()}
-        onOpenDevicePanel={() => (showDevicePanel = true)}
-        {pendingInvitationCount}
         isHidden={convs.mobileView === 'chat'}
       />
 
@@ -636,9 +577,6 @@
           newChannelInput={convs.newChannelInput}
           channelWorkspaces={channels.channelWorkspaces}
           selectedChannelId={channels.selectedChannelConversationId}
-          isExporting={session.isExporting}
-          isImporting={session.isImporting}
-          isSyncing={sync.isSyncSessionBusy}
           onContactInputChange={(v) => (convs.newContactInput = v)}
           onGroupInputChange={(v) => (convs.newGroupInput = v)}
           onChannelInputChange={(v) => (convs.newChannelInput = v)}
@@ -678,18 +616,6 @@
             channels.selectedChannelConversationId = channelId;
             convs.selectConversation(channelId);
           }}
-          onExport={() => session.handleExport(log)}
-          onImport={(file) =>
-            session.handleImport(
-              file,
-              log,
-              () => convs.conversations.clear(),
-              () => convs.loadAndRestoreConversations(convCtx())
-            )}
-          onStartSync={() => sync.handleStartSyncSession(syncCtx())}
-          onJoinSync={() => sync.openJoinSyncModal()}
-          onOpenDevicePanel={() => (showDevicePanel = true)}
-          {pendingInvitationCount}
           isHidden={false}
           drawerMode={true}
           onCloseDrawer={() => {
@@ -723,16 +649,6 @@
         onClose={sync.closeModal}
       />
 
-      {#if session.isLoggedIn}
-        <DeviceManagementPanel
-          open={showDevicePanel}
-          userId={session.userId}
-          myDeviceId={session.myDeviceId}
-          mlsService={session.ensureMls()}
-          onClose={() => (showDevicePanel = false)}
-        />
-      {/if}
-
       <Modal
         open={convs.showSyncGuidePrompt}
         onClose={() => (convs.showSyncGuidePrompt = false)}
@@ -756,29 +672,6 @@
           </button>
         </div>
       </Modal>
-
-      {#if showLogs}
-        <div class="fixed inset-0 z-50 flex flex-col md:relative md:inset-auto md:z-auto md:block">
-          <LogsPanel
-            logs={statusLog}
-            onClose={() => (showLogs = false)}
-            onGenerateKeyPackage={() => session.devGenerateKeyPackage(log)}
-            onAddMember={() =>
-              session.devAddMember(
-                convs.selectedContact
-                  ? (convs.conversations.get(convs.selectedContact)?.id ?? '')
-                  : '',
-                log
-              )}
-            onProcessWelcome={() => session.devProcessWelcome(log)}
-            lastKeyPackage={session.lastKeyPackage}
-            lastCommit={session.lastCommit}
-            lastWelcome={session.lastWelcome}
-            incomingBytesHex={session.incomingBytesHex}
-            onIncomingBytesChange={(value) => (session.incomingBytesHex = value)}
-          />
-        </div>
-      {/if}
     </main>
   </div>
 {/if}

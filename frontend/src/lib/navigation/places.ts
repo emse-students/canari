@@ -2,84 +2,40 @@ export interface AppPlace {
   id: string;
   label: string;
   description: string;
-  icon:
-    | 'message-circle'
-    | 'newspaper'
-    | 'users'
-    | 'phone'
-    | 'calendar-days'
-    | 'layout-dashboard'
-    | 'file-text';
+  icon: 'message-circle' | 'newspaper' | 'users' | 'layout-dashboard';
   href: string;
-  enabled: boolean;
-  badge?: string;
 }
 
+// Ordre : Communautés | Feed | Discussions | Tableau de bord
+// (correspond à l'ordre de la bottom nav mobile et de la sidebar desktop)
 export const APP_PLACES: AppPlace[] = [
-  {
-    id: 'chat',
-    label: 'Discussions',
-    description: 'Messages directs et petits groupes',
-    icon: 'message-circle',
-    href: '/chat',
-    enabled: true,
-  },
-  {
-    id: 'posts',
-    label: 'Posts',
-    description: 'Le fil social de la communauté',
-    icon: 'newspaper',
-    href: '/posts',
-    enabled: true,
-  },
   {
     id: 'communities',
     label: 'Communautés',
     description: "Espaces d'associations et canaux",
     icon: 'users',
     href: '/communities',
-    enabled: true,
   },
   {
-    id: 'events',
-    label: 'Évènements',
-    description: 'Calendrier, rendez-vous, évènements',
-    icon: 'calendar-days',
-    href: '/events',
-    enabled: true,
+    id: 'posts',
+    label: 'Feed',
+    description: 'Le fil social de la communauté',
+    icon: 'newspaper',
+    href: '/posts',
   },
   {
-    id: 'forms',
-    label: 'Formulaires',
-    description: 'Sondages et inscriptions',
-    icon: 'file-text',
-    href: '/forms',
-    enabled: true,
-  },
-  {
-    id: 'associations',
-    label: 'Associations',
-    description: 'Les associations de la communauté',
-    icon: 'users',
-    href: '/associations',
-    enabled: true,
+    id: 'chat',
+    label: 'Discussions',
+    description: 'Messages directs et petits groupes',
+    icon: 'message-circle',
+    href: '/chat',
   },
   {
     id: 'dashboard',
     label: 'Tableau de bord',
-    description: "Gestion de l'association",
+    description: "Vue d'ensemble de l'application",
     icon: 'layout-dashboard',
-    href: '/dashboard/association',
-    enabled: true,
-  },
-  {
-    id: 'calls',
-    label: 'Appels',
-    description: 'Audio et vidéo en temps réel',
-    icon: 'phone',
-    href: '/calls',
-    enabled: false,
-    badge: 'Bientôt',
+    href: '/dashboard',
   },
 ];
 

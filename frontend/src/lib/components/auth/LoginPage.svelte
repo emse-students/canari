@@ -11,22 +11,26 @@
   import { BiometricService } from '$lib/services/biometric';
   import LoginForm from './LoginForm.svelte';
 
-  // ─── Auth state ──────────────────────────────────────────────────────────
+  // ─── État de l'authentification ─────────────────────────────────────────────
   let isLoggingIn = $state(false);
   let loginError = $state('');
   let biometricAvailable = $state(false);
   let requestedReturnTo = '';
   let devId = $state('');
 
+  const isDev = devRoutesEnabled();
+
+  // ─── Utilitaires ────────────────────────────────────────────────────────────
   function getSafeReturnTarget(): string {
-    const target =
-      requestedReturnTo && requestedReturnTo.startsWith('/') ? requestedReturnTo : '/posts';
-    // Avoid redirect loops to the login page itself.
+    const target = requestedReturnTo?.startsWith('/') ? requestedReturnTo : '/posts';
+    // Évite les boucles de redirection vers la page de login elle-même
     if (target === '/login' || target.startsWith('/login?')) return '/posts';
     return target;
   }
 
+  // ─── Initialisation ─────────────────────────────────────────────────────────
   onMount(() => {
+    // 1. Récupération sécurisée de l'URL de retour
     try {
       const url = new URL(window.location.href);
       requestedReturnTo = url.searchParams.get('returnTo') ?? '';
@@ -34,54 +38,48 @@
       requestedReturnTo = '';
     }
 
-    const isTauri = !!(window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
-    if (isTauri) {
-      void (async () => {
-        const configured = await BiometricService.isConfigured();
-        if (configured) {
-          biometricAvailable = true;
-          if (await hasStoredSession()) {
-            try {
-              await getToken();
-              void goto(getSafeReturnTarget(), { replaceState: true });
-            } catch {
-              // Token expired — user needs to re-authenticate via OIDC
-            }
+    // 2. Vérification unifiée de la session et de la biométrie
+    const initAuth = async () => {
+      const isTauri = '__TAURI_INTERNALS__' in window;
+
+      // Vérification biométrique spécifique à Tauri
+      if (isTauri) {
+        biometricAvailable = await BiometricService.isConfigured();
+      }
+
+      // Vérification de session unifiée (Tauri + Web)
+      if (await hasStoredSession()) {
+        try {
+          await getToken();
+          const target = getSafeReturnTarget();
+          const current = window.location.pathname + window.location.search;
+
+          // On ne redirige que si on n'est pas déjà sur la bonne page
+          if (target !== current) {
+            await goto(target, { replaceState: true });
           }
+        } catch {
+          // Le token est expiré ou invalide : on reste sur la page pour se reconnecter
+          console.debug("Session invalide, re-connexion requise.");
         }
-      })();
-    } else {
-      void (async () => {
-        if (await hasStoredSession()) {
-          try {
-            await getToken();
-            const target = getSafeReturnTarget();
-            const current = window.location.pathname + window.location.search;
-            if (target !== current) {
-              await goto(target, { replaceState: true });
-            }
-          } catch {
-            // Refresh token invalid — stay on login page
-          }
-        }
-      })();
-    }
+      }
+    };
+
+    void initAuth();
   });
 
-  // ─── OIDC Login ───────────────────────────────────────────────────────────
+  // ─── Gestionnaires d'événements ───────────────────────────────────────────
   function handleLogin() {
     loginError = '';
     isLoggingIn = true;
     try {
       startOidcLogin(getSafeReturnTarget());
-      // Browser navigates to Authentik — no need to reset isLoggingIn
+      // Le navigateur navigue vers Authentik — pas besoin de réinitialiser isLoggingIn
     } catch (e: unknown) {
       loginError = e instanceof Error ? e.message : String(e);
       isLoggingIn = false;
     }
   }
-
-  const isDev = devRoutesEnabled();
 
   async function handleDevLogin() {
     loginError = '';
@@ -97,23 +95,32 @@
   }
 
   async function resetAll() {
-    if (!(window as any).__TAURI_INTERNALS__) {
-      const allDbs = await indexedDB.databases();
-      await Promise.all(
-        allDbs
-          .filter((db) => db.name?.startsWith('CanariDB'))
-          .map(
-            (db) =>
-              new Promise<void>((resolve) => {
-                const req = indexedDB.deleteDatabase(db.name!);
+    // Nettoyage IndexedDB uniquement pour les utilisateurs Web
+    if (!('__TAURI_INTERNALS__' in window)) {
+      try {
+        if (indexedDB.databases) {
+          const allDbs = await indexedDB.databases();
+          const deletePromises = allDbs
+            .filter((db) => db.name?.startsWith('CanariDB'))
+            .map((db) => {
+              return new Promise<void>((resolve) => {
+                if (!db.name) return resolve();
+                const req = indexedDB.deleteDatabase(db.name);
                 req.onsuccess = () => resolve();
                 req.onerror = () => resolve();
                 req.onblocked = () => resolve();
-              })
-          )
-      );
+              });
+            });
+          await Promise.all(deletePromises);
+        }
+      } catch (e) {
+        console.warn('Erreur lors du nettoyage de la base de données:', e);
+      }
     }
+
+    // Nettoyage complet du stockage local
     localStorage.clear();
+    sessionStorage.clear();
     loginError = '';
   }
 </script>
@@ -123,8 +130,8 @@
   {loginError}
   {biometricAvailable}
   {isDev}
+  bind:devId
   onLogin={handleLogin}
   onDevLogin={handleDevLogin}
   onReset={resetAll}
-  bind:devId
 />

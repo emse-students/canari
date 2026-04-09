@@ -20,7 +20,7 @@
     try {
       fetchedMembers = await channelService.listMembers(channelId);
     } catch {
-      // Fallback to current user only
+      // Fallback au cas où l'appel échoue
       fetchedMembers = currentUserId
         ? [{ id: currentUserId, userId: currentUserId, role: 'admin', joinedAt: '' }]
         : [];
@@ -33,20 +33,22 @@
     }
   });
 
+  // CRUCIAL : On nomme explicitement la propriété "userId" et non "name".
+  // L'identifiant brut (ex: "usr_8fa9") ne doit jamais être affiché à l'écran.
   let channelMembers = $derived(
-    fetchedMembers.map((m) => ({ id: m.id, name: m.userId, role: m.role }))
+    fetchedMembers.map((m) => ({ id: m.id, userId: m.userId, role: m.role }))
   );
 
   const members = $derived(
     channelMembers.map((m) => ({
       ...m,
-      status: $presenceMap[m.name] ? 'online' : 'offline',
+      status: $presenceMap[m.userId] ? 'online' : 'offline',
     }))
   );
 
   $effect(() => {
     if (channelMembers.length > 0) {
-      watchUsers(channelMembers.map((m) => m.name));
+      watchUsers(channelMembers.map((m) => m.userId));
     }
   });
 
@@ -56,11 +58,11 @@
 
 <div
   class="{mode === 'desktop'
-    ? 'hidden w-64 flex-col border-l border-cn-border bg-[color-mix(in_srgb,var(--cn-surface)_80%,white)] xl:flex'
-    : 'flex h-full w-full flex-col bg-[color-mix(in_srgb,var(--cn-surface)_80%,white)]'} overflow-y-auto"
+    ? 'hidden w-64 xl:flex'
+    : 'flex h-full w-full'} flex-col border-l border-white/20 dark:border-white/10 bg-white/50 dark:bg-black/30 backdrop-blur-xl overflow-y-auto"
 >
   {#if mode === 'mobile'}
-    <div class="flex items-center justify-between border-b border-cn-border/60 p-4">
+    <div class="flex items-center justify-between border-b border-black/5 dark:border-white/10 p-4 bg-white/50 dark:bg-black/40 backdrop-blur-md sticky top-0 z-10">
       <h2 class="text-sm font-semibold text-text-main flex items-center gap-2">
         <Users size={18} />
         Membres du canal
@@ -68,7 +70,8 @@
       <button
         type="button"
         onclick={() => onClose?.()}
-        class="rounded-lg border border-cn-border bg-white p-1.5 text-text-main"
+        class="rounded-full bg-black/5 dark:bg-white/10 p-2 text-text-main hover:bg-black/10 dark:hover:bg-white/20 transition-colors"
+        aria-label="Fermer"
       >
         <X size={16} />
       </button>
@@ -76,50 +79,56 @@
   {/if}
 
   <div class="p-4 space-y-6">
-    <!-- Section Admins & Mods -->
+    <!-- Section Administrateurs & Modérateurs -->
     {#if admins.length > 0}
       <div>
-        <h3 class="text-[0.7rem] font-bold uppercase tracking-wider text-text-muted mb-3">
-          Administrateurs - {admins.length}
+        <h3 class="text-xs font-bold uppercase tracking-wider text-text-muted mb-2 px-2">
+          Administrateurs — {admins.length}
         </h3>
-        <div class="space-y-3">
+        <div class="space-y-1">
           {#each admins as member (member.id)}
-            <div class="flex items-center gap-2.5">
-              <div class="relative">
-                <Avatar userId={member.name} size="sm" />
+            <div class="flex items-center gap-3 px-2 py-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer group">
+              <div class="relative shrink-0">
+                <Avatar userId={member.userId} size="sm" />
                 <span
-                  class="absolute bottom-0 right-0 block h-2.5 w-2.5 rounded-full ring-2 ring-white {member.status ===
-                  'online'
+                  class="absolute bottom-0 right-0 block h-3 w-3 rounded-full ring-2 ring-white dark:ring-zinc-900 {member.status === 'online'
                     ? 'bg-green-500'
-                    : 'bg-gray-400'}"
+                    : 'bg-zinc-400 dark:bg-zinc-600'}"
                 ></span>
               </div>
-              <UserName userId={member.name} class="text-sm font-medium text-text-main truncate" />
+              <!-- C'est le composant UserName qui se charge de transformer l'ID en "Prénom Nom" -->
+              <UserName
+                userId={member.userId}
+                class="text-sm font-semibold text-text-main truncate group-hover:text-amber-500 dark:group-hover:text-amber-400 transition-colors"
+              />
             </div>
           {/each}
         </div>
       </div>
     {/if}
 
-    <!-- Section Membres -->
+    <!-- Section Membres Réguliers -->
     {#if regulars.length > 0}
       <div>
-        <h3 class="text-[0.7rem] font-bold uppercase tracking-wider text-text-muted mb-3">
-          Membres - {regulars.length}
+        <h3 class="text-xs font-bold uppercase tracking-wider text-text-muted mb-2 px-2">
+          Membres — {regulars.length}
         </h3>
-        <div class="space-y-3">
+        <div class="space-y-1">
           {#each regulars as member (member.id)}
-            <div class="flex items-center gap-2.5 opacity-80 hover:opacity-100 transition-opacity">
-              <div class="relative">
-                <Avatar userId={member.name} size="sm" />
+            <div class="flex items-center gap-3 px-2 py-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer group opacity-90 hover:opacity-100">
+              <div class="relative shrink-0">
+                <Avatar userId={member.userId} size="sm" />
                 <span
-                  class="absolute bottom-0 right-0 block h-2.5 w-2.5 rounded-full ring-2 ring-white {member.status ===
-                  'online'
+                  class="absolute bottom-0 right-0 block h-3 w-3 rounded-full ring-2 ring-white dark:ring-zinc-900 {member.status === 'online'
                     ? 'bg-green-500'
-                    : 'bg-gray-400'}"
+                    : 'bg-zinc-400 dark:bg-zinc-600'}"
                 ></span>
               </div>
-              <UserName userId={member.name} class="text-sm text-text-main truncate font-medium" />
+              <!-- C'est le composant UserName qui se charge de transformer l'ID en "Prénom Nom" -->
+              <UserName
+                userId={member.userId}
+                class="text-sm font-medium text-text-main truncate group-hover:text-amber-500 dark:group-hover:text-amber-400 transition-colors"
+              />
             </div>
           {/each}
         </div>

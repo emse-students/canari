@@ -1,15 +1,12 @@
 <script lang="ts">
   import StatusPill from '../shared/StatusPill.svelte';
   import CanariBrand from './CanariBrand.svelte';
-  import PlaceSwitcher from './PlaceSwitcher.svelte';
   import ThemeToggleButton from './ThemeToggleButton.svelte';
   import SessionActionButtons from './SessionActionButtons.svelte';
+  import Avatar from '../shared/Avatar.svelte';
   import { goto } from '$app/navigation';
-  import { page } from '$app/state';
   import { clearAuth } from '$lib/stores/auth';
   import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
-
-  const pathname = $derived(page.url.pathname);
 
   let isDarkMode = $state(false);
 
@@ -56,18 +53,22 @@
       <CanariBrand compact={true} />
     </div>
 
-    <!-- Center: Place switcher -->
-    <div class="flex-1 flex justify-center">
-      <div class="relative">
-        <PlaceSwitcher {pathname} compact={true} />
-      </div>
-    </div>
-
     <!-- Right: Status + Theme + actions -->
-    <div class="flex items-center gap-2 flex-shrink-0">
+    <div class="flex items-center gap-2 flex-shrink-0 ml-auto">
       <StatusPill isConnected={globalSession.isWsConnected} />
       <ThemeToggleButton {isDarkMode} onToggle={toggleTheme} />
       <SessionActionButtons onToggleLogs={handleToggleLogs} onLogout={handleLogout} />
+      {#if globalSession.isLoggedIn && globalSession.userId}
+        <button
+          type="button"
+          onclick={() => goto('/profile')}
+          title="Mon profil"
+          class="rounded-2xl ring-2 ring-transparent hover:ring-amber-400 transition-all duration-200"
+          aria-label="Accéder au profil"
+        >
+          <Avatar userId={globalSession.userId} size="sm" />
+        </button>
+      {/if}
     </div>
   </div>
 </header>

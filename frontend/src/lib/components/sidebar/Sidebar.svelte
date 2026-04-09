@@ -5,7 +5,6 @@
   import ConversationTile from '../chat/ConversationTile.svelte';
   import SidebarHeaderControls from './SidebarHeaderControls.svelte';
 
-  import SidebarFooterTools from './SidebarFooterTools.svelte';
   import SidebarNewChatModal from './SidebarNewChatModal.svelte';
   import SidebarNewChannelModal from './SidebarNewChannelModal.svelte';
   import SidebarNewCommunityModal from './SidebarNewCommunityModal.svelte';
@@ -65,15 +64,6 @@
     onSelectConversation: (name: string) => void;
     onSelectChannelConversation?: (channelId: string) => void;
     selectedChannelId?: string;
-    onExport: () => void;
-    onImport: (file: File) => void;
-    onStartSync: () => void;
-    onJoinSync: () => void;
-    onOpenDevicePanel?: () => void;
-    isExporting?: boolean;
-    isImporting?: boolean;
-    isSyncing?: boolean;
-    pendingInvitationCount?: number;
     isHidden?: boolean;
     drawerMode?: boolean;
     onCloseDrawer?: () => void;
@@ -98,18 +88,9 @@
     onSelectConversation,
     onSelectChannelConversation,
     selectedChannelId = '',
-    onExport,
-    onImport,
-    onStartSync,
-    onJoinSync,
-    isExporting = false,
-    isImporting = false,
-    isSyncing = false,
     isHidden = false,
     drawerMode = false,
     onCloseDrawer,
-    onOpenDevicePanel,
-    pendingInvitationCount = 0,
   }: Props = $props();
 
   let showNewChatModal = $state(false);
@@ -436,18 +417,6 @@
         {/if}
       {/if}
     </div>
-
-    <SidebarFooterTools
-      {onImport}
-      {onExport}
-      {onStartSync}
-      {onJoinSync}
-      onOpenDevicePanel={onOpenDevicePanel ?? (() => {})}
-      {isExporting}
-      {isImporting}
-      {isSyncing}
-      {pendingInvitationCount}
-    />
   </div>
 </aside>
 

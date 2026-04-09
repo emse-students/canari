@@ -42,6 +42,11 @@ export async function apiFetch(url: string, init: ApiFetchOptions = {}): Promise
       await clearAuth();
       throw new Error('Session expirée — veuillez vous reconnecter.');
     }
+    // If the retried request is still 401, the session is definitively invalid.
+    if (res.status === 401) {
+      await clearAuth();
+      throw new Error('Session expirée — veuillez vous reconnecter.');
+    }
   }
 
   return res;
