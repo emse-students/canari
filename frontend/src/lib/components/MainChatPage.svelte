@@ -17,7 +17,7 @@
     getStatusLog,
   } from '$lib/stores/globalChatSingleton.svelte';
   import Modal from './shared/Modal.svelte';
-  import Navbar from './navigation/Navbar.svelte';
+
   import Sidebar from './sidebar/Sidebar.svelte';
   import ChannelMembersSidebar from './chat/ChannelMembersSidebar.svelte';
   import ChannelSettingsModal from './chat/ChannelSettingsModal.svelte';
@@ -398,11 +398,16 @@
     window.addEventListener('focus', handleWindowFocus);
     window.addEventListener('blur', handleWindowBlur);
     window.addEventListener('keydown', handleKeyDown);
+    const toggleLogsListener = () => {
+      showLogs = !showLogs;
+    };
+    window.addEventListener('canari:toggle-logs', toggleLogsListener);
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('focus', handleWindowFocus);
       window.removeEventListener('blur', handleWindowBlur);
       window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('canari:toggle-logs', toggleLogsListener);
     };
   });
 
@@ -449,12 +454,6 @@
   </div>
 {:else}
   <div class="app-layout" in:fade>
-    <Navbar
-      isWsConnected={session.isWsConnected}
-      onToggleLogs={() => (showLogs = !showLogs)}
-      onLogout={() => session.logout(sessionCb())}
-    />
-
     {#if notifs.channelMembershipNotice}
       <!-- La notice est aussi affichée dans ChatBackgroundService ; ce bloc est
            conservé pour la compatibilité visuelle quand on est déjà sur /chat. -->

@@ -16,7 +16,7 @@
   }
 
   let {
-    value,
+    value: _value,
     onValueChange,
     onSelect,
     placeholder = 'Rechercher un utilisateur…',
@@ -35,6 +35,8 @@
   let showDropdown = $state(false);
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let selectedIndex = $state(-1);
+  let inputText = $state('');
+  let selectedUser = $state<User | null>(null);
 
   async function searchUsers(query: string) {
     if (!query || query.length < 2) {
@@ -61,7 +63,10 @@
 
   function handleInput(e: Event) {
     const newValue = (e.target as HTMLInputElement).value;
-    onValueChange(newValue);
+    // When user types, clear any previous selection — only explicit selection produces a valid id
+    selectedUser = null;
+    onValueChange('');
+    inputText = newValue;
 
     if (debounceTimer) {
       clearTimeout(debounceTimer);
@@ -72,16 +77,20 @@
   }
 
   function selectUser(user: User) {
+    selectedUser = user;
+    inputText = user.displayName || user.id;
     onValueChange(user.id);
     showDropdown = false;
     suggestions = [];
+    selectedIndex = -1;
     onSelect?.(user);
   }
 
   function handleKeydown(e: KeyboardEvent) {
     if (!showDropdown || suggestions.length === 0) {
       if (e.key === 'Enter') {
-        onSubmit?.();
+        // Only allow submit when a user was explicitly selected
+        if (selectedUser) onSubmit?.();
       }
       return;
     }
@@ -100,7 +109,8 @@
         if (selectedIndex >= 0 && suggestions[selectedIndex]) {
           selectUser(suggestions[selectedIndex]);
         } else {
-          onSubmit?.();
+          // Do not submit when no selection is made
+          // (parent will receive an empty id while typing)
         }
         break;
       case 'Escape':
@@ -115,6 +125,11 @@
     setTimeout(() => {
       showDropdown = false;
       selectedIndex = -1;
+      // If the input no longer matches the selected user's display name, clear selection
+      if (!selectedUser || inputText !== (selectedUser.displayName || selectedUser.id)) {
+        selectedUser = null;
+        onValueChange('');
+      }
     }, 150);
   }
 
@@ -129,7 +144,7 @@
   <input
     id={inputId}
     type="text"
-    {value}
+    value={inputText}
     oninput={handleInput}
     onkeydown={handleKeydown}
     onblur={handleBlur}

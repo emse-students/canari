@@ -1,9 +1,9 @@
 <div class="chat-blobs" aria-hidden="true">
-  <span class="blob blob-a animate-blob-a"></span>
-  <span class="blob blob-b animate-blob-b"></span>
-  <span class="blob blob-c animate-blob-c"></span>
-  <span class="blob blob-d animate-blob-b"></span>
-  <span class="blob blob-e animate-blob-a"></span>
+  <span class="blob blob-a"></span>
+  <span class="blob blob-b"></span>
+  <span class="blob blob-c"></span>
+  <span class="blob blob-d"></span>
+  <span class="blob blob-e"></span>
   <span class="noise-overlay"></span>
 </div>
 
@@ -20,52 +20,57 @@
   .blob {
     position: absolute;
     border-radius: 50%;
-    filter: blur(100px);
+    /* L'optimisation majeure : On remplace filter: blur() par un dégradé radial.
+      L'effet visuel est le même (un halo de couleur), mais le coût GPU est nul.
+    */
+    background: radial-gradient(circle, var(--blob-color) 0%, transparent 70%);
     transform: scale(1.08);
     opacity: 0.56;
     mix-blend-mode: multiply;
-    will-change: transform;
   }
 
+  /* Les tailles ont été légèrement augmentées pour compenser le fait
+    que le blur() s'étalait à l'extérieur de l'élément initialement.
+  */
   .blob-a {
-    width: min(64vw, 760px);
-    height: min(64vw, 760px);
-    left: -20%;
-    top: -24%;
-    background: color-mix(in srgb, var(--cn-yellow) 90%, #ffd86a 10%);
+    width: min(85vw, 1000px);
+    height: min(85vw, 1000px);
+    left: -25%;
+    top: -30%;
+    --blob-color: color-mix(in srgb, var(--cn-yellow) 90%, #ffd86a 10%);
   }
 
   .blob-b {
-    width: min(54vw, 640px);
-    height: min(54vw, 640px);
-    right: -18%;
-    top: -10%;
-    background: color-mix(in srgb, #ffe084 86%, var(--cn-yellow) 14%);
+    width: min(75vw, 850px);
+    height: min(75vw, 850px);
+    right: -25%;
+    top: -15%;
+    --blob-color: color-mix(in srgb, #ffe084 86%, var(--cn-yellow) 14%);
   }
 
   .blob-c {
-    width: min(58vw, 700px);
-    height: min(58vw, 700px);
-    left: 10%;
-    bottom: -34%;
-    background: color-mix(in srgb, #f6c232 78%, #ffbf3f 22%);
+    width: min(80vw, 900px);
+    height: min(80vw, 900px);
+    left: 5%;
+    bottom: -40%;
+    --blob-color: color-mix(in srgb, #f6c232 78%, #ffbf3f 22%);
   }
 
   .blob-d {
-    width: min(42vw, 520px);
-    height: min(42vw, 520px);
-    right: 6%;
-    bottom: -14%;
-    background: color-mix(in srgb, #ffd157 72%, #ffeaab 28%);
+    width: min(55vw, 700px);
+    height: min(55vw, 700px);
+    right: 2%;
+    bottom: -20%;
+    --blob-color: color-mix(in srgb, #ffd157 72%, #ffeaab 28%);
     opacity: 0.46;
   }
 
   .blob-e {
-    width: min(36vw, 440px);
-    height: min(36vw, 440px);
-    left: 34%;
-    top: 28%;
-    background: color-mix(in srgb, #ffe6a2 66%, var(--cn-yellow) 34%);
+    width: min(48vw, 600px);
+    height: min(48vw, 600px);
+    left: 30%;
+    top: 25%;
+    --blob-color: color-mix(in srgb, #ffe6a2 66%, var(--cn-yellow) 34%);
     opacity: 0.34;
   }
 
@@ -77,30 +82,31 @@
     background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.72' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
   }
 
+  /* Thème sombre simplifié grâce à la variable --blob-color */
   :global(:root[data-theme='dark']) .blob {
     opacity: 0.2;
     mix-blend-mode: screen;
   }
 
   :global(:root[data-theme='dark']) .blob-a {
-    background: color-mix(in srgb, var(--cn-yellow) 62%, #6f520f 38%);
+    --blob-color: color-mix(in srgb, var(--cn-yellow) 62%, #6f520f 38%);
   }
 
   :global(:root[data-theme='dark']) .blob-b {
-    background: color-mix(in srgb, #f0bf3b 56%, #513c0d 44%);
+    --blob-color: color-mix(in srgb, #f0bf3b 56%, #513c0d 44%);
   }
 
   :global(:root[data-theme='dark']) .blob-c {
-    background: color-mix(in srgb, #e6b532 52%, #4a360a 48%);
+    --blob-color: color-mix(in srgb, #e6b532 52%, #4a360a 48%);
   }
 
   :global(:root[data-theme='dark']) .blob-d {
-    background: color-mix(in srgb, #f7c84f 58%, #5a420d 42%);
+    --blob-color: color-mix(in srgb, #f7c84f 58%, #5a420d 42%);
     opacity: 0.16;
   }
 
   :global(:root[data-theme='dark']) .blob-e {
-    background: color-mix(in srgb, #f8ce62 52%, #60450c 48%);
+    --blob-color: color-mix(in srgb, #f8ce62 52%, #60450c 48%);
     opacity: 0.14;
   }
 

@@ -4,15 +4,11 @@
   import PlaceSwitcher from './PlaceSwitcher.svelte';
   import ThemeToggleButton from './ThemeToggleButton.svelte';
   import SessionActionButtons from './SessionActionButtons.svelte';
+  import { goto } from '$app/navigation';
   import { page } from '$app/state';
+  import { clearAuth } from '$lib/stores/auth';
+  import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
 
-  interface Props {
-    isWsConnected: boolean;
-    onToggleLogs: () => void;
-    onLogout: () => void;
-  }
-
-  let { isWsConnected, onToggleLogs, onLogout }: Props = $props();
   const pathname = $derived(page.url.pathname);
 
   let isDarkMode = $state(false);
@@ -40,10 +36,19 @@
       applyTheme(true);
     }
   }
+
+  function handleToggleLogs() {
+    window.dispatchEvent(new CustomEvent('canari:toggle-logs'));
+  }
+
+  async function handleLogout() {
+    await clearAuth();
+    void goto('/login', { replaceState: true });
+  }
 </script>
 
 <header
-  class="bg-[var(--surface-elevated)] border-b border-cn-border z-20 backdrop-blur-sm pt-[env(safe-area-inset-top)]"
+  class="sticky top-0 z-20 bg-[var(--surface-elevated)] border-b border-cn-border backdrop-blur-sm pt-[env(safe-area-inset-top)] flex-shrink-0"
 >
   <div class="h-14 flex items-center justify-between px-4 md:px-6 gap-3">
     <!-- Left: Brand -->
@@ -51,16 +56,18 @@
       <CanariBrand compact={true} />
     </div>
 
-    <!-- Center: Connection status -->
+    <!-- Center: Place switcher -->
     <div class="flex-1 flex justify-center">
-      <StatusPill isConnected={isWsConnected} />
+      <div class="relative">
+        <PlaceSwitcher {pathname} compact={true} />
+      </div>
     </div>
 
-    <!-- Right: Place switcher + actions -->
+    <!-- Right: Status + Theme + actions -->
     <div class="flex items-center gap-2 flex-shrink-0">
-      <PlaceSwitcher {pathname} compact={true} />
+      <StatusPill isConnected={globalSession.isWsConnected} />
       <ThemeToggleButton {isDarkMode} onToggle={toggleTheme} />
-      <SessionActionButtons {onToggleLogs} {onLogout} />
+      <SessionActionButtons onToggleLogs={handleToggleLogs} onLogout={handleLogout} />
     </div>
   </div>
 </header>

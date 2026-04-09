@@ -293,11 +293,11 @@
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     // ── Tauri notification click → show & focus window ─────────────────────
-    let unlistenNotif: (() => void) | null = null;
+    let _unlistenNotif: (() => void) | null = null;
     if ((window as any).__TAURI_INTERNALS__) {
       import('@tauri-apps/plugin-notification')
         .then(({ onAction }) => {
-          onAction((notification) => {
+          onAction((_notification) => {
             import('@tauri-apps/api/window')
               .then(({ getCurrentWindow }) => {
                 const win = getCurrentWindow();

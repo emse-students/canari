@@ -48,19 +48,23 @@ export default defineConfig(async () => ({
         target: 'http://localhost:3010',
         changeOrigin: true,
         rewrite: (/** @type {string} */ path) => `/api${path}`,
+        headers: { 'x-user-logged-in': 'true' },
       },
       '/history': {
         target: 'http://localhost:3010',
         changeOrigin: true,
         rewrite: (/** @type {string} */ path) => `/api${path}`,
+        headers: { 'x-user-logged-in': 'true' },
       },
       '/api/mls-api': {
         target: 'http://localhost:3010',
         changeOrigin: true,
+        headers: { 'x-user-logged-in': 'true' },
       },
       '/api/history': {
         target: 'http://localhost:3010',
         changeOrigin: true,
+        headers: { 'x-user-logged-in': 'true' },
       },
       '/api/channels': {
         target: 'http://localhost:3014',
@@ -86,6 +90,12 @@ export default defineConfig(async () => ({
       '/api/forms': { target: 'http://localhost:3014', changeOrigin: true },
       '/api/associations': { target: 'http://localhost:3014', changeOrigin: true },
 
+      // WebSocket proxy — /api/ws must be listed before the /ws fallback
+      '/api/ws': {
+        target: 'ws://localhost:3000',
+        ws: true,
+        changeOrigin: true,
+      },
       '/ws': {
         target: 'ws://localhost:3000',
         ws: true,

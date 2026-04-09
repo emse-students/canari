@@ -112,6 +112,17 @@ export class WasmMlsClient {
         return v1;
     }
     /**
+     * @param {number} count
+     * @returns {Array<any>}
+     */
+    generate_key_packages(count) {
+        const ret = wasm.wasmmlsclient_generate_key_packages(this.__wbg_ptr, count);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
      * Returns the current MLS epoch for a group (capped to u32 for WASM boundary).
      * @param {string} group_id
      * @returns {number}
@@ -134,17 +145,20 @@ export class WasmMlsClient {
     }
     /**
      * @param {string} user_id
+     * @param {string} device_id
      * @param {Uint8Array | null} [state_bytes]
      * @param {string | null} [pin]
      */
-    constructor(user_id, state_bytes, pin) {
+    constructor(user_id, device_id, state_bytes, pin) {
         const ptr0 = passStringToWasm0(user_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        var ptr1 = isLikeNone(state_bytes) ? 0 : passArray8ToWasm0(state_bytes, wasm.__wbindgen_malloc);
-        var len1 = WASM_VECTOR_LEN;
-        var ptr2 = isLikeNone(pin) ? 0 : passStringToWasm0(pin, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const ptr1 = passStringToWasm0(device_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(state_bytes) ? 0 : passArray8ToWasm0(state_bytes, wasm.__wbindgen_malloc);
         var len2 = WASM_VECTOR_LEN;
-        const ret = wasm.wasmmlsclient_new(ptr0, len0, ptr1, len1, ptr2, len2);
+        var ptr3 = isLikeNone(pin) ? 0 : passStringToWasm0(pin, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len3 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmmlsclient_new(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
@@ -234,6 +248,24 @@ export class WasmMlsClient {
         const ptr0 = passStringToWasm0(group_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.wasmmlsclient_remove_members(this.__wbg_ptr, ptr0, len0, user_ids);
+        if (ret[3]) {
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v2;
+    }
+    /**
+     * Remove specific device leaves by their `userId:deviceId` identity string.
+     * Only removes the targeted leaves, leaving other devices of the same user intact.
+     * @param {string} group_id
+     * @param {Array<any>} device_identities
+     * @returns {Uint8Array}
+     */
+    remove_members_by_device(group_id, device_identities) {
+        const ptr0 = passStringToWasm0(group_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmmlsclient_remove_members_by_device(this.__wbg_ptr, ptr0, len0, device_identities);
         if (ret[3]) {
             throw takeFromExternrefTable0(ret[2]);
         }

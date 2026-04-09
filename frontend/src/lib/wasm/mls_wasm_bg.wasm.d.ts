@@ -12,13 +12,15 @@ export const wasmmlsclient_export_secret: (a: number, b: number, c: number, d: n
 export const wasmmlsclient_force_create_group: (a: number, b: number, c: number) => [number, number];
 export const wasmmlsclient_forget_group: (a: number, b: number, c: number, d: number) => void;
 export const wasmmlsclient_generate_key_package: (a: number) => [number, number, number, number];
+export const wasmmlsclient_generate_key_packages: (a: number, b: number) => [number, number, number];
 export const wasmmlsclient_get_epoch: (a: number, b: number, c: number) => [number, number, number];
 export const wasmmlsclient_get_groups: (a: number) => any;
-export const wasmmlsclient_new: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+export const wasmmlsclient_new: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
 export const wasmmlsclient_process_incoming_message: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
 export const wasmmlsclient_process_incoming_message_bytes: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
 export const wasmmlsclient_process_welcome: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
 export const wasmmlsclient_remove_members: (a: number, b: number, c: number, d: any) => [number, number, number, number];
+export const wasmmlsclient_remove_members_by_device: (a: number, b: number, c: number, d: any) => [number, number, number, number];
 export const wasmmlsclient_save_state: (a: number, b: number, c: number) => [number, number, number, number];
 export const wasmmlsclient_send_message: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
 export const wasmmlsclient_send_message_bytes: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];

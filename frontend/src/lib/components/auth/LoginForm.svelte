@@ -15,7 +15,7 @@
   let {
     isLoggingIn,
     loginError,
-    biometricAvailable,
+    biometricAvailable: _biometricAvailable,
     isDev = false,
     devId = $bindable(''),
     onLogin,
@@ -28,14 +28,20 @@
   class="min-h-dvh overflow-y-auto flex items-start md:items-center justify-center bg-transparent px-4 py-10 pt-[max(2.5rem,env(safe-area-inset-top))] pb-[max(2.5rem,env(safe-area-inset-bottom))]"
   in:fade
 >
+  <!--
+    Effet Glassmorphism accentué :
+    - Fond très transparent (bg-white/20 ou bg-black/40)
+    - Flou arrière très fort (backdrop-blur-2xl)
+    - Bordure blanche semi-transparente pour l'éclat du verre
+    - Ombre diffuse (shadow-2xl)
+  -->
   <div
-    class="w-full max-w-sm p-10 rounded-3xl text-center border border-cn-border shadow-[0_24px_70px_rgba(0,0,0,0.35)]"
-    style="background: color-mix(in srgb, var(--cn-surface) 88%, transparent); backdrop-filter: blur(12px);"
+    class="w-full max-w-sm p-10 rounded-3xl text-center shadow-2xl border border-white/40 dark:border-white/10 bg-white/20 dark:bg-black/40 backdrop-blur-2xl"
   >
     <!-- Logo -->
     <div class="mb-10">
       <div
-        class="w-24 h-24 rounded-[32px] bg-gradient-to-br from-cn-yellow to-cn-yellow-hover shadow-lg border border-black/10 dark:border-white/10 flex items-center justify-center mx-auto mb-6 transform hover:scale-105 transition-transform duration-300"
+        class="w-24 h-24 rounded-[32px] bg-[#151B2C] shadow-[0_8px_32px_rgba(0,0,0,0.3)] border border-white/10 flex items-center justify-center mx-auto mb-6 transform hover:scale-105 transition-transform duration-300"
       >
         <img
           src="/favicon.png"
@@ -43,7 +49,9 @@
           class="w-2/3 h-2/3 object-contain drop-shadow-md"
         />
       </div>
-      <h1 class="text-5xl font-brand font-bold text-text-main tracking-wide">Canari</h1>
+      <h1 class="text-5xl font-brand font-bold text-text-main tracking-wide drop-shadow-sm">
+        Canari
+      </h1>
       <p class="text-text-muted text-base mt-3 font-medium">Mines Saint-Étienne</p>
     </div>
 
@@ -52,12 +60,12 @@
       <button
         onclick={onLogin}
         disabled={isLoggingIn}
-        class="w-full py-4 bg-cn-yellow text-cn-dark rounded-2xl font-extrabold text-lg transition-all hover:bg-cn-yellow-hover hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-70 disabled:cursor-wait"
+        class="w-full py-4 bg-cn-yellow text-[#151B2C] rounded-2xl font-extrabold text-lg transition-all hover:bg-cn-yellow-hover hover:-translate-y-0.5 active:translate-y-0 shadow-lg shadow-cn-yellow/20 disabled:opacity-70 disabled:cursor-wait"
       >
         {#if isLoggingIn}
           <span class="inline-flex items-center gap-2">
             <span
-              class="inline-block w-4 h-4 border-2 border-cn-dark/20 border-t-cn-dark rounded-full animate-spin"
+              class="inline-block w-4 h-4 border-2 border-[#151B2C]/20 border-t-[#151B2C] rounded-full animate-spin"
             ></span>
             Redirection…
           </span>
@@ -69,17 +77,18 @@
       <p class="text-xs text-text-muted">Connexion sécurisée via votre compte Mines</p>
 
       {#if isDev && onDevLogin}
-        <div class="space-y-2">
+        <div class="space-y-2 mt-4 pt-4 border-t border-white/20 dark:border-white/10">
+          <!-- Inputs Dev adaptés au glassmorphism -->
           <input
             type="text"
             bind:value={devId}
             placeholder="ID (default: dev)"
-            class="w-full rounded-xl border border-zinc-600 bg-zinc-800 px-4 py-2.5 text-sm text-white placeholder:text-zinc-400 focus:border-cn-yellow focus:outline-none"
+            class="w-full rounded-xl border border-white/30 dark:border-white/10 bg-white/30 dark:bg-black/30 px-4 py-2.5 text-sm text-text-main placeholder:text-text-muted focus:border-cn-yellow focus:ring-2 focus:ring-cn-yellow/30 focus:outline-none backdrop-blur-md transition-all"
           />
           <button
             onclick={onDevLogin}
             disabled={isLoggingIn}
-            class="w-full py-3 bg-zinc-700 text-white rounded-2xl font-bold text-sm transition-all hover:bg-zinc-600 disabled:opacity-70 disabled:cursor-wait"
+            class="w-full py-3 bg-white/20 dark:bg-black/30 border border-white/30 dark:border-white/10 text-text-main rounded-2xl font-bold text-sm transition-all hover:bg-white/40 dark:hover:bg-black/50 backdrop-blur-md disabled:opacity-70 disabled:cursor-wait"
           >
             Dev Login (no Authentik)
           </button>
@@ -88,7 +97,7 @@
 
       {#if loginError}
         <div
-          class="bg-red-50 text-red-500 px-4 py-3 rounded-xl text-sm font-medium border border-red-200 mt-6"
+          class="bg-red-500/10 text-red-500 dark:text-red-400 px-4 py-3 rounded-xl text-sm font-medium border border-red-500/20 backdrop-blur-md mt-6"
           transition:slide
         >
           {loginError}
