@@ -15,6 +15,22 @@
 
   let { open = false, title, maxWidth = 'max-w-md', onClose, children, footer }: Props = $props();
 
+  // Quand la modale s'ouvre, on pousse un état dans l'historique.
+  // Quand le bouton retour est pressé, on intercepte le popstate et on ferme
+  // la modale sans naviguer vers la page précédente.
+  $effect(() => {
+    if (open) {
+      history.pushState({ canariModal: true }, '');
+    }
+  });
+
+  function handlePopState(e: PopStateEvent) {
+    if (!open) return;
+    // Empêche la navigation : on remet l'état que l'on vient de consommer
+    // (le popstate a déjà retiré notre entrée de l'historique)
+    onClose();
+  }
+
   function handleBackdropClick(e: MouseEvent) {
     if (e.target === e.currentTarget) onClose();
   }
@@ -24,7 +40,7 @@
   }
 </script>
 
-<svelte:window onkeydown={open ? handleKeydown : undefined} />
+<svelte:window onkeydown={open ? handleKeydown : undefined} onpopstate={handlePopState} />
 
 {#if open}
   <div use:portal class="fixed inset-0 z-[280] pointer-events-none">

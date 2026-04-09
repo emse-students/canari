@@ -31,6 +31,8 @@
   import type { MessagingContext } from '$lib/composables/useMessaging.svelte';
 
   let showPinModal = $state(false);
+  let pinError = $state('');
+  let pinLoading = $state(false);
 
   // Guard against concurrent login attempts (e.g. onMount + afterNavigate both firing).
   let _loginInProgress = false;
@@ -261,7 +263,14 @@
         if (savedUser && savedPin) {
           globalSession.userId = savedUser;
           globalSession.pin = savedPin;
-          void globalSession.login(sessionCb());
+          void globalSession.login({
+            ...sessionCb(),
+            onLoginFailed: (msg: string) => {
+              // Le PIN sauvegardé est invalide — on demande à l'utilisateur
+              pinError = msg;
+              showPinModal = true;
+            },
+          });
         } else if (savedUser) {
           globalSession.userId = savedUser;
           showPinModal = true;
@@ -332,11 +341,24 @@
     };
   });
 
-  function handlePinSubmit(pin: string) {
-    showPinModal = false;
-    globalSession.pin = pin;
+  async function handlePinSubmit(submittedPin: string) {
+    pinError = '';
+    pinLoading = true;
+    globalSession.pin = submittedPin;
     _loginInProgress = true;
-    void globalSession.login(sessionCb());
+
+    await globalSession.login({
+      ...sessionCb(),
+      onLoginFailed: (msg: string) => {
+        pinError = msg;
+        // La modal reste ouverte — pintLoading s'arrête ci-dessous
+      },
+    });
+
+    pinLoading = false;
+    if (globalSession.isLoggedIn) {
+      showPinModal = false;
+    }
   }
 
   // Safety net for the OIDC / dev-login race condition:
@@ -362,7 +384,14 @@
       globalSession.userId = uid;
       globalSession.pin = savedPin;
       _loginInProgress = true;
-      void globalSession.login(sessionCb());
+      void globalSession.login({
+        ...sessionCb(),
+        onLoginFailed: (msg: string) => {
+          pinError = msg;
+          showPinModal = true;
+          _loginInProgress = false;
+        },
+      });
     } else {
       globalSession.userId = uid;
       showPinModal = true;
@@ -371,7 +400,7 @@
 </script>
 
 <!-- PIN modal global (visible sur toutes les routes) -->
-<PinModal open={showPinModal} onSubmit={handlePinSubmit} />
+<PinModal open={showPinModal} onSubmit={handlePinSubmit} externalError={pinError} isLoading={pinLoading} />
 
 <!-- Notice d'invitation de canal (toutes routes) -->
 {#if globalNotifs.channelMembershipNotice}

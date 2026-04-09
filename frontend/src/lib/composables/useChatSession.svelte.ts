@@ -59,6 +59,10 @@ export interface ChatSessionCallbacks {
   }) => void;
   onSendError: (msg: string) => void;
   onShowSyncGuidePrompt: () => void;
+  /** Appelé quand le login échoue (PIN incorrect, serveur inaccessible, etc.).
+   * Si fourni, la redirection vers /login n'a PAS lieu — le caller gère l'erreur.
+   * Si absent, on redirige vers /login comme avant. */
+  onLoginFailed?: (error: string) => void;
   log: (msg: string) => void;
   messageReactions: SvelteMap<string, any[]>;
   getSelectedContact: () => string | null;
@@ -377,8 +381,12 @@ export function useChatSession() {
       cb.log(`Erreur: ${msg}`);
       clearUserLocally();
       localStorage.removeItem('canari_saved_pin');
-      const cur = window.location.pathname + window.location.search;
-      void goto(`/login?returnTo=${encodeURIComponent(cur)}`, { replaceState: true });
+      if (cb.onLoginFailed) {
+        cb.onLoginFailed(msg);
+      } else {
+        const cur = window.location.pathname + window.location.search;
+        void goto(`/login?returnTo=${encodeURIComponent(cur)}`, { replaceState: true });
+      }
     } finally {
       isLoginInProgress = false;
     }
