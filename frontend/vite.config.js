@@ -4,6 +4,7 @@ import tailwindcss from '@tailwindcss/vite';
 
 // eslint-disable-next-line no-undef
 const host = process.env.TAURI_DEV_HOST;
+const devOrigin = host ? `http://${host}:1420` : undefined;
 
 /** @returns {import('vite').Plugin} */
 function protobufPatch() {
@@ -34,6 +35,7 @@ export default defineConfig(async () => ({
     port: 1420,
     strictPort: true,
     host: host || false,
+    origin: devOrigin,
     hmr: host
       ? {
           protocol: 'ws',

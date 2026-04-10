@@ -17,6 +17,10 @@ val tauriProperties = Properties().apply {
 android {
     compileSdk = 36
     namespace = "fr.emse.canari"
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+    }
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
         applicationId = "fr.emse.canari"
@@ -70,7 +74,7 @@ android {
         }
     }
     kotlinOptions {
-        jvmTarget = "1.8"
+        jvmTarget = "11"
     }
     buildFeatures {
         buildConfig = true

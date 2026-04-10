@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Politique réseau Android.
+    On autorise le trafic HTTP (cleartext) uniquement pour les domaines internes
+    utilisés par Tauri : tauri.localhost est intercepté par le WebViewAssetLoader
+    et ne génère jamais de vraie requête réseau en clair.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">tauri.localhost</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>
