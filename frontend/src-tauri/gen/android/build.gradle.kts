@@ -19,6 +19,16 @@ allprojects {
         google()
         mavenCentral()
     }
+
+    beforeEvaluate {
+        // Create missing consumer-rules.pro for plugins (some versions don't include it)
+        if (project.plugins.hasPlugin("com.android.library")) {
+            val rulesFile = File(project.projectDir, "consumer-rules.pro")
+            if (!rulesFile.exists()) {
+                rulesFile.writeText("# Auto-generated: plugin is missing consumer rules\n")
+            }
+        }
+    }
 }
 
 subprojects {
