@@ -21,6 +21,17 @@ allprojects {
     }
 }
 
+subprojects {
+    afterEvaluate {
+        if (hasProperty("android")) {
+            android {
+                // Force compileSdkVersion to 36 for all subprojects (required for tauri-android compatibility)
+                compileSdk = 36
+            }
+        }
+    }
+}
+
 tasks.register("clean").configure {
     delete("build")
 }
