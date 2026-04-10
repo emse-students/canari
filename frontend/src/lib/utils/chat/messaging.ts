@@ -85,6 +85,7 @@ export async function sendChatMessage(
           nonce: encryptedParams.nonce,
           ciphertext: encryptedParams.ciphertext,
           keyVersion: encryptedParams.keyVersion,
+          messageId,
         });
       } catch (err) {
         console.warn('Crypto missing for channel via keyManager, falling back to legacy:', err);
@@ -94,10 +95,20 @@ export async function sendChatMessage(
         await channelService.sendMessage(actualChannelId, {
           nonce,
           ciphertext: btoa(String.fromCharCode(...payload)),
+          messageId,
         });
       }
-      // We do not add the message optimistically for channels:
-      // We wait for the 'channel.message.created' WebSocket event instead!
+      // Show message optimistically with the same messageId.
+      // When the WS echo arrives with data.id === messageId, the dedup guard
+      // in addMessageToChat silently drops it — so the message appears once.
+      await addMessageToChat(
+        userId,
+        serializeEnvelope(mkTextEnvelope(text, replyToData)),
+        contactName,
+        undefined,
+        false,
+        messageId
+      );
     } else {
       deps.log(`[SEND] Appel mlsService.sendMessage groupId="${conversation.id}"...`);
       // Passes messageId so WebMlsService can wait for the gateway ACK (message_sent event)

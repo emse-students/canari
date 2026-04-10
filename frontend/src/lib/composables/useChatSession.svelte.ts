@@ -203,6 +203,8 @@ export function useChatSession() {
         const localMlsGroups = new SvelteSet(mlsService.getLocalGroups());
         const missingKeys: string[] = [];
         for (const [key, c] of cb.conversations.entries()) {
+          // Channels use AES-GCM, not MLS — never mark them as not-ready
+          if (c.id.startsWith('channel_')) continue;
           if (c.isReady && !localMlsGroups.has(c.id)) {
             cb.conversations.set(key, { ...c, isReady: false });
             missingKeys.push(key);

@@ -50,6 +50,7 @@ export interface SendChannelMessageDto {
   ciphertext: string;
   nonce: string;
   keyVersion?: number;
+  messageId?: string;
 }
 
 export interface ChannelMemberDto {

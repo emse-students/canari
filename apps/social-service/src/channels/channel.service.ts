@@ -645,6 +645,7 @@ export class ChannelService {
     if (!member) throw new ForbiddenException('Not a member of this workspace');
 
     const msg = this.messageRepo.create({
+      ...(input.messageId ? { id: input.messageId } : {}),
       workspaceId: channel.workspaceId,
       channelId,
       authorId: input.senderId,

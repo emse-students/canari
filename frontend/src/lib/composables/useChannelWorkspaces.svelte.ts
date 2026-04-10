@@ -192,16 +192,16 @@ export function useChannelWorkspaces() {
 
           await bootstrapChannelKey(actualId);
 
-          if (!ctx.conversations.has(channelConversationId)) {
-            ctx.conversations.set(channelConversationId, {
-              contactName: channelConversationId,
-              name: channel.name,
-              id: channelConversationId,
-              messages: [],
-              isReady: true,
-              mlsStateHex: null,
-            });
-          }
+          const existing = ctx.conversations.get(channelConversationId);
+          ctx.conversations.set(channelConversationId, {
+            contactName: channelConversationId,
+            name: channel.name,
+            id: channelConversationId,
+            messages: existing?.messages ?? [],
+            isReady: true,
+            mlsStateHex: null,
+            ...(existing?.unreadCount !== undefined ? { unreadCount: existing.unreadCount } : {}),
+          });
         }
       }
     } catch (error) {
@@ -236,16 +236,18 @@ export function useChannelWorkspaces() {
             isPrivate: channel.visibility === 'private',
           });
           await bootstrapChannelKey(actualId);
-          if (!ctx.conversations.has(channelConversationId)) {
-            ctx.conversations.set(channelConversationId, {
-              contactName: channelConversationId,
-              name: channel.name,
-              id: channelConversationId,
-              messages: [],
-              isReady: true,
-              mlsStateHex: null,
-            });
-          }
+          const existingEws = ctx.conversations.get(channelConversationId);
+          ctx.conversations.set(channelConversationId, {
+            contactName: channelConversationId,
+            name: channel.name,
+            id: channelConversationId,
+            messages: existingEws?.messages ?? [],
+            isReady: true,
+            mlsStateHex: null,
+            ...(existingEws?.unreadCount !== undefined
+              ? { unreadCount: existingEws.unreadCount }
+              : {}),
+          });
         }
       } catch {
         // Non-fatal: channels will load on next full refresh
@@ -308,18 +310,16 @@ export function useChannelWorkspaces() {
 
       selectedChannelConversationId = channelId;
 
-      if (!ctx.conversations.has(channelId)) {
-        ctx.conversations.set(channelId, {
-          contactName: channelId,
-          name: normalizedChannelName,
-          id: channelId,
-          messages: [],
-          isReady: true,
-          mlsStateHex: null,
-        });
-        await ctx.saveConversation(channelId);
-        ctx.selectConversation(channelId);
-      }
+      ctx.conversations.set(channelId, {
+        contactName: channelId,
+        name: normalizedChannelName,
+        id: channelId,
+        messages: [],
+        isReady: true,
+        mlsStateHex: null,
+      });
+      await ctx.saveConversation(channelId);
+      ctx.selectConversation(channelId);
       ctx.log(`Canal créé : #${normalizedChannelName}`);
     } catch (error) {
       ctx.log(toUiActionError('Création de canal', error));

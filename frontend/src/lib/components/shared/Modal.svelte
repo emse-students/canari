@@ -24,7 +24,7 @@
     }
   });
 
-  function handlePopState(e: PopStateEvent) {
+  function handlePopState(_e: PopStateEvent) {
     if (!open) return;
     // Empêche la navigation : on remet l'état que l'on vient de consommer
     // (le popstate a déjà retiré notre entrée de l'historique)

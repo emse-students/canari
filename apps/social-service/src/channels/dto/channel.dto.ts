@@ -54,6 +54,8 @@ export interface SendChannelMessageDto {
   ciphertext: string;
   nonce: string;
   keyVersion?: number;
+  /** Client-generated UUID used as PK so the WS echo can be deduplicated. */
+  messageId?: string;
 }
 
 export interface GetChannelMessagesQuery {

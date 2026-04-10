@@ -1,7 +1,6 @@
 <script lang="ts">
   import { Shield, Settings, Users, Key, Trash2, LogOut } from 'lucide-svelte';
   import Modal from '../shared/Modal.svelte';
-  import { de } from 'date-fns/locale';
 
   interface ChannelSidebarItem {
     id: string;
