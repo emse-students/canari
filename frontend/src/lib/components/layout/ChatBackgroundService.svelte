@@ -400,7 +400,12 @@
 </script>
 
 <!-- PIN modal global (visible sur toutes les routes) -->
-<PinModal open={showPinModal} onSubmit={handlePinSubmit} externalError={pinError} isLoading={pinLoading} />
+<PinModal
+  open={showPinModal}
+  onSubmit={handlePinSubmit}
+  externalError={pinError}
+  isLoading={pinLoading}
+/>
 
 <!-- Notice d'invitation de canal (toutes routes) -->
 {#if globalNotifs.channelMembershipNotice}

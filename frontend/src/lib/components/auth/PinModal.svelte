@@ -48,7 +48,9 @@
         inputmode="numeric"
         autocomplete="current-password"
         bind:value={pin}
-        oninput={() => { internalError = ''; }}
+        oninput={() => {
+          internalError = '';
+        }}
         disabled={isLoading}
         placeholder="••••••"
         class="w-full rounded-xl border border-cn-border/60 bg-white/5 dark:bg-black/20 px-4 py-3.5 text-center text-2xl tracking-[0.4em] font-mono focus:border-cn-yellow focus:ring-2 focus:ring-cn-yellow/30 focus:outline-none transition-all placeholder:tracking-normal placeholder:text-text-muted/50 disabled:opacity-50"
