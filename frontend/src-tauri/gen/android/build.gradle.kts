@@ -3,6 +3,27 @@ plugins {
     id("com.google.gms.google-services") version "4.4.4" apply false
 }
 
+// Pre-create missing consumer-rules.pro files before any plugin evaluation
+run {
+    val cargoRegistryPath = System.getenv("USERPROFILE") ?: System.getenv("HOME") ?: return@run
+    val registryBase = File(cargoRegistryPath).let { 
+        if (it.path.contains("USERPROFILE")) File(it, ".cargo/registry/src/index.crates.io-1949cf8c6b5b557f")
+        else File(it, ".cargo/registry/src/index.crates.io-1949cf8c6b5b557f")
+    }
+    
+    if (registryBase.exists()) {
+        registryBase.listFiles { dir -> dir.isDirectory && dir.name.startsWith("tauri-plugin-") }?.forEach { pluginDir ->
+            val androidDir = File(pluginDir, "android")
+            if (androidDir.exists()) {
+                val rulesFile = File(androidDir, "consumer-rules.pro")
+                if (!rulesFile.exists()) {
+                    rulesFile.writeText("# Auto-generated: ${pluginDir.name}\n")
+                }
+            }
+        }
+    }
+}
+
 buildscript {
     repositories {
         google()
@@ -18,16 +39,6 @@ allprojects {
     repositories {
         google()
         mavenCentral()
-    }
-
-    beforeEvaluate {
-        // Create missing consumer-rules.pro for plugins (some versions don't include it)
-        if (project.plugins.hasPlugin("com.android.library")) {
-            val rulesFile = File(project.projectDir, "consumer-rules.pro")
-            if (!rulesFile.exists()) {
-                rulesFile.writeText("# Auto-generated: plugin is missing consumer rules\n")
-            }
-        }
     }
 }
 
