@@ -1,9 +1,16 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use mls_core::MlsManager;
 use std::sync::Mutex;
+
 use tauri::{
     image::Image,
     Manager, WindowEvent,
+};
+
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+use tauri::{
+    menu::{MenuBuilder, MenuItemBuilder},
+    tray::TrayIconBuilder,
 };
 
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
