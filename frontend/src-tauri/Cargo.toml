@@ -28,6 +28,4 @@ mls-core = { path = "../mls-core" }
 tauri-plugin-biometric = "2.3.2"
 tauri-plugin-keystore = "2.1.0-alpha.1"
 tauri-plugin-http = "2"
-tauri-plugin-push = "2"
-tauri-plugin-background-task = "2"
 
