@@ -1,0 +1,30 @@
+{
+  "_comment": "REMPLACER CE FICHIER par le vrai google-services.json depuis https://console.firebase.google.com → Paramètres du projet → Ajouter une appli Android (package: fr.emse.canari)",
+  "project_info": {
+    "project_number": "VOTRE_PROJECT_NUMBER",
+    "project_id": "canari-VOTRE_ID",
+    "storage_bucket": "canari-VOTRE_ID.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:VOTRE_PROJECT_NUMBER:android:VOTRE_APP_ID",
+        "android_client_info": {
+          "package_name": "fr.emse.canari"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "VOTRE_API_KEY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

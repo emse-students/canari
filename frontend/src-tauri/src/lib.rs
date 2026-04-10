@@ -298,6 +298,53 @@ fn exporter_secret(
         .map_err(|e| e.to_string())
 }
 
+/// Retourne le token FCM stocké par CanariFirebaseMessagingService/MainActivity.
+/// Sur Android, lit les SharedPreferences "canari_prefs" / clé "fcm_token".
+/// Sur desktop/iOS, retourne None (pas de FCM).
+#[tauri::command]
+fn get_fcm_token(app: tauri::AppHandle) -> Option<String> {
+    #[cfg(target_os = "android")]
+    {
+        use tauri::Manager;
+        // Accès aux SharedPreferences Android via le JNI Tauri
+        let ctx = app.jni_handle();
+        let env = ctx.env();
+        // Utilise l'API SharedPreferences via JNI
+        let prefs_name = env.new_string("canari_prefs").ok()?;
+        let mode = 0i32; // Context.MODE_PRIVATE
+        let activity = ctx.activity();
+        let prefs = env
+            .call_method(
+                activity,
+                "getSharedPreferences",
+                "(Ljava/lang/String;I)Landroid/content/SharedPreferences;",
+                &[prefs_name.into(), mode.into()],
+            )
+            .ok()?
+            .l()
+            .ok()?;
+        let key = env.new_string("fcm_token").ok()?;
+        let default_val = env.new_string("").ok()?;
+        let token_jstr = env
+            .call_method(
+                prefs,
+                "getString",
+                "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
+                &[key.into(), default_val.into()],
+            )
+            .ok()?
+            .l()
+            .ok()?;
+        let token: String = env.get_string((&token_jstr).into()).ok()?.into();
+        if token.is_empty() { None } else { Some(token) }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        None
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
@@ -395,7 +442,8 @@ pub fn run() {
             envoyer_message_bytes,
             recevoir_message,
             recevoir_message_bytes,
-            exporter_secret
+            exporter_secret,
+            get_fcm_token
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
