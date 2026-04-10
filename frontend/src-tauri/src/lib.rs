@@ -419,14 +419,14 @@ fn extract_app_message_text(bytes: &[u8]) -> Option<String> {
 /// Retourne le texte du message, ou "" si le déchiffrement échoue.
 #[cfg(target_os = "android")]
 #[no_mangle]
-pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeDecryptMessage(
-    mut env: jni::JNIEnv,
-    _service: jni::objects::JObject,
-    state_bytes: jni::objects::JByteArray,
-    pin: jni::objects::JString,
-    group_id: jni::objects::JString,
-    ciphertext: jni::objects::JByteArray,
-) -> jni::objects::JString {
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeDecryptMessage<'a>(
+    mut env: jni::JNIEnv<'a>,
+    _service: jni::objects::JObject<'a>,
+    state_bytes: jni::objects::JByteArray<'a>,
+    pin: jni::objects::JString<'a>,
+    group_id: jni::objects::JString<'a>,
+    ciphertext: jni::objects::JByteArray<'a>,
+) -> jni::objects::JString<'a> {
     let text = (|| -> Option<String> {
         let state_vec = env.convert_byte_array(&state_bytes).ok()?;
         let pin_str: String = env.get_string(&pin).ok()?.into();
