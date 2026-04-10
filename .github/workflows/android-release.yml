@@ -67,6 +67,8 @@ jobs:
           ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           BASE_URL: ${{ secrets.BASE_URL }}
+          AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
+          AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
           required=(
@@ -76,6 +78,8 @@ jobs:
             ANDROID_STORE_PASSWORD
             JWT_SECRET
             BASE_URL
+            AUTHENTIK_URL
+            AUTHENTIK_CLIENT_ID
             GOOGLE_SERVICES_JSON
           )
 
@@ -123,6 +127,8 @@ jobs:
         env:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           BASE_URL: ${{ secrets.BASE_URL }}
+          AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
+          AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
         run: |
           echo "VITE_JWT_SECRET=${JWT_SECRET}" > .env
           # Use empty values for URLs to trigger fallback to window.location logic (or defaults)
@@ -133,6 +139,8 @@ jobs:
           echo "VITE_CALL_URL=${BASE_URL}" >> .env
           echo "VITE_SOCIAL_URL=${BASE_URL}" >> .env
           echo "VITE_CORE_URL=${BASE_URL}" >> .env
+          echo "VITE_AUTHENTIK_URL=${AUTHENTIK_URL}" >> .env
+          echo "VITE_AUTHENTIK_CLIENT_ID=${AUTHENTIK_CLIENT_ID}" >> .env
 
       - name: Verify frontend env for Android build
         working-directory: frontend
@@ -144,6 +152,8 @@ jobs:
           grep -q '^VITE_CALL_URL=.' .env
           grep -q '^VITE_SOCIAL_URL=.' .env
           grep -q '^VITE_CORE_URL=.' .env
+          grep -q '^VITE_AUTHENTIK_URL=.' .env
+          grep -q '^VITE_AUTHENTIK_CLIENT_ID=.' .env
           echo "✅ Android frontend env prepared"
 
       - name: Build Android APK
