@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { Shield, Settings, Users, Key, Trash2 } from 'lucide-svelte';
+  import { Shield, Settings, Users, Key, Trash2, LogOut } from 'lucide-svelte';
   import Modal from '../shared/Modal.svelte';
+  import { de } from 'date-fns/locale';
 
   interface ChannelSidebarItem {
     id: string;
@@ -28,6 +29,9 @@
       memberId: string,
       role: 'member' | 'moderator' | 'admin'
     ) => void;
+    onRenameChannel?: (channelId: string, newName: string) => void;
+    onDeleteChannel?: (channelId: string) => void;
+    onLeaveChannel?: (channelId: string) => void;
     onClose: () => void;
   }
 
@@ -37,6 +41,9 @@
     channelWorkspaces,
     onInviteMember,
     onUpdateMemberRole,
+    onRenameChannel,
+    onDeleteChannel,
+    onLeaveChannel,
     onClose,
   }: Props = $props();
 
@@ -49,6 +56,8 @@
   let selectedChannel = $derived(
     selectedWorkspace?.channels.find((c) => c.id === selectedChannelId)
   );
+
+  let channelNameInput = $derived(selectedChannel?.name ?? '');
 
   let permissionMembersId = $state('');
   let permissionRole = $state<'member' | 'moderator' | 'admin'>('member');
@@ -124,6 +133,27 @@
       permissionRole = 'member';
     }
   }
+
+  function handleRenameChannel() {
+    const trimmed = channelNameInput.trim().toLowerCase();
+    if (trimmed && trimmed !== selectedChannel?.name) {
+      onRenameChannel?.(selectedChannelId, trimmed);
+    }
+  }
+
+  function handleDeleteChannel() {
+    if (confirm(`Supprimer définitivement le canal #${selectedChannel?.name} ?`)) {
+      onDeleteChannel?.(selectedChannelId);
+      onClose();
+    }
+  }
+
+  function handleLeaveChannel() {
+    if (confirm(`Quitter le canal #${selectedChannel?.name} ?`)) {
+      onLeaveChannel?.(selectedChannelId);
+      onClose();
+    }
+  }
 </script>
 
 <Modal {open} {onClose} title="Paramètres du canal" maxWidth="max-w-4xl">
@@ -169,8 +199,18 @@
         Invitations & Rôles
       </button>
 
-      <div class="hidden md:block mt-auto pt-4 space-y-2">
+      <div class="hidden md:flex md:flex-col mt-auto pt-4 gap-2">
         <button
+          type="button"
+          onclick={handleLeaveChannel}
+          class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-amber-700 hover:bg-amber-50 transition-colors w-full"
+        >
+          <LogOut size={18} />
+          Quitter le canal
+        </button>
+        <button
+          type="button"
+          onclick={handleDeleteChannel}
           class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-red-600 hover:bg-red-50 transition-colors w-full"
         >
           <Trash2 size={18} />
@@ -189,23 +229,44 @@
               <label class="text-xs font-bold uppercase text-text-muted" for="channel-name"
                 >Nom du canal</label
               >
-              <input
-                id="channel-name"
-                class="w-full bg-white border border-cn-border rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-amber-500/50"
-                value={selectedChannel ? selectedChannel.name : ''}
-              />
+              <div class="flex gap-2">
+                <input
+                  id="channel-name"
+                  class="flex-1 bg-white border border-cn-border rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-amber-500/50"
+                  bind:value={channelNameInput}
+                  onkeydown={(e) => e.key === 'Enter' && handleRenameChannel()}
+                />
+                <button
+                  type="button"
+                  onclick={handleRenameChannel}
+                  disabled={!channelNameInput.trim() ||
+                    channelNameInput.trim() === selectedChannel?.name}
+                  class="rounded-xl bg-amber-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-amber-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Renommer
+                </button>
+              </div>
             </div>
-            <div class="space-y-2">
-              <label class="text-xs font-bold uppercase text-text-muted" for="channel-desc"
-                >Description</label
-              >
-              <textarea
-                id="channel-desc"
-                rows="3"
-                placeholder="Règles ou sujet principal de ce canal..."
-                class="w-full bg-white border border-cn-border rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-amber-500/50 resize-none"
-              ></textarea>
-            </div>
+          </div>
+
+          <!-- Mobile-visible danger zone -->
+          <div class="flex flex-col gap-2 md:hidden pt-4 border-t border-cn-border/40">
+            <button
+              type="button"
+              onclick={handleLeaveChannel}
+              class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-amber-700 hover:bg-amber-50 transition-colors"
+            >
+              <LogOut size={18} />
+              Quitter le canal
+            </button>
+            <button
+              type="button"
+              onclick={handleDeleteChannel}
+              class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-red-600 hover:bg-red-50 transition-colors"
+            >
+              <Trash2 size={18} />
+              Supprimer le canal
+            </button>
           </div>
         </div>
       {/if}

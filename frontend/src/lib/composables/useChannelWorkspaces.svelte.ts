@@ -212,17 +212,53 @@ export function useChannelWorkspaces() {
 
   async function ensureWorkspaceByName(
     nameRaw: string,
-    _ctx: ChannelWorkspaceContext
+    ctx: ChannelWorkspaceContext
   ): Promise<ChannelSidebarWorkspace> {
     const slug = slugifyWorkspace(nameRaw.trim());
     if (!slug) throw new Error('Nom de communauté invalide.');
 
     const workspace = await service.createWorkspace({ slug, name: nameRaw.trim() });
     const sidebarWorkspace = upsertWorkspaceFromDto(workspace);
-    if (sidebarWorkspace.channels.length > 0) {
-      selectedChannelConversationId = sidebarWorkspace.channels[0].id;
+    const workspaceId = sidebarWorkspace.workspaceDbId;
+
+    // Immediately load the channels the backend created (e.g. the default "general" channel)
+    // so the sidebar populates without requiring a page reload.
+    if (workspaceId) {
+      try {
+        const channels = await service.listChannels(workspaceId);
+        for (const channel of channels as ChannelDto[]) {
+          const actualId = channel.id || channel._id;
+          if (!actualId) continue;
+          const channelConversationId = `channel_${actualId}`;
+          addChannelToWorkspace(sidebarWorkspace.id, {
+            id: channelConversationId,
+            name: channel.name,
+            isPrivate: channel.visibility === 'private',
+          });
+          await bootstrapChannelKey(actualId);
+          if (!ctx.conversations.has(channelConversationId)) {
+            ctx.conversations.set(channelConversationId, {
+              contactName: channelConversationId,
+              name: channel.name,
+              id: channelConversationId,
+              messages: [],
+              isReady: true,
+              mlsStateHex: null,
+            });
+          }
+        }
+      } catch {
+        // Non-fatal: channels will load on next full refresh
+      }
     }
-    return sidebarWorkspace;
+
+    // Auto-select the first channel (usually "general")
+    const freshWorkspace = channelWorkspaces.find((w) => w.id === sidebarWorkspace.id);
+    if (freshWorkspace && freshWorkspace.channels.length > 0) {
+      selectedChannelConversationId = freshWorkspace.channels[0].id;
+      ctx.selectConversation(freshWorkspace.channels[0].id);
+    }
+    return freshWorkspace ?? sidebarWorkspace;
   }
 
   async function createNewCommunity(nameRaw: string, ctx: ChannelWorkspaceContext) {
@@ -332,6 +368,63 @@ export function useChannelWorkspaces() {
     }
   }
 
+  async function leaveCurrentChannel(channelConversationId: string, ctx: ChannelWorkspaceContext) {
+    if (!channelConversationId) return;
+    try {
+      await service.leaveChannel(channelConversationId);
+      ctx.conversations.delete(channelConversationId);
+      removeChannelFromWorkspaces(channelConversationId);
+      if (selectedChannelConversationId === channelConversationId) {
+        selectedChannelConversationId = '';
+      }
+      ctx.log('Vous avez quitté le canal.');
+    } catch (error) {
+      ctx.log(toUiActionError('Départ du canal', error));
+    }
+  }
+
+  async function renameCurrentChannel(
+    channelConversationId: string,
+    newName: string,
+    ctx: ChannelWorkspaceContext
+  ) {
+    const trimmed = newName.trim().toLowerCase();
+    if (!channelConversationId || !trimmed) return;
+    try {
+      await service.renameChannel(channelConversationId, trimmed);
+      // Update sidebar label
+      channelWorkspaces = channelWorkspaces.map((ws) => ({
+        ...ws,
+        channels: ws.channels.map((ch) =>
+          ch.id === channelConversationId ? { ...ch, name: trimmed } : ch
+        ),
+      }));
+      // Update conversation name
+      const convo = ctx.conversations.get(channelConversationId);
+      if (convo) {
+        ctx.conversations.set(channelConversationId, { ...convo, name: trimmed });
+      }
+      ctx.log(`Canal renommé : #${trimmed}`);
+    } catch (error) {
+      ctx.log(toUiActionError('Renommage du canal', error));
+    }
+  }
+
+  async function deleteCurrentChannel(channelConversationId: string, ctx: ChannelWorkspaceContext) {
+    if (!channelConversationId) return;
+    try {
+      await service.deleteChannel(channelConversationId);
+      ctx.conversations.delete(channelConversationId);
+      removeChannelFromWorkspaces(channelConversationId);
+      if (selectedChannelConversationId === channelConversationId) {
+        selectedChannelConversationId = '';
+      }
+      ctx.log('Canal supprimé.');
+    } catch (error) {
+      ctx.log(toUiActionError('Suppression du canal', error));
+    }
+  }
+
   return {
     get channelWorkspaces() {
       return channelWorkspaces;
@@ -354,5 +447,8 @@ export function useChannelWorkspaces() {
     createNewChannel,
     inviteMemberToChannel,
     updateChannelMemberRole,
+    leaveCurrentChannel,
+    renameCurrentChannel,
+    deleteCurrentChannel,
   };
 }

@@ -18,6 +18,10 @@ export interface CreateChannelDto {
   actorUserId: string;
 }
 
+export interface RenameChannelDto {
+  name: string;
+}
+
 export interface ChannelJoinDto {
   userId: string;
   roleName?: string;

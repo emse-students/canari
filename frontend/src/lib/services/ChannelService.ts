@@ -74,6 +74,14 @@ export class ChannelService {
     }
   }
 
+  // Normalize channel IDs coming from the UI (`channel_<id>`) to the raw
+  // backend channel id. Centralizing this avoids repeating `.replace` across
+  // callers and makes the client tolerant to UI conversation keys.
+  private normalizeChannelId(id: string): string {
+    if (id === undefined || id === null) return '';
+    return String(id).replace(/^channel_/, '');
+  }
+
   private fetchWithAuth(url: string, init: RequestInit = {}): Promise<Response> {
     return apiFetch(url, init as any);
   }
@@ -145,7 +153,8 @@ export class ChannelService {
   }
 
   async joinChannel(channelId: string, dto: ChannelJoinDto) {
-    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${channelId}/members/join`, {
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/members/join`, {
       method: 'POST',
       body: JSON.stringify(dto),
     });
@@ -153,20 +162,58 @@ export class ChannelService {
     return res.json();
   }
 
+  async leaveChannel(channelId: string) {
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/members/leave`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    await this.handleError(res);
+    return res.json();
+  }
+
+  async kickMember(channelId: string, targetUserId: string) {
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/members/kick`, {
+      method: 'POST',
+      body: JSON.stringify({ targetUserId }),
+    });
+    await this.handleError(res);
+    return res.json();
+  }
+
+  async renameChannel(channelId: string, newName: string) {
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name: newName }),
+    });
+    await this.handleError(res);
+    return res.json();
+  }
+
+  async deleteChannel(channelId: string) {
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}`, {
+      method: 'DELETE',
+    });
+    await this.handleError(res);
+    return res.json();
+  }
+
   async inviteToChannel(channelId: string, dto: ChannelInviteDto) {
-    const res = await this.fetchWithAuth(
-      `${this.baseUrl}/api/channels/${channelId}/members/invite`,
-      {
-        method: 'POST',
-        body: JSON.stringify(dto),
-      }
-    );
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/members/invite`, {
+      method: 'POST',
+      body: JSON.stringify(dto),
+    });
     await this.handleError(res);
     return res.json();
   }
 
   async updateMemberRole(channelId: string, dto: ChannelUpdateRoleDto) {
-    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${channelId}/members/role`, {
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/members/role`, {
       method: 'POST',
       body: JSON.stringify(dto),
     });
@@ -175,7 +222,8 @@ export class ChannelService {
   }
 
   async sendMessage(channelId: string, dto: SendChannelMessageDto) {
-    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${channelId}/messages`, {
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/messages`, {
       method: 'POST',
       body: JSON.stringify(dto),
     });
@@ -184,15 +232,17 @@ export class ChannelService {
   }
 
   async listMessages(channelId: string, limit = 100) {
+    const cid = this.normalizeChannelId(channelId);
     const res = await this.fetchWithAuth(
-      `${this.baseUrl}/api/channels/${channelId}/messages?limit=${limit}`
+      `${this.baseUrl}/api/channels/${cid}/messages?limit=${limit}`
     );
     await this.handleError(res);
     return res.json();
   }
 
   async listMembers(channelId: string): Promise<ChannelMemberDto[]> {
-    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${channelId}/members`);
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/members`);
     await this.handleError(res);
     return res.json();
   }
@@ -200,13 +250,15 @@ export class ChannelService {
   async getChannelKey(
     channelId: string
   ): Promise<{ channelId: string; keyVersion: number; epochKey: string }> {
-    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${channelId}/key`);
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/key`);
     await this.handleError(res);
     return res.json();
   }
 
   async rotateChannelKey(channelId: string): Promise<{ channelId: string; keyVersion: number }> {
-    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${channelId}/key/rotate`, {
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/key/rotate`, {
       method: 'POST',
     });
     await this.handleError(res);

@@ -1,9 +1,11 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Headers,
   Param,
+  Patch,
   Post,
   Query,
   HttpException,
@@ -22,6 +24,7 @@ import {
   type CreateRoleDto,
   type CreateWorkspaceDto,
   type GetChannelMessagesQuery,
+  type RenameChannelDto,
   type SendChannelMessageDto,
 } from './dto/channel.dto';
 
@@ -154,6 +157,22 @@ export class ChannelsController {
   @Post(':channelId/key/rotate')
   rotateChannelKey(@Headers('x-user-id') xUserId: string, @Param('channelId') channelId: string) {
     return this.service.rotateChannelKey(channelId, xUserId.trim().toLowerCase());
+  }
+
+  @UseGuards(NginxAuthGuard)
+  @Patch(':channelId')
+  renameChannel(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string,
+    @Body() body: RenameChannelDto
+  ) {
+    return this.service.renameChannel(channelId, xUserId.trim().toLowerCase(), body.name);
+  }
+
+  @UseGuards(NginxAuthGuard)
+  @Delete(':channelId')
+  archiveChannel(@Headers('x-user-id') xUserId: string, @Param('channelId') channelId: string) {
+    return this.service.archiveChannel(channelId, xUserId.trim().toLowerCase());
   }
 
   @UseGuards(NginxAuthGuard)

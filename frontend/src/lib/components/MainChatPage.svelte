@@ -237,6 +237,31 @@
         );
         log(`Retire du canal #${event.channelName || event.channelId}`);
       },
+      onChannelUpdated: (event: { channelId: string; name?: string }) => {
+        if (!event.channelId || !event.name) return;
+        const channelConversationId = `channel_${event.channelId}`;
+        channels.channelWorkspaces = channels.channelWorkspaces.map((ws) => ({
+          ...ws,
+          channels: ws.channels.map((ch) =>
+            ch.id === channelConversationId ? { ...ch, name: event.name! } : ch
+          ),
+        }));
+        const convo = convs.conversations.get(channelConversationId);
+        if (convo) convs.conversations.set(channelConversationId, { ...convo, name: event.name });
+      },
+      onChannelDeleted: (event: { channelId: string }) => {
+        if (!event.channelId) return;
+        const channelConversationId = `channel_${event.channelId}`;
+        convs.conversations.delete(channelConversationId);
+        channels.removeChannelFromWorkspaces(channelConversationId);
+        if (convs.selectedContact === channelConversationId) {
+          convs.selectedContact = null;
+          convs.mobileView = 'list';
+        }
+        if (channels.selectedChannelConversationId === channelConversationId) {
+          channels.selectedChannelConversationId = '';
+        }
+      },
       onSendError: (msg: string) => {
         convs.sendError = msg;
       },
@@ -383,6 +408,21 @@
     });
   });
 
+  // When switching to the communities view, clear any non-channel selection so
+  // the right-hand panel doesn't keep showing the last discussion.
+  $effect(() => {
+    if (!convs.selectedContact) return;
+
+    if (
+      (routeMode === 'communities' && !convs.selectedContact.startsWith('channel_')) ||
+      (routeMode === 'chat' && convs.selectedContact.startsWith('channel_'))
+    ) {
+      convs.selectedContact = null;
+      convs.mobileView = routeMode === 'communities' ? 'list' : 'chat';
+      convs.sendError = '';
+    }
+  });
+
   // ─── Forwarding helpers (thin wrappers so the template stays clean) ───────
 
   function handleSendChat() {
@@ -463,6 +503,7 @@
         onSelectChannelConversation={(channelId) => {
           channels.selectedChannelConversationId = channelId;
           convs.selectConversation(channelId);
+          void convs.loadHistoryForConversation(channelId, channelId, convCtx());
         }}
         isHidden={convs.mobileView === 'chat'}
       />
@@ -615,6 +656,7 @@
           onSelectChannelConversation={(channelId) => {
             channels.selectedChannelConversationId = channelId;
             convs.selectConversation(channelId);
+            void convs.loadHistoryForConversation(channelId, channelId, convCtx());
           }}
           isHidden={false}
           drawerMode={true}
@@ -633,6 +675,22 @@
           channels.inviteMemberToChannel(channelId, memberId, roleName, channelsCtx())}
         onUpdateMemberRole={(channelId, memberId, roleName) =>
           channels.updateChannelMemberRole(channelId, memberId, roleName, channelsCtx())}
+        onRenameChannel={(channelId, newName) =>
+          channels.renameCurrentChannel(channelId, newName, channelsCtx())}
+        onDeleteChannel={(channelId) => {
+          void channels.deleteCurrentChannel(channelId, channelsCtx());
+          if (convs.selectedContact === channelId) {
+            convs.selectedContact = null;
+            convs.mobileView = 'list';
+          }
+        }}
+        onLeaveChannel={(channelId) => {
+          void channels.leaveCurrentChannel(channelId, channelsCtx());
+          if (convs.selectedContact === channelId) {
+            convs.selectedContact = null;
+            convs.mobileView = 'list';
+          }
+        }}
       />
 
       <SyncSessionModal

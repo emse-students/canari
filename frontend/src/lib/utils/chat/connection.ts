@@ -67,6 +67,8 @@ interface MessageHandlerDeps {
     workspaceId?: string;
     kickedBy?: string;
   }) => void;
+  onChannelUpdated?: (event: { channelId: string; name?: string; workspaceId?: string }) => void;
+  onChannelDeleted?: (event: { channelId: string; workspaceId?: string }) => void;
   onReadReceiptReceived?: (event: {
     conversationKey: string;
     senderId: string;
@@ -192,6 +194,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
     loadHistoryForConversation,
     onChannelMemberJoined,
     onChannelMemberKicked,
+    onChannelUpdated,
+    onChannelDeleted,
     onReadReceiptReceived,
     onCallSignal,
     log,
@@ -245,6 +249,25 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           channelName: data.channelName,
           workspaceId: data.workspaceId,
           kickedBy: data.kickedBy,
+        });
+        return;
+      }
+
+      if (event.type === 'channel.updated') {
+        const data = event.data || {};
+        onChannelUpdated?.({
+          channelId: String(data.channelId || ''),
+          name: data.name,
+          workspaceId: data.workspaceId,
+        });
+        return;
+      }
+
+      if (event.type === 'channel.deleted') {
+        const data = event.data || {};
+        onChannelDeleted?.({
+          channelId: String(data.channelId || ''),
+          workspaceId: data.workspaceId,
         });
         return;
       }

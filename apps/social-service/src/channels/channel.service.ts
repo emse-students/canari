@@ -73,7 +73,7 @@ export class ChannelService {
 
     const adminRole = this.roleRepo.create({
       workspaceId: savedWs.id,
-      name: 'Admin',
+      name: 'Administrateur',
       priority: 100,
       permissions: [
         'MANAGE_WORKSPACE',
@@ -86,9 +86,17 @@ export class ChannelService {
     });
     const savedAdminRole = await this.roleRepo.save(adminRole);
 
+    const moderatorRole = this.roleRepo.create({
+      workspaceId: savedWs.id,
+      name: 'Modérateur',
+      priority: 50,
+      permissions: ['MANAGE_CHANNELS', 'MODERATE_MESSAGES', 'INVITE_USERS', 'SEND_MESSAGES'],
+    });
+    await this.roleRepo.save(moderatorRole);
+
     const memberRole = this.roleRepo.create({
       workspaceId: savedWs.id,
-      name: 'Member',
+      name: 'Membre',
       priority: 10,
       permissions: ['SEND_MESSAGES', 'INVITE_USERS'],
     });
@@ -105,6 +113,8 @@ export class ChannelService {
       workspaceId: savedWs.id,
       name: 'general',
       isPrivate: false,
+      masterSecret: crypto.randomBytes(32).toString('base64'),
+      keyVersion: 1,
     });
     await this.channelRepo.save(generalChannel);
 
@@ -149,16 +159,107 @@ export class ChannelService {
   // ================= CHANNELS =================
 
   async createChannel(input: CreateChannelDto) {
+    // Check actor has permission to manage channels in this workspace
+    const actorMember = await this.memberRepo.findOne({
+      where: { workspaceId: input.workspaceId, userId: input.actorUserId },
+    });
+    if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
+
+    let hasPerm = false;
+    if (actorMember.roleIds?.length > 0) {
+      const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
+      hasPerm = roles.some(
+        (r) =>
+          r.permissions.includes('MANAGE_WORKSPACE') || r.permissions.includes('MANAGE_CHANNELS')
+      );
+    }
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNELS permission');
+
     const masterSecret = crypto.randomBytes(32).toString('base64');
+    const isPrivate = input.visibility === 'private';
+
+    // For private channels, only Admin and Moderator roles can access by default
+    let allowedRoles: string[] = [];
+    if (isPrivate) {
+      const adminAndMod = await this.roleRepo.find({
+        where: { workspaceId: input.workspaceId, name: In(['Administrateur', 'Modérateur']) },
+      });
+      allowedRoles = adminAndMod.map((r) => r.id);
+    }
+
     const channel = this.channelRepo.create({
       workspaceId: input.workspaceId,
       name: input.name,
-      isPrivate: input.visibility === 'private',
-      allowedRoles: [],
+      isPrivate,
+      allowedRoles,
       masterSecret,
       keyVersion: 1,
     });
     return this.channelRepo.save(channel);
+  }
+
+  async renameChannel(channelId: string, actorUserId: string, newName: string) {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
+
+    const actorMember = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId: actorUserId },
+    });
+    if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
+
+    let hasPerm = false;
+    if (actorMember.roleIds?.length > 0) {
+      const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
+      hasPerm = roles.some(
+        (r) =>
+          r.permissions.includes('MANAGE_WORKSPACE') || r.permissions.includes('MANAGE_CHANNELS')
+      );
+    }
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNELS permission');
+
+    channel.name = newName.trim().toLowerCase();
+    await this.channelRepo.save(channel);
+
+    const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
+    await this.redis.publishChannelEvent(
+      'channel.updated',
+      { channelId, name: channel.name, workspaceId: channel.workspaceId },
+      workspaceMemberIds
+    );
+
+    return { success: true, channelId, name: channel.name };
+  }
+
+  async archiveChannel(channelId: string, actorUserId: string) {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
+
+    const actorMember = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId: actorUserId },
+    });
+    if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
+
+    let hasPerm = false;
+    if (actorMember.roleIds?.length > 0) {
+      const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
+      hasPerm = roles.some(
+        (r) =>
+          r.permissions.includes('MANAGE_WORKSPACE') || r.permissions.includes('MANAGE_CHANNELS')
+      );
+    }
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNELS permission');
+
+    channel.archived = true;
+    await this.channelRepo.save(channel);
+
+    const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
+    await this.redis.publishChannelEvent(
+      'channel.deleted',
+      { channelId, workspaceId: channel.workspaceId },
+      workspaceMemberIds
+    );
+
+    return { success: true };
   }
 
   /**
@@ -260,7 +361,7 @@ export class ChannelService {
     const member = await this.memberRepo.findOne({ where: { workspaceId, userId } });
     if (!member) throw new ForbiddenException('Not a member of this workspace');
 
-    const channels = await this.channelRepo.find({ where: { workspaceId } });
+    const channels = await this.channelRepo.find({ where: { workspaceId, archived: false } });
     return channels.filter((ch) => {
       if (!ch.isPrivate) return true;
       return ch.allowedRoles?.some((rId) => member.roleIds?.includes(rId));
@@ -446,6 +547,26 @@ export class ChannelService {
       notifyIds
     );
 
+    // Rotate key so the kicked user's in-memory epoch keys are no longer valid
+    // for future messages. Backfill master secret if needed.
+    if (!channel.masterSecret) {
+      channel.masterSecret = crypto.randomBytes(32).toString('base64');
+    }
+    channel.keyVersion += 1;
+    await this.channelRepo.save(channel);
+
+    const newEpochKey = this.deriveEpochKey(channel.masterSecret, channel.id, channel.keyVersion);
+    // Only notify remaining members (not the kicked user) of the new key
+    await this.redis.publishChannelEvent(
+      'channel.key.rotated',
+      {
+        channelId,
+        newEpochBaseKey: newEpochKey.toString('base64'),
+        keyVersion: channel.keyVersion,
+      },
+      workspaceMemberIds
+    );
+
     return { success: true };
   }
 
@@ -502,7 +623,7 @@ export class ChannelService {
 
     return members.map((m) => {
       const memberRoles = (m.roleIds || []).map((rid) => roleMap.get(rid)).filter(Boolean);
-      const highestRole = memberRoles.sort((a, b) => (b!.priority ?? 0) - (a!.priority ?? 0))[0];
+      const highestRole = memberRoles.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))[0];
       return {
         id: m.id,
         userId: m.userId,

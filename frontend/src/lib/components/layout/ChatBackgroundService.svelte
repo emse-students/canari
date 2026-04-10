@@ -205,6 +205,32 @@
         );
         appendLog(`Retire du canal #${event.channelName || event.channelId}`);
       },
+      onChannelUpdated: (event: { channelId: string; name?: string }) => {
+        if (!event.channelId || !event.name) return;
+        const channelConversationId = `channel_${event.channelId}`;
+        globalChannels.channelWorkspaces = globalChannels.channelWorkspaces.map((ws) => ({
+          ...ws,
+          channels: ws.channels.map((ch) =>
+            ch.id === channelConversationId ? { ...ch, name: event.name! } : ch
+          ),
+        }));
+        const convo = globalConvs.conversations.get(channelConversationId);
+        if (convo)
+          globalConvs.conversations.set(channelConversationId, { ...convo, name: event.name });
+      },
+      onChannelDeleted: (event: { channelId: string }) => {
+        if (!event.channelId) return;
+        const channelConversationId = `channel_${event.channelId}`;
+        globalConvs.conversations.delete(channelConversationId);
+        globalChannels.removeChannelFromWorkspaces(channelConversationId);
+        if (globalConvs.selectedContact === channelConversationId) {
+          globalConvs.selectedContact = null;
+          globalConvs.mobileView = 'list';
+        }
+        if (globalChannels.selectedChannelConversationId === channelConversationId) {
+          globalChannels.selectedChannelConversationId = '';
+        }
+      },
       onSendError: (msg: string) => {
         globalConvs.sendError = msg;
       },
