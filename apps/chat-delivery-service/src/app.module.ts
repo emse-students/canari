@@ -8,6 +8,7 @@ import { GroupMember } from './entities/group-member.entity';
 import { Group } from './entities/group.entity';
 import { PinVerifier } from './entities/pin-verifier.entity';
 import { DeviceGroupMembership } from './entities/device-group-membership.entity';
+import { PushToken } from './entities/push-token.entity';
 import Redis from 'ioredis';
 
 const RedisProvider: Provider = {
@@ -35,6 +36,7 @@ const RedisProvider: Provider = {
         Group,
         PinVerifier,
         DeviceGroupMembership,
+        PushToken,
       ],
       synchronize: process.env.NODE_ENV !== 'production',
     }),
@@ -46,6 +48,7 @@ const RedisProvider: Provider = {
       Group,
       PinVerifier,
       DeviceGroupMembership,
+      PushToken,
     ]),
   ],
   controllers: [AppController],

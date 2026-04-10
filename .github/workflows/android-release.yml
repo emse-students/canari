@@ -65,6 +65,7 @@ jobs:
           ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           BASE_URL: ${{ secrets.BASE_URL }}
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
           required=(
             ANDROID_KEYSTORE_BASE64
@@ -73,6 +74,7 @@ jobs:
             ANDROID_STORE_PASSWORD
             JWT_SECRET
             BASE_URL
+            GOOGLE_SERVICES_JSON
           )
 
           for key in "${required[@]}"; do
@@ -90,6 +92,7 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
           echo "Decoding keystore..."
           cd frontend/src-tauri/gen/android
@@ -99,6 +102,10 @@ jobs:
           echo "keyPassword=$ANDROID_KEY_PASSWORD" >> keystore.properties
           echo "storePassword=$ANDROID_STORE_PASSWORD" >> keystore.properties
           echo "storeFile=release.jks" >> keystore.properties
+
+          echo "Writing google-services.json from secret..."
+          echo "$GOOGLE_SERVICES_JSON" > app/google-services.json
+          echo "✅ google-services.json written"
 
       - name: Verify signing files are populated
         run: |

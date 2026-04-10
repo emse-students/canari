@@ -24,7 +24,9 @@ import { GroupMember } from './entities/group-member.entity';
 import { Group } from './entities/group.entity';
 import { PinVerifier } from './entities/pin-verifier.entity';
 import { DeviceGroupMembership } from './entities/device-group-membership.entity';
+import { PushToken } from './entities/push-token.entity';
 import Redis from 'ioredis';
+import * as admin from 'firebase-admin';
 import * as crypto from 'crypto';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
@@ -554,10 +556,30 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     private pinVerifierRepo: Repository<PinVerifier>,
     @InjectRepository(DeviceGroupMembership)
     private deviceGroupRepo: Repository<DeviceGroupMembership>,
+    @InjectRepository(PushToken)
+    private pushTokenRepo: Repository<PushToken>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
   ) {}
 
   onModuleInit() {
+    // Initialize Firebase Admin SDK once if a service account is provided
+    if (!admin.apps.length) {
+      const sa = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+      if (sa) {
+        try {
+          const serviceAccount = JSON.parse(sa) as admin.ServiceAccount;
+          admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount),
+          });
+          this.logger.log('[FIREBASE] Admin SDK initialized');
+        } catch (e) {
+          this.logger.error('[FIREBASE] Failed to parse FIREBASE_SERVICE_ACCOUNT_JSON', e);
+        }
+      } else {
+        this.logger.warn('[FIREBASE] FIREBASE_SERVICE_ACCOUNT_JSON not set — push disabled');
+      }
+    }
+
     // Both crons run hourly — there's no point detecting staleness more
     // frequently than the message cleanup that defines it.
     const ONE_HOUR = 60 * 60 * 1000;
@@ -2573,6 +2595,33 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         this.logger.log(
           `[SEND][${traceId}] PUBLISHED recipient=${queued.recipientId}:${queued.deviceId} queuedId=${queued.id}`,
         );
+      } else if (!body.isWelcome && !body.isCommit && admin.apps.length > 0) {
+        // Offline recipient: send FCM push notification
+        const pushTokens = await this.pushTokenRepo.find({
+          where: { userId: queued.recipientId },
+        });
+        for (const pt of pushTokens) {
+          try {
+            await admin.messaging().send({
+              token: pt.token,
+              notification: { title: 'Canari', body: 'Nouveau message' },
+              data: {
+                type: 'message',
+                groupId: body.groupId ?? '',
+                queuedMessageId: queued.id,
+              },
+              android: { priority: 'high' },
+              apns: { payload: { aps: { contentAvailable: true } } },
+            });
+            this.logger.log(
+              `[PUSH_SEND][${traceId}] FCM sent user=${queued.recipientId} device=${pt.deviceId}`,
+            );
+          } catch (e) {
+            this.logger.warn(
+              `[PUSH_SEND][${traceId}] FCM failed user=${queued.recipientId} device=${pt.deviceId} err=${e}`,
+            );
+          }
+        }
       }
     }
 
@@ -2667,5 +2716,62 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     );
 
     return { status: 'deleted', count: result.affected || 0 };
+  }
+
+  // ─── Push Notification token management ───────────────────────────────
+
+  /**
+   * Register or refresh a push token for a device.
+   * Upserts on (userId, deviceId) — one token per device per user.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Post('push/register')
+  async registerPushToken(
+    @Body() body: { token: string; deviceId: string; platform?: string },
+    @Headers('x-user-id') userIdRaw: string,
+  ) {
+    const userId = sanitizeQueryValue(userIdRaw, 'userId');
+    const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
+
+    if (typeof body.token !== 'string' || !body.token.trim()) {
+      throw new BadRequestException('token is required');
+    }
+    const token = body.token.trim().slice(0, 500);
+    const platform: 'android' | 'ios' =
+      body.platform === 'ios' ? 'ios' : 'android';
+
+    let pushToken = await this.pushTokenRepo.findOne({
+      where: { userId, deviceId },
+    });
+
+    if (!pushToken) {
+      pushToken = this.pushTokenRepo.create({ userId, deviceId, token, platform });
+    } else {
+      pushToken.token = token;
+      pushToken.platform = platform;
+    }
+
+    await this.pushTokenRepo.save(pushToken);
+    this.logger.log(
+      `[PUSH_REGISTER] user=${userId} device=${deviceId} platform=${platform}`,
+    );
+    return { status: 'registered' };
+  }
+
+  /**
+   * Unregister the push token of a specific device (e.g. on logout).
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Delete('push/unregister/:deviceId')
+  async unregisterPushToken(
+    @Param('deviceId') deviceIdRaw: string,
+    @Headers('x-user-id') userIdRaw: string,
+  ) {
+    const userId = sanitizeQueryValue(userIdRaw, 'userId');
+    const deviceId = sanitizeQueryValue(deviceIdRaw, 'deviceId');
+
+    await this.pushTokenRepo.delete({ userId, deviceId });
+    this.logger.log(`[PUSH_UNREGISTER] user=${userId} device=${deviceId}`);
+    return { status: 'unregistered' };
   }
 }

@@ -21,3 +21,4 @@ keystore.properties
 *.jks
 *.keystore
 release.jks
+google-services.json
