@@ -15,7 +15,7 @@ jobs:
   build-ios:
     name: Build iOS IPA
     if: ${{ github.event.inputs.force == 'true' }}
-    runs-on: macos-14   # macOS Sonoma avec Xcode 15+
+    runs-on: macos-14 # macOS Sonoma avec Xcode 15+
 
     steps:
       - uses: actions/checkout@v6

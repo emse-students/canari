@@ -15,18 +15,22 @@ Cela crée `frontend/src-tauri/gen/apple/`.
 ## Étape 2 — Ajouter Firebase iOS SDK via Swift Package Manager
 
 Dans Xcode → File → Add Package Dependencies :
+
 ```
 https://github.com/firebase/firebase-ios-sdk
 ```
+
 Sélectionner uniquement `FirebaseMessaging`.
 
 ## Étape 3 — Placer GoogleService-Info.plist
 
 Copier le fichier depuis Firebase Console (Paramètres du projet → iOS),
 et l'ajouter dans Xcode :
+
 ```
 frontend/src-tauri/gen/apple/Canari_iOS/GoogleService-Info.plist
 ```
+
 Ce fichier est gitignored (`gen/apple/.gitignore`) — il sera injecté
 depuis le secret CI `GOOGLE_SERVICE_INFO_PLIST`.
 
@@ -141,11 +145,11 @@ Console → Paramètres du projet → iOS → Télécharger GoogleService-Info.p
 
 ## Résumé des secrets GitHub nécessaires (iOS)
 
-| Secret                       | Contenu                                      |
-|------------------------------|----------------------------------------------|
-| `APPLE_SIGNING_IDENTITY`     | "Apple Distribution: EMSE (TEAMID)"          |
-| `APPLE_CERTIFICATE_BASE64`   | Certificat .p12 encodé base64                |
-| `APPLE_CERTIFICATE_PASSWORD` | Mot de passe du certificat .p12              |
-| `APPLE_PROVISIONING_PROFILE` | Profil .mobileprovision encodé base64        |
-| `APPLE_TEAM_ID`              | Identifiant équipe Apple Developer           |
-| `GOOGLE_SERVICE_INFO_PLIST`  | Contenu de GoogleService-Info.plist          |
+| Secret                       | Contenu                               |
+| ---------------------------- | ------------------------------------- |
+| `APPLE_SIGNING_IDENTITY`     | "Apple Distribution: EMSE (TEAMID)"   |
+| `APPLE_CERTIFICATE_BASE64`   | Certificat .p12 encodé base64         |
+| `APPLE_CERTIFICATE_PASSWORD` | Mot de passe du certificat .p12       |
+| `APPLE_PROVISIONING_PROFILE` | Profil .mobileprovision encodé base64 |
+| `APPLE_TEAM_ID`              | Identifiant équipe Apple Developer    |
+| `GOOGLE_SERVICE_INFO_PLIST`  | Contenu de GoogleService-Info.plist   |
