@@ -1,0 +1,184 @@
+name: iOS Release
+
+on:
+  release:
+    types: [created]
+  workflow_dispatch:
+
+# NOTE: Ce workflow nécessite que le projet iOS Tauri ait été initialisé
+# via `tauri ios init` (depuis macOS) et que gen/apple/ soit versionné.
+# Secrets GitHub requis :
+#   - APPLE_SIGNING_IDENTITY       : ex. "Apple Distribution: EMSE (XXXXXXXXXX)"
+#   - APPLE_CERTIFICATE_BASE64     : certificat .p12 encodé en base64
+#   - APPLE_CERTIFICATE_PASSWORD   : mot de passe du certificat .p12
+#   - APPLE_PROVISIONING_PROFILE   : profil .mobileprovision encodé en base64
+#   - APPLE_TEAM_ID                : identifiant équipe Apple (ex. "XXXXXXXXXX")
+#   - GOOGLE_SERVICE_INFO_PLIST    : contenu du fichier GoogleService-Info.plist
+#   - JWT_SECRET                   : clé JWT backend Canari
+#   - BASE_URL                     : URL de base de l'API
+
+jobs:
+  build-ios:
+    name: Build iOS IPA
+    runs-on: macos-14   # macOS Sonoma avec Xcode 15+
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            frontend/node_modules
+            ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('frontend/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Install Rust Stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: aarch64-apple-ios,x86_64-apple-ios,aarch64-apple-ios-sim
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: |
+          bun install
+          bunx svelte-kit sync
+
+      - name: Build WASM
+        working-directory: frontend/mls-wasm
+        run: wasm-pack build --target web --out-dir ../src/lib/wasm
+
+      - name: Generate protobuf bindings
+        working-directory: frontend
+        run: bun run proto:gen
+
+      - name: Validate iOS release secrets
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_PROVISIONING_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          GOOGLE_SERVICE_INFO_PLIST: ${{ secrets.GOOGLE_SERVICE_INFO_PLIST }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          BASE_URL: ${{ secrets.BASE_URL }}
+        run: |
+          required=(
+            APPLE_SIGNING_IDENTITY
+            APPLE_CERTIFICATE_BASE64
+            APPLE_CERTIFICATE_PASSWORD
+            APPLE_PROVISIONING_PROFILE
+            APPLE_TEAM_ID
+            GOOGLE_SERVICE_INFO_PLIST
+            JWT_SECRET
+            BASE_URL
+          )
+
+          for key in "${required[@]}"; do
+            if [ -z "${!key}" ]; then
+              echo "::error::Missing required GitHub secret: ${key}"
+              exit 1
+            fi
+          done
+
+          echo "✅ Required iOS secrets are present"
+
+      - name: Install Apple signing certificate
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          # Créer un keychain temporaire
+          KEYCHAIN_PATH="$RUNNER_TEMP/ios-build.keychain-db"
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 16)
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Décoder et importer le certificat
+          echo "$APPLE_CERTIFICATE_BASE64" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" \
+            -k "$KEYCHAIN_PATH" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/xcodebuild
+
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          echo "✅ Signing certificate installed"
+
+      - name: Install provisioning profile
+        env:
+          APPLE_PROVISIONING_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
+        run: |
+          PP_PATH="$RUNNER_TEMP/canari.mobileprovision"
+          echo "$APPLE_PROVISIONING_PROFILE" | base64 --decode > "$PP_PATH"
+
+          PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$PROFILES_DIR"
+
+          # Extraire l'UUID du profil pour le nommage
+          UUID=$(security cms -D -i "$PP_PATH" | plutil -extract UUID raw -)
+          cp "$PP_PATH" "$PROFILES_DIR/$UUID.mobileprovision"
+          echo "PP_UUID=$UUID" >> $GITHUB_ENV
+          echo "✅ Provisioning profile installed (UUID: $UUID)"
+
+      - name: Write GoogleService-Info.plist
+        env:
+          GOOGLE_SERVICE_INFO_PLIST: ${{ secrets.GOOGLE_SERVICE_INFO_PLIST }}
+        run: |
+          # Le fichier va dans le dossier sourcé par Xcode dans gen/apple/
+          PLIST_DIR="frontend/src-tauri/gen/apple/Canari_iOS"
+          mkdir -p "$PLIST_DIR"
+          echo "$GOOGLE_SERVICE_INFO_PLIST" > "$PLIST_DIR/GoogleService-Info.plist"
+          echo "✅ GoogleService-Info.plist written"
+
+      - name: Create frontend .env
+        working-directory: frontend
+        env:
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          BASE_URL: ${{ secrets.BASE_URL }}
+        run: |
+          echo "VITE_JWT_SECRET=${JWT_SECRET}" > .env
+          echo "VITE_GATEWAY_URL=${BASE_URL}" >> .env
+          echo "VITE_DELIVERY_URL=${BASE_URL}" >> .env
+          echo "VITE_MEDIA_URL=${BASE_URL}" >> .env
+          echo "VITE_CALL_URL=${BASE_URL}" >> .env
+          echo "VITE_SOCIAL_URL=${BASE_URL}" >> .env
+          echo "VITE_CORE_URL=${BASE_URL}" >> .env
+
+      - name: Build iOS IPA
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        with:
+          projectPath: ./frontend
+          tauriScript: bun tauri ios
+          args: build --export-method app-store-connect
+
+      - name: Upload IPA Artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ios-release-ipa
+          path: frontend/src-tauri/gen/apple/build/arm64/*.ipa
+
+      - name: Upload IPA to Release
+        uses: softprops/action-gh-release@v1
+        if: github.event_name == 'release'
+        with:
+          files: frontend/src-tauri/gen/apple/build/arm64/*.ipa
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

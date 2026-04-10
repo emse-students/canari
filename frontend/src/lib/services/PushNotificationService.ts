@@ -1,12 +1,14 @@
 /**
  * PushNotificationService.ts
  *
- * Gestion des notifications push (FCM) sur Android via Tauri.
+ * Gestion des notifications push (FCM/APNs) sur Android et iOS via Tauri.
  *
  * Flux :
- *  1. Au démarrage, lit le token FCM via la commande Rust `get_fcm_token`
- *  2. Envoie le token au backend Canari pour qu'il puisse envoyer des push
- *  3. Expose une function utilitaire pour re-demander le token si nécessaire
+ *  1. Au démarrage, détecte la plateforme (Android / iOS / desktop)
+ *  2. Lit le token push via la commande Rust `get_fcm_token`
+ *     – Android : token FCM lu depuis les SharedPreferences Kotlin
+ *     – iOS     : token APNs/FCM lu depuis UserDefaults Swift (à implémenter)
+ *  3. Envoie le token au backend Canari avec la plateforme correcte
  *
  * Sur desktop/web, les méthodes sont des no-op silencieux.
  */
@@ -16,9 +18,22 @@ import { invoke } from '@tauri-apps/api/core';
 
 const FCM_TOKEN_STORAGE_KEY = 'canari_fcm_token';
 
+type PushPlatform = 'android' | 'ios';
+
+/** Détecte la plateforme mobile courante. Retourne null hors mobile/Tauri. */
+function detectPlatform(): PushPlatform | null {
+  if (typeof window === 'undefined') return null;
+  const ua = window.navigator?.userAgent ?? '';
+  if (/android/i.test(ua)) return 'android';
+  if (/iphone|ipad|ipod/i.test(ua)) return 'ios';
+  return null;
+}
+
 /**
- * Lit le token FCM depuis la couche Rust (Android uniquement).
- * Retourne null hors Android ou si le token n'est pas encore disponible.
+ * Lit le token push depuis la couche Rust (Android/iOS uniquement).
+ * – Android : token FCM depuis les SharedPreferences Kotlin
+ * – iOS     : token FCM/APNs depuis les UserDefaults Swift
+ * Retourne null hors mobile ou si le token n'est pas encore disponible.
  */
 export async function getFcmToken(): Promise<string | null> {
   if (!isTauri()) return null;
@@ -62,16 +77,24 @@ export async function registerPushToken(
  *
  * @param apiBaseUrl   URL de base de l'API backend (ex: "https://api.canari.app")
  * @param authToken    Token d'authentification pour l'API
+ * @param deviceId     Identifiant unique de l'appareil
  */
-export async function startPushService(apiBaseUrl: string, authToken: string): Promise<void> {
-  await registerPushToken(async (fcmToken) => {
+export async function startPushService(
+  apiBaseUrl: string,
+  authToken: string,
+  deviceId: string
+): Promise<void> {
+  const platform = detectPlatform();
+  if (!platform) return; // desktop ou web : pas de push
+
+  await registerPushToken(async (pushToken) => {
     const response = await fetch(`${apiBaseUrl}/push/register`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${authToken}`,
+        'x-user-id': authToken,
       },
-      body: JSON.stringify({ token: fcmToken, platform: 'android' }),
+      body: JSON.stringify({ token: pushToken, deviceId, platform }),
     });
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
