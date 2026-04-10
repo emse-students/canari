@@ -649,6 +649,14 @@ export class TauriMlsService implements IMlsService {
     const encryptedState = state ? Array.from(state) : null;
     await invoke('initialiser_mls', { userId, deviceId: this.deviceId, pin, encryptedState });
 
+    // Sauvegarde le contexte de session pour les notifications push Android (no-op desktop).
+    void invoke('store_push_context', {
+      pin,
+      userId,
+      deviceId: this.deviceId,
+      baseUrl: this.historyUrl,
+    }).catch(() => {});
+
     // Populate the local groups cache from Rust after init.
     try {
       const groups = await invoke<string[]>('lister_groupes');
@@ -768,7 +776,10 @@ export class TauriMlsService implements IMlsService {
 
   async saveState(pin: string) {
     // Pass the PIN to the Tauri command
-    return await invoke<Uint8Array>('sauvegarder_mls', { pin });
+    const bytes = await invoke<Uint8Array>('sauvegarder_mls', { pin });
+    // Persiste aussi l'état chiffré pour les notifications push Android (no-op desktop).
+    void invoke('save_mls_state_for_push', { pin }).catch(() => {});
+    return bytes;
   }
 
   private async fetchPrekeyCount(): Promise<number> {

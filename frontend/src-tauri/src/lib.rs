@@ -339,6 +339,302 @@ fn get_fcm_token(app: tauri::AppHandle) -> Option<String> {
     }
 }
 
+// ─── Protobuf minimal helpers (pas de dépendance externe) ────────────────────
+
+/// Lit un varint protobuf depuis `bytes` à la position `pos`.
+/// Retourne (valeur, position_suivante) ou None si invalide.
+#[cfg(target_os = "android")]
+fn read_varint(bytes: &[u8], pos: usize) -> Option<(u64, usize)> {
+    let mut result: u64 = 0;
+    let mut shift = 0u32;
+    let mut cur = pos;
+    loop {
+        if cur >= bytes.len() || shift >= 64 {
+            return None;
+        }
+        let byte = bytes[cur] as u64;
+        result |= (byte & 0x7f) << shift;
+        cur += 1;
+        if byte & 0x80 == 0 {
+            break;
+        }
+        shift += 7;
+    }
+    Some((result, cur))
+}
+
+/// Cherche le premier champ `field_num` de wire type 2 (LEN) dans `bytes`.
+/// Retourne les octets du payload de ce champ, ou None si absent.
+#[cfg(target_os = "android")]
+fn find_length_delimited_field(bytes: &[u8], field_num: u32) -> Option<Vec<u8>> {
+    let mut pos = 0usize;
+    while pos < bytes.len() {
+        let (tag, after_tag) = read_varint(bytes, pos)?;
+        let wire_type = tag & 0x7;
+        let field = (tag >> 3) as u32;
+        pos = after_tag;
+        match wire_type {
+            0 => {
+                let (_, next) = read_varint(bytes, pos)?;
+                pos = next;
+            }
+            1 => {
+                if pos + 8 > bytes.len() {
+                    return None;
+                }
+                pos += 8;
+            }
+            2 => {
+                let (len, after_len) = read_varint(bytes, pos)?;
+                pos = after_len;
+                let end = pos + len as usize;
+                if end > bytes.len() {
+                    return None;
+                }
+                if field == field_num {
+                    return Some(bytes[pos..end].to_vec());
+                }
+                pos = end;
+            }
+            5 => {
+                if pos + 4 > bytes.len() {
+                    return None;
+                }
+                pos += 4;
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// Extrait le texte d'un `AppMessage` protobuf déchiffré.
+/// - field 1 = TextMsg  (.content = field 1)
+/// - field 2 = ReplyMsg (.content = field 1)
+/// - field 4 = MediaMsg → texte générique
+#[cfg(target_os = "android")]
+fn extract_app_message_text(bytes: &[u8]) -> Option<String> {
+    // TextMsg
+    if let Some(text_msg) = find_length_delimited_field(bytes, 1) {
+        if let Some(content) = find_length_delimited_field(&text_msg, 1) {
+            if let Ok(s) = String::from_utf8(content) {
+                if !s.is_empty() {
+                    return Some(s);
+                }
+            }
+        }
+    }
+    // ReplyMsg
+    if let Some(reply_msg) = find_length_delimited_field(bytes, 2) {
+        if let Some(content) = find_length_delimited_field(&reply_msg, 1) {
+            if let Ok(s) = String::from_utf8(content) {
+                if !s.is_empty() {
+                    return Some(s);
+                }
+            }
+        }
+    }
+    // MediaMsg
+    if find_length_delimited_field(bytes, 4).is_some() {
+        return Some("📎 Pièce jointe".to_string());
+    }
+    None
+}
+
+// ─── Fonction JNI appelée par CanariFirebaseMessagingService ─────────────────
+
+/// Déchiffre un message MLS et extrait son texte.
+/// Appelée directement depuis Kotlin via System.loadLibrary("mines_app_lib").
+/// Retourne le texte du message, ou "" si le déchiffrement échoue.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeDecryptMessage(
+    mut env: jni::JNIEnv,
+    _service: jni::objects::JObject,
+    state_bytes: jni::objects::JByteArray,
+    pin: jni::objects::JString,
+    group_id: jni::objects::JString,
+    ciphertext: jni::objects::JByteArray,
+) -> jni::objects::JString {
+    let text = (|| -> Option<String> {
+        let state_vec = env.convert_byte_array(&state_bytes).ok()?;
+        let pin_str: String = env.get_string(&pin).ok()?.into();
+        let group_id_str: String = env.get_string(&group_id).ok()?.into();
+        let cipher_vec = env.convert_byte_array(&ciphertext).ok()?;
+
+        // Crée un MlsManager temporaire depuis l'état sauvegardé (lecture seule du fichier).
+        // Ce manager TEMPORAIRE avance son propre ratchet mais n'écrit rien sur disque.
+        // Le MlsManager de l'app principale peut donc traiter le même message normalement.
+        let mut manager =
+            MlsManager::load_encrypted("_push_", "_push_", Some(state_vec), &pin_str).ok()?;
+
+        let plaintext = manager
+            .process_incoming_message(&group_id_str, &cipher_vec)
+            .ok()??;
+
+        extract_app_message_text(&plaintext)
+    })()
+    .unwrap_or_default();
+
+    env.new_string(&text)
+        .unwrap_or_else(|_| env.new_string("").unwrap())
+}
+
+// ─── Commandes Tauri : contexte push ─────────────────────────────────────────
+
+/// Sauvegarde le PIN et le contexte de session dans les SharedPreferences Android
+/// pour que CanariFirebaseMessagingService puisse déchiffrer les notifications push.
+/// No-op sur desktop / iOS.
+#[tauri::command]
+fn store_push_context(
+    pin: String,
+    user_id: String,
+    device_id: String,
+    base_url: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (pin, user_id, device_id, base_url, app);
+        return Ok(());
+    }
+    #[cfg(target_os = "android")]
+    android_store_push_context(pin, user_id, device_id, base_url, app)
+}
+
+#[cfg(target_os = "android")]
+fn android_store_push_context(
+    pin: String,
+    user_id: String,
+    device_id: String,
+    base_url: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    use tauri::Manager;
+    let ctx = app.jni_handle();
+    let env = ctx.env();
+    let prefs_name = env.new_string("canari_prefs").map_err(|e| e.to_string())?;
+    let mode = 0i32; // Context.MODE_PRIVATE
+    let activity = ctx.activity();
+    let prefs = env
+        .call_method(
+            activity,
+            "getSharedPreferences",
+            "(Ljava/lang/String;I)Landroid/content/SharedPreferences;",
+            &[prefs_name.into(), mode.into()],
+        )
+        .map_err(|e| e.to_string())?
+        .l()
+        .map_err(|e| e.to_string())?;
+
+    let editor = env
+        .call_method(
+            &prefs,
+            "edit",
+            "()Landroid/content/SharedPreferences$Editor;",
+            &[],
+        )
+        .map_err(|e| e.to_string())?
+        .l()
+        .map_err(|e| e.to_string())?;
+
+    let put_sig = "(Ljava/lang/String;Ljava/lang/String;)\
+                   Landroid/content/SharedPreferences$Editor;";
+    for (key, val) in [
+        ("session_pin", pin.as_str()),
+        ("push_user_id", user_id.as_str()),
+        ("push_device_id", device_id.as_str()),
+        ("push_base_url", base_url.as_str()),
+    ] {
+        let k = env.new_string(key).map_err(|e| e.to_string())?;
+        let v = env.new_string(val).map_err(|e| e.to_string())?;
+        env.call_method(&editor, "putString", put_sig, &[k.into(), v.into()])
+            .map_err(|e| e.to_string())?;
+    }
+
+    env.call_method(&editor, "apply", "()V", &[])
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+/// Chiffre l'état MLS courant et l'écrit dans {filesDir}/mls_push.bin
+/// pour que CanariFirebaseMessagingService puisse le lire.
+/// No-op sur desktop / iOS.
+#[tauri::command]
+fn save_mls_state_for_push(
+    pin: String,
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+) -> Result<(), String> {
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (pin, app, state);
+        return Ok(());
+    }
+    #[cfg(target_os = "android")]
+    android_save_mls_state_for_push(pin, app, state)
+}
+
+#[cfg(target_os = "android")]
+fn android_save_mls_state_for_push(
+    pin: String,
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+) -> Result<(), String> {
+    use tauri::Manager;
+
+    // 1. Chiffrer l'état MLS
+    let encrypted_bytes = {
+        let lock = state
+            .mls_manager
+            .lock()
+            .map_err(|_| "Failed to lock state")?;
+        let manager = lock.as_ref().ok_or("MLS not initialized")?;
+        manager.save_encrypted(&pin).map_err(|e| e.to_string())?
+    };
+
+    // 2. Récupérer le chemin filesDir via JNI
+    let ctx = app.jni_handle();
+    let env = ctx.env();
+    let activity = ctx.activity();
+
+    let files_dir = env
+        .call_method(
+            activity,
+            "getFilesDir",
+            "()Ljava/io/File;",
+            &[],
+        )
+        .map_err(|e| e.to_string())?
+        .l()
+        .map_err(|e| e.to_string())?;
+
+    let path_jobj = env
+        .call_method(
+            &files_dir,
+            "getAbsolutePath",
+            "()Ljava/lang/String;",
+            &[],
+        )
+        .map_err(|e| e.to_string())?
+        .l()
+        .map_err(|e| e.to_string())?;
+
+    let path: String = env
+        .get_string((&path_jobj).into())
+        .map_err(|e| e.to_string())?
+        .into();
+
+    // 3. Écrire le fichier
+    let state_path = format!("{}/mls_push.bin", path);
+    std::fs::write(&state_path, &encrypted_bytes).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
@@ -437,7 +733,9 @@ pub fn run() {
             recevoir_message,
             recevoir_message_bytes,
             exporter_secret,
-            get_fcm_token
+            get_fcm_token,
+            store_push_context,
+            save_mls_state_for_push
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

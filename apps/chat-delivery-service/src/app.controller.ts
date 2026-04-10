@@ -2609,14 +2609,18 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
           try {
             await admin.messaging().send({
               token: pt.token,
-              notification: { title: 'Canari', body: 'Nouveau message' },
+              // Pas de clé "notification" → data-only push, onMessageReceived()
+              // est toujours appelé (foreground ET background).
               data: {
                 type: 'message',
                 groupId: body.groupId ?? '',
                 queuedMessageId: queued.id,
+                senderId: body.senderId ?? '',
               },
               android: { priority: 'high' },
-              apns: { payload: { aps: { contentAvailable: true } } },
+              apns: {
+                payload: { aps: { contentAvailable: true, sound: 'default' } },
+              },
             });
             this.logger.log(
               `[PUSH_SEND][${traceId}] FCM sent user=${queued.recipientId} device=${pt.deviceId}`,
