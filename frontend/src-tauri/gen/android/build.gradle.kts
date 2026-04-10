@@ -23,10 +23,9 @@ allprojects {
 
 subprojects {
     afterEvaluate {
-        if (hasProperty("android")) {
-            android {
-                // Force compileSdkVersion to 36 for all subprojects (required for tauri-android compatibility)
-                compileSdk = 36
+        if (pluginManager.hasPlugin("com.android.library") || pluginManager.hasPlugin("com.android.application")) {
+            extensions.configure<com.android.build.gradle.BaseExtension>("android") {
+                compileSdkVersion(36)
             }
         }
     }
