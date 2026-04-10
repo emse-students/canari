@@ -141,7 +141,6 @@ jobs:
           echo "VITE_CORE_URL=${BASE_URL}" >> .env
           echo "VITE_AUTHENTIK_URL=${AUTHENTIK_URL}" >> .env
           echo "VITE_AUTHENTIK_CLIENT_ID=${AUTHENTIK_CLIENT_ID}" >> .env
-          echo "VITE_AUTHENTIK_REDIRECT_URI=https://tauri.localhost/auth/callback" >> .env
 
       - name: Verify frontend env for Android build
         working-directory: frontend
@@ -155,7 +154,6 @@ jobs:
           grep -q '^VITE_CORE_URL=.' .env
           grep -q '^VITE_AUTHENTIK_URL=.' .env
           grep -q '^VITE_AUTHENTIK_CLIENT_ID=.' .env
-          grep -q '^VITE_AUTHENTIK_REDIRECT_URI=.' .env
           echo "✅ Android frontend env prepared"
 
       - name: Build Android APK
