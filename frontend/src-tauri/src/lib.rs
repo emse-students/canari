@@ -13,12 +13,6 @@ use tauri::{
     tray::TrayIconBuilder,
 };
 
-#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-use tauri::{
-    menu::{MenuBuilder, MenuItemBuilder},
-    tray::TrayIconBuilder,
-};
-
 // State wrapper
 struct AppState {
     mls_manager: Mutex<Option<MlsManager>>,

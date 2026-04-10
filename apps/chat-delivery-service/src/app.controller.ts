@@ -573,10 +573,15 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
           });
           this.logger.log('[FIREBASE] Admin SDK initialized');
         } catch (e) {
-          this.logger.error('[FIREBASE] Failed to parse FIREBASE_SERVICE_ACCOUNT_JSON', e);
+          this.logger.error(
+            '[FIREBASE] Failed to parse FIREBASE_SERVICE_ACCOUNT_JSON',
+            e,
+          );
         }
       } else {
-        this.logger.warn('[FIREBASE] FIREBASE_SERVICE_ACCOUNT_JSON not set — push disabled');
+        this.logger.warn(
+          '[FIREBASE] FIREBASE_SERVICE_ACCOUNT_JSON not set — push disabled',
+        );
       }
     }
 
@@ -2745,7 +2750,12 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     });
 
     if (!pushToken) {
-      pushToken = this.pushTokenRepo.create({ userId, deviceId, token, platform });
+      pushToken = this.pushTokenRepo.create({
+        userId,
+        deviceId,
+        token,
+        platform,
+      });
     } else {
       pushToken.token = token;
       pushToken.platform = platform;
