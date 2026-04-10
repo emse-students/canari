@@ -18,6 +18,9 @@
     "sql:allow-execute",
     "biometric:default",
     "keystore:default",
-    "http:default"
+    {
+      "identifier": "http:default",
+      "allow": ["http://*", "https://*"]
+    }
   ]
 }

@@ -46,6 +46,12 @@ function authentikClientId(): string {
   return (import.meta.env.VITE_AUTHENTIK_CLIENT_ID as string) || '';
 }
 
+function oidcRedirectUri(): string {
+  const configured = (import.meta.env.VITE_AUTHENTIK_REDIRECT_URI as string | undefined)?.trim();
+  if (configured) return configured;
+  return `${window.location.origin}/auth/callback`;
+}
+
 export function devRoutesEnabled(): boolean {
   return isEnvFlagEnabled(import.meta.env.VITE_ENABLE_DEV_ROUTES as string | undefined);
 }
@@ -68,7 +74,7 @@ export function startOidcLogin(returnTo = '/chat'): void {
   sessionStorage.setItem(OIDC_STATE_KEY, state);
   sessionStorage.setItem(OIDC_RETURN_KEY, returnTo);
 
-  const redirectUri = `${window.location.origin}/auth/callback`;
+  const redirectUri = oidcRedirectUri();
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,
@@ -95,7 +101,7 @@ export async function handleOidcCallback(
   }
   sessionStorage.removeItem(OIDC_STATE_KEY);
 
-  const redirectUri = `${coreUrl()}/auth/callback`;
+  const redirectUri = oidcRedirectUri();
 
   const res = await fetch(`${coreUrl()}/api/auth/oidc/callback`, {
     method: 'POST',
