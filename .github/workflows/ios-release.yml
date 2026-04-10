@@ -1,25 +1,20 @@
 name: iOS Release
 
 on:
-  release:
-    types: [created]
   workflow_dispatch:
+    inputs:
+      force:
+        description: 'Set to "true" to force enable (disabled by default)'
+        required: false
+        default: 'false'
 
-# NOTE: Ce workflow nécessite que le projet iOS Tauri ait été initialisé
-# via `tauri ios init` (depuis macOS) et que gen/apple/ soit versionné.
-# Secrets GitHub requis :
-#   - APPLE_SIGNING_IDENTITY       : ex. "Apple Distribution: EMSE (XXXXXXXXXX)"
-#   - APPLE_CERTIFICATE_BASE64     : certificat .p12 encodé en base64
-#   - APPLE_CERTIFICATE_PASSWORD   : mot de passe du certificat .p12
-#   - APPLE_PROVISIONING_PROFILE   : profil .mobileprovision encodé en base64
-#   - APPLE_TEAM_ID                : identifiant équipe Apple (ex. "XXXXXXXXXX")
-#   - GOOGLE_SERVICE_INFO_PLIST    : contenu du fichier GoogleService-Info.plist
-#   - JWT_SECRET                   : clé JWT backend Canari
-#   - BASE_URL                     : URL de base de l'API
+# Ce workflow est temporairement désactivé (iOS non finalisé).
+# Pour le réactiver, mettre jobs.build-ios.if: true
 
 jobs:
   build-ios:
     name: Build iOS IPA
+    if: ${{ github.event.inputs.force == 'true' }}
     runs-on: macos-14   # macOS Sonoma avec Xcode 15+
 
     steps:

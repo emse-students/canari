@@ -2,13 +2,12 @@
 use mls_core::MlsManager;
 use std::sync::Mutex;
 
-use tauri::{
-    image::Image,
-    Manager, WindowEvent,
-};
+use tauri::Manager;
 
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 use tauri::{
+    image::Image,
+    WindowEvent,
     menu::{MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
 };
@@ -292,44 +291,16 @@ fn exporter_secret(
         .map_err(|e| e.to_string())
 }
 
-/// Retourne le token FCM stocké par CanariFirebaseMessagingService/MainActivity.
-/// Sur Android, lit les SharedPreferences "canari_prefs" / clé "fcm_token".
+/// Retourne le token FCM stocké par CanariFirebaseMessagingService.
+/// Sur Android, lit {app_data_dir}/fcm_token.txt (écrit par onNewToken).
 /// Sur desktop/iOS, retourne None (pas de FCM).
 #[tauri::command]
 fn get_fcm_token(app: tauri::AppHandle) -> Option<String> {
     #[cfg(target_os = "android")]
     {
-        use tauri::Manager;
-        // Accès aux SharedPreferences Android via le JNI Tauri
-        let ctx = app.jni_handle();
-        let env = ctx.env();
-        // Utilise l'API SharedPreferences via JNI
-        let prefs_name = env.new_string("canari_prefs").ok()?;
-        let mode = 0i32; // Context.MODE_PRIVATE
-        let activity = ctx.activity();
-        let prefs = env
-            .call_method(
-                activity,
-                "getSharedPreferences",
-                "(Ljava/lang/String;I)Landroid/content/SharedPreferences;",
-                &[prefs_name.into(), mode.into()],
-            )
-            .ok()?
-            .l()
-            .ok()?;
-        let key = env.new_string("fcm_token").ok()?;
-        let default_val = env.new_string("").ok()?;
-        let token_jstr = env
-            .call_method(
-                prefs,
-                "getString",
-                "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
-                &[key.into(), default_val.into()],
-            )
-            .ok()?
-            .l()
-            .ok()?;
-        let token: String = env.get_string((&token_jstr).into()).ok()?.into();
+        let data_dir = app.path().app_data_dir().ok()?;
+        let token = std::fs::read_to_string(data_dir.join("fcm_token.txt")).ok()?;
+        let token = token.trim().to_string();
         if token.is_empty() { None } else { Some(token) }
     }
     #[cfg(not(target_os = "android"))]
@@ -482,9 +453,8 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
 
 // ─── Commandes Tauri : contexte push ─────────────────────────────────────────
 
-/// Sauvegarde le PIN et le contexte de session dans les SharedPreferences Android
+/// Sauvegarde le PIN et le contexte de session dans {app_data_dir}/push_context.json
 /// pour que CanariFirebaseMessagingService puisse déchiffrer les notifications push.
-/// No-op sur desktop / iOS.
 #[tauri::command]
 fn store_push_context(
     pin: String,
@@ -493,98 +463,26 @@ fn store_push_context(
     base_url: String,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
-    #[cfg(not(target_os = "android"))]
-    {
-        let _ = (pin, user_id, device_id, base_url, app);
-        return Ok(());
-    }
-    #[cfg(target_os = "android")]
-    android_store_push_context(pin, user_id, device_id, base_url, app)
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
+    let json = serde_json::json!({
+        "pin": pin,
+        "userId": user_id,
+        "deviceId": device_id,
+        "baseUrl": base_url
+    });
+    std::fs::write(data_dir.join("push_context.json"), json.to_string())
+        .map_err(|e| e.to_string())
 }
 
-#[cfg(target_os = "android")]
-fn android_store_push_context(
-    pin: String,
-    user_id: String,
-    device_id: String,
-    base_url: String,
-    app: tauri::AppHandle,
-) -> Result<(), String> {
-    use tauri::Manager;
-    let ctx = app.jni_handle();
-    let env = ctx.env();
-    let prefs_name = env.new_string("canari_prefs").map_err(|e| e.to_string())?;
-    let mode = 0i32; // Context.MODE_PRIVATE
-    let activity = ctx.activity();
-    let prefs = env
-        .call_method(
-            activity,
-            "getSharedPreferences",
-            "(Ljava/lang/String;I)Landroid/content/SharedPreferences;",
-            &[prefs_name.into(), mode.into()],
-        )
-        .map_err(|e| e.to_string())?
-        .l()
-        .map_err(|e| e.to_string())?;
-
-    let editor = env
-        .call_method(
-            &prefs,
-            "edit",
-            "()Landroid/content/SharedPreferences$Editor;",
-            &[],
-        )
-        .map_err(|e| e.to_string())?
-        .l()
-        .map_err(|e| e.to_string())?;
-
-    let put_sig = "(Ljava/lang/String;Ljava/lang/String;)\
-                   Landroid/content/SharedPreferences$Editor;";
-    for (key, val) in [
-        ("session_pin", pin.as_str()),
-        ("push_user_id", user_id.as_str()),
-        ("push_device_id", device_id.as_str()),
-        ("push_base_url", base_url.as_str()),
-    ] {
-        let k = env.new_string(key).map_err(|e| e.to_string())?;
-        let v = env.new_string(val).map_err(|e| e.to_string())?;
-        env.call_method(&editor, "putString", put_sig, &[k.into(), v.into()])
-            .map_err(|e| e.to_string())?;
-    }
-
-    env.call_method(&editor, "apply", "()V", &[])
-        .map_err(|e| e.to_string())?;
-
-    Ok(())
-}
-
-/// Chiffre l'état MLS courant et l'écrit dans {filesDir}/mls_push.bin
+/// Chiffre l'état MLS courant et l'écrit dans {app_data_dir}/mls_push.bin
 /// pour que CanariFirebaseMessagingService puisse le lire.
-/// No-op sur desktop / iOS.
 #[tauri::command]
 fn save_mls_state_for_push(
     pin: String,
     app: tauri::AppHandle,
     state: tauri::State<AppState>,
 ) -> Result<(), String> {
-    #[cfg(not(target_os = "android"))]
-    {
-        let _ = (pin, app, state);
-        return Ok(());
-    }
-    #[cfg(target_os = "android")]
-    android_save_mls_state_for_push(pin, app, state)
-}
-
-#[cfg(target_os = "android")]
-fn android_save_mls_state_for_push(
-    pin: String,
-    app: tauri::AppHandle,
-    state: tauri::State<AppState>,
-) -> Result<(), String> {
-    use tauri::Manager;
-
-    // 1. Chiffrer l'état MLS
     let encrypted_bytes = {
         let lock = state
             .mls_manager
@@ -593,44 +491,10 @@ fn android_save_mls_state_for_push(
         let manager = lock.as_ref().ok_or("MLS not initialized")?;
         manager.save_encrypted(&pin).map_err(|e| e.to_string())?
     };
-
-    // 2. Récupérer le chemin filesDir via JNI
-    let ctx = app.jni_handle();
-    let env = ctx.env();
-    let activity = ctx.activity();
-
-    let files_dir = env
-        .call_method(
-            activity,
-            "getFilesDir",
-            "()Ljava/io/File;",
-            &[],
-        )
-        .map_err(|e| e.to_string())?
-        .l()
-        .map_err(|e| e.to_string())?;
-
-    let path_jobj = env
-        .call_method(
-            &files_dir,
-            "getAbsolutePath",
-            "()Ljava/lang/String;",
-            &[],
-        )
-        .map_err(|e| e.to_string())?
-        .l()
-        .map_err(|e| e.to_string())?;
-
-    let path: String = env
-        .get_string((&path_jobj).into())
-        .map_err(|e| e.to_string())?
-        .into();
-
-    // 3. Écrire le fichier
-    let state_path = format!("{}/mls_push.bin", path);
-    std::fs::write(&state_path, &encrypted_bytes).map_err(|e| e.to_string())?;
-
-    Ok(())
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
+    std::fs::write(data_dir.join("mls_push.bin"), &encrypted_bytes)
+        .map_err(|e| e.to_string())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -654,6 +518,9 @@ pub fn run() {
             mls_manager: Mutex::new(None),
         })
         .setup(|app| {
+            // Paramètre utilisé uniquement sur desktop (system tray).
+            #[cfg(mobile)]
+            let _ = app;
             // ── System tray (desktop only) ──────────────────────────────
             #[cfg(desktop)]
             {
@@ -708,6 +575,8 @@ pub fn run() {
         })
         // Intercept window close → hide to tray on desktop
         .on_window_event(|window, event| {
+            #[cfg(mobile)]
+            let _ = (window, event);
             #[cfg(desktop)]
             if let WindowEvent::CloseRequested { api, .. } = event {
                 // Hide the window instead of closing it

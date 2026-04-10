@@ -33,10 +33,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         const val CHANNEL_NAME  = "Messages Canari"
         const val PREFS_NAME    = "canari_prefs"
         const val KEY_FCM_TOKEN = "fcm_token"
-        const val KEY_PIN       = "session_pin"
-        const val KEY_USER_ID   = "push_user_id"
-        const val KEY_DEVICE_ID = "push_device_id"
-        const val KEY_BASE_URL  = "push_base_url"
     }
 
     // ── Pont JNI vers la bibliothèque Rust mines_app_lib ──────────────────────
@@ -54,6 +50,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         super.onNewToken(token)
         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit().putString(KEY_FCM_TOKEN, token).apply()
+        // Également accessible par le backend Rust via get_fcm_token (lecture fichier).
+        try { File(filesDir, "fcm_token.txt").writeText(token) } catch (_: Exception) { }
     }
 
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
@@ -78,11 +76,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     private fun tryDecryptContent(queuedMessageId: String?, groupId: String): String? {
         if (queuedMessageId == null) return null
 
-        val prefs   = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val pin     = prefs.getString(KEY_PIN,       null) ?: return null
-        val userId  = prefs.getString(KEY_USER_ID,   null) ?: return null
-        val devId   = prefs.getString(KEY_DEVICE_ID, null) ?: return null
-        val baseUrl = prefs.getString(KEY_BASE_URL,  null) ?: return null
+        // Lecture du contexte de session depuis le fichier JSON écrit par store_push_context.
+        val contextFile = File(filesDir, "push_context.json")
+        if (!contextFile.exists()) return null
+        val ctxJson = try {
+            org.json.JSONObject(contextFile.readText())
+        } catch (_: Exception) { return null }
+        val pin     = ctxJson.optString("pin").takeIf     { it.isNotEmpty() } ?: return null
+        val userId  = ctxJson.optString("userId").takeIf  { it.isNotEmpty() } ?: return null
+        val devId   = ctxJson.optString("deviceId").takeIf{ it.isNotEmpty() } ?: return null
+        val baseUrl = ctxJson.optString("baseUrl").takeIf { it.isNotEmpty() } ?: return null
 
         val stateFile = File(filesDir, "mls_push.bin")
         if (!stateFile.exists()) return null
