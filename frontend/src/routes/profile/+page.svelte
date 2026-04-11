@@ -16,7 +16,6 @@
     Trash2,
     Edit3,
     Check,
-    X,
     Mail,
     GraduationCap,
     CalendarDays,

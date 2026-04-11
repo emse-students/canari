@@ -1,28 +1,52 @@
 import { ForbiddenException, BadRequestException } from '@nestjs/common';
+import { Repository } from 'typeorm';
 import { ChannelService } from './channel.service';
+import { Workspace } from './entities/workspace.entity';
+import { Channel } from './entities/channel.entity';
+import { ChannelRole } from './entities/channel-role.entity';
+import { ChannelMember } from './entities/channel-member.entity';
+import { ChannelMessage } from './entities/channel-message.entity';
+import { ChannelKeyDistribution } from './entities/channel-key-distribution.entity';
+import { RedisService } from '../common/redis';
 
 describe('ChannelService security hardening', () => {
   function makeService() {
-    const workspaceRepo: any = {};
-    const channelRepo: any = { findOne: jest.fn(), save: jest.fn() };
-    const roleRepo: any = { find: jest.fn() };
-    const memberRepo: any = { findOne: jest.fn(), find: jest.fn() };
-    const messageRepo: any = { create: jest.fn((x) => x), save: jest.fn(async (x) => x) };
-    const keyDistributionRepo: any = {
+    const workspaceRepo = {} as Repository<Workspace>;
+    const channelRepo = {
       findOne: jest.fn(),
-      save: jest.fn(async (x) => x),
-      create: jest.fn((x) => x),
+      save: jest.fn(),
     };
-    const redis: any = { publishChannelEvent: jest.fn(async () => {}) };
+    const roleRepo = {
+      find: jest.fn(),
+    };
+    const memberRepo = {
+      findOne: jest.fn(),
+      find: jest.fn(),
+      save: jest.fn(),
+      delete: jest.fn(),
+    };
+    const messageRepo = {
+      create: jest.fn((x: unknown) => x),
+      save: jest.fn((x: unknown) => Promise.resolve(x)),
+      find: jest.fn(),
+    };
+    const keyDistributionRepo = {
+      findOne: jest.fn(),
+      save: jest.fn((x: unknown) => Promise.resolve(x)),
+      create: jest.fn((x: unknown) => x),
+    };
+    const redis = {
+      publishChannelEvent: jest.fn(() => Promise.resolve()),
+    };
 
     const service = new ChannelService(
       workspaceRepo,
-      channelRepo,
-      roleRepo,
-      memberRepo,
-      messageRepo,
-      keyDistributionRepo,
-      redis
+      channelRepo as unknown as Repository<Channel>,
+      roleRepo as unknown as Repository<ChannelRole>,
+      memberRepo as unknown as Repository<ChannelMember>,
+      messageRepo as unknown as Repository<ChannelMessage>,
+      keyDistributionRepo as unknown as Repository<ChannelKeyDistribution>,
+      redis as unknown as RedisService
     );
 
     return {
@@ -125,7 +149,7 @@ describe('ChannelService security hardening', () => {
   it('accepts valid distribution chain sent -> received -> acked', async () => {
     const { service, keyDistributionRepo, memberRepo, channelRepo } = makeService();
 
-    const distribution = {
+    const distribution: ChannelKeyDistribution = {
       id: 'd1',
       channelId: 'ch1',
       workspaceId: 'ws1',
@@ -134,9 +158,15 @@ describe('ChannelService security hardening', () => {
       keyVersion: 3,
       status: 'key_sent',
       attempts: 0,
-    } as any;
+      lastError: null,
+      sentAt: null,
+      receivedAt: null,
+      ackedAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
 
-    keyDistributionRepo.findOne.mockImplementation(async () => distribution);
+    keyDistributionRepo.findOne.mockImplementation(() => Promise.resolve(distribution));
 
     memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u2', roleIds: [] });
     channelRepo.findOne.mockResolvedValue({
