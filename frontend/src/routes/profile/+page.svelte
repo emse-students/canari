@@ -178,7 +178,7 @@
     <!-- En-tête du profil -->
     <div class="flex items-center gap-5 sm:gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div class="relative">
-        <Avatar userId={profile.id} size="xl" class="w-24 h-24 sm:w-28 sm:h-28 shadow-lg ring-4 ring-white/50 dark:ring-black/20" />
+        <Avatar userId={profile.id} size="lg" class="w-24 h-24 sm:w-28 sm:h-28 shadow-lg ring-4 ring-white/50 dark:ring-black/20" />
       </div>
       <div class="flex-1 min-w-0">
         <h1 class="text-2xl sm:text-3xl font-extrabold text-text-main tracking-tight truncate mb-1">
