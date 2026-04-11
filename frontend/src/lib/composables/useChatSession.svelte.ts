@@ -33,6 +33,7 @@ import {
 } from '$lib/utils/chat/connection';
 import { BiometricService } from '$lib/services/biometric';
 import { CallService } from '$lib/services/CallService';
+import { startPushService, stopPushService } from '$lib/services/PushNotificationService';
 import type { Conversation } from '$lib/types';
 
 export interface ChatSessionCallbacks {
@@ -201,6 +202,14 @@ export function useChatSession() {
         localStorage.setItem('canari_saved_pin', pin);
       }
       localStorage.setItem('canari_authToken', authToken);
+
+      // Android push: register (or refresh) this device token in delivery-service.
+      // Non-blocking: messaging must continue even if push registration fails.
+      void startPushService(historyBaseUrl, authToken, myDeviceId)
+        .then(() => cb.log('[PUSH] Enregistrement token push termine.'))
+        .catch((e) =>
+          cb.log(`[WARN] Echec enregistrement push: ${e instanceof Error ? e.message : String(e)}`)
+        );
 
       await cb.loadAndRestoreConversations();
 
@@ -437,6 +446,14 @@ export function useChatSession() {
   }
 
   function logout(cb: ChatSessionCallbacks) {
+    const tokenForPushCleanup = authToken;
+    const deviceForPushCleanup = myDeviceId;
+
+    // Non-blocking cleanup of server-side push token binding for this device.
+    if (tokenForPushCleanup && deviceForPushCleanup) {
+      void stopPushService(historyBaseUrl, tokenForPushCleanup, deviceForPushCleanup);
+    }
+
     if (reconnectTimer !== null) {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;

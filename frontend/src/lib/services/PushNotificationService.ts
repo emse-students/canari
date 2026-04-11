@@ -17,6 +17,8 @@ import { isTauri } from '@tauri-apps/api/core';
 import { invoke } from '@tauri-apps/api/core';
 
 const FCM_TOKEN_STORAGE_KEY = 'canari_fcm_token';
+const TOKEN_POLL_RETRIES = 5;
+const TOKEN_POLL_DELAY_MS = 1000;
 
 type PushPlatform = 'android' | 'ios';
 
@@ -55,7 +57,15 @@ export async function getFcmToken(): Promise<string | null> {
 export async function registerPushToken(
   registerFn: (token: string) => Promise<void>
 ): Promise<void> {
-  const token = await getFcmToken();
+  // On Android, the FCM service may provide the token a bit after startup.
+  let token: string | null = null;
+  for (let i = 0; i < TOKEN_POLL_RETRIES; i++) {
+    token = await getFcmToken();
+    if (token) break;
+    if (i < TOKEN_POLL_RETRIES - 1) {
+      await new Promise((resolve) => setTimeout(resolve, TOKEN_POLL_DELAY_MS));
+    }
+  }
   if (!token) return;
 
   // Évite de ré-enregistrer le même token inutilement
@@ -81,18 +91,18 @@ export async function registerPushToken(
  */
 export async function startPushService(
   apiBaseUrl: string,
-  authToken: string,
+  bearerToken: string,
   deviceId: string
 ): Promise<void> {
   const platform = detectPlatform();
   if (!platform) return; // desktop ou web : pas de push
 
   await registerPushToken(async (pushToken) => {
-    const response = await fetch(`${apiBaseUrl}/push/register`, {
+    const response = await fetch(`${apiBaseUrl}/api/mls-api/push/register`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-user-id': authToken,
+        Authorization: `Bearer ${bearerToken}`,
       },
       body: JSON.stringify({ token: pushToken, deviceId, platform }),
     });
@@ -100,4 +110,31 @@ export async function startPushService(
       throw new Error(`HTTP ${response.status}`);
     }
   });
+}
+
+export async function stopPushService(
+  apiBaseUrl: string,
+  bearerToken: string,
+  deviceId: string
+): Promise<void> {
+  const platform = detectPlatform();
+  if (!platform) return;
+
+  try {
+    const response = await fetch(
+      `${apiBaseUrl}/api/mls-api/push/unregister/${encodeURIComponent(deviceId)}`,
+      {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${bearerToken}`,
+        },
+      }
+    );
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    sessionStorage.removeItem(FCM_TOKEN_STORAGE_KEY);
+  } catch (err) {
+    console.error('[Push] Échec désenregistrement du token FCM', err);
+  }
 }
