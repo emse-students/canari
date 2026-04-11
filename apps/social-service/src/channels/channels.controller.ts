@@ -89,6 +89,15 @@ export class ChannelsController {
   }
 
   @UseGuards(NginxAuthGuard)
+  @Get(':channelId/keys/history')
+  getChannelHistoryKeys(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string
+  ) {
+    return this.service.getChannelHistoryKeysForUser(channelId, xUserId.trim().toLowerCase());
+  }
+
+  @UseGuards(NginxAuthGuard)
   @Post(':channelId/members/join')
   join(
     @Headers('x-user-id') xUserId: string,

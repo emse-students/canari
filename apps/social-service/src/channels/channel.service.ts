@@ -30,6 +30,7 @@ import {
   ChannelUpdateRoleDto,
   SendChannelMessageDto,
   type ChannelBootstrapDto,
+  type ChannelHistoryKeysDto,
   type ChannelKeyDistributionPayloadDto,
 } from './dto/channel.dto';
 
@@ -505,7 +506,8 @@ export class ChannelService {
     distribution: ChannelKeyDistribution,
     channel: Channel,
     channelName: string,
-    epochKeyB64: string
+    epochKeyB64: string,
+    epochKeys?: Array<{ keyVersion: number; encryptedChannelKey: string }>
   ): ChannelKeyDistributionPayloadDto {
     return {
       type: 'channel_key_distribution',
@@ -513,6 +515,7 @@ export class ChannelService {
       channelName,
       keyVersion: distribution.keyVersion,
       encryptedChannelKey: epochKeyB64,
+      epochKeys,
       distributionId: distribution.id,
       issuedAt: distribution.createdAt.toISOString(),
       invitedBy: distribution.invitedBy,
@@ -590,6 +593,39 @@ export class ChannelService {
     }
 
     return this.buildChannelBootstrap(channel);
+  }
+
+  async getChannelHistoryKeysForUser(channelId: string, userId: string): Promise<ChannelHistoryKeysDto> {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
+
+    const member = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId },
+    });
+    if (!member) throw new ForbiddenException('Not a member of this workspace');
+    if (!this.canAccessChannel(channel, member)) {
+      throw new ForbiddenException('Not allowed to access this channel');
+    }
+
+    if (!channel.masterSecret) {
+      channel.masterSecret = crypto.randomBytes(32).toString('base64');
+      await this.channelRepo.save(channel);
+    }
+
+    const epochKeys = Array.from({ length: channel.keyVersion }, (_, index) => {
+      const version = index + 1;
+      const key = this.deriveEpochKey(channel.masterSecret, channel.id, version);
+      return {
+        keyVersion: version,
+        encryptedChannelKey: key.toString('base64'),
+      };
+    });
+
+    return {
+      channelId: channel.id,
+      latestKeyVersion: channel.keyVersion,
+      epochKeys,
+    };
   }
 
   async joinChannel(channelId: string, input: ChannelJoinDto) {
@@ -684,10 +720,6 @@ export class ChannelService {
       await this.memberRepo.save(targetMember);
     }
 
-    if (!isNewMember) {
-      return { success: true, userId: input.targetUserId, alreadyMember: true };
-    }
-
     // Publish event to notify the invited user and connected clients
     if (isNewMember) {
       const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
@@ -706,16 +738,30 @@ export class ChannelService {
         },
         workspaceMemberIds
       );
+
+      // Membership change => mandatory channel key rotation.
+      if (!channel.masterSecret) {
+        channel.masterSecret = crypto.randomBytes(32).toString('base64');
+      }
+      channel.keyVersion += 1;
+      await this.channelRepo.save(channel);
     }
 
-    // Membership change => mandatory channel key rotation.
+    // Existing members can be re-invited to resync historical keys.
     if (!channel.masterSecret) {
       channel.masterSecret = crypto.randomBytes(32).toString('base64');
+      await this.channelRepo.save(channel);
     }
-    channel.keyVersion += 1;
-    await this.channelRepo.save(channel);
 
     const epochKey = this.deriveEpochKey(channel.masterSecret, channel.id, channel.keyVersion);
+    const epochKeys = Array.from({ length: channel.keyVersion }, (_, index) => {
+      const version = index + 1;
+      const key = this.deriveEpochKey(channel.masterSecret, channel.id, version);
+      return {
+        keyVersion: version,
+        encryptedChannelKey: key.toString('base64'),
+      };
+    });
 
     const distribution = this.keyDistributionRepo.create({
       workspaceId: channel.workspaceId,
@@ -731,12 +777,14 @@ export class ChannelService {
       savedDistribution,
       channel,
       channel.name,
-      epochKey.toString('base64')
+      epochKey.toString('base64'),
+      epochKeys
     );
 
     return {
       success: true,
       userId: input.targetUserId,
+      alreadyMember: !isNewMember,
       keyDistribution: payload,
     };
   }

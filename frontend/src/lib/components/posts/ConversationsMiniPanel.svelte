@@ -212,7 +212,10 @@
             <!-- Informations -->
             <div class="flex-1 min-w-0 flex flex-col justify-center">
               <div
-                class="text-[0.9rem] font-bold text-text-main truncate group-hover:text-amber-600 dark:group-hover:text-amber-400 transition-colors {(item.unreadCount ?? 0) > 0 ? 'text-text-main' : ''}"
+                class="text-[0.9rem] font-bold text-text-main truncate group-hover:text-amber-600 dark:group-hover:text-amber-400 transition-colors {(item.unreadCount ??
+                  0) > 0
+                  ? 'text-text-main'
+                  : ''}"
               >
                 {getEffectiveName(item)}
               </div>

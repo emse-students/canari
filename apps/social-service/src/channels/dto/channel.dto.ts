@@ -44,6 +44,10 @@ export interface ChannelKeyDistributionPayloadDto {
   channelName?: string;
   keyVersion: number;
   encryptedChannelKey: string;
+  epochKeys?: Array<{
+    keyVersion: number;
+    encryptedChannelKey: string;
+  }>;
   distributionId: string;
   issuedAt: string;
   invitedBy: string;
@@ -53,6 +57,15 @@ export interface ChannelBootstrapDto {
   channelId: string;
   keyVersion: number;
   newEpochBaseKey: string;
+}
+
+export interface ChannelHistoryKeysDto {
+  channelId: string;
+  latestKeyVersion: number;
+  epochKeys: Array<{
+    keyVersion: number;
+    encryptedChannelKey: string;
+  }>;
 }
 
 export interface MarkDistributionReceivedDto {

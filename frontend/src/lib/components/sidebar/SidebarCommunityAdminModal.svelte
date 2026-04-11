@@ -1,9 +1,11 @@
 <script lang="ts">
+  import { SvelteMap } from 'svelte/reactivity';
   import { Settings, Users, Trash2, ShieldCheck, Upload, Loader } from 'lucide-svelte';
   import Modal from '../shared/Modal.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
   import { MediaService } from '$lib/media';
   import { getToken } from '$lib/stores/auth';
+  import { channelService, type ChannelMemberDto } from '$lib/services/ChannelService';
 
   interface ChannelItem {
     id: string;
@@ -51,7 +53,100 @@
   let inviteStatus = $state('');
   let inviteUserId = $state('');
   let inviteRole = $state<'member' | 'moderator' | 'admin'>('member');
+  let communityMembers = $state<Array<{ userId: string; role: 'member' | 'moderator' | 'admin' }>>(
+    []
+  );
+  let membersLoading = $state(false);
+  let membersError = $state('');
+  let membersLoadToken = 0;
   const mediaService = new MediaService();
+
+  function normalizeRoleLabel(roleName: string): 'member' | 'moderator' | 'admin' {
+    const normalized = roleName.trim().toLowerCase();
+    if (
+      normalized === 'admin' ||
+      normalized === 'administrateur' ||
+      normalized === 'owner' ||
+      normalized === 'proprietaire' ||
+      normalized === 'propriétaire'
+    ) {
+      return 'admin';
+    }
+    if (normalized === 'moderator' || normalized === 'modérateur' || normalized === 'moderateur') {
+      return 'moderator';
+    }
+    return 'member';
+  }
+
+  function strongerRole(
+    current: 'member' | 'moderator' | 'admin',
+    next: 'member' | 'moderator' | 'admin'
+  ): 'member' | 'moderator' | 'admin' {
+    const rank = { member: 1, moderator: 2, admin: 3 } as const;
+    return rank[next] > rank[current] ? next : current;
+  }
+
+  function roleLabel(role: 'member' | 'moderator' | 'admin'): string {
+    if (role === 'admin') return 'Administrateur';
+    if (role === 'moderator') return 'Modérateur';
+    return 'Membre';
+  }
+
+  function roleBadgeClass(role: 'member' | 'moderator' | 'admin'): string {
+    if (role === 'admin') return 'bg-red-100 text-red-700';
+    if (role === 'moderator') return 'bg-blue-100 text-blue-700';
+    return 'bg-emerald-100 text-emerald-700';
+  }
+
+  async function loadCommunityMembers() {
+    if (!open || activeTab !== 'members') return;
+    if (!selectedWorkspace || selectedWorkspace.channels.length === 0) {
+      communityMembers = [];
+      membersError = '';
+      return;
+    }
+
+    const loadToken = ++membersLoadToken;
+    membersLoading = true;
+    membersError = '';
+    try {
+      const perChannelMembers = await Promise.all(
+        selectedWorkspace.channels.map((channel) => channelService.listMembers(channel.id))
+      );
+
+      const aggregate = new SvelteMap<string, 'member' | 'moderator' | 'admin'>();
+      for (const members of perChannelMembers) {
+        for (const member of members as ChannelMemberDto[]) {
+          const userId = member.userId?.trim().toLowerCase();
+          if (!userId) continue;
+          const nextRole = normalizeRoleLabel(member.role || 'member');
+          const currentRole = aggregate.get(userId);
+          aggregate.set(userId, currentRole ? strongerRole(currentRole, nextRole) : nextRole);
+        }
+      }
+
+      if (loadToken !== membersLoadToken) return;
+
+      communityMembers = Array.from(aggregate.entries())
+        .map(([userId, role]) => ({ userId, role }))
+        .sort((a, b) => a.userId.localeCompare(b.userId));
+    } catch (e) {
+      if (loadToken !== membersLoadToken) return;
+      membersError = e instanceof Error ? e.message : 'Impossible de charger les membres.';
+      communityMembers = [];
+    } finally {
+      if (loadToken === membersLoadToken) membersLoading = false;
+    }
+  }
+
+  $effect(() => {
+    void open;
+    void activeTab;
+    void selectedWorkspace?.id;
+    if (open && activeTab === 'members') {
+      void loadCommunityMembers();
+    }
+  });
 
   function handleGenerateInvitation() {
     const memberId = inviteUserId.trim().toLowerCase();
@@ -74,6 +169,7 @@
     inviteStatus = `Invitation envoyée à ${memberId} (${inviteRole}).`;
     inviteUserId = '';
     inviteRole = 'member';
+    void loadCommunityMembers();
   }
 
   async function handleImageFileChange(event: Event) {
@@ -220,7 +316,7 @@
           <!-- Placer ici une liste factice ou une vraie table -->
           <div class="border border-cn-border rounded-xl bg-white overflow-hidden text-sm">
             <div class="p-4 flex items-center justify-between border-b border-cn-border bg-black/5">
-              <span class="font-semibold text-text-main">1 Membre(s)</span>
+              <span class="font-semibold text-text-main">{communityMembers.length} Membre(s)</span>
               <button
                 class="bg-amber-500 text-white rounded-lg px-3 py-1.5 text-xs font-bold hover:bg-amber-600 transition"
                 onclick={handleGenerateInvitation}
@@ -251,9 +347,28 @@
                 {inviteStatus}
               </div>
             {/if}
-            <div class="p-6 text-center text-text-muted">
-              Aucun membre à afficher pour le moment.
-            </div>
+            {#if membersLoading}
+              <div class="p-6 text-center text-text-muted">Chargement des membres...</div>
+            {:else if membersError}
+              <div class="p-6 text-center text-red-600">{membersError}</div>
+            {:else if communityMembers.length === 0}
+              <div class="p-6 text-center text-text-muted">
+                Aucun membre à afficher pour le moment.
+              </div>
+            {:else}
+              <div class="divide-y divide-cn-border/70">
+                {#each communityMembers as member (member.userId)}
+                  <div class="px-4 py-3 flex items-center justify-between gap-3">
+                    <span class="font-medium text-text-main truncate">{member.userId}</span>
+                    <span
+                      class={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ${roleBadgeClass(member.role)}`}
+                    >
+                      {roleLabel(member.role)}
+                    </span>
+                  </div>
+                {/each}
+              </div>
+            {/if}
           </div>
         </div>
       {/if}

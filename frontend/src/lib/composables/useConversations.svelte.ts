@@ -123,6 +123,25 @@ export function useConversations() {
     if (!convo) return;
 
     try {
+      // Fresh devices may miss historical channel epochs in memory.
+      // Hydrate all known epochs before decrypting history.
+      try {
+        const historyKeys = await channelService.getChannelHistoryKeys(rawId);
+        const vault = channelKeyManager.getVault(rawId);
+        for (const keyEntry of historyKeys.epochKeys || []) {
+          if (!Number.isFinite(keyEntry.keyVersion) || keyEntry.keyVersion <= 0) continue;
+          if (!keyEntry.encryptedChannelKey) continue;
+          const rawKeyMat = Uint8Array.from(atob(keyEntry.encryptedChannelKey), (c) =>
+            c.charCodeAt(0)
+          );
+          await vault.rotateKey(keyEntry.keyVersion, rawKeyMat);
+        }
+      } catch (e) {
+        ctx.log(
+          `[CHANNEL] Hydratation clés historiques impossible pour ${rawId}: ${e instanceof Error ? e.message : e}`
+        );
+      }
+
       const messages: any[] = await channelService.listMessages(rawId, 200);
       if (!Array.isArray(messages) || messages.length === 0) return;
 
@@ -134,6 +153,7 @@ export function useConversations() {
         if (msg.id && existingIds.has(msg.id)) continue;
 
         let content = '[Message chiffré]';
+        let shouldAppendMessage = false;
         try {
           if (msg.ciphertext && msg.nonce && msg.keyVersion !== undefined) {
             const bytes = await channelKeyManager.decryptMessage(
@@ -145,6 +165,7 @@ export function useConversations() {
             const decoded = decodeAppMessage(bytes);
             if (decoded?.text) {
               content = serializeEnvelope(mkTextEnvelope(decoded.text.content ?? ''));
+              shouldAppendMessage = true;
             } else if (decoded?.reply) {
               const replyTo = decoded.reply.replyTo
                 ? {
@@ -154,6 +175,7 @@ export function useConversations() {
                   }
                 : undefined;
               content = serializeEnvelope(mkTextEnvelope(decoded.reply.content ?? '', replyTo));
+              shouldAppendMessage = true;
             }
           } else if (msg.ciphertext) {
             // Legacy base64 fallback
@@ -163,11 +185,17 @@ export function useConversations() {
             const decoded = decodeAppMessage(bytes);
             if (decoded?.text) {
               content = serializeEnvelope(mkTextEnvelope(decoded.text.content ?? ''));
+              shouldAppendMessage = true;
             }
           }
         } catch (e) {
-          ctx.log(`[CHANNEL] Échec déchiffrement msg ${msg.id}: ${e}`);
+          ctx.log(`[CHANNEL] Message non lisible (clé indisponible) ${msg.id}: ${e}`);
+          shouldAppendMessage = false;
         }
+
+        // Keep history clean for newly invited users: skip messages that
+        // cannot be decrypted with the locally available channel keys.
+        if (!shouldAppendMessage) continue;
 
         await ctx.addMessageToChat(
           msg.senderId || 'unknown',

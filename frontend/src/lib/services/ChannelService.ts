@@ -35,6 +35,15 @@ export interface ChannelBootstrapDto {
   newEpochBaseKey: string;
 }
 
+export interface ChannelHistoryKeysDto {
+  channelId: string;
+  latestKeyVersion: number;
+  epochKeys: Array<{
+    keyVersion: number;
+    encryptedChannelKey: string;
+  }>;
+}
+
 export interface CreateChannelResultDto extends ChannelDto {
   keyVersion?: number;
   keyBootstrap?: ChannelBootstrapDto;
@@ -62,6 +71,10 @@ export interface ChannelKeyDistributionPayloadDto {
   channelName?: string;
   keyVersion: number;
   encryptedChannelKey: string;
+  epochKeys?: Array<{
+    keyVersion: number;
+    encryptedChannelKey: string;
+  }>;
   distributionId: string;
   issuedAt: string;
   invitedBy: string;
@@ -184,6 +197,13 @@ export class ChannelService {
     const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/key`);
     await this.handleError(res);
     return res.json() as Promise<ChannelBootstrapDto>;
+  }
+
+  async getChannelHistoryKeys(channelId: string): Promise<ChannelHistoryKeysDto> {
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/keys/history`);
+    await this.handleError(res);
+    return res.json() as Promise<ChannelHistoryKeysDto>;
   }
 
   async joinChannel(channelId: string, dto: ChannelJoinDto) {

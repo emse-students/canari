@@ -352,6 +352,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
 
         if (convoKey) {
           let content = '[Message chiffré]';
+          let appMessageId: string | undefined;
           try {
             if (data.ciphertext) {
               let bytes: Uint8Array;
@@ -372,6 +373,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               }
 
               const msg = decodeAppMessage(bytes);
+              appMessageId = msg?.messageId || undefined;
               if (msg?.text) {
                 content = serializeEnvelope(mkTextEnvelope(msg.text.content ?? ''));
               } else if (msg?.reply) {
@@ -397,7 +399,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             convoKey,
             undefined,
             false,
-            data.id,
+            appMessageId || data.messageId || data.id,
             new Date(data.createdAt)
           ).catch((e) => console.error(e));
         } else {
@@ -643,22 +645,38 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                 const distributionId = String(data.distributionId || '');
                 const encryptedChannelKey = String(data.encryptedChannelKey || '');
                 const keyVersion = Number(data.keyVersion || 0);
+                const epochKeysRaw = Array.isArray(data.epochKeys) ? data.epochKeys : [];
 
-                if (
-                  !channelId ||
-                  !distributionId ||
-                  !encryptedChannelKey ||
-                  !Number.isFinite(keyVersion)
-                ) {
+                const epochKeys = epochKeysRaw
+                  .map((entry: any) => ({
+                    keyVersion: Number(entry?.keyVersion),
+                    encryptedChannelKey: String(entry?.encryptedChannelKey || ''),
+                  }))
+                  .filter(
+                    (entry: { keyVersion: number; encryptedChannelKey: string }) =>
+                      Number.isFinite(entry.keyVersion) &&
+                      entry.keyVersion > 0 &&
+                      !!entry.encryptedChannelKey
+                  );
+
+                const fallbackCurrent =
+                  encryptedChannelKey && Number.isFinite(keyVersion) && keyVersion > 0
+                    ? [{ keyVersion, encryptedChannelKey }]
+                    : [];
+                const keysToImport = epochKeys.length > 0 ? epochKeys : fallbackCurrent;
+
+                if (!channelId || !distributionId || keysToImport.length === 0) {
                   return true;
                 }
 
                 try {
-                  const rawKeyMat = Uint8Array.from(atob(encryptedChannelKey), (c) =>
-                    c.charCodeAt(0)
-                  );
                   const vault = channelKeyManager.getVault(channelId);
-                  await vault.rotateKey(keyVersion, rawKeyMat);
+                  for (const item of keysToImport) {
+                    const rawKeyMat = Uint8Array.from(atob(item.encryptedChannelKey), (c) =>
+                      c.charCodeAt(0)
+                    );
+                    await vault.rotateKey(item.keyVersion, rawKeyMat);
+                  }
 
                   const channelSvc = new ChannelService();
                   await channelSvc
@@ -670,10 +688,12 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
 
                   const displayName = data.channelName || channelId;
                   await addSystemMessage(
-                    `Vous avez ete invite a rejoindre #${displayName}. La cle de chiffrement a ete recue en prive.`,
+                    `Vous avez ete invite a rejoindre #${displayName}. Les cles de chiffrement ont ete recues en prive.`,
                     convoKey
                   );
-                  log(`[CHANNEL-KEY] Cle recue via MLS pour #${displayName} (v${keyVersion}).`);
+                  log(
+                    `[CHANNEL-KEY] ${keysToImport.length} cle(s) recue(s) via MLS pour #${displayName} (jusqu'a v${keyVersion}).`
+                  );
                 } catch (e) {
                   log(
                     `[CHANNEL-KEY] Echec traitement distribution ${distributionId}: ${e instanceof Error ? e.message : String(e)}`
