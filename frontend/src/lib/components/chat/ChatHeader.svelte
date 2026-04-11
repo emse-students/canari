@@ -181,7 +181,7 @@
     </div>
   {:else}
     <div class="relative shrink-0">
-      <Avatar userId={contactName} size="lg" />
+      <Avatar userId={contactName} size="lg" fallbackLabel={effectiveDisplayName} />
       {#if isOnline}
         <span
           class="absolute bottom-0 right-0 block h-3.5 w-3.5 rounded-full ring-2 ring-white dark:ring-zinc-900 bg-green-500 shadow-sm"
@@ -299,7 +299,7 @@
                 <Users size={24} strokeWidth={2} />
               </div>
             {:else}
-              <Avatar userId={contactName} size="lg" />
+              <Avatar userId={contactName} size="lg" fallbackLabel={effectiveDisplayName} />
             {/if}
             <div class="min-w-0 flex-1">
               <div class="text-[1.05rem] font-extrabold text-text-main truncate mb-1">

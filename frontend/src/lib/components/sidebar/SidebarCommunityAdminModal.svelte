@@ -24,9 +24,20 @@
     selectedWorkspaceId: string;
     onClose: () => void;
     onUpdateWorkspaceImage?: (workspaceDbId: string, mediaId: string) => void;
+    onInviteCommunityMember?: (
+      memberId: string,
+      roleName: 'member' | 'moderator' | 'admin'
+    ) => void;
   }
 
-  let { open, workspaces, selectedWorkspaceId, onClose, onUpdateWorkspaceImage }: Props = $props();
+  let {
+    open,
+    workspaces,
+    selectedWorkspaceId,
+    onClose,
+    onUpdateWorkspaceImage,
+    onInviteCommunityMember,
+  }: Props = $props();
 
   let activeTab = $state<'overview' | 'members'>('overview');
 
@@ -37,7 +48,33 @@
   // Image upload state
   let imageUploading = $state(false);
   let imageUploadError = $state('');
+  let inviteStatus = $state('');
+  let inviteUserId = $state('');
+  let inviteRole = $state<'member' | 'moderator' | 'admin'>('member');
   const mediaService = new MediaService();
+
+  function handleGenerateInvitation() {
+    const memberId = inviteUserId.trim().toLowerCase();
+    if (!selectedWorkspace?.name) {
+      inviteStatus = "Sélectionnez d'abord une communauté.";
+      return;
+    }
+
+    if (!memberId) {
+      inviteStatus = "Saisissez l'identifiant du membre à inviter.";
+      return;
+    }
+
+    if (!onInviteCommunityMember) {
+      inviteStatus = "L'invitation communautaire n'est pas disponible dans ce contexte.";
+      return;
+    }
+
+    onInviteCommunityMember(memberId, inviteRole);
+    inviteStatus = `Invitation envoyée à ${memberId} (${inviteRole}).`;
+    inviteUserId = '';
+    inviteRole = 'member';
+  }
 
   async function handleImageFileChange(event: Event) {
     const input = event.target as HTMLInputElement;
@@ -186,10 +223,34 @@
               <span class="font-semibold text-text-main">1 Membre(s)</span>
               <button
                 class="bg-amber-500 text-white rounded-lg px-3 py-1.5 text-xs font-bold hover:bg-amber-600 transition"
+                onclick={handleGenerateInvitation}
               >
                 Générer une invitation
               </button>
             </div>
+            <div class="px-4 py-3 border-b border-cn-border bg-white/70 space-y-2.5">
+              <div class="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2.5">
+                <input
+                  type="text"
+                  bind:value={inviteUserId}
+                  placeholder="Identifiant utilisateur (ex: leon.muselli)"
+                  class="w-full bg-white border border-cn-border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-500/40"
+                />
+                <select
+                  bind:value={inviteRole}
+                  class="bg-white border border-cn-border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-500/40"
+                >
+                  <option value="member">Membre</option>
+                  <option value="moderator">Modérateur</option>
+                  <option value="admin">Administrateur</option>
+                </select>
+              </div>
+            </div>
+            {#if inviteStatus}
+              <div class="px-4 py-2 border-b border-cn-border text-xs font-medium text-text-muted">
+                {inviteStatus}
+              </div>
+            {/if}
             <div class="p-6 text-center text-text-muted">
               Aucun membre à afficher pour le moment.
             </div>

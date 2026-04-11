@@ -7,9 +7,10 @@
     size?: 'sm' | 'md' | 'lg';
     fill?: boolean;
     shape?: 'soft' | 'circle';
+    fallbackLabel?: string;
   }
 
-  let { userId, size = 'md', fill = false, shape = 'soft' }: Props = $props();
+  let { userId, size = 'md', fill = false, shape = 'soft', fallbackLabel = '' }: Props = $props();
 
   function getCoreUrl(): string {
     const url =
@@ -25,13 +26,29 @@
 
   let imageFailed = $state(false);
   let displayLabel = $state('');
+  let resolveToken = 0;
+  let lastResolvedUserId = $state('');
   const initials = $derived(getInitials(displayLabel));
 
   $effect(() => {
-    displayLabel = getUserDisplayNameSync(userId);
+    const token = ++resolveToken;
+    const fallback = fallbackLabel.trim();
+    displayLabel = getUserDisplayNameSync(userId, fallback || undefined);
     resolveUserDisplayName(userId).then((resolved) => {
-      if (resolved) displayLabel = resolved;
+      if (token !== resolveToken) return;
+      if (resolved) {
+        displayLabel = resolved;
+      } else if (fallback) {
+        displayLabel = fallback;
+      }
     });
+  });
+
+  $effect(() => {
+    if (lastResolvedUserId !== userId) {
+      lastResolvedUserId = userId;
+      imageFailed = false;
+    }
   });
 
   const sizeClasses = $derived(

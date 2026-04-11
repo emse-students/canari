@@ -156,14 +156,12 @@
           });
         }
         globalNotifs.showChannelMembershipNotice(
-          isPrivate
-            ? `Vous avez été ajouté au canal privé #${event.channelName || event.channelId}`
-            : `Vous avez été ajouté au canal #${event.channelName || event.channelId}`,
-          isPrivate ? channelConversationId : undefined
+          `Je t'invite à rejoindre #${event.channelName || event.channelId}`,
+          channelConversationId
         );
         void globalNotifs.sendSystemNotification(
           'Canal rejoint',
-          `Vous avez été ajouté au canal #${event.channelName || event.channelId}`
+          `Je t'invite à rejoindre #${event.channelName || event.channelId}`
         );
         appendLog(`Ajout au canal #${event.channelName || event.channelId}`);
       },
@@ -453,7 +451,7 @@
             );
             void (async () => {
               const { goto: gotoPage } = await import('$app/navigation');
-              void gotoPage('/chat');
+              void gotoPage('/communities');
             })();
           }}
         >

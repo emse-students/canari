@@ -186,14 +186,12 @@
           });
         }
         notifs.showChannelMembershipNotice(
-          isPrivate
-            ? `Vous avez ete ajoute au canal prive #${event.channelName || event.channelId}`
-            : `Vous avez ete ajoute au canal #${event.channelName || event.channelId}`,
-          isPrivate ? channelConversationId : undefined
+          `Je t'invite à rejoindre #${event.channelName || event.channelId}`,
+          channelConversationId
         );
         void notifs.sendSystemNotification(
           'Canal rejoint',
-          `Vous avez ete ajoute au canal #${event.channelName || event.channelId}`
+          `Je t'invite à rejoindre #${event.channelName || event.channelId}`
         );
         log(`Ajout au canal #${event.channelName || event.channelId}`);
       },

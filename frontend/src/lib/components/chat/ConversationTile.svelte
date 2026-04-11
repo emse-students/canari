@@ -72,7 +72,7 @@
   <!-- Zone Avatar / Icône de Groupe -->
   <div class="relative flex-shrink-0">
     {#if isDirect}
-      <Avatar userId={contactName} size="lg" />
+      <Avatar userId={contactName} size="lg" fallbackLabel={effectiveDisplayName} />
       {#if isOnline}
         <span
           class="absolute bottom-0 right-0 block h-3.5 w-3.5 rounded-full ring-2 ring-white dark:ring-zinc-900 bg-green-500 shadow-sm"

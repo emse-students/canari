@@ -3,7 +3,7 @@ import { ChannelService } from '$lib/services/ChannelService';
 import type { WorkspaceDto, ChannelDto } from '$lib/services/ChannelService';
 import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
-import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
+import { encodeAppMessage, mkSystem, mkText } from '$lib/proto/codec';
 import { hydrateChannelBootstrap } from '$lib/utils/chat/channelCrypto';
 
 export interface ChannelSidebarItem {
@@ -365,6 +365,15 @@ export function useChannelWorkspaces() {
     const channelId = channelConversationId.replace(/^channel_/, '');
     if (!memberId || !channelId) return;
 
+    const currentWorkspace = channelWorkspaces.find((workspace) =>
+      workspace.channels.some((channel) => channel.id === channelConversationId)
+    );
+    const currentChannel = currentWorkspace?.channels.find(
+      (channel) => channel.id === channelConversationId
+    );
+    const channelDisplayName = currentChannel?.name || channelId;
+    const workspaceDisplayName = currentWorkspace?.name || 'la communauté';
+
     try {
       // Map frontend role names to backend role names (capitalized)
       const backendRoleName =
@@ -393,6 +402,14 @@ export function useChannelWorkspaces() {
               mkSystem('channel_key_distribution', JSON.stringify(inviteResult.keyDistribution))
             );
             await mlsService.sendMessage(directConvo[1].id, controlMsg);
+
+            const inviteNotice = encodeAppMessage(
+              mkText(
+                `Je t'invite à rejoindre #${channelDisplayName} dans ${workspaceDisplayName}. Ouvre l'onglet Communautés puis clique sur Rejoindre.`
+              )
+            );
+            await mlsService.sendMessage(directConvo[1].id, inviteNotice);
+
             await service.markKeyDistributionSent(
               channelId,
               inviteResult.keyDistribution.distributionId
@@ -422,7 +439,16 @@ export function useChannelWorkspaces() {
     if (!memberId || !channelId) return;
 
     try {
-      await service.updateMemberRole(channelId, { targetUserId: memberId, roleName });
+      const backendRoleName =
+        roleName === 'admin'
+          ? 'Administrateur'
+          : roleName === 'moderator'
+            ? 'Modérateur'
+            : 'Membre';
+      await service.updateMemberRole(channelId, {
+        targetUserId: memberId,
+        roleName: backendRoleName,
+      });
       ctx.log(`Rôle mis à jour (${roleName}) pour : ${memberId}`);
     } catch (error) {
       ctx.log(toUiActionError(`Mise à jour du rôle (${roleName})`, error));

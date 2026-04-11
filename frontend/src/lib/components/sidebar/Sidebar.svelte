@@ -88,6 +88,7 @@
     onCreateGroup,
     onCreateChannel,
     onCreateWorkspace,
+    onInviteChannelMember,
     onUpdateWorkspaceImage,
     onSelectConversation,
     onSelectChannelConversation,
@@ -112,6 +113,9 @@
 
   let selectedCommunityWorkspaceId = $state('');
   let searchQuery = $state('');
+  const selectedCommunityWorkspace = $derived(
+    channelWorkspaces.find((w) => w.id === selectedCommunityWorkspaceId)
+  );
 
   interface ChannelItem {
     id: string;
@@ -295,33 +299,34 @@
         class="px-4 py-3 border-b border-white/50 dark:border-white/10 bg-white/30 dark:bg-gray-900/40 backdrop-blur-sm sticky top-0 z-10 flex items-center justify-between"
       >
         <h2 class="font-black tracking-tight text-text-main text-lg truncate">
-          {channelWorkspaces.find((w) => w.id === selectedCommunityWorkspaceId)?.name ||
-            'Communautés'}
+          {selectedCommunityWorkspace?.name || 'Communautés'}
         </h2>
 
         <div class="flex items-center gap-1">
-          <button
-            class="w-8 h-8 rounded-full flex items-center justify-center text-text-muted hover:text-text-main hover:bg-white/50 dark:hover:bg-black/30 transition-colors"
-            onclick={() => {
-              showCommunityAdminModal = true;
-            }}
-            title="Paramètres de la communauté"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              ><path
-                d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
-              /><circle cx="12" cy="12" r="3" /></svg
+          {#if selectedCommunityWorkspace}
+            <button
+              class="w-8 h-8 rounded-full flex items-center justify-center text-text-muted hover:text-text-main hover:bg-white/50 dark:hover:bg-black/30 transition-colors"
+              onclick={() => {
+                showCommunityAdminModal = true;
+              }}
+              title="Paramètres de la communauté"
             >
-          </button>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                ><path
+                  d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+                /><circle cx="12" cy="12" r="3" /></svg
+              >
+            </button>
+          {/if}
 
           {#if drawerMode}
             <button
@@ -464,9 +469,27 @@
 <SidebarCommunityAdminModal
   open={showCommunityAdminModal}
   workspaces={channelWorkspaces}
-  selectedWorkspaceId={selectedCommunityWorkspaceId || channelWorkspaces[0]?.id || ''}
+  selectedWorkspaceId={selectedCommunityWorkspaceId}
   onClose={closeCommunityAdminModal}
   {onUpdateWorkspaceImage}
+  onInviteCommunityMember={(memberId, roleName) => {
+    const workspace = selectedCommunityWorkspace;
+    if (!workspace) {
+      alert("Veuillez sélectionner une communauté d'abord");
+      return;
+    }
+
+    const targetChannel =
+      workspace.channels.find((channel) => channel.name.trim().toLowerCase() === 'general') ||
+      workspace.channels[0];
+
+    if (!targetChannel) {
+      alert("Aucun canal disponible dans cette communauté pour envoyer l'invitation");
+      return;
+    }
+
+    onInviteChannelMember?.(targetChannel.id, memberId, roleName);
+  }}
 />
 
 <SidebarNewCommunityModal

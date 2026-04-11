@@ -191,7 +191,11 @@
                 </div>
               {:else}
                 <div class="transition-transform duration-200 group-hover:scale-105">
-                  <Avatar userId={getAvatarUserId(item)} size="sm" />
+                  <Avatar
+                    userId={getAvatarUserId(item)}
+                    size="sm"
+                    fallbackLabel={getEffectiveName(item)}
+                  />
                 </div>
               {/if}
 

@@ -37,6 +37,47 @@ import {
 export class ChannelService {
   private readonly logger = new Logger(ChannelService.name);
 
+  private normalizeRoleLabelToCanonical(name?: string | null): 'admin' | 'moderator' | 'member' {
+    const normalized = String(name || '')
+      .trim()
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+
+    if (
+      normalized === 'administrateur' ||
+      normalized === 'administrator' ||
+      normalized === 'admin'
+    ) {
+      return 'admin';
+    }
+    if (normalized === 'moderateur' || normalized === 'moderator') {
+      return 'moderator';
+    }
+    return 'member';
+  }
+
+  private mapRoleInputToWorkspaceRoleName(name?: string | null): string {
+    const normalized = String(name || '')
+      .trim()
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+
+    if (!normalized || normalized === 'member' || normalized === 'membre') return 'Membre';
+    if (
+      normalized === 'admin' ||
+      normalized === 'administrateur' ||
+      normalized === 'administrator'
+    ) {
+      return 'Administrateur';
+    }
+    if (normalized === 'moderator' || normalized === 'moderateur' || normalized === 'modérateur') {
+      return 'Modérateur';
+    }
+    return name?.trim() || 'Membre';
+  }
+
   private canAccessChannel(channel: Channel, member: ChannelMember): boolean {
     if (!channel.isPrivate) return true;
     const roleIds = member.roleIds || [];
@@ -629,7 +670,7 @@ export class ChannelService {
 
     if (!targetMember) {
       // Find the role to assign (default to Member if not specified)
-      const roleName = input.roleName || 'Member';
+      const roleName = this.mapRoleInputToWorkspaceRoleName(input.roleName || 'Membre');
       const role = await this.roleRepo.findOne({
         where: { workspaceId: channel.workspaceId, name: roleName },
       });
@@ -659,7 +700,7 @@ export class ChannelService {
           workspaceSlug: workspace?.slug,
           workspaceName: workspace?.name,
           visibility: channel.isPrivate ? 'private' : 'public',
-          roleName: input.roleName || 'Member',
+          roleName: this.mapRoleInputToWorkspaceRoleName(input.roleName || 'Membre'),
           joinedBy: input.targetUserId,
           invitedBy: input.actorUserId,
         },
@@ -885,7 +926,10 @@ export class ChannelService {
     if (!targetMember) throw new NotFoundException('Target member not found');
 
     const role = await this.roleRepo.findOne({
-      where: { workspaceId: channel.workspaceId, name: input.roleName },
+      where: {
+        workspaceId: channel.workspaceId,
+        name: this.mapRoleInputToWorkspaceRoleName(input.roleName),
+      },
     });
     if (!role) throw new NotFoundException('Role not found');
     const roleIds = [...new Set([...(targetMember.roleIds || []), role.id])];
@@ -917,7 +961,7 @@ export class ChannelService {
       return {
         id: m.id,
         userId: m.userId,
-        role: highestRole?.name?.toLowerCase() ?? 'member',
+        role: this.normalizeRoleLabelToCanonical(highestRole?.name),
         joinedAt: m.createdAt,
       };
     });
