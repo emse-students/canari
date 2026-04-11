@@ -50,7 +50,6 @@ export function useConversations() {
 
   // ── UI state ──────────────────────────────────────────────────────────────
   let selectedContact = $state<string | null>(null);
-  let mobileView = $state<'list' | 'chat'>('list');
   let isConversationDrawerOpen = $state(false);
   let isChannelMembersDrawerOpen = $state(false);
   let isChannelSettingsModalOpen = $state(false);
@@ -207,7 +206,6 @@ export function useConversations() {
 
   function selectConversation(name: string) {
     selectedContact = name;
-    mobileView = 'chat';
     isConversationDrawerOpen = false;
     sendError = '';
     const convo = conversations.get(name);
@@ -220,7 +218,6 @@ export function useConversations() {
   /** Call this version when you have the ctx available (inside handlers). */
   function selectConversationWithCtx(name: string, ctx: ConversationContext) {
     selectedContact = name;
-    mobileView = 'chat';
     isConversationDrawerOpen = false;
     sendError = '';
     const convo = conversations.get(name);
@@ -232,7 +229,7 @@ export function useConversations() {
   }
 
   function goBackToMenu() {
-    mobileView = 'list';
+    selectedContact = null;
     isConversationDrawerOpen = false;
   }
 
@@ -433,7 +430,6 @@ export function useConversations() {
     // 4. Retirer de la map et reset UI
     conversations.delete(contactKey);
     selectedContact = null;
-    mobileView = 'list';
     isConversationDrawerOpen = false;
     sendError = '';
     groupMembers = [];
@@ -480,10 +476,7 @@ export function useConversations() {
       selectedContact = v;
     },
     get mobileView() {
-      return mobileView;
-    },
-    set mobileView(v: 'list' | 'chat') {
-      mobileView = v;
+      return selectedContact ? 'chat' : 'list';
     },
     get isConversationDrawerOpen() {
       return isConversationDrawerOpen;

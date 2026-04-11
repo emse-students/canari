@@ -38,7 +38,6 @@ interface MessageHandlerDeps {
   messageReactions: SvelteMap<string, MessageReaction[]>;
   selectedContact: string | null;
   setSelectedContact: (value: string | null) => void;
-  setMobileView: (value: 'list' | 'chat') => void;
   saveConversation: (contactName: string) => Promise<void>;
   addMessageToChat: (
     senderId: string,
@@ -187,7 +186,6 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
     conversations,
     messageReactions,
     setSelectedContact,
-    setMobileView,
     saveConversation,
     addMessageToChat,
     addSystemMessage,
@@ -923,7 +921,6 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               groupNullAppFailures.delete(convoKey);
               if (getSelectedContact() === convoKey) {
                 setSelectedContact(null);
-                setMobileView('list');
               }
             }
           }

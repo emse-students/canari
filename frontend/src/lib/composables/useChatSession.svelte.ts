@@ -69,7 +69,6 @@ export interface ChatSessionCallbacks {
   messageReactions: SvelteMap<string, any[]>;
   getSelectedContact: () => string | null;
   setSelectedContact: (v: string | null) => void;
-  setMobileView: (v: 'list' | 'chat') => void;
   onLoadHistoryForConversation: (contactName: string, groupId: string) => Promise<void>;
 }
 
@@ -254,7 +253,6 @@ export function useChatSession() {
         messageReactions: cb.messageReactions,
         selectedContact: cb.getSelectedContact(),
         setSelectedContact: cb.setSelectedContact,
-        setMobileView: cb.setMobileView,
         saveConversation: cb.saveConversation,
         addMessageToChat: cb.addMessageToChat,
         addSystemMessage: cb.addSystemMessage,

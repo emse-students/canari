@@ -189,7 +189,6 @@
         globalChannels.removeChannelFromWorkspaces(channelConversationId);
         if (globalConvs.selectedContact === channelConversationId) {
           globalConvs.selectedContact = null;
-          globalConvs.mobileView = 'list';
           globalConvs.sendError = '';
         }
         if (globalChannels.selectedChannelConversationId === channelConversationId) {
@@ -225,7 +224,6 @@
         globalChannels.removeChannelFromWorkspaces(channelConversationId);
         if (globalConvs.selectedContact === channelConversationId) {
           globalConvs.selectedContact = null;
-          globalConvs.mobileView = 'list';
         }
         if (globalChannels.selectedChannelConversationId === channelConversationId) {
           globalChannels.selectedChannelConversationId = '';
@@ -242,9 +240,6 @@
       getSelectedContact: () => globalConvs.selectedContact,
       setSelectedContact: (v: string | null) => {
         globalConvs.selectedContact = v;
-      },
-      setMobileView: (v: 'list' | 'chat') => {
-        globalConvs.mobileView = v;
       },
       onLoadHistoryForConversation: (contactName: string, groupId: string) =>
         globalConvs.loadHistoryForConversation(contactName, groupId, convCtx()),

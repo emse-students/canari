@@ -221,7 +221,6 @@
         channels.removeChannelFromWorkspaces(channelConversationId);
         if (convs.selectedContact === channelConversationId) {
           convs.selectedContact = null;
-          convs.mobileView = 'list';
           convs.sendError = '';
         }
         if (channels.selectedChannelConversationId === channelConversationId) {
@@ -256,7 +255,6 @@
         channels.removeChannelFromWorkspaces(channelConversationId);
         if (convs.selectedContact === channelConversationId) {
           convs.selectedContact = null;
-          convs.mobileView = 'list';
         }
         if (channels.selectedChannelConversationId === channelConversationId) {
           channels.selectedChannelConversationId = '';
@@ -277,9 +275,6 @@
       setSelectedContact: (v: string | null) => {
         convs.selectedContact = v;
       },
-      setMobileView: (v: 'list' | 'chat') => {
-        convs.mobileView = v;
-      },
       onLoadHistoryForConversation: (contactName: string, groupId: string) =>
         convs.loadHistoryForConversation(contactName, groupId, convCtx()),
     };
@@ -292,7 +287,6 @@
   $effect(() => {
     if (!convs.selectedContact || !session.isLoggedIn) return;
     if (!isWindowFocused || !isTabVisible) return;
-    if (convs.mobileView !== 'chat') return;
     const convo = convs.conversations.get(convs.selectedContact);
     if (!convo || !convo.isReady) return;
 
@@ -408,19 +402,13 @@
     });
   });
 
-  // When switching to the communities view, clear any non-channel selection so
-  // the right-hand panel doesn't keep showing the last discussion.
+  // Clear selected conversation state when switching between pages.
   $effect(() => {
-    if (!convs.selectedContact) return;
-
-    if (
-      (routeMode === 'communities' && !convs.selectedContact.startsWith('channel_')) ||
-      (routeMode === 'chat' && convs.selectedContact.startsWith('channel_'))
-    ) {
+    const _ = routeMode;
+    untrack(() => {
       convs.selectedContact = null;
-      convs.mobileView = routeMode === 'communities' ? 'list' : 'chat';
       convs.sendError = '';
-    }
+    });
   });
 
   // ─── Forwarding helpers (thin wrappers so the template stays clean) ───────
@@ -681,14 +669,12 @@
           void channels.deleteCurrentChannel(channelId, channelsCtx());
           if (convs.selectedContact === channelId) {
             convs.selectedContact = null;
-            convs.mobileView = 'list';
           }
         }}
         onLeaveChannel={(channelId) => {
           void channels.leaveCurrentChannel(channelId, channelsCtx());
           if (convs.selectedContact === channelId) {
             convs.selectedContact = null;
-            convs.mobileView = 'list';
           }
         }}
       />
