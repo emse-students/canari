@@ -656,21 +656,24 @@ export class ChannelService {
 
     const savedMsg = await this.messageRepo.save(msg);
 
-    // Publish event to notify all connected channel members in real-time
-    const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
-    await this.redis.publishChannelEvent(
-      'channel.message.created',
-      {
-        channelId,
-        messageId: savedMsg.id,
-        senderId: input.senderId,
-        ciphertext: input.ciphertext,
-        nonce: input.nonce,
-        keyVersion: input.keyVersion,
-        createdAt: savedMsg.createdAt,
-      },
-      workspaceMemberIds
-    );
+    // Publish event fire-and-forget — do not block the HTTP response
+    this.getWorkspaceMemberIds(channel.workspaceId)
+      .then((workspaceMemberIds) =>
+        this.redis.publishChannelEvent(
+          'channel.message.created',
+          {
+            channelId,
+            messageId: savedMsg.id,
+            senderId: input.senderId,
+            ciphertext: input.ciphertext,
+            nonce: input.nonce,
+            keyVersion: input.keyVersion,
+            createdAt: savedMsg.createdAt,
+          },
+          workspaceMemberIds
+        )
+      )
+      .catch((err) => this.logger.error(`Failed to publish channel message event: ${err}`));
 
     return savedMsg;
   }
