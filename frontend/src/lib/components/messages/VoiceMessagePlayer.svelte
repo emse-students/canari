@@ -90,7 +90,7 @@
 </script>
 
 <div
-  class="rounded-2xl border border-cn-border bg-[color-mix(in_srgb,var(--cn-surface)_90%,transparent)] px-3 py-2 w-[min(80vw,23rem)]"
+  class="relative flex items-center gap-3.5 rounded-[1.25rem] border border-black/5 dark:border-white/10 bg-black/5 dark:bg-white/10 backdrop-blur-md px-3.5 py-3 w-full min-w-[200px] sm:min-w-[240px] transition-colors"
 >
   <audio
     bind:this={audioEl}
@@ -117,63 +117,70 @@
     class="hidden"
   ></audio>
 
-  <div class="flex items-center gap-2">
-    <button
-      type="button"
-      onclick={(e) => {
-        e.stopPropagation();
-        togglePlay();
-      }}
-      class="w-8 h-8 rounded-full bg-cn-dark text-cn-yellow inline-flex items-center justify-center"
-      aria-label={isPlaying ? 'Pause' : 'Lecture'}
-    >
-      {#if isPlaying}
-        <Pause size={14} />
-      {:else}
-        <Play size={14} class="ml-0.5" />
-      {/if}
-    </button>
+  <!-- Bouton Play/Pause -->
+  <button
+    type="button"
+    onclick={(e) => {
+      e.stopPropagation();
+      togglePlay();
+    }}
+    class="shrink-0 w-11 h-11 rounded-full bg-amber-500 text-[#151B2C] inline-flex items-center justify-center shadow-md hover:bg-amber-400 hover:scale-105 active:scale-95 transition-all outline-none focus-visible:ring-4 focus-visible:ring-amber-500/40"
+    aria-label={isPlaying ? 'Mettre en pause' : 'Lire le message vocal'}
+  >
+    {#if isPlaying}
+      <Pause size={18} strokeWidth={2.5} />
+    {:else}
+      <Play size={18} strokeWidth={2.5} class="ml-1" />
+    {/if}
+  </button>
 
-    <div class="flex-1 min-w-0">
-      <input
-        type="range"
-        min="0"
-        max={Math.max(duration, 1)}
-        step="0.01"
-        value={Math.min(currentTime, duration || 0)}
-        onclick={(e) => e.stopPropagation()}
-        oninput={(e) => seekTo((e.currentTarget as HTMLInputElement).value)}
-        class="w-full accent-[var(--cn-yellow)]"
-        aria-label="Position de lecture"
-      />
-      <div class="text-[0.68rem] text-text-muted flex items-center justify-between mt-0.5">
-        <span>{formatTime(currentTime)}</span>
-        <span>{formatTime(duration)}</span>
-      </div>
+  <!-- Section de la Timeline (Slider) -->
+  <div class="flex-1 min-w-0 flex flex-col justify-center gap-1.5 pt-1">
+    <input
+      type="range"
+      min="0"
+      max={Math.max(duration, 1)}
+      step="0.01"
+      value={Math.min(currentTime, duration || 0)}
+      onclick={(e) => e.stopPropagation()}
+      oninput={(e) => seekTo((e.currentTarget as HTMLInputElement).value)}
+      class="w-full h-1.5 rounded-full accent-amber-500 bg-black/10 dark:bg-white/20 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50"
+      aria-label="Position de lecture"
+    />
+    <div class="text-[0.65rem] font-bold opacity-70 flex items-center justify-between">
+      <span>{formatTime(currentTime)}</span>
+      <span>{formatTime(duration)}</span>
     </div>
+  </div>
 
+  <!-- Actions (Vitesse et Téléchargement) -->
+  <div class="flex items-center gap-0.5 shrink-0">
     <button
       type="button"
       onclick={(e) => {
         e.stopPropagation();
         cycleSpeed();
       }}
-      class="px-2 py-1 rounded-lg bg-cn-bg text-[0.65rem] font-semibold text-cn-dark"
-      aria-label="Vitesse de lecture"
+      class="w-9 h-9 rounded-full inline-flex items-center justify-center text-[0.7rem] font-bold opacity-70 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10 transition-all outline-none focus-visible:ring-2 focus-visible:ring-current"
+      aria-label={`Vitesse de lecture actuelle: x${speed}`}
+      title="Changer la vitesse"
     >
       x{speed}
     </button>
 
-    <button
-      type="button"
-      onclick={(e) => {
-        e.stopPropagation();
-        onDownload?.();
-      }}
-      class="w-7 h-7 rounded-full bg-cn-bg text-cn-dark inline-flex items-center justify-center"
-      aria-label="Telecharger le vocal"
-    >
-      <Download size={13} />
-    </button>
+    {#if onDownload}
+      <button
+        type="button"
+        onclick={(e) => {
+          e.stopPropagation();
+          onDownload?.();
+        }}
+        class="w-9 h-9 rounded-full inline-flex items-center justify-center opacity-70 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10 transition-all outline-none focus-visible:ring-2 focus-visible:ring-current"
+        aria-label="Télécharger le message vocal"
+        title="Télécharger"
+      >
+        <Download size={16} strokeWidth={2.5} />
+      </button>
+    {/if}
   </div>
 </div>

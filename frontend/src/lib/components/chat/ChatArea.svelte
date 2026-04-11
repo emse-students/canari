@@ -186,7 +186,7 @@
     <div
       bind:this={chatContainer}
       onscroll={handleScroll}
-      class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 py-3 md:px-6 md:py-6 pb-32 md:pb-36 flex flex-col gap-2"
+      class="chat-scrollbar flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 py-3 md:px-6 md:py-6 pb-4 md:pb-6 flex flex-col gap-2"
     >
       <ChatMessageGroups
         {visibleMessageGroups}
@@ -204,9 +204,7 @@
     </div>
 
     {#if sendError}
-      <div
-        class="absolute bottom-24 left-3 right-3 md:left-6 md:right-6 px-3 py-2 bg-red-50/95 border border-red-200 rounded-lg text-sm text-red-600 flex items-center justify-center gap-2 shadow-sm z-10"
-      >
+      <div class="chat-floating-alert md:text-sm">
         <AlertTriangle size={16} />
         <span>{sendError}</span>
       </div>
@@ -216,7 +214,7 @@
       <button
         type="button"
         onclick={() => scrollToBottom(true)}
-        class="absolute right-4 md:right-8 bottom-28 md:bottom-32 w-10 h-10 rounded-full bg-cn-dark text-cn-yellow shadow-lg hover:shadow-xl transition-all hover:scale-105 z-20"
+        class="chat-scroll-bottom-button"
         aria-label="Revenir en bas de la discussion"
         title="Revenir en bas"
       >

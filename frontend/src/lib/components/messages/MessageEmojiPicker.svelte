@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Smile } from 'lucide-svelte';
   import { onMount } from 'svelte';
+  import { scale } from 'svelte/transition';
   import 'emoji-picker-element';
 
   interface Props {
@@ -59,30 +60,67 @@
 
 {#if visible}
   <div
+    transition:scale={{ duration: 250, start: 0.95, opacity: 0, easing: (t) => t * (2 - t) }}
     class="absolute top-full mt-2 {isOwn
-      ? 'right-0'
-      : 'left-0'} w-[min(92vw,22rem)] bg-[var(--cn-surface)] border border-cn-border rounded-2xl shadow-2xl z-[110] overflow-hidden"
+      ? 'right-0 origin-top-right'
+      : 'left-0 origin-top-left'} w-[min(92vw,22rem)] bg-white/85 dark:bg-black/60 backdrop-blur-2xl border border-black/5 dark:border-white/10 rounded-[1.5rem] shadow-2xl shadow-black/10 dark:shadow-black/40 z-[110] overflow-hidden flex flex-col"
   >
+    <!-- En-tête -->
     <div
-      class="px-3 py-2 border-b border-cn-border text-xs text-text-muted flex items-center gap-1.5"
+      class="px-4 py-3 border-b border-black/5 dark:border-white/10 text-xs font-semibold text-text-muted flex items-center gap-2 bg-white/40 dark:bg-black/20"
     >
-      <Smile size={12} /> Reagir au message
+      <Smile size={14} class="text-amber-500" /> Réagir au message
     </div>
+
+    <!-- Section Émojis Récents -->
     {#if recentEmojis.length > 0}
-      <div class="px-3 py-2 border-b border-cn-border flex items-center gap-1 flex-wrap">
-        <span class="text-[0.65rem] text-text-muted mr-1">Recents</span>
+      <div class="px-3 py-2 border-b border-black/5 dark:border-white/10 flex items-center gap-1.5 flex-wrap bg-white/20 dark:bg-black/10">
+        <span class="text-[0.65rem] font-bold uppercase tracking-widest text-text-muted/80 mr-2">
+          Récents
+        </span>
         {#each recentEmojis as emoji (emoji)}
           <button
             type="button"
             onclick={() => handleEmojiClick(emoji)}
-            class="w-7 h-7 rounded-md hover:bg-cn-bg transition-colors text-base inline-flex items-center justify-center"
-            aria-label={`Reagir avec ${emoji}`}
+            class="w-8 h-8 rounded-xl hover:bg-black/10 dark:hover:bg-white/10 hover:scale-110 transition-all text-lg inline-flex items-center justify-center shadow-sm hover:shadow-md cursor-pointer"
+            aria-label={`Réagir avec ${emoji}`}
           >
             {emoji}
           </button>
         {/each}
       </div>
     {/if}
-    <emoji-picker use:attachEmojiPicker class="light w-full" locale="fr"></emoji-picker>
+
+    <!-- Composant Web emoji-picker -->
+    <emoji-picker use:attachEmojiPicker class="w-full h-80" locale="fr"></emoji-picker>
   </div>
 {/if}
+
+<style>
+  /* Stylisation globale du composant emoji-picker-element pour qu'il se fonde
+    dans notre design Glassmorphism sans casser ses bordures.
+  */
+  emoji-picker {
+    --background: transparent;
+    --border-color: transparent;
+    --input-border-radius: 1rem;
+    --input-padding: 0.5rem 1rem;
+    --indicator-color: #f59e0b; /* Couleur Amber-500 de Tailwind */
+    --category-emoji-size: 1.1rem;
+    --emoji-size: 1.5rem;
+    --input-font-size: 0.875rem;
+    --num-columns: 8;
+  }
+
+  /* Adaptation parfaite au mode sombre */
+  :global(:root[data-theme='dark']) emoji-picker {
+    --button-hover-background: rgba(255, 255, 255, 0.1);
+    --button-active-background: rgba(255, 255, 255, 0.2);
+    --search-background: rgba(0, 0, 0, 0.4);
+    --search-focus-background: rgba(0, 0, 0, 0.6);
+    --search-icon-color: rgba(255, 255, 255, 0.5);
+    --text-color: rgba(255, 255, 255, 0.9);
+    --category-button-color: rgba(255, 255, 255, 0.5);
+    --category-button-active-color: #f59e0b;
+  }
+</style>

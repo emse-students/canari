@@ -6,7 +6,7 @@
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { deriveConversationIdentity } from '$lib/utils/chat/conversations';
   import Avatar from '$lib/components/shared/Avatar.svelte';
-  import { MessageCircle, ChevronRight } from 'lucide-svelte';
+  import { MessageCircle, ChevronRight, Users, Loader2 } from 'lucide-svelte';
   import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
 
   interface ConvItem {
@@ -120,87 +120,125 @@
 </script>
 
 <aside
-  class="hidden xl:flex flex-col w-72 h-full border-l border-cn-border/50 bg-[color-mix(in_srgb,var(--cn-surface)_60%,transparent)] backdrop-blur-sm overflow-hidden rounded-2xl"
+  class="hidden xl:flex flex-col w-72 h-full border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 backdrop-blur-2xl overflow-hidden rounded-[1.5rem] shadow-sm transition-all duration-300"
 >
-  <!-- Header -->
+  <!-- En-tête -->
   <div
-    class="flex items-center justify-between px-4 py-3 border-b border-cn-border/50 flex-shrink-0"
+    class="flex items-center justify-between px-5 py-4 border-b border-black/5 dark:border-white/10 flex-shrink-0 bg-white/40 dark:bg-black/10"
   >
-    <div class="flex items-center gap-2">
-      <MessageCircle size={16} class="text-text-muted" />
-      <span class="text-sm font-bold text-text-main">Discussions</span>
+    <div class="flex items-center gap-2.5">
+      <div class="p-1.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded-lg">
+        <MessageCircle size={16} strokeWidth={2.5} />
+      </div>
+      <span class="text-[0.95rem] font-extrabold text-text-main tracking-wide">Discussions</span>
     </div>
     <a
       href="/chat"
-      class="text-xs font-semibold text-cn-dark hover:text-cn-yellow transition-colors flex items-center gap-0.5"
+      class="text-[0.7rem] font-bold text-amber-600 dark:text-amber-500 hover:text-amber-500 dark:hover:text-amber-400 transition-colors flex items-center gap-0.5 uppercase tracking-wider outline-none focus-visible:ring-2 focus-visible:ring-amber-500 rounded"
     >
       Tout voir
-      <ChevronRight size={13} />
+      <ChevronRight size={14} strokeWidth={2.5} />
     </a>
   </div>
 
-  <!-- Conversation list -->
-  <div class="flex-1 overflow-y-auto py-2">
+  <!-- Liste des conversations -->
+  <div class="flex-1 overflow-y-auto py-2 custom-scrollbar">
     {#if isLoading}
-      <div class="flex justify-center items-center py-8">
-        <div
-          class="w-5 h-5 border-2 border-cn-yellow border-t-transparent rounded-full animate-spin"
-        ></div>
+      <div class="flex flex-col justify-center items-center py-10 gap-3 text-text-muted">
+        <Loader2 size={24} class="animate-spin text-amber-500" />
+        <span class="text-xs font-semibold">Chargement...</span>
       </div>
     {:else if displayItems.length === 0}
-      <div class="text-center py-8 px-4">
-        <MessageCircle size={32} class="mx-auto mb-2 text-text-muted opacity-30" />
-        <p class="text-xs text-text-muted">Aucune discussion</p>
+      <div class="text-center py-10 px-4">
+        <div class="w-12 h-12 rounded-2xl bg-black/5 dark:bg-white/5 flex items-center justify-center mx-auto mb-3 text-text-muted opacity-60">
+          <MessageCircle size={24} strokeWidth={2} />
+        </div>
+        <p class="text-sm font-semibold text-text-main mb-1">Aucune discussion</p>
+        <p class="text-xs text-text-muted px-2 mb-4 leading-relaxed">Démarrez une nouvelle conversation pour échanger avec le réseau.</p>
         <a
           href="/chat"
-          class="mt-2 inline-block text-xs font-semibold text-cn-dark hover:text-cn-yellow transition-colors"
+          class="inline-block px-4 py-2 rounded-xl bg-amber-500/10 text-amber-700 dark:text-amber-400 text-xs font-bold hover:bg-amber-500/20 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
         >
-          Commencer
+          Commencer à discuter
         </a>
       </div>
     {:else}
       {#each displayItems as item (item.meta.id)}
         <button
           type="button"
-          class="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-white/30 dark:hover:bg-black/20 transition-colors text-left rounded-xl mx-1 my-0.5"
-          style="width: calc(100% - 8px);"
+          class="w-full flex items-center gap-3.5 px-3 py-2.5 hover:bg-white/80 dark:hover:bg-white/5 transition-all duration-200 text-left rounded-2xl mx-2 my-1 group hover:shadow-sm hover:translate-x-1 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 border border-transparent hover:border-black/5 dark:hover:border-white/5"
+          style="width: calc(100% - 16px);"
           onclick={() => navigateToConversation(item.meta.id)}
         >
+          <!-- Avatar -->
           <div class="flex-shrink-0 relative">
-            <Avatar userId={getAvatarUserId(item)} size="sm" />
+            {#if item.isGroup}
+              <div class="w-10 h-10 rounded-xl shadow-inner border border-black/5 dark:border-white/5 bg-gradient-to-b from-gray-100 to-gray-200 dark:from-zinc-800 dark:to-zinc-900 text-gray-600 dark:text-gray-300 flex items-center justify-center transition-transform group-hover:scale-105">
+                <Users size={18} strokeWidth={2} class="opacity-80" />
+              </div>
+            {:else}
+              <div class="transition-transform duration-200 group-hover:scale-105">
+                 <Avatar userId={getAvatarUserId(item)} size="sm" />
+              </div>
+            {/if}
+
+            <!-- Badge Non-lu -->
             {#if (item.unreadCount ?? 0) > 0}
               <span
-                class="absolute -top-0.5 -right-0.5 min-w-[1rem] h-4 rounded-full bg-cn-yellow text-cn-dark text-[0.6rem] font-bold flex items-center justify-center px-0.5 leading-none"
+                class="absolute -top-1.5 -right-1.5 min-w-[1.25rem] h-5 px-1.5 rounded-full bg-red-500 text-white text-[0.7rem] font-bold flex items-center justify-center leading-none shadow-sm ring-2 ring-[var(--cn-surface)] dark:ring-[#151B2C] z-10 transition-transform group-hover:scale-110"
               >
-                {item.unreadCount! > 9 ? '9+' : item.unreadCount}
+                {item.unreadCount! > 99 ? '99+' : item.unreadCount}
               </span>
             {/if}
           </div>
-          <div class="flex-1 min-w-0">
+
+          <!-- Informations -->
+          <div class="flex-1 min-w-0 flex flex-col justify-center">
             <div
-              class="text-sm font-semibold text-text-main truncate {(item.unreadCount ?? 0) > 0
-                ? 'text-text-main'
-                : ''}"
+              class="text-[0.9rem] font-bold text-text-main truncate group-hover:text-amber-600 dark:group-hover:text-amber-400 transition-colors {(item.unreadCount ?? 0) > 0 ? 'text-text-main' : ''}"
             >
               {getEffectiveName(item)}
             </div>
-            {#if item.isGroup}
-              <div class="text-xs text-text-muted truncate">Groupe</div>
-            {/if}
+            <div class="text-[0.75rem] font-medium text-text-muted truncate mt-0.5">
+              {item.isGroup ? 'Groupe de discussion' : 'Message direct'}
+            </div>
           </div>
         </button>
       {/each}
     {/if}
   </div>
 
-  <!-- Footer -->
-  <div class="px-3 py-2 border-t border-cn-border/50 flex-shrink-0">
+  <!-- Footer (Bouton d'action principal) -->
+  <div class="px-4 py-4 border-t border-black/5 dark:border-white/10 flex-shrink-0 bg-white/40 dark:bg-black/10 backdrop-blur-md">
     <a
       href="/chat"
-      class="flex items-center justify-center gap-2 w-full py-2 rounded-xl bg-cn-dark/5 hover:bg-cn-dark/10 transition-colors text-sm font-semibold text-text-main"
+      class="flex items-center justify-center gap-2 w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-[0.98] hover:-translate-y-0.5 active:translate-y-0 transition-all text-[#151B2C] text-[0.85rem] font-extrabold shadow-md shadow-amber-500/20 outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50"
     >
-      <MessageCircle size={15} />
+      <MessageCircle size={18} strokeWidth={2.5} class="ml-0.5 mt-0.5" />
       Ouvrir la messagerie
     </a>
   </div>
 </aside>
+
+<style>
+  /* Scrollbar discrète */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--cn-surface) 20%, transparent);
+    border-radius: 6px;
+  }
+  :global([data-theme='dark']) .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+  }
+  .custom-scrollbar:hover::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--cn-surface) 40%, transparent);
+  }
+  :global([data-theme='dark']) .custom-scrollbar:hover::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+  }
+</style>

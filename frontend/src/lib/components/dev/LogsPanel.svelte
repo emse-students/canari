@@ -1,35 +1,16 @@
 <script lang="ts">
   import { slide } from 'svelte/transition';
-  import { X } from 'lucide-svelte';
+  import { Terminal, X, Download } from 'lucide-svelte';
   import { tick } from 'svelte';
 
   interface Props {
     logs: string[];
     onClose: () => void;
-    onGenerateKeyPackage?: () => void;
-    onAddMember?: () => void;
-    onProcessWelcome?: () => void;
-    lastKeyPackage?: string;
-    lastCommit?: string;
-    lastWelcome?: string;
-    incomingBytesHex?: string;
-    onIncomingBytesChange?: (value: string) => void;
   }
 
-  let {
-    logs,
-    onClose,
-    onGenerateKeyPackage,
-    onAddMember,
-    onProcessWelcome,
-    lastKeyPackage = '',
-    lastCommit: _lastCommit = '',
-    lastWelcome: _lastWelcome = '',
-    incomingBytesHex = '',
-    onIncomingBytesChange,
-  }: Props = $props();
+  let { logs, onClose }: Props = $props();
 
-  let logContainer: HTMLDivElement;
+  let logContainer: HTMLDivElement | undefined = $state();
 
   $effect(() => {
     if (logs.length > 0) {
@@ -40,82 +21,86 @@
       });
     }
   });
+
+  // Fonction pour exporter les logs dans un fichier .txt
+  function exportLogs() {
+    if (logs.length === 0) return;
+
+    const text = logs.join('\n');
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement('a');
+    a.href = url;
+    // Crée un nom de fichier horodaté, ex: canari-logs-2023-10-25T14-30-00.txt
+    a.download = `canari-logs-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
+
+    document.body.appendChild(a);
+    a.click();
+
+    // Nettoyage
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
 </script>
 
+<!--
+  Utilisation de "fixed inset-y-0 right-0" pour le coller en haut, en bas et à droite de l'écran.
+  z-[100] garantit qu'il passe par-dessus la bottom bar ou la navbar.
+-->
 <aside
-  class="w-full h-full md:w-80 bg-slate-900 text-green-400 flex flex-col border-l border-slate-800"
-  transition:slide={{ axis: 'x' }}
+  class="fixed inset-y-0 right-0 flex flex-col w-[100vw] sm:w-80 xl:w-96 border-l border-black/5 dark:border-white/10 bg-white/70 dark:bg-black/30 backdrop-blur-2xl shadow-[-10px_0_30px_rgba(0,0,0,0.1)] dark:shadow-[-10px_0_30px_rgba(0,0,0,0.3)] z-[100] shrink-0"
+  transition:slide={{ axis: 'x', duration: 300, easing: t => t * (2 - t) }}
 >
-  <!-- Header -->
-  <div class="px-4 py-4 bg-slate-800 flex justify-between items-center text-white">
-    <h4 class="text-sm font-bold uppercase tracking-wider">Terminal Système</h4>
-    <button onclick={onClose} class="text-gray-400 hover:text-white text-xl">
-      <X size={20} />
-    </button>
+  <!-- Header Glassmorphism -->
+  <div class="flex items-center justify-between border-b border-black/5 dark:border-white/10 p-4 bg-white/50 dark:bg-black/40 backdrop-blur-md">
+    <h4 class="text-sm font-semibold text-text-main flex items-center gap-2">
+      <Terminal size={18} />
+      Terminal Système
+    </h4>
+    <div class="flex items-center gap-1">
+      <!-- Bouton d'export -->
+      <button
+        type="button"
+        onclick={exportLogs}
+        disabled={logs.length === 0}
+        title="Exporter les logs"
+        class="rounded-full bg-black/5 dark:bg-white/10 p-2 text-text-main hover:bg-black/10 dark:hover:bg-white/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        aria-label="Exporter"
+      >
+        <Download size={16} />
+      </button>
+
+      <!-- Bouton fermer -->
+      <button
+        type="button"
+        onclick={onClose}
+        title="Fermer"
+        class="rounded-full bg-black/5 dark:bg-white/10 p-2 text-text-main hover:bg-red-500 hover:text-white dark:hover:bg-red-500 transition-colors"
+        aria-label="Fermer"
+      >
+        <X size={16} />
+      </button>
+    </div>
   </div>
 
-  <!-- Logs -->
-  <div
-    bind:this={logContainer}
-    class="flex-1 overflow-y-auto px-4 py-4 font-mono text-xs space-y-1"
-  >
-    {#each logs as entry, i (i)}
-      <div class="border-b border-white/5 pb-1 break-all">{entry}</div>
-    {/each}
-  </div>
-
-  <!-- Dev Tools -->
-  {#if onGenerateKeyPackage || onAddMember || onProcessWelcome}
-    <details class="bg-slate-800 border-t border-slate-700 text-white text-sm">
-      <summary class="px-4 py-4 cursor-pointer font-bold">Outils Développeur</summary>
-      <div class="px-4 pb-4 space-y-2">
-        {#if onGenerateKeyPackage}
-          <button
-            onclick={onGenerateKeyPackage}
-            class="w-full py-2 px-3 bg-slate-700 rounded-lg hover:bg-slate-600 transition-colors"
-          >
-            Générer KeyPackage
-          </button>
+  <!-- Conteneur des Logs (Look Terminal) -->
+  <div class="flex-1 p-3 overflow-hidden">
+    <div
+      bind:this={logContainer}
+      class="h-full w-full overflow-y-auto rounded-xl bg-[#0f111a]/95 p-4 shadow-inner ring-1 ring-white/10"
+    >
+      <div class="font-mono text-[11px] sm:text-xs text-green-400 space-y-1.5 selection:bg-green-400/30">
+        {#if logs.length === 0}
+          <div class="text-white/40 italic">En attente de journaux...</div>
         {/if}
 
-        {#if lastKeyPackage}
-          <input
-            type="text"
-            readonly
-            value={lastKeyPackage}
-            class="w-full bg-slate-900 text-white border border-slate-600 px-2 py-2 rounded-lg font-mono text-xs"
-          />
-        {/if}
-
-        {#if onIncomingBytesChange}
-          <input
-            type="text"
-            value={incomingBytesHex}
-            oninput={(e) => onIncomingBytesChange?.(e.currentTarget.value)}
-            placeholder="Payload Hex..."
-            class="w-full bg-slate-900 text-white border border-slate-600 px-2 py-2 rounded-lg outline-none font-mono text-xs"
-          />
-        {/if}
-
-        {#if onAddMember}
-          <button
-            onclick={onAddMember}
-            class="w-full py-2 px-3 bg-slate-700 rounded-lg hover:bg-slate-600 transition-colors"
-          >
-            Ajouter Membre
-          </button>
-        {/if}
-
-        {#if onProcessWelcome}
-          <button
-            onclick={onProcessWelcome}
-            class="w-full py-2 px-3 bg-slate-700 rounded-lg hover:bg-slate-600 transition-colors"
-          >
-            Traiter Welcome
-          </button>
-        {/if}
-
+        {#each logs as entry, i (i)}
+          <div class="border-b border-white/5 pb-1.5 break-all opacity-90 hover:opacity-100 transition-opacity">
+            <span class="text-blue-400/70 mr-2 font-bold">›</span>{entry}
+          </div>
+        {/each}
       </div>
-    </details>
-  {/if}
+    </div>
+  </div>
 </aside>

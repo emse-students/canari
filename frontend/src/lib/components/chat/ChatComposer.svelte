@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { Send, Paperclip, X, FileText } from 'lucide-svelte';
+  import { Send, Paperclip, X, FileText, UploadCloud, Loader2 } from 'lucide-svelte';
   import { untrack } from 'svelte';
+  import { slide, fade, scale } from 'svelte/transition';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import VoiceRecorder from './VoiceRecorder.svelte';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
@@ -46,6 +47,10 @@
   let isMobileViewport = $state(false);
   const isVoiceRecordingSupported = $derived(hasMediaRecorder && isMobileViewport);
 
+  const isSendDisabled = $derived(
+    (!messageText.trim() && pendingFiles.length === 0) || isUploading
+  );
+
   function toReplyPreview(value: string): string {
     const normalized = value.replace(/\s+/g, ' ').trim();
     if (normalized.length <= 96) return normalized;
@@ -81,7 +86,7 @@
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      onSend();
+      if (!isSendDisabled) onSend();
     }
     if (e.key === 'Escape' && replyingTo) {
       onCancelReply?.();
@@ -181,8 +186,8 @@
 
   $effect(() => {
     if (textareaEl) {
-      textareaEl.style.height = '40px';
-      textareaEl.style.height = `${Math.max(textareaEl.scrollHeight, 40)}px`;
+      textareaEl.style.height = '44px'; // Base height
+      textareaEl.style.height = `${Math.min(Math.max(textareaEl.scrollHeight, 44), 160)}px`; // Max height ~160px
     }
   });
 
@@ -228,77 +233,99 @@
   });
 </script>
 
-<footer
-  class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-white/55 dark:from-black/30 via-white/15 dark:via-black/10 to-transparent pb-[max(0.9rem,env(safe-area-inset-bottom))] pt-8 z-20 pointer-events-none"
->
+<!-- Footer Container -->
+<footer class="chat-composer-footer">
+  <!-- Zone de Réponse (Reply) -->
   {#if replyingTo}
-    <div
-      class="mx-3 md:mx-6 mb-2 max-w-4xl md:max-w-[unset] flex items-center justify-between bg-white/85 backdrop-blur-md border border-white/60 rounded-xl p-3 shadow-lg pointer-events-auto relative overflow-hidden"
-    >
-      <div class="absolute left-0 top-0 bottom-0 w-1 bg-cn-yellow"></div>
-      <div class="flex-1 min-w-0">
-        <div class="text-xs font-semibold text-text-main">
-          Répondre à {replySenderDisplayName || replyingTo.senderId}
+    <div transition:slide={{ duration: 200, axis: 'y' }} class="pointer-events-auto">
+      <div
+        class="mx-3 sm:mx-4 md:mx-6 mb-3 flex items-center justify-between bg-white/85 dark:bg-[#151B2C]/85 backdrop-blur-2xl border border-black/5 dark:border-white/10 rounded-2xl p-3 md:p-4 shadow-lg relative overflow-hidden"
+      >
+        <div
+          class="absolute left-0 top-0 bottom-0 w-1.5 bg-amber-500 shadow-[0_0_12px_rgba(245,158,11,0.6)]"
+        ></div>
+        <div class="flex-1 min-w-0 pl-1.5">
+          <div
+            class="text-xs font-bold text-amber-600 dark:text-amber-500 mb-0.5 flex items-center gap-1.5"
+          >
+            <span class="truncate">Répondre à {replySenderDisplayName || replyingTo.senderId}</span>
+          </div>
+          <div class="text-[0.85rem] font-medium text-text-muted truncate leading-snug">
+            {replyPreviewText}
+          </div>
         </div>
-        <div class="text-sm text-text-muted truncate">
-          {replyPreviewText}
-        </div>
+        {#if onCancelReply}
+          <button
+            onclick={onCancelReply}
+            class="p-2 ml-2 rounded-full bg-black/5 dark:bg-white/5 text-text-muted hover:text-text-main hover:bg-black/10 dark:hover:bg-white/10 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 flex-shrink-0 active:scale-95"
+            aria-label="Annuler la réponse"
+          >
+            <X size={16} strokeWidth={2.5} />
+          </button>
+        {/if}
       </div>
-      {#if onCancelReply}
-        <button
-          onclick={onCancelReply}
-          class="p-1 text-text-muted hover:text-cn-dark transition-colors flex-shrink-0"
-          aria-label="Annuler la réponse"
-        >
-          <X size={16} />
-        </button>
-      {/if}
     </div>
   {/if}
 
-  <div class="px-3 md:px-6 pointer-events-auto">
+  <div class="px-3 sm:px-4 md:px-6 pointer-events-auto flex flex-col gap-2">
+    <!-- Zone des Fichiers en attente -->
     {#if pendingFiles.length > 0}
-      <div class="mb-2">
-        <div class="text-[0.7rem] text-text-muted mb-1">
-          {pendingFiles.length} fichier(s) en attente
+      <div transition:slide={{ duration: 200, axis: 'y' }} class="w-full">
+        <div class="text-[0.7rem] font-bold uppercase tracking-wider text-text-muted mb-2 px-1">
+          {pendingFiles.length} fichier{pendingFiles.length > 1 ? 's' : ''} en attente
         </div>
-        <div class="flex flex-wrap gap-2">
+        <div class="flex flex-wrap gap-3">
           {#each pendingFiles as file, index (`${file.name}-${index}`)}
             {@const key = fileKey(file, index)}
             <div
-              class="relative rounded-2xl bg-white/80 backdrop-blur-sm border border-white/60 overflow-hidden w-24 h-24 shadow-sm"
+              transition:scale={{ duration: 200, start: 0.9 }}
+              class="relative rounded-[1rem] bg-white/90 dark:bg-[#151B2C]/90 backdrop-blur-xl border border-black/5 dark:border-white/10 overflow-hidden w-20 h-20 sm:w-24 sm:h-24 shadow-md group/file"
             >
               {#if isImageFile(file) && previewUrls[key]}
                 <img src={previewUrls[key]} alt={file.name} class="w-full h-full object-cover" />
               {:else if isPdfFile(file) && previewUrls[key]}
-                <div class="w-full h-full bg-[var(--cn-surface)]">
-                  <embed src={previewUrls[key]} type="application/pdf" class="w-full h-full" />
+                <div class="w-full h-full bg-white/50 dark:bg-black/50">
+                  <embed
+                    src={previewUrls[key]}
+                    type="application/pdf"
+                    class="w-full h-full pointer-events-none"
+                  />
                 </div>
               {:else}
                 <div
-                  class="w-full h-full flex flex-col items-center justify-center gap-1 px-2 text-text-muted"
+                  class="w-full h-full flex flex-col items-center justify-center gap-1.5 px-2 text-text-muted bg-black/5 dark:bg-white/5"
                 >
-                  <FileText size={16} />
-                  <span class="text-[0.6rem] text-center leading-tight line-clamp-2"
-                    >{file.name}</span
+                  <FileText size={20} strokeWidth={1.5} />
+                  <span
+                    class="text-[0.6rem] sm:text-[0.65rem] font-medium text-center leading-tight line-clamp-2 px-1 break-all"
                   >
+                    {file.name}
+                  </span>
                 </div>
               {/if}
 
+              <!-- Overlay Gradient et Nom du fichier -->
               <div
-                class="absolute inset-x-0 bottom-0 bg-black/55 text-white text-[0.55rem] px-1.5 py-1 truncate"
-                title={file.name}
+                class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent pt-4 pb-1.5 px-2 pointer-events-none"
               >
-                {file.name}
+                <div
+                  class="text-white text-[0.55rem] sm:text-[0.6rem] font-medium truncate drop-shadow-md"
+                  title={file.name}
+                >
+                  {file.name}
+                </div>
               </div>
+
+              <!-- Bouton de suppression -->
               {#if onRemovePendingFile}
                 <button
                   type="button"
-                  class="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 hover:bg-black/75 inline-flex items-center justify-center text-white"
+                  class="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-black/50 backdrop-blur-md hover:bg-red-500 inline-flex items-center justify-center text-white shadow-sm opacity-100 sm:opacity-0 sm:group-hover/file:opacity-100 transition-all duration-200 outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-red-500 scale-90 hover:scale-105 active:scale-95"
                   onclick={() => onRemovePendingFile(index)}
                   aria-label="Retirer le fichier"
+                  title="Retirer"
                 >
-                  <X size={12} />
+                  <X size={14} strokeWidth={2.5} />
                 </button>
               {/if}
             </div>
@@ -307,50 +334,51 @@
       </div>
     {/if}
 
+    <!-- Barre de saisie principale -->
     <div
       role="group"
-      aria-label="Zone de saisie et depot de fichiers"
-      class="relative max-w-full flex items-center gap-2 md:gap-3 backdrop-blur-md bg-white/50 dark:bg-gray-800/50 p-2.5 md:p-3 rounded-full overflow-x-hidden border border-white/50 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.05)] transition-all {isDragOver
-        ? 'ring-2 ring-amber-300/70'
-        : ''}"
+      aria-label="Zone de saisie et dépôt de fichiers"
+      class="chat-composer-panel {isDragOver ? 'is-dragover' : ''}"
       ondragover={handleDragOver}
       ondragleave={handleDragLeave}
       ondrop={handleDrop}
     >
+      <!-- Badge de Drag & Drop au-dessus -->
       {#if isDragOver}
         <div
-          class="absolute left-1/2 -translate-x-1/2 -translate-y-11 px-3 py-1 rounded-full bg-cn-dark text-white text-xs pointer-events-none"
+          transition:fade={{ duration: 150 }}
+          class="absolute left-1/2 -translate-x-1/2 -translate-y-16 z-10 pointer-events-none"
         >
-          Deposez vos fichiers ici
+          <span
+            class="px-4 py-2.5 bg-amber-500 text-[#151B2C] font-extrabold rounded-full shadow-xl shadow-amber-500/20 text-sm flex items-center gap-2 whitespace-nowrap"
+          >
+            <UploadCloud size={18} strokeWidth={2.5} /> Déposez vos fichiers ici
+          </span>
         </div>
       {/if}
 
-      <button
-        onclick={() => fileInput?.click()}
-        disabled={isUploading}
-        title="Envoyer une image, vidéo ou fichier"
-        aria-label="Joindre un fichier"
-        class="w-10 h-10 md:w-11 md:h-11 text-text-muted rounded-full flex items-center justify-center flex-shrink-0 hover:text-cn-dark hover:bg-black/5 transition-colors disabled:opacity-40"
-      >
-        {#if isUploading}
-          <svg class="animate-spin w-5 h-5" viewBox="0 0 24 24" fill="none">
-            <circle
-              class="opacity-25"
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              stroke-width="4"
-            />
-            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
-          </svg>
-        {:else}
-          <Paperclip size={20} />
-        {/if}
-      </button>
+      <!-- Bouton Pièce Jointe -->
+      <div class="pb-[3px] shrink-0">
+        <button
+          onclick={() => fileInput?.click()}
+          disabled={isUploading}
+          title="Envoyer une image, vidéo ou fichier"
+          aria-label="Joindre un fichier"
+          class="chat-composer-icon-button"
+        >
+          {#if isUploading}
+            <Loader2 class="animate-spin w-5 h-5 text-amber-500" strokeWidth={2.5} />
+          {:else}
+            <Paperclip size={20} strokeWidth={2} />
+          {/if}
+        </button>
+      </div>
 
+      <!-- Enregistreur Vocal (Mobile uniquement) -->
       {#if isVoiceRecordingSupported}
-        <VoiceRecorder onRecordingComplete={handleVoiceRecording} />
+        <div class="pb-[3px] shrink-0">
+          <VoiceRecorder onRecordingComplete={handleVoiceRecording} />
+        </div>
       {/if}
 
       <input
@@ -362,24 +390,30 @@
         onchange={handleFileChange}
       />
 
+      <!-- Zone de Texte auto-extensible -->
       <textarea
         bind:this={textareaEl}
         value={messageText}
         oninput={(e) => onMessageChange(e.currentTarget.value)}
         onkeydown={handleKeydown}
         onpaste={handlePaste}
-        placeholder="Message..."
+        placeholder="Écrivez un message..."
         rows="1"
-        class="flex-1 min-w-0 bg-transparent border-none resize-none outline-none font-normal text-[0.95rem] md:text-base px-2 py-2 leading-6 max-h-32 text-gray-800 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-300"
+        class="chat-composer-textarea chat-scrollbar"
       ></textarea>
-      <button
-        onclick={onSend}
-        disabled={(!messageText.trim() && pendingFiles.length === 0) || isUploading}
-        aria-label="Envoyer le message"
-        class="w-10 h-10 md:w-11 md:h-11 bg-amber-500 text-white rounded-full flex items-center justify-center flex-shrink-0 transition-transform hover:scale-105 active:scale-100 hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
-      >
-        <Send size={20} />
-      </button>
+
+      <!-- Bouton Envoyer Dynamique -->
+      <div class="pb-[3px] shrink-0 pr-1">
+        <button
+          onclick={onSend}
+          disabled={isSendDisabled}
+          aria-label="Envoyer le message"
+          class="chat-composer-send-button {isSendDisabled ? 'is-disabled' : ''}"
+        >
+          <!-- Léger décalage de l'icône Send pour un centrage optique parfait -->
+          <Send size={18} strokeWidth={2.5} class={isSendDisabled ? '' : 'ml-0.5 mt-0.5'} />
+        </button>
+      </div>
     </div>
   </div>
 </footer>

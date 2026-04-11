@@ -1,9 +1,10 @@
 <script lang="ts">
+  import { SvelteSet } from 'svelte/reactivity';
   import Avatar from '../shared/Avatar.svelte';
   import MessageBubble from '../messages/MessageBubble.svelte';
   import type { ChatMessage, MessageReaction } from '$lib/types';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
-  import { SvelteSet } from 'svelte/reactivity';
+  import { ChevronUp } from 'lucide-svelte';
 
   interface MessageGroup {
     type: 'date_separator' | 'time_separator' | 'message';
@@ -71,108 +72,75 @@
   });
 </script>
 
+<!-- Bouton de chargement de l'historique (Sticky) -->
 {#if hiddenGroupCount > 0}
-  <div class="sticky top-2 z-10 flex justify-center mb-1">
+  <div class="sticky top-2 z-10 flex justify-center mb-4 mt-2">
     <button
       type="button"
       onclick={loadOlderGroups}
-      class="px-3 py-1 rounded-full bg-[var(--surface-elevated)]/85 backdrop-blur border border-cn-border text-xs text-text-main hover:bg-[var(--surface-elevated)] transition-colors shadow-sm"
+      class="group inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-white/70 dark:bg-black/40 backdrop-blur-md border border-black/5 dark:border-white/10 text-[0.75rem] font-bold text-text-muted hover:text-text-main hover:bg-white/90 dark:hover:bg-black/60 transition-all shadow-sm hover:shadow-md active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
     >
-      Charger les messages précédents ({hiddenGroupCount})
+      <ChevronUp size={14} class="group-hover:-translate-y-0.5 transition-transform" />
+      Charger l'historique ({hiddenGroupCount})
     </button>
   </div>
 {/if}
 
-{#each visibleMessageGroups as group, index (group.type === 'message' ? group.message?.id : `${group.type}-${index}`)}
-  {#if group.type === 'date_separator'}
-    <div class="flex justify-center my-3">
-      <div
-        class="px-3 py-1 bg-[var(--surface-elevated)]/85 rounded-full text-xs text-cn-muted font-medium border border-cn-border/70 backdrop-blur"
-      >
-        {group.date}
-      </div>
-    </div>
-  {:else if group.type === 'time_separator'}
-    <div class="flex justify-center my-2">
-      <div class="px-2 py-0.5 text-[0.65rem] text-cn-muted/80">
-        {group.time}
-      </div>
-    </div>
-  {:else if group.type === 'message' && group.message}
-    {@const msg = group.message}
-    {@const reactions =
-      messageReactions instanceof Map
-        ? messageReactions.get(msg.id) || []
-        : messageReactions?.[msg.id] || []}
-    {@const prevGroup = index > 0 ? visibleMessageGroups[index - 1] : null}
-    {@const prevMsg = prevGroup?.type === 'message' ? prevGroup.message : null}
-    {@const nextGroup =
-      index < visibleMessageGroups.length - 1 ? visibleMessageGroups[index + 1] : null}
-    {@const nextMsg = nextGroup?.type === 'message' ? nextGroup.message : null}
-    {@const continuesFromPrev =
-      !!prevMsg &&
-      !msg.isSystem &&
-      !prevMsg.isSystem &&
-      prevMsg.senderId === msg.senderId &&
-      prevMsg.isOwn === msg.isOwn}
-    {@const continuesToNext =
-      !!nextMsg &&
-      !msg.isSystem &&
-      !nextMsg.isSystem &&
-      nextMsg.senderId === msg.senderId &&
-      nextMsg.isOwn === msg.isOwn}
-    {@const groupPosition = continuesFromPrev
-      ? continuesToNext
-        ? 'middle'
-        : 'end'
-      : continuesToNext
-        ? 'start'
-        : 'single'}
-    {@const showSender = !msg.isOwn && groupPosition !== 'middle' && groupPosition !== 'end'}
-
-    {#if msg.isSystem}
-      <div class="flex justify-center my-2">
-        <MessageBubble
-          messageId={msg.id}
-          senderId={msg.senderId}
-          content={msg.content}
-          timestamp={msg.timestamp}
-          isOwn={msg.isOwn}
-          isSystem={msg.isSystem}
-          replyTo={msg.replyTo}
-          {reactions}
-          onReply={onReply ? () => onReply?.(msg) : undefined}
-          {onReact}
-          shouldAnimate={msg.timestamp.getTime() > switchTime}
-          {authToken}
-        />
-      </div>
-    {:else}
-      <div class="flex gap-2 {msg.isOwn ? 'justify-end' : 'justify-start'}">
-        {#if !msg.isOwn}
-          <div class="flex flex-col items-center gap-1" style="width: 28px;">
-            {#if showSender}
-              <Avatar userId={msg.senderId} size="sm" />
-            {:else}
-              <div class="w-6"></div>
-            {/if}
-          </div>
-        {/if}
-
+<div class="flex flex-col gap-1 pb-4">
+  {#each visibleMessageGroups as group, index (group.type === 'message' ? group.message?.id : `${group.type}-${index}`)}
+    <!-- Séparateur de Date -->
+    {#if group.type === 'date_separator'}
+      <div class="flex justify-center my-5">
         <div
-          class="flex flex-col {msg.isOwn ? 'items-end' : 'items-start'} max-w-[88%] md:max-w-[75%]"
+          class="px-4 py-1.5 bg-white/50 dark:bg-black/30 rounded-full text-[0.65rem] text-text-main font-bold uppercase tracking-widest border border-black/5 dark:border-white/10 backdrop-blur-md shadow-sm"
         >
-          {#if showSender && !msg.isSystem}
-            <div class="text-xs text-cn-muted px-2 mb-1 font-medium">
-              <a
-                href="/profile/{encodeURIComponent(msg.senderId)}"
-                class="hover:underline"
-                onclick={(e) => e.stopPropagation()}
-                >{resolvedSenderNames[msg.senderId] || msg.senderId}</a
-              >
-            </div>
-          {/if}
+          {group.date}
+        </div>
+      </div>
 
+      <!-- Séparateur de Temps (Heure) -->
+    {:else if group.type === 'time_separator'}
+      <div class="flex justify-center my-3">
+        <div class="px-2 py-0.5 text-[0.65rem] font-semibold text-text-muted/70 tracking-wider">
+          {group.time}
+        </div>
+      </div>
+
+      <!-- Message -->
+    {:else if group.type === 'message' && group.message}
+      {@const msg = group.message}
+      {@const reactions =
+        messageReactions instanceof Map
+          ? messageReactions.get(msg.id) || []
+          : messageReactions?.[msg.id] || []}
+      {@const prevGroup = index > 0 ? visibleMessageGroups[index - 1] : null}
+      {@const prevMsg = prevGroup?.type === 'message' ? prevGroup.message : null}
+      {@const nextGroup =
+        index < visibleMessageGroups.length - 1 ? visibleMessageGroups[index + 1] : null}
+      {@const nextMsg = nextGroup?.type === 'message' ? nextGroup.message : null}
+      {@const continuesFromPrev =
+        !!prevMsg &&
+        !msg.isSystem &&
+        !prevMsg.isSystem &&
+        prevMsg.senderId === msg.senderId &&
+        prevMsg.isOwn === msg.isOwn}
+      {@const continuesToNext =
+        !!nextMsg &&
+        !msg.isSystem &&
+        !nextMsg.isSystem &&
+        nextMsg.senderId === msg.senderId &&
+        nextMsg.isOwn === msg.isOwn}
+      {@const groupPosition = continuesFromPrev
+        ? continuesToNext
+          ? 'middle'
+          : 'end'
+        : continuesToNext
+          ? 'start'
+          : 'single'}
+      {@const showSender = !msg.isOwn && groupPosition !== 'middle' && groupPosition !== 'end'}
+
+      {#if msg.isSystem}
+        <div class="flex justify-center my-3">
           <MessageBubble
             messageId={msg.id}
             senderId={msg.senderId}
@@ -182,21 +150,67 @@
             isSystem={msg.isSystem}
             replyTo={msg.replyTo}
             {reactions}
-            readBy={msg.readBy}
-            isEdited={msg.isEdited}
-            editedAt={msg.editedAt}
-            isDeleted={msg.isDeleted}
-            {groupPosition}
             onReply={onReply ? () => onReply?.(msg) : undefined}
-            {onNavigateToMessage}
             {onReact}
-            {onDelete}
-            {onEdit}
             shouldAnimate={msg.timestamp.getTime() > switchTime}
             {authToken}
           />
         </div>
-      </div>
+      {:else}
+        <div class="flex gap-2.5 {msg.isOwn ? 'justify-end' : 'justify-start'} w-full">
+          <!-- Avatar de l'expéditeur (uniquement pour les messages reçus) -->
+          {#if !msg.isOwn}
+            <div class="w-8 shrink-0 flex flex-col justify-end pb-1">
+              {#if groupPosition === 'end' || groupPosition === 'single'}
+                <Avatar userId={msg.senderId} size="sm" />
+              {/if}
+            </div>
+          {/if}
+
+          <!-- Conteneur Bulle + Nom -->
+          <div
+            class="flex flex-col {msg.isOwn
+              ? 'items-end'
+              : 'items-start'} max-w-[85%] md:max-w-[70%]"
+          >
+            <!-- Nom de l'expéditeur -->
+            {#if showSender && !msg.isSystem}
+              <div class="text-[0.75rem] text-text-muted px-1 mb-1 font-bold tracking-wide">
+                <a
+                  href="/profile/{encodeURIComponent(msg.senderId)}"
+                  class="hover:text-text-main transition-colors"
+                  onclick={(e) => e.stopPropagation()}
+                >
+                  {resolvedSenderNames[msg.senderId] || msg.senderId}
+                </a>
+              </div>
+            {/if}
+
+            <MessageBubble
+              messageId={msg.id}
+              senderId={msg.senderId}
+              content={msg.content}
+              timestamp={msg.timestamp}
+              isOwn={msg.isOwn}
+              isSystem={msg.isSystem}
+              replyTo={msg.replyTo}
+              {reactions}
+              readBy={msg.readBy}
+              isEdited={msg.isEdited}
+              editedAt={msg.editedAt}
+              isDeleted={msg.isDeleted}
+              {groupPosition}
+              onReply={onReply ? () => onReply?.(msg) : undefined}
+              {onNavigateToMessage}
+              {onReact}
+              {onDelete}
+              {onEdit}
+              shouldAnimate={msg.timestamp.getTime() > switchTime}
+              {authToken}
+            />
+          </div>
+        </div>
+      {/if}
     {/if}
-  {/if}
-{/each}
+  {/each}
+</div>

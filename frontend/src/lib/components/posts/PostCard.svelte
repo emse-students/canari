@@ -19,6 +19,8 @@
   import PostEventButtons from './PostEventButtons.svelte';
   import PostForms from './PostForms.svelte';
   import PostComments from './PostComments.svelte';
+  import { AlertCircle, CheckCircle2 } from 'lucide-svelte';
+  import { slide, fade } from 'svelte/transition';
 
   interface Props {
     post: PostEntity;
@@ -33,7 +35,7 @@
     { type: "J'adore", emoji: '😍', icon: 'love' },
     { type: 'Triste', emoji: '😢', icon: 'sad' },
     { type: 'Joyeux', emoji: '😊', icon: 'smile' },
-    { type: 'Enervé', emoji: '😠', icon: 'angry' },
+    { type: 'Énervé', emoji: '😠', icon: 'angry' },
     { type: 'Canari', emoji: '🐤', icon: 'bird' },
     { type: 'Marteau', emoji: '🔨', icon: 'hammer' },
   ];
@@ -64,6 +66,26 @@
   let btnFormInfos = $state<Record<string, { formId: string; title: string; submitted: boolean }>>(
     {}
   );
+
+  // Auto-clear des messages d'erreur après 4 secondes
+  $effect(() => {
+    if (errorMessage) {
+      const timer = setTimeout(() => {
+        errorMessage = '';
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  });
+
+  // Auto-clear des messages de succès après 4 secondes
+  $effect(() => {
+    if (actionMessage) {
+      const timer = setTimeout(() => {
+        actionMessage = '';
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  });
 
   $effect(() => {
     for (const btn of post.eventButtons ?? []) {
@@ -160,7 +182,7 @@
       showReactionPicker = false;
       onRefresh();
     } catch (err) {
-      errorMessage = err instanceof Error ? err.message : 'Erreur';
+      errorMessage = err instanceof Error ? err.message : 'Erreur lors de la réaction';
     }
   }
 
@@ -184,7 +206,7 @@
       await likeCommentApi(post.id, commentId);
       onRefresh();
     } catch {
-      // ignore
+      // ignore silently to not disrupt UX
     }
   }
 
@@ -214,9 +236,11 @@
   }
 </script>
 
-<Card class="mb-6 overflow-hidden !p-0 hover:shadow-lg transition-shadow">
+<Card class="mb-6 overflow-hidden !p-0 transition-all duration-300 hover:shadow-xl hover:-translate-y-0.5 border border-black/5 dark:border-white/10 bg-white/70 dark:bg-[#151B2C]/70 backdrop-blur-xl">
+
   <PostHeader {post} />
   <PostContent {post} {authToken} />
+
   <PostActions
     {userReaction}
     {showReactionPicker}
@@ -225,25 +249,30 @@
     onReactionSelect={handleReaction}
     onCommentClick={() => (showComments = !showComments)}
   />
+
   <ReactionsDisplay
     {reactionCounts}
     {userReaction}
     reactionList={REACTIONS}
     onReactionClick={handleReaction}
   />
+
   <PostPolls
     polls={post.polls}
     {selectedOptions}
     onToggleOption={toggleOption}
     onSubmitVote={submitVote}
   />
+
   <PostEventButtons
     eventButtons={post.eventButtons}
     {currentUserId}
     {btnFormInfos}
     onRegisterEvent={registerForEvent}
   />
+
   <PostForms {formInfos} />
+
   <PostComments
     {comments}
     {topLevelComments}
@@ -265,18 +294,32 @@
     }}
   />
 
-  {#if errorMessage}
-    <div
-      class="mx-5 mb-4 p-3 rounded-xl bg-red-err/10 text-red-err text-sm font-medium border border-red-err/20"
-    >
-      {errorMessage}
-    </div>
-  {/if}
-  {#if actionMessage}
-    <div
-      class="mx-5 mb-4 p-3 rounded-xl bg-green-ok/10 text-green-ok text-sm font-medium border border-green-ok/20"
-    >
-      {actionMessage}
+  <!-- Notifications intégrées à la carte -->
+  {#if errorMessage || actionMessage}
+    <div class="px-5 pb-5 pt-2">
+      {#if errorMessage}
+        <div
+          transition:slide={{ duration: 200 }}
+          class="flex items-start gap-3 p-3.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 shadow-inner"
+        >
+          <div transition:fade={{ duration: 150 }} class="flex items-center gap-3">
+             <AlertCircle size={18} class="shrink-0 mt-0.5" />
+             <span class="text-sm font-bold leading-snug">{errorMessage}</span>
+          </div>
+        </div>
+      {/if}
+
+      {#if actionMessage}
+        <div
+          transition:slide={{ duration: 200 }}
+          class="flex items-start gap-3 p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400 shadow-inner mt-2"
+        >
+          <div transition:fade={{ duration: 150 }} class="flex items-center gap-3">
+             <CheckCircle2 size={18} class="shrink-0 mt-0.5" />
+             <span class="text-sm font-bold leading-snug">{actionMessage}</span>
+          </div>
+        </div>
+      {/if}
     </div>
   {/if}
 </Card>

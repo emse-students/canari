@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { ExternalLink } from 'lucide-svelte';
 
   interface Props {
     url: string;
@@ -39,29 +39,39 @@
   let preview = $state<PreviewPayload | null>(null);
   let isLoading = $state(false);
 
-  async function loadPreview(targetHref: string) {
-    isLoading = true;
-    try {
-      const baseUrl = import.meta.env.VITE_DELIVERY_URL?.trim() || window.location.origin;
-      const endpoint = `${baseUrl}/api/mls-api/link-preview?url=${encodeURIComponent(targetHref)}`;
-      const res = await fetch(endpoint);
-      if (!res.ok) return;
-      preview = (await res.json()) as PreviewPayload;
-    } catch {
-      // Keep fallback card when preview API is unavailable.
-    } finally {
-      isLoading = false;
-    }
-  }
-
-  onMount(() => {
-    void loadPreview(parsed.href);
-  });
-
+  // Consolidation dans un seul $effect propre (remplace le onMount redondant)
   $effect(() => {
-    const href = parsed.href;
+    const targetHref = parsed.href;
+    let isCancelled = false; // Permet d'ignorer la réponse si l'URL a changé entre temps
+
+    async function loadPreview() {
+      isLoading = true;
+      try {
+        const baseUrl = import.meta.env.VITE_DELIVERY_URL?.trim() || window.location.origin;
+        const endpoint = `${baseUrl}/api/mls-api/link-preview?url=${encodeURIComponent(targetHref)}`;
+        const res = await fetch(endpoint);
+
+        if (!res.ok) return;
+
+        const data = (await res.json()) as PreviewPayload;
+        if (!isCancelled) {
+          preview = data;
+        }
+      } catch {
+        // En cas d'erreur, on garde le mode "fallback" avec le favicon
+      } finally {
+        if (!isCancelled) {
+          isLoading = false;
+        }
+      }
+    }
+
     preview = null;
-    void loadPreview(href);
+    loadPreview();
+
+    return () => {
+      isCancelled = true;
+    };
   });
 </script>
 
@@ -70,33 +80,52 @@
   href={parsed.href}
   target="_blank"
   rel="noopener noreferrer"
-  class="mt-2 flex items-center gap-3 p-3 rounded-2xl border border-cn-border bg-[color-mix(in_srgb,var(--cn-surface)_94%,transparent)] hover:bg-[var(--cn-surface)] transition-colors"
+  class="group mt-3 flex items-center gap-4 p-3 sm:p-4 rounded-2xl border border-black/5 dark:border-white/10 bg-white/40 dark:bg-black/20 backdrop-blur-xl transition-all duration-300 hover:bg-white/60 dark:hover:bg-black/40 hover:border-amber-500/30 hover:shadow-md overflow-hidden"
 >
-  {#if preview?.image}
-    <img
-      src={preview.image}
-      alt="Apercu lien"
-      class="w-12 h-12 rounded-lg object-cover bg-[var(--cn-surface)]"
-    />
-  {:else}
-    <img
-      src={faviconUrl}
-      alt="Apercu lien"
-      class="w-8 h-8 rounded-lg object-cover bg-[var(--cn-surface)]"
-    />
-  {/if}
-  <div class="min-w-0 flex-1">
-    <p class="text-xs uppercase tracking-wide text-text-muted truncate">
-      {preview?.siteName || parsed.host}
-    </p>
-    <p class="text-sm font-medium text-cn-dark truncate">
-      {preview?.title || parsed.path || parsed.href}
-    </p>
-    {#if preview?.description}
-      <p class="text-xs text-text-muted truncate">{preview.description}</p>
-    {:else if isLoading}
-      <p class="text-xs text-text-muted">Chargement de l'apercu...</p>
+  <!-- Conteneur Image / Favicon -->
+  <div
+    class="shrink-0 relative overflow-hidden rounded-xl border border-black/5 dark:border-white/5 bg-black/5 dark:bg-white/5 flex items-center justify-center transition-all duration-300
+    {preview?.image ? 'w-16 h-16 sm:w-20 sm:h-20' : 'w-12 h-12'}"
+  >
+    {#if isLoading}
+      <!-- Skeleton Loading pour l'image -->
+      <div class="absolute inset-0 bg-black/10 dark:bg-white/10 animate-pulse"></div>
+    {:else if preview?.image}
+      <img
+        src={preview.image}
+        alt="Aperçu du lien"
+        class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+      />
+    {:else}
+      <!-- Fallback sur le Favicon -->
+      <img
+        src={faviconUrl}
+        alt="Favicon du site"
+        class="w-6 h-6 object-contain opacity-70 group-hover:opacity-100 transition-opacity duration-300"
+      />
     {/if}
   </div>
-  <span class="text-xs text-text-muted font-medium">Ouvrir</span>
+
+  <!-- Section Texte -->
+  <div class="min-w-0 flex-1 py-1">
+    <p class="text-[10px] sm:text-xs uppercase tracking-wider font-bold text-text-muted mb-1 truncate">
+      {preview?.siteName || parsed.host}
+    </p>
+
+    <p class="text-sm font-bold text-text-main leading-snug truncate group-hover:text-amber-600 dark:group-hover:text-amber-400 transition-colors duration-300">
+      {preview?.title || parsed.path || parsed.href}
+    </p>
+
+    {#if isLoading}
+      <!-- Skeleton Loading pour la description -->
+      <div class="h-3 w-2/3 bg-black/5 dark:bg-white/10 rounded animate-pulse mt-2.5"></div>
+    {:else if preview?.description}
+      <p class="text-xs text-text-muted mt-1 truncate opacity-80">{preview.description}</p>
+    {/if}
+  </div>
+
+  <!-- Icône d'ouverture (remplace le texte) -->
+  <div class="shrink-0 pl-1 pr-2 opacity-40 text-text-muted group-hover:text-amber-500 group-hover:opacity-100 transition-all duration-300 group-hover:translate-x-1">
+    <ExternalLink size={20} strokeWidth={2.5} />
+  </div>
 </a>

@@ -9,6 +9,7 @@
     CheckCircle,
     Clock,
     Loader,
+    ShieldAlert
   } from 'lucide-svelte';
   import Modal from '../shared/Modal.svelte';
   import type { IMlsService } from '$lib/services/IMlsService';
@@ -76,7 +77,7 @@
       }
     } catch (e) {
       console.error('[DevicePanel] Failed to load device data', e);
-      error = 'Impossible de charger les appareils.';
+      error = 'Impossible de charger les appareils liés à votre compte.';
     } finally {
       loading = false;
     }
@@ -93,7 +94,7 @@
       await loadDeviceData();
     } catch (e) {
       console.error('[DevicePanel] Failed to remove device memberships', e);
-      error = 'Impossible de supprimer les adhésions de cet appareil.';
+      error = 'Impossible de supprimer (révoquer) cet appareil.';
     }
   }
 
@@ -125,128 +126,137 @@
   }
 </script>
 
-<Modal {open} title="Gestion des appareils" {onClose} maxWidth="max-w-lg">
-  {#if loading}
-    <div class="flex items-center justify-center py-8 gap-2 text-text-muted">
-      <Loader size={18} class="animate-spin" />
-      Chargement...
-    </div>
-  {:else if error}
-    <div class="flex items-center gap-2 text-red-500 py-4">
-      <AlertTriangle size={16} />
-      {error}
-    </div>
-  {:else}
-    <div class="space-y-4">
-      <p class="text-sm text-text-muted">
-        {devices.length} appareil{devices.length > 1 ? 's' : ''} enregistré{devices.length > 1
-          ? 's'
-          : ''}
-      </p>
+<Modal {open} title="Gestion des appareils" {onClose} maxWidth="max-w-xl">
+  <div class="px-1">
+    {#if loading}
+      <div class="flex flex-col items-center justify-center py-12 gap-4 text-text-muted">
+        <Loader size={28} class="animate-spin text-amber-500" />
+        <span class="text-sm font-semibold tracking-wide">Synchronisation des appareils...</span>
+      </div>
+    {:else if error}
+      <div class="flex items-start gap-3 p-4 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 mb-4 shadow-inner">
+        <ShieldAlert size={20} class="shrink-0 mt-0.5" />
+        <p class="text-sm font-medium leading-relaxed">{error}</p>
+      </div>
+    {:else}
+      <div class="space-y-5 pb-2">
+        <div class="flex items-center justify-between">
+          <p class="text-[0.85rem] font-bold uppercase tracking-wider text-text-muted">
+            {devices.length} appareil{devices.length > 1 ? 's' : ''} connecté{devices.length > 1 ? 's' : ''}
+          </p>
+        </div>
 
-      {#each devices as device (device.deviceId)}
-        {@const isCurrentDevice = device.deviceId === myDeviceId}
-        {@const deviceMemberships = memberships.get(device.deviceId) ?? []}
-        {@const stats = getMembershipStats(deviceMemberships)}
-        {@const staleGroups = getStaleGroups(deviceMemberships)}
+        <div class="space-y-4">
+          {#each devices as device (device.deviceId)}
+            {@const isCurrentDevice = device.deviceId === myDeviceId}
+            {@const deviceMemberships = memberships.get(device.deviceId) ?? []}
+            {@const stats = getMembershipStats(deviceMemberships)}
+            {@const staleGroups = getStaleGroups(deviceMemberships)}
 
-        <div
-          class="rounded-xl border p-3 space-y-2 transition-colors
-              {isCurrentDevice
-            ? 'border-blue-300 dark:border-blue-700 bg-blue-50/50 dark:bg-blue-900/20'
-            : 'border-cn-border bg-[var(--cn-surface)]'}"
-        >
-          <!-- Device header -->
-          <div class="flex items-center gap-3">
-            <div class="p-2 rounded-lg bg-white/50 dark:bg-black/20">
-              {#if isCurrentDevice}
-                <Monitor size={18} class="text-blue-500" />
-              {:else}
-                <Smartphone size={18} class="text-text-muted" />
-              {/if}
-            </div>
-            <div class="flex-1 min-w-0">
-              <div class="flex items-center gap-2">
-                <span class="font-medium text-sm text-cn-dark truncate">
-                  {device.deviceId.slice(0, 12)}…
-                </span>
-                {#if isCurrentDevice}
-                  <span
-                    class="text-xs px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-800/40 text-blue-600 dark:text-blue-300 font-medium"
+            <div
+              class="rounded-[1.5rem] border p-4 sm:p-5 space-y-4 transition-all duration-300 hover:shadow-md
+                {isCurrentDevice
+                  ? 'border-amber-500/30 bg-amber-500/5 shadow-inner'
+                  : 'border-black/5 dark:border-white/10 bg-white/40 dark:bg-black/20 backdrop-blur-md'}"
+            >
+              <!-- En-tête de l'appareil -->
+              <div class="flex items-start sm:items-center gap-4">
+                <div class="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-sm
+                  {isCurrentDevice ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400' : 'bg-white/80 dark:bg-white/10 text-text-muted'}">
+                  {#if isCurrentDevice}
+                    <Monitor size={24} strokeWidth={2} />
+                  {:else}
+                    <Smartphone size={24} strokeWidth={2} />
+                  {/if}
+                </div>
+
+                <div class="flex-1 min-w-0 pt-0.5 sm:pt-0">
+                  <div class="flex flex-wrap items-center gap-2.5 mb-1">
+                    <span class="font-bold text-[0.95rem] text-text-main truncate">
+                      Appareil {device.deviceId.slice(0, 4).toUpperCase()}
+                    </span>
+                    {#if isCurrentDevice}
+                      <span
+                        class="text-[0.65rem] px-2 py-0.5 rounded-full bg-amber-500 text-[#151B2C] font-extrabold uppercase tracking-wider shadow-sm"
+                      >
+                        Cet appareil
+                      </span>
+                    {/if}
+                  </div>
+                  <div class="text-[0.7rem] font-mono text-text-muted opacity-80 truncate" title={device.deviceId}>
+                    ID: {device.deviceId.slice(0, 24)}…
+                  </div>
+                </div>
+
+                {#if !isCurrentDevice}
+                  <button
+                    onclick={() => handleRemoveDevice(device.deviceId)}
+                    class="p-2.5 rounded-xl bg-black/5 dark:bg-white/5 hover:bg-red-500/15 dark:hover:bg-red-500/20 text-text-muted hover:text-red-600 dark:hover:text-red-400 transition-all outline-none focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95 shrink-0"
+                    title="Révoquer cet appareil (Supprimer ses adhésions)"
+                    aria-label="Révoquer l'appareil"
                   >
-                    Cet appareil
-                  </span>
+                    <Trash2 size={18} strokeWidth={2.5} />
+                  </button>
                 {/if}
               </div>
-              <div class="text-xs text-text-muted mt-0.5">
-                ID: {device.deviceId.slice(0, 20)}…
-              </div>
-            </div>
-            {#if !isCurrentDevice}
-              <button
-                onclick={() => handleRemoveDevice(device.deviceId)}
-                class="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/30 text-text-muted hover:text-red-500 transition-colors"
-                title="Supprimer les adhésions de cet appareil"
-                aria-label="Supprimer les adhésions de cet appareil"
-              >
-                <Trash2 size={14} />
-              </button>
-            {/if}
-          </div>
 
-          <!-- Membership stats -->
-          <div class="flex items-center gap-3 text-xs pl-11">
-            {#if stats.active > 0}
-              <span class="flex items-center gap-1 text-green-500">
-                <CheckCircle size={12} />
-                {stats.active} actif{stats.active > 1 ? 's' : ''}
-              </span>
-            {/if}
-            {#if stats.pending > 0}
-              <span class="flex items-center gap-1 text-orange-400">
-                <Clock size={12} />
-                {stats.pending} en attente
-              </span>
-            {/if}
-            {#if stats.inProgress > 0}
-              <span class="flex items-center gap-1 text-blue-400">
-                <Loader size={12} />
-                {stats.inProgress} en cours
-              </span>
-            {/if}
-            {#if stats.total === 0}
-              <span class="text-text-muted">Aucun groupe</span>
-            {/if}
-          </div>
-
-          <!-- Stale alert -->
-          {#if staleGroups.length > 0 && !isCurrentDevice}
-            <div
-              class="flex items-start gap-2 p-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 ml-11"
-            >
-              <AlertTriangle size={14} class="text-amber-500 mt-0.5 shrink-0" />
-              <div class="text-xs text-amber-700 dark:text-amber-300">
-                {staleGroups.length} groupe{staleGroups.length > 1 ? 's' : ''} en attente de synchronisation.
-                L'appareil se synchronisera automatiquement à la prochaine connexion.
+              <!-- Statistiques d'adhésions (Pills) -->
+              <div class="flex flex-wrap items-center gap-2 text-xs sm:pl-16">
+                {#if stats.active > 0}
+                  <span class="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1.5 rounded-xl font-medium">
+                    <CheckCircle size={14} />
+                    {stats.active} actif{stats.active > 1 ? 's' : ''}
+                  </span>
+                {/if}
+                {#if stats.pending > 0}
+                  <span class="flex items-center gap-1.5 text-orange-600 dark:text-orange-400 bg-orange-500/10 border border-orange-500/20 px-2.5 py-1.5 rounded-xl font-medium">
+                    <Clock size={14} />
+                    {stats.pending} en attente
+                  </span>
+                {/if}
+                {#if stats.inProgress > 0}
+                  <span class="flex items-center gap-1.5 text-blue-600 dark:text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2.5 py-1.5 rounded-xl font-medium">
+                    <Loader size={14} class="animate-spin" />
+                    {stats.inProgress} en cours
+                  </span>
+                {/if}
+                {#if stats.total === 0}
+                  <span class="text-text-muted/70 italic px-1 font-medium">Aucun groupe synchronisé</span>
+                {/if}
               </div>
+
+              <!-- Alerte de groupes obsolètes / en attente -->
+              {#if staleGroups.length > 0 && !isCurrentDevice}
+                <div
+                  class="flex items-start gap-3 p-3.5 rounded-xl bg-orange-500/10 border border-orange-500/20 sm:ml-16 mt-2"
+                >
+                  <AlertTriangle size={18} class="text-orange-500 mt-0.5 shrink-0" />
+                  <p class="text-xs text-orange-700 dark:text-orange-300 leading-relaxed font-medium">
+                    <span class="font-bold">{staleGroups.length} groupe{staleGroups.length > 1 ? 's' : ''}</span> en attente de synchronisation. L'appareil se mettra à jour automatiquement lors de sa prochaine connexion au réseau.
+                  </p>
+                </div>
+              {/if}
             </div>
-          {/if}
+          {/each}
         </div>
-      {/each}
 
-      {#if devices.length === 0}
-        <div class="text-center py-6 text-text-muted text-sm">Aucun appareil enregistré</div>
-      {/if}
-    </div>
-  {/if}
+        {#if devices.length === 0}
+          <div class="text-center py-10 text-text-muted text-sm font-medium border border-dashed border-black/10 dark:border-white/10 rounded-[1.5rem] bg-black/5 dark:bg-white/5">
+            Aucun appareil enregistré
+          </div>
+        {/if}
+      </div>
+    {/if}
+  </div>
+
   {#snippet footer()}
     <button
       onclick={loadDeviceData}
       disabled={loading}
-      class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium text-text-main bg-white/60 dark:bg-black/30 border border-cn-border hover:bg-white/80 dark:hover:bg-black/45 transition-colors disabled:opacity-50"
+      class="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-text-main bg-black/5 dark:bg-white/10 hover:bg-black/10 dark:hover:bg-white/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-text-muted"
     >
-      <RefreshCw size={14} class={loading ? 'animate-spin' : ''} />
-      Rafraîchir
+      <RefreshCw size={16} strokeWidth={2.5} class={loading ? 'animate-spin' : ''} />
+      Actualiser
     </button>
   {/snippet}
 </Modal>

@@ -1402,18 +1402,28 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   ) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     const safeUserId = sanitizeQueryValue(userId, 'userId');
+
+    // Remove all per-device memberships for this user in the group to keep
+    // server-side metadata aligned with the MLS remove commit semantics.
+    const deviceMembershipDelete = await this.deviceGroupRepo.delete({
+      groupId: safeGroupId,
+      userId: safeUserId,
+    });
+
     await this.groupMemberRepo.delete({
       groupId: safeGroupId,
       userId: safeUserId,
     });
+
     // Remove all devices of this user from the Redis set
     const members = await this.redis.smembers(`group:members:${safeGroupId}`);
     const toRemove = members.filter((m) => m.startsWith(`${safeUserId}:`));
     if (toRemove.length > 0) {
       await this.redis.srem(`group:members:${safeGroupId}`, ...toRemove);
     }
+
     this.logger.log(
-      `[REMOVE_MEMBER] group=${safeGroupId} user=${safeUserId} redisRemoved=${toRemove.length}`,
+      `[REMOVE_MEMBER] group=${safeGroupId} user=${safeUserId} redisRemoved=${toRemove.length} deviceMembershipsDeleted=${deviceMembershipDelete.affected ?? 0}`,
     );
     return { status: 'removed' };
   }
@@ -1653,6 +1663,12 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       groupId: safeGroupId,
     });
 
+    // Keep Redis message routing in sync with membership deletion.
+    await this.redis.srem(
+      `group:members:${safeGroupId}`,
+      `${safeUserId}:${safeDeviceId}`,
+    );
+
     this.logger.log(
       `[DEL_MEMBERSHIP] user=${safeUserId} device=${safeDeviceId} group=${safeGroupId} affected=${result.affected ?? 0}`,
     );
@@ -1671,13 +1687,25 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
 
+    // Capture affected groups before delete so we can clean Redis routing sets.
+    const memberships = await this.deviceGroupRepo.find({
+      where: { userId: safeUserId, deviceId: safeDeviceId },
+      select: ['groupId'],
+    });
+    const groupIds = [...new Set(memberships.map((m) => m.groupId))];
+
     const result = await this.deviceGroupRepo.delete({
       userId: safeUserId,
       deviceId: safeDeviceId,
     });
 
+    const memberKey = `${safeUserId}:${safeDeviceId}`;
+    for (const gid of groupIds) {
+      await this.redis.srem(`group:members:${gid}`, memberKey);
+    }
+
     this.logger.log(
-      `[DEL_ALL_MEMBERSHIPS] user=${safeUserId} device=${safeDeviceId} affected=${result.affected ?? 0}`,
+      `[DEL_ALL_MEMBERSHIPS] user=${safeUserId} device=${safeDeviceId} affected=${result.affected ?? 0} redisGroupsCleaned=${groupIds.length}`,
     );
     return { status: 'deleted', affected: result.affected ?? 0 };
   }

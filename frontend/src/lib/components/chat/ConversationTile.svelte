@@ -59,54 +59,64 @@
 
 <button
   onclick={onClick}
-  class="w-full p-3 flex items-center gap-4 rounded-2xl transition-colors text-left {isSelected
-    ? 'bg-white/55 dark:bg-black/35 border border-white/60 dark:border-white/10'
-    : unreadCount > 0
-      ? 'bg-white/25 dark:bg-black/20 hover:bg-white/30 dark:hover:bg-black/30 border border-white/45 dark:border-white/10'
-      : 'hover:bg-white/30 dark:hover:bg-black/30 border border-transparent'} animate-rise-in"
+  class="w-full p-3.5 flex items-center gap-4 rounded-[1.25rem] transition-all duration-200 text-left outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-[0.98] group
+    {isSelected
+      ? 'bg-white/60 dark:bg-black/40 border border-black/5 dark:border-white/10 shadow-sm backdrop-blur-md'
+      : unreadCount > 0
+        ? 'bg-white/30 dark:bg-white/5 hover:bg-white/50 dark:hover:bg-white/10 border border-transparent'
+        : 'hover:bg-white/40 dark:hover:bg-black/20 border border-transparent'}
+    animate-rise-in"
 >
+  <!-- Zone Avatar / Icône de Groupe -->
   <div class="relative flex-shrink-0">
     {#if isDirect}
       <Avatar userId={contactName} size="lg" />
       {#if isOnline}
         <span
-          class="absolute bottom-0 right-0 block h-3.5 w-3.5 rounded-full ring-2 ring-white bg-green-500"
+          class="absolute bottom-0 right-0 block h-3.5 w-3.5 rounded-full ring-2 ring-white dark:ring-zinc-900 bg-green-500 shadow-sm"
         ></span>
       {/if}
     {:else}
+      <!-- Avatar premium pour les groupes -->
       <div
-        class="w-12 h-12 rounded-2xl shadow-sm ring-1 ring-white/20 flex-shrink-0 bg-cn-dark text-cn-yellow flex items-center justify-center"
+        class="w-[3.25rem] h-[3.25rem] rounded-2xl shadow-inner border border-black/5 dark:border-white/5 flex-shrink-0 bg-gradient-to-b from-gray-100 to-gray-200 dark:from-zinc-800 dark:to-zinc-900 text-gray-600 dark:text-gray-300 flex items-center justify-center transition-transform group-hover:scale-105"
       >
-        <Users size={22} />
+        <Users size={24} strokeWidth={2} class="opacity-80" />
       </div>
     {/if}
   </div>
 
-  <!-- Info -->
-  <div class="flex-1 min-w-0">
-    <div class="flex justify-between items-center mb-1 gap-2">
-      <span class="text-cn-dark truncate {unreadCount > 0 ? 'font-extrabold' : 'font-bold'}"
-        >{effectiveDisplayName}</span
-      >
-      <div class="flex items-center gap-1.5 flex-shrink-0">
+  <!-- Zone d'Informations (Nom, Aperçu, Badges) -->
+  <div class="flex-1 min-w-0 flex flex-col justify-center">
+    <div class="flex justify-between items-center mb-0.5 gap-3">
+      <!-- Nom de la conversation -->
+      <span class="text-[0.95rem] text-text-main truncate {unreadCount > 0 ? 'font-extrabold' : 'font-bold'}">
+        {effectiveDisplayName}
+      </span>
+
+      <!-- Espace Badges (Non lus, Sync) -->
+      <div class="flex items-center gap-2 flex-shrink-0">
+        {#if !isReady}
+          <span
+            class="bg-amber-500/15 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 border border-amber-500/20 text-[0.6rem] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider"
+          >
+            Sync
+          </span>
+        {/if}
         {#if unreadCount > 0}
           <span
-            class="min-w-5 h-5 px-1 rounded-full bg-cn-dark text-cn-yellow text-[0.65rem] font-extrabold inline-flex items-center justify-center"
-            aria-label={`${unreadCount} message(s) non lus`}
+            class="min-w-[1.25rem] h-5 px-1.5 rounded-full bg-red-500 text-white text-[0.7rem] font-bold inline-flex items-center justify-center shadow-sm shadow-red-500/20"
+            aria-label={`${unreadCount} message(s) non lu(s)`}
           >
             {unreadCount > 99 ? '99+' : unreadCount}
           </span>
         {/if}
-        {#if !isReady}
-          <span
-            class="bg-yellow-200 text-yellow-900 text-[0.6rem] px-2 py-0.5 rounded-full font-extrabold uppercase"
-            >sync</span
-          >
-        {/if}
       </div>
     </div>
+
+    <!-- Aperçu du dernier message -->
     <div
-      class="text-sm truncate {unreadCount > 0 ? 'text-cn-dark font-semibold' : 'text-text-muted'}"
+      class="text-sm truncate mt-0.5 {unreadCount > 0 ? 'text-text-main font-semibold' : 'text-text-muted opacity-90'}"
     >
       {previewText || 'Canal E2E établi.'}
     </div>

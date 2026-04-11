@@ -337,12 +337,13 @@
 </script>
 
 {#if effectiveSystem}
+  <!-- Message Système Premium -->
   <div
-    class="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs text-text-muted text-center max-w-md border border-cn-border/50 bg-[var(--cn-surface)]/60 backdrop-blur-sm {shouldAnimate
+    class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-medium text-text-muted text-center max-w-md border border-black/5 dark:border-white/10 bg-black/5 dark:bg-white/5 backdrop-blur-md shadow-sm {shouldAnimate
       ? 'animate-rise-in'
       : ''}"
   >
-    <Info size={12} class="flex-shrink-0 opacity-60" />
+    <Info size={14} class="flex-shrink-0 opacity-60" />
     <span>{textContent}</span>
   </div>
 {:else}
@@ -358,17 +359,19 @@
     }}
     class="relative group"
   >
+    <!-- Bouton Mobile (Ellipsis) -->
     <button
       type="button"
       onclick={openMobileActions}
       class="absolute top-1/2 -translate-y-1/2 {isOwn
         ? 'right-full mr-2'
-        : 'left-full ml-2'} md:hidden z-10 p-1.5 rounded-full bg-white/85 dark:bg-black/40 border border-white/60 dark:border-white/10 text-gray-500 dark:text-gray-300"
+        : 'left-full ml-2'} md:hidden z-10 p-1.5 rounded-full bg-white/80 dark:bg-black/60 border border-black/5 dark:border-white/10 text-text-muted backdrop-blur-sm shadow-sm"
       aria-label="Ouvrir les actions du message"
     >
-      <EllipsisVertical size={14} />
+      <EllipsisVertical size={16} />
     </button>
 
+    <!-- Bulle de message principale -->
     <div
       role="button"
       tabindex="0"
@@ -388,31 +391,34 @@
           toggleInfo(e as unknown as MouseEvent);
         }
       }}
-      class="px-4 py-2.5 cursor-pointer min-w-0 {getBubbleShapeClass(groupPosition)} {isOwn
-        ? 'bg-gradient-to-br from-amber-400 to-amber-500 text-white shadow-md shadow-amber-500/20'
-        : 'backdrop-blur-sm bg-white/80 dark:bg-gray-700/80 shadow-sm rounded-2xl text-cn-dark border border-white/55 dark:border-white/10'} {shouldAnimate
-        ? 'animate-rise-in'
-        : ''}"
+      class="px-4 py-2.5 cursor-pointer min-w-0 {getBubbleShapeClass(
+        groupPosition
+      )} transition-shadow duration-200
+      {isOwn
+        ? 'bg-gradient-to-br from-amber-400 to-amber-500 text-[#151B2C] shadow-md shadow-amber-500/20 hover:shadow-lg hover:shadow-amber-500/30'
+        : 'bg-white/70 dark:bg-black/40 backdrop-blur-xl border border-black/5 dark:border-white/10 text-text-main shadow-sm hover:shadow-md'}
+      {shouldAnimate ? 'animate-rise-in' : ''}"
     >
+      <!-- Citation de réponse -->
       {#if effectiveReplyTo}
         <button
           type="button"
-          class="mb-2 pb-2 border-l-4 border-gray-400 pl-3 text-xs opacity-80 text-left w-full hover:opacity-100 transition-opacity"
+          class="mb-2 pb-2 border-l-[3px] border-current/30 pl-3 text-xs opacity-85 text-left w-full hover:opacity-100 transition-opacity"
           onclick={(e) => {
             e.stopPropagation();
             if (effectiveReplyTo.id) {
               onNavigateToMessage?.(effectiveReplyTo.id);
             }
           }}
-          title="Aller au message cite"
-          aria-label="Aller au message cite"
+          title="Aller au message cité"
+          aria-label="Aller au message cité"
         >
           <a
             href="/profile/{encodeURIComponent(effectiveReplyTo.senderId)}"
-            class="font-semibold truncate hover:underline"
+            class="font-bold truncate hover:underline"
             onclick={(e) => e.stopPropagation()}>{effectiveReplyTo.senderId}</a
           >
-          <div class="truncate">{replyPreviewText}</div>
+          <div class="truncate mt-0.5">{replyPreviewText}</div>
         </button>
       {/if}
 
@@ -437,18 +443,18 @@
 
         {#if !isEditingInline}
           <p
-            class="text-base leading-relaxed break-words whitespace-pre-wrap [overflow-wrap:anywhere] {isDeleted
-              ? 'italic text-gray-500'
+            class="text-[0.95rem] leading-relaxed break-words whitespace-pre-wrap [overflow-wrap:anywhere] {isDeleted
+              ? 'italic opacity-60'
               : ''}"
           >
             {#each textSegments as segment, index (`${segment.type}-${segment.value}-${index}`)}
               {#if segment.type === 'link'}
                 {#if isGifUrl(segment.value)}
-                  <span class="block my-1">
+                  <span class="block my-1.5">
                     <img
                       src={getGifEmbedUrl(segment.value)}
                       alt="GIF"
-                      class="rounded-xl max-h-64 max-w-full object-contain"
+                      class="rounded-xl max-h-64 max-w-full object-contain shadow-sm"
                       onerror={(e) => {
                         const img = e.currentTarget;
                         if (img instanceof HTMLImageElement) {
@@ -459,7 +465,7 @@
                           link.rel = 'noopener noreferrer';
                           link.textContent = segment.value;
                           link.className =
-                            'underline underline-offset-2 decoration-current hover:opacity-80';
+                            'underline underline-offset-2 decoration-current hover:opacity-80 transition-opacity';
                           img.parentElement?.appendChild(link);
                         }
                       }}
@@ -470,7 +476,7 @@
                     href={segment.value}
                     target="_blank"
                     rel="noopener noreferrer"
-                    class="underline underline-offset-2 decoration-current hover:opacity-80"
+                    class="underline underline-offset-2 decoration-current hover:opacity-80 font-medium transition-opacity"
                     onclick={(e) => e.stopPropagation()}
                   >
                     {segment.value}
@@ -487,14 +493,15 @@
         {/if}
       {/if}
 
+      <!-- Méta données du message (Modifié, Lu) -->
       {#if isEdited || (isOwn && readBy.length > 0)}
-        <div class="flex items-center justify-end gap-1 mt-1">
+        <div class="flex items-center justify-end gap-1.5 mt-1.5">
           {#if isEdited}
-            <span class="italic text-[0.6rem] opacity-60">(modifié)</span>
+            <span class="italic text-[0.65rem] opacity-65 font-medium">(modifié)</span>
           {/if}
           {#if isOwn && readBy.length > 0}
-            <span class="inline-flex items-center gap-1 text-[0.62rem] font-medium opacity-75">
-              <CheckCheck size={11} />
+            <span class="inline-flex items-center gap-1 text-[0.65rem] font-bold opacity-80">
+              <CheckCheck size={12} strokeWidth={2.5} />
               Lu{readBy.length > 1 ? ` (${readBy.length})` : ''}
             </span>
           {/if}
@@ -502,20 +509,22 @@
       {/if}
     </div>
 
+    <!-- Barre d'actions flottante au survol (Desktop) -->
     <div
       class="absolute top-1/2 -translate-y-1/2 {isOwn
         ? 'right-full mr-2'
         : 'left-full ml-2'} opacity-0 {showEmojiPicker
         ? 'opacity-100'
-        : 'group-hover:opacity-100'} transition-opacity hidden md:flex flex-row items-center gap-1 rounded-full bg-[var(--cn-surface)]/95 border border-cn-border shadow-sm px-1.5 py-1 z-10"
+        : 'group-hover:opacity-100'} transition-opacity duration-200 hidden md:flex flex-row items-center gap-0.5 rounded-full bg-white/90 dark:bg-black/70 backdrop-blur-xl border border-black/5 dark:border-white/10 shadow-lg px-2 py-1.5 z-10 text-text-muted"
     >
       {#if !isDeleted && onReply}
         <button
           onclick={() => onReply?.(messageId)}
-          class="p-1.5 rounded-full hover:bg-gray-200 transition-colors text-gray-400 hover:text-gray-700"
+          class="p-1.5 rounded-full hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main transition-colors"
           aria-label="Répondre"
+          title="Répondre"
         >
-          <Reply size={15} />
+          <Reply size={16} />
         </button>
       {/if}
       {#if onReact}
@@ -524,10 +533,11 @@
             e.stopPropagation();
             showEmojiPicker = !showEmojiPicker;
           }}
-          class="p-1.5 rounded-full hover:bg-gray-200 transition-colors text-gray-400 hover:text-gray-700"
+          class="p-1.5 rounded-full hover:bg-black/5 dark:hover:bg-white/10 hover:text-amber-500 transition-colors"
           aria-label="Réagir"
+          title="Réagir"
         >
-          <Smile size={15} />
+          <Smile size={16} />
         </button>
       {/if}
       {#if !isDeleted && isOwn && !mediaRef && onEdit}
@@ -536,10 +546,11 @@
             e.stopPropagation();
             startInlineEdit();
           }}
-          class="p-1.5 rounded-full hover:bg-gray-200 transition-colors text-gray-400 hover:text-gray-700"
+          class="p-1.5 rounded-full hover:bg-black/5 dark:hover:bg-white/10 hover:text-blue-500 transition-colors"
           aria-label="Modifier"
+          title="Modifier"
         >
-          <Pencil size={15} />
+          <Pencil size={16} />
         </button>
       {/if}
       {#if !isDeleted && isOwn && onDelete}
@@ -548,19 +559,16 @@
             e.stopPropagation();
             showDeleteModal = true;
           }}
-          class="p-1.5 rounded-full hover:bg-gray-200 transition-colors text-red-400 hover:text-red-600"
+          class="p-1.5 rounded-full hover:bg-red-500/10 hover:text-red-500 transition-colors"
           aria-label="Supprimer"
+          title="Supprimer"
         >
-          <Trash2 size={15} />
+          <Trash2 size={16} />
         </button>
       {/if}
     </div>
 
-    <MessageReactions
-      {groupedReactions}
-      {isOwn}
-      onReactionClick={(emoji) => onReact?.(messageId, emoji)}
-    />
+    <MessageReactions {groupedReactions} {isOwn} onReact={(emoji) => onReact?.(messageId, emoji)} />
 
     <MessageEmojiPicker
       visible={showEmojiPicker}
@@ -588,19 +596,19 @@
     title="Supprimer le message"
     onClose={() => (showDeleteModal = false)}
   >
-    <p class="text-sm text-gray-600">
+    <p class="text-sm text-text-muted leading-relaxed">
       Supprimer définitivement ce message ? Cette action est irréversible.
     </p>
     {#snippet footer()}
       <button
         onclick={() => (showDeleteModal = false)}
-        class="px-4 py-2 text-sm rounded-lg text-gray-600 hover:bg-gray-100 transition-colors"
+        class="px-4 py-2.5 text-sm font-semibold rounded-xl text-text-muted hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
       >
         Annuler
       </button>
       <button
         onclick={confirmDelete}
-        class="px-4 py-2 text-sm rounded-lg bg-red-500 text-white font-medium hover:bg-red-600 transition-colors"
+        class="px-4 py-2.5 text-sm rounded-xl bg-red-500 text-white font-bold hover:bg-red-600 hover:-translate-y-0.5 shadow-md shadow-red-500/20 transition-all"
       >
         Supprimer
       </button>

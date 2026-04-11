@@ -11,12 +11,7 @@
   import { currentUserId } from '$lib/stores/user';
   import { page } from '$app/state';
   import { APP_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
-  import {
-    globalSession,
-    globalConvs,
-    appendLog,
-    getStatusLog,
-  } from '$lib/stores/globalChatSingleton.svelte';
+  import { getStatusLog } from '$lib/stores/globalChatSingleton.svelte';
 
   let { children } = $props();
 
@@ -37,8 +32,24 @@
     const handler = () => {
       showLogs = !showLogs;
     };
+
+    const updateViewportHeight = () => {
+      const height = window.visualViewport?.height ?? window.innerHeight;
+      document.documentElement.style.setProperty('--app-viewport-height', `${height}px`);
+    };
+
     window.addEventListener('canari:toggle-logs', handler);
-    return () => window.removeEventListener('canari:toggle-logs', handler);
+    updateViewportHeight();
+    window.addEventListener('resize', updateViewportHeight);
+    window.visualViewport?.addEventListener('resize', updateViewportHeight);
+    window.visualViewport?.addEventListener('scroll', updateViewportHeight);
+
+    return () => {
+      window.removeEventListener('canari:toggle-logs', handler);
+      window.removeEventListener('resize', updateViewportHeight);
+      window.visualViewport?.removeEventListener('resize', updateViewportHeight);
+      window.visualViewport?.removeEventListener('scroll', updateViewportHeight);
+    };
   });
 
   // ── Auth guard ─────────────────────────────────────────────────────────────
@@ -75,7 +86,10 @@
   }
 </script>
 
-<div class="relative {isAuthRoute ? 'min-h-dvh' : 'h-dvh'} flex flex-col">
+<div
+  class="relative flex flex-col {isAuthRoute ? 'min-h-dvh' : ''}"
+  style={isAuthRoute ? undefined : `height: var(--app-viewport-height, 100dvh);`}
+>
   <ChatBackgroundService />
 
   <div class="fixed inset-0 z-0 pointer-events-none">
@@ -111,24 +125,7 @@
   {#if showLogs && !isAuthRoute}
     <div class="fixed inset-0 z-50 flex justify-end pointer-events-none">
       <div class="pointer-events-auto h-full w-full md:w-80">
-        <LogsPanel
-          logs={statusLog}
-          onClose={() => (showLogs = false)}
-          onGenerateKeyPackage={() => globalSession.devGenerateKeyPackage(appendLog)}
-          onAddMember={() =>
-            globalSession.devAddMember(
-              globalConvs.selectedContact
-                ? (globalConvs.conversations.get(globalConvs.selectedContact)?.id ?? '')
-                : '',
-              appendLog
-            )}
-          onProcessWelcome={() => globalSession.devProcessWelcome(appendLog)}
-          lastKeyPackage={globalSession.lastKeyPackage}
-          lastCommit={globalSession.lastCommit}
-          lastWelcome={globalSession.lastWelcome}
-          incomingBytesHex={globalSession.incomingBytesHex}
-          onIncomingBytesChange={(value) => (globalSession.incomingBytesHex = value)}
-        />
+        <LogsPanel logs={statusLog} onClose={() => (showLogs = false)} />
       </div>
     </div>
   {/if}

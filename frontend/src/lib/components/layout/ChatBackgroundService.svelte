@@ -6,7 +6,7 @@
    * - Initialisation de la session MLS + WebSocket (PIN, biométrie).
    * - Reconnexion au WS lors des changements de visibilité de page.
    * - Affichage global : modal PIN, overlay d'appel, notices d'invitation de canal,
-   *   prompt d'enrôlement biométrique.
+   * prompt d'enrôlement biométrique.
    *
    * En utilisant les singletons globaux (globalChatSingleton.svelte.ts), la
    * connexion persiste sur toutes les routes et non seulement sur /chat.
@@ -29,6 +29,7 @@
   import CallOverlay from '$lib/components/chat/CallOverlay.svelte';
   import type { ConversationContext } from '$lib/composables/useConversations.svelte';
   import type { MessagingContext } from '$lib/composables/useMessaging.svelte';
+  import { Bell, Fingerprint } from 'lucide-svelte';
 
   let showPinModal = $state(false);
   let pinError = $state('');
@@ -172,13 +173,13 @@
         }
         globalNotifs.showChannelMembershipNotice(
           isPrivate
-            ? `Vous avez ete ajoute au canal prive #${event.channelName || event.channelId}`
-            : `Vous avez ete ajoute au canal #${event.channelName || event.channelId}`,
+            ? `Vous avez été ajouté au canal privé #${event.channelName || event.channelId}`
+            : `Vous avez été ajouté au canal #${event.channelName || event.channelId}`,
           isPrivate ? channelConversationId : undefined
         );
         void globalNotifs.sendSystemNotification(
           'Canal rejoint',
-          `Vous avez ete ajoute au canal #${event.channelName || event.channelId}`
+          `Vous avez été ajouté au canal #${event.channelName || event.channelId}`
         );
         appendLog(`Ajout au canal #${event.channelName || event.channelId}`);
       },
@@ -196,13 +197,13 @@
         }
         globalNotifs.clearActionChannel(channelConversationId);
         globalNotifs.showChannelMembershipNotice(
-          `Vous avez ete retire du canal #${event.channelName || event.channelId}`
+          `Vous avez été retiré du canal #${event.channelName || event.channelId}`
         );
         void globalNotifs.sendSystemNotification(
-          'Canal quitte',
-          `Vous avez ete retire du canal #${event.channelName || event.channelId}`
+          'Canal quitté',
+          `Vous avez été retiré du canal #${event.channelName || event.channelId}`
         );
-        appendLog(`Retire du canal #${event.channelName || event.channelId}`);
+        appendLog(`Retiré du canal #${event.channelName || event.channelId}`);
       },
       onChannelUpdated: (event: { channelId: string; name?: string }) => {
         if (!event.channelId || !event.name) return;
@@ -383,7 +384,7 @@
       ...sessionCb(),
       onLoginFailed: (msg: string) => {
         pinError = msg;
-        // La modal reste ouverte — pintLoading s'arrête ci-dessous
+        // La modal reste ouverte — pinLoading s'arrête ci-dessous
       },
     });
 
@@ -442,16 +443,19 @@
 <!-- Notice d'invitation de canal (toutes routes) -->
 {#if globalNotifs.channelMembershipNotice}
   <div
-    class="pointer-events-none fixed left-1/2 top-[calc(env(safe-area-inset-top,0px)+4.5rem)] z-40 w-[min(92vw,42rem)] -translate-x-1/2"
+    class="pointer-events-none fixed left-1/2 top-[calc(env(safe-area-inset-top,0px)+4.5rem)] z-50 w-[min(92vw,32rem)] -translate-x-1/2 transition-all duration-300"
   >
     <div
-      class="pointer-events-auto flex items-center gap-3 rounded-2xl border border-cn-border bg-white/95 px-4 py-3 text-sm font-semibold text-text-main shadow-lg backdrop-blur"
+      class="pointer-events-auto flex items-center gap-4 rounded-2xl border border-black/5 dark:border-white/10 bg-white/80 dark:bg-black/50 px-4 py-3 shadow-xl shadow-black/5 dark:shadow-black/20 backdrop-blur-2xl"
     >
-      <p class="flex-1">{globalNotifs.channelMembershipNotice}</p>
+      <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-400">
+        <Bell size={16} />
+      </div>
+      <p class="flex-1 text-sm font-semibold text-text-main leading-snug">{globalNotifs.channelMembershipNotice}</p>
       {#if globalNotifs.channelMembershipActionChannelId}
         <button
           type="button"
-          class="rounded-lg border border-cn-border bg-white px-3 py-1.5 text-xs font-bold text-text-main hover:border-cn-yellow"
+          class="shrink-0 rounded-xl bg-amber-500 px-4 py-2 text-xs font-bold text-[#151B2C] shadow-sm transition-all hover:-translate-y-0.5 hover:bg-amber-400 hover:shadow-md"
           onclick={() => {
             globalNotifs.openJoinedChannelFromNotice(
               globalConvs.selectConversation,
@@ -481,45 +485,29 @@
 <!-- Prompt d'enrôlement biométrique (toutes routes) -->
 {#if globalSession.showBiometricEnrollPrompt}
   <div
-    class="fixed bottom-[env(safe-area-inset-bottom,0px)] left-0 right-0 z-50 mx-4 mb-4 p-4 rounded-2xl border border-cn-border shadow-lg flex items-center gap-3"
-    style="background: color-mix(in srgb, var(--cn-surface) 95%, transparent); backdrop-filter: blur(10px);"
+    class="fixed bottom-[calc(env(safe-area-inset-bottom,0px)+1rem)] left-4 right-4 md:left-auto md:right-6 md:w-96 z-50 p-4 sm:p-5 rounded-[1.5rem] border border-black/5 dark:border-white/10 bg-white/80 dark:bg-black/50 backdrop-blur-2xl shadow-2xl shadow-black/10 dark:shadow-black/30 flex items-start sm:items-center gap-4 transition-all duration-300"
   >
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      stroke-width="2"
-      stroke-linecap="round"
-      stroke-linejoin="round"
-      class="shrink-0 text-cn-yellow"
-    >
-      <path d="M12 10a2 2 0 0 0-2 2c0 1.02.5 1.93 1.27 2.49" />
-      <path d="M12 2a10 10 0 0 1 9.39 6.52" />
-      <path d="M12 22C6.48 22 2 17.52 2 12" />
-      <path d="M4.93 4.93a10 10 0 0 0-.93 3" />
-      <path d="M19.07 4.93A10 10 0 0 1 22 12" />
-      <path d="M15.36 17.12A5 5 0 0 1 7 14" />
-      <path d="M12 7a5 5 0 0 1 4.9 4" />
-    </svg>
+    <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-400">
+      <Fingerprint size={24} strokeWidth={2.5} />
+    </div>
+
     <div class="flex-1 min-w-0">
-      <p class="text-sm font-semibold text-text-main">Activer le deverrouillage par empreinte ?</p>
-      <p class="text-xs text-text-muted">
-        Votre PIN sera stocke de facon securisee et recuperable uniquement par biometrie.
+      <p class="text-sm font-bold text-text-main mb-0.5">Connexion rapide</p>
+      <p class="text-[11px] sm:text-xs text-text-muted leading-relaxed">
+        Activer l'empreinte digitale ? Votre PIN sera stocké de façon sécurisée.
       </p>
     </div>
-    <div class="flex gap-2 shrink-0">
+
+    <div class="flex flex-col sm:flex-row gap-2 shrink-0 mt-3 sm:mt-0 w-full sm:w-auto">
       <button
         onclick={() => (globalSession.showBiometricEnrollPrompt = false)}
-        class="px-3 py-1.5 text-xs text-text-muted rounded-xl border border-cn-border hover:border-cn-yellow transition-colors"
+        class="px-3 py-2 text-xs font-semibold text-text-muted hover:text-text-main rounded-xl hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
       >
         Plus tard
       </button>
       <button
         onclick={() => globalSession.enrollBiometric()}
-        class="px-3 py-1.5 text-xs font-bold text-cn-dark bg-cn-yellow rounded-xl hover:bg-cn-yellow-hover transition-colors"
+        class="px-4 py-2 text-xs font-bold text-[#151B2C] bg-amber-500 rounded-xl hover:bg-amber-400 hover:-translate-y-0.5 shadow-sm hover:shadow-md transition-all"
       >
         Activer
       </button>

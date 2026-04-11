@@ -43,7 +43,7 @@
     {disabled}
     {required}
     {rows}
-    class="w-full px-4 py-3 border-2 border-cn-border rounded-2xl text-base text-text-main bg-[var(--cn-surface)] outline-none transition-all placeholder:text-text-muted/50 focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)] disabled:opacity-50 disabled:bg-cn-border/20 resize-y"
+    class="ui-textarea"
     {oninput}
     {...rest}
   ></textarea>

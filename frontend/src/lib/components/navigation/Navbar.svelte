@@ -45,7 +45,7 @@
 </script>
 
 <header
-  class="sticky top-0 z-20 bg-[var(--surface-elevated)] border-b border-cn-border backdrop-blur-sm pt-[env(safe-area-inset-top)] flex-shrink-0"
+  class="hidden md:block sticky top-0 z-20 bg-[var(--surface-elevated)] border-b border-cn-border backdrop-blur-sm pt-[env(safe-area-inset-top)] flex-shrink-0"
 >
   <div class="h-14 flex items-center justify-between px-4 md:px-6 gap-3">
     <!-- Left: Brand -->

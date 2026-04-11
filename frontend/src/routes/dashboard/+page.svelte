@@ -12,7 +12,13 @@
     ScanLine,
     Smartphone,
     Monitor,
+    User,
+    Moon,
+    Sun,
+    LogOut,
   } from 'lucide-svelte';
+  import { goto } from '$app/navigation';
+  import { clearAuth } from '$lib/stores/auth';
   import { useSyncSession } from '$lib/composables/useSyncSession.svelte';
   import SyncSessionModal from '$lib/components/chat/SyncSessionModal.svelte';
   import DeviceManagementPanel from '$lib/components/chat/DeviceManagementPanel.svelte';
@@ -91,6 +97,22 @@
   let showDevicePanel = $state(false);
   let pendingInvitationCount = $state(0);
   let fileInput: HTMLInputElement | undefined = $state();
+  let isDarkMode = $state(false);
+
+  function applyTheme(isDark: boolean) {
+    document.documentElement.dataset.theme = isDark ? 'dark' : 'light';
+    localStorage.setItem('canari-theme', isDark ? 'dark' : 'light');
+  }
+
+  function toggleTheme() {
+    isDarkMode = !isDarkMode;
+    applyTheme(isDarkMode);
+  }
+
+  async function handleLogout() {
+    await clearAuth();
+    void goto('/login', { replaceState: true });
+  }
 
   function syncCtx() {
     return {
@@ -122,6 +144,13 @@
       input.value = '';
     }
   }
+
+  $effect(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('canari-theme');
+      isDarkMode = saved === 'dark';
+    }
+  });
 
   $effect(() => {
     if (!session.isLoggedIn || !session.myDeviceId) return;
@@ -189,6 +218,45 @@
   {/snippet}
 
   <!-- Sections principales -->
+  <section class="mb-8 md:hidden">
+    <h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted mb-3">Compte</h2>
+    <div class="grid grid-cols-3 gap-3">
+      <button
+        type="button"
+        onclick={() => goto('/profile')}
+        class="flex flex-col items-center gap-2 p-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] hover:border-cn-yellow hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))] transition-colors"
+        title="Accéder à votre profil"
+      >
+        <User size={22} class="text-text-muted" />
+        <span class="text-sm font-medium text-text-main">Profil</span>
+      </button>
+
+      <button
+        type="button"
+        onclick={toggleTheme}
+        class="flex flex-col items-center gap-2 p-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] hover:border-cn-yellow hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))] transition-colors"
+        title="Basculer le thème"
+      >
+        {#if isDarkMode}
+          <Sun size={22} class="text-text-muted" />
+        {:else}
+          <Moon size={22} class="text-text-muted" />
+        {/if}
+        <span class="text-sm font-medium text-text-main">Thème</span>
+      </button>
+
+      <button
+        type="button"
+        onclick={handleLogout}
+        class="flex flex-col items-center gap-2 p-4 rounded-2xl border border-red-400/40 bg-red-500/5 text-red-600 hover:bg-red-500/10 transition-colors"
+        title="Se déconnecter"
+      >
+        <LogOut size={22} />
+        <span class="text-sm font-medium">Déconnexion</span>
+      </button>
+    </div>
+  </section>
+
   <section class="mb-8">
     <h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted mb-3">Principal</h2>
     <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">

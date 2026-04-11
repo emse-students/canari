@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Reply, Smile, Pencil, Trash2 } from 'lucide-svelte';
-  import { fly } from 'svelte/transition';
+  import { fly, fade } from 'svelte/transition';
 
   interface Props {
     visible: boolean;
@@ -36,62 +36,91 @@
 </script>
 
 {#if visible}
-  <button
-    type="button"
-    class="fixed inset-0 z-40 bg-black/30 md:hidden"
-    aria-label="Fermer le menu des actions"
-    onclick={onClose}
-  ></button>
-  <div
-    class="fixed inset-x-0 bottom-0 z-50 md:hidden rounded-t-3xl bg-[var(--cn-surface)] border-t border-cn-border shadow-2xl p-4"
-    in:fly={{ y: 12, duration: 120 }}
-  >
-    <div class="w-12 h-1.5 rounded-full bg-gray-200 mx-auto mb-4"></div>
-    <div class="grid grid-cols-2 gap-2">
-      {#if !isDeleted && canReply}
-        <button
-          onclick={() => {
-            onReply?.();
-            onClose?.();
-          }}
-          class="px-3 py-2.5 rounded-xl bg-cn-bg text-sm font-medium flex items-center justify-center gap-2"
-        >
-          <Reply size={15} /> Repondre
-        </button>
-      {/if}
-      {#if canReact}
-        <button
-          onclick={() => {
-            onReact?.();
-            onClose?.();
-          }}
-          class="px-3 py-2.5 rounded-xl bg-cn-bg text-sm font-medium flex items-center justify-center gap-2"
-        >
-          <Smile size={15} /> Reagir
-        </button>
-      {/if}
-      {#if !isDeleted && isOwn && !hasMedia && canEdit}
-        <button
-          onclick={() => {
-            onEdit?.();
-            onClose?.();
-          }}
-          class="px-3 py-2.5 rounded-xl bg-cn-bg text-sm font-medium flex items-center justify-center gap-2"
-        >
-          <Pencil size={15} /> Modifier
-        </button>
-      {/if}
-      {#if !isDeleted && isOwn && canDelete}
-        <button
-          onclick={() => {
-            onDelete?.();
-            onClose?.();
-          }}
-          class="px-3 py-2.5 rounded-xl bg-red-50 text-red-600 text-sm font-medium flex items-center justify-center gap-2"
-        >
-          <Trash2 size={15} /> Supprimer
-        </button>
-      {/if}
+  <!-- Conteneur global qui gère le z-index très élevé pour passer au-dessus de tout -->
+  <div class="fixed inset-0 z-[110] flex flex-col justify-end md:hidden">
+
+    <!-- Overlay sombre et flouté -->
+    <button
+      type="button"
+      class="absolute inset-0 bg-black/40 backdrop-blur-sm cursor-default outline-none"
+      aria-label="Fermer le menu des actions"
+      onclick={onClose}
+      transition:fade={{ duration: 200 }}
+    ></button>
+
+    <!-- Tiroir (Bottom Sheet) -->
+    <div
+      class="relative w-full rounded-t-[2rem] bg-white/85 dark:bg-[#151B2C]/90 backdrop-blur-2xl border-t border-black/5 dark:border-white/10 shadow-[0_-8px_30px_rgba(0,0,0,0.15)] dark:shadow-[0_-8px_30px_rgba(0,0,0,0.4)] px-5 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] flex flex-col gap-2"
+      transition:fly={{ y: '100%', duration: 300, easing: (t) => t * (2 - t) }}
+    >
+      <!-- Poignée visuelle (Drag handle) -->
+      <div class="w-12 h-1.5 rounded-full bg-black/15 dark:bg-white/20 mx-auto mb-4"></div>
+
+      <!-- Liste d'actions -->
+      <div class="flex flex-col gap-2.5">
+        {#if !isDeleted && canReply}
+          <button
+            onclick={() => {
+              onReply?.();
+              onClose?.();
+            }}
+            class="w-full flex items-center gap-4 px-5 py-4 rounded-2xl bg-white/60 dark:bg-black/20 border border-black/5 dark:border-white/5 text-text-main font-semibold text-[0.95rem] active:scale-[0.98] transition-all shadow-sm"
+          >
+            <div class="flex items-center justify-center text-text-muted">
+              <Reply size={20} />
+            </div>
+            Répondre
+          </button>
+        {/if}
+
+        {#if canReact}
+          <button
+            onclick={() => {
+              onReact?.();
+              onClose?.();
+            }}
+            class="w-full flex items-center gap-4 px-5 py-4 rounded-2xl bg-white/60 dark:bg-black/20 border border-black/5 dark:border-white/5 text-text-main font-semibold text-[0.95rem] active:scale-[0.98] transition-all shadow-sm"
+          >
+            <div class="flex items-center justify-center text-amber-500">
+              <Smile size={20} />
+            </div>
+            Réagir
+          </button>
+        {/if}
+
+        {#if !isDeleted && isOwn && !hasMedia && canEdit}
+          <button
+            onclick={() => {
+              onEdit?.();
+              onClose?.();
+            }}
+            class="w-full flex items-center gap-4 px-5 py-4 rounded-2xl bg-white/60 dark:bg-black/20 border border-black/5 dark:border-white/5 text-text-main font-semibold text-[0.95rem] active:scale-[0.98] transition-all shadow-sm"
+          >
+            <div class="flex items-center justify-center text-blue-500">
+              <Pencil size={20} />
+            </div>
+            Modifier
+          </button>
+        {/if}
+
+        {#if !isDeleted && isOwn && canDelete}
+          <!-- Séparateur subtil avant la zone de danger -->
+          <div class="h-px w-full bg-black/5 dark:bg-white/10 my-1"></div>
+
+          <button
+            onclick={() => {
+              onDelete?.();
+              onClose?.();
+            }}
+            class="w-full flex items-center gap-4 px-5 py-4 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 font-bold text-[0.95rem] active:scale-[0.98] active:bg-red-500/20 transition-all shadow-sm"
+          >
+            <div class="flex items-center justify-center">
+              <Trash2 size={20} />
+            </div>
+            Supprimer
+          </button>
+        {/if}
+      </div>
     </div>
   </div>
 {/if}
