@@ -1,8 +1,9 @@
 import { SvelteMap } from 'svelte/reactivity';
 import { ChannelService } from '$lib/services/ChannelService';
 import type { WorkspaceDto, ChannelDto } from '$lib/services/ChannelService';
+import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
-import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
+import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
 
 export interface ChannelSidebarItem {
   id: string;
@@ -23,6 +24,9 @@ export interface ChannelWorkspaceContext {
   conversations: SvelteMap<string, Conversation>;
   saveConversation: (id: string) => Promise<void>;
   selectConversation: (id: string) => void;
+  ensureMls?: () => IMlsService | Promise<IMlsService>;
+  startDirectConversation?: (targetUserId: string) => Promise<void>;
+  getSelectedConversationId?: () => string | null;
   log: (msg: string) => void;
 }
 
@@ -47,29 +51,6 @@ export function useChannelWorkspaces() {
     }
 
     return `${action} impossible: ${raw}`;
-  }
-
-  // ---------- Key bootstrapping ----------
-
-  async function bootstrapChannelKey(rawChannelId: string) {
-    const vault = channelKeyManager.getVault(rawChannelId);
-    try {
-      vault.getCurrentKey();
-      // Key already exists – nothing to do
-      return;
-    } catch {
-      // No key yet – fetch from backend
-    }
-    try {
-      const { epochKey, keyVersion } = await service.getChannelKey(rawChannelId);
-      const rawKeyMat = Uint8Array.from(atob(epochKey), (c) => c.charCodeAt(0));
-      await vault.rotateKey(keyVersion, rawKeyMat);
-    } catch {
-      // Fallback: derive deterministically (legacy/offline mode)
-      const encoded = new TextEncoder().encode(`canari-channel-key:${rawChannelId}`);
-      const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', encoded));
-      await vault.rotateKey(0, hash);
-    }
   }
 
   // ---------- Workspace helpers ----------
@@ -190,8 +171,6 @@ export function useChannelWorkspaces() {
             isPrivate: channel.visibility === 'private',
           });
 
-          await bootstrapChannelKey(actualId);
-
           const existing = ctx.conversations.get(channelConversationId);
           ctx.conversations.set(channelConversationId, {
             contactName: channelConversationId,
@@ -235,7 +214,6 @@ export function useChannelWorkspaces() {
             name: channel.name,
             isPrivate: channel.visibility === 'private',
           });
-          await bootstrapChannelKey(actualId);
           const existingEws = ctx.conversations.get(channelConversationId);
           ctx.conversations.set(channelConversationId, {
             contactName: channelConversationId,
@@ -297,8 +275,6 @@ export function useChannelWorkspaces() {
         createdChannel?.id || createdChannel?._id || `${workspaceId}_${normalizedChannelName}`;
       const channelId = `channel_${actualId}`;
 
-      await bootstrapChannelKey(actualId);
-
       const sidebarWorkspace = channelWorkspaces.find((w) => w.workspaceDbId === workspaceId);
       if (sidebarWorkspace) {
         addChannelToWorkspace(sidebarWorkspace.id, {
@@ -339,11 +315,43 @@ export function useChannelWorkspaces() {
     try {
       // Map frontend role names to backend role names (capitalized)
       const backendRoleName =
-        roleName === 'admin' ? 'Admin' : roleName === 'moderator' ? 'Moderator' : 'Member';
-      await service.inviteToChannel(channelId, {
+        roleName === 'admin'
+          ? 'Administrateur'
+          : roleName === 'moderator'
+            ? 'Modérateur'
+            : 'Membre';
+      const inviteResult = await service.inviteToChannel(channelId, {
         targetUserId: memberId,
         roleName: backendRoleName,
       });
+
+      if (inviteResult.keyDistribution && ctx.ensureMls && ctx.startDirectConversation) {
+        const previousSelection = ctx.getSelectedConversationId?.() ?? null;
+        try {
+          await ctx.startDirectConversation(memberId);
+          const directConvo = Array.from(ctx.conversations.entries()).find(([, convo]) => {
+            if ((convo.conversationType ?? 'group') !== 'direct') return false;
+            return (convo.directPeerId ?? convo.contactName).toLowerCase() === memberId;
+          });
+
+          if (directConvo) {
+            const mlsService = await ctx.ensureMls();
+            const controlMsg = encodeAppMessage(
+              mkSystem('channel_key_distribution', JSON.stringify(inviteResult.keyDistribution))
+            );
+            await mlsService.sendMessage(directConvo[1].id, controlMsg);
+            await service.markKeyDistributionSent(
+              channelId,
+              inviteResult.keyDistribution.distributionId
+            );
+          } else {
+            throw new Error('Discussion privée MLS introuvable après création');
+          }
+        } finally {
+          if (previousSelection) ctx.selectConversation(previousSelection);
+        }
+      }
+
       ctx.log(`Membre invité dans le canal (${roleName}) : ${memberId}`);
     } catch (error) {
       ctx.log(toUiActionError(`Invitation dans le canal (${roleName})`, error));

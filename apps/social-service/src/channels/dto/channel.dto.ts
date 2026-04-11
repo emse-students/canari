@@ -38,6 +38,21 @@ export interface ChannelInviteDto {
   roleName?: string;
 }
 
+export interface ChannelKeyDistributionPayloadDto {
+  type: 'channel_key_distribution';
+  channelId: string;
+  channelName?: string;
+  keyVersion: number;
+  encryptedChannelKey: string;
+  distributionId: string;
+  issuedAt: string;
+  invitedBy: string;
+}
+
+export interface MarkDistributionReceivedDto {
+  keyVersion: number;
+}
+
 export interface ChannelKickDto {
   targetUserId: string;
   actorUserId: string;

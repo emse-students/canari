@@ -7,11 +7,19 @@ import { Channel } from './entities/channel.entity';
 import { ChannelRole } from './entities/channel-role.entity';
 import { ChannelMember } from './entities/channel-member.entity';
 import { ChannelMessage } from './entities/channel-message.entity';
+import { ChannelKeyDistribution } from './entities/channel-key-distribution.entity';
 import { Workspace } from './entities/workspace.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Workspace, Channel, ChannelRole, ChannelMember, ChannelMessage]),
+    TypeOrmModule.forFeature([
+      Workspace,
+      Channel,
+      ChannelRole,
+      ChannelMember,
+      ChannelMessage,
+      ChannelKeyDistribution,
+    ]),
     HttpModule,
   ],
   controllers: [ChannelsController],

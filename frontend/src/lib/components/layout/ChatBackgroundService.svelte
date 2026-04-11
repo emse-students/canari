@@ -15,8 +15,6 @@
   import { goto, afterNavigate } from '$app/navigation';
   import { BiometricService } from '$lib/services/biometric';
   import { currentUserId } from '$lib/stores/user';
-  import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
-  import { ChannelService } from '$lib/services/ChannelService';
   import {
     globalSession,
     globalConvs,
@@ -98,28 +96,12 @@
       conversations: globalConvs.conversations,
       saveConversation: (name: string) => globalConvs.saveConversation(name, convCtx()),
       selectConversation: globalConvs.selectConversation,
+      ensureMls: globalSession.ensureMls,
+      startDirectConversation: (targetUserId: string) =>
+        globalConvs.startNewConversation(targetUserId, convCtx()),
+      getSelectedConversationId: () => globalConvs.selectedContact,
       log: appendLog,
     };
-  }
-
-  async function bootstrapChannelKey(rawChannelId: string) {
-    const vault = channelKeyManager.getVault(rawChannelId);
-    try {
-      vault.getCurrentKey();
-      return;
-    } catch {
-      // no key yet
-    }
-    try {
-      const svc = new ChannelService();
-      const { epochKey, keyVersion } = await svc.getChannelKey(rawChannelId);
-      const rawKeyMat = Uint8Array.from(atob(epochKey), (c) => c.charCodeAt(0));
-      await vault.rotateKey(keyVersion, rawKeyMat);
-    } catch {
-      const encoded = new TextEncoder().encode(`canari-channel-key:${rawChannelId}`);
-      const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', encoded));
-      await vault.rotateKey(0, hash);
-    }
   }
 
   /** Callbacks complets pour globalSession.login() / session callbacks. */
@@ -153,7 +135,6 @@
       onChannelMemberJoined: (event: any) => {
         if (!event.channelId) return;
         const channelConversationId = `channel_${event.channelId}`;
-        void bootstrapChannelKey(event.channelId);
         const workspace = globalChannels.ensureWorkspaceForChannelEvent(event);
         const isPrivate = event.visibility === 'private';
         globalChannels.addChannelToWorkspace(workspace.id, {
@@ -448,10 +429,14 @@
     <div
       class="pointer-events-auto flex items-center gap-4 rounded-2xl border border-black/5 dark:border-white/10 bg-white/80 dark:bg-black/50 px-4 py-3 shadow-xl shadow-black/5 dark:shadow-black/20 backdrop-blur-2xl"
     >
-      <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-400">
+      <div
+        class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-400"
+      >
         <Bell size={16} />
       </div>
-      <p class="flex-1 text-sm font-semibold text-text-main leading-snug">{globalNotifs.channelMembershipNotice}</p>
+      <p class="flex-1 text-sm font-semibold text-text-main leading-snug">
+        {globalNotifs.channelMembershipNotice}
+      </p>
       {#if globalNotifs.channelMembershipActionChannelId}
         <button
           type="button"
@@ -487,7 +472,9 @@
   <div
     class="fixed bottom-[calc(env(safe-area-inset-bottom,0px)+1rem)] left-4 right-4 md:left-auto md:right-6 md:w-96 z-50 p-4 sm:p-5 rounded-[1.5rem] border border-black/5 dark:border-white/10 bg-white/80 dark:bg-black/50 backdrop-blur-2xl shadow-2xl shadow-black/10 dark:shadow-black/30 flex items-start sm:items-center gap-4 transition-all duration-300"
   >
-    <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-400">
+    <div
+      class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-400"
+    >
       <Fingerprint size={24} strokeWidth={2.5} />
     </div>
 

@@ -1,4 +1,10 @@
-import { Injectable, NotFoundException, ForbiddenException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+  Logger,
+  BadRequestException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import * as crypto from 'crypto';
@@ -7,6 +13,10 @@ import { Channel } from './entities/channel.entity';
 import { ChannelRole } from './entities/channel-role.entity';
 import { ChannelMember } from './entities/channel-member.entity';
 import { ChannelMessage } from './entities/channel-message.entity';
+import {
+  ChannelKeyDistribution,
+  type ChannelKeyDistributionStatus,
+} from './entities/channel-key-distribution.entity';
 import { RedisService } from '../common/redis';
 
 import {
@@ -19,11 +29,19 @@ import {
   ChannelInviteDto,
   ChannelUpdateRoleDto,
   SendChannelMessageDto,
+  type ChannelKeyDistributionPayloadDto,
 } from './dto/channel.dto';
 
 @Injectable()
 export class ChannelService {
   private readonly logger = new Logger(ChannelService.name);
+
+  private canAccessChannel(channel: Channel, member: ChannelMember): boolean {
+    if (!channel.isPrivate) return true;
+    const roleIds = member.roleIds || [];
+    const allowed = channel.allowedRoles || [];
+    return allowed.some((roleId) => roleIds.includes(roleId));
+  }
 
   /**
    * Derive a 32-byte AES-256 key from the channel's master secret + version.
@@ -50,6 +68,8 @@ export class ChannelService {
     @InjectRepository(ChannelRole) private readonly roleRepo: Repository<ChannelRole>,
     @InjectRepository(ChannelMember) private readonly memberRepo: Repository<ChannelMember>,
     @InjectRepository(ChannelMessage) private readonly messageRepo: Repository<ChannelMessage>,
+    @InjectRepository(ChannelKeyDistribution)
+    private readonly keyDistributionRepo: Repository<ChannelKeyDistribution>,
     private readonly redis: RedisService
   ) {}
 
@@ -116,7 +136,9 @@ export class ChannelService {
       masterSecret: crypto.randomBytes(32).toString('base64'),
       keyVersion: 1,
     });
-    await this.channelRepo.save(generalChannel);
+    const savedGeneralChannel = await this.channelRepo.save(generalChannel);
+
+    await this.pushKeyToUser(savedGeneralChannel, input.createdBy);
 
     return savedWs;
   }
@@ -195,7 +217,11 @@ export class ChannelService {
       masterSecret,
       keyVersion: 1,
     });
-    return this.channelRepo.save(channel);
+    const savedChannel = await this.channelRepo.save(channel);
+
+    await this.pushKeyToUser(savedChannel, input.actorUserId);
+
+    return savedChannel;
   }
 
   async renameChannel(channelId: string, actorUserId: string, newName: string) {
@@ -260,33 +286,6 @@ export class ChannelService {
     );
 
     return { success: true };
-  }
-
-  /**
-   * Return the derived epoch key for the given channel.
-   * The raw master secret never leaves the backend.
-   */
-  async getChannelKey(channelId: string, userId: string) {
-    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException('Channel not found');
-
-    const member = await this.memberRepo.findOne({
-      where: { workspaceId: channel.workspaceId, userId },
-    });
-    if (!member) throw new ForbiddenException('Not a member of this workspace');
-
-    // Backfill master secret for channels created before this feature
-    if (!channel.masterSecret) {
-      channel.masterSecret = crypto.randomBytes(32).toString('base64');
-      await this.channelRepo.save(channel);
-    }
-
-    const epochKey = this.deriveEpochKey(channel.masterSecret, channelId, channel.keyVersion);
-    return {
-      channelId,
-      keyVersion: channel.keyVersion,
-      epochKey: epochKey.toString('base64'),
-    };
   }
 
   /**
@@ -357,15 +356,70 @@ export class ChannelService {
     );
   }
 
+  private toDistributionPayload(
+    distribution: ChannelKeyDistribution,
+    channel: Channel,
+    channelName: string,
+    epochKeyB64: string
+  ): ChannelKeyDistributionPayloadDto {
+    return {
+      type: 'channel_key_distribution',
+      channelId: channel.id,
+      channelName,
+      keyVersion: distribution.keyVersion,
+      encryptedChannelKey: epochKeyB64,
+      distributionId: distribution.id,
+      issuedAt: distribution.createdAt.toISOString(),
+      invitedBy: distribution.invitedBy,
+    };
+  }
+
+  private async updateDistributionStatus(
+    distributionId: string,
+    status: ChannelKeyDistributionStatus,
+    actorUserId?: string
+  ) {
+    const distribution = await this.keyDistributionRepo.findOne({ where: { id: distributionId } });
+    if (!distribution) throw new NotFoundException('Channel key distribution not found');
+
+    if (actorUserId && distribution.targetUserId !== actorUserId) {
+      throw new ForbiddenException('Only target user can update this distribution');
+    }
+
+    const isValidTransition =
+      (distribution.status === 'pending_key_distribution' && status === 'key_sent') ||
+      (distribution.status === 'key_sent' &&
+        (status === 'key_received' || status === 'key_acked')) ||
+      (distribution.status === 'key_received' && status === 'key_acked') ||
+      distribution.status === status;
+    if (!isValidTransition) {
+      throw new BadRequestException(
+        `Invalid distribution status transition ${distribution.status} -> ${status}`
+      );
+    }
+
+    distribution.status = status;
+    if (status === 'key_sent') {
+      distribution.sentAt = new Date();
+      distribution.attempts += 1;
+    }
+    if (status === 'key_received') {
+      distribution.receivedAt = new Date();
+    }
+    if (status === 'key_acked') {
+      distribution.ackedAt = new Date();
+      if (!distribution.receivedAt) distribution.receivedAt = distribution.ackedAt;
+    }
+    await this.keyDistributionRepo.save(distribution);
+    return distribution;
+  }
+
   async listChannelsForUser(workspaceId: string, userId: string) {
     const member = await this.memberRepo.findOne({ where: { workspaceId, userId } });
     if (!member) throw new ForbiddenException('Not a member of this workspace');
 
     const channels = await this.channelRepo.find({ where: { workspaceId, archived: false } });
-    return channels.filter((ch) => {
-      if (!ch.isPrivate) return true;
-      return ch.allowedRoles?.some((rId) => member.roleIds?.includes(rId));
-    });
+    return channels.filter((ch) => this.canAccessChannel(ch, member));
   }
 
   async joinChannel(channelId: string, input: ChannelJoinDto) {
@@ -409,9 +463,6 @@ export class ChannelService {
         workspaceMemberIds
       );
     }
-
-    // Push channel encryption key to the joining user
-    await this.pushKeyToUser(channel, input.userId);
 
     return { success: true };
   }
@@ -463,6 +514,10 @@ export class ChannelService {
       await this.memberRepo.save(targetMember);
     }
 
+    if (!isNewMember) {
+      return { success: true, userId: input.targetUserId, alreadyMember: true };
+    }
+
     // Publish event to notify the invited user and connected clients
     if (isNewMember) {
       const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
@@ -483,10 +538,37 @@ export class ChannelService {
       );
     }
 
-    // Push channel encryption key to the invited user
-    await this.pushKeyToUser(channel, input.targetUserId);
+    // Membership change => mandatory channel key rotation.
+    if (!channel.masterSecret) {
+      channel.masterSecret = crypto.randomBytes(32).toString('base64');
+    }
+    channel.keyVersion += 1;
+    await this.channelRepo.save(channel);
 
-    return { success: true, userId: input.targetUserId };
+    const epochKey = this.deriveEpochKey(channel.masterSecret, channel.id, channel.keyVersion);
+
+    const distribution = this.keyDistributionRepo.create({
+      workspaceId: channel.workspaceId,
+      channelId: channel.id,
+      targetUserId: input.targetUserId,
+      invitedBy: input.actorUserId,
+      keyVersion: channel.keyVersion,
+      status: 'pending_key_distribution',
+    });
+    const savedDistribution = await this.keyDistributionRepo.save(distribution);
+
+    const payload = this.toDistributionPayload(
+      savedDistribution,
+      channel,
+      channel.name,
+      epochKey.toString('base64')
+    );
+
+    return {
+      success: true,
+      userId: input.targetUserId,
+      keyDistribution: payload,
+    };
   }
 
   async leaveChannel(channelId: string, input: ChannelLeaveDto) {
@@ -506,7 +588,86 @@ export class ChannelService {
       await this.memberRepo.delete({ workspaceId: channel.workspaceId, userId: input.userId });
     }
 
+    // Membership change => rotate key and distribute only to remaining members.
+    if (!channel.masterSecret) {
+      channel.masterSecret = crypto.randomBytes(32).toString('base64');
+    }
+    channel.keyVersion += 1;
+    await this.channelRepo.save(channel);
+
+    const newEpochKey = this.deriveEpochKey(channel.masterSecret, channel.id, channel.keyVersion);
+    const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
+    await this.redis.publishChannelEvent(
+      'channel.key.rotated',
+      {
+        channelId,
+        newEpochBaseKey: newEpochKey.toString('base64'),
+        keyVersion: channel.keyVersion,
+      },
+      workspaceMemberIds
+    );
+
     return { success: true };
+  }
+
+  async markKeyDistributionSent(channelId: string, distributionId: string, actorUserId: string) {
+    const distribution = await this.keyDistributionRepo.findOne({ where: { id: distributionId } });
+    if (!distribution || distribution.channelId !== channelId) {
+      throw new NotFoundException('Channel key distribution not found');
+    }
+    if (distribution.invitedBy !== actorUserId) {
+      throw new ForbiddenException('Only inviter can mark distribution as sent');
+    }
+    await this.updateDistributionStatus(distributionId, 'key_sent');
+    return { success: true, distributionId, status: 'key_sent' };
+  }
+
+  async markKeyDistributionReceived(
+    channelId: string,
+    distributionId: string,
+    actorUserId: string,
+    keyVersion: number
+  ) {
+    const distribution = await this.keyDistributionRepo.findOne({ where: { id: distributionId } });
+    if (!distribution || distribution.channelId !== channelId) {
+      throw new NotFoundException('Channel key distribution not found');
+    }
+    if (distribution.keyVersion !== keyVersion) {
+      throw new ForbiddenException('Distribution keyVersion mismatch');
+    }
+    const member = await this.memberRepo.findOne({
+      where: { workspaceId: distribution.workspaceId, userId: actorUserId },
+    });
+    const channel = await this.channelRepo.findOne({ where: { id: distribution.channelId } });
+    if (!member || !channel || !this.canAccessChannel(channel, member)) {
+      throw new ForbiddenException('Target user no longer authorized for this channel');
+    }
+    await this.updateDistributionStatus(distributionId, 'key_received', actorUserId);
+    return { success: true, distributionId, status: 'key_received' };
+  }
+
+  async ackKeyDistribution(
+    channelId: string,
+    distributionId: string,
+    actorUserId: string,
+    keyVersion: number
+  ) {
+    const distribution = await this.keyDistributionRepo.findOne({ where: { id: distributionId } });
+    if (!distribution || distribution.channelId !== channelId) {
+      throw new NotFoundException('Channel key distribution not found');
+    }
+    if (distribution.keyVersion !== keyVersion) {
+      throw new ForbiddenException('Distribution keyVersion mismatch');
+    }
+    const member = await this.memberRepo.findOne({
+      where: { workspaceId: distribution.workspaceId, userId: actorUserId },
+    });
+    const channel = await this.channelRepo.findOne({ where: { id: distribution.channelId } });
+    if (!member || !channel || !this.canAccessChannel(channel, member)) {
+      throw new ForbiddenException('Target user no longer authorized for this channel');
+    }
+    await this.updateDistributionStatus(distributionId, 'key_acked', actorUserId);
+    return { success: true, distributionId, status: 'key_acked' };
   }
 
   async kickMember(channelId: string, input: ChannelKickDto) {
@@ -643,6 +804,17 @@ export class ChannelService {
       where: { workspaceId: channel.workspaceId, userId: input.senderId },
     });
     if (!member) throw new ForbiddenException('Not a member of this workspace');
+    if (!this.canAccessChannel(channel, member)) {
+      throw new ForbiddenException('Not allowed to access this channel');
+    }
+    if (input.keyVersion === undefined || input.keyVersion === null) {
+      throw new BadRequestException('keyVersion is required for channel messages');
+    }
+    if (input.keyVersion !== channel.keyVersion) {
+      throw new ForbiddenException(
+        `Stale or invalid keyVersion (${input.keyVersion}) for channel epoch ${channel.keyVersion}`
+      );
+    }
 
     const msg = this.messageRepo.create({
       ...(input.messageId ? { id: input.messageId } : {}),
@@ -681,6 +853,13 @@ export class ChannelService {
   async listMessages(channelId: string, userId: string, limit = 50) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
+
+    const member = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId },
+    });
+    if (!member || !this.canAccessChannel(channel, member)) {
+      throw new ForbiddenException('Not allowed to access this channel');
+    }
 
     const msgs = await this.messageRepo.find({
       where: { channelId },

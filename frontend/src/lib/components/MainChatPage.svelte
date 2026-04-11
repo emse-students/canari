@@ -4,8 +4,6 @@
   import { Users } from 'lucide-svelte';
   import { sendReadReceipt } from '$lib/utils/chat/messaging';
   import { forceSyncReset } from '$lib/utils/chat/actions';
-  import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
-  import { ChannelService } from '$lib/services/ChannelService';
   import { useSyncSession } from '$lib/composables/useSyncSession.svelte';
   import {
     globalSession as session,
@@ -53,6 +51,10 @@
       conversations: convs.conversations,
       saveConversation: (name: string) => convs.saveConversation(name, convCtx()),
       selectConversation: convs.selectConversation,
+      ensureMls: async () => session.ensureMls(),
+      startDirectConversation: (targetUserId: string) =>
+        convs.startNewConversation(targetUserId, convCtx()),
+      getSelectedConversationId: () => convs.selectedContact,
       log,
     };
   }
@@ -133,26 +135,6 @@
     };
   }
 
-  async function bootstrapChannelKey(rawChannelId: string) {
-    const vault = channelKeyManager.getVault(rawChannelId);
-    try {
-      vault.getCurrentKey();
-      return;
-    } catch {
-      // no key yet
-    }
-    try {
-      const svc = new ChannelService();
-      const { epochKey, keyVersion } = await svc.getChannelKey(rawChannelId);
-      const rawKeyMat = Uint8Array.from(atob(epochKey), (c) => c.charCodeAt(0));
-      await vault.rotateKey(keyVersion, rawKeyMat);
-    } catch {
-      const encoded = new TextEncoder().encode(`canari-channel-key:${rawChannelId}`);
-      const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', encoded));
-      await vault.rotateKey(0, hash);
-    }
-  }
-
   /** Callbacks object for session composable operations. */
   function sessionCb() {
     return {
@@ -184,7 +166,6 @@
       onChannelMemberJoined: (event: any) => {
         if (!event.channelId) return;
         const channelConversationId = `channel_${event.channelId}`;
-        void bootstrapChannelKey(event.channelId);
         const workspace = channels.ensureWorkspaceForChannelEvent(event);
         const isPrivate = event.visibility === 'private';
         channels.addChannelToWorkspace(workspace.id, {

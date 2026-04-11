@@ -41,6 +41,17 @@ export interface ChannelInviteDto {
   roleName?: string;
 }
 
+export interface ChannelKeyDistributionPayloadDto {
+  type: 'channel_key_distribution';
+  channelId: string;
+  channelName?: string;
+  keyVersion: number;
+  encryptedChannelKey: string;
+  distributionId: string;
+  issuedAt: string;
+  invitedBy: string;
+}
+
 export interface ChannelUpdateRoleDto {
   targetUserId: string;
   roleName: string;
@@ -202,12 +213,57 @@ export class ChannelService {
     return res.json();
   }
 
-  async inviteToChannel(channelId: string, dto: ChannelInviteDto) {
+  async inviteToChannel(
+    channelId: string,
+    dto: ChannelInviteDto
+  ): Promise<{
+    success: boolean;
+    userId: string;
+    keyDistribution?: ChannelKeyDistributionPayloadDto;
+  }> {
     const cid = this.normalizeChannelId(channelId);
     const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/members/invite`, {
       method: 'POST',
       body: JSON.stringify(dto),
     });
+    await this.handleError(res);
+    return res.json();
+  }
+
+  async markKeyDistributionSent(channelId: string, distributionId: string) {
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/${cid}/key-distributions/${distributionId}/sent`,
+      {
+        method: 'POST',
+      }
+    );
+    await this.handleError(res);
+    return res.json();
+  }
+
+  async markKeyDistributionReceived(channelId: string, distributionId: string, keyVersion: number) {
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/${cid}/key-distributions/${distributionId}/received`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ keyVersion }),
+      }
+    );
+    await this.handleError(res);
+    return res.json();
+  }
+
+  async ackKeyDistribution(channelId: string, distributionId: string, keyVersion: number) {
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/${cid}/key-distributions/${distributionId}/ack`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ keyVersion }),
+      }
+    );
     await this.handleError(res);
     return res.json();
   }
@@ -244,15 +300,6 @@ export class ChannelService {
   async listMembers(channelId: string): Promise<ChannelMemberDto[]> {
     const cid = this.normalizeChannelId(channelId);
     const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/members`);
-    await this.handleError(res);
-    return res.json();
-  }
-
-  async getChannelKey(
-    channelId: string
-  ): Promise<{ channelId: string; keyVersion: number; epochKey: string }> {
-    const cid = this.normalizeChannelId(channelId);
-    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/key`);
     await this.handleError(res);
     return res.json();
   }

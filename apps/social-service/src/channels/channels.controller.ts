@@ -24,6 +24,7 @@ import {
   type CreateRoleDto,
   type CreateWorkspaceDto,
   type GetChannelMessagesQuery,
+  type MarkDistributionReceivedDto,
   type RenameChannelDto,
   type SendChannelMessageDto,
 } from './dto/channel.dto';
@@ -148,15 +149,55 @@ export class ChannelsController {
   }
 
   @UseGuards(NginxAuthGuard)
-  @Get(':channelId/key')
-  getChannelKey(@Headers('x-user-id') xUserId: string, @Param('channelId') channelId: string) {
-    return this.service.getChannelKey(channelId, xUserId.trim().toLowerCase());
-  }
-
-  @UseGuards(NginxAuthGuard)
   @Post(':channelId/key/rotate')
   rotateChannelKey(@Headers('x-user-id') xUserId: string, @Param('channelId') channelId: string) {
     return this.service.rotateChannelKey(channelId, xUserId.trim().toLowerCase());
+  }
+
+  @UseGuards(NginxAuthGuard)
+  @Post(':channelId/key-distributions/:distributionId/sent')
+  markKeyDistributionSent(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string,
+    @Param('distributionId') distributionId: string
+  ) {
+    return this.service.markKeyDistributionSent(
+      channelId,
+      distributionId,
+      xUserId.trim().toLowerCase()
+    );
+  }
+
+  @UseGuards(NginxAuthGuard)
+  @Post(':channelId/key-distributions/:distributionId/received')
+  markKeyDistributionReceived(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string,
+    @Param('distributionId') distributionId: string,
+    @Body() body: MarkDistributionReceivedDto
+  ) {
+    return this.service.markKeyDistributionReceived(
+      channelId,
+      distributionId,
+      xUserId.trim().toLowerCase(),
+      Number(body.keyVersion)
+    );
+  }
+
+  @UseGuards(NginxAuthGuard)
+  @Post(':channelId/key-distributions/:distributionId/ack')
+  ackKeyDistribution(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string,
+    @Param('distributionId') distributionId: string,
+    @Body() body: MarkDistributionReceivedDto
+  ) {
+    return this.service.ackKeyDistribution(
+      channelId,
+      distributionId,
+      xUserId.trim().toLowerCase(),
+      Number(body.keyVersion)
+    );
   }
 
   @UseGuards(NginxAuthGuard)

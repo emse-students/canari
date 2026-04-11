@@ -7,6 +7,7 @@ import type { MessageReaction } from '$lib/types';
 import { decodeAppMessage, MediaKind } from '$lib/proto/codec';
 import { serializeEnvelope, mkTextEnvelope, mkMediaEnvelope } from '$lib/envelope';
 import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
+import { ChannelService } from '$lib/services/ChannelService';
 
 function bytesToHex(bytes?: Uint8Array | null): string {
   if (!bytes || bytes.length === 0) return '';
@@ -619,6 +620,51 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             if (msg?.system) {
               const event = msg.system.event;
               const data = msg.system.data ? JSON.parse(msg.system.data) : {};
+
+              if (event === 'channel_key_distribution') {
+                const channelId = String(data.channelId || '');
+                const distributionId = String(data.distributionId || '');
+                const encryptedChannelKey = String(data.encryptedChannelKey || '');
+                const keyVersion = Number(data.keyVersion || 0);
+
+                if (
+                  !channelId ||
+                  !distributionId ||
+                  !encryptedChannelKey ||
+                  !Number.isFinite(keyVersion)
+                ) {
+                  return true;
+                }
+
+                try {
+                  const rawKeyMat = Uint8Array.from(atob(encryptedChannelKey), (c) =>
+                    c.charCodeAt(0)
+                  );
+                  const vault = channelKeyManager.getVault(channelId);
+                  await vault.rotateKey(keyVersion, rawKeyMat);
+
+                  const channelSvc = new ChannelService();
+                  await channelSvc
+                    .markKeyDistributionReceived(channelId, distributionId, keyVersion)
+                    .catch(() => {});
+                  await channelSvc
+                    .ackKeyDistribution(channelId, distributionId, keyVersion)
+                    .catch(() => {});
+
+                  const displayName = data.channelName || channelId;
+                  await addSystemMessage(
+                    `Vous avez ete invite a rejoindre #${displayName}. La cle de chiffrement a ete recue en prive.`,
+                    convoKey
+                  );
+                  log(`[CHANNEL-KEY] Cle recue via MLS pour #${displayName} (v${keyVersion}).`);
+                } catch (e) {
+                  log(
+                    `[CHANNEL-KEY] Echec traitement distribution ${distributionId}: ${e instanceof Error ? e.message : String(e)}`
+                  );
+                }
+
+                return true;
+              }
 
               if (event === 'groupRenamed' && data.newName) {
                 conversations.set(convoKey, { ...convo, name: data.newName });
