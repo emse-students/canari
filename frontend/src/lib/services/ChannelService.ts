@@ -25,6 +25,8 @@ export interface ChannelDto {
   name: string;
   visibility?: 'public' | 'private';
   imageMediaId?: string | null;
+  keyVersion?: number;
+  keyBootstrap?: ChannelBootstrapDto;
 }
 
 export interface ChannelBootstrapDto {
@@ -175,6 +177,13 @@ export class ChannelService {
     );
     await this.handleError(res);
     return res.json() as Promise<ChannelDto[]>;
+  }
+
+  async getChannelKeyBootstrap(channelId: string): Promise<ChannelBootstrapDto> {
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/key`);
+    await this.handleError(res);
+    return res.json() as Promise<ChannelBootstrapDto>;
   }
 
   async joinChannel(channelId: string, dto: ChannelJoinDto) {

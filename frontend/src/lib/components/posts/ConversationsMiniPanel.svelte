@@ -21,11 +21,12 @@
   let loading = $state(true);
   let resolvedNames = $state<Record<string, string>>({});
 
+  // Filtre utilitaire pour exclure les canaux
   function isCommunityChannelId(id: string | undefined): boolean {
     return String(id ?? '').startsWith('channel_');
   }
 
-  // ── Live data from global session (reactive when logged in) ──────────────
+  // ── Données en direct de la session globale ──────────────
   const liveItems = $derived(
     globalSession.isLoggedIn
       ? [...globalConvs.conversations.entries()]
@@ -89,7 +90,7 @@
           };
         });
 
-      // Async resolve display names for direct conversations
+      // Résolution asynchrone des noms d'affichage
       for (const item of items) {
         if (!item.isGroup) {
           const identity = deriveConversationIdentity(item.meta.name, uid, item.meta.id);
@@ -102,7 +103,7 @@
         }
       }
     } catch {
-      // silently ignore IDB errors
+      // Ignorer silencieusement les erreurs IDB
     } finally {
       loading = false;
     }
@@ -155,71 +156,69 @@
         <span class="text-xs font-semibold">Chargement...</span>
       </div>
     {:else if displayItems.length === 0}
-      <div class="text-center py-10 px-4">
+      <div class="text-center py-10 px-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
         <div
-          class="w-12 h-12 rounded-2xl bg-black/5 dark:bg-white/5 flex items-center justify-center mx-auto mb-3 text-text-muted opacity-60"
+          class="w-12 h-12 rounded-2xl bg-black/5 dark:bg-white/5 flex items-center justify-center mx-auto mb-3 text-text-muted opacity-60 shadow-inner"
         >
           <MessageCircle size={24} strokeWidth={2} />
         </div>
-        <p class="text-sm font-semibold text-text-main mb-1">Aucune discussion</p>
-        <p class="text-xs text-text-muted px-2 mb-4 leading-relaxed">
-          Démarrez une nouvelle conversation pour échanger avec le réseau.
+        <p class="text-sm font-bold text-text-main mb-1">Aucune discussion privée</p>
+        <p class="text-xs font-medium text-text-muted px-2 mb-4 leading-relaxed">
+          Démarrez un message direct ou un groupe privé avec vos contacts.
         </p>
         <a
           href="/chat"
-          class="inline-block px-4 py-2 rounded-xl bg-amber-500/10 text-amber-700 dark:text-amber-400 text-xs font-bold hover:bg-amber-500/20 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+          class="inline-flex items-center justify-center px-4 py-2.5 rounded-xl bg-amber-500/10 text-amber-700 dark:text-amber-400 text-xs font-bold hover:bg-amber-500/20 active:scale-95 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
         >
-          Commencer à discuter
+          Nouvelle discussion
         </a>
       </div>
     {:else}
-      {#each displayItems as item (item.meta.id)}
-        <button
-          type="button"
-          class="w-full flex items-center gap-3.5 px-3 py-2.5 hover:bg-white/80 dark:hover:bg-white/5 transition-all duration-200 text-left rounded-2xl mx-2 my-1 group hover:shadow-sm hover:translate-x-1 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 border border-transparent hover:border-black/5 dark:hover:border-white/5"
-          style="width: calc(100% - 16px);"
-          onclick={() => navigateToConversation(item.meta.id)}
-        >
-          <!-- Avatar -->
-          <div class="flex-shrink-0 relative">
-            {#if item.isGroup}
+      <div class="flex flex-col gap-0.5 px-2 animate-in fade-in duration-300">
+        {#each displayItems as item (item.meta.id)}
+          <button
+            type="button"
+            class="w-full flex items-center gap-3.5 px-3 py-2.5 hover:bg-white/80 dark:hover:bg-white/5 transition-all duration-200 text-left rounded-2xl group hover:shadow-sm hover:translate-x-1 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 border border-transparent hover:border-black/5 dark:hover:border-white/5"
+            onclick={() => navigateToConversation(item.meta.id)}
+          >
+            <!-- Avatar -->
+            <div class="flex-shrink-0 relative">
+              {#if item.isGroup}
+                <div
+                  class="w-10 h-10 rounded-xl shadow-inner border border-black/5 dark:border-white/5 bg-gradient-to-b from-gray-100 to-gray-200 dark:from-zinc-800 dark:to-zinc-900 text-gray-600 dark:text-gray-300 flex items-center justify-center transition-transform group-hover:scale-105"
+                >
+                  <Users size={18} strokeWidth={2} class="opacity-80" />
+                </div>
+              {:else}
+                <div class="transition-transform duration-200 group-hover:scale-105">
+                  <Avatar userId={getAvatarUserId(item)} size="sm" />
+                </div>
+              {/if}
+
+              <!-- Badge Non-lu -->
+              {#if (item.unreadCount ?? 0) > 0}
+                <span
+                  class="absolute -top-1.5 -right-1.5 min-w-[1.25rem] h-5 px-1.5 rounded-full bg-red-500 text-white text-[0.7rem] font-bold flex items-center justify-center leading-none shadow-sm ring-2 ring-[var(--cn-surface)] dark:ring-[#151B2C] z-10 transition-transform group-hover:scale-110"
+                >
+                  {item.unreadCount! > 99 ? '99+' : item.unreadCount}
+                </span>
+              {/if}
+            </div>
+
+            <!-- Informations -->
+            <div class="flex-1 min-w-0 flex flex-col justify-center">
               <div
-                class="w-10 h-10 rounded-xl shadow-inner border border-black/5 dark:border-white/5 bg-gradient-to-b from-gray-100 to-gray-200 dark:from-zinc-800 dark:to-zinc-900 text-gray-600 dark:text-gray-300 flex items-center justify-center transition-transform group-hover:scale-105"
+                class="text-[0.9rem] font-bold text-text-main truncate group-hover:text-amber-600 dark:group-hover:text-amber-400 transition-colors {(item.unreadCount ?? 0) > 0 ? 'text-text-main' : ''}"
               >
-                <Users size={18} strokeWidth={2} class="opacity-80" />
+                {getEffectiveName(item)}
               </div>
-            {:else}
-              <div class="transition-transform duration-200 group-hover:scale-105">
-                <Avatar userId={getAvatarUserId(item)} size="sm" />
+              <div class="text-[0.75rem] font-medium text-text-muted truncate mt-0.5">
+                {item.isGroup ? 'Groupe de discussion' : 'Message direct'}
               </div>
-            {/if}
-
-            <!-- Badge Non-lu -->
-            {#if (item.unreadCount ?? 0) > 0}
-              <span
-                class="absolute -top-1.5 -right-1.5 min-w-[1.25rem] h-5 px-1.5 rounded-full bg-red-500 text-white text-[0.7rem] font-bold flex items-center justify-center leading-none shadow-sm ring-2 ring-[var(--cn-surface)] dark:ring-[#151B2C] z-10 transition-transform group-hover:scale-110"
-              >
-                {item.unreadCount! > 99 ? '99+' : item.unreadCount}
-              </span>
-            {/if}
-          </div>
-
-          <!-- Informations -->
-          <div class="flex-1 min-w-0 flex flex-col justify-center">
-            <div
-              class="text-[0.9rem] font-bold text-text-main truncate group-hover:text-amber-600 dark:group-hover:text-amber-400 transition-colors {(item.unreadCount ??
-                0) > 0
-                ? 'text-text-main'
-                : ''}"
-            >
-              {getEffectiveName(item)}
             </div>
-            <div class="text-[0.75rem] font-medium text-text-muted truncate mt-0.5">
-              {item.isGroup ? 'Groupe de discussion' : 'Message direct'}
-            </div>
-          </div>
-        </button>
-      {/each}
+          </button>
+        {/each}
+      </div>
     {/if}
   </div>
 

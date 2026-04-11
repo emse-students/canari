@@ -29,6 +29,7 @@ import {
   ChannelInviteDto,
   ChannelUpdateRoleDto,
   SendChannelMessageDto,
+  type ChannelBootstrapDto,
   type ChannelKeyDistributionPayloadDto,
 } from './dto/channel.dto';
 
@@ -60,6 +61,17 @@ export class ChannelService {
       32
     );
     return Buffer.from(raw);
+  }
+
+  private buildChannelBootstrap(
+    channel: Pick<Channel, 'id' | 'keyVersion' | 'masterSecret'>
+  ): ChannelBootstrapDto {
+    const epochKey = this.deriveEpochKey(channel.masterSecret, channel.id, channel.keyVersion);
+    return {
+      channelId: channel.id,
+      keyVersion: channel.keyVersion,
+      newEpochBaseKey: epochKey.toString('base64'),
+    };
   }
 
   constructor(
@@ -236,12 +248,6 @@ export class ChannelService {
 
     await this.pushKeyToUser(savedChannel, input.actorUserId);
 
-    const bootstrapEpochKey = this.deriveEpochKey(
-      savedChannel.masterSecret,
-      savedChannel.id,
-      savedChannel.keyVersion
-    );
-
     return {
       id: savedChannel.id,
       workspaceId: savedChannel.workspaceId,
@@ -249,11 +255,7 @@ export class ChannelService {
       visibility: savedChannel.isPrivate ? 'private' : 'public',
       imageMediaId: savedChannel.imageMediaId ?? null,
       keyVersion: savedChannel.keyVersion,
-      keyBootstrap: {
-        channelId: savedChannel.id,
-        keyVersion: savedChannel.keyVersion,
-        newEpochBaseKey: bootstrapEpochKey.toString('base64'),
-      },
+      keyBootstrap: this.buildChannelBootstrap(savedChannel),
     };
   }
 
@@ -521,7 +523,32 @@ export class ChannelService {
     if (!member) throw new ForbiddenException('Not a member of this workspace');
 
     const channels = await this.channelRepo.find({ where: { workspaceId, archived: false } });
-    return channels.filter((ch) => this.canAccessChannel(ch, member));
+    return channels
+      .filter((ch) => this.canAccessChannel(ch, member))
+      .map((channel) => ({
+        id: channel.id,
+        workspaceId: channel.workspaceId,
+        name: channel.name,
+        visibility: channel.isPrivate ? 'private' : 'public',
+        imageMediaId: channel.imageMediaId ?? null,
+        keyVersion: channel.keyVersion,
+        keyBootstrap: this.buildChannelBootstrap(channel),
+      }));
+  }
+
+  async getChannelKeyBootstrapForUser(channelId: string, userId: string) {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
+
+    const member = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId },
+    });
+    if (!member) throw new ForbiddenException('Not a member of this workspace');
+    if (!this.canAccessChannel(channel, member)) {
+      throw new ForbiddenException('Not allowed to access this channel');
+    }
+
+    return this.buildChannelBootstrap(channel);
   }
 
   async joinChannel(channelId: string, input: ChannelJoinDto) {

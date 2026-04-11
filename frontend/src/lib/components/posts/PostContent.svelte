@@ -10,27 +10,33 @@
   let { post, authToken = '' }: Props = $props();
 </script>
 
-<!-- Markdown content -->
-<div class="px-5 py-3 border-b border-cn-border/40">
-  <div class="text-sm text-text-main leading-relaxed">
-    <a href="/profile/{encodeURIComponent(post.authorId)}" class="font-bold mr-1 hover:underline"
-      >{post.authorDisplayName || post.authorId}</a
-    >
-    <span class="prose prose-sm max-w-none inline [&_p]:inline [&_p]:m-0">
-      {post.markdown}
-    </span>
+<!-- Contenu Texte (Markdown) -->
+{#if post.markdown}
+  <div class="px-5 pb-3">
+    <div class="text-[0.95rem] text-text-main leading-relaxed break-words">
+      <!-- Texte formaté -->
+      <div class="prose prose-sm dark:prose-invert max-w-none opacity-90">
+        {post.markdown}
+      </div>
+    </div>
   </div>
-</div>
+{/if}
 
-<!-- Images -->
+<!-- Galerie d'Images (Effet "Bleeding Edge" bord à bord) -->
 {#if post.images && post.images.length > 0 && authToken}
-  <div class="border-b border-cn-border/40">
+  <div class="w-full mt-1">
     {#if post.images.length === 1}
-      <PostImage media={post.images[0]} {authToken} />
+      <!-- Image Unique -->
+      <div class="relative w-full max-h-[75vh] bg-black/5 dark:bg-white/5 flex items-center justify-center overflow-hidden">
+        <PostImage media={post.images[0]} {authToken} />
+      </div>
     {:else}
-      <div class="grid grid-cols-2 gap-0.5">
+      <!-- Mosaïque Multi-Images -->
+      <div class="grid grid-cols-2 gap-0.5 sm:gap-1 bg-white/20 dark:bg-black/20">
         {#each post.images as img (img.mediaId)}
-          <PostImage media={img} {authToken} />
+          <div class="relative aspect-square w-full overflow-hidden bg-black/5 dark:bg-white/5">
+            <PostImage media={img} {authToken} />
+          </div>
         {/each}
       </div>
     {/if}

@@ -49,6 +49,12 @@ export interface ChannelKeyDistributionPayloadDto {
   invitedBy: string;
 }
 
+export interface ChannelBootstrapDto {
+  channelId: string;
+  keyVersion: number;
+  newEpochBaseKey: string;
+}
+
 export interface MarkDistributionReceivedDto {
   keyVersion: number;
 }

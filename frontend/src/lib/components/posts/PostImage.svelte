@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
   import { MediaService } from '$lib/media';
   import type { MediaRef } from '$lib/media';
+  import { Image as ImageIcon, AlertCircle } from 'lucide-svelte';
 
   interface Props {
     media: {
@@ -21,16 +21,22 @@
   let loading = $state(true);
   let loadError = $state('');
 
-  const mediaService = new MediaService();
-
-  onMount(() => {
+  // Svelte 5 : Gestion réactive du téléchargement et du nettoyage mémoire
+  $effect(() => {
     if (!authToken) {
       loading = false;
-      loadError = 'Missing auth token for media decryption';
+      loadError = 'Jeton d\'authentification manquant';
       return;
     }
 
-    void mediaService
+    let destroyed = false;
+    let currentUrl: string | null = null;
+    loading = true;
+    loadError = '';
+
+    const mediaService = new MediaService();
+
+    mediaService
       .downloadAndDecrypt(
         {
           type: 'image',
@@ -44,33 +50,71 @@
         authToken
       )
       .then((url) => {
-        blobUrl = url;
+        if (destroyed) {
+          URL.revokeObjectURL(url);
+        } else {
+          blobUrl = url;
+          currentUrl = url;
+        }
       })
       .catch((err) => {
-        loadError = err instanceof Error ? err.message : 'Unable to decrypt image';
+        if (!destroyed) {
+          loadError = err instanceof Error ? err.message : 'Impossible de charger l\'image';
+        }
       })
       .finally(() => {
-        loading = false;
+        if (!destroyed) {
+          loading = false;
+        }
       });
+
+    // Fonction de nettoyage exécutée à la destruction du composant ou au changement de props
+    return () => {
+      destroyed = true;
+      if (currentUrl) {
+        URL.revokeObjectURL(currentUrl);
+      }
+    };
   });
 
-  onDestroy(() => {
-    if (blobUrl) {
-      URL.revokeObjectURL(blobUrl);
+  // Fonction d'ouverture compatible Web et Tauri (Desktop)
+  function openBlob(e: MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!blobUrl) return;
+
+    if ((window as any).__TAURI_INTERNALS__) {
+      const win = window.open('', '_blank');
+      if (win) {
+        win.location.href = blobUrl;
+      }
+    } else {
+      window.open(blobUrl, '_blank', 'noopener,noreferrer');
     }
-  });
+  }
 </script>
 
 {#if loading}
-  <div class="h-36 w-full rounded-xl bg-white/60 animate-pulse"></div>
+  <div class="absolute inset-0 flex items-center justify-center bg-black/5 dark:bg-white/5 animate-pulse">
+    <ImageIcon size={32} class="opacity-20 text-text-muted" strokeWidth={1.5} />
+  </div>
 {:else if loadError}
-  <div class="rounded-xl border border-red-200 bg-red-50 text-red-700 text-xs p-3">{loadError}</div>
+  <div class="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center bg-red-500/5 dark:bg-red-500/10 border border-dashed border-red-500/20">
+    <AlertCircle size={24} class="text-red-500 opacity-70" strokeWidth={2} />
+    <span class="text-xs font-semibold text-red-600 dark:text-red-400">{loadError}</span>
+  </div>
 {:else if blobUrl}
-  <a href={blobUrl} target="_blank" rel="noopener noreferrer" class="block">
+  <button
+    type="button"
+    onclick={openBlob}
+    class="block w-full h-full outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50 focus-visible:z-10 group/img cursor-zoom-in"
+    aria-label="Agrandir l'image"
+  >
     <img
       src={blobUrl}
-      alt={media.fileName ?? 'Post image'}
-      class="w-full rounded-xl object-cover max-h-80"
+      alt={media.fileName ?? 'Image de la publication'}
+      class="w-full h-full object-cover transition-transform duration-700 group-hover/img:scale-105"
+      loading="lazy"
     />
-  </a>
+  </button>
 {/if}

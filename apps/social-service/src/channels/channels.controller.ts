@@ -80,6 +80,15 @@ export class ChannelsController {
   }
 
   @UseGuards(NginxAuthGuard)
+  @Get(':channelId/key')
+  getChannelKeyBootstrap(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string
+  ) {
+    return this.service.getChannelKeyBootstrapForUser(channelId, xUserId.trim().toLowerCase());
+  }
+
+  @UseGuards(NginxAuthGuard)
   @Post(':channelId/members/join')
   join(
     @Headers('x-user-id') xUserId: string,

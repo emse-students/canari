@@ -3,10 +3,7 @@ import type { ChatMessage, Conversation } from '$lib/types';
 import { toHex } from '$lib/utils/hex';
 import { encodeAppMessage, mkText, mkReply, mkReaction, mkSystem } from '$lib/proto/codec';
 import { serializeEnvelope, mkTextEnvelope, parseEnvelope } from '$lib/envelope';
-import { ChannelService } from '$lib/services/ChannelService';
-import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
-
-const channelService = new ChannelService();
+import { sendEncryptedChannelMessage } from '$lib/utils/chat/channelCrypto';
 
 interface SendMessageDeps {
   mlsService: IMlsService;
@@ -79,25 +76,7 @@ export async function sendChatMessage(
 
     if (contactName.startsWith('channel_')) {
       const actualChannelId = contactName.replace('channel_', ''); // extract the db id
-      try {
-        const encryptedParams = await channelKeyManager.encryptMessage(actualChannelId, payload);
-        await channelService.sendMessage(actualChannelId, {
-          nonce: encryptedParams.nonce,
-          ciphertext: encryptedParams.ciphertext,
-          keyVersion: encryptedParams.keyVersion,
-          messageId,
-        });
-      } catch (err) {
-        console.warn('Crypto missing for channel via keyManager, falling back to legacy:', err);
-        const nonce = Array.from(crypto.getRandomValues(new Uint8Array(12)))
-          .map((b) => b.toString(16).padStart(2, '0'))
-          .join('');
-        await channelService.sendMessage(actualChannelId, {
-          nonce,
-          ciphertext: btoa(String.fromCharCode(...payload)),
-          messageId,
-        });
-      }
+      await sendEncryptedChannelMessage(actualChannelId, payload, messageId);
       // Show message optimistically with the same messageId.
       // When the WS echo arrives with data.id === messageId, the dedup guard
       // in addMessageToChat silently drops it — so the message appears once.

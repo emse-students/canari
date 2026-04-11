@@ -25,7 +25,7 @@ import type { ChatMessage, MessageReaction, Conversation } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
 import type { IStorage } from '$lib/db';
 import { ChannelService } from '$lib/services/ChannelService';
-import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
+import { sendEncryptedChannelMessage } from '$lib/utils/chat/channelCrypto';
 
 export interface MessagingContext {
   ensureMls: () => IMlsService;
@@ -246,22 +246,7 @@ export function useMessaging() {
           if (isChannel && channelSvc) {
             // Send media as channel message via REST
             const actualChannelId = ctx.selectedContact!.replace('channel_', '');
-            try {
-              const enc = await channelKeyManager.encryptMessage(actualChannelId, protoBytes);
-              await channelSvc.sendMessage(actualChannelId, {
-                ciphertext: enc.ciphertext,
-                nonce: enc.nonce,
-                keyVersion: enc.keyVersion,
-              });
-            } catch {
-              const nonce = Array.from(crypto.getRandomValues(new Uint8Array(12)))
-                .map((b) => b.toString(16).padStart(2, '0'))
-                .join('');
-              await channelSvc.sendMessage(actualChannelId, {
-                ciphertext: btoa(String.fromCharCode(...protoBytes)),
-                nonce,
-              });
-            }
+            await sendEncryptedChannelMessage(actualChannelId, protoBytes, messageId);
           } else if (mlsService) {
             await mlsService.sendMessage(convo.id, protoBytes, messageId);
             const stateBytes = await mlsService.saveState(ctx.pin);

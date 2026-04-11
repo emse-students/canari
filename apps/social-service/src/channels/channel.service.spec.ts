@@ -14,6 +14,7 @@ describe('ChannelService security hardening', () => {
     const workspaceRepo = {} as Repository<Workspace>;
     const channelRepo = {
       findOne: jest.fn(),
+      find: jest.fn(),
       save: jest.fn(),
     };
     const roleRepo = {
@@ -77,6 +78,37 @@ describe('ChannelService security hardening', () => {
     });
 
     await expect(service.listMessages('ch1', 'u1')).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('returns sanitized channels with key bootstrap for accessible members', async () => {
+    const { service, channelRepo, memberRepo } = makeService();
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: [] });
+    channelRepo.find.mockResolvedValue([
+      {
+        id: 'ch1',
+        workspaceId: 'ws1',
+        name: 'general',
+        isPrivate: false,
+        allowedRoles: [],
+        keyVersion: 2,
+        masterSecret: Buffer.alloc(32).toString('base64'),
+        imageMediaId: null,
+      },
+    ]);
+
+    await expect(service.listChannelsForUser('ws1', 'u1')).resolves.toEqual([
+      expect.objectContaining({
+        id: 'ch1',
+        workspaceId: 'ws1',
+        name: 'general',
+        visibility: 'public',
+        keyVersion: 2,
+        keyBootstrap: expect.objectContaining({
+          channelId: 'ch1',
+          keyVersion: 2,
+        }),
+      }),
+    ]);
   });
 
   it('rejects sendMessage when keyVersion is missing', async () => {

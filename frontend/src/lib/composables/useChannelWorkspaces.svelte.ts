@@ -4,7 +4,7 @@ import type { WorkspaceDto, ChannelDto } from '$lib/services/ChannelService';
 import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
-import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
+import { hydrateChannelBootstrap } from '$lib/utils/chat/channelCrypto';
 
 export interface ChannelSidebarItem {
   id: string;
@@ -173,6 +173,14 @@ export function useChannelWorkspaces() {
           const actualId = channel.id || channel._id;
           if (!actualId) continue;
 
+          if (channel.keyBootstrap) {
+            await hydrateChannelBootstrap(actualId, channel.keyBootstrap).catch((error) => {
+              ctx.log(
+                `[CHANNEL-KEY] Echec hydratation pour #${channel.name}: ${error instanceof Error ? error.message : String(error)}`
+              );
+            });
+          }
+
           const channelConversationId = `channel_${actualId}`;
           if (!validChannelConversationIds.includes(channelConversationId)) {
             validChannelConversationIds.push(channelConversationId);
@@ -233,6 +241,11 @@ export function useChannelWorkspaces() {
         for (const channel of channels as ChannelDto[]) {
           const actualId = channel.id || channel._id;
           if (!actualId) continue;
+
+          if (channel.keyBootstrap) {
+            await hydrateChannelBootstrap(actualId, channel.keyBootstrap).catch(() => {});
+          }
+
           const channelConversationId = `channel_${actualId}`;
           addChannelToWorkspace(sidebarWorkspace.id, {
             id: channelConversationId,
@@ -302,14 +315,11 @@ export function useChannelWorkspaces() {
       const channelId = `channel_${actualId}`;
 
       const bootstrap = createdChannel?.keyBootstrap;
-      if (bootstrap && bootstrap.channelId === actualId) {
+      if (bootstrap) {
         try {
-          const rawKeyMat = Uint8Array.from(atob(bootstrap.newEpochBaseKey), (c) =>
-            c.charCodeAt(0)
-          );
-          await channelKeyManager.getVault(actualId).rotateKey(bootstrap.keyVersion, rawKeyMat);
+          const hydrated = await hydrateChannelBootstrap(actualId, bootstrap);
           ctx.log(
-            `[CHANNEL-KEY] Cle initiale chargee pour #${normalizedChannelName} (v${bootstrap.keyVersion}).`
+            `[CHANNEL-KEY] Cle initiale chargee pour #${normalizedChannelName} (v${hydrated.keyVersion}).`
           );
         } catch (e) {
           ctx.log(
