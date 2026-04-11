@@ -103,7 +103,8 @@ export async function mergeDirectConversationDuplicates(
   userId: string,
   pin: string,
   storage: IStorage,
-  log: (msg: string) => void
+  log: (msg: string) => void,
+  mlsService?: IMlsService
 ): Promise<ConversationMeta[]> {
   const canonicalByPeer = new Map<string, ConversationMeta>();
   const duplicatesToMerge: Array<{ canonical: ConversationMeta; duplicate: ConversationMeta }> = [];
@@ -140,6 +141,15 @@ export async function mergeDirectConversationDuplicates(
       const merged = Array.from(byId.values()).sort((a, b) => a.timestamp - b.timestamp);
       if (merged.length > 0) await storage.saveMessages(merged, pin);
       await storage.deleteConversation(duplicate.id);
+      // Supprimer aussi le groupe orphelin côté serveur pour éviter qu'il
+      // réapparaisse au prochain login via discoverMissingGroups.
+      if (mlsService) {
+        try {
+          await mlsService.deleteGroupOnServer(duplicate.id);
+        } catch {
+          // Non-bloquant : nettoyé lors du prochain GC serveur
+        }
+      }
       log(`Fusion de discussions 1:1 en doublon: ${duplicate.name} -> ${canonical.name}`);
     } catch (error) {
       log(
@@ -212,7 +222,8 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
     ctx.userId,
     ctx.pin,
     ctx.storage,
-    ctx.log
+    ctx.log,
+    ctx.mlsService
   );
 
   const validConversationIds = new Set(mergedConvMetas.map((meta) => meta.id.toLowerCase()));

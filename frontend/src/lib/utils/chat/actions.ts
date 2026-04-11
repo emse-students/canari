@@ -295,6 +295,21 @@ export async function discoverMissingGroups(params: {
     const directPeer = !g.isGroup ? parseDirectPeerFromName(g.name || '', userId) : null;
     const displayName = directPeer || g.name || g.groupId;
 
+    // Dédoublon local : si une conv directe avec ce même pair existe déjà
+    // sous un groupId différent (doublon côté serveur), on ne crée pas un
+    // second placeholder — on met juste à jour la clé si nécessaire.
+    if (directPeer) {
+      const alreadyLoaded = [...conversations.values()].find(
+        (c) =>
+          (c.conversationType ?? 'group') === 'direct' &&
+          (c.directPeerId ?? c.contactName).toLowerCase() === directPeer
+      );
+      if (alreadyLoaded) {
+        log(`[DISCOVERY] Doublon ignoré pour "${directPeer}" (existant: ${alreadyLoaded.id})`);
+        continue;
+      }
+    }
+
     const key = g.groupId; // map key = groupId
     conversations.set(key, {
       id: g.groupId,

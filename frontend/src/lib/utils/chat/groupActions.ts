@@ -7,6 +7,46 @@ export async function fetchUniqueGroupMembers(mlsService: IMlsService, groupId: 
   return [...new Set(members.map((m) => m.userId))];
 }
 
+/**
+ * Supprime un groupe MLS :
+ *  1. Diffuse un message "groupDeleted" à tous les membres (pour qu'ils archiven leur conv).
+ *  2. Supprime le groupe côté serveur (DB + Redis).
+ *  3. Oublie l'état MLS local.
+ */
+export async function deleteGroupAndBroadcast(params: {
+  mlsService: IMlsService;
+  groupId: string;
+  userId: string;
+  pin: string;
+}): Promise<void> {
+  const { mlsService, groupId, userId, pin } = params;
+
+  // 1. Notifier les autres membres via MLS (best-effort)
+  try {
+    const controlMsg = encodeAppMessage(
+      mkSystem('groupDeleted', JSON.stringify({ deletedBy: userId }))
+    );
+    await mlsService.sendMessage(groupId, controlMsg);
+  } catch {
+    // Non-blocking : les pairs découvriront la suppression lors du prochain pull
+  }
+
+  // 2. Supprimer le groupe sur le serveur (DB + Redis)
+  try {
+    await mlsService.deleteGroupOnServer(groupId);
+  } catch {
+    // Non-blocking : le groupe sera orphelin côté serveur jusqu'au prochain GC
+  }
+
+  // 3. Sauvegarder l'état MLS (le groupe n'existe plus localement après forgetGroup)
+  try {
+    const stBytes = await mlsService.saveState(pin);
+    localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
+  } catch {
+    // Non-blocking
+  }
+}
+
 export async function renameGroupAndBroadcast(params: {
   mlsService: IMlsService;
   groupId: string;

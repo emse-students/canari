@@ -14,6 +14,7 @@ import {
   fetchUniqueGroupMembers,
   removeMemberAndBroadcast,
   renameGroupAndBroadcast,
+  deleteGroupAndBroadcast,
 } from '$lib/utils/chat/groupActions';
 import {
   createNewGroup as createGroup,
@@ -403,15 +404,24 @@ export function useConversations() {
     const convo = conversations.get(selectedContact);
     if (!convo) return;
     const contactKey = selectedContact;
+    const mlsService = ctx.ensureMls();
 
-    // Forget MLS state
+    // 1. Notifier les pairs + supprimer côté serveur
+    await deleteGroupAndBroadcast({
+      mlsService,
+      groupId: convo.id,
+      userId: ctx.userId,
+      pin: ctx.pin,
+    });
+
+    // 2. Oublier l'état MLS local
     try {
-      ctx.ensureMls().forgetGroup(convo.id, 0);
+      mlsService.forgetGroup(convo.id, 0);
     } catch {
       /* non-blocking */
     }
 
-    // Delete from persistent storage
+    // 3. Supprimer de la base locale
     if (ctx.storage) {
       try {
         await ctx.storage.deleteConversation(contactKey);
@@ -420,10 +430,8 @@ export function useConversations() {
       }
     }
 
-    // Remove from local map
+    // 4. Retirer de la map et reset UI
     conversations.delete(contactKey);
-
-    // Clean up selection
     selectedContact = null;
     mobileView = 'list';
     isConversationDrawerOpen = false;

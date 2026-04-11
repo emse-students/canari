@@ -330,6 +330,7 @@ export async function startNewConversation(
   const contact = contactName.trim().toLowerCase();
   if (!contact || contact === userId) return;
 
+  // Check local map first
   const existingDirect = Array.from(conversations.entries()).find(([, convo]) => {
     if ((convo.conversationType ?? 'group') !== 'direct') return false;
     return (convo.directPeerId ?? convo.contactName).toLowerCase() === contact;
@@ -338,6 +339,43 @@ export async function startNewConversation(
   if (existingDirect) {
     selectConversation(existingDirect[0]);
     return;
+  }
+
+  // Check server-side: a direct group might exist but not be loaded locally yet
+  // (e.g. after state clear, backup import, or another device created it first).
+  // Names can be "alice::bob" or "bob::alice" — check both orderings.
+  try {
+    const serverGroups = await mlsService.getUserGroups(userId);
+    const expectedNames = [
+      `${userId.toLowerCase()}::${contact}`,
+      `${contact}::${userId.toLowerCase()}`,
+    ];
+    const existing = serverGroups.find(
+      (g) => !g.isGroup && expectedNames.includes((g.name ?? '').toLowerCase())
+    );
+    if (existing) {
+      log(
+        `[1v1] Groupe serveur existant trouvé (${existing.groupId}) — chargement sans recréation.`
+      );
+      const key = existing.groupId;
+      if (!conversations.has(key)) {
+        conversations.set(key, {
+          id: key,
+          contactName: contact,
+          name: contact,
+          messages: [],
+          isReady: false,
+          mlsStateHex: null,
+          conversationType: 'direct',
+          directPeerId: contact,
+        });
+        if (saveConversation) await saveConversation(key);
+      }
+      selectConversation(key);
+      return;
+    }
+  } catch {
+    // Non-bloquant : on continue avec la création normale
   }
 
   // IMPORTANT: Check if contact is available BEFORE creating the group
