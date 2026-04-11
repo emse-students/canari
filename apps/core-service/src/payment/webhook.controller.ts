@@ -3,13 +3,17 @@ import type { Request, Response } from 'express';
 import Stripe from 'stripe';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
+import { UsersService } from '../users/users.service';
 
 @Controller('payments')
 export class PaymentWebhookController {
   private readonly logger = new Logger(PaymentWebhookController.name);
   private readonly stripe: Stripe;
 
-  constructor(private readonly config: ConfigService) {
+  constructor(
+    private readonly config: ConfigService,
+    private readonly usersService: UsersService,
+  ) {
     const key = this.config.get<string>('STRIPE_SECRET_KEY');
     this.stripe = key
       ? new Stripe(key, { apiVersion: '2026-03-25.dahlia' })
@@ -41,6 +45,35 @@ export class PaymentWebhookController {
     if (event.type === 'checkout.session.completed') {
       const session = event.data.object;
       const submissionId = session.metadata?.submissionId;
+      const userId = session.metadata?.userId;
+
+      // Save the Stripe customer ID back to the user if they just paid for the first time
+      if (userId && session.customer && typeof session.customer === 'string') {
+        const customerId = session.customer;
+        if (!/^[a-zA-Z0-9_-]{1,128}$/.test(userId)) {
+          this.logger.error(`Invalid userId in webhook metadata: ${userId}`);
+        } else {
+          try {
+            const user = await this.usersService
+              .findOne(userId)
+              .catch(() => null);
+            if (user && !user.stripeCustomerId) {
+              await this.usersService.update(userId, {
+                stripeCustomerId: customerId,
+              });
+              this.logger.log(
+                `Saved stripeCustomerId ${customerId} for user ${userId}`,
+              );
+            }
+          } catch (err: unknown) {
+            const error = err as Error;
+            this.logger.error(
+              'Failed to save stripeCustomerId to user',
+              error?.message,
+            );
+          }
+        }
+      }
 
       if (submissionId) {
         // Prevent SSRF: submissionId originates from Stripe session metadata which was

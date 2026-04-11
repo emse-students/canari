@@ -51,6 +51,10 @@
       error = 'Le titre du formulaire est obligatoire.';
       return;
     }
+    if (requiresPayment && !associationId) {
+      error = 'Veuillez sélectionner une association bénéficiaire pour un formulaire payant.';
+      return;
+    }
     isSubmitting = true;
     error = '';
     try {

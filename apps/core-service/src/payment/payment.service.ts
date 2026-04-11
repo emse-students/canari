@@ -1,6 +1,13 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import Stripe from 'stripe';
 
+export interface ChargeResult {
+  ok: boolean;
+  requiresAction?: boolean;
+  clientSecret?: string;
+  error?: string;
+}
+
 @Injectable()
 export class PaymentService {
   private readonly stripe: Stripe | null;
@@ -52,6 +59,8 @@ export class PaymentService {
     cancelUrl: string;
     metadata?: Record<string, string>;
     stripeConnectAccountId?: string;
+    customerId?: string;
+    saveForFuture?: boolean;
   }) {
     if (!this.stripe) throw new BadRequestException('Stripe not configured');
 
@@ -64,9 +73,21 @@ export class PaymentService {
       cancel_url: params.cancelUrl,
     };
 
+    if (params.customerId) {
+      sessionParams.customer = params.customerId;
+    }
+
+    if (params.saveForFuture) {
+      sessionParams.payment_intent_data = {
+        ...(sessionParams.payment_intent_data ?? {}),
+        setup_future_usage: 'off_session',
+      };
+    }
+
     // Destination charge: funds go to the connected account
     if (params.stripeConnectAccountId) {
       sessionParams.payment_intent_data = {
+        ...(sessionParams.payment_intent_data ?? {}),
         transfer_data: {
           destination: params.stripeConnectAccountId,
         },
@@ -157,5 +178,70 @@ export class PaymentService {
   async detachPaymentMethod(paymentMethodId: string): Promise<void> {
     if (!this.stripe) throw new BadRequestException('Stripe not configured');
     await this.stripe.paymentMethods.detach(paymentMethodId);
+  }
+
+  async chargeWithSavedMethod(params: {
+    customerId: string;
+    paymentMethodId: string;
+    amountCents: number;
+    currency: string;
+    metadata?: Record<string, string>;
+    stripeConnectAccountId?: string;
+  }): Promise<ChargeResult> {
+    if (!this.stripe) throw new BadRequestException('Stripe not configured');
+
+    const intentParams: Stripe.PaymentIntentCreateParams = {
+      amount: params.amountCents,
+      currency: params.currency,
+      customer: params.customerId,
+      payment_method: params.paymentMethodId,
+      confirm: true,
+      off_session: true,
+      metadata: params.metadata,
+    };
+
+    if (params.stripeConnectAccountId) {
+      intentParams.transfer_data = {
+        destination: params.stripeConnectAccountId,
+      };
+    }
+
+    try {
+      const intent = await this.stripe.paymentIntents.create(intentParams);
+      if (intent.status === 'succeeded') {
+        return { ok: true };
+      }
+      if (intent.status === 'requires_action' && intent.client_secret) {
+        return {
+          ok: false,
+          requiresAction: true,
+          clientSecret: intent.client_secret,
+        };
+      }
+      return {
+        ok: false,
+        error: `Unexpected payment status: ${intent.status}`,
+      };
+    } catch (err: unknown) {
+      const stripeErr = err as {
+        code?: string;
+        payment_intent?: { client_secret?: string };
+        message?: string;
+      };
+      if (
+        stripeErr?.code === 'authentication_required' &&
+        stripeErr?.payment_intent?.client_secret
+      ) {
+        return {
+          ok: false,
+          requiresAction: true,
+          clientSecret: stripeErr.payment_intent.client_secret,
+        };
+      }
+      return {
+        ok: false,
+        error: stripeErr?.message ?? 'Payment failed',
+      };
+    }
   }
 }

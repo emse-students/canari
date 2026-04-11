@@ -63,6 +63,11 @@ export class FormsController {
     return this.service.getSubmissions(id);
   }
 
+  @Get('submissions/:submissionId')
+  getSubmissionById(@Param('submissionId') submissionId: string) {
+    return this.service.getSubmissionById(submissionId);
+  }
+
   @Post('submissions/:submissionId/mark-paid')
   markPaid(@Param('submissionId') submissionId: string, @Body() body: { sessionId?: string }) {
     return this.service.markPaid(submissionId, body.sessionId);

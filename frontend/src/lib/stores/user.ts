@@ -135,3 +135,23 @@ export async function deletePaymentMethod(id: string): Promise<void> {
   );
   if (!res.ok) throw new Error(`Failed to delete payment method (${res.status})`);
 }
+
+export async function chargeWithSavedMethod(
+  submissionId: string,
+  paymentMethodId: string
+): Promise<{ ok: boolean; requiresAction?: boolean; clientSecret?: string; error?: string }> {
+  const res = await apiFetch(`${coreUrl()}/api/payments/charge-saved-method`, {
+    method: 'POST',
+    body: JSON.stringify({ submissionId, paymentMethodId }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.message || `Payment failed (${res.status})`);
+  }
+  return (await res.json()) as {
+    ok: boolean;
+    requiresAction?: boolean;
+    clientSecret?: string;
+    error?: string;
+  };
+}

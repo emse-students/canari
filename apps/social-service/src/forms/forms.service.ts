@@ -124,7 +124,7 @@ export class FormsService {
 
       const paymentServiceBase =
         this.configService.get<string>('PAYMENT_SERVICE_URL') || 'http://localhost:3012';
-      const url = `${paymentServiceBase.replace(/\/$/, '')}/api/payments/create-checkout-session`;
+      const checkoutUrl = `${paymentServiceBase.replace(/\/$/, '')}/api/payments/create-checkout-session`;
 
       try {
         // If the form belongs to an association, route payment via Stripe Connect
@@ -134,12 +134,28 @@ export class FormsService {
           if (acctId) stripeConnectAccountId = acctId;
         }
 
-        const res = await axios.post(url, {
+        // Resolve the Stripe customer ID for the user so the card gets saved after checkout
+        let customerId: string | undefined;
+        if (input.userId) {
+          try {
+            const customerResp = await axios.post<{ customerId: string | null }>(
+              `${paymentServiceBase.replace(/\/$/, '')}/api/payments/internal/customer-id`,
+              { userId: input.userId },
+              { maxRedirects: 0 }
+            );
+            customerId = customerResp.data.customerId ?? undefined;
+          } catch {
+            // Non-fatal — proceed without customer ID
+          }
+        }
+
+        const res = await axios.post(checkoutUrl, {
           lineItems: singleLineItem,
           successUrl: `${this.configService.get('FRONTEND_URL')}/forms/success?session_id={CHECKOUT_SESSION_ID}`,
           cancelUrl: `${this.configService.get('FRONTEND_URL')}/forms/cancel`,
-          metadata: { submissionId: savedSubmission.id, formId: id },
+          metadata: { submissionId: savedSubmission.id, formId: id, userId: input.userId ?? '' },
           stripeConnectAccountId,
+          ...(customerId ? { customerId, saveForFuture: true } : {}),
         });
 
         const data = res.data || {};
@@ -158,7 +174,7 @@ export class FormsService {
           await this.submissionRepo.save(savedSubmission);
         }
 
-        return { checkoutUrl: sessionUrl };
+        return { checkoutUrl: sessionUrl, submissionId: savedSubmission.id };
       } catch (err: any) {
         this.logger.error('Payment service error', err?.response?.data || err.message || err);
         return { message: 'Failed to create checkout session', submissionId: savedSubmission.id };
@@ -166,6 +182,23 @@ export class FormsService {
     }
 
     return { message: 'Form submitted successfully', submissionId: savedSubmission.id };
+  }
+
+  async getSubmissionById(submissionId: string) {
+    const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
+    if (!submission) throw new NotFoundException('Submission not found');
+    const form = await this.formRepo.findOne({ where: { id: submission.formId } });
+    return {
+      id: submission.id,
+      formId: submission.formId,
+      userId: submission.userId,
+      totalPaid: submission.totalPaid,
+      currency: form?.currency ?? 'eur',
+      paymentStatus: submission.paymentStatus,
+      stripeAccountId: form?.associationId
+        ? await this.associationsService.getStripeAccountId(form.associationId)
+        : null,
+    };
   }
 
   async markPaid(submissionId: string, sessionId?: string) {

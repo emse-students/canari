@@ -84,7 +84,10 @@ export async function exportSubmissions(id: string): Promise<Blob> {
   if (!res.ok) throw new Error('Failed to export submissions');
   return res.blob();
 }
-export async function submitForm(id: string, payload: any): Promise<any> {
+export async function submitForm(
+  id: string,
+  payload: { email?: string; answers: any }
+): Promise<any> {
   const res = await request(`${API_Base}/api/forms/${id}/submit`, {
     method: 'POST',
     body: JSON.stringify(payload),

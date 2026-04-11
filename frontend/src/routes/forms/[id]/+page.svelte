@@ -3,7 +3,12 @@
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
   import { getToken } from '$lib/stores/auth';
-  import { currentUserId } from '$lib/stores/user';
+  import {
+    currentUserId,
+    listPaymentMethods,
+    chargeWithSavedMethod,
+    type PaymentMethod,
+  } from '$lib/stores/user';
   import {
     getForm,
     submitForm as submitFormService,
@@ -14,6 +19,7 @@
   } from '$lib/forms/api';
   import Button from '$lib/components/ui/Button.svelte';
   import Card from '$lib/components/ui/Card.svelte';
+  import PaymentModal from '$lib/components/ui/PaymentModal.svelte';
   import { ArrowLeft, ClipboardList, Check, Send } from 'lucide-svelte';
 
   const formId = $derived(page.params.id);
@@ -26,6 +32,12 @@
   let error = $state('');
   let successMessage = $state('');
   let userId = $state('');
+
+  // Payment
+  let paymentMethods = $state<PaymentMethod[]>([]);
+  let showPaymentModal = $state(false);
+  let pendingCheckoutUrl = $state('');
+  let pendingSubmissionId = $state('');
 
   onMount(async () => {
     const savedUser = currentUserId();
@@ -57,6 +69,18 @@
           if (sub?.answers) selections = sub.answers;
         } catch {
           // ignore
+        }
+      }
+
+      // Pre-load saved payment methods for paid forms
+      if (f.requiresPayment && userId) {
+        try {
+          const methods = await listPaymentMethods();
+          paymentMethods = methods;
+          // Attempt to get the customer ID to pass to checkout for future-save
+          // It's stored server-side; we don't expose it directly, but the backend will use it
+        } catch {
+          // Stripe may not be configured
         }
       }
     } catch (e: any) {
@@ -157,7 +181,15 @@
         answers: selections,
       });
       if (res.checkoutUrl) {
-        window.location.href = res.checkoutUrl;
+        // Payment required — check if user has saved payment methods
+        if (paymentMethods.length > 0 && res.submissionId) {
+          pendingCheckoutUrl = res.checkoutUrl;
+          pendingSubmissionId = res.submissionId;
+          showPaymentModal = true;
+        } else {
+          // No saved methods: redirect to Stripe-hosted checkout
+          window.location.href = res.checkoutUrl;
+        }
       } else {
         submitted = true;
         successMessage = res.message || 'Réponse envoyée !';
@@ -167,9 +199,35 @@
       error = e.message || 'Échec de la soumission.';
     }
   }
+
+  async function handlePayWithSaved(paymentMethodId: string) {
+    const result = await chargeWithSavedMethod(pendingSubmissionId, paymentMethodId);
+    if (result.ok) {
+      submitted = true;
+      successMessage = 'Paiement effectué avec succès !';
+      showPaymentModal = false;
+      setTimeout(() => goto(redirectTo), 1500);
+    }
+    return result;
+  }
+
+  function handlePayWithNew() {
+    showPaymentModal = false;
+    window.location.href = pendingCheckoutUrl;
+  }
 </script>
 
 <div class="min-h-screen bg-cn-dark/5">
+  {#if showPaymentModal && pendingSubmissionId}
+    <PaymentModal
+      {paymentMethods}
+      totalCents={calculateTotal()}
+      currency={form?.currency ?? 'eur'}
+      onPayWithSaved={handlePayWithSaved}
+      onPayWithNew={handlePayWithNew}
+      onClose={() => (showPaymentModal = false)}
+    />
+  {/if}
   <div class="max-w-2xl mx-auto px-4 py-8">
     <!-- Back button -->
     <button

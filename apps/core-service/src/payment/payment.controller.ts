@@ -13,7 +13,9 @@ import {
 } from '@nestjs/common';
 import { PaymentService } from './payment.service';
 import { UsersService } from '../users/users.service';
+import { User } from '../users/entities/user.entity';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
+import { ChargeResult } from './payment.service';
 import { Stripe } from 'stripe';
 import axios from 'axios';
 
@@ -80,6 +82,8 @@ export class PaymentController {
       cancelUrl: string;
       metadata?: Record<string, string>;
       stripeConnectAccountId?: string;
+      customerId?: string;
+      saveForFuture?: boolean;
     },
   ) {
     if (!body || !body.lineItems || !Array.isArray(body.lineItems)) {
@@ -96,6 +100,8 @@ export class PaymentController {
       cancelUrl: body.cancelUrl,
       metadata: body.metadata,
       stripeConnectAccountId: body.stripeConnectAccountId,
+      customerId: body.customerId,
+      saveForFuture: body.saveForFuture,
     });
 
     return { ok: true, url: session.url, id: session.id };
@@ -172,5 +178,148 @@ export class PaymentController {
 
     await this.paymentService.detachPaymentMethod(paymentMethodId);
     return { ok: true };
+  }
+
+  // ── Internal (server-to-server) ──────────────────────────────────────────
+
+  /**
+   * Returns the Stripe customer ID for a user, creating one if necessary.
+   * Called by social-service when creating a checkout session for a paid form.
+   * Not exposed to end-users — no auth guard needed (internal traffic only).
+   */
+  @Post('internal/customer-id')
+  @HttpCode(200)
+  async getOrCreateCustomerForUser(
+    @Body() body: { userId: string },
+  ): Promise<{ customerId: string | null }> {
+    if (!this.paymentService.isConfigured()) {
+      return { customerId: null };
+    }
+    if (!body?.userId || !/^[a-zA-Z0-9_@.-]{1,256}$/.test(body.userId)) {
+      throw new BadRequestException('Invalid userId');
+    }
+
+    let user: User;
+    try {
+      user = await this.usersService.findOne(body.userId);
+    } catch {
+      return { customerId: null };
+    }
+
+    const customerId = await this.paymentService.getOrCreateCustomer(
+      user.stripeCustomerId,
+      { userId: user.id, displayName: user.displayName },
+    );
+
+    if (customerId !== user.stripeCustomerId) {
+      await this.usersService.update(body.userId, {
+        stripeCustomerId: customerId,
+      });
+    }
+
+    return { customerId };
+  }
+
+  @UseGuards(NginxAuthGuard)
+  @Post('charge-saved-method')
+  @HttpCode(200)
+  async chargeWithSavedMethod(
+    @Headers('x-user-id') userId: string,
+    @Body() body: { submissionId: string; paymentMethodId: string },
+  ) {
+    if (!this.paymentService.isConfigured()) {
+      return { ok: false, message: 'Stripe not configured' };
+    }
+
+    const { submissionId, paymentMethodId } = body;
+    if (!submissionId || !paymentMethodId) {
+      throw new BadRequestException(
+        'submissionId and paymentMethodId are required',
+      );
+    }
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(submissionId)) {
+      throw new BadRequestException('Invalid submissionId');
+    }
+
+    // Ensure user has a Stripe customer and this PM belongs to them
+    const user = await this.usersService.findOne(userId);
+    const customerId = await this.paymentService.getOrCreateCustomer(
+      user.stripeCustomerId,
+      { userId: user.id, displayName: user.displayName },
+    );
+    if (customerId !== user.stripeCustomerId) {
+      await this.usersService.update(userId, { stripeCustomerId: customerId });
+    }
+
+    const methods = await this.paymentService.listPaymentMethods(customerId);
+    if (!methods.some((m) => m.id === paymentMethodId)) {
+      throw new BadRequestException(
+        'Payment method not found or does not belong to this account',
+      );
+    }
+
+    // Fetch submission details from social-service
+    const socialBase = process.env.FORM_URL || 'http://localhost:3014';
+
+    interface SubmissionData {
+      paymentStatus: string;
+      totalPaid: number;
+      currency: string;
+      stripeAccountId: string | null;
+    }
+
+    let submissionData: SubmissionData;
+    try {
+      const resp = await axios.get<SubmissionData>(
+        `${socialBase.replace(/\/$/, '')}/api/forms/submissions/${submissionId}`,
+        { maxRedirects: 0 },
+      );
+      submissionData = resp.data;
+    } catch (err: unknown) {
+      const error = err as Error & { response?: { data?: unknown } };
+      this.logger.error(
+        'Failed to fetch submission',
+        error?.response?.data || error?.message,
+      );
+      throw new BadRequestException('Could not retrieve submission details');
+    }
+
+    if (submissionData.paymentStatus === 'paid') {
+      return { ok: true, alreadyPaid: true };
+    }
+    if (submissionData.paymentStatus === 'free' || !submissionData.totalPaid) {
+      return { ok: true, noPaymentRequired: true };
+    }
+
+    // Charge
+    const result: ChargeResult =
+      await this.paymentService.chargeWithSavedMethod({
+        customerId,
+        paymentMethodId,
+        amountCents: submissionData.totalPaid,
+        currency: submissionData.currency ?? 'eur',
+        metadata: { submissionId, userId },
+        stripeConnectAccountId: submissionData.stripeAccountId ?? undefined,
+      });
+
+    if (result.ok) {
+      // Mark submission as paid
+      try {
+        await axios.post(
+          `${socialBase.replace(/\/$/, '')}/api/forms/submissions/${submissionId}/mark-paid`,
+          {},
+          { maxRedirects: 0 },
+        );
+      } catch (err: unknown) {
+        const error = err as Error & { response?: { data?: unknown } };
+        this.logger.error(
+          'Failed to mark submission as paid',
+          error?.response?.data || error?.message,
+        );
+        // Payment succeeded but marking failed — return ok, user can retry
+      }
+    }
+
+    return result;
   }
 }
