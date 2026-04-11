@@ -286,7 +286,7 @@
                     {imageMediaId}
                     name={selectedChannel?.name ?? ''}
                     variant="channel"
-                    size="lg"
+                    fill
                   />
                 </div>
                 <label

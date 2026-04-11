@@ -22,7 +22,7 @@
     Plus,
     Loader2,
     AlertCircle,
-    CheckCircle2
+    CheckCircle2,
   } from 'lucide-svelte';
   import { slide, fade } from 'svelte/transition';
 
@@ -45,7 +45,9 @@
   // Auto-clear success message
   $effect(() => {
     if (paymentSuccess) {
-      const timer = setTimeout(() => { paymentSuccess = ''; }, 4000);
+      const timer = setTimeout(() => {
+        paymentSuccess = '';
+      }, 4000);
       return () => clearTimeout(timer);
     }
   });
@@ -95,7 +97,8 @@
         window.location.href = result.url;
       }
     } catch (err) {
-      paymentError = err instanceof Error ? err.message : 'Erreur de connexion au service de paiement';
+      paymentError =
+        err instanceof Error ? err.message : 'Erreur de connexion au service de paiement';
       paymentSetupLoading = false;
     }
   }
@@ -116,7 +119,7 @@
       mastercard: 'Mastercard',
       amex: 'American Express',
     };
-    return labels[brand] ?? (brand.charAt(0).toUpperCase() + brand.slice(1));
+    return labels[brand] ?? brand.charAt(0).toUpperCase() + brand.slice(1);
   }
 
   async function saveBio() {
@@ -151,21 +154,23 @@
     if (profile?.displayName) return profile.displayName;
     if (profile?.email) {
       const namePart = profile.email.split('@')[0];
-      return namePart.replace('.', ' ').replace(/\b\w/g, l => l.toUpperCase());
+      return namePart.replace('.', ' ').replace(/\b\w/g, (l) => l.toUpperCase());
     }
     return 'Mon Profil';
   });
 </script>
 
 <div class="px-4 py-8 sm:px-6 max-w-3xl mx-auto space-y-6 md:space-y-8">
-
   {#if loading}
     <div class="flex flex-col items-center justify-center py-32 gap-4 text-text-muted" in:fade>
       <Loader2 size={32} class="animate-spin text-amber-500" strokeWidth={2.5} />
       <span class="text-sm font-bold tracking-wider uppercase">Chargement du profil...</span>
     </div>
   {:else if error}
-    <div class="rounded-2xl bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 p-5 flex items-start gap-3 shadow-sm backdrop-blur-md" in:slide>
+    <div
+      class="rounded-2xl bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 p-5 flex items-start gap-3 shadow-sm backdrop-blur-md"
+      in:slide
+    >
       <AlertCircle size={20} class="shrink-0 mt-0.5" />
       <div>
         <h3 class="font-bold text-sm mb-1">Erreur</h3>
@@ -173,18 +178,23 @@
       </div>
     </div>
   {:else if profile}
-
     <!-- En-tête du profil -->
-    <div class="flex items-center gap-5 sm:gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div class="relative w-24 h-24 sm:w-28 sm:h-28 shadow-lg ring-4 ring-white/50 dark:ring-black/20 rounded-full">
-        <Avatar userId={profile.id} size="lg" />
+    <div
+      class="flex items-center gap-5 sm:gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500"
+    >
+      <div
+        class="relative w-24 h-24 sm:w-28 sm:h-28 shadow-lg ring-4 ring-white/50 dark:ring-black/20 rounded-full overflow-hidden"
+      >
+        <Avatar userId={profile.id} fill shape="circle" />
       </div>
       <div class="flex-1 min-w-0">
         <h1 class="text-2xl sm:text-3xl font-extrabold text-text-main tracking-tight truncate mb-1">
           {displayFallbackName}
         </h1>
         {#if profile.formation}
-          <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 text-xs font-bold uppercase tracking-wider mt-2 shadow-sm">
+          <div
+            class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 text-xs font-bold uppercase tracking-wider mt-2 shadow-sm"
+          >
             <GraduationCap size={14} strokeWidth={2.5} />
             {profile.formation}
           </div>
@@ -193,7 +203,10 @@
     </div>
 
     <!-- Section Bio -->
-    <div class="rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-6 md:p-8 shadow-sm backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-500 delay-75" style="animation-fill-mode: backwards;">
+    <div
+      class="rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-6 md:p-8 shadow-sm backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-500 delay-75"
+      style="animation-fill-mode: backwards;"
+    >
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-lg font-extrabold text-text-main">À propos de moi</h2>
         {#if !editingBio}
@@ -216,7 +229,11 @@
             placeholder="Décris-toi en quelques mots (passions, projets, etc.)..."
           ></textarea>
           <div class="flex items-center justify-between">
-            <span class="text-xs font-semibold text-text-muted pl-1 {bioInput.length >= 490 ? 'text-orange-500' : ''}">
+            <span
+              class="text-xs font-semibold text-text-muted pl-1 {bioInput.length >= 490
+                ? 'text-orange-500'
+                : ''}"
+            >
               {bioInput.length} / 500
             </span>
             <div class="flex gap-2">
@@ -241,43 +258,63 @@
           </div>
         </div>
       {:else}
-        <p class="text-[0.95rem] text-text-main leading-relaxed whitespace-pre-wrap min-h-[3rem] opacity-90" transition:fade={{ duration: 200 }}>
+        <p
+          class="text-[0.95rem] text-text-main leading-relaxed whitespace-pre-wrap min-h-[3rem] opacity-90"
+          transition:fade={{ duration: 200 }}
+        >
           {profile.bio || "Aucune bio pour le moment. N'hésite pas à te présenter !"}
         </p>
       {/if}
     </div>
 
     <!-- Section Informations -->
-    <div class="rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-6 md:p-8 shadow-sm backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-500 delay-150" style="animation-fill-mode: backwards;">
+    <div
+      class="rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-6 md:p-8 shadow-sm backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-500 delay-150"
+      style="animation-fill-mode: backwards;"
+    >
       <h2 class="text-lg font-extrabold text-text-main mb-6">Informations du compte</h2>
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
-        <div class="flex items-center gap-3.5 p-4 rounded-2xl bg-white/50 dark:bg-white/5 border border-black/5 dark:border-white/5 shadow-sm">
+        <div
+          class="flex items-center gap-3.5 p-4 rounded-2xl bg-white/50 dark:bg-white/5 border border-black/5 dark:border-white/5 shadow-sm"
+        >
           <div class="p-2.5 rounded-xl bg-black/5 dark:bg-black/40 text-text-muted">
             <Mail size={20} strokeWidth={2.5} />
           </div>
           <div class="min-w-0">
-            <p class="text-[0.65rem] font-bold uppercase tracking-wider text-text-muted mb-0.5">Adresse Email</p>
-            <p class="text-sm font-bold text-text-main truncate">{profile.email || 'Non renseigné'}</p>
+            <p class="text-[0.65rem] font-bold uppercase tracking-wider text-text-muted mb-0.5">
+              Adresse Email
+            </p>
+            <p class="text-sm font-bold text-text-main truncate">
+              {profile.email || 'Non renseigné'}
+            </p>
           </div>
         </div>
 
-        <div class="flex items-center gap-3.5 p-4 rounded-2xl bg-white/50 dark:bg-white/5 border border-black/5 dark:border-white/5 shadow-sm">
+        <div
+          class="flex items-center gap-3.5 p-4 rounded-2xl bg-white/50 dark:bg-white/5 border border-black/5 dark:border-white/5 shadow-sm"
+        >
           <div class="p-2.5 rounded-xl bg-black/5 dark:bg-black/40 text-text-muted">
             <GraduationCap size={20} strokeWidth={2.5} />
           </div>
           <div class="min-w-0">
-            <p class="text-[0.65rem] font-bold uppercase tracking-wider text-text-muted mb-0.5">Promotion</p>
+            <p class="text-[0.65rem] font-bold uppercase tracking-wider text-text-muted mb-0.5">
+              Promotion
+            </p>
             <p class="text-sm font-bold text-text-main truncate">{formatYear(profile.promo)}</p>
           </div>
         </div>
 
-        <div class="flex items-center gap-3.5 p-4 rounded-2xl bg-white/50 dark:bg-white/5 border border-black/5 dark:border-white/5 shadow-sm md:col-span-2">
+        <div
+          class="flex items-center gap-3.5 p-4 rounded-2xl bg-white/50 dark:bg-white/5 border border-black/5 dark:border-white/5 shadow-sm md:col-span-2"
+        >
           <div class="p-2.5 rounded-xl bg-black/5 dark:bg-black/40 text-text-muted">
             <CalendarDays size={20} strokeWidth={2.5} />
           </div>
           <div class="min-w-0">
-            <p class="text-[0.65rem] font-bold uppercase tracking-wider text-text-muted mb-0.5">Membre depuis le</p>
+            <p class="text-[0.65rem] font-bold uppercase tracking-wider text-text-muted mb-0.5">
+              Membre depuis le
+            </p>
             <p class="text-sm font-bold text-text-main capitalize">
               {new Date(profile.createdAt).toLocaleDateString('fr-FR', {
                 year: 'numeric',
@@ -291,7 +328,10 @@
     </div>
 
     <!-- Section Paiements -->
-    <div class="rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-6 md:p-8 shadow-sm backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-500 delay-200" style="animation-fill-mode: backwards;">
+    <div
+      class="rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-6 md:p-8 shadow-sm backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-500 delay-200"
+      style="animation-fill-mode: backwards;"
+    >
       <div class="flex items-center justify-between mb-6">
         <div class="flex items-center gap-3">
           <div class="p-2.5 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
@@ -314,14 +354,22 @@
       </div>
 
       {#if paymentSuccess}
-        <div transition:slide={{ duration: 200 }} class="flex items-center gap-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400 p-4 text-sm font-bold mb-6 shadow-inner">
-          <CheckCircle2 size={20} class="shrink-0" /> {paymentSuccess}
+        <div
+          transition:slide={{ duration: 200 }}
+          class="flex items-center gap-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400 p-4 text-sm font-bold mb-6 shadow-inner"
+        >
+          <CheckCircle2 size={20} class="shrink-0" />
+          {paymentSuccess}
         </div>
       {/if}
 
       {#if paymentError}
-        <div transition:slide={{ duration: 200 }} class="flex items-center gap-3 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 p-4 text-sm font-bold mb-6 shadow-inner">
-          <AlertCircle size={20} class="shrink-0" /> {paymentError}
+        <div
+          transition:slide={{ duration: 200 }}
+          class="flex items-center gap-3 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 p-4 text-sm font-bold mb-6 shadow-inner"
+        >
+          <AlertCircle size={20} class="shrink-0" />
+          {paymentError}
         </div>
       {/if}
 
@@ -334,10 +382,15 @@
           <div class="space-y-3 mb-6">
             {#each paymentMethods as pm (pm.id)}
               <!-- Carte bancaire stylisée -->
-              <div transition:slide={{ duration: 200 }} class="flex items-center justify-between rounded-[1.25rem] bg-gradient-to-r from-black/5 to-transparent dark:from-white/5 dark:to-transparent border border-black/5 dark:border-white/5 px-5 py-4 group hover:border-black/10 dark:hover:border-white/10 transition-colors shadow-sm">
+              <div
+                transition:slide={{ duration: 200 }}
+                class="flex items-center justify-between rounded-[1.25rem] bg-gradient-to-r from-black/5 to-transparent dark:from-white/5 dark:to-transparent border border-black/5 dark:border-white/5 px-5 py-4 group hover:border-black/10 dark:hover:border-white/10 transition-colors shadow-sm"
+              >
                 <div class="flex items-center gap-4">
                   <!-- Petite puce visuelle -->
-                  <div class="w-8 h-6 rounded bg-amber-500/20 border border-amber-500/30 flex items-center justify-center opacity-80">
+                  <div
+                    class="w-8 h-6 rounded bg-amber-500/20 border border-amber-500/30 flex items-center justify-center opacity-80"
+                  >
                     <div class="w-4 h-3 border border-amber-500/40 rounded-sm"></div>
                   </div>
 
@@ -345,8 +398,13 @@
                     <span class="text-[0.95rem] font-bold text-text-main tracking-wider font-mono">
                       •••• •••• •••• {pm.last4}
                     </span>
-                    <span class="text-[0.65rem] font-extrabold text-text-muted uppercase tracking-wider mt-0.5">
-                      {brandLabel(pm.brand)} • Exp: {String(pm.expMonth).padStart(2, '0')}/{pm.expYear}
+                    <span
+                      class="text-[0.65rem] font-extrabold text-text-muted uppercase tracking-wider mt-0.5"
+                    >
+                      {brandLabel(pm.brand)} • Exp: {String(pm.expMonth).padStart(
+                        2,
+                        '0'
+                      )}/{pm.expYear}
                     </span>
                   </div>
                 </div>
@@ -363,9 +421,14 @@
             {/each}
           </div>
         {:else}
-          <div class="text-center py-6 px-4 border border-dashed border-black/10 dark:border-white/10 rounded-[1.25rem] bg-black/5 dark:bg-white/5 mb-6">
+          <div
+            class="text-center py-6 px-4 border border-dashed border-black/10 dark:border-white/10 rounded-[1.25rem] bg-black/5 dark:bg-white/5 mb-6"
+          >
             <p class="text-sm font-semibold text-text-muted">Aucun moyen de paiement enregistré.</p>
-            <p class="text-[0.7rem] font-medium text-text-muted/70 mt-1 max-w-sm mx-auto">Ajoutez une carte bancaire pour pouvoir participer aux événements payants de l'association.</p>
+            <p class="text-[0.7rem] font-medium text-text-muted/70 mt-1 max-w-sm mx-auto">
+              Ajoutez une carte bancaire pour pouvoir participer aux événements payants de
+              l'association.
+            </p>
           </div>
         {/if}
 
@@ -383,6 +446,5 @@
         </button>
       {/if}
     </div>
-
   {/if}
 </div>

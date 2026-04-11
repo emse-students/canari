@@ -12,9 +12,18 @@
     /** Visual variant controls the fallback icon and color scheme. */
     variant?: 'group' | 'channel' | 'community';
     size?: 'sm' | 'md' | 'lg';
+    fill?: boolean;
+    shape?: 'soft' | 'circle';
   }
 
-  let { imageMediaId = null, name = '', variant = 'group', size = 'md' }: Props = $props();
+  let {
+    imageMediaId = null,
+    name = '',
+    variant = 'group',
+    size = 'md',
+    fill = false,
+    shape = 'soft',
+  }: Props = $props();
 
   let blobUrl = $state<string | null>(null);
   let loadFailed = $state(false);
@@ -22,8 +31,15 @@
   const mediaService = new MediaService();
 
   const sizeClasses = $derived(
-    size === 'sm' ? 'w-6 h-6 text-xs' : size === 'lg' ? 'w-12 h-12 text-base' : 'w-8 h-8 text-sm'
+    fill
+      ? 'w-full h-full text-base'
+      : size === 'sm'
+        ? 'w-6 h-6 text-xs'
+        : size === 'lg'
+          ? 'w-12 h-12 text-base'
+          : 'w-8 h-8 text-sm'
   );
+  const shapeClasses = $derived(shape === 'circle' ? 'rounded-full' : 'rounded-2xl');
 
   const iconSize = $derived(size === 'sm' ? 14 : size === 'lg' ? 22 : 18);
 
@@ -87,11 +103,11 @@
   <img
     src={blobUrl}
     alt={name || 'Avatar du groupe'}
-    class="rounded-2xl object-cover shadow-sm ring-1 ring-white/20 flex-shrink-0 select-none {sizeClasses}"
+    class="{shapeClasses} object-cover shadow-sm ring-1 ring-white/20 flex-shrink-0 select-none {sizeClasses}"
   />
 {:else}
   <div
-    class="rounded-2xl shadow-sm ring-1 ring-white/20 flex-shrink-0 select-none flex items-center justify-center font-bold {sizeClasses} {fallbackClasses}"
+    class="{shapeClasses} shadow-sm ring-1 ring-white/20 flex-shrink-0 select-none flex items-center justify-center font-bold {sizeClasses} {fallbackClasses}"
     title={name}
   >
     {#if initials}

@@ -4,6 +4,7 @@ import type { WorkspaceDto, ChannelDto } from '$lib/services/ChannelService';
 import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
+import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
 
 export interface ChannelSidebarItem {
   id: string;
@@ -24,6 +25,7 @@ export interface ChannelSidebarWorkspace {
 export interface ChannelWorkspaceContext {
   conversations: SvelteMap<string, Conversation>;
   saveConversation: (id: string) => Promise<void>;
+  deleteConversation?: (id: string) => Promise<void>;
   selectConversation: (id: string) => void;
   ensureMls?: () => IMlsService | Promise<IMlsService>;
   startDirectConversation?: (targetUserId: string) => Promise<void>;
@@ -159,6 +161,7 @@ export function useChannelWorkspaces() {
   async function loadChannelWorkspacesFromBackend(ctx: ChannelWorkspaceContext) {
     try {
       const backendWorkspaces = await service.listUserWorkspaces();
+      const validChannelConversationIds: string[] = [];
 
       for (const workspace of backendWorkspaces) {
         const sidebarWorkspace = upsertWorkspaceFromDto(workspace);
@@ -171,6 +174,9 @@ export function useChannelWorkspaces() {
           if (!actualId) continue;
 
           const channelConversationId = `channel_${actualId}`;
+          if (!validChannelConversationIds.includes(channelConversationId)) {
+            validChannelConversationIds.push(channelConversationId);
+          }
           addChannelToWorkspace(sidebarWorkspace.id, {
             id: channelConversationId,
             name: channel.name,
@@ -189,6 +195,18 @@ export function useChannelWorkspaces() {
             ...(existing?.unreadCount !== undefined ? { unreadCount: existing.unreadCount } : {}),
           });
         }
+      }
+
+      const staleLocalChannelIds = Array.from(ctx.conversations.keys()).filter(
+        (id) => id.startsWith('channel_') && !validChannelConversationIds.includes(id)
+      );
+      for (const staleId of staleLocalChannelIds) {
+        ctx.conversations.delete(staleId);
+        removeChannelFromWorkspaces(staleId);
+        if (selectedChannelConversationId === staleId) {
+          selectedChannelConversationId = '';
+        }
+        await ctx.deleteConversation?.(staleId).catch(() => {});
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -282,6 +300,23 @@ export function useChannelWorkspaces() {
       const actualId =
         createdChannel?.id || createdChannel?._id || `${workspaceId}_${normalizedChannelName}`;
       const channelId = `channel_${actualId}`;
+
+      const bootstrap = createdChannel?.keyBootstrap;
+      if (bootstrap && bootstrap.channelId === actualId) {
+        try {
+          const rawKeyMat = Uint8Array.from(atob(bootstrap.newEpochBaseKey), (c) =>
+            c.charCodeAt(0)
+          );
+          await channelKeyManager.getVault(actualId).rotateKey(bootstrap.keyVersion, rawKeyMat);
+          ctx.log(
+            `[CHANNEL-KEY] Cle initiale chargee pour #${normalizedChannelName} (v${bootstrap.keyVersion}).`
+          );
+        } catch (e) {
+          ctx.log(
+            `[CHANNEL-KEY] Echec chargement cle initiale pour #${normalizedChannelName}: ${e instanceof Error ? e.message : String(e)}`
+          );
+        }
+      }
 
       const sidebarWorkspace = channelWorkspaces.find((w) => w.workspaceDbId === workspaceId);
       if (sidebarWorkspace) {
@@ -389,6 +424,7 @@ export function useChannelWorkspaces() {
     try {
       await service.leaveChannel(channelConversationId);
       ctx.conversations.delete(channelConversationId);
+      await ctx.deleteConversation?.(channelConversationId).catch(() => {});
       removeChannelFromWorkspaces(channelConversationId);
       if (selectedChannelConversationId === channelConversationId) {
         selectedChannelConversationId = '';
@@ -431,6 +467,7 @@ export function useChannelWorkspaces() {
     try {
       await service.deleteChannel(channelConversationId);
       ctx.conversations.delete(channelConversationId);
+      await ctx.deleteConversation?.(channelConversationId).catch(() => {});
       removeChannelFromWorkspaces(channelConversationId);
       if (selectedChannelConversationId === channelConversationId) {
         selectedChannelConversationId = '';

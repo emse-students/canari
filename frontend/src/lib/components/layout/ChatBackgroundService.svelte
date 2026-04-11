@@ -96,6 +96,8 @@
     return {
       conversations: globalConvs.conversations,
       saveConversation: (name: string) => globalConvs.saveConversation(name, convCtx()),
+      deleteConversation: (name: string) =>
+        globalSession.storage?.deleteConversation(name) ?? Promise.resolve(),
       selectConversation: globalConvs.selectConversation,
       ensureMls: globalSession.ensureMls,
       startDirectConversation: (targetUserId: string) =>
@@ -169,6 +171,7 @@
         if (!event.channelId) return;
         const channelConversationId = `channel_${event.channelId}`;
         globalConvs.conversations.delete(channelConversationId);
+        void globalSession.storage?.deleteConversation(channelConversationId).catch(() => {});
         globalChannels.removeChannelFromWorkspaces(channelConversationId);
         if (globalConvs.selectedContact === channelConversationId) {
           globalConvs.selectedContact = null;
@@ -204,6 +207,7 @@
         if (!event.channelId) return;
         const channelConversationId = `channel_${event.channelId}`;
         globalConvs.conversations.delete(channelConversationId);
+        void globalSession.storage?.deleteConversation(channelConversationId).catch(() => {});
         globalChannels.removeChannelFromWorkspaces(channelConversationId);
         if (globalConvs.selectedContact === channelConversationId) {
           globalConvs.selectedContact = null;

@@ -5,9 +5,11 @@
   interface Props {
     userId: string;
     size?: 'sm' | 'md' | 'lg';
+    fill?: boolean;
+    shape?: 'soft' | 'circle';
   }
 
-  let { userId, size = 'md' }: Props = $props();
+  let { userId, size = 'md', fill = false, shape = 'soft' }: Props = $props();
 
   function getCoreUrl(): string {
     const url =
@@ -33,13 +35,20 @@
   });
 
   const sizeClasses = $derived(
-    size === 'sm' ? 'w-6 h-6 text-xs' : size === 'lg' ? 'w-12 h-12 text-base' : 'w-8 h-8 text-sm'
+    fill
+      ? 'w-full h-full text-base'
+      : size === 'sm'
+        ? 'w-6 h-6 text-xs'
+        : size === 'lg'
+          ? 'w-12 h-12 text-base'
+          : 'w-8 h-8 text-sm'
   );
+  const shapeClasses = $derived(shape === 'circle' ? 'rounded-full' : 'rounded-2xl');
 </script>
 
 {#if imageFailed}
   <div
-    class="rounded-2xl shadow-sm ring-1 ring-white/20 flex-shrink-0 select-none {sizeClasses} bg-cn-dark text-cn-yellow flex items-center justify-center font-bold"
+    class="{shapeClasses} shadow-sm ring-1 ring-white/20 flex-shrink-0 select-none {sizeClasses} bg-cn-dark text-cn-yellow flex items-center justify-center font-bold"
     title={displayLabel}
     aria-label={`Avatar de ${displayLabel}`}
   >
@@ -49,7 +58,7 @@
   <img
     src={avatarSrc}
     alt={`Avatar de ${displayLabel}`}
-    class="rounded-2xl object-cover shadow-sm ring-1 ring-white/20 flex-shrink-0 select-none {sizeClasses}"
+    class="{shapeClasses} object-cover shadow-sm ring-1 ring-white/20 flex-shrink-0 select-none {sizeClasses}"
     title={displayLabel}
     onerror={() => {
       imageFailed = true;

@@ -27,6 +27,17 @@ export interface ChannelDto {
   imageMediaId?: string | null;
 }
 
+export interface ChannelBootstrapDto {
+  channelId: string;
+  keyVersion: number;
+  newEpochBaseKey: string;
+}
+
+export interface CreateChannelResultDto extends ChannelDto {
+  keyVersion?: number;
+  keyBootstrap?: ChannelBootstrapDto;
+}
+
 export interface CreateRoleDto {
   workspaceId: string;
   name: string;
@@ -140,13 +151,13 @@ export class ChannelService {
     return res.json() as Promise<WorkspaceDto[]>;
   }
 
-  async createChannel(dto: CreateChannelDto) {
+  async createChannel(dto: CreateChannelDto): Promise<CreateChannelResultDto> {
     const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/`, {
       method: 'POST',
       body: JSON.stringify(dto),
     });
     await this.handleError(res);
-    return res.json();
+    return res.json() as Promise<CreateChannelResultDto>;
   }
 
   async createRole(dto: CreateRoleDto) {

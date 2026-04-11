@@ -122,7 +122,8 @@
                   imageMediaId={selectedWorkspace?.imageMediaId}
                   name={selectedWorkspace?.name ?? ''}
                   variant="community"
-                  size="lg"
+                  fill
+                  shape="circle"
                 />
               </div>
               <label

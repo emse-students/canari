@@ -236,7 +236,25 @@ export class ChannelService {
 
     await this.pushKeyToUser(savedChannel, input.actorUserId);
 
-    return savedChannel;
+    const bootstrapEpochKey = this.deriveEpochKey(
+      savedChannel.masterSecret,
+      savedChannel.id,
+      savedChannel.keyVersion
+    );
+
+    return {
+      id: savedChannel.id,
+      workspaceId: savedChannel.workspaceId,
+      name: savedChannel.name,
+      visibility: savedChannel.isPrivate ? 'private' : 'public',
+      imageMediaId: savedChannel.imageMediaId ?? null,
+      keyVersion: savedChannel.keyVersion,
+      keyBootstrap: {
+        channelId: savedChannel.id,
+        keyVersion: savedChannel.keyVersion,
+        newEpochBaseKey: bootstrapEpochKey.toString('base64'),
+      },
+    };
   }
 
   async updateChannelImage(channelId: string, actorUserId: string, mediaId: string) {

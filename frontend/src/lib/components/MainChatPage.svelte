@@ -50,6 +50,8 @@
     return {
       conversations: convs.conversations,
       saveConversation: (name: string) => convs.saveConversation(name, convCtx()),
+      deleteConversation: (name: string) =>
+        session.storage?.deleteConversation(name) ?? Promise.resolve(),
       selectConversation: convs.selectConversation,
       ensureMls: async () => session.ensureMls(),
       startDirectConversation: (targetUserId: string) =>
@@ -199,6 +201,7 @@
         if (!event.channelId) return;
         const channelConversationId = `channel_${event.channelId}`;
         convs.conversations.delete(channelConversationId);
+        void session.storage?.deleteConversation(channelConversationId).catch(() => {});
         channels.removeChannelFromWorkspaces(channelConversationId);
         if (convs.selectedContact === channelConversationId) {
           convs.selectedContact = null;
@@ -241,6 +244,7 @@
         if (!event.channelId) return;
         const channelConversationId = `channel_${event.channelId}`;
         convs.conversations.delete(channelConversationId);
+        void session.storage?.deleteConversation(channelConversationId).catch(() => {});
         channels.removeChannelFromWorkspaces(channelConversationId);
         if (convs.selectedContact === channelConversationId) {
           convs.selectedContact = null;
@@ -657,10 +661,16 @@
         selectedChannelId={channels.selectedChannelConversationId}
         channelWorkspaces={channels.channelWorkspaces}
         imageMediaId={convs.currentConvo?.imageMediaId ?? null}
-        onInviteMember={(channelId: string, memberId: string, roleName: "member" | "moderator" | "admin") =>
-          channels.inviteMemberToChannel(channelId, memberId, roleName, channelsCtx())}
-        onUpdateMemberRole={(channelId: string, memberId: string, roleName: "member" | "moderator" | "admin") =>
-          channels.updateChannelMemberRole(channelId, memberId, roleName, channelsCtx())}
+        onInviteMember={(
+          channelId: string,
+          memberId: string,
+          roleName: 'member' | 'moderator' | 'admin'
+        ) => channels.inviteMemberToChannel(channelId, memberId, roleName, channelsCtx())}
+        onUpdateMemberRole={(
+          channelId: string,
+          memberId: string,
+          roleName: 'member' | 'moderator' | 'admin'
+        ) => channels.updateChannelMemberRole(channelId, memberId, roleName, channelsCtx())}
         onRenameChannel={(channelId: string, newName: string) =>
           channels.renameCurrentChannel(channelId, newName, channelsCtx())}
         onUpdateChannelImage={(channelId: string, mediaId: string) =>

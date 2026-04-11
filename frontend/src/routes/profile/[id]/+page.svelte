@@ -81,8 +81,10 @@
     <div
       class="flex flex-col sm:flex-row sm:items-center gap-5 sm:gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500"
     >
-      <div class="relative shrink-0 self-start sm:self-auto">
-        <Avatar userId={profile.id} size="lg" />
+      <div
+        class="relative shrink-0 self-start sm:self-auto w-24 h-24 rounded-full overflow-hidden ring-4 ring-white/50 dark:ring-black/20 shadow-lg"
+      >
+        <Avatar userId={profile.id} fill shape="circle" />
       </div>
 
       <div class="flex-1 min-w-0">

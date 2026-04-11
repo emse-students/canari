@@ -21,10 +21,15 @@
   let loading = $state(true);
   let resolvedNames = $state<Record<string, string>>({});
 
+  function isCommunityChannelId(id: string | undefined): boolean {
+    return String(id ?? '').startsWith('channel_');
+  }
+
   // ── Live data from global session (reactive when logged in) ──────────────
   const liveItems = $derived(
     globalSession.isLoggedIn
       ? [...globalConvs.conversations.entries()]
+          .filter(([key, conv]) => !isCommunityChannelId(key) && !isCommunityChannelId(conv.id))
           .map(([key, conv]) => {
             const uid = globalSession.userId ?? getSavedUserId() ?? '';
             const identity = deriveConversationIdentity(key, uid, conv.id);
@@ -63,6 +68,7 @@
       const convos = await storage.getConversations();
 
       items = convos
+        .filter((meta) => !isCommunityChannelId(meta.id))
         .sort((a, b) => b.updatedAt - a.updatedAt)
         .slice(0, 20)
         .map((meta) => {
@@ -150,11 +156,15 @@
       </div>
     {:else if displayItems.length === 0}
       <div class="text-center py-10 px-4">
-        <div class="w-12 h-12 rounded-2xl bg-black/5 dark:bg-white/5 flex items-center justify-center mx-auto mb-3 text-text-muted opacity-60">
+        <div
+          class="w-12 h-12 rounded-2xl bg-black/5 dark:bg-white/5 flex items-center justify-center mx-auto mb-3 text-text-muted opacity-60"
+        >
           <MessageCircle size={24} strokeWidth={2} />
         </div>
         <p class="text-sm font-semibold text-text-main mb-1">Aucune discussion</p>
-        <p class="text-xs text-text-muted px-2 mb-4 leading-relaxed">Démarrez une nouvelle conversation pour échanger avec le réseau.</p>
+        <p class="text-xs text-text-muted px-2 mb-4 leading-relaxed">
+          Démarrez une nouvelle conversation pour échanger avec le réseau.
+        </p>
         <a
           href="/chat"
           class="inline-block px-4 py-2 rounded-xl bg-amber-500/10 text-amber-700 dark:text-amber-400 text-xs font-bold hover:bg-amber-500/20 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
@@ -173,12 +183,14 @@
           <!-- Avatar -->
           <div class="flex-shrink-0 relative">
             {#if item.isGroup}
-              <div class="w-10 h-10 rounded-xl shadow-inner border border-black/5 dark:border-white/5 bg-gradient-to-b from-gray-100 to-gray-200 dark:from-zinc-800 dark:to-zinc-900 text-gray-600 dark:text-gray-300 flex items-center justify-center transition-transform group-hover:scale-105">
+              <div
+                class="w-10 h-10 rounded-xl shadow-inner border border-black/5 dark:border-white/5 bg-gradient-to-b from-gray-100 to-gray-200 dark:from-zinc-800 dark:to-zinc-900 text-gray-600 dark:text-gray-300 flex items-center justify-center transition-transform group-hover:scale-105"
+              >
                 <Users size={18} strokeWidth={2} class="opacity-80" />
               </div>
             {:else}
               <div class="transition-transform duration-200 group-hover:scale-105">
-                 <Avatar userId={getAvatarUserId(item)} size="sm" />
+                <Avatar userId={getAvatarUserId(item)} size="sm" />
               </div>
             {/if}
 
@@ -195,7 +207,10 @@
           <!-- Informations -->
           <div class="flex-1 min-w-0 flex flex-col justify-center">
             <div
-              class="text-[0.9rem] font-bold text-text-main truncate group-hover:text-amber-600 dark:group-hover:text-amber-400 transition-colors {(item.unreadCount ?? 0) > 0 ? 'text-text-main' : ''}"
+              class="text-[0.9rem] font-bold text-text-main truncate group-hover:text-amber-600 dark:group-hover:text-amber-400 transition-colors {(item.unreadCount ??
+                0) > 0
+                ? 'text-text-main'
+                : ''}"
             >
               {getEffectiveName(item)}
             </div>
@@ -209,7 +224,9 @@
   </div>
 
   <!-- Footer (Bouton d'action principal) -->
-  <div class="px-4 py-4 border-t border-black/5 dark:border-white/10 flex-shrink-0 bg-white/40 dark:bg-black/10 backdrop-blur-md">
+  <div
+    class="px-4 py-4 border-t border-black/5 dark:border-white/10 flex-shrink-0 bg-white/40 dark:bg-black/10 backdrop-blur-md"
+  >
     <a
       href="/chat"
       class="flex items-center justify-center gap-2 w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-[0.98] hover:-translate-y-0.5 active:translate-y-0 transition-all text-[#151B2C] text-[0.85rem] font-extrabold shadow-md shadow-amber-500/20 outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50"
