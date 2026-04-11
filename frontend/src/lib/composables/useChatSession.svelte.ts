@@ -194,7 +194,13 @@ export function useChatSession() {
 
       isLoggedIn = true;
       saveUserLocally({ id: userId });
-      localStorage.setItem('canari_saved_pin', pin);
+      // Sur Tauri mobile, si la biométrie est enrolée on ne stocke pas le PIN en clair
+      // dans localStorage : la prochaine ouverture doit passer par le keystore.
+      // Sur desktop / web, on garde le cache pour l'auto-login.
+      const tauriEnv = !!(window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+      if (!tauriEnv || !(await BiometricService.isConfigured().catch(() => false))) {
+        localStorage.setItem('canari_saved_pin', pin);
+      }
       localStorage.setItem('canari_authToken', authToken);
 
       await cb.loadAndRestoreConversations();
@@ -423,6 +429,9 @@ export function useChatSession() {
   async function enrollBiometric() {
     try {
       await BiometricService.enableBiometric(pin);
+      // Le PIN est désormais protégé par le keystore — supprimer le cache
+      // en clair pour que l'app ne puisse plus s'ouvrir sans biométrie.
+      localStorage.removeItem('canari_saved_pin');
       showBiometricEnrollPrompt = false;
     } catch (e) {
       console.error('Biometric enrollment failed:', e);

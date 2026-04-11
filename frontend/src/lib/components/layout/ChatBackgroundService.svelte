@@ -282,6 +282,17 @@
         const configured = await BiometricService.isConfigured().catch(() => false);
         if (configured && w.__TAURI_INTERNALS__) {
           await globalSession.biometricLogin(sessionCb());
+          if (!globalSession.isLoggedIn) {
+            // Biométrie annulée ou échouée → fallback modal PIN
+            const savedUser2 = currentUserId();
+            if (savedUser2) {
+              globalSession.userId = savedUser2;
+              showPinModal = true;
+            } else {
+              const cur2 = window.location.pathname + window.location.search;
+              void goto(`/login?returnTo=${encodeURIComponent(cur2)}`, { replaceState: true });
+            }
+          }
           return;
         }
         const savedUser = currentUserId();

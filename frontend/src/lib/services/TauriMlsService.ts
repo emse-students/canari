@@ -657,6 +657,10 @@ export class TauriMlsService implements IMlsService {
       baseUrl: this.historyUrl,
     }).catch(() => {});
 
+    // Écrit mls_push.bin dès l'init pour que le service FCM puisse déchiffrer
+    // même si aucun message n'a encore été traité (saveState non appelé).
+    void invoke('save_mls_state_for_push', { pin }).catch(() => {});
+
     // Populate the local groups cache from Rust after init.
     try {
       const groups = await invoke<string[]>('lister_groupes');
