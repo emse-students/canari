@@ -77,3 +77,7 @@ export interface GetChannelMessagesQuery {
   userId: string;
   limit?: number;
 }
+
+export interface UpdateChannelImageDto {
+  mediaId: string;
+}

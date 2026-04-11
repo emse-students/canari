@@ -17,6 +17,7 @@ export interface ChannelSidebarWorkspace {
   name: string;
   workspaceDbId?: string;
   avatarUserId: string;
+  imageMediaId?: string | null;
   channels: ChannelSidebarItem[];
 }
 
@@ -77,6 +78,7 @@ export function useChannelWorkspaces() {
       if (!existing.avatarUserId) {
         existing.avatarUserId = workspace.name || workspaceSlug;
       }
+      if (workspace.imageMediaId !== undefined) existing.imageMediaId = workspace.imageMediaId;
       channelWorkspaces = [...channelWorkspaces];
       return existing;
     }
@@ -86,6 +88,7 @@ export function useChannelWorkspaces() {
       name: workspace.name,
       workspaceDbId: workspaceId,
       avatarUserId: workspace.name || workspaceSlug,
+      imageMediaId: workspace.imageMediaId ?? null,
       channels: [],
     };
     channelWorkspaces = [...channelWorkspaces, created];
@@ -116,6 +119,7 @@ export function useChannelWorkspaces() {
     workspaceId?: string;
     workspaceSlug?: string;
     workspaceName?: string;
+    imageMediaId?: string;
   }): ChannelSidebarWorkspace {
     const slugFromEvent = event.workspaceSlug?.trim().toLowerCase();
     const workspaceId = event.workspaceId;
@@ -133,6 +137,7 @@ export function useChannelWorkspaces() {
         existing.name = workspaceName;
         if (!existing.avatarUserId) existing.avatarUserId = workspaceName;
       }
+      if (event.imageMediaId !== undefined) existing.imageMediaId = event.imageMediaId;
       channelWorkspaces = [...channelWorkspaces];
       return existing;
     }
@@ -142,6 +147,7 @@ export function useChannelWorkspaces() {
       name: workspaceName,
       workspaceDbId: workspaceId,
       avatarUserId: workspaceName || slugFromEvent || 'workspace',
+      imageMediaId: event.imageMediaId ?? null,
       channels: [],
     };
     channelWorkspaces = [...channelWorkspaces, created];
@@ -179,6 +185,7 @@ export function useChannelWorkspaces() {
             messages: existing?.messages ?? [],
             isReady: true,
             mlsStateHex: null,
+            imageMediaId: channel.imageMediaId ?? null,
             ...(existing?.unreadCount !== undefined ? { unreadCount: existing.unreadCount } : {}),
           });
         }
@@ -222,6 +229,7 @@ export function useChannelWorkspaces() {
             messages: existingEws?.messages ?? [],
             isReady: true,
             mlsStateHex: null,
+            imageMediaId: channel.imageMediaId ?? null,
             ...(existingEws?.unreadCount !== undefined
               ? { unreadCount: existingEws.unreadCount }
               : {}),
@@ -433,6 +441,52 @@ export function useChannelWorkspaces() {
     }
   }
 
+  async function updateCurrentChannelImage(
+    channelConversationId: string,
+    mediaId: string,
+    ctx: ChannelWorkspaceContext
+  ) {
+    const channelId = channelConversationId.replace(/^channel_/, '');
+    if (!channelId || !mediaId) return;
+    try {
+      await service.updateChannelImage(channelId, mediaId);
+      // Optimistically update the conversation
+      const convo = ctx.conversations.get(channelConversationId);
+      if (convo) {
+        ctx.conversations.set(channelConversationId, { ...convo, imageMediaId: mediaId });
+      }
+      ctx.log('Image du canal mise à jour.');
+    } catch (error) {
+      ctx.log(toUiActionError('Mise à jour image canal', error));
+    }
+  }
+
+  async function updateCurrentWorkspaceImage(
+    workspaceDbId: string,
+    mediaId: string,
+    ctx: ChannelWorkspaceContext
+  ) {
+    if (!workspaceDbId || !mediaId) return;
+    try {
+      await service.updateWorkspaceImage(workspaceDbId, mediaId);
+      // Optimistically update the local workspace entry
+      channelWorkspaces = channelWorkspaces.map((ws) =>
+        ws.workspaceDbId === workspaceDbId ? { ...ws, imageMediaId: mediaId } : ws
+      );
+      ctx.log('Image de la communauté mise à jour.');
+    } catch (error) {
+      ctx.log(toUiActionError('Mise à jour image communauté', error));
+    }
+  }
+
+  function handleWorkspaceUpdated(event: { workspaceId: string; imageMediaId?: string }) {
+    channelWorkspaces = channelWorkspaces.map((ws) =>
+      ws.workspaceDbId === event.workspaceId
+        ? { ...ws, imageMediaId: event.imageMediaId ?? ws.imageMediaId }
+        : ws
+    );
+  }
+
   return {
     get channelWorkspaces() {
       return channelWorkspaces;
@@ -458,5 +512,8 @@ export function useChannelWorkspaces() {
     leaveCurrentChannel,
     renameCurrentChannel,
     deleteCurrentChannel,
+    updateCurrentChannelImage,
+    updateCurrentWorkspaceImage,
+    handleWorkspaceUpdated,
   };
 }

@@ -9,9 +9,13 @@
     Check,
     Minus,
     UserPlus,
-    PencilLine,
+    Upload,
+    Loader,
   } from 'lucide-svelte';
   import Modal from '../shared/Modal.svelte';
+  import GroupAvatar from '../shared/GroupAvatar.svelte';
+  import { MediaService } from '$lib/media';
+  import { getToken } from '$lib/stores/auth';
 
   interface ChannelSidebarItem {
     id: string;
@@ -29,6 +33,7 @@
     open: boolean;
     selectedChannelId: string;
     channelWorkspaces: ChannelSidebarWorkspace[];
+    imageMediaId?: string | null;
     onInviteMember: (
       channelId: string,
       memberId: string,
@@ -42,6 +47,7 @@
     onRenameChannel?: (channelId: string, newName: string) => void;
     onDeleteChannel?: (channelId: string) => void;
     onLeaveChannel?: (channelId: string) => void;
+    onUpdateChannelImage?: (channelId: string, mediaId: string) => void;
     onClose: () => void;
   }
 
@@ -49,11 +55,13 @@
     open,
     selectedChannelId,
     channelWorkspaces,
+    imageMediaId = null,
     onInviteMember,
     onUpdateMemberRole,
     onRenameChannel,
     onDeleteChannel,
     onLeaveChannel,
+    onUpdateChannelImage,
     onClose,
   }: Props = $props();
 
@@ -144,6 +152,33 @@
       onUpdateMemberRole(selectedChannelId, permissionMembersId, permissionRole);
       permissionMembersId = '';
       permissionRole = 'member';
+    }
+  }
+
+  // Image upload state
+  let imageUploading = $state(false);
+  let imageUploadError = $state('');
+  const mediaService = new MediaService();
+
+  async function handleImageFileChange(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      imageUploadError = 'Veuillez sélectionner une image.';
+      return;
+    }
+    imageUploading = true;
+    imageUploadError = '';
+    try {
+      const token = await getToken();
+      const mediaId = await mediaService.uploadRaw(file, token);
+      onUpdateChannelImage?.(selectedChannelId, mediaId);
+    } catch (e) {
+      imageUploadError = e instanceof Error ? e.message : 'Échec du téléversement.';
+    } finally {
+      imageUploading = false;
+      input.value = '';
     }
   }
 
@@ -240,29 +275,52 @@
     <div class="flex-1 bg-transparent p-5 md:p-8 overflow-y-auto custom-scrollbar">
       <!-- ================= ONGLET : VUE D'ENSEMBLE ================= -->
       {#if activeTab === 'overview'}
-        <div class="space-y-8 max-w-2xl animate-in fade-in slide-in-from-bottom-2 duration-300">
-          <div>
-            <h2 class="text-xl font-extrabold text-text-main mb-1">Vue d'ensemble</h2>
-            <p class="text-sm font-medium text-text-muted">
-              Gérez les informations générales de ce canal.
-            </p>
-          </div>
-
-          <div
-            class="rounded-[1.5rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-5 shadow-sm space-y-4"
-          >
-            <label
-              class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-2"
-              for="channel-name"
-            >
-              <PencilLine size={14} /> Nom du canal
-            </label>
-            <div class="flex flex-col sm:flex-row gap-3">
-              <div class="relative flex-1">
-                <span
-                  class="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted font-bold text-lg"
-                  >#</span
+        <div class="space-y-6 max-w-2xl">
+          <h2 class="text-xl font-bold text-text-main">Vue d'ensemble</h2>
+          <div class="space-y-4">
+            <!-- Channel image -->
+            <div class="flex items-center gap-5">
+              <div class="relative flex-shrink-0">
+                <div class="w-20 h-20 rounded-2xl overflow-hidden">
+                  <GroupAvatar
+                    {imageMediaId}
+                    name={selectedChannel?.name ?? ''}
+                    variant="channel"
+                    size="lg"
+                  />
+                </div>
+                <label
+                  class="absolute bottom-0 right-0 w-7 h-7 rounded-full bg-amber-500 text-white flex items-center justify-center cursor-pointer hover:bg-amber-600 transition-colors shadow"
+                  title="Changer l'image"
                 >
+                  {#if imageUploading}
+                    <Loader size={12} class="animate-spin" />
+                  {:else}
+                    <Upload size={12} />
+                  {/if}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    class="sr-only"
+                    disabled={imageUploading}
+                    onchange={handleImageFileChange}
+                  />
+                </label>
+              </div>
+              <div class="flex-1">
+                {#if imageUploadError}
+                  <p class="text-xs text-red-600 mb-2">{imageUploadError}</p>
+                {/if}
+                <p class="text-sm text-text-muted">
+                  Cliquez sur l'icône pour changer l'image du canal.
+                </p>
+              </div>
+            </div>
+            <div class="space-y-2">
+              <label class="text-xs font-bold uppercase text-text-muted" for="channel-name"
+                >Nom du canal</label
+              >
+              <div class="flex gap-2">
                 <input
                   id="channel-name"
                   class="w-full bg-white/80 dark:bg-black/40 border border-black/10 dark:border-white/10 rounded-xl pl-9 pr-4 py-3 text-sm font-semibold outline-none focus:ring-2 focus:ring-amber-500/50 shadow-inner transition-all"

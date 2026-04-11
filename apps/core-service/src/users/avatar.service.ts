@@ -34,6 +34,11 @@ export class AvatarService {
       );
     }
 
+    // Prevent SSRF / path traversal: userId must be a safe alphanumeric identifier.
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(userId)) {
+      throw new HttpException('Invalid user ID', HttpStatus.BAD_REQUEST);
+    }
+
     try {
       const url = `${this.avatarApiUrl}/api/users/${userId}/avatar`;
 
@@ -43,6 +48,8 @@ export class AvatarService {
         },
         responseType: 'arraybuffer',
         timeout: 5000,
+        // Disable redirects: following them to unknown destinations is a SSRF vector.
+        maxRedirects: 0,
       });
 
       return Buffer.from(response.data);

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { SvelteMap } from 'svelte/reactivity';
   import { Hand, Hash, Lock, Plus } from 'lucide-svelte';
-  import Avatar from '../shared/Avatar.svelte';
+  import GroupAvatar from '../shared/GroupAvatar.svelte';
   import ConversationTile from '../chat/ConversationTile.svelte';
   import SidebarHeaderControls from './SidebarHeaderControls.svelte';
 
@@ -20,6 +20,7 @@
     unreadCount?: number;
     conversationType?: 'direct' | 'group' | 'channel';
     directPeerId?: string;
+    imageMediaId?: string | null;
   }
 
   interface ChannelItem {
@@ -33,6 +34,8 @@
     id: string;
     name: string;
     avatarUserId: string;
+    imageMediaId?: string | null;
+    workspaceDbId?: string;
     channels: ChannelItem[];
   }
 
@@ -61,6 +64,7 @@
       memberId: string,
       roleName: 'member' | 'moderator' | 'admin'
     ) => void;
+    onUpdateWorkspaceImage?: (workspaceDbId: string, mediaId: string) => void;
     onSelectConversation: (name: string) => void;
     onSelectChannelConversation?: (channelId: string) => void;
     selectedChannelId?: string;
@@ -84,7 +88,7 @@
     onCreateGroup,
     onCreateChannel,
     onCreateWorkspace,
-
+    onUpdateWorkspaceImage,
     onSelectConversation,
     onSelectChannelConversation,
     selectedChannelId = '',
@@ -120,6 +124,8 @@
     id: string;
     name: string;
     avatarUserId: string;
+    imageMediaId?: string | null;
+    workspaceDbId?: string;
     channels: ChannelItem[];
   }
 
@@ -239,7 +245,12 @@
           title={workspace.name}
           aria-label={workspace.name}
         >
-          <Avatar userId={workspace.avatarUserId} size="lg" />
+          <GroupAvatar
+            imageMediaId={workspace.imageMediaId}
+            name={workspace.name}
+            variant="community"
+            size="lg"
+          />
         </button>
       {/each}
 
@@ -351,6 +362,7 @@
               isReady={convo.isReady}
               isSelected={selectedContact === name}
               unreadCount={convo.unreadCount ?? 0}
+              imageMediaId={convo.imageMediaId}
               onClick={() => onSelectConversation(name)}
             />
           </div>
@@ -454,6 +466,7 @@
   workspaces={channelWorkspaces}
   selectedWorkspaceId={selectedCommunityWorkspaceId || channelWorkspaces[0]?.id || ''}
   onClose={closeCommunityAdminModal}
+  {onUpdateWorkspaceImage}
 />
 
 <SidebarNewCommunityModal

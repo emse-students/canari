@@ -13,10 +13,10 @@
     X,
     PencilLine,
     Shield,
-    Hash,
     Phone,
   } from 'lucide-svelte';
   import Avatar from '../shared/Avatar.svelte';
+  import GroupAvatar from '../shared/GroupAvatar.svelte';
   import UserName from '../shared/UserName.svelte';
   import Modal from '../shared/Modal.svelte';
   import MultiUserSelector from '../shared/MultiUserSelector.svelte';
@@ -31,6 +31,7 @@
     isReady: boolean;
     isGroupConversation?: boolean;
     isChannel?: boolean;
+    imageMediaId?: string | null;
     onInviteMembers?: (ids: string[]) => void;
     onBack?: () => void;
     onOpenConversations?: () => void;
@@ -49,6 +50,7 @@
     isReady,
     isGroupConversation = true,
     isChannel = false,
+    imageMediaId = null,
     onInviteMembers,
     onBack,
     onOpenConversations,
@@ -170,16 +172,12 @@
 
   <!-- Icône de la conversation (Avatar, Groupe ou Canal) -->
   {#if isChannel}
-    <div
-      class="flex h-11 w-11 shrink-0 items-center justify-center rounded-[1.1rem] bg-amber-500/15 border border-amber-500/20 text-amber-600 dark:text-amber-400 shadow-inner"
-    >
-      <Hash size={24} strokeWidth={2.5} />
+    <div class="w-10 h-10 flex-shrink-0">
+      <GroupAvatar {imageMediaId} name={displayName} variant="channel" size="lg" />
     </div>
   {:else if isGroupConversation}
-    <div
-      class="w-11 h-11 shrink-0 rounded-[1.1rem] shadow-inner border border-black/5 dark:border-white/5 flex items-center justify-center bg-gradient-to-b from-gray-100 to-gray-200 dark:from-zinc-800 dark:to-zinc-900 text-gray-600 dark:text-gray-300"
-    >
-      <Users size={22} strokeWidth={2} class="opacity-80" />
+    <div class="w-10 h-10 flex-shrink-0">
+      <GroupAvatar {imageMediaId} name={displayName} variant="group" size="lg" />
     </div>
   {:else}
     <div class="relative shrink-0">

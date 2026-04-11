@@ -169,7 +169,22 @@ export class ChannelService {
 
   // ================= ROLES =================
 
-  async createRole(input: CreateRoleDto) {
+  async createRole(input: CreateRoleDto & { actorUserId: string }) {
+    // Only workspace admins (MANAGE_WORKSPACE or MANAGE_ROLES) may create roles.
+    const actorMember = await this.memberRepo.findOne({
+      where: { workspaceId: input.workspaceId, userId: input.actorUserId },
+    });
+    if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
+
+    let hasPerm = false;
+    if (actorMember.roleIds?.length > 0) {
+      const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
+      hasPerm = roles.some(
+        (r) => r.permissions.includes('MANAGE_WORKSPACE') || r.permissions.includes('MANAGE_ROLES')
+      );
+    }
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_ROLES permission');
+
     const role = this.roleRepo.create({
       workspaceId: input.workspaceId,
       name: input.name,
@@ -222,6 +237,75 @@ export class ChannelService {
     await this.pushKeyToUser(savedChannel, input.actorUserId);
 
     return savedChannel;
+  }
+
+  async updateChannelImage(channelId: string, actorUserId: string, mediaId: string) {
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(mediaId)) {
+      throw new ForbiddenException('Invalid mediaId format');
+    }
+
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
+
+    const actorMember = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId: actorUserId },
+    });
+    if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
+
+    let hasPerm = false;
+    if (actorMember.roleIds?.length > 0) {
+      const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
+      hasPerm = roles.some(
+        (r) =>
+          r.permissions.includes('MANAGE_WORKSPACE') || r.permissions.includes('MANAGE_CHANNELS')
+      );
+    }
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNELS permission');
+
+    channel.imageMediaId = mediaId;
+    await this.channelRepo.save(channel);
+
+    const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
+    await this.redis.publishChannelEvent(
+      'channel.updated',
+      { channelId, imageMediaId: mediaId, workspaceId: channel.workspaceId },
+      workspaceMemberIds
+    );
+
+    return { success: true, channelId, imageMediaId: mediaId };
+  }
+
+  async updateWorkspaceImage(workspaceId: string, actorUserId: string, mediaId: string) {
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(mediaId)) {
+      throw new ForbiddenException('Invalid mediaId format');
+    }
+
+    const workspace = await this.workspaceRepo.findOne({ where: { id: workspaceId } });
+    if (!workspace) throw new NotFoundException('Workspace not found');
+
+    const actorMember = await this.memberRepo.findOne({
+      where: { workspaceId, userId: actorUserId },
+    });
+    if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
+
+    let hasPerm = false;
+    if (actorMember.roleIds?.length > 0) {
+      const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
+      hasPerm = roles.some((r) => r.permissions.includes('MANAGE_WORKSPACE'));
+    }
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_WORKSPACE permission');
+
+    workspace.imageMediaId = mediaId;
+    await this.workspaceRepo.save(workspace);
+
+    const workspaceMemberIds = await this.getWorkspaceMemberIds(workspaceId);
+    await this.redis.publishChannelEvent(
+      'workspace.updated',
+      { workspaceId, imageMediaId: mediaId },
+      workspaceMemberIds
+    );
+
+    return { success: true, workspaceId, imageMediaId: mediaId };
   }
 
   async renameChannel(channelId: string, actorUserId: string, newName: string) {
@@ -817,7 +901,8 @@ export class ChannelService {
     }
 
     const msg = this.messageRepo.create({
-      ...(input.messageId ? { id: input.messageId } : {}),
+      // Never use a client-supplied ID as the DB primary key — the server
+      // always generates a fresh UUID to prevent IDOR / row-overwrite attacks.
       workspaceId: channel.workspaceId,
       channelId,
       authorId: input.senderId,
@@ -861,10 +946,12 @@ export class ChannelService {
       throw new ForbiddenException('Not allowed to access this channel');
     }
 
+    const safeLimit = Math.min(Math.max(1, limit), 200);
+
     const msgs = await this.messageRepo.find({
       where: { channelId },
       order: { createdAt: 'DESC' },
-      take: limit,
+      take: safeLimit,
     });
     return msgs.map((m) => ({
       id: m.id,

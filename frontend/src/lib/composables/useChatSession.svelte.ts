@@ -32,6 +32,7 @@ import {
   getIsTabLeader,
 } from '$lib/utils/chat/connection';
 import { BiometricService } from '$lib/services/biometric';
+import { savePin, clearPin, clearPinAndKey } from '$lib/utils/pinVault';
 import { CallService } from '$lib/services/CallService';
 import { startPushService, stopPushService } from '$lib/services/PushNotificationService';
 import type { Conversation } from '$lib/types';
@@ -194,12 +195,18 @@ export function useChatSession() {
 
       isLoggedIn = true;
       saveUserLocally({ id: userId });
-      // Sur Tauri mobile, si la biométrie est enrolée on ne stocke pas le PIN en clair
-      // dans localStorage : la prochaine ouverture doit passer par le keystore.
-      // Sur desktop / web, on garde le cache pour l'auto-login.
+      // On Tauri (mobile): rely exclusively on the hardware-backed keystore —
+      // never cache the PIN in any browser storage. The biometric enrolment
+      // prompt that follows will call BiometricService.enableBiometric(pin).
+      // On web/desktop: store an AES-GCM encrypted blob in sessionStorage so
+      // the PIN is never at rest in plaintext and is wiped on tab/session close.
       const tauriEnv = !!(window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
-      if (!tauriEnv || !(await BiometricService.isConfigured().catch(() => false))) {
-        localStorage.setItem('canari_saved_pin', pin);
+      if (!tauriEnv) {
+        await savePin(pin);
+      } else if (!(await BiometricService.isConfigured().catch(() => false))) {
+        // Tauri but biometrics not yet enrolled: cache encrypted for this session
+        // only (will be cleared once the user completes biometric enrolment below).
+        await savePin(pin);
       }
       localStorage.setItem('canari_authToken', authToken);
 
@@ -399,7 +406,7 @@ export function useChatSession() {
       loginError = msg;
       cb.log(`Erreur: ${msg}`);
       clearUserLocally();
-      localStorage.removeItem('canari_saved_pin');
+      clearPin();
       if (cb.onLoginFailed) {
         cb.onLoginFailed(msg);
       } else {
@@ -436,9 +443,9 @@ export function useChatSession() {
   async function enrollBiometric() {
     try {
       await BiometricService.enableBiometric(pin);
-      // Le PIN est désormais protégé par le keystore — supprimer le cache
-      // en clair pour que l'app ne puisse plus s'ouvrir sans biométrie.
-      localStorage.removeItem('canari_saved_pin');
+      // PIN is now protected by the hardware keystore — wipe the session cache
+      // so the app cannot reopen without biometric authentication.
+      clearPinAndKey();
       showBiometricEnrollPrompt = false;
     } catch (e) {
       console.error('Biometric enrollment failed:', e);
@@ -467,7 +474,7 @@ export function useChatSession() {
     authToken = '';
     showBiometricEnrollPrompt = false;
     clearUserLocally();
-    localStorage.removeItem('canari_saved_pin');
+    clearPinAndKey();
     clearAuth();
     void goto('/login', { replaceState: true });
   }

@@ -1,6 +1,6 @@
 <script lang="ts">
   import Avatar from '../shared/Avatar.svelte';
-  import { Users } from 'lucide-svelte';
+  import GroupAvatar from '../shared/GroupAvatar.svelte';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import { presenceMap, watchUsers } from '$lib/stores/presenceStore';
   import { onMount } from 'svelte';
@@ -14,6 +14,7 @@
     isReady: boolean;
     isSelected: boolean;
     unreadCount?: number;
+    imageMediaId?: string | null;
     onClick: () => void;
   }
 
@@ -25,6 +26,7 @@
     isReady,
     isSelected,
     unreadCount = 0,
+    imageMediaId = null,
     onClick,
   }: Props = $props();
 
@@ -61,10 +63,10 @@
   onclick={onClick}
   class="w-full p-3.5 flex items-center gap-4 rounded-[1.25rem] transition-all duration-200 text-left outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-[0.98] group
     {isSelected
-      ? 'bg-white/60 dark:bg-black/40 border border-black/5 dark:border-white/10 shadow-sm backdrop-blur-md'
-      : unreadCount > 0
-        ? 'bg-white/30 dark:bg-white/5 hover:bg-white/50 dark:hover:bg-white/10 border border-transparent'
-        : 'hover:bg-white/40 dark:hover:bg-black/20 border border-transparent'}
+    ? 'bg-white/60 dark:bg-black/40 border border-black/5 dark:border-white/10 shadow-sm backdrop-blur-md'
+    : unreadCount > 0
+      ? 'bg-white/30 dark:bg-white/5 hover:bg-white/50 dark:hover:bg-white/10 border border-transparent'
+      : 'hover:bg-white/40 dark:hover:bg-black/20 border border-transparent'}
     animate-rise-in"
 >
   <!-- Zone Avatar / Icône de Groupe -->
@@ -77,12 +79,12 @@
         ></span>
       {/if}
     {:else}
-      <!-- Avatar premium pour les groupes -->
-      <div
-        class="w-[3.25rem] h-[3.25rem] rounded-2xl shadow-inner border border-black/5 dark:border-white/5 flex-shrink-0 bg-gradient-to-b from-gray-100 to-gray-200 dark:from-zinc-800 dark:to-zinc-900 text-gray-600 dark:text-gray-300 flex items-center justify-center transition-transform group-hover:scale-105"
-      >
-        <Users size={24} strokeWidth={2} class="opacity-80" />
-      </div>
+      <GroupAvatar
+        {imageMediaId}
+        name={displayName}
+        variant={conversationType === 'channel' ? 'channel' : 'group'}
+        size="lg"
+      />
     {/if}
   </div>
 
@@ -90,7 +92,11 @@
   <div class="flex-1 min-w-0 flex flex-col justify-center">
     <div class="flex justify-between items-center mb-0.5 gap-3">
       <!-- Nom de la conversation -->
-      <span class="text-[0.95rem] text-text-main truncate {unreadCount > 0 ? 'font-extrabold' : 'font-bold'}">
+      <span
+        class="text-[0.95rem] text-text-main truncate {unreadCount > 0
+          ? 'font-extrabold'
+          : 'font-bold'}"
+      >
         {effectiveDisplayName}
       </span>
 
@@ -116,7 +122,9 @@
 
     <!-- Aperçu du dernier message -->
     <div
-      class="text-sm truncate mt-0.5 {unreadCount > 0 ? 'text-text-main font-semibold' : 'text-text-muted opacity-90'}"
+      class="text-sm truncate mt-0.5 {unreadCount > 0
+        ? 'text-text-main font-semibold'
+        : 'text-text-muted opacity-90'}"
     >
       {previewText || 'Canal E2E établi.'}
     </div>

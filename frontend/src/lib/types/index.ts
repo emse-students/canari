@@ -35,4 +35,6 @@ export interface Conversation {
   unreadCount?: number;
   conversationType?: 'direct' | 'group' | 'channel';
   directPeerId?: string;
+  /** Media-service ID of the group/channel image (unencrypted avatar). */
+  imageMediaId?: string | null;
 }

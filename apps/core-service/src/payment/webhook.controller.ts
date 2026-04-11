@@ -43,11 +43,19 @@ export class PaymentWebhookController {
       const submissionId = session.metadata?.submissionId;
 
       if (submissionId) {
+        // Prevent SSRF: submissionId originates from Stripe session metadata which was
+        // set by the client at checkout creation time — validate before embedding in URL.
+        if (!/^[a-zA-Z0-9_-]{1,128}$/.test(submissionId)) {
+          this.logger.error(
+            `Invalid submissionId in webhook metadata: ${submissionId}`,
+          );
+          return res.status(400).send('Invalid submissionId');
+        }
         try {
           const formServiceBase =
             this.config.get<string>('FORM_URL') || 'http://localhost:3014';
           const url = `${formServiceBase.replace(/\/$/, '')}/api/forms/submissions/${submissionId}/mark-paid`;
-          await axios.post(url, { sessionId: session.id });
+          await axios.post(url, { sessionId: session.id }, { maxRedirects: 0 });
           this.logger.log(
             `Marked submission ${submissionId} as paid via form-service`,
           );
@@ -70,20 +78,28 @@ export class PaymentWebhookController {
       const account = event.data.object;
       const associationId = account.metadata?.associationId;
       if (associationId && account.charges_enabled) {
-        try {
-          const socialServiceBase =
-            this.config.get<string>('FORM_URL') || 'http://localhost:3014';
-          const url = `${socialServiceBase.replace(/\/$/, '')}/api/associations/${associationId}/stripe-complete`;
-          await axios.post(url);
-          this.logger.log(
-            `Marked association ${associationId} stripe onboarding complete`,
-          );
-        } catch (err: unknown) {
-          const error = err as Error & { response?: { data?: unknown } };
+        // Prevent SSRF: associationId originates from Stripe account metadata which was
+        // set by the client at onboarding time — validate before embedding in URL.
+        if (!/^[a-zA-Z0-9_-]{1,128}$/.test(associationId)) {
           this.logger.error(
-            'Failed to notify social-service about stripe onboarding',
-            error?.response?.data || error?.message || error,
+            `Invalid associationId in webhook metadata: ${associationId}`,
           );
+        } else {
+          try {
+            const socialServiceBase =
+              this.config.get<string>('FORM_URL') || 'http://localhost:3014';
+            const url = `${socialServiceBase.replace(/\/$/, '')}/api/associations/${associationId}/stripe-complete`;
+            await axios.post(url, undefined, { maxRedirects: 0 });
+            this.logger.log(
+              `Marked association ${associationId} stripe onboarding complete`,
+            );
+          } catch (err: unknown) {
+            const error = err as Error & { response?: { data?: unknown } };
+            this.logger.error(
+              'Failed to notify social-service about stripe onboarding',
+              error?.response?.data || error?.message || error,
+            );
+          }
         }
       }
     }

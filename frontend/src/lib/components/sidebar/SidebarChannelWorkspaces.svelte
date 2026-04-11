@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Plus, ChevronDown, ChevronRight, Hash, Lock } from 'lucide-svelte';
-  import Avatar from '../shared/Avatar.svelte';
+  import GroupAvatar from '../shared/GroupAvatar.svelte';
 
   interface ChannelItem {
     id: string;
@@ -13,6 +13,7 @@
     id: string;
     name: string;
     avatarUserId: string;
+    imageMediaId?: string | null;
     channels: ChannelItem[];
   }
 
@@ -53,7 +54,12 @@
             {/if}
           </span>
           <div class="w-9 h-9 rounded-xl overflow-hidden flex-shrink-0">
-            <Avatar userId={workspace.avatarUserId} size="lg" />
+            <GroupAvatar
+              imageMediaId={workspace.imageMediaId}
+              name={workspace.name}
+              variant="community"
+              size="lg"
+            />
           </div>
           <div class="flex-1 min-w-0 font-semibold text-text-main truncate">
             {workspace.name}

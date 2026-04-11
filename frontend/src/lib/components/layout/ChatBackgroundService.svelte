@@ -14,6 +14,7 @@
   import { onMount, untrack } from 'svelte';
   import { goto, afterNavigate } from '$app/navigation';
   import { BiometricService } from '$lib/services/biometric';
+  import { loadPin } from '$lib/utils/pinVault';
   import { currentUserId } from '$lib/stores/user';
   import {
     globalSession,
@@ -273,7 +274,7 @@
           return;
         }
         const savedUser = currentUserId();
-        const savedPin = localStorage.getItem('canari_saved_pin');
+        const savedPin = await loadPin();
         if (savedUser && savedPin) {
           globalSession.userId = savedUser;
           globalSession.pin = savedPin;
@@ -381,7 +382,7 @@
   // `onMount` fires before `currentUserId()` is set, so `tryLogin()` does
   // nothing useful.  After the callback/login sets the user and navigates to
   // `/chat`, this `afterNavigate` hook re-tries the login flow.
-  afterNavigate(({ to }) => {
+  afterNavigate(async ({ to }) => {
     const path = to?.url.pathname ?? window.location.pathname;
     const isAuthRoute = path === '/login' || path.startsWith('/login') || path.startsWith('/auth/');
     if (isAuthRoute) return;
@@ -393,7 +394,7 @@
     // Arriving on a non-auth route with a user but not yet logged in:
     // trigger the login flow that onMount missed.
     globalSession.initServices(appendLog);
-    const savedPin = localStorage.getItem('canari_saved_pin');
+    const savedPin = await loadPin();
     if (savedPin) {
       globalSession.userId = uid;
       globalSession.pin = savedPin;

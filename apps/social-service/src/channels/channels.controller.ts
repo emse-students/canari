@@ -27,6 +27,7 @@ import {
   type MarkDistributionReceivedDto,
   type RenameChannelDto,
   type SendChannelMessageDto,
+  type UpdateChannelImageDto,
 } from './dto/channel.dto';
 
 @Controller('channels')
@@ -48,6 +49,7 @@ export class ChannelsController {
     return this.service.createWorkspace({ ...body, createdBy: xUserId.trim().toLowerCase() });
   }
 
+  @UseGuards(NginxAuthGuard)
   @Get('workspaces/by-slug/:slug')
   getWorkspaceBySlug(@Param('slug') slug: string) {
     return this.service.getWorkspaceBySlug(slug);
@@ -61,8 +63,8 @@ export class ChannelsController {
 
   @UseGuards(NginxAuthGuard)
   @Post('roles')
-  createRole(@Body() body: CreateRoleDto) {
-    return this.service.createRole(body);
+  createRole(@Headers('x-user-id') xUserId: string, @Body() body: CreateRoleDto) {
+    return this.service.createRole({ ...body, actorUserId: xUserId.trim().toLowerCase() });
   }
 
   @UseGuards(NginxAuthGuard)
@@ -185,6 +187,20 @@ export class ChannelsController {
   }
 
   @UseGuards(NginxAuthGuard)
+  @Patch('workspaces/:workspaceId/image')
+  async updateWorkspaceImage(
+    @Headers('x-user-id') xUserId: string,
+    @Param('workspaceId') workspaceId: string,
+    @Body() body: UpdateChannelImageDto
+  ) {
+    return await this.service.updateWorkspaceImage(
+      workspaceId,
+      xUserId.trim().toLowerCase(),
+      body.mediaId
+    );
+  }
+
+  @UseGuards(NginxAuthGuard)
   @Post(':channelId/key-distributions/:distributionId/ack')
   ackKeyDistribution(
     @Headers('x-user-id') xUserId: string,
@@ -197,6 +213,20 @@ export class ChannelsController {
       distributionId,
       xUserId.trim().toLowerCase(),
       Number(body.keyVersion)
+    );
+  }
+
+  @UseGuards(NginxAuthGuard)
+  @Patch(':channelId/image')
+  async updateChannelImage(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string,
+    @Body() body: UpdateChannelImageDto
+  ) {
+    return await this.service.updateChannelImage(
+      channelId,
+      xUserId.trim().toLowerCase(),
+      body.mediaId
     );
   }
 
@@ -227,12 +257,10 @@ export class ChannelsController {
     try {
       return await this.service.sendMessage(channelId, { ...body, senderId: userId });
     } catch (err: any) {
-      console.error('CONTROLLER SEND ERROR', err);
       throw new HttpException(
         {
           statusCode: err.status || 500,
           message: err.message || 'Internal server error',
-          stack: err.stack,
         },
         err.status ? Number(err.status) : HttpStatus.INTERNAL_SERVER_ERROR
       );
@@ -246,7 +274,7 @@ export class ChannelsController {
     @Param('channelId') channelId: string,
     @Query() query: GetChannelMessagesQuery
   ) {
-    const limit = query.limit ? Number(query.limit) : 100;
+    const limit = query.limit ? Math.min(Number(query.limit), 200) : 100;
     return this.service.listMessages(channelId, xUserId.trim().toLowerCase(), limit);
   }
 }

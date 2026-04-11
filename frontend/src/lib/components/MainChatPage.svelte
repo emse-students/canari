@@ -217,17 +217,25 @@
         );
         log(`Retire du canal #${event.channelName || event.channelId}`);
       },
-      onChannelUpdated: (event: { channelId: string; name?: string }) => {
-        if (!event.channelId || !event.name) return;
+      onChannelUpdated: (event: { channelId: string; name?: string; imageMediaId?: string }) => {
+        if (!event.channelId) return;
         const channelConversationId = `channel_${event.channelId}`;
-        channels.channelWorkspaces = channels.channelWorkspaces.map((ws) => ({
-          ...ws,
-          channels: ws.channels.map((ch) =>
-            ch.id === channelConversationId ? { ...ch, name: event.name! } : ch
-          ),
-        }));
+        if (event.name) {
+          channels.channelWorkspaces = channels.channelWorkspaces.map((ws) => ({
+            ...ws,
+            channels: ws.channels.map((ch) =>
+              ch.id === channelConversationId ? { ...ch, name: event.name! } : ch
+            ),
+          }));
+        }
         const convo = convs.conversations.get(channelConversationId);
-        if (convo) convs.conversations.set(channelConversationId, { ...convo, name: event.name });
+        if (convo) {
+          convs.conversations.set(channelConversationId, {
+            ...convo,
+            ...(event.name ? { name: event.name } : {}),
+            ...(event.imageMediaId !== undefined ? { imageMediaId: event.imageMediaId } : {}),
+          });
+        }
       },
       onChannelDeleted: (event: { channelId: string }) => {
         if (!event.channelId) return;
@@ -243,6 +251,9 @@
       },
       onSendError: (msg: string) => {
         convs.sendError = msg;
+      },
+      onWorkspaceUpdated: (event: { workspaceId: string; imageMediaId?: string }) => {
+        channels.handleWorkspaceUpdated(event);
       },
       onShowSyncGuidePrompt: () => {
         convs.showSyncGuidePrompt = true;
@@ -468,6 +479,8 @@
           channels.inviteMemberToChannel(channelId, memberId, roleName, channelsCtx())}
         onUpdateChannelMemberRole={(channelId, memberId, roleName) =>
           channels.updateChannelMemberRole(channelId, memberId, roleName, channelsCtx())}
+        onUpdateWorkspaceImage={(workspaceDbId, mediaId) =>
+          void channels.updateCurrentWorkspaceImage(workspaceDbId, mediaId, channelsCtx())}
         onSelectConversation={convs.selectConversation}
         onSelectChannelConversation={(channelId) => {
           channels.selectedChannelConversationId = channelId;
@@ -481,6 +494,7 @@
         conversation={convs.currentConvo}
         {messageText}
         isChannel={convs.selectedContact?.startsWith('channel_') ?? false}
+        imageMediaId={convs.currentConvo?.imageMediaId ?? null}
         onMessageChange={(value) => (messageText = value)}
         onSend={handleSendChat}
         onInviteMembers={(ids) => void convs.inviteMembersToCurrentGroup(ids, convCtx())}
@@ -621,6 +635,8 @@
             channels.inviteMemberToChannel(channelId, memberId, roleName, channelsCtx())}
           onUpdateChannelMemberRole={(channelId, memberId, roleName) =>
             channels.updateChannelMemberRole(channelId, memberId, roleName, channelsCtx())}
+          onUpdateWorkspaceImage={(workspaceDbId, mediaId) =>
+            void channels.updateCurrentWorkspaceImage(workspaceDbId, mediaId, channelsCtx())}
           onSelectConversation={convs.selectConversation}
           onSelectChannelConversation={(channelId) => {
             channels.selectedChannelConversationId = channelId;
@@ -640,19 +656,22 @@
         onClose={() => (convs.isChannelSettingsModalOpen = false)}
         selectedChannelId={channels.selectedChannelConversationId}
         channelWorkspaces={channels.channelWorkspaces}
-        onInviteMember={(channelId, memberId, roleName) =>
+        imageMediaId={convs.currentConvo?.imageMediaId ?? null}
+        onInviteMember={(channelId: string, memberId: string, roleName: "member" | "moderator" | "admin") =>
           channels.inviteMemberToChannel(channelId, memberId, roleName, channelsCtx())}
-        onUpdateMemberRole={(channelId, memberId, roleName) =>
+        onUpdateMemberRole={(channelId: string, memberId: string, roleName: "member" | "moderator" | "admin") =>
           channels.updateChannelMemberRole(channelId, memberId, roleName, channelsCtx())}
-        onRenameChannel={(channelId, newName) =>
+        onRenameChannel={(channelId: string, newName: string) =>
           channels.renameCurrentChannel(channelId, newName, channelsCtx())}
-        onDeleteChannel={(channelId) => {
+        onUpdateChannelImage={(channelId: string, mediaId: string) =>
+          void channels.updateCurrentChannelImage(channelId, mediaId, channelsCtx())}
+        onDeleteChannel={(channelId: string) => {
           void channels.deleteCurrentChannel(channelId, channelsCtx());
           if (convs.selectedContact === channelId) {
             convs.selectedContact = null;
           }
         }}
-        onLeaveChannel={(channelId) => {
+        onLeaveChannel={(channelId: string) => {
           void channels.leaveCurrentChannel(channelId, channelsCtx());
           if (convs.selectedContact === channelId) {
             convs.selectedContact = null;

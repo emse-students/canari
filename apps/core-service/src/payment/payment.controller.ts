@@ -44,18 +44,26 @@ export class PaymentController {
 
     // Persist the Stripe account ID on the association (social-service)
     if (result.accountId && body.associationId) {
-      try {
-        const socialBase = process.env.FORM_URL || 'http://localhost:3014';
-        await axios.post(
-          `${socialBase.replace(/\/$/, '')}/api/associations/${body.associationId}/stripe-account`,
-          { stripeAccountId: result.accountId },
-        );
-      } catch (err: unknown) {
-        const error = err as Error & { response?: { data?: unknown } };
+      // Prevent SSRF: validate the ID before embedding it in a URL.
+      if (!/^[a-zA-Z0-9_-]{1,128}$/.test(body.associationId)) {
         this.logger.error(
-          'Failed to save stripeAccountId on association',
-          error?.response?.data || error?.message,
+          'Invalid associationId in onboarding request — skipping stripe-account sync',
         );
+      } else {
+        try {
+          const socialBase = process.env.FORM_URL || 'http://localhost:3014';
+          await axios.post(
+            `${socialBase.replace(/\/$/, '')}/api/associations/${body.associationId}/stripe-account`,
+            { stripeAccountId: result.accountId },
+            { maxRedirects: 0 },
+          );
+        } catch (err: unknown) {
+          const error = err as Error & { response?: { data?: unknown } };
+          this.logger.error(
+            'Failed to save stripeAccountId on association',
+            error?.response?.data || error?.message,
+          );
+        }
       }
     }
 

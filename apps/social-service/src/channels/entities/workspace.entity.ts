@@ -14,6 +14,9 @@ export class Workspace {
   @Column()
   createdBy: string;
 
+  @Column({ nullable: true, type: 'varchar' })
+  imageMediaId: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 }

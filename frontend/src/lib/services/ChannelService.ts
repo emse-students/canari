@@ -9,6 +9,7 @@ export interface WorkspaceDto {
   slug: string;
   name: string;
   createdBy: string;
+  imageMediaId?: string | null;
 }
 
 export interface CreateChannelDto {
@@ -23,6 +24,7 @@ export interface ChannelDto {
   workspaceId: string;
   name: string;
   visibility?: 'public' | 'private';
+  imageMediaId?: string | null;
 }
 
 export interface CreateRoleDto {
@@ -311,6 +313,28 @@ export class ChannelService {
     });
     await this.handleError(res);
     return res.json();
+  }
+
+  async updateChannelImage(channelId: string, mediaId: string) {
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/image`, {
+      method: 'PATCH',
+      body: JSON.stringify({ mediaId }),
+    });
+    await this.handleError(res);
+    return res.json() as Promise<{ success: boolean; channelId: string; imageMediaId: string }>;
+  }
+
+  async updateWorkspaceImage(workspaceId: string, mediaId: string) {
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/workspaces/${encodeURIComponent(workspaceId)}/image`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ mediaId }),
+      }
+    );
+    await this.handleError(res);
+    return res.json() as Promise<{ success: boolean; workspaceId: string; imageMediaId: string }>;
   }
 }
 

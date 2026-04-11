@@ -1,0 +1,105 @@
+<script lang="ts">
+  import { Users, Hash } from 'lucide-svelte';
+  import { onDestroy } from 'svelte';
+  import { MediaService } from '$lib/media';
+  import { getToken } from '$lib/stores/auth';
+
+  interface Props {
+    /** Media-service ID of the avatar image. When absent, falls back to icon/initials. */
+    imageMediaId?: string | null;
+    /** Display name used for initials fallback. */
+    name?: string;
+    /** Visual variant controls the fallback icon and color scheme. */
+    variant?: 'group' | 'channel' | 'community';
+    size?: 'sm' | 'md' | 'lg';
+  }
+
+  let { imageMediaId = null, name = '', variant = 'group', size = 'md' }: Props = $props();
+
+  let blobUrl = $state<string | null>(null);
+  let loadFailed = $state(false);
+
+  const mediaService = new MediaService();
+
+  const sizeClasses = $derived(
+    size === 'sm' ? 'w-6 h-6 text-xs' : size === 'lg' ? 'w-12 h-12 text-base' : 'w-8 h-8 text-sm'
+  );
+
+  const iconSize = $derived(size === 'sm' ? 14 : size === 'lg' ? 22 : 18);
+
+  const fallbackClasses = $derived(
+    variant === 'channel'
+      ? 'bg-amber-500 text-white'
+      : variant === 'community'
+        ? 'bg-amber-500 text-white'
+        : 'bg-cn-dark text-cn-yellow'
+  );
+
+  function getInitials(n: string): string {
+    return n
+      .trim()
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((w) => w[0]?.toUpperCase() ?? '')
+      .join('');
+  }
+
+  const initials = $derived(getInitials(name));
+
+  let currentMediaId: string | null = null;
+
+  async function loadImage(mediaId: string) {
+    currentMediaId = mediaId;
+    loadFailed = false;
+    try {
+      const token = await getToken();
+      const url = await mediaService.downloadRaw(mediaId, token);
+      // Discard result if a newer load was triggered
+      if (currentMediaId !== mediaId) {
+        URL.revokeObjectURL(url);
+        return;
+      }
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+      blobUrl = url;
+    } catch {
+      if (currentMediaId === mediaId) loadFailed = true;
+    }
+  }
+
+  $effect(() => {
+    if (imageMediaId) {
+      loadImage(imageMediaId);
+    } else {
+      if (blobUrl) {
+        URL.revokeObjectURL(blobUrl);
+        blobUrl = null;
+      }
+      loadFailed = false;
+    }
+  });
+
+  onDestroy(() => {
+    if (blobUrl) URL.revokeObjectURL(blobUrl);
+  });
+</script>
+
+{#if blobUrl && !loadFailed}
+  <img
+    src={blobUrl}
+    alt={name || 'Avatar du groupe'}
+    class="rounded-2xl object-cover shadow-sm ring-1 ring-white/20 flex-shrink-0 select-none {sizeClasses}"
+  />
+{:else}
+  <div
+    class="rounded-2xl shadow-sm ring-1 ring-white/20 flex-shrink-0 select-none flex items-center justify-center font-bold {sizeClasses} {fallbackClasses}"
+    title={name}
+  >
+    {#if initials}
+      {initials}
+    {:else if variant === 'channel'}
+      <Hash size={iconSize} />
+    {:else}
+      <Users size={iconSize} />
+    {/if}
+  </div>
+{/if}

@@ -392,4 +392,59 @@ export class MediaService {
     const blob = new Blob([plaintext], { type: ref.mimeType });
     return URL.createObjectURL(blob);
   }
+
+  // -------------------------------------------------------------------------
+  // Raw (unencrypted) upload / download — for group & community avatars
+  // -------------------------------------------------------------------------
+
+  /**
+   * Upload a file to the media service without client-side encryption.
+   * Suitable for group/community avatars that don't require E2E secrecy.
+   *
+   * @param file        The image File selected by the user.
+   * @param authToken   JWT token.
+   * @returns           The opaque `mediaId` from the server.
+   */
+  async uploadRaw(file: File, authToken: string): Promise<string> {
+    const formData = new FormData();
+    formData.append('file', file, file.name);
+
+    const res = await fetch(`${this.baseUrl}/api/media/upload`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${authToken}` },
+      body: formData,
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Avatar upload failed: ${res.status}${text ? ` — ${text}` : ''}`);
+    }
+
+    const data = await res.json();
+    if (typeof data.mediaId !== 'string') throw new Error('Media service returned no mediaId');
+    return data.mediaId;
+  }
+
+  /**
+   * Download a raw (unencrypted) blob from the media service and return an
+   * object URL for use in an `<img>` element.
+   *
+   * The caller is responsible for calling `URL.revokeObjectURL` when done.
+   *
+   * @param mediaId    The opaque identifier returned by `uploadRaw`.
+   * @param authToken  JWT token.
+   */
+  async downloadRaw(mediaId: string, authToken: string): Promise<string> {
+    const res = await fetch(`${this.baseUrl}/api/media/${encodeURIComponent(mediaId)}`, {
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+
+    if (!res.ok) {
+      if (res.status === 410) throw new Error('MEDIA_PURGED_BY_RETENTION');
+      throw new Error(`Avatar download failed: ${res.status}`);
+    }
+
+    const blob = await res.blob();
+    return URL.createObjectURL(blob);
+  }
 }

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ShieldCheck, AlertTriangle } from 'lucide-svelte';
+  import { ShieldCheck, TriangleAlert } from 'lucide-svelte';
   import { ArrowDown } from 'lucide-svelte';
   import { tick, untrack } from 'svelte';
   import ChatHeader from './ChatHeader.svelte';
@@ -41,6 +41,7 @@
     onRemovePendingFile?: (index: number) => void;
     isUploading?: boolean;
     onStartCall?: () => void;
+    imageMediaId?: string | null;
   }
 
   let {
@@ -73,6 +74,7 @@
     onRemovePendingFile,
     isUploading = false,
     onStartCall,
+    imageMediaId = null,
   }: Props = $props();
 
   const INITIAL_RENDER_GROUPS = 180;
@@ -171,6 +173,7 @@
       isReady={conversation.isReady}
       {isChannel}
       isGroupConversation={(conversation.conversationType ?? 'group') === 'group'}
+      {imageMediaId}
       {onInviteMembers}
       {onBack}
       {onOpenConversations}
@@ -205,7 +208,7 @@
 
     {#if sendError}
       <div class="chat-floating-alert md:text-sm">
-        <AlertTriangle size={16} />
+        <TriangleAlert size={16} />
         <span>{sendError}</span>
       </div>
     {/if}

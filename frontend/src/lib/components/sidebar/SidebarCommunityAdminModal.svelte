@@ -1,6 +1,9 @@
 <script lang="ts">
-  import { Settings, Users, Trash2, ShieldCheck } from 'lucide-svelte';
+  import { Settings, Users, Trash2, ShieldCheck, Upload, Loader } from 'lucide-svelte';
   import Modal from '../shared/Modal.svelte';
+  import GroupAvatar from '../shared/GroupAvatar.svelte';
+  import { MediaService } from '$lib/media';
+  import { getToken } from '$lib/stores/auth';
 
   interface ChannelItem {
     id: string;
@@ -10,6 +13,8 @@
   interface ChannelWorkspace {
     id: string;
     name: string;
+    imageMediaId?: string | null;
+    workspaceDbId?: string;
     channels: ChannelItem[];
   }
 
@@ -18,17 +23,47 @@
     workspaces: ChannelWorkspace[];
     selectedWorkspaceId: string;
     onClose: () => void;
-    // Actions:
-    // This is a mockup for layout. Real actions like onLeaveWorkspace, onUpdateWorkspaceName, etc. would go here.
+    onUpdateWorkspaceImage?: (workspaceDbId: string, mediaId: string) => void;
   }
 
-  let { open, workspaces, selectedWorkspaceId, onClose }: Props = $props();
+  let { open, workspaces, selectedWorkspaceId, onClose, onUpdateWorkspaceImage }: Props = $props();
 
   let activeTab = $state<'overview' | 'members'>('overview');
 
   let selectedWorkspace = $derived(
     workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? workspaces[0]
   );
+
+  // Image upload state
+  let imageUploading = $state(false);
+  let imageUploadError = $state('');
+  const mediaService = new MediaService();
+
+  async function handleImageFileChange(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file || !selectedWorkspace?.id) return;
+
+    if (!file.type.startsWith('image/')) {
+      imageUploadError = 'Veuillez sélectionner une image.';
+      return;
+    }
+
+    imageUploading = true;
+    imageUploadError = '';
+    try {
+      const token = await getToken();
+      const mediaId = await mediaService.uploadRaw(file, token);
+      // Pass workspaceDbId if available, otherwise fall back to the slug id
+      const targetId = selectedWorkspace.workspaceDbId ?? selectedWorkspace.id;
+      onUpdateWorkspaceImage?.(targetId, mediaId);
+    } catch (e) {
+      imageUploadError = e instanceof Error ? e.message : 'Échec du téléversement.';
+    } finally {
+      imageUploading = false;
+      input.value = '';
+    }
+  }
 </script>
 
 <Modal {open} {onClose} title="Paramètres de la communauté" maxWidth="max-w-4xl">
@@ -81,12 +116,37 @@
           <h2 class="text-xl font-bold text-text-main">Vue d'ensemble</h2>
 
           <div class="flex items-center gap-6">
-            <div
-              class="w-24 h-24 rounded-full bg-amber-500 flex items-center justify-center text-white text-3xl font-bold shadow-md"
-            >
-              {selectedWorkspace ? selectedWorkspace.name.charAt(0).toUpperCase() : '?'}
+            <div class="relative flex-shrink-0">
+              <div class="w-24 h-24 rounded-full overflow-hidden shadow-md">
+                <GroupAvatar
+                  imageMediaId={selectedWorkspace?.imageMediaId}
+                  name={selectedWorkspace?.name ?? ''}
+                  variant="community"
+                  size="lg"
+                />
+              </div>
+              <label
+                class="absolute bottom-0 right-0 w-8 h-8 rounded-full bg-amber-500 text-white flex items-center justify-center cursor-pointer hover:bg-amber-600 transition-colors shadow"
+                title="Changer l'image"
+              >
+                {#if imageUploading}
+                  <Loader size={14} class="animate-spin" />
+                {:else}
+                  <Upload size={14} />
+                {/if}
+                <input
+                  type="file"
+                  accept="image/*"
+                  class="sr-only"
+                  disabled={imageUploading}
+                  onchange={handleImageFileChange}
+                />
+              </label>
             </div>
             <div class="flex-1 space-y-2">
+              {#if imageUploadError}
+                <p class="text-xs text-red-600">{imageUploadError}</p>
+              {/if}
               <label class="text-xs font-bold uppercase text-text-muted" for="server-name"
                 >Nom de la communauté</label
               >

@@ -5,11 +5,11 @@
     Smartphone,
     Trash2,
     RefreshCw,
-    AlertTriangle,
+    TriangleAlert,
     CheckCircle,
     Clock,
     Loader,
-    ShieldAlert
+    ShieldAlert,
   } from 'lucide-svelte';
   import Modal from '../shared/Modal.svelte';
   import type { IMlsService } from '$lib/services/IMlsService';
@@ -119,9 +119,7 @@
     const total = deviceMemberships.length;
     const active = deviceMemberships.filter((m) => m.status === 'welcome_received').length;
     const pending = deviceMemberships.filter((m) => m.status === 'pending').length;
-    const inProgress = deviceMemberships.filter(
-      (m) => m.status === 'welcome_sent'
-    ).length;
+    const inProgress = deviceMemberships.filter((m) => m.status === 'welcome_sent').length;
     return { total, active, pending, inProgress };
   }
 </script>
@@ -134,7 +132,9 @@
         <span class="text-sm font-semibold tracking-wide">Synchronisation des appareils...</span>
       </div>
     {:else if error}
-      <div class="flex items-start gap-3 p-4 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 mb-4 shadow-inner">
+      <div
+        class="flex items-start gap-3 p-4 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 mb-4 shadow-inner"
+      >
         <ShieldAlert size={20} class="shrink-0 mt-0.5" />
         <p class="text-sm font-medium leading-relaxed">{error}</p>
       </div>
@@ -142,7 +142,9 @@
       <div class="space-y-5 pb-2">
         <div class="flex items-center justify-between">
           <p class="text-[0.85rem] font-bold uppercase tracking-wider text-text-muted">
-            {devices.length} appareil{devices.length > 1 ? 's' : ''} connecté{devices.length > 1 ? 's' : ''}
+            {devices.length} appareil{devices.length > 1 ? 's' : ''} connecté{devices.length > 1
+              ? 's'
+              : ''}
           </p>
         </div>
 
@@ -156,13 +158,17 @@
             <div
               class="rounded-[1.5rem] border p-4 sm:p-5 space-y-4 transition-all duration-300 hover:shadow-md
                 {isCurrentDevice
-                  ? 'border-amber-500/30 bg-amber-500/5 shadow-inner'
-                  : 'border-black/5 dark:border-white/10 bg-white/40 dark:bg-black/20 backdrop-blur-md'}"
+                ? 'border-amber-500/30 bg-amber-500/5 shadow-inner'
+                : 'border-black/5 dark:border-white/10 bg-white/40 dark:bg-black/20 backdrop-blur-md'}"
             >
               <!-- En-tête de l'appareil -->
               <div class="flex items-start sm:items-center gap-4">
-                <div class="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-sm
-                  {isCurrentDevice ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400' : 'bg-white/80 dark:bg-white/10 text-text-muted'}">
+                <div
+                  class="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-sm
+                  {isCurrentDevice
+                    ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400'
+                    : 'bg-white/80 dark:bg-white/10 text-text-muted'}"
+                >
                   {#if isCurrentDevice}
                     <Monitor size={24} strokeWidth={2} />
                   {:else}
@@ -183,7 +189,10 @@
                       </span>
                     {/if}
                   </div>
-                  <div class="text-[0.7rem] font-mono text-text-muted opacity-80 truncate" title={device.deviceId}>
+                  <div
+                    class="text-[0.7rem] font-mono text-text-muted opacity-80 truncate"
+                    title={device.deviceId}
+                  >
                     ID: {device.deviceId.slice(0, 24)}…
                   </div>
                 </div>
@@ -203,25 +212,33 @@
               <!-- Statistiques d'adhésions (Pills) -->
               <div class="flex flex-wrap items-center gap-2 text-xs sm:pl-16">
                 {#if stats.active > 0}
-                  <span class="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1.5 rounded-xl font-medium">
+                  <span
+                    class="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1.5 rounded-xl font-medium"
+                  >
                     <CheckCircle size={14} />
                     {stats.active} actif{stats.active > 1 ? 's' : ''}
                   </span>
                 {/if}
                 {#if stats.pending > 0}
-                  <span class="flex items-center gap-1.5 text-orange-600 dark:text-orange-400 bg-orange-500/10 border border-orange-500/20 px-2.5 py-1.5 rounded-xl font-medium">
+                  <span
+                    class="flex items-center gap-1.5 text-orange-600 dark:text-orange-400 bg-orange-500/10 border border-orange-500/20 px-2.5 py-1.5 rounded-xl font-medium"
+                  >
                     <Clock size={14} />
                     {stats.pending} en attente
                   </span>
                 {/if}
                 {#if stats.inProgress > 0}
-                  <span class="flex items-center gap-1.5 text-blue-600 dark:text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2.5 py-1.5 rounded-xl font-medium">
+                  <span
+                    class="flex items-center gap-1.5 text-blue-600 dark:text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2.5 py-1.5 rounded-xl font-medium"
+                  >
                     <Loader size={14} class="animate-spin" />
                     {stats.inProgress} en cours
                   </span>
                 {/if}
                 {#if stats.total === 0}
-                  <span class="text-text-muted/70 italic px-1 font-medium">Aucun groupe synchronisé</span>
+                  <span class="text-text-muted/70 italic px-1 font-medium"
+                    >Aucun groupe synchronisé</span
+                  >
                 {/if}
               </div>
 
@@ -230,9 +247,14 @@
                 <div
                   class="flex items-start gap-3 p-3.5 rounded-xl bg-orange-500/10 border border-orange-500/20 sm:ml-16 mt-2"
                 >
-                  <AlertTriangle size={18} class="text-orange-500 mt-0.5 shrink-0" />
-                  <p class="text-xs text-orange-700 dark:text-orange-300 leading-relaxed font-medium">
-                    <span class="font-bold">{staleGroups.length} groupe{staleGroups.length > 1 ? 's' : ''}</span> en attente de synchronisation. L'appareil se mettra à jour automatiquement lors de sa prochaine connexion au réseau.
+                  <TriangleAlert size={18} class="text-orange-500 mt-0.5 shrink-0" />
+                  <p
+                    class="text-xs text-orange-700 dark:text-orange-300 leading-relaxed font-medium"
+                  >
+                    <span class="font-bold"
+                      >{staleGroups.length} groupe{staleGroups.length > 1 ? 's' : ''}</span
+                    > en attente de synchronisation. L'appareil se mettra à jour automatiquement lors
+                    de sa prochaine connexion au réseau.
                   </p>
                 </div>
               {/if}
@@ -241,7 +263,9 @@
         </div>
 
         {#if devices.length === 0}
-          <div class="text-center py-10 text-text-muted text-sm font-medium border border-dashed border-black/10 dark:border-white/10 rounded-[1.5rem] bg-black/5 dark:bg-white/5">
+          <div
+            class="text-center py-10 text-text-muted text-sm font-medium border border-dashed border-black/10 dark:border-white/10 rounded-[1.5rem] bg-black/5 dark:bg-white/5"
+          >
             Aucun appareil enregistré
           </div>
         {/if}
