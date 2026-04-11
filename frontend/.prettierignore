@@ -5,6 +5,7 @@ dist
 .tauri
 coverage
 target
+**/.gradle
 src/lib/proto
 src/lib/wasm
 *.tsbuildinfo
