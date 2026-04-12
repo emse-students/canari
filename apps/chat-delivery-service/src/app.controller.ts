@@ -1710,6 +1710,66 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     return { status: 'deleted', affected: result.affected ?? 0 };
   }
 
+  /**
+   * Completely delete a device from the user's account.
+   * Removes: all group memberships, KeyPackages, OneTimeKeyPackages, and push tokens.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Delete('mls-api/devices/:userId/:deviceId')
+  async deleteDevice(
+    @Param('userId') userId: string,
+    @Param('deviceId') deviceId: string,
+  ) {
+    const safeUserId = sanitizeQueryValue(userId, 'userId');
+    const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
+
+    // 1. Remove from ALL groups and clean Redis
+    const memberships = await this.deviceGroupRepo.find({
+      where: { userId: safeUserId, deviceId: safeDeviceId },
+      select: ['groupId'],
+    });
+    const groupIds = [...new Set(memberships.map((m) => m.groupId))];
+
+    await this.deviceGroupRepo.delete({
+      userId: safeUserId,
+      deviceId: safeDeviceId,
+    });
+
+    const memberKey = `${safeUserId}:${safeDeviceId}`;
+    for (const gid of groupIds) {
+      await this.redis.srem(`group:members:${gid}`, memberKey);
+    }
+
+    // 2. Delete all KeyPackages for this device
+    const kpResult = await this.keyPackageRepo.delete({
+      userId: safeUserId,
+      deviceId: safeDeviceId,
+    });
+
+    // 3. Delete all OneTimeKeyPackages for this device
+    const otkpResult = await this.oneTimeKeyPackageRepo.delete({
+      userId: safeUserId,
+      deviceId: safeDeviceId,
+    });
+
+    // 4. Delete push token if exists
+    await this.pushTokenRepo.delete({
+      userId: safeUserId,
+      deviceId: safeDeviceId,
+    });
+
+    this.logger.log(
+      `[DELETE_DEVICE] user=${safeUserId} device=${safeDeviceId} groupsCleaned=${groupIds.length} keyPackagesDeleted=${kpResult.affected ?? 0} oneTimeKeyPackagesDeleted=${otkpResult.affected ?? 0}`,
+    );
+
+    return {
+      status: 'device_deleted',
+      groupsCleaned: groupIds.length,
+      keyPackagesDeleted: kpResult.affected ?? 0,
+      oneTimeKeyPackagesDeleted: otkpResult.affected ?? 0,
+    };
+  }
+
   @UseGuards(HeaderAuthGuard)
   @Get('mls-api/devices/:userId/:deviceId/prekeys/count')
   async getPrekeyCount(

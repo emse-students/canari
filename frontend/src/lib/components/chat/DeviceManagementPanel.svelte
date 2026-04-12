@@ -85,16 +85,16 @@
 
   async function handleRemoveDevice(deviceId: string) {
     if (deviceId === myDeviceId) return;
-    console.log(`[DevicePanel] Removing all memberships for device ${deviceId.slice(0, 8)}…`);
+    console.log(`[DevicePanel] Deleting device ${deviceId.slice(0, 8)}…`);
     try {
-      const result = await mlsService.deleteAllDeviceMemberships(userId, deviceId);
+      const result = await mlsService.deleteDevice(userId, deviceId);
       console.log(
-        `[DevicePanel] Deleted ${result.affected} membership(s) for device ${deviceId.slice(0, 8)}…`
+        `[DevicePanel] Deleted device ${deviceId.slice(0, 8)}… (groups cleaned: ${result.groupsCleaned}, keyPackages: ${result.keyPackagesDeleted})`
       );
       await loadDeviceData();
     } catch (e) {
-      console.error('[DevicePanel] Failed to remove device memberships', e);
-      error = 'Impossible de supprimer (révoquer) cet appareil.';
+      console.error('[DevicePanel] Failed to delete device', e);
+      error = 'Impossible de supprimer cet appareil.';
     }
   }
 
@@ -201,8 +201,8 @@
                   <button
                     onclick={() => handleRemoveDevice(device.deviceId)}
                     class="p-2.5 rounded-xl bg-black/5 dark:bg-white/5 hover:bg-red-500/15 dark:hover:bg-red-500/20 text-text-muted hover:text-red-600 dark:hover:text-red-400 transition-all outline-none focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95 shrink-0"
-                    title="Révoquer cet appareil (Supprimer ses adhésions)"
-                    aria-label="Révoquer l'appareil"
+                    title="Supprimer cet appareil de votre compte"
+                    aria-label="Supprimer l'appareil"
                   >
                     <Trash2 size={18} strokeWidth={2.5} />
                   </button>

@@ -133,6 +133,17 @@ export interface IMlsService {
     deviceId: string
   ): Promise<{ status: string; affected: number }>;
 
+  /** Completely delete a device from the user's account (groups + KeyPackages + push token) */
+  deleteDevice(
+    userId: string,
+    deviceId: string
+  ): Promise<{
+    status: string;
+    groupsCleaned: number;
+    keyPackagesDeleted: number;
+    oneTimeKeyPackagesDeleted: number;
+  }>;
+
   // Callbacks
   onChannelEvent?: (event: { type: string; data: any }) => void;
   onMessage(

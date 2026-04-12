@@ -1151,4 +1151,37 @@ export class TauriMlsService implements IMlsService {
       return { status: 'error', affected: 0 };
     }
   }
+
+  async deleteDevice(
+    userId: string,
+    deviceId: string
+  ): Promise<{
+    status: string;
+    groupsCleaned: number;
+    keyPackagesDeleted: number;
+    oneTimeKeyPackagesDeleted: number;
+  }> {
+    try {
+      const res = await fetch(
+        `${this.historyUrl}/api/mls-api/devices/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}`,
+        { method: 'DELETE' }
+      );
+      if (!res.ok)
+        return {
+          status: 'error',
+          groupsCleaned: 0,
+          keyPackagesDeleted: 0,
+          oneTimeKeyPackagesDeleted: 0,
+        };
+      return await res.json();
+    } catch (e) {
+      console.error('Failed to delete device', e);
+      return {
+        status: 'error',
+        groupsCleaned: 0,
+        keyPackagesDeleted: 0,
+        oneTimeKeyPackagesDeleted: 0,
+      };
+    }
+  }
 }
