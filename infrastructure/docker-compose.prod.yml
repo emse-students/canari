@@ -222,9 +222,10 @@ services:
       DB_DATABASE: auth_db
       CHANNELS_ENCRYPTION_SECRET: ${CHANNELS_ENCRYPTION_SECRET:-dev-channel-secret-change-me}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
-      STRIPE_SUCCESS_URL: ${FRONTEND_URL:-http://localhost:5173}/posts?registration=success
-      STRIPE_CANCEL_URL: ${FRONTEND_URL:-http://localhost:5173}/posts?registration=cancel
-      USER_SERVICE_URL: ${FRONTEND_URL:-http://core-service:3012}
+      STRIPE_SUCCESS_URL: ${FRONTEND_URL:-https://canari-emse.fr}/posts?registration=success
+      STRIPE_CANCEL_URL: ${FRONTEND_URL:-https://canari-emse.fr}/posts?registration=cancel
+      USER_SERVICE_URL: http://core-service:3012
+      PAYMENT_SERVICE_URL: http://core-service:3012
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
     depends_on:
       postgres:
