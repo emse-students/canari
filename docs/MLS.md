@@ -2,9 +2,10 @@
 
 ## 1. Introduction
 
-Canari implémente le **Messaging Layer Security (MLS)** défini par la RFC 9420. MLS garantit la *confidentialité future* (forward secrecy) et la *sécurité post-compromission* (post-compromise security) pour les conversations de groupe. Chaque appareil est un membre MLS indépendant.
+Canari implémente le **Messaging Layer Security (MLS)** défini par la RFC 9420. MLS garantit la _confidentialité future_ (forward secrecy) et la _sécurité post-compromission_ (post-compromise security) pour les conversations de groupe. Chaque appareil est un membre MLS indépendant.
 
 La ciphersuite utilisée est : **MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519**
+
 - Échange de clé : DHKEM(X25519)
 - Chiffrement de message : AES-128-GCM
 - Hash : SHA-256
@@ -48,6 +49,7 @@ struct PersistedState {
 ```
 
 **Chiffrement de l'état** (`security.rs`) :
+
 - Dérivation de clé : **Argon2id** (salt aléatoire OsRng 16 bytes) → clé 32 bytes
 - Chiffrement du blob : **ChaCha20-Poly1305** (nonce aléatoire 12 bytes, préfixé au ciphertext)
 - Input utilisateur : PIN numérique (dérivé en clé via Argon2id)
@@ -59,60 +61,71 @@ Chaque device a une identité MLS unique formée de `"userId:deviceId"` encodée
 ### 3.3 KeyPackages
 
 Un **KeyPackage** est un ensemble signé contenant :
+
 - La clé publique HPKE du device (X25519)
 - Les extensions MLS (durée de vie, capabilities)
 - La signature Ed25519 de l'identité
 
 Canari maintient :
+
 - **1 KeyPackage standard** par device (table `key_packages`, écrasé à chaque enregistrement)
 - **Pool de one-time KeyPackages** (table `one_time_key_packages`) — utilisés pour les Welcomes afin d'éviter les collisions d'epoch
 
 ### 3.4 Cycle de vie d'un groupe MLS
 
 **Création** :
+
 ```
 mls.create_group(groupId)           → état epoch 0
 mls.generate_key_package()          → KeyPackage à publier
 ```
 
 **Ajout de membres** :
+
 ```
 mls.add_members_bulk(groupId, [keyPackageBytes...])
   → (commit_bytes, welcome_bytes, ratchet_tree_bytes)
 ```
+
 Un seul `add_members_bulk` évite les erreurs d'epoch liées aux commits multiples simultanés.
 
 **Réception d'un Welcome** :
+
 ```
 mls.process_welcome(welcome_bytes, ratchet_tree_bytes?)
   → intègre le groupe, état MLS synchronisé
 ```
 
 **Envoi d'un message** :
+
 ```
 mls.send_message(groupId, plaintext_bytes)
   → ciphertext MLS (chiffré pour l'epoch courant du groupe)
 ```
 
 **Réception d'un message** :
+
 ```
 mls.process_incoming_message(groupId, ciphertext_bytes)
   → Some(plaintext_bytes) | None (commit de gestion)
 ```
 
 **Retrait d'un membre** :
+
 ```
 mls.remove_member(groupId, ["userId:deviceId", ...])
   → commit MLS → epoch +1 → anciens membres ne peuvent plus déchiffrer
 ```
 
 **Oubli d'un groupe** :
+
 ```
 mls.forget_group(groupId, minEpoch)
   → supprime l'état local, refuse les Welcomes périmés (< minEpoch)
 ```
 
 **Export de secret** :
+
 ```
 mls.export_secret(groupId, label, context, keyLen)
   → secret dérivé de l'état du groupe (usage : sync multi-device)
@@ -280,6 +293,7 @@ Le bootstrap se déclenche à chaque connexion de l'utilisateur, qu'il s'agisse 
 Quand un utilisateur ajoute un nouvel appareil, les conversations existantes ne sont **pas** automatiquement disponibles — MLS exige que l'initiateur du groupe envoie un Welcome au nouveau device.
 
 Flux :
+
 1. Nouvel appareil → `POST /api/mls-api/register-device` → KeyPackage publié
 2. Serveur notifie les membres existants via Redis (`group.member.device_added`)
 3. Un des appareils existants reçoit un `welcome_request` WS :
@@ -416,36 +430,36 @@ Le chiffrement des chunks utilise la clé dérivée de l'échange ECDH, en AES-2
 
 ## 10. API chat-delivery-service (endpoints MLS)
 
-| Méthode | Route | Description |
-|---|---|---|
-| `POST` | `/api/mls-api/register-device` | Enregistre un device (KeyPackage + push token) |
-| `POST` | `/api/mls-api/key-package` | Met à jour le KeyPackage standard |
-| `GET` | `/api/mls-api/:userId/devices` | Liste les KeyPackages disponibles d'un utilisateur |
-| `POST` | `/api/mls-api/groups` | Crée un groupe MLS (`{ groupId, createdBy, members[], isGroup }`) |
-| `GET` | `/api/mls-api/groups/:groupId/members` | Membres d'un groupe |
-| `POST` | `/api/mls-api/welcome` | Stocke un Welcome offline pour un device |
-| `GET` | `/api/mls-api/welcome` | Récupère les Welcomes en attente pour le device courant |
-| `POST` | `/api/mls-api/send` | Envoie un message MLS (publie en Redis + push notif offline) |
-| `GET` | `/api/mls-api/messages/:groupId` | Messages en attente offline |
-| `POST` | `/api/mls-api/register-member` | Enregistre un membre dans un groupe |
-| `GET` | `/api/history/:groupId` | Lit le Redis Stream `history:{groupId}` |
-| `POST` | `/api/mls-api/link-preview` | Génère une prévisualisation de lien (OG tags) |
-| `POST` | `/api/mls-api/sync/session/start` | Démarre une session de sync |
-| `POST` | `/api/mls-api/sync/session/join` | Rejoint une session de sync |
-| `PUT` | `/api/mls-api/sync/session/:id/upload` | Upload de chunks de sync |
-| `GET` | `/api/mls-api/sync/session/:id/download` | Download de chunks de sync |
-| `POST` | `/api/mls-api/pin-verifier/check` | Vérifie un PIN (test de déchiffrement état MLS) |
+| Méthode | Route                                    | Description                                                       |
+| ------- | ---------------------------------------- | ----------------------------------------------------------------- |
+| `POST`  | `/api/mls-api/register-device`           | Enregistre un device (KeyPackage + push token)                    |
+| `POST`  | `/api/mls-api/key-package`               | Met à jour le KeyPackage standard                                 |
+| `GET`   | `/api/mls-api/:userId/devices`           | Liste les KeyPackages disponibles d'un utilisateur                |
+| `POST`  | `/api/mls-api/groups`                    | Crée un groupe MLS (`{ groupId, createdBy, members[], isGroup }`) |
+| `GET`   | `/api/mls-api/groups/:groupId/members`   | Membres d'un groupe                                               |
+| `POST`  | `/api/mls-api/welcome`                   | Stocke un Welcome offline pour un device                          |
+| `GET`   | `/api/mls-api/welcome`                   | Récupère les Welcomes en attente pour le device courant           |
+| `POST`  | `/api/mls-api/send`                      | Envoie un message MLS (publie en Redis + push notif offline)      |
+| `GET`   | `/api/mls-api/messages/:groupId`         | Messages en attente offline                                       |
+| `POST`  | `/api/mls-api/register-member`           | Enregistre un membre dans un groupe                               |
+| `GET`   | `/api/history/:groupId`                  | Lit le Redis Stream `history:{groupId}`                           |
+| `POST`  | `/api/mls-api/link-preview`              | Génère une prévisualisation de lien (OG tags)                     |
+| `POST`  | `/api/mls-api/sync/session/start`        | Démarre une session de sync                                       |
+| `POST`  | `/api/mls-api/sync/session/join`         | Rejoint une session de sync                                       |
+| `PUT`   | `/api/mls-api/sync/session/:id/upload`   | Upload de chunks de sync                                          |
+| `GET`   | `/api/mls-api/sync/session/:id/download` | Download de chunks de sync                                        |
+| `POST`  | `/api/mls-api/pin-verifier/check`        | Vérifie un PIN (test de déchiffrement état MLS)                   |
 
 ---
 
 ## 11. Garanties de sécurité
 
-| Propriété | Mécanisme |
-|---|---|
-| Confidentialité des messages | AES-128-GCM, chiffrement MLS par epoch |
-| Forward secrecy | Rotation de clé à chaque commit MLS (epoch +1) |
-| Post-compromise security | Suppression d'un membre → nouvel epoch inaccessible aux exclus |
-| Authenticité des messages | Signature Ed25519 de chaque KeyPackage |
-| Confidentialité de l'état local | ChaCha20-Poly1305 + Argon2id (PIN utilisateur) |
-| Confidentialité des médias | AES-256-GCM côté client, clé dans le ciphertext MLS |
-| Transport | HTTPS (Cloudflare TLS) + JWT HS256 pour l'API |
+| Propriété                       | Mécanisme                                                      |
+| ------------------------------- | -------------------------------------------------------------- |
+| Confidentialité des messages    | AES-128-GCM, chiffrement MLS par epoch                         |
+| Forward secrecy                 | Rotation de clé à chaque commit MLS (epoch +1)                 |
+| Post-compromise security        | Suppression d'un membre → nouvel epoch inaccessible aux exclus |
+| Authenticité des messages       | Signature Ed25519 de chaque KeyPackage                         |
+| Confidentialité de l'état local | ChaCha20-Poly1305 + Argon2id (PIN utilisateur)                 |
+| Confidentialité des médias      | AES-256-GCM côté client, clé dans le ciphertext MLS            |
+| Transport                       | HTTPS (Cloudflare TLS) + JWT HS256 pour l'API                  |
