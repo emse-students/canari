@@ -38,14 +38,14 @@
     void refreshPosts();
   }
 
-  function setupWebSocket(uid: string, token: string, devId: string) {
+  function setupWebSocket(devId: string) {
     if (ws) return;
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = import.meta.env.VITE_GATEWAY_URL
       ? new URL(import.meta.env.VITE_GATEWAY_URL).host
       : window.location.host;
-    const wsUrl = `${protocol}//${host}/api/ws?token=${token}&device_id=${devId}`;
+    const wsUrl = `${protocol}//${host}/api/ws?device_id=${encodeURIComponent(devId)}`;
 
     console.log('[Posts] Connecting to WS:', wsUrl);
     ws = new WebSocket(wsUrl);
@@ -89,7 +89,7 @@
       try {
         const token = await getToken();
         authToken = token;
-        setupWebSocket(savedUser, token, deviceId);
+        setupWebSocket(deviceId);
       } catch (e) {
         console.error('[Posts] Failed to get token', e);
       }

@@ -10,6 +10,6 @@ pub struct Claims {
 
 #[derive(Deserialize)]
 pub struct AuthParams {
-    pub token: String,
+    pub token: Option<String>,
     pub device_id: Option<String>,
 }

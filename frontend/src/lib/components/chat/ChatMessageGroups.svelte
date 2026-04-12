@@ -17,6 +17,7 @@
     visibleMessageGroups: MessageGroup[];
     hiddenGroupCount: number;
     loadOlderGroups: () => void;
+    searchQuery?: string;
     messageReactions?: Record<string, MessageReaction[]> | Map<string, MessageReaction[]>;
     onReply?: (message: ChatMessage) => void;
     onNavigateToMessage?: (messageId: string) => void;
@@ -31,6 +32,7 @@
     visibleMessageGroups,
     hiddenGroupCount,
     loadOlderGroups,
+    searchQuery = '',
     messageReactions,
     onReply,
     onNavigateToMessage,
@@ -92,6 +94,7 @@
     {#if group.type === 'date_separator'}
       <div class="flex justify-center my-5">
         <div
+          data-chat-date-separator={group.date}
           class="px-4 py-1.5 bg-white/50 dark:bg-black/30 rounded-full text-[0.65rem] text-text-main font-bold uppercase tracking-widest border border-black/5 dark:border-white/10 backdrop-blur-md shadow-sm"
         >
           {group.date}
@@ -206,6 +209,7 @@
               {onDelete}
               {onEdit}
               shouldAnimate={msg.timestamp.getTime() > switchTime}
+              searchTerm={searchQuery}
               {authToken}
             />
           </div>

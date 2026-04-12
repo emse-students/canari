@@ -16,6 +16,7 @@
     messageText: string;
     onMessageChange: (value: string) => void;
     onSend: () => void;
+    onFocusChange?: (focused: boolean) => void;
     replyingTo?: ReplyTo | null;
     onCancelReply?: () => void;
     onFilesSelected?: (files: File[]) => void;
@@ -28,6 +29,7 @@
     messageText,
     onMessageChange,
     onSend,
+    onFocusChange,
     replyingTo,
     onCancelReply,
     onFilesSelected,
@@ -395,6 +397,8 @@
         bind:this={textareaEl}
         value={messageText}
         oninput={(e) => onMessageChange(e.currentTarget.value)}
+        onfocus={() => onFocusChange?.(true)}
+        onblur={() => onFocusChange?.(false)}
         onkeydown={handleKeydown}
         onpaste={handlePaste}
         placeholder="Écrivez un message..."

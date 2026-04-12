@@ -1,12 +1,13 @@
 <script lang="ts">
   import { ShieldCheck, TriangleAlert } from 'lucide-svelte';
-  import { ArrowDown } from 'lucide-svelte';
+  import { ArrowDown, Search, ChevronUp, ChevronDown, X } from 'lucide-svelte';
   import { tick, untrack } from 'svelte';
   import ChatHeader from './ChatHeader.svelte';
   import ChatMessageGroups from './ChatMessageGroups.svelte';
   import ChatComposer from './ChatComposer.svelte';
   import EmptyState from '../shared/EmptyState.svelte';
   import { groupMessages } from '$lib/utils/messageGrouping';
+  import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import type { ChatMessage, MessageReaction, Conversation } from '$lib/types';
 
   interface Props {
@@ -82,10 +83,18 @@
 
   let chatContainer = $state<HTMLDivElement>();
   let isNearBottom = $state(true);
+  let isMobile = $state(false);
+  let composerFocused = $state(false);
   let lastConversationKey = $state('');
   let lastMessageCount = $state(0);
   let renderedGroupCount = $state(INITIAL_RENDER_GROUPS);
   let switchTime = $state(Date.now());
+  let stickyDateLabel = $state('');
+  let showStickyDate = $state(false);
+  let stickyDateTimer: ReturnType<typeof setTimeout> | null = null;
+  let searchQuery = $state('');
+  let searchMatches = $state<string[]>([]);
+  let activeSearchIndex = $state(-1);
 
   function scrollToBottom(smooth = true) {
     if (!chatContainer) return;
@@ -100,6 +109,41 @@
     const distanceFromBottom =
       chatContainer.scrollHeight - (chatContainer.scrollTop + chatContainer.clientHeight);
     isNearBottom = distanceFromBottom < 120;
+    updateStickyDateIndicator();
+  }
+
+  function clearStickyDateTimer() {
+    if (!stickyDateTimer) return;
+    clearTimeout(stickyDateTimer);
+    stickyDateTimer = null;
+  }
+
+  function updateStickyDateIndicator() {
+    if (!chatContainer) return;
+    const dates = Array.from(
+      chatContainer.querySelectorAll<HTMLElement>('[data-chat-date-separator]')
+    );
+    if (dates.length === 0) return;
+
+    const containerTop = chatContainer.getBoundingClientRect().top;
+    let currentDate = dates[0].dataset.chatDateSeparator ?? '';
+
+    for (const item of dates) {
+      const y = item.getBoundingClientRect().top - containerTop;
+      if (y <= 40) {
+        currentDate = item.dataset.chatDateSeparator ?? currentDate;
+      } else {
+        break;
+      }
+    }
+
+    if (!currentDate) return;
+    stickyDateLabel = currentDate;
+    showStickyDate = true;
+    clearStickyDateTimer();
+    stickyDateTimer = setTimeout(() => {
+      showStickyDate = false;
+    }, 1400);
   }
 
   // Group messages by date and time gaps
@@ -129,7 +173,40 @@
     const targetElement = document.getElementById(`msg-${messageId}`);
     if (targetElement) {
       targetElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      targetElement.classList.add('chat-message-jump-highlight');
+      setTimeout(() => {
+        targetElement.classList.remove('chat-message-jump-highlight');
+      }, 1800);
     }
+  }
+
+  function searchableText(message: ChatMessage): string {
+    try {
+      return getPreviewText(parseEnvelope(message.content));
+    } catch {
+      return message.content;
+    }
+  }
+
+  function refreshSearchMatches() {
+    const q = searchQuery.trim().toLowerCase();
+    if (!conversation || q.length < 2) {
+      searchMatches = [];
+      activeSearchIndex = -1;
+      return;
+    }
+    const hits = conversation.messages
+      .filter((m) => searchableText(m).toLowerCase().includes(q))
+      .map((m) => m.id);
+    searchMatches = hits;
+    activeSearchIndex = hits.length > 0 ? 0 : -1;
+  }
+
+  async function jumpSearch(delta: 1 | -1) {
+    if (searchMatches.length === 0) return;
+    const next = (activeSearchIndex + delta + searchMatches.length) % searchMatches.length;
+    activeSearchIndex = next;
+    await navigateToMessage(searchMatches[next]);
   }
 
   $effect(() => {
@@ -159,6 +236,27 @@
       lastMessageCount = messageCount;
     });
   });
+
+  $effect(() => {
+    if (typeof window === 'undefined') return;
+    const mq = window.matchMedia('(max-width: 768px), (pointer: coarse)');
+    const apply = () => {
+      isMobile = mq.matches;
+    };
+    apply();
+    mq.addEventListener('change', apply);
+    return () => mq.removeEventListener('change', apply);
+  });
+
+  $effect(() => {
+    refreshSearchMatches();
+  });
+
+  $effect(() => {
+    return () => {
+      clearStickyDateTimer();
+    };
+  });
 </script>
 
 <section
@@ -167,23 +265,83 @@
     : ''}"
 >
   {#if conversation}
-    <ChatHeader
-      contactName={conversation.contactName}
-      displayName={conversation.name}
-      isReady={conversation.isReady}
-      {isChannel}
-      isGroupConversation={(conversation.conversationType ?? 'group') === 'group'}
-      {imageMediaId}
-      {onInviteMembers}
-      {onBack}
-      {onOpenConversations}
-      {onOpenSettings}
-      {groupMembers}
-      {onGroupRename}
-      {onGroupDelete}
-      {onGroupRemoveMember}
-      {onStartCall}
-    />
+    <div
+      class="transition-all duration-200 {isMobile && composerFocused
+        ? 'max-h-0 opacity-0 pointer-events-none overflow-hidden border-0'
+        : 'max-h-40 opacity-100'}"
+    >
+      <ChatHeader
+        contactName={conversation.contactName}
+        displayName={conversation.name}
+        isReady={conversation.isReady}
+        {isChannel}
+        isGroupConversation={(conversation.conversationType ?? 'group') === 'group'}
+        {imageMediaId}
+        {onInviteMembers}
+        {onBack}
+        {onOpenConversations}
+        {onOpenSettings}
+        {groupMembers}
+        {onGroupRename}
+        {onGroupDelete}
+        {onGroupRemoveMember}
+        {onStartCall}
+      />
+    </div>
+
+    <div class="px-3 md:px-6 pt-2 pb-1">
+      <div class="chat-search-panel">
+        <div class="chat-search-input-wrap">
+          <Search size={15} class="opacity-60" />
+          <input
+            type="text"
+            value={searchQuery}
+            oninput={(e) => (searchQuery = e.currentTarget.value)}
+            placeholder="Rechercher dans la conversation"
+            class="chat-search-input"
+          />
+          {#if searchQuery}
+            <button
+              type="button"
+              onclick={() => {
+                searchQuery = '';
+                searchMatches = [];
+                activeSearchIndex = -1;
+              }}
+              class="chat-search-action"
+              aria-label="Effacer la recherche"
+            >
+              <X size={15} />
+            </button>
+          {/if}
+        </div>
+        <div class="chat-search-nav">
+          <span class="chat-search-count">
+            {searchMatches.length > 0 && activeSearchIndex >= 0
+              ? `${activeSearchIndex + 1}/${searchMatches.length}`
+              : '0/0'}
+          </span>
+          <button
+            type="button"
+            onclick={() => void jumpSearch(-1)}
+            class="chat-search-action"
+            aria-label="Occurrence précédente"
+            disabled={searchMatches.length === 0}
+          >
+            <ChevronUp size={16} />
+          </button>
+          <button
+            type="button"
+            onclick={() => void jumpSearch(1)}
+            class="chat-search-action"
+            aria-label="Occurrence suivante"
+            disabled={searchMatches.length === 0}
+          >
+            <ChevronDown size={16} />
+          </button>
+        </div>
+      </div>
+    </div>
 
     <!-- Messages -->
     <div
@@ -196,6 +354,7 @@
         {hiddenGroupCount}
         {loadOlderGroups}
         {messageReactions}
+        searchQuery={searchQuery.trim()}
         {onReply}
         onNavigateToMessage={navigateToMessage}
         {onReact}
@@ -227,10 +386,15 @@
       </button>
     {/if}
 
+    {#if showStickyDate && stickyDateLabel}
+      <div class="chat-sticky-date-indicator">{stickyDateLabel}</div>
+    {/if}
+
     <div class="relative z-20">
       <ChatComposer
         {messageText}
         {onMessageChange}
+        onFocusChange={(focused) => (composerFocused = focused)}
         {onSend}
         {replyingTo}
         {onCancelReply}

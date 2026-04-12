@@ -3,7 +3,7 @@ use axum::{
         Query, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Json, Response},
 };
 use futures::{sink::SinkExt, stream::StreamExt};
@@ -15,6 +15,19 @@ use tokio::sync::mpsc;
 use crate::models::{AuthParams, Claims};
 use crate::state::AppState;
 use crate::ws_dispatch::WsFrame;
+
+fn extract_cookie_value(headers: &HeaderMap, key: &str) -> Option<String> {
+    let cookie_header = headers.get("cookie")?.to_str().ok()?;
+    for part in cookie_header.split(';') {
+        let trimmed = part.trim();
+        if let Some((name, value)) = trimmed.split_once('=') {
+            if name.trim() == key {
+                return Some(value.trim().to_string());
+            }
+        }
+    }
+    None
+}
 
 // ── ConnectionGuard — cleanup on drop ────────────────────────────────────
 
@@ -58,12 +71,18 @@ impl Drop for ConnectionGuard {
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     Query(params): Query<AuthParams>,
+    headers: HeaderMap,
     State(state): State<Arc<AppState>>,
 ) -> Response {
+    let token = extract_cookie_value(&headers, "canari_ws_token").or(params.token);
     let validation = Validation::new(Algorithm::HS256);
     let key = DecodingKey::from_secret(state.jwt_secret.as_bytes());
 
-    match decode::<Claims>(&params.token, &key, &validation) {
+    let Some(token) = token else {
+        return (StatusCode::UNAUTHORIZED, "Missing auth token").into_response();
+    };
+
+    match decode::<Claims>(&token, &key, &validation) {
         Ok(token_data) => {
             let device_id = params.device_id.unwrap_or_else(|| "unknown".to_string());
             ws.on_upgrade(move |socket| {

@@ -124,12 +124,10 @@ export class TauriMlsService implements IMlsService {
       this.ws = null;
     }
 
-    const token = await getToken();
-
     // Reuse direct WebSocket logic for now (Tauri allows localhost by default)
     return new Promise((resolve, reject) => {
       this.ws = new WebSocket(
-        `${this.baseUrl.replace('http', 'ws')}/api/ws?token=${token}&device_id=${this.deviceId}`
+        `${this.baseUrl.replace('http', 'ws')}/api/ws?device_id=${encodeURIComponent(this.deviceId)}`
       );
       let resolved = false;
 

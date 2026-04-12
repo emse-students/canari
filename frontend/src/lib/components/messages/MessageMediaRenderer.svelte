@@ -1,5 +1,12 @@
 <script lang="ts">
-  import { FileText, Download, AlertCircle, Image as ImageIcon, Video as VideoIcon, Mic } from 'lucide-svelte';
+  import {
+    FileText,
+    Download,
+    AlertCircle,
+    Image as ImageIcon,
+    Video as VideoIcon,
+    Mic,
+  } from 'lucide-svelte';
   import VoiceMessagePlayer from './VoiceMessagePlayer.svelte';
   import type { MediaRef } from '$lib/media';
 
@@ -25,6 +32,18 @@
     onNavigateLink: _onNavigateLink,
   }: Props = $props();
 
+  let showLightbox = $state(false);
+
+  function openLightbox(e: MouseEvent) {
+    e.stopPropagation();
+    if (!blobUrl) return;
+    showLightbox = true;
+  }
+
+  function closeLightbox() {
+    showLightbox = false;
+  }
+
   // Utilitaires dynamiques pour s'adapter au fond du message
   // isOwn = fond ambré (texte sombre), !isOwn = fond glassmorphism clair/sombre (texte adapté au thème)
   const glassBoxClass = $derived(
@@ -33,11 +52,7 @@
       : 'bg-black/5 dark:bg-white/10 border-black/5 dark:border-white/10'
   );
 
-  const textMutedClass = $derived(
-    isOwn
-      ? 'text-[#151B2C]/70'
-      : 'text-text-muted'
-  );
+  const textMutedClass = $derived(isOwn ? 'text-[#151B2C]/70' : 'text-text-muted');
 
   function formatFileSize(bytes: number): string {
     if (bytes < 1024) return `${bytes} o`;
@@ -70,10 +85,7 @@
         <div class="relative inline-block group/media">
           <button
             type="button"
-            onclick={(e) => {
-              e.stopPropagation();
-              openBlob(blobUrl!);
-            }}
+            onclick={openLightbox}
             aria-label="Ouvrir l'image en plein écran"
             class="block overflow-hidden rounded-[1.1rem] bg-black/5 dark:bg-white/5"
           >
@@ -98,22 +110,28 @@
           </button>
         </div>
       {:else if loadError}
-        <div class="w-full max-wxs sm:w-64 aspect-[4/3] rounded-[1.1rem] border border-dashed {glassBoxClass} flex flex-col items-center justify-center gap-3 p-4 text-center">
+        <div
+          class="w-full max-wxs sm:w-64 aspect-[4/3] rounded-[1.1rem] border border-dashed {glassBoxClass} flex flex-col items-center justify-center gap-3 p-4 text-center"
+        >
           <AlertCircle size={28} class="opacity-50" />
           <span class="text-xs font-medium leading-snug {textMutedClass}">
             {mediaPurgedByRetention
               ? 'Média expiré (rétention 30 jours).'
-              : 'Impossible de charger l\'image.'}
+              : "Impossible de charger l'image."}
           </span>
         </div>
       {:else}
         <!-- Skeleton Image -->
-        <div class="w-full max-w-[14rem] sm:w-56 aspect-[4/3] rounded-[1.1rem] {isOwn ? 'bg-black/10' : 'bg-black/5 dark:bg-white/10'} animate-pulse flex items-center justify-center">
+        <div
+          class="w-full max-w-[14rem] sm:w-56 aspect-[4/3] rounded-[1.1rem] {isOwn
+            ? 'bg-black/10'
+            : 'bg-black/5 dark:bg-white/10'} animate-pulse flex items-center justify-center"
+        >
           <ImageIcon size={32} class="opacity-20" />
         </div>
       {/if}
 
-    <!-- ================= VIDEO ================= -->
+      <!-- ================= VIDEO ================= -->
     {:else if mediaRef.type === 'video'}
       {#if blobUrl}
         <div class="relative inline-block group/media">
@@ -125,6 +143,16 @@
             onclick={(e) => e.stopPropagation()}
             class="rounded-[1.1rem] max-h-80 max-w-full sm:max-w-md bg-black/10 dark:bg-black/40 shadow-sm"
           ></video>
+
+          <button
+            type="button"
+            onclick={openLightbox}
+            class="absolute left-2.5 bottom-2.5 px-2.5 h-8 rounded-full bg-black/50 backdrop-blur-md text-white inline-flex items-center justify-center shadow-lg transition-all duration-300 hover:bg-black/70"
+            aria-label="Ouvrir la vidéo en plein écran"
+            title="Plein écran"
+          >
+            Plein écran
+          </button>
 
           <button
             type="button"
@@ -140,7 +168,9 @@
           </button>
         </div>
       {:else if loadError}
-        <div class="w-full max-w-[16rem] aspect-video rounded-[1.1rem] border border-dashed {glassBoxClass} flex flex-col items-center justify-center gap-3 p-4 text-center">
+        <div
+          class="w-full max-w-[16rem] aspect-video rounded-[1.1rem] border border-dashed {glassBoxClass} flex flex-col items-center justify-center gap-3 p-4 text-center"
+        >
           <AlertCircle size={28} class="opacity-50" />
           <span class="text-xs font-medium leading-snug {textMutedClass}">
             {mediaPurgedByRetention
@@ -150,12 +180,16 @@
         </div>
       {:else}
         <!-- Skeleton Video -->
-        <div class="w-full max-w-[16rem] aspect-video rounded-[1.1rem] {isOwn ? 'bg-black/10' : 'bg-black/5 dark:bg-white/10'} animate-pulse flex items-center justify-center">
+        <div
+          class="w-full max-w-[16rem] aspect-video rounded-[1.1rem] {isOwn
+            ? 'bg-black/10'
+            : 'bg-black/5 dark:bg-white/10'} animate-pulse flex items-center justify-center"
+        >
           <VideoIcon size={32} class="opacity-20" />
         </div>
       {/if}
 
-    <!-- ================= AUDIO ================= -->
+      <!-- ================= AUDIO ================= -->
     {:else if mediaRef.type === 'audio'}
       {#if blobUrl}
         <div class="min-w-[200px] sm:min-w-[240px]">
@@ -165,24 +199,34 @@
           />
         </div>
       {:else if loadError}
-        <div class="w-full sm:w-56 h-14 rounded-xl border border-dashed {glassBoxClass} flex items-center justify-center px-4 text-center">
+        <div
+          class="w-full sm:w-56 h-14 rounded-xl border border-dashed {glassBoxClass} flex items-center justify-center px-4 text-center"
+        >
           <span class="text-[0.7rem] font-medium leading-snug {textMutedClass}">
             {mediaPurgedByRetention ? 'Audio expiré (30j)' : 'Erreur de chargement audio'}
           </span>
         </div>
       {:else}
         <!-- Skeleton Audio -->
-        <div class="w-full sm:w-56 h-14 rounded-xl {isOwn ? 'bg-black/10' : 'bg-black/5 dark:bg-white/10'} animate-pulse flex items-center justify-center px-4">
-           <Mic size={20} class="opacity-20" />
-           <div class="flex-1 ml-3 h-2 bg-current opacity-10 rounded-full"></div>
+        <div
+          class="w-full sm:w-56 h-14 rounded-xl {isOwn
+            ? 'bg-black/10'
+            : 'bg-black/5 dark:bg-white/10'} animate-pulse flex items-center justify-center px-4"
+        >
+          <Mic size={20} class="opacity-20" />
+          <div class="flex-1 ml-3 h-2 bg-current opacity-10 rounded-full"></div>
         </div>
       {/if}
 
-    <!-- ================= FICHIER (Générique) ================= -->
+      <!-- ================= FICHIER (Générique) ================= -->
     {:else}
-      <div class="flex items-center gap-3.5 px-3.5 py-3 min-w-[200px] sm:min-w-[240px] rounded-[1rem] border {glassBoxClass} backdrop-blur-md transition-colors group/file">
+      <div
+        class="flex items-center gap-3.5 px-3.5 py-3 min-w-[200px] sm:min-w-[240px] rounded-[1rem] border {glassBoxClass} backdrop-blur-md transition-colors group/file"
+      >
         <!-- Icône du fichier -->
-        <div class="w-11 h-11 rounded-xl bg-current/10 flex items-center justify-center shrink-0 text-current opacity-80">
+        <div
+          class="w-11 h-11 rounded-xl bg-current/10 flex items-center justify-center shrink-0 text-current opacity-80"
+        >
           <FileText size={22} strokeWidth={2} />
         </div>
 
@@ -210,16 +254,24 @@
             title="Télécharger"
             class="p-2.5 rounded-xl hover:bg-current/10 transition-all outline-none focus-visible:ring-2 focus-visible:ring-current shrink-0"
           >
-            <Download size={18} strokeWidth={2.5} class="opacity-70 group-hover/file:opacity-100 transition-opacity" />
+            <Download
+              size={18}
+              strokeWidth={2.5}
+              class="opacity-70 group-hover/file:opacity-100 transition-opacity"
+            />
           </button>
         {:else if mediaPurgedByRetention}
-          <span class="text-[0.65rem] font-bold text-red-600 dark:text-red-400 bg-red-500/10 px-2 py-1 rounded-md shrink-0">
+          <span
+            class="text-[0.65rem] font-bold text-red-600 dark:text-red-400 bg-red-500/10 px-2 py-1 rounded-md shrink-0"
+          >
             Expiré
           </span>
         {:else if loadError}
           <AlertCircle size={18} class="opacity-50 text-red-500 shrink-0" />
         {:else}
-          <div class="w-8 h-8 rounded-full border-2 border-current/20 border-t-current animate-spin shrink-0"></div>
+          <div
+            class="w-8 h-8 rounded-full border-2 border-current/20 border-t-current animate-spin shrink-0"
+          ></div>
         {/if}
       </div>
     {/if}
@@ -245,4 +297,65 @@
       {/each}
     </p>
   {/if}
+{/if}
+
+{#if showLightbox && blobUrl && mediaRef && (mediaRef.type === 'image' || mediaRef.type === 'video')}
+  <div class="fixed inset-0 z-[150] bg-black/92 backdrop-blur-sm">
+    <button
+      type="button"
+      class="absolute inset-0"
+      onclick={closeLightbox}
+      aria-label="Fermer l'aperçu média"
+    ></button>
+
+    <div class="relative z-10 h-full flex flex-col">
+      <div class="flex items-center justify-between p-3 sm:p-4 text-white">
+        <div class="text-xs sm:text-sm opacity-85 truncate pr-3">
+          {mediaRef.fileName ?? 'Média'}
+        </div>
+        <div class="flex items-center gap-2">
+          <button
+            type="button"
+            class="px-3 h-9 rounded-lg bg-white/15 hover:bg-white/25 transition-colors"
+            onclick={(e) => {
+              e.stopPropagation();
+              downloadBlob(blobUrl, mediaRef.fileName ?? 'media');
+            }}
+          >
+            Télécharger
+          </button>
+          <button
+            type="button"
+            class="px-3 h-9 rounded-lg bg-white/15 hover:bg-white/25 transition-colors"
+            onclick={(e) => {
+              e.stopPropagation();
+              closeLightbox();
+            }}
+          >
+            Fermer
+          </button>
+        </div>
+      </div>
+
+      <div class="flex-1 min-h-0 flex items-center justify-center p-3 sm:p-6">
+        {#if mediaRef.type === 'image'}
+          <img
+            src={blobUrl}
+            alt={mediaRef.fileName ?? 'Image'}
+            class="max-h-full max-w-full object-contain select-none"
+            style="touch-action: pinch-zoom;"
+          />
+        {:else}
+          <!-- svelte-ignore a11y_media_has_caption -->
+          <video
+            src={blobUrl}
+            controls
+            autoplay
+            class="max-h-full max-w-full object-contain bg-black rounded-xl"
+            style="touch-action: pinch-zoom;"
+          ></video>
+        {/if}
+      </div>
+    </div>
+  </div>
 {/if}

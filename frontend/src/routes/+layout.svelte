@@ -26,7 +26,21 @@
 
   // ── Logs panel (global — fonctionne sur toutes les routes) ──────────────────
   let showLogs = $state(false);
+  let isKeyboardOpen = $state(false);
   const statusLog = $derived(getStatusLog());
+
+  function keyboardOpenThresholdPx(): number {
+    const ua = navigator.userAgent.toLowerCase();
+    const isAndroid = ua.includes('android');
+    const isIos = /iphone|ipad|ipod/.test(ua);
+
+    // iOS a souvent un delta plus petit (barres système + clavier flottant).
+    if (isIos) return 100;
+    // Android a généralement un delta plus important en mode portrait.
+    if (isAndroid) return 140;
+    // Fallback navigateurs mobiles/desktop.
+    return 120;
+  }
 
   onMount(() => {
     const handler = () => {
@@ -36,6 +50,11 @@
     const updateViewportHeight = () => {
       const height = window.visualViewport?.height ?? window.innerHeight;
       document.documentElement.style.setProperty('--app-viewport-height', `${height}px`);
+
+      // Sur mobile, le clavier virtuel réduit fortement visualViewport.height.
+      // On utilise ce signal pour retirer l'espace réservé à la BottomNav.
+      const keyboardDelta = window.innerHeight - height;
+      isKeyboardOpen = keyboardDelta > keyboardOpenThresholdPx();
     };
 
     window.addEventListener('canari:toggle-logs', handler);
@@ -87,7 +106,9 @@
 </script>
 
 <div
-  class="relative flex flex-col {isAuthRoute ? 'min-h-dvh' : ''}"
+  class="relative flex flex-col {isAuthRoute
+    ? 'min-h-dvh'
+    : 'pt-[env(safe-area-inset-top)] md:pt-0'}"
   style={isAuthRoute ? undefined : `height: var(--app-viewport-height, 100dvh);`}
 >
   <ChatBackgroundService />
@@ -113,12 +134,16 @@
     ontouchend={handleTouchEnd}
   >
     <!-- Contenu — md:pl-14 laisse la place au rail replié de la sidebar fixe -->
-    <div class="flex-1 min-w-0 h-full {!isAuthRoute ? 'pb-14 md:pb-0 md:pl-[4.5rem]' : ''}">
+    <div
+      class="flex-1 min-w-0 h-full {!isAuthRoute
+        ? `${isKeyboardOpen ? 'pb-0' : 'pb-14'} md:pb-0 md:pl-[4.5rem]`
+        : ''}"
+    >
       {@render children?.()}
     </div>
   </div>
 
-  {#if !isAuthRoute}
+  {#if !isAuthRoute && !isKeyboardOpen}
     <BottomNav />
   {/if}
 

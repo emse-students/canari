@@ -15,7 +15,7 @@ services:
     depends_on:
       - zookeeper
     ports:
-      - "9092:9092"
+      - "9092"
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
@@ -33,7 +33,7 @@ services:
   redis:
     image: redis:alpine
     ports:
-      - "6379:6379"
+      - "6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -43,7 +43,7 @@ services:
   mongo:
     image: mongo:latest
     ports:
-      - "27017:27017"
+      - "27017"
     environment:
       MONGO_INITDB_DATABASE: chat_db
     volumes:
@@ -51,8 +51,8 @@ services:
 
   postgres:
     image: postgres:15-alpine
-    ports:
-      - "5432:5432"
+    expose:
+      - "5432"
     environment:
       POSTGRES_USER: admin
       POSTGRES_PASSWORD: password
@@ -71,8 +71,8 @@ services:
     build:
       context: ../../
       dockerfile: infrastructure/local/Dockerfile.chat-gateway
-    ports:
-      - "3000:3000"
+    expose:
+      - "3000"
     environment:
       RUST_LOG: chat_gateway=info,tower_http=info
       JWT_SECRET: ${JWT_SECRET}
@@ -97,8 +97,8 @@ services:
     build:
       context: ../../
       dockerfile: infrastructure/local/Dockerfile.chat-delivery-service
-    ports:
-      - "3010:3010"
+    expose:
+      - "3010"
     environment:
       PORT: "3010"
       POSTGRES_URL: postgres://admin:password@postgres:5432/auth_db
@@ -142,8 +142,8 @@ services:
     build:
       context: ../../
       dockerfile: infrastructure/local/Dockerfile.media-service
-    ports:
-      - "3011:3011"
+    expose:
+      - "3011"
     environment:
       PORT: "3011"
       JWT_SECRET: ${JWT_SECRET}
@@ -168,8 +168,8 @@ services:
     build:
       context: ../../
       dockerfile: infrastructure/local/Dockerfile.core-service
-    ports:
-      - "3012:3012"
+    expose:
+      - "3012"
     environment:
       PORT: "3012"
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-me}
@@ -199,8 +199,8 @@ services:
     build:
       context: ../../
       dockerfile: infrastructure/local/Dockerfile.social-service
-    ports:
-      - "3014:3014"
+    expose:
+      - "3014"
     environment:
       PORT: "3014"
       DB_HOST: postgres

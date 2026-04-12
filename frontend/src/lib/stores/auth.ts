@@ -17,6 +17,18 @@ const OIDC_RETURN_KEY = 'canari_oidc_return';
 
 let _accessToken: string | null = null;
 
+function setWsSessionCookie(token: string): void {
+  if (typeof document === 'undefined') return;
+  const secure = window.location.protocol === 'https:' ? '; Secure' : '';
+  document.cookie = `canari_ws_token=${encodeURIComponent(token)}; Path=/; SameSite=Lax${secure}`;
+}
+
+function clearWsSessionCookie(): void {
+  if (typeof document === 'undefined') return;
+  const secure = window.location.protocol === 'https:' ? '; Secure' : '';
+  document.cookie = `canari_ws_token=; Path=/; Max-Age=0; SameSite=Lax${secure}`;
+}
+
 function isEnvFlagEnabled(value: string | boolean | undefined): boolean {
   if (typeof value === 'boolean') return value;
   if (typeof value !== 'string') return false;
@@ -129,6 +141,7 @@ export async function handleOidcCallback(
   };
 
   _accessToken = data.access_token;
+  setWsSessionCookie(data.access_token);
 
   saveUserLocally(data.user);
 
@@ -172,6 +185,7 @@ export async function devLogin(
   };
 
   _accessToken = data.access_token;
+  setWsSessionCookie(data.access_token);
 
   saveUserLocally(data.user);
 
@@ -202,6 +216,7 @@ export async function refresh(): Promise<string> {
 
   const data = (await res.json()) as { access_token: string };
   _accessToken = data.access_token;
+  setWsSessionCookie(data.access_token);
   return data.access_token;
 }
 
@@ -237,10 +252,12 @@ export async function getToken(): Promise<string> {
 /** Override the in-memory token (used when a token is received externally). */
 export function setToken(token: string): void {
   _accessToken = token;
+  setWsSessionCookie(token);
 }
 
 export async function clearAuth(): Promise<void> {
   _accessToken = null;
+  clearWsSessionCookie();
   // Tell the backend to clear the HttpOnly cookie
   await fetch(`${coreUrl()}/api/auth/logout`, {
     method: 'POST',

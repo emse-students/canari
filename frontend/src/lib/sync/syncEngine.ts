@@ -50,14 +50,20 @@ function decodeConversationTransportId(transportId: string): string {
   return new TextDecoder().decode(bytes);
 }
 
-function getAuthTokenFromStorage(): string | null {
-  if (typeof window === 'undefined') return null;
-  const token = localStorage.getItem('canari_authToken');
-  return token && token.trim() ? token : null;
+function getWsSessionToken(): string | null {
+  if (typeof document === 'undefined') return null;
+  const cookies = document.cookie ? document.cookie.split(';') : [];
+  for (const rawCookie of cookies) {
+    const cookie = rawCookie.trim();
+    if (!cookie.startsWith('canari_ws_token=')) continue;
+    const token = decodeURIComponent(cookie.slice('canari_ws_token='.length));
+    return token && token.trim() ? token : null;
+  }
+  return null;
 }
 
 function withAuthHeaders(extra: Record<string, string> = {}): Record<string, string> {
-  const token = getAuthTokenFromStorage();
+  const token = getWsSessionToken();
   return token ? { Authorization: `Bearer ${token}`, ...extra } : { ...extra };
 }
 

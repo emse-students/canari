@@ -1,5 +1,14 @@
 <script lang="ts">
-  import { Reply, Smile, Pencil, Trash2, EllipsisVertical, CheckCheck, Info } from 'lucide-svelte';
+  import {
+    Reply,
+    Smile,
+    Pencil,
+    Trash2,
+    EllipsisVertical,
+    CheckCheck,
+    Check,
+    Info,
+  } from 'lucide-svelte';
   import { MediaService } from '$lib/media';
   import type { MediaRef } from '$lib/media';
   import { parseEnvelope } from '$lib/envelope';
@@ -44,6 +53,8 @@
     onEdit?: (messageId: string, newText: string) => void;
     authToken?: string;
     shouldAnimate?: boolean;
+    isHighlighted?: boolean;
+    searchTerm?: string;
   }
 
   let {
@@ -67,6 +78,8 @@
     onEdit,
     authToken = '',
     shouldAnimate = false,
+    isHighlighted = false,
+    searchTerm = '',
   }: Props = $props();
 
   let showEmojiPicker = $state(false);
@@ -100,6 +113,7 @@
 
   let replyPreviewText = $derived(shortenReplyPreview(effectiveReplyTo?.content ?? ''));
   let textSegments = $derived(splitTextWithLinks(textContent));
+  const normalizedSearchTerm = $derived(searchTerm.trim().toLowerCase());
 
   const groupedReactions = $derived(
     reactions.reduce(
@@ -275,6 +289,29 @@
     return segments;
   }
 
+  function splitWithHighlight(text: string, needle: string): Array<{ text: string; hit: boolean }> {
+    if (!needle) return [{ text, hit: false }];
+    const lowerText = text.toLowerCase();
+    const lowerNeedle = needle.toLowerCase();
+    const parts: Array<{ text: string; hit: boolean }> = [];
+    let cursor = 0;
+
+    while (cursor < text.length) {
+      const idx = lowerText.indexOf(lowerNeedle, cursor);
+      if (idx === -1) {
+        parts.push({ text: text.slice(cursor), hit: false });
+        break;
+      }
+      if (idx > cursor) {
+        parts.push({ text: text.slice(cursor, idx), hit: false });
+      }
+      parts.push({ text: text.slice(idx, idx + needle.length), hit: true });
+      cursor = idx + needle.length;
+    }
+
+    return parts.length > 0 ? parts : [{ text, hit: false }];
+  }
+
   function getBubbleShapeClass(position: 'single' | 'start' | 'middle' | 'end') {
     if (position === 'single') return 'rounded-[1.25rem]';
 
@@ -397,13 +434,16 @@
       {isOwn
         ? 'bg-gradient-to-br from-amber-400 to-amber-500 text-[#151B2C] shadow-md shadow-amber-500/20 hover:shadow-lg hover:shadow-amber-500/30'
         : 'bg-white/70 dark:bg-black/40 backdrop-blur-xl border border-black/5 dark:border-white/10 text-text-main shadow-sm hover:shadow-md'}
+      {isHighlighted
+        ? 'ring-2 ring-amber-500/80 ring-offset-2 ring-offset-transparent animate-pulse'
+        : ''}
       {shouldAnimate ? 'animate-rise-in' : ''}"
     >
       <!-- Citation de réponse -->
       {#if effectiveReplyTo}
         <button
           type="button"
-          class="mb-2 pb-2 border-l-[3px] border-current/30 pl-3 text-xs opacity-85 text-left w-full hover:opacity-100 transition-opacity"
+          class="mb-2 pb-2 border-l-4 border-current/60 pl-3.5 text-xs opacity-95 text-left w-full hover:opacity-100 transition-opacity rounded-r-lg bg-black/5 dark:bg-white/5"
           onclick={(e) => {
             e.stopPropagation();
             if (effectiveReplyTo.id) {
@@ -483,7 +523,13 @@
                   </a>
                 {/if}
               {:else}
-                {segment.value}
+                {#each splitWithHighlight(segment.value, normalizedSearchTerm) as part, pIndex (`${pIndex}-${part.text}`)}
+                  {#if part.hit}
+                    <mark class="rounded px-0.5 bg-amber-300/60 text-inherit">{part.text}</mark>
+                  {:else}
+                    {part.text}
+                  {/if}
+                {/each}
               {/if}
             {/each}
           </p>
@@ -494,16 +540,30 @@
       {/if}
 
       <!-- Méta données du message (Modifié, Lu) -->
-      {#if isEdited || (isOwn && readBy.length > 0)}
+      {#if isEdited || isOwn}
         <div class="flex items-center justify-end gap-1.5 mt-1.5">
           {#if isEdited}
             <span class="italic text-[0.65rem] opacity-65 font-medium">(modifié)</span>
           {/if}
-          {#if isOwn && readBy.length > 0}
-            <span class="inline-flex items-center gap-1 text-[0.65rem] font-bold opacity-80">
-              <CheckCheck size={12} strokeWidth={2.5} />
-              Lu{readBy.length > 1 ? ` (${readBy.length})` : ''}
-            </span>
+          {#if isOwn}
+            {#if readBy.length > 0}
+              <span
+                class="inline-flex items-center gap-1 text-[0.65rem] font-bold text-emerald-700 dark:text-emerald-400"
+              >
+                <CheckCheck size={12} strokeWidth={2.5} class="animate-pulse" />
+                Lu{readBy.length > 1 ? ` (${readBy.length})` : ''}
+              </span>
+            {:else if Date.now() - timestamp.getTime() > 3000}
+              <span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold opacity-80">
+                <CheckCheck size={12} strokeWidth={2.2} />
+                Distribué
+              </span>
+            {:else}
+              <span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold opacity-80">
+                <Check size={12} strokeWidth={2.4} />
+                Envoyé
+              </span>
+            {/if}
           {/if}
         </div>
       {/if}

@@ -130,17 +130,15 @@ export class WebMlsService implements IMlsService {
       this.ws = null;
     }
 
-    const token = await getToken();
-
     return new Promise((resolve, reject) => {
       // Convert HTTP(S) URL to WS(S) URL
       // https:// -> wss://, http:// -> ws://
       const wsUrl = this.baseUrl.replace(/^https?:/, (match) =>
         match === 'https:' ? 'wss:' : 'ws:'
       );
-      const fullWsUrl = `${wsUrl}/api/ws?token=${token}&device_id=${this.deviceId}`;
+      const fullWsUrl = `${wsUrl}/api/ws?device_id=${encodeURIComponent(this.deviceId)}`;
 
-      console.log(`Connecting to WebSocket: ${fullWsUrl.replace(/token=[^&]+/, 'token=***')}`);
+      console.log(`Connecting to WebSocket: ${fullWsUrl}`);
       this.ws = new WebSocket(fullWsUrl);
       let resolved = false;
 

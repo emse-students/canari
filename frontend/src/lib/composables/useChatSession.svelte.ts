@@ -208,8 +208,6 @@ export function useChatSession() {
         // only (will be cleared once the user completes biometric enrolment below).
         await savePin(pin);
       }
-      localStorage.setItem('canari_authToken', authToken);
-
       // Android push: register (or refresh) this device token in delivery-service.
       // Non-blocking: messaging must continue even if push registration fails.
       void startPushService(historyBaseUrl, authToken, myDeviceId)
