@@ -23,17 +23,6 @@ const TOKEN_POLL_DELAY_MS = 1000;
 const BACKGROUND_RETRY_ATTEMPTS = 6;
 const BACKGROUND_RETRY_DELAY_MS = 5000;
 
-type PushPlatform = 'android' | 'ios';
-
-/** Détecte la plateforme mobile courante. Retourne null hors mobile/Tauri. */
-function detectPlatform(): PushPlatform | null {
-  if (typeof window === 'undefined') return null;
-  const ua = window.navigator?.userAgent ?? '';
-  if (/android/i.test(ua)) return 'android';
-  if (/iphone|ipad|ipod/i.test(ua)) return 'ios';
-  return null;
-}
-
 /**
  * Lit le token push depuis la couche Rust (Android/iOS uniquement).
  * – Android : token FCM depuis les SharedPreferences Kotlin
@@ -109,13 +98,14 @@ export async function startPushService(
   bearerToken: string,
   deviceId: string
 ): Promise<void> {
-  const platform = detectPlatform();
-  if (!platform) {
-    console.info('[Push] startPushService noop (non-mobile platform)');
-    return; // desktop ou web : pas de push
+  if (!isTauri()) {
+    console.info('[Push] startPushService noop (non-Tauri environment)');
+    return; // web : pas de push
   }
 
-  console.info(`[Push] startPushService platform=${platform} device=${deviceId}`);
+  console.info(
+    `[Push] startPushService device=${deviceId} (platform will be confirmed by FCM token)`
+  );
 
   const userId = currentUserId();
   if (!userId) {
@@ -133,7 +123,7 @@ export async function startPushService(
           'x-user-logged-in': 'true',
           'x-user-id': userId,
         },
-        body: JSON.stringify({ token: pushToken, deviceId, platform }),
+        body: JSON.stringify({ token: pushToken, deviceId, platform: 'android' }),
       });
       if (!response.ok) {
         const errText = await response.text().catch(() => '');
@@ -160,13 +150,18 @@ export async function stopPushService(
   bearerToken: string,
   deviceId: string
 ): Promise<void> {
-  const platform = detectPlatform();
-  if (!platform) {
-    console.info('[Push] stopPushService noop (non-mobile platform)');
+  if (!isTauri()) {
+    console.info('[Push] stopPushService noop (non-Tauri environment)');
     return;
   }
 
-  console.info(`[Push] stopPushService platform=${platform} device=${deviceId}`);
+  const cachedToken = sessionStorage.getItem(FCM_TOKEN_STORAGE_KEY);
+  if (!cachedToken) {
+    console.info('[Push] stopPushService noop (no registered token)');
+    return;
+  }
+
+  console.info(`[Push] stopPushService device=${deviceId}`);
 
   try {
     const response = await fetch(
