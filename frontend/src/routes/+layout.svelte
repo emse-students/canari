@@ -140,7 +140,7 @@
   >
     <!-- Contenu — md:pl-14 laisse la place au rail replié de la sidebar fixe -->
     <div
-      class="flex-1 min-w-0 h-full {!isAuthRoute
+      class="flex-1 min-w-0 h-full overflow-y-auto {!isAuthRoute
         ? `${isKeyboardOpen ? 'pb-0' : 'pb-[calc(4rem+env(safe-area-inset-bottom))]'} md:pb-0 md:pl-[4.5rem]`
         : ''}"
     >
