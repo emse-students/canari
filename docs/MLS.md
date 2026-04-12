@@ -204,7 +204,114 @@ WS frame { proto, senderId, senderDeviceId, groupId, isWelcome, isCommit }
 
 ---
 
-## 6. Payload applicatif chiffré : AppMessage (Protobuf)
+## 6. Bootstrap : initialisation d'un device
+
+Le bootstrap se déclenche à chaque connexion de l'utilisateur, qu'il s'agisse du tout premier appareil ou d'un nouvel appareil rejoignant un compte existant.
+
+### 6.1 Séquence complète
+
+```
+1. Vérification du PIN
+   POST /api/mls-api/pin-verifier/check { userId, verifier }
+
+   verifier = PBKDF2-SHA256(pin, userId)  — jamais le PIN brut
+
+   Réponses possibles :
+   ├── { status: "registered" }   → premier appareil, PIN enregistré
+   ├── { status: "ok" }           → PIN correct pour un compte existant
+   └── { status: "mismatch" }     → PIN incorrect → login refusé
+                                    (tous les appareils d'un compte partagent le même PIN)
+
+2. Résolution du device ID
+   Si localStorage["mls_device_id_{userId}"] existe → réutilisé
+   Sinon → généré : "web-{userId}-{timestamp36}-{random4}"
+                 ou "tauri-{userId}-{timestamp36}-{random4}"
+   Stocké dans localStorage (permanent).
+
+3. Initialisation de l'état MLS (mls-core / WASM)
+   Si localStorage["mls_autosave_{userId}"] existe :
+     → bytes = fromHex(savedState)
+     → MlsManager::load_encrypted(userId, deviceId, Some(bytes), pin)
+       → déchiffre avec ChaCha20-Poly1305 (clé Argon2id depuis pin)
+       → restaure keypair Ed25519 + credential + groupes
+
+   Sinon (nouvel appareil) :
+     → MlsManager::load_or_create(userId, deviceId, None)
+       → génère un keypair Ed25519 frais
+       → credential = BasicCredential("userId:deviceId")
+       → état vide (aucun groupe)
+
+4. Publication du KeyPackage
+   kpBytes = mls.generate_key_package()
+   POST /api/mls-api/register-device { userId, deviceId, keyPackage: base64(kpBytes) }
+   → le serveur stocke/écrase dans la table key_packages
+   → retourne les groupes auxquels l'utilisateur appartient côté serveur
+
+5. Publication du pool de one-time KeyPackages (optionnel)
+   packages = mls.generate_key_packages(N)
+   POST /api/mls-api/register-device/prekeys { userId, deviceId, keyPackages[] }
+   → alimente one_time_key_packages (un par Welcome futur)
+
+6. Récupération et traitement des Welcomes en attente
+   GET /api/mls-api/welcome
+   → tableau de { welcome, ratchetTree, groupId }
+   Pour chaque Welcome :
+     mls.process_welcome(welcomeBytes, ratchetTree?) → rejoint le groupe
+     → sauvegarde état
+
+7. Découverte des groupes manquants (discoverMissingGroups)
+   Comparer groupes serveur vs état MLS local.
+   Pour chaque groupe présent côté serveur mais absent localement :
+     a. Si d'autres membres sont connectés :
+        → envoyer welcome_request via WS → un pair envoie un Welcome
+     b. Sinon (timeout BOOTSTRAP_TIMEOUT_MS = 30s dépassé) :
+        → forceCreateGroup + addMembersBulk (re-création complète)
+        → envoyer group_reset aux autres membres
+           (chaque pair reçoit group_reset → forgetGroup + attend Welcome)
+
+8. Sauvegarde de l'état MLS
+   stateBytes = mls.save_state()     → sérialise + chiffre (ChaCha20-Poly1305)
+   localStorage["mls_autosave_{userId}"] = toHex(stateBytes)
+   Appelée après chaque opération MLS (send, receive, add/remove member).
+```
+
+### 6.2 Nouveaux appareils d'un compte existant
+
+Quand un utilisateur ajoute un nouvel appareil, les conversations existantes ne sont **pas** automatiquement disponibles — MLS exige que l'initiateur du groupe envoie un Welcome au nouveau device.
+
+Flux :
+1. Nouvel appareil → `POST /api/mls-api/register-device` → KeyPackage publié
+2. Serveur notifie les membres existants via Redis (`group.member.device_added`)
+3. Un des appareils existants reçoit un `welcome_request` WS :
+   - Récupère le KeyPackage du nouveau device
+   - `addMember(groupId, keyPackage)` → commit + Welcome
+   - `POST /api/mls-api/welcome` → Welcome stocké offline
+   - `POST /api/mls-api/send` (commit) → distribué via Redis
+4. Nouveau device reçoit le Welcome → `process_welcome` → groupe rejoint
+
+Si le nouvel appareil est en ligne au moment où un pair traite le welcome_request, le Welcome arrive directement via WebSocket.
+
+### 6.3 Récupération après perte d'état (group_reset)
+
+Si un device perd son état MLS local (localStorage effacé, désinstallation, etc.) :
+
+```
+Device perdu                          Membres existants
+─────────────                         ─────────────────
+forceCreateGroup(groupId)             ← group_reset reçu
+  → epoch 0 local                       forgetGroup(groupId)
+  → envoyer group_reset WS              marquer conversation not-ready
+addMembersBulk([tous les devices])    ← welcome_request envoyé
+  → Welcome pour chaque device          process_welcome()
+POST /api/mls-api/welcome                → rejoindre le groupe
+POST /api/mls-api/send (commit)
+```
+
+Le mécanisme de retry (`discoverMissingGroups` relancé à t+35s et t+70s) couvre le cas où le premier bootstrap échoue car tous les pairs sont hors ligne.
+
+---
+
+## 7. Payload applicatif chiffré : AppMessage (Protobuf)
 
 Défini dans `libs/proto/canari.proto`. Le plaintext MLS est le sérialisation Protobuf d'un `AppMessage` :
 
@@ -266,7 +373,7 @@ message CallMsg {
 
 ---
 
-## 7. Médias chiffrés E2EE
+## 8. Médias chiffrés E2EE
 
 Le service media ne voit jamais les clés de déchiffrement :
 
@@ -282,7 +389,7 @@ Le service media ne voit jamais les clés de déchiffrement :
 
 ---
 
-## 8. Synchronisation multi-device (SyncEngine)
+## 9. Synchronisation multi-device (SyncEngine)
 
 Le `SyncEngine` (`frontend/src/lib/sync/syncEngine.ts`) synchronise les conversations entre deux appareils du même utilisateur via un protocole pair-à-pair chiffré :
 
@@ -307,7 +414,7 @@ Le chiffrement des chunks utilise la clé dérivée de l'échange ECDH, en AES-2
 
 ---
 
-## 9. API chat-delivery-service (endpoints MLS)
+## 10. API chat-delivery-service (endpoints MLS)
 
 | Méthode | Route | Description |
 |---|---|---|
@@ -331,7 +438,7 @@ Le chiffrement des chunks utilise la clé dérivée de l'échange ECDH, en AES-2
 
 ---
 
-## 10. Garanties de sécurité
+## 11. Garanties de sécurité
 
 | Propriété | Mécanisme |
 |---|---|
