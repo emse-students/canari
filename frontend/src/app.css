@@ -244,6 +244,13 @@ h6,
   z-index: 20;
 }
 
+/* When virtual keyboard is open, env(safe-area-inset-bottom) may still be
+   non-zero (gesture nav bar). Remove it so the composer sits flush against
+   the keyboard top edge. */
+:global(.keyboard-open) .chat-composer-footer {
+  padding-bottom: 0;
+}
+
 :global([data-theme='dark']) .chat-composer-footer {
   background: linear-gradient(to top, rgba(10, 13, 20, 0.82), rgba(10, 13, 20, 0.5), transparent);
 }
