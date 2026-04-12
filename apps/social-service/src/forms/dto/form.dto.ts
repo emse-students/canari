@@ -91,6 +91,11 @@ export class CreateFormDto {
   requiresPayment?: boolean;
 
   @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  paymentMethods?: string[];
+
+  @IsArray()
   @ValidateNested({ each: true })
   @Type(() => FormItemDto)
   items: FormItemDto[];

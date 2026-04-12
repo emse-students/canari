@@ -61,12 +61,18 @@ export class PaymentService {
     stripeConnectAccountId?: string;
     customerId?: string;
     saveForFuture?: boolean;
+    paymentMethods?: string[];
   }) {
     if (!this.stripe) throw new BadRequestException('Stripe not configured');
 
+    const allowedMethods = new Set(['card', 'paypal']);
+    const methods = (params.paymentMethods ?? ['card']).filter((m) =>
+      allowedMethods.has(m),
+    ) as Stripe.Checkout.SessionCreateParams.PaymentMethodType[];
+
     const sessionParams: Stripe.Checkout.SessionCreateParams = {
       mode: 'payment',
-      payment_method_types: ['card'],
+      payment_method_types: methods.length > 0 ? methods : ['card'],
       line_items: params.lineItems,
       metadata: params.metadata,
       success_url: params.successUrl,
@@ -77,7 +83,8 @@ export class PaymentService {
       sessionParams.customer = params.customerId;
     }
 
-    if (params.saveForFuture) {
+    // off_session future usage only applies to card — skip for PayPal / SEPA
+    if (params.saveForFuture && methods.includes('card')) {
       sessionParams.payment_intent_data = {
         ...(sessionParams.payment_intent_data ?? {}),
         setup_future_usage: 'off_session',

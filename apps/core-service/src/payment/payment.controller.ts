@@ -84,6 +84,7 @@ export class PaymentController {
       stripeConnectAccountId?: string;
       customerId?: string;
       saveForFuture?: boolean;
+      paymentMethods?: string[];
     },
   ) {
     if (!body || !body.lineItems || !Array.isArray(body.lineItems)) {
@@ -102,6 +103,7 @@ export class PaymentController {
       stripeConnectAccountId: body.stripeConnectAccountId,
       customerId: body.customerId,
       saveForFuture: body.saveForFuture,
+      paymentMethods: body.paymentMethods,
     });
 
     return { ok: true, url: session.url, id: session.id };

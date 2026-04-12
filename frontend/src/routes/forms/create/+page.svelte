@@ -17,6 +17,7 @@
   let maxSubmissions = $state<number | undefined>(undefined);
   let requiresPayment = $state(false);
   let associationId = $state('');
+  let paymentMethods = $state<string[]>(['card']);
 
   // Associations with Stripe account (eligible as recipients)
   let associations = $state<Association[]>([]);
@@ -76,6 +77,7 @@
         maxSubmissions,
         requiresPayment,
         associationId: requiresPayment && associationId ? associationId : undefined,
+        paymentMethods: requiresPayment ? paymentMethods : undefined,
       };
       await createForm(payload);
       goto('/forms');
@@ -265,6 +267,105 @@
             d'une association pour activer les paiements.
           </p>
         {/if}
+      </div>
+
+      <!-- Payment methods -->
+      <div class="mt-4 pt-4 border-t-2 border-cn-border">
+        <p class="text-sm font-bold text-text-main mb-1">Moyens de paiement acceptés</p>
+        <p class="text-xs text-text-muted mb-3">
+          Au moins un moyen requis. Les options actives apparaîtront sur la page Stripe.
+        </p>
+
+        <div class="flex flex-col gap-2">
+          {#each [{ id: 'card', label: 'Carte bancaire', sub: 'Visa, Mastercard, Amex…', icon: 'card' }, { id: 'paypal', label: 'PayPal', sub: 'Redirection vers PayPal', icon: 'paypal' }] as method (method.id)}
+            {@const checked = paymentMethods.includes(method.id)}
+            {@const isLast = paymentMethods.length === 1 && checked}
+            <button
+              type="button"
+              onclick={() => {
+                if (checked) {
+                  if (!isLast) paymentMethods = paymentMethods.filter((m) => m !== method.id);
+                } else {
+                  paymentMethods = [...paymentMethods, method.id];
+                }
+              }}
+              class="flex items-center gap-4 rounded-2xl border-2 px-4 py-3.5 text-left w-full transition-all
+                {checked
+                ? 'border-cn-yellow bg-cn-yellow/5 shadow-sm'
+                : 'border-cn-border bg-transparent hover:border-cn-yellow/50'}
+                {isLast ? 'cursor-not-allowed opacity-80' : 'cursor-pointer'}"
+              title={isLast ? 'Au moins un moyen de paiement requis' : ''}
+            >
+              <!-- Icon -->
+              <div
+                class="shrink-0 w-10 h-10 rounded-xl flex items-center justify-center
+                {checked ? 'bg-cn-yellow/20 text-cn-dark' : 'bg-cn-border/40 text-text-muted'}"
+              >
+                {#if method.icon === 'card'}
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <rect width="20" height="14" x="2" y="5" rx="2" /><line
+                      x1="2"
+                      x2="22"
+                      y1="10"
+                      y2="10"
+                    />
+                  </svg>
+                {:else if method.icon === 'paypal'}
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                  >
+                    <path
+                      d="M7.076 21.337H2.47a.641.641 0 0 1-.633-.74L4.944.901C5.026.382 5.474 0 5.998 0h7.46c2.57 0 4.578.543 5.69 1.81 1.01 1.15 1.304 2.42 1.012 4.287-.012.078-.026.157-.042.238-.375 2.245-1.668 3.793-3.783 4.576a8.1 8.1 0 0 1-2.498.38H12.32l-.582 3.835c-.081.52-.529.903-1.053.903H7.076v5.308zm9.607-14.697c-.176 1.178-.832 2.068-1.94 2.54a5.69 5.69 0 0 1-1.998.343h-1.12l.637-4.18h1.12c.963 0 1.672.19 2.093.567.407.364.544.892.408 1.73z"
+                    />
+                  </svg>
+                {/if}
+              </div>
+
+              <!-- Text -->
+              <div class="flex-1 min-w-0">
+                <p class="text-sm font-bold text-text-main">{method.label}</p>
+                <p class="text-xs text-text-muted">{method.sub}</p>
+              </div>
+
+              <!-- Toggle pill -->
+              <div
+                class="shrink-0 flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold transition-colors
+                {checked ? 'bg-cn-yellow/30 text-cn-dark' : 'bg-cn-border/40 text-text-muted'}"
+              >
+                {#if checked}
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="3"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg
+                  >
+                  Activé
+                {:else}
+                  Désactivé
+                {/if}
+              </div>
+            </button>
+          {/each}
+        </div>
       </div>
     {/if}
   </section>

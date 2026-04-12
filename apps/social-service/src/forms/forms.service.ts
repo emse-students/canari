@@ -149,13 +149,20 @@ export class FormsService {
           }
         }
 
+        const paymentMethods = form.paymentMethods?.length ? form.paymentMethods : ['card'];
+
         const res = await axios.post(checkoutUrl, {
           lineItems: singleLineItem,
           successUrl: `${this.configService.get('FRONTEND_URL')}/forms/success?session_id={CHECKOUT_SESSION_ID}`,
           cancelUrl: `${this.configService.get('FRONTEND_URL')}/forms/cancel`,
           metadata: { submissionId: savedSubmission.id, formId: id, userId: input.userId ?? '' },
           stripeConnectAccountId,
-          ...(customerId ? { customerId, saveForFuture: true } : {}),
+          paymentMethods,
+          ...(customerId && paymentMethods.includes('card')
+            ? { customerId, saveForFuture: true }
+            : customerId
+              ? { customerId }
+              : {}),
         });
 
         const data = res.data || {};

@@ -37,6 +37,9 @@ export class Form {
   @Column({ default: false })
   requiresPayment: boolean;
 
+  @Column('simple-array', { default: 'card' })
+  paymentMethods: string[];
+
   @Column({ nullable: true })
   @Index()
   associationId: string;
