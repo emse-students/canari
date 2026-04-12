@@ -432,7 +432,7 @@ Le chiffrement des chunks utilise la clé dérivée de l'échange ECDH, en AES-2
 
 | Méthode | Route                                    | Description                                                       |
 | ------- | ---------------------------------------- | ----------------------------------------------------------------- |
-| `POST`  | `/api/mls-api/register-device`           | Enregistre un device (KeyPackage + push token)                    |
+| `POST`  | `/api/mls-api/register-device`           | Enregistre un device MLS (KeyPackage + métadonnées device)        |
 | `POST`  | `/api/mls-api/key-package`               | Met à jour le KeyPackage standard                                 |
 | `GET`   | `/api/mls-api/:userId/devices`           | Liste les KeyPackages disponibles d'un utilisateur                |
 | `POST`  | `/api/mls-api/groups`                    | Crée un groupe MLS (`{ groupId, createdBy, members[], isGroup }`) |
@@ -440,7 +440,9 @@ Le chiffrement des chunks utilise la clé dérivée de l'échange ECDH, en AES-2
 | `POST`  | `/api/mls-api/welcome`                   | Stocke un Welcome offline pour un device                          |
 | `GET`   | `/api/mls-api/welcome`                   | Récupère les Welcomes en attente pour le device courant           |
 | `POST`  | `/api/mls-api/send`                      | Envoie un message MLS (publie en Redis + push notif offline)      |
-| `GET`   | `/api/mls-api/messages/:groupId`         | Messages en attente offline                                       |
+| `POST`  | `/api/mls-api/push/register`             | Enregistre ou rafraîchit le token push d'un device                |
+| `DELETE`| `/api/mls-api/push/unregister/:deviceId` | Supprime le token push d'un device                                |
+| `GET`   | `/api/mls-api/messages/:userId/:deviceId`| Messages en attente offline pour un device                        |
 | `POST`  | `/api/mls-api/register-member`           | Enregistre un membre dans un groupe                               |
 | `GET`   | `/api/history/:groupId`                  | Lit le Redis Stream `history:{groupId}`                           |
 | `POST`  | `/api/mls-api/link-preview`              | Génère une prévisualisation de lien (OG tags)                     |
@@ -449,6 +451,8 @@ Le chiffrement des chunks utilise la clé dérivée de l'échange ECDH, en AES-2
 | `PUT`   | `/api/mls-api/sync/session/:id/upload`   | Upload de chunks de sync                                          |
 | `GET`   | `/api/mls-api/sync/session/:id/download` | Download de chunks de sync                                        |
 | `POST`  | `/api/mls-api/pin-verifier/check`        | Vérifie un PIN (test de déchiffrement état MLS)                   |
+
+Voir aussi `docs/PUSH_NOTIFICATIONS.md` pour le détail du pipeline Android/FCM actuellement implémenté.
 
 ---
 

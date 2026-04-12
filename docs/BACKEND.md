@@ -203,23 +203,38 @@ POST /api/mls-api/send
 
    b. Si le device est offline (absence dans Redis présence) :
       → stocke dans queued_message
-      → émet événement Kafka "chat.messages" → push notification
+      → si le device est offline, envoie une push FCM data-only
 
 4. Retourne 201 OK
 ```
 
-### Push Notifications (Kafka)
+### Push Notifications
 
-Le consommateur Kafka (groupe `chat-delivery-consumer`) reçoit les événements `chat.messages` et envoie les push notifications via Firebase Admin SDK :
+Le comportement actuel n'utilise pas Kafka pour les pushs chat.
+
+Le `chat-delivery-service` :
+
+- persiste d'abord les messages dans `queued_message`
+- teste ensuite la présence Redis par device
+- publie sur Redis `chat:messages` si le device est online
+- envoie une push Firebase Admin data-only si le device est offline
+
+Le payload FCM actuel est minimal et transporte surtout :
 
 ```typescript
-// Payload FCM
 {
-  token: pushToken,
-  notification: { title: senderName, body: "Nouveau message" },
-  data: { groupId, messageId, type: "chat_message" }
+   data: {
+      type: 'message',
+      groupId: '...',
+      queuedMessageId: '...',
+      senderId: '...'
+   }
 }
 ```
+
+Le texte final affiché à l'utilisateur est reconstruit côté client Android après récupération du message chiffré en attente et tentative de déchiffrement local.
+
+Voir aussi `docs/PUSH_NOTIFICATIONS.md` pour le flux réel, les limites actuelles et les pistes de correction.
 
 ---
 

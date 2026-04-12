@@ -120,14 +120,15 @@ export function useMessaging() {
       (ctx.playReceiveTone ?? ctx.playNotificationTone)();
     }
 
-    if (shouldMarkUnread) {
+    const shouldSendSystemNotification =
+      !isOwn &&
+      !isSystem &&
+      typeof document !== 'undefined' &&
+      (document.visibilityState !== 'visible' || !document.hasFocus());
+
+    if (shouldSendSystemNotification) {
       const preview = getPreviewText(parseEnvelope(content));
-      if (
-        typeof document !== 'undefined' &&
-        (document.visibilityState !== 'visible' || !document.hasFocus())
-      ) {
-        void ctx.sendSystemNotification(convo.name, preview || 'Nouveau message');
-      }
+      void ctx.sendSystemNotification(convo.name, preview || 'Nouveau message');
     }
 
     if (ctx.storage) {

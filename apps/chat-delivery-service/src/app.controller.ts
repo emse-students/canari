@@ -700,6 +700,66 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     clearInterval(this.cleanupOrphanedRedisGroupsInterval);
   }
 
+  private isTerminalPushTokenError(error: unknown): boolean {
+    const rawCode =
+      typeof error === 'object' && error && 'code' in error
+        ? (error as { code?: unknown }).code
+        : undefined;
+    const code = typeof rawCode === 'string' ? rawCode : '';
+
+    return (
+      code === 'messaging/invalid-registration-token' ||
+      code === 'messaging/registration-token-not-registered'
+    );
+  }
+
+  private parseOnlineDeviceKey(
+    key: string,
+  ): { userId: string; deviceId: string } | null {
+    const prefix = 'user:online:';
+    if (!key.startsWith(prefix)) return null;
+
+    const payload = key.slice(prefix.length);
+    const splitAt = payload.lastIndexOf(':');
+    if (splitAt <= 0 || splitAt >= payload.length - 1) return null;
+
+    const userId = payload.slice(0, splitAt);
+    const deviceId = payload.slice(splitAt + 1);
+    if (!userId || !deviceId) return null;
+
+    return { userId, deviceId };
+  }
+
+  private async listOnlineDevices(): Promise<
+    Array<{ userId: string; deviceId: string }>
+  > {
+    let cursor = '0';
+    const unique = new Set<string>();
+    const result: Array<{ userId: string; deviceId: string }> = [];
+
+    do {
+      const [nextCursor, keys] = await this.redis.scan(
+        cursor,
+        'MATCH',
+        'user:online:*:*',
+        'COUNT',
+        '500',
+      );
+      cursor = nextCursor;
+
+      for (const key of keys) {
+        const parsed = this.parseOnlineDeviceKey(key);
+        if (!parsed) continue;
+        const uniqKey = `${parsed.userId}:${parsed.deviceId}`;
+        if (unique.has(uniqKey)) continue;
+        unique.add(uniqKey);
+        result.push(parsed);
+      }
+    } while (cursor !== '0');
+
+    return result;
+  }
+
   /**
    * Detect devices whose membership hasn't been touched within the message
    * retention window.  Once their queued messages have been garbage-collected,
@@ -2882,8 +2942,15 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       } else if (!body.isWelcome && !body.isCommit && admin.apps.length > 0) {
         // Offline recipient: send FCM push notification
         const pushTokens = await this.pushTokenRepo.find({
-          where: { userId: queued.recipientId },
+          where: { userId: queued.recipientId, deviceId: queued.deviceId },
         });
+
+        if (pushTokens.length === 0) {
+          this.logger.log(
+            `[PUSH_SEND][${traceId}] No push token for user=${queued.recipientId} device=${queued.deviceId}`,
+          );
+        }
+
         for (const pt of pushTokens) {
           try {
             await admin.messaging().send({
@@ -2905,6 +2972,12 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
               `[PUSH_SEND][${traceId}] FCM sent user=${queued.recipientId} device=${pt.deviceId}`,
             );
           } catch (e) {
+            if (this.isTerminalPushTokenError(e)) {
+              await this.pushTokenRepo.delete({ id: pt.id });
+              this.logger.warn(
+                `[PUSH_SEND][${traceId}] Deleted invalid push token user=${queued.recipientId} device=${pt.deviceId}`,
+              );
+            }
             this.logger.warn(
               `[PUSH_SEND][${traceId}] FCM failed user=${queued.recipientId} device=${pt.deviceId} err=${e}`,
             );
@@ -3066,5 +3139,104 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     await this.pushTokenRepo.delete({ userId, deviceId });
     this.logger.log(`[PUSH_UNREGISTER] user=${userId} device=${deviceId}`);
     return { status: 'unregistered' };
+  }
+
+  /**
+   * Diagnostic route: sends a push notification test to all devices currently
+   * marked online in Redis and having a registered push token.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Post('push/broadcast-test')
+  async broadcastTestPush(
+    @Body() body: { title?: string; message?: string },
+    @Headers('x-user-id') requesterRaw?: string,
+  ) {
+    if (admin.apps.length === 0) {
+      throw new BadRequestException(
+        'Firebase Admin SDK is not initialized (push disabled)',
+      );
+    }
+
+    const requester = sanitizeOptionalQueryValue(requesterRaw, 'x-user-id');
+    const traceId = this.makeTraceId('push-test');
+    const title = (body?.title || 'Canari - test push').trim().slice(0, 80);
+    const message = (body?.message || 'Notification de diagnostic')
+      .trim()
+      .slice(0, 180);
+
+    this.logger.log(
+      `[PUSH_TEST][${traceId}] START requester=${requester ?? 'unknown'} title=${title}`,
+    );
+
+    const onlineDevices = await this.listOnlineDevices();
+    let withToken = 0;
+    let sent = 0;
+    let failed = 0;
+
+    for (const target of onlineDevices) {
+      const pushToken = await this.pushTokenRepo.findOne({
+        where: { userId: target.userId, deviceId: target.deviceId },
+      });
+      if (!pushToken) {
+        this.logger.log(
+          `[PUSH_TEST][${traceId}] SKIP no-token user=${target.userId} device=${target.deviceId}`,
+        );
+        continue;
+      }
+
+      withToken++;
+      try {
+        await admin.messaging().send({
+          token: pushToken.token,
+          notification: {
+            title,
+            body: message,
+          },
+          data: {
+            type: 'push_test',
+            title,
+            message,
+            sentAt: Date.now().toString(),
+          },
+          android: {
+            priority: 'high',
+            notification: {
+              channelId: 'canari_messages',
+            },
+          },
+          apns: {
+            payload: { aps: { sound: 'default' } },
+          },
+        });
+        sent++;
+        this.logger.log(
+          `[PUSH_TEST][${traceId}] SENT user=${target.userId} device=${target.deviceId}`,
+        );
+      } catch (e) {
+        failed++;
+        if (this.isTerminalPushTokenError(e)) {
+          await this.pushTokenRepo.delete({ id: pushToken.id });
+          this.logger.warn(
+            `[PUSH_TEST][${traceId}] DELETED invalid token user=${target.userId} device=${target.deviceId}`,
+          );
+        }
+        this.logger.warn(
+          `[PUSH_TEST][${traceId}] FAILED user=${target.userId} device=${target.deviceId} err=${e}`,
+        );
+      }
+    }
+
+    this.logger.log(
+      `[PUSH_TEST][${traceId}] DONE online=${onlineDevices.length} withToken=${withToken} sent=${sent} failed=${failed}`,
+    );
+
+    return {
+      status: 'done',
+      traceId,
+      onlineDevices: onlineDevices.length,
+      withToken,
+      sent,
+      failed,
+    };
   }
 }

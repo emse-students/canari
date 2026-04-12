@@ -241,10 +241,10 @@
 
   // ── Mount ─────────────────────────────────────────────────────────────────
   onMount(() => {
+    void globalNotifs.requestSystemNotificationPermission();
+
     // Déjà connecté (ex. navigation depuis /chat) → rien à faire.
     if (globalSession.isLoggedIn) return;
-
-    void globalNotifs.requestSystemNotificationPermission();
 
     const w = window as Window & {
       wasm_bindings_log?: (level: string, msg: string) => void;

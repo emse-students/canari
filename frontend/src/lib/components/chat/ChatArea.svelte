@@ -46,6 +46,7 @@
     imageMediaId?: string | null;
     onOpenMembers?: () => void;
     currentUserId?: string;
+    onSendPushTest?: () => void;
   }
 
   let {
@@ -81,6 +82,7 @@
     imageMediaId = null,
     onOpenMembers,
     currentUserId = '',
+    onSendPushTest,
   }: Props = $props();
 
   const INITIAL_RENDER_GROUPS = 180;
@@ -292,6 +294,7 @@
         {onGroupRemoveMember}
         {onStartCall}
         {onOpenMembers}
+        {onSendPushTest}
         onToggleSearch={() => {
           showSearch = !showSearch;
           if (!showSearch) {

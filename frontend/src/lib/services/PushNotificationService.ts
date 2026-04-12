@@ -57,20 +57,30 @@ export async function getFcmToken(): Promise<string | null> {
 export async function registerPushToken(
   registerFn: (token: string) => Promise<void>
 ): Promise<void> {
+  console.info('[Push] registerPushToken start');
   // On Android, the FCM service may provide the token a bit after startup.
   let token: string | null = null;
   for (let i = 0; i < TOKEN_POLL_RETRIES; i++) {
     token = await getFcmToken();
+    console.info(
+      `[Push] token poll attempt ${i + 1}/${TOKEN_POLL_RETRIES}: ${token ? 'received' : 'empty'}`
+    );
     if (token) break;
     if (i < TOKEN_POLL_RETRIES - 1) {
       await new Promise((resolve) => setTimeout(resolve, TOKEN_POLL_DELAY_MS));
     }
   }
-  if (!token) return;
+  if (!token) {
+    console.warn('[Push] No FCM token available after polling');
+    return;
+  }
 
   // Évite de ré-enregistrer le même token inutilement
   const stored = sessionStorage.getItem(FCM_TOKEN_STORAGE_KEY);
-  if (stored === token) return;
+  if (stored === token) {
+    console.info('[Push] Token unchanged, skip backend registration');
+    return;
+  }
 
   try {
     await registerFn(token);
@@ -95,7 +105,12 @@ export async function startPushService(
   deviceId: string
 ): Promise<void> {
   const platform = detectPlatform();
-  if (!platform) return; // desktop ou web : pas de push
+  if (!platform) {
+    console.info('[Push] startPushService noop (non-mobile platform)');
+    return; // desktop ou web : pas de push
+  }
+
+  console.info(`[Push] startPushService platform=${platform} device=${deviceId}`);
 
   await registerPushToken(async (pushToken) => {
     const response = await fetch(`${apiBaseUrl}/api/mls-api/push/register`, {
@@ -118,7 +133,12 @@ export async function stopPushService(
   deviceId: string
 ): Promise<void> {
   const platform = detectPlatform();
-  if (!platform) return;
+  if (!platform) {
+    console.info('[Push] stopPushService noop (non-mobile platform)');
+    return;
+  }
+
+  console.info(`[Push] stopPushService platform=${platform} device=${deviceId}`);
 
   try {
     const response = await fetch(

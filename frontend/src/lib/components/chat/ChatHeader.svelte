@@ -14,6 +14,7 @@
     PencilLine,
     Shield,
     Phone,
+    Bell,
   } from 'lucide-svelte';
   import Avatar from '../shared/Avatar.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
@@ -44,6 +45,7 @@
     onToggleSearch?: () => void;
     searchActive?: boolean;
     onOpenMembers?: () => void;
+    onSendPushTest?: () => void;
   }
 
   let {
@@ -64,6 +66,7 @@
     onToggleSearch,
     searchActive = false,
     onOpenMembers,
+    onSendPushTest,
   }: Props = $props();
 
   let showPanel = $state(false);
@@ -248,6 +251,17 @@
           : 'text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main'}"
       >
         <Search size={20} strokeWidth={2.5} />
+      </button>
+    {/if}
+
+    {#if onSendPushTest}
+      <button
+        onclick={onSendPushTest}
+        aria-label="Envoyer un test push global"
+        title="Test push global"
+        class="p-2.5 rounded-xl text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-amber-600 dark:hover:text-amber-400 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95"
+      >
+        <Bell size={20} strokeWidth={2.5} />
       </button>
     {/if}
 

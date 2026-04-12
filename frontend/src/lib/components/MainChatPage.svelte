@@ -4,6 +4,8 @@
   import { Users } from 'lucide-svelte';
   import { sendReadReceipt } from '$lib/utils/chat/messaging';
   import { forceSyncReset } from '$lib/utils/chat/actions';
+  import { apiFetch } from '$lib/utils/apiFetch';
+  import { isGlobalAdmin } from '$lib/stores/user';
   import { useSyncSession } from '$lib/composables/useSyncSession.svelte';
   import {
     globalSession as session,
@@ -43,6 +45,35 @@
       const el = document.getElementById('logContainer');
       if (el) el.scrollTop = el.scrollHeight;
     });
+  }
+
+  async function handleBroadcastPushTest() {
+    try {
+      const res = await apiFetch(`${session.historyBaseUrl}/api/mls-api/push/broadcast-test`, {
+        method: 'POST',
+        body: JSON.stringify({
+          title: 'Canari - test push global',
+          message: `Diagnostic ${new Date().toLocaleTimeString()}`,
+        }),
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(`HTTP ${res.status}${txt ? `: ${txt}` : ''}`);
+      }
+      const data = (await res.json()) as {
+        traceId: string;
+        onlineDevices: number;
+        withToken: number;
+        sent: number;
+        failed: number;
+      };
+      log(
+        `[PUSH_TEST] trace=${data.traceId} online=${data.onlineDevices} withToken=${data.withToken} sent=${data.sent} failed=${data.failed}`
+      );
+    } catch (e) {
+      log(`[PUSH_TEST] ERROR ${e instanceof Error ? e.message : String(e)}`);
+      alert(`Echec test push: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   /** Context object for channel workspace operations. */
@@ -552,6 +583,7 @@
         onOpenMembers={routeMode === 'communities' && convs.selectedContact?.startsWith('channel_')
           ? () => (convs.isChannelMembersDrawerOpen = true)
           : undefined}
+        onSendPushTest={isGlobalAdmin() ? () => void handleBroadcastPushTest() : undefined}
       />
 
       {#if routeMode === 'communities'}

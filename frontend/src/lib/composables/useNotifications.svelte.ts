@@ -9,6 +9,7 @@ export function useNotifications() {
   let lastSendToneAt = $state(0);
   let lastReadToneAt = $state(0);
   let lastSystemNotificationAt = $state(0);
+  let browserPermissionRetryAbort: AbortController | null = null;
 
   // Channel membership notice banner
   let channelMembershipNotice = $state('');
@@ -107,6 +108,34 @@ export function useNotifications() {
 
   // ---------- System (OS-level) notifications ----------
 
+  function installBrowserPermissionRetry() {
+    if (typeof window === 'undefined' || !('Notification' in window)) return;
+    if (browserPermissionRetryAbort || Notification.permission !== 'default') return;
+
+    const abort = new AbortController();
+    browserPermissionRetryAbort = abort;
+
+    const requestFromGesture = () => {
+      void (async () => {
+        try {
+          await Notification.requestPermission();
+        } catch {
+          /* ignore */
+        } finally {
+          abort.abort();
+          browserPermissionRetryAbort = null;
+        }
+      })();
+    };
+
+    for (const eventName of ['pointerdown', 'keydown', 'touchstart'] as const) {
+      window.addEventListener(eventName, requestFromGesture, {
+        once: true,
+        signal: abort.signal,
+      });
+    }
+  }
+
   async function requestSystemNotificationPermission() {
     if (typeof window === 'undefined') return;
 
@@ -122,11 +151,23 @@ export function useNotifications() {
       return;
     }
 
+    if (!('Notification' in window)) return;
+
+    if (Notification.permission === 'granted') {
+      browserPermissionRetryAbort?.abort();
+      browserPermissionRetryAbort = null;
+      return;
+    }
+
     if ('Notification' in window && Notification.permission === 'default') {
       try {
         await Notification.requestPermission();
       } catch {
         /* ignore */
+      }
+
+      if (Notification.permission === 'default') {
+        installBrowserPermissionRetry();
       }
     }
   }
@@ -150,7 +191,12 @@ export function useNotifications() {
       }
     }
 
-    if ('Notification' in window && Notification.permission === 'granted') {
+    if ('Notification' in window) {
+      if (Notification.permission !== 'granted') {
+        void requestSystemNotificationPermission();
+        return;
+      }
+
       try {
         const n = new Notification(title, { body, tag: 'canari-message' });
         n.onclick = async () => {
