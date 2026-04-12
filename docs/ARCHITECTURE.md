@@ -1,280 +1,229 @@
-# ARCHITECTURE.md - Canari (etat reel du code)
-
-## 1. Objectif et perimetre
-
-Ce document decrit l'architecture actuelle telle qu'elle est implementee dans le code.
-Source de verite utilisee:
-
-- `infrastructure/docker-compose.prod.yml`
-- `infrastructure/local/docker-compose.yml`
-- `infrastructure/local/Dockerfile.frontend` (config Nginx runtime)
-- points d'entree des services dans `apps/*/src/main.*`
-- liaisons inter-services visibles dans le code applicatif
-
-## 2. Vue d'ensemble
-
-Canari est un monorepo microservices avec:
-
-- Frontend SvelteKit servi par Nginx en production
-- Services backend Rust + NestJS
-- Transport temps reel via WebSocket
-- Coordination/eventing via Redis Pub/Sub et Kafka
-- Stockage relationnel/objet/document (PostgreSQL, MongoDB, MinIO)
-
-## 3. Services deployes
-
-| Service                         | Stack                       | Port interne                 | Exposition host (compose)                                                                                             | Role                                             |
-| ------------------------------- | --------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| frontend (Nginx + build Svelte) | Nginx                       | 80                           | prod: `${FRONTEND_HOST_PORT:-80}:80`                                                                                  | Point d'entree HTTP unique + reverse proxy       |
-| chat-gateway                    | Rust/Axum                   | 3000                         | `3000:3000`                                                                                                           | WebSocket chat MLS, presence, routage temps reel |
-| chat-delivery-service           | NestJS + Kafka microservice | 3010                         | `3010:3010`                                                                                                           | API MLS, messages offline, historique            |
-| media-service                   | NestJS                      | 3011                         | `3011:3011`                                                                                                           | Upload/acces media chiffre via MinIO             |
-| core-service                    | NestJS                      | 3012                         | `3012:3012`                                                                                                           | Auth, users, paiement Stripe                     |
-| social-service                  | NestJS                      | 3014                         | `3014:3014`                                                                                                           | Posts, forms, channels                           |
-| redis                           | Redis                       | 6379                         | `6379:6379`                                                                                                           | Presence, Pub/Sub, streams                       |
-| kafka                           | Confluent Kafka             | 29092 (interne), 9092 (host) | `9092:9092`                                                                                                           | Bus d'evenements                                 |
-| zookeeper                       | Confluent Zookeeper         | 2181                         | non expose                                                                                                            | Coordination Kafka                               |
-| postgres                        | PostgreSQL                  | 5432                         | `5432:5432`                                                                                                           | Donnees relationnelles                           |
-| mongo                           | MongoDB                     | 27017                        | `27017:27017`                                                                                                         | Donnees document                                 |
-| minio                           | MinIO                       | 9000 (API), 9001 (console)   | local: `9000:9000`, `9001:9001`; prod: `${MINIO_API_HOST_PORT:-19000}:9000`, `${MINIO_CONSOLE_HOST_PORT:-19001}:9001` | Stockage objet S3-compatible                     |
-| coturn (local uniquement)       | Coturn                      | 3478/5349 + range UDP        | `3478`, `5349`, `49000-49040/udp`                                                                                     | STUN/TURN pour appels                            |
-
-## 4. Ports detailes
-
-### 4.1 Ports applicatifs backend
-
-- `3000`: chat-gateway
-- `3010`: chat-delivery-service
-- `3011`: media-service
-- `3012`: core-service
-- `3014`: social-service
-
-Le service appels `call-service` est archive et n'est plus expose ni deploie dans les stacks activees.
+# Architecture de Canari
 
-### 4.2 Ports infra
+## 1. Vue d'ensemble
 
-- `6379`: Redis
-- `9092`: Kafka expose host
-- `29092`: Kafka listener inter-container (`kafka:29092`)
-- `2181`: Zookeeper interne
-- `5432`: PostgreSQL
-- `27017`: MongoDB
-- `9000`: MinIO API S3 (ou host 19000 en prod)
-- `9001`: MinIO console (ou host 19001 en prod)
-- `3478`, `5349`, `49000-49040/udp`: Coturn local
-
-### 4.3 Frontend et dev
-
-- `80`: frontend Nginx en prod
-- `1420`: Vite dev server (`frontend/vite.config.js`)
-- `1421`: HMR websocket en mode Tauri host
-
-## 5. Ingress HTTP: mapping Nginx -> services
+Canari est un monorepo microservices. Le seul point d'entrée public est **Nginx** (frontend), qui joue le rôle de reverse proxy et de gateway d'authentification via `auth_request`.
 
-Le frontend Nginx fait office de gateway applicative. Routes configurees dans `infrastructure/local/Dockerfile.frontend`:
+En production, Cloudflare Tunnel expose `http://localhost:8080` — le host forward sur Nginx:80 du conteneur frontend.
 
-| Route publique  | Upstream interne             | Notes                                  |
-| --------------- | ---------------------------- | -------------------------------------- |
-| `/api/ws`       | `chat-gateway:3000`          | WS chat, protege via `auth_request`    |
-| `/api/groups`   | `chat-gateway:3000`          | routes groupes cote gateway            |
-| `/api/mls-api`  | `chat-delivery-service:3010` | API MLS, protege via `auth_request`    |
-| `/api/history`  | `chat-delivery-service:3010` | historique, protege via `auth_request` |
-| `/api/media`    | `media-service:3011`         | media blobs                            |
-| `/api/posts`    | `social-service:3014`        | posts, protege via `auth_request`      |
-| `/api/forms`    | `social-service:3014`        | forms, protege via `auth_request`      |
-| `/api/channels` | `social-service:3014`        | channels                               |
-| `/api/auth`     | `core-service:3012`          | auth                                   |
-| `/api/users`    | `core-service:3012`          | users                                  |
-| `/api/payments` | `core-service:3012`          | paiement, protege via `auth_request`   |
-
-Auth interne Nginx:
-
-- endpoint interne: `/internal/auth/verify`
-- proxy vers `core-service:3012/api/auth/verify`
-- headers reinjectes vers upstreams proteges: `X-User-Id`, `X-User-Logged-In`
+---
 
-## 6. Liaisons inter-services (code)
+## 2. Topologie des services
 
-### 6.1 HTTP synchrone
-
-- `chat-gateway` -> `chat-delivery-service`
-  - appel `POST {DELIVERY_SERVICE_URL}/mls-api/send`
-  - utilise pour la livraison offline ou fallback non connecte
+| Service | Stack | Port | Base de données | Rôle |
+|---|---|---|---|---|
+| **frontend** (Nginx) | Nginx + SvelteKit statique | 80 | — | Point d'entrée HTTP unique, reverse proxy |
+| **chat-gateway** | Rust / Axum / Tokio | 3000 | Redis | WebSocket temps réel, routage MLS, présence |
+| **chat-delivery-service** | NestJS | 3010 | PostgreSQL + Redis | API MLS, messages offline, historique Redis Stream |
+| **media-service** | NestJS | 3011 | MinIO | Stockage blobs chiffrés E2EE |
+| **core-service** | NestJS | 3012 | PostgreSQL | Auth OIDC (Authentik), utilisateurs, paiements Stripe |
+| **social-service** | NestJS | 3014 | PostgreSQL + MongoDB | Posts, formulaires, channels/communautés |
+| Redis | — | 6379 | — | Présence, Pub/Sub, streams historique |
+| Kafka | Confluent 7.5 | 9092 / 29092 | — | Bus d'événements asynchrones |
+| PostgreSQL | — | 5432 | `auth_db` | Données relationnelles partagées |
+| MongoDB | — | 27017 | `chat_db` | Posts et données document |
+| MinIO | — | 9000 / 9001 | — | Blobs médias (S3-compatible) |
+| Coturn | — | 3478 / 5349 | — | STUN/TURN WebRTC (local uniquement) |
 
-- `social-service` -> service paiement
-  - `forms.service.ts` appelle `POST {PAYMENT_SERVICE_URL}/api/payments/create-checkout-session`
-  - fallback code: `http://localhost:3012` si variable absente
+---
 
-- `core-service` -> service forms
-  - `payment/webhook.controller.ts` appelle `POST {FORM_URL}/api/forms/submissions/:id/mark-paid`
-  - fallback code: `http://localhost:3014` si variable absente
+## 3. Routage Nginx
 
-### 6.2 Pub/Sub Redis
+Nginx est l'unique entrée HTTP. Il implémente l'authentification via le sous-module `auth_request` de Nginx, qui valide chaque requête protégée en appelant `core-service:3012/api/auth/verify` en interne.
 
-- Canal `chat:messages`
-  - publie par `chat-gateway`
-  - consomme localement par `chat-gateway` (fanout multi-instance)
+### Tableau des routes
 
-- Canal `chat:channel_events`
-  - **publie par `social-service`** lors des mutations de membres et d'envoi de messages
-  - consomme par `chat-gateway` pour notifier les clients connectes
-  - format: `{ type: string, data: object, userIds: string[], timestamp: string }`
-  - types d'evenements publies:
-    - `channel.member.joined` : quand un membre rejoint ou est invite (joinChannel / inviteToChannel)
-    - `channel.member.kicked` : quand un membre est expulse (kickMember)
-    - `channel.message.created` : quand un message est envoye dans un canal
-  - le champ `userIds` liste les IDs des utilisateurs destinataires (membres du workspace + utilisateur kick le cas echeant)
+| Route publique | Upstream | Auth ? | Notes |
+|---|---|---|---|
+| `/api/ws` | `chat-gateway:3000` | ✅ | WebSocket upgrade, token cookie |
+| `/api/groups` | `chat-gateway:3000` | — | Groupes MLS |
+| `/api/mls-api/*` | `chat-delivery-service:3010` | ✅ | API MLS principal |
+| `/api/history/*` | `chat-delivery-service:3010` | ✅ | Redis Stream historique |
+| `/api/media/*` | `media-service:3011` | — | Blobs — auth interne au service |
+| `/api/posts/*` | `social-service:3014` | ✅ | Fil d'actualités |
+| `/api/forms/*` | `social-service:3014` | ✅ | Formulaires |
+| `/api/channels/*` | `social-service:3014` | — | Channels communautés |
+| `/api/auth/*` | `core-service:3012` | — | Login, refresh, logout |
+| `/api/users/*` | `core-service:3012` | — | Profils utilisateurs |
+| `/api/payments/*` | `core-service:3012` | ✅ | Stripe |
 
-- Presence
-  - cles `user:online:<userId>:<deviceId>` dans Redis
+**Headers réinjectés par Nginx** après `auth_request` réussi :
+- `X-User-Id` — identifiant utilisateur (sub OIDC)
+- `X-User-Logged-In` — booléen
 
-- Historique groupe
-  - stream `history:<groupId>` alimente par `chat-gateway`
-  - lu par `chat-delivery-service` pour `/api/history/:groupId`
+---
 
-### 6.3 Kafka
+## 4. Authentification (OIDC Authentik)
 
-- Topic `chat.messages`
-  - produit par `chat-gateway` (evenements `MessageSentEvent`)
-  - consomme par `chat-delivery-service` (microservice Kafka, group `chat-delivery-consumer`)
+```
+1. Frontend → startOidcLogin()
+     → redirect vers Authentik /authorize (PKCE, state anti-CSRF)
 
-- Topic `post.created`
-  - consomme par `chat-gateway` (abonnement visible dans `main.rs`)
-  - utilite: diffusion d'evenements channels/posts vers clients en ligne
+2. Authentik → redirect vers /auth/callback?code=...&state=...
 
-## 7. Endpoints backend exposes (principaux)
+3. Frontend → POST /api/auth/oidc/callback { code, redirect_uri }
+     → core-service échange le code contre tokens Authentik (server-side)
+     → upsert utilisateur en PostgreSQL
+     → retourne { access_token (JWT HS256, 15 min), refresh (cookie HttpOnly 7j) }
 
-### 7.1 chat-gateway (port 3000)
+4. Frontend stocke access_token en mémoire + cookie canari_ws_token
+     (pour auth WebSocket via cookie HTTP)
 
-- `GET /api/health`
-- `GET /api/ws` (WebSocket)
-- `GET /api/presence`
-
-### 7.2 chat-delivery-service (port 3010, prefix global `/api`)
-
-Familles d'endpoints majeures:
-
-- `/api/mls-api/sync/session/*`
-- `/api/mls-api/pin-verifier/check`
-- `/api/mls-api/groups*` — `POST` accepte `{ groupId, createdBy, members[], isGroup? }` ; `isGroup=false` signifie conversation 1-pour-1
-- `/api/mls-api/register-device`
-- `/api/mls-api/welcome*`
-- `/api/mls-api/send`
-- `/api/mls-api/messages/*`
-- `/api/history/:groupId`
-
-### 7.3 core-service (port 3012, prefix `/api`)
-
-- `/api/auth/*`
-- `/api/users/*`
-- `/api/payments/*`
-- `/api/payments/webhook` (raw body Stripe)
-
-### 7.4 social-service (port 3014, prefix `/api`)
-
-- `/api/posts/*`
-- `/api/forms/*`
-- `/api/channels/*`
-  - `POST /api/channels/workspaces` : creer un workspace
-  - `GET /api/channels/workspaces/:slug` : obtenir un workspace par slug
-  - `GET /api/channels/workspaces/:id/user/:userId` : lister les workspaces d'un user
-  - `POST /api/channels/:channelId/join` : rejoindre un canal
-  - `POST /api/channels/:channelId/leave` : quitter un canal
-  - `POST /api/channels/:channelId/members/invite` : inviter un membre (actorUserId + targetUserId)
-  - `POST /api/channels/:channelId/members/kick` : expulser un membre
-  - `POST /api/channels/:channelId/messages` : envoyer un message chiffre dans un canal
-
-### 7.5 media-service (port 3011, prefix `/api`)
-
-- endpoints media exposes via `/api/media/*` derriere Nginx
-
-## 8. Flux critiques
-
-### 8.1 Message MLS (online/offline)
-
-1. Client -> `frontend` -> `/api/ws` -> `chat-gateway`
-2. `chat-gateway` publie en Redis `chat:messages` pour les destinataires online
-3. Si destinataire offline: `chat-gateway` appelle `chat-delivery-service /mls-api/send`
-4. `chat-gateway` archive aussi en Kafka `chat.messages` et Redis Stream `history:*`
-
-### 8.2 Convergence historique multi-appareils
-
-Objectif: garantir qu'un appareil qui se connecte tardivement recupere un
-historique complet des conversations, meme si l'ordre de connexion des appareils
-varie.
-
-Flux frontend:
-
-1. Login/reconnexion WebSocket -> declenchement d'une synchro d'historique
-   sur toutes les conversations `isReady`.
-2. Discovery des groupes manquants -> nouveau passage de synchro apres activation
-   des placeholders.
-3. Reception d'un `sync_request` (nouvel appareil detecte) -> sync des appareils
-   - nouveau passage d'historique.
-
-Mecanismes de robustesse:
-
-- Anti-concurrence cote frontend pour eviter plusieurs replays historiques en
-  parallele sur le meme etat MLS.
-- Re-planification d'un passage de rattrapage si un trigger arrive pendant un
-  sync deja en cours.
-- En conversation directe, la verification de membership privilegie d'abord
-  `registerMember` (self-heal serveur) et evite les reparations destructrices
-  si l'etat MLS local du groupe existe deja.
-
-### 8.3 Creation paiement formulaire
-
-1. Client -> `/api/forms/*` -> `social-service`
-2. `social-service` appelle le service paiement (`/api/payments/create-checkout-session`)
-3. Webhook Stripe recu par `core-service /api/payments/webhook`
-4. `core-service` notifie le service forms (`/api/forms/submissions/:id/mark-paid`)
-
-## 9. Notes
-
-- En dev local, les fallbacks `PAYMENT_SERVICE_URL` dans `forms.service.ts` (`http://localhost:3012`) et `FORM_URL` dans `webhook.controller.ts` (`http://localhost:3014`) correspondent aux ports compose.
-- En prod (Docker network), `posts.service.ts` utilise `http://core-service:3012` comme fallback pour `PAYMENT_SERVICE_URL`.
-
-## 10. Diagramme simplifie
-
-```mermaid
-graph LR
-    U[Client] --> F[Frontend Nginx :80]
-
-    F --> GW[chat-gateway :3000]
-    F --> DEL[chat-delivery-service :3010]
-    F --> MED[media-service :3011]
-    F --> CORE[core-service :3012]
-    F --> SOC[social-service :3014]
-
-    GW <--> R[(Redis :6379)]
-    GW --> K[(Kafka :29092/9092)]
-    GW --> DEL
-
-    DEL --> R
-    DEL --> K
-    DEL --> M[(Mongo :27017)]
-
-    SOC --> R
-    CORE --> P[(Postgres :5432)]
-    SOC --> P
-    MED --> MIN[(MinIO :9000)]
+5. Refresh automatique : POST /api/auth/refresh via cookie HttpOnly
 ```
 
-# Chiffrement
+**En dev** : `POST /api/auth/dev-login` (désactivé via `ENABLE_DEV_ROUTES=false` en prod).
 
-La messagerie utilise un chiffrement de bout en bout (E2EE) pour garantir la confidentialité des messages dans toutes les conversations. Voici les détails techniques des mécanismes de chiffrement utilisés selon le type de discussion :
+**Vérification Nginx** : `GET /internal/auth/verify` sur `core-service:3012/api/auth/verify`.
 
-## 1. Discussions Directes et Petits Groupes (DMs)
+---
 
-- **Protocole de Chiffrement :** Utilisation de **Message Layer Security (MLS)** pour la gestion des clés et le chiffrement de groupe. (cf. [RFC 9420](https://datatracker.ietf.org/doc/html/rfc9420)).
-- **Perfect Forward Secrecy (PFS) et Post-Compromise Security (PCS) :** Le protocole MLS assure la rotation continue des clés, empêchant la lecture des anciens messages si une clé est compromise, et garantissant l'impossibilité de lire les nouveaux si un membre est expulsé.
+## 5. Communications inter-services
 
-## 2. Canaux Communautaires (Espaces / Workspaces)
+### HTTP synchrone
 
-Pour les espaces communautaires à fort volume impliquant de fréquents mouvements de membres (ex: promotions, associations), le maintien exclusif de la rotation MLS pure peut s'avérer trop coûteux en performances. Un modèle hybride est ainsi appliqué :
+| Appelant | Appelé | Raison |
+|---|---|---|
+| chat-delivery-service | core-service | Vérification utilisateurs |
+| social-service | core-service | Auth paiements, vérification memberships |
+| media-service | — | Accès direct MinIO (SDK) |
 
-- **Clé par Canal :** Une clé privée symétrique unique (AES-256) est générée pour chaque canal. Actuellement (au stade de MVP), cette clé est statique et n'est pas modifiée au cours du temps.
-- **Distribution via MLS :** La clé privée du canal n'est **jamais** transmise en clair au serveur. Lorsqu'un nouveau membre rejoint le canal, un bot ou un administrateur ayant déjà accès transmet la clé privée du canal de manière asynchrone au nouvel arrivant via un message chiffré MLS (en utilisant l'infrastructure sécurisée de la partie DMs/Groupes de l'application).
-- **Chiffrement des messages :** Les messages envoyés dans le canal sont chiffrés en AES-256-GCM à l'aide de la clé statique du canal.
-- **Accès à l'historique :** Ce paradigme permet intrinsèquement à un nouveau venu, une fois la clé reçue, de déchiffrer sans complexité l'intégralité de l'historique du canal.
-- **Gestion des expulsions :** Dans la version actuelle, une exclusion repose sur une interdiction serveur ("soft block") : le serveur coupe l'accès de la cible aux flux de la WebSocket et de l'API. La clé n'étant pas rotative, la cryptographie seule ne prévient pas un membre expulsé de déchiffrer les requêtes futures s'il parvenait à écouter le réseau en contournant l'ACL. C'est un compromis assumé sur ce volet MVP.
+### Redis Pub/Sub (temps réel)
+
+| Canal | Producteur | Consommateur | Format |
+|---|---|---|---|
+| `chat:messages` | chat-delivery-service | chat-gateway | `{ recipientId, deviceId, proto (base64), groupId, senderId, ... }` |
+| `chat:channel_events` | social-service | chat-gateway | `{ type, data, userIds[], timestamp }` |
+
+**Types d'événements canal** (`chat:channel_events`) :
+- `channel.member.joined`
+- `channel.member.kicked`
+- `channel.message.created`
+
+### Kafka (événements asynchrones)
+
+| Topic | Producteur | Consommateur | Payload |
+|---|---|---|---|
+| `chat.messages` | chat-delivery-service | chat-delivery-service (push notif) | `MessageSentEvent` |
+| `post_created` | social-service | chat-gateway | `PostCreatedEvent` |
+
+---
+
+## 6. Flux d'un message MLS (online)
+
+```
+1. Expéditeur (WASM)
+   WasmMlsClient.send_message(groupId, plaintext)
+   → ciphertext MLS (AES-128-GCM, epoch courant)
+
+2. Frontend → HTTP POST /api/mls-api/send
+   { proto: base64(ciphertext), groupId, recipientId, deviceId }
+
+3. chat-delivery-service
+   ├── Stocke dans Redis Stream history:{groupId}
+   └── Publie N messages sur Redis "chat:messages"
+       (un par membre/device destinataire)
+
+4. chat-gateway (abonné Redis "chat:messages")
+   ├── Lookup: connected_users["userId:deviceId"]
+   ├── Online → envoie frame WS au destinataire
+   └── Offline → message déjà stocké (récupéré à la reconnexion)
+
+5. Destinataire (WASM)
+   processIncomingMessage(groupId, bytes) → plaintext AppMessage → UI
+```
+
+**Offline** : le client appelle `GET /api/mls-api/messages/:groupId` à la reconnexion et rejoue les messages en file séquentielle.
+
+---
+
+## 7. Flux de création d'un groupe MLS
+
+```
+1. GET /api/mls-api/{userId}/devices  → liste des KeyPackages du contact
+2. POST /api/mls-api/groups { groupId, createdBy, members[], isGroup }
+3. mls.createGroup(groupId)           → epoch 0 côté initiateur
+4. mls.addMembersBulk(devices)        → { commit, welcome, ratchetTree }
+5. POST /api/mls-api/welcome          → stockage offline pour chaque device
+6. POST /api/mls-api/send (commit)    → diffusé via Redis aux membres online
+7. Si multi-device (propres appareils): répéter 4-6
+```
+
+---
+
+## 8. Protocole WebSocket (frames JSON)
+
+### Client → Gateway (entrant)
+
+| Frame | Champs | Action |
+|---|---|---|
+| `welcome_request` | `groupId`, `payload`, `targetUserId`, `targetDeviceId` | Forward du Welcome à un peer |
+| `reinvite_request` | idem | Réinvitation après stale epoch |
+| `read` | `messageId` | Acquittement de lecture (no-op côté gateway) |
+
+### Gateway → Client (sortant)
+
+```json
+{
+  "proto": "<base64 ciphertext MLS>",
+  "senderId": "userId",
+  "senderDeviceId": "deviceId",
+  "groupId": "uuid",
+  "isWelcome": false,
+  "isCommit": false
+}
+```
+
+---
+
+## 9. Schémas de données PostgreSQL
+
+Toutes les tables partagent la base `auth_db` (core-service + chat-delivery-service ont le même host).
+
+### Tables core-service
+
+| Table | Colonnes clés |
+|---|---|
+| `users` | `id` (sub OIDC), `displayName`, `promo`, `formation`, `bio`, `stripeCustomerId`, `admin` |
+
+### Tables chat-delivery-service
+
+| Table | Colonnes clés |
+|---|---|
+| `key_packages` | `userId`, `deviceId` (UNIQUE), `packageBase64` |
+| `one_time_key_packages` | pool de pré-keys par `(userId, deviceId)` |
+| `queued_message` | `recipientId`, `deviceId`, `proto`, `isWelcome`, `isCommit`, `groupId`, `type`, `ratchetTree` |
+| `dm_groups` | `id`, `isGroup`, `keyVersion`, `activeEpoch`, `latestKeyRotationPayload` |
+| `dm_group_members` | `groupId`, `userId`, `role`, `leftAt` |
+| `dm_device_group_memberships` | `groupId`, `userId`, `deviceId`, `status` (pending/welcome_sent/welcome_received/stale), `lastEpochSeen` |
+| `push_tokens` | `userId`, `deviceId`, `token`, `platform` (fcm/apns) |
+
+### Tables social-service
+
+| Table | Colonnes clés |
+|---|---|
+| `channel_workspaces` | `id`, `slug` (unique), `name`, `createdBy`, `imageMediaId` |
+| `channels` | `workspaceId`, `name`, `isPrivate`, `allowedRoles[]`, `keyVersion`, `masterSecret`, `archived` |
+| `channel_roles` | `workspaceId`, `name`, `priority`, `permissions[]` |
+| `channel_members` | `workspaceId`, `userId`, `roleIds[]`, `keys` (JSONB) |
+| `channel_messages` | `channelId`, `senderId`, `content` (ciphertext), `nonce`, `keyVersion`, `replyTo`, `attachments`, `reactions` |
+| `channel_key_distributions` | `channelId`, `userId`, `deviceId`, `status`, `attempts`, `sentAt`, `receivedAt`, `ackedAt` |
+
+---
+
+## 10. Déploiement production
+
+```
+Internet
+  └── Cloudflare (TLS termination)
+        └── Cloudflare Tunnel → http://localhost:8080
+              └── Nginx:80 (conteneur frontend)
+                    ├── /api/ws         → chat-gateway:3000
+                    ├── /api/mls-api/*  → chat-delivery-service:3010
+                    ├── /api/media/*    → media-service:3011
+                    ├── /api/auth/*     → core-service:3012
+                    ├── /api/channels/* → social-service:3014
+                    └── /*              → SvelteKit statique (build/)
+```
+
+Les services backend sont uniquement exposés via `expose:` (pas de `ports:` en prod), ils ne sont accessibles que depuis le réseau Docker interne.

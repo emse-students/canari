@@ -1,326 +1,318 @@
-# Déploiement avec Cloudflare Tunnel
+# Déploiement et Infrastructure
 
-## Architecture
-
-```
-[Client Mobile HTTPS]
-        ↓
-[Cloudflare Edge (TLS/SSL termination)]
-        ↓
-[Cloudflare Tunnel - cloudflared]
-        ↓
-[Nginx local HTTP:8080]
-        ↓
-[Services Docker]
-  ├─ Chat Gateway :3000
-  ├─ Chat Delivery :3010
-  ├─ Media Service :3011
-  ├─ Core Service :3012
-  └─ Social Service :3014
+## 1. Topologie de production
 
 ```
+Internet (HTTPS)
+  └── Cloudflare (TLS + WAF + DDoS)
+        └── Cloudflare Tunnel → http://localhost:8080
+              └── Nginx:80 (conteneur frontend, port host 8080→80)
+                    ├── auth_request → core-service:3012/api/auth/verify
+                    ├── /api/ws         → chat-gateway:3000
+                    ├── /api/mls-api/*  → chat-delivery-service:3010
+                    ├── /api/media/*    → media-service:3011
+                    ├── /api/auth/*     → core-service:3012
+                    ├── /api/channels/* → social-service:3014
+                    └── /*              → build SvelteKit statique
+```
 
-## Avantages de Cloudflare Tunnel
+Tous les services backend (`chat-gateway`, `chat-delivery-service`, `media-service`, `core-service`, `social-service`) sont exposés uniquement via `expose:` dans le docker-compose de prod — ils ne sont **pas** accessibles directement depuis l'hôte, uniquement depuis le réseau Docker interne.
 
-✅ Pas besoin de certificats SSL sur le serveur (Cloudflare gère tout)
-✅ Pas besoin d'ouvrir les ports 80/443 publiquement
-✅ Protection DDoS automatique
-✅ CDN global gratuit
-✅ Support WebSocket (wss://)
-✅ Configuration simple
+---
 
-## Configuration actuelle
+## 2. Docker Compose
 
-### Cloudflare Tunnel (`~/.cloudflared/config.yml`)
+### Fichiers
+
+| Fichier | Usage |
+|---|---|
+| `infrastructure/local/docker-compose.yml` | Développement local |
+| `infrastructure/docker-compose.dev.yml` | Dev avec services distants |
+| `infrastructure/docker-compose.prod.yml` | Production |
+
+### Services en production
 
 ```yaml
-tunnel: 7e564786-96b0-4a91-94e6-720032909cfd
-credentials-file: /root/.cloudflared/7e564786-96b0-4a91-94e6-720032909cfd.json
+services:
+  frontend:
+    image: ghcr.io/emse-students/canari/frontend:latest
+    ports: ["8080:80"]    # Seul port exposé vers l'hôte
 
-ingress:
-  - hostname: auth.canari-emse.fr
-    service: http://localhost:9000
-  - hostname: canari-emse.fr
-    service: http://localhost:8080 # ← Nginx écoute ici
-  - service: http_status:404
+  chat-gateway:
+    image: ghcr.io/emse-students/canari/chat-gateway:latest
+    expose: ["3000"]       # Interne uniquement
+
+  chat-delivery-service:
+    image: ghcr.io/emse-students/canari/chat-delivery-service:latest
+    expose: ["3010"]
+
+  media-service:
+    image: ghcr.io/emse-students/canari/media-service:latest
+    expose: ["3011"]
+
+  core-service:
+    image: ghcr.io/emse-students/canari/core-service:latest
+    expose: ["3012"]
+
+  social-service:
+    image: ghcr.io/emse-students/canari/social-service:latest
+    expose: ["3014"]
+
+  redis:
+    image: redis:7-alpine
+    expose: ["6379"]
+
+  postgres:
+    image: postgres:15
+    expose: ["5432"]
+    environment:
+      POSTGRES_DB: auth_db
+      POSTGRES_USER: canari
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
+  mongo:
+    image: mongo:7
+    expose: ["27017"]
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    expose: ["29092"]
+
+  minio:
+    image: minio/minio
+    ports:
+      - "${MINIO_API_HOST_PORT:-19000}:9000"
+      - "${MINIO_CONSOLE_HOST_PORT:-19001}:9001"
 ```
 
-### Points clés
+---
 
-1. **Nginx écoute en HTTP** (pas HTTPS) sur le port 8080
-2. **Cloudflare gère le TLS** en amont (tunnel sécurisé)
-3. Le navigateur voit **HTTPS**, donc `crypto.subtle` fonctionne
-4. Les WebSockets utilisent **WSS** automatiquement
+## 3. Variables d'environnement
 
-## Déploiement
+Toutes les variables sont dans `infrastructure/.env` (jamais committé).
 
-### 1. Vérifier que le tunnel Cloudflare est actif
+### Variables obligatoires
 
+| Variable | Description | Exemple |
+|---|---|---|
+| `JWT_SECRET` | Secret JWT HS256 (64 chars hex) | `openssl rand -hex 32` |
+| `POSTGRES_PASSWORD` | Mot de passe PostgreSQL | |
+| `DOMAIN` | Domaine principal | `canari-emse.fr` |
+| `ALLOW_ORIGIN` | CORS origin | `https://canari-emse.fr` |
+
+### Variables optionnelles
+
+| Variable | Défaut | Description |
+|---|---|---|
+| `FRONTEND_HOST_PORT` | `80` | Port host pour Nginx frontend |
+| `MINIO_API_HOST_PORT` | `19000` | Port host API MinIO |
+| `MINIO_CONSOLE_HOST_PORT` | `19001` | Port host console MinIO |
+| `MINIO_ROOT_USER` | `minioadmin` | Accès MinIO |
+| `MINIO_ROOT_PASSWORD` | — | Accès MinIO |
+| `AUTHENTIK_URL` | — | URL Authentik OIDC |
+| `AUTHENTIK_CLIENT_ID` | — | Client ID OIDC |
+| `AUTHENTIK_CLIENT_SECRET` | — | Secret OIDC (côté serveur uniquement) |
+| `STRIPE_SECRET_KEY` | — | Clé secrète Stripe |
+| `STRIPE_WEBHOOK_SECRET` | — | Secret webhook Stripe |
+| `FCM_PROJECT_ID` | — | Firebase (push notifs Android) |
+| `FCM_PRIVATE_KEY` | — | Firebase credentials |
+| `APNS_KEY_ID` | — | APNs (push notifs iOS) |
+| `ENABLE_DEV_ROUTES` | `false` | Active /api/auth/dev-login |
+| `MEDIA_MAX_SIZE_MB` | `100` | Taille max upload médias |
+
+---
+
+## 4. Premier déploiement (pas à pas)
+
+### Prérequis serveur
+
+- Linux (Ubuntu 22.04+ recommandé)
+- Docker Engine 24+ + Docker Compose V2
+- Git
+- Runner GitHub Actions self-hosted configuré
+
+### Étapes
+
+**1. Cloner le dépôt**
 ```bash
-# Status du service
-sudo systemctl status cloudflared
-
-# Si inactif, démarrer
-sudo systemctl start cloudflared
-
-# Activer au démarrage
-sudo systemctl enable cloudflared
-
-# Voir les logs
-sudo journalctl -u cloudflared -f
+git clone https://github.com/emse-students/canari.git ~/canari
+cd ~/canari
 ```
 
-### 2. Builder et déployer l'application
-
+**2. Générer les secrets**
 ```bash
-# Dans le dossier du projet
-cd /root/Canari  # ou votre chemin
-
-# Builder le frontend
-cd frontend
-bun run build  # ou npm run build
-
-# Retour à la racine
-cd ..
-
-# Déployer nginx (port 8080 par défaut pour Cloudflare)
-make nginx-install
-
-# Ou avec un port personnalisé
-make nginx-install NGINX_PORT=8888
+./scripts/setup-env.sh --prod
+# Crée infrastructure/.env avec JWT_SECRET aléatoire
+nano infrastructure/.env
+# Remplir : POSTGRES_PASSWORD, DOMAIN, ALLOW_ORIGIN, Authentik, Stripe, Firebase...
 ```
 
-### 3. Vérifier le déploiement
+**3. Configurer le secret GitHub**
 
+GitHub → Settings → Secrets and variables → Actions → New repository secret :
+```
+JWT_SECRET = <même valeur que dans infrastructure/.env>
+```
+
+Ce secret est injecté dans le bundle JS à chaque build CI (variable `PUBLIC_JWT_SECRET`).
+
+**4. Configurer Cloudflare Tunnel**
+
+Dans le dashboard Cloudflare :
+- Créer un tunnel pointant vers `http://localhost:8080`
+- Assigner le domaine `canari-emse.fr` au tunnel
+- Installer cloudflared sur le serveur :
+  ```bash
+  cloudflared service install <TOKEN>
+  ```
+
+**5. Premier démarrage**
 ```bash
-# Nginx écoute bien sur 8080
-sudo netstat -tlnp | grep 8080
-
-# Test local
-curl http://localhost:8080
-
-# Test via Cloudflare
-curl -I https://canari-emse.fr
-
-# Vérifier les services Docker
-docker ps
+make production
+# Pull les images depuis ghcr.io/emse-students/canari/*
+# Démarre tous les services avec docker compose up -d
 ```
 
-## Flux de requête
-
-### Page web
-
-```
-Client → https://canari-emse.fr
-         ↓
-Cloudflare Edge (HTTPS, certificat SSL géré par Cloudflare)
-         ↓
-Cloudflare Tunnel (connexion chiffrée)
-         ↓
-Nginx :8080 (HTTP local)
-         ↓
-Frontend statique (SvelteKit)
-```
-
-### WebSocket
-
-```
-Client → wss://canari-emse.fr/ws
-         ↓
-Cloudflare Edge (WSS)
-         ↓
-Cloudflare Tunnel
-         ↓
-Nginx :8080 → Chat Gateway :3000
-```
-
-### API REST
-
-```
-Client → https://canari-emse.fr/mls-api/...
-         ↓
-Cloudflare Edge
-         ↓
-Cloudflare Tunnel
-         ↓
-Nginx :8080 → Chat Delivery :3010
-```
-
-## Configuration Nginx
-
-Le fichier `infrastructure/local/Dockerfile.frontend` contient la configuration Nginx intégrée, optimisée pour Cloudflare :
-
-```nginx
-server {
-    listen ${NGINX_PORT};  # 8080 par défaut
-    server_name ${DOMAIN};
-
-    # Headers indiquant que HTTPS est géré en amont
-    location /ws {
-        proxy_set_header X-Forwarded-Proto https;
-        # ...
-    }
-}
-```
-
-**Note :** Pas de configuration SSL/TLS dans nginx car Cloudflare s'en occupe.
-
-## Troubleshooting
-
-### Le site ne charge pas
-
+**6. Initialiser MinIO**
 ```bash
-# 1. Vérifier Cloudflare Tunnel
-sudo systemctl status cloudflared
-sudo journalctl -u cloudflared -n 50
-
-# 2. Vérifier Nginx
-sudo systemctl status nginx
-sudo nginx -t
-sudo tail -f /var/log/nginx/error.log
-
-# 3. Vérifier le port 8080
-sudo netstat -tlnp | grep 8080
-curl http://localhost:8080
+# Créer le bucket canari-media
+docker exec -it $(docker ps -q -f name=minio) sh
+mc alias set local http://localhost:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD
+mc mb local/canari-media
+mc policy set private local/canari-media
 ```
 
-### Erreur "crypto.subtle is undefined"
+---
 
-**Causes :**
+## 5. CI/CD (GitHub Actions)
 
-1. Vous accédez via HTTP au lieu de HTTPS
-   - ✅ Solution : Utilisez `https://canari-emse.fr`
-2. Cloudflare Tunnel n'est pas actif
-   - ✅ Solution : `sudo systemctl restart cloudflared`
-3. Configuration DNS incorrecte
-   - ✅ Vérifiez le dashboard Cloudflare
+### Workflows
 
-### WebSocket ne se connecte pas
+| Fichier | Déclencheur | Actions |
+|---|---|---|
+| `.github/workflows/ci.yml` | Push, PR sur main | Lint + tests |
+| `.github/workflows/cd.yml` | Push sur main | Build + déploiement |
+| `.github/workflows/code-analysis.yml` | Push + cron quotidien | Sécurité + audit dépendances |
 
-```bash
-# Vérifier que le Chat Gateway tourne
-docker ps | grep gateway
-docker logs chat-gateway
-
-# Vérifier que nginx forward correctement
-curl -I http://localhost:8080/ws
-
-# Tester la connexion WebSocket
-wscat -c wss://canari-emse.fr/ws?token=test
-# (installer wscat: npm install -g wscat)
-```
-
-### Les services backend ne répondent pas
-
-```bash
-# Lister les containers
-docker ps
-
-# Démarrer les services
-docker compose -f infrastructure/docker-compose.prod.yml up -d
-
-# Voir les logs
-docker compose -f infrastructure/docker-compose.prod.yml logs -f
-
-# Vérifier les ports
-curl http://localhost:3000  # Gateway
-curl http://localhost:3010  # Delivery
-```
-
-## Modification de la configuration
-
-### Changer le port nginx
-
-```bash
-# Dans le Makefile
-make nginx-install NGINX_PORT=9999
-
-# Puis mettre à jour cloudflared config
-vim ~/.cloudflared/config.yml
-# Changer service: http://localhost:9999
-sudo systemctl restart cloudflared
-```
-
-### Ajouter un nouveau service
+### Pipeline CD détaillé
 
 ```yaml
-# ~/.cloudflared/config.yml
-ingress:
-  - hostname: auth.canari-emse.fr
-    service: http://localhost:9000
-  - hostname: api.canari-emse.fr # Nouveau
-    service: http://localhost:4000 # Nouveau
-  - hostname: canari-emse.fr
-    service: http://localhost:8080
-  - service: http_status:404
+jobs:
+  build-frontend:
+    steps:
+      - name: Install wasm-pack
+      - name: Build mls-core WASM
+        run: cd frontend/mls-wasm && wasm-pack build --target web
+      - name: Build SvelteKit
+        run: cd frontend && bun run build
+        env:
+          PUBLIC_JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          VITE_GATEWAY_URL: https://canari-emse.fr
+          # ... autres VITE_* variables
+
+  build-docker:
+    needs: build-frontend
+    steps:
+      - name: Build and push images
+        uses: docker/build-push-action
+        with:
+          context: .
+          file: infrastructure/local/Dockerfile.frontend
+          tags: ghcr.io/emse-students/canari/frontend:latest
+      # Répété pour chaque service
+
+  deploy:
+    needs: build-docker
+    runs-on: self-hosted   # Runner sur le serveur de prod
+    steps:
+      - name: Pull and restart
+        run: |
+          cd ~/canari
+          git pull
+          docker compose -f infrastructure/docker-compose.prod.yml pull
+          docker compose -f infrastructure/docker-compose.prod.yml up -d
 ```
+
+### Analyse de sécurité (code-analysis.yml)
+
+- **CodeQL** : détection de vulnérabilités JS/TS
+- **TruffleHog** : scan de secrets dans les commits
+- **npm audit** : vulnérabilités de dépendances Node.js
+- **cargo audit** : vulnérabilités de crates Rust
+- **cargo clippy** : linting Rust
+- **ESLint** : linting TypeScript
+
+---
+
+## 6. Développement local
+
+### Stack locale complète
 
 ```bash
-# Redémarrer cloudflared
-sudo systemctl restart cloudflared
-
-# Vérifier
-curl -I https://api.canari-emse.fr
+make run-services
+# Lance via infrastructure/local/docker-compose.yml :
+# postgres, mongo, redis, kafka, zookeeper, minio, coturn
+# + chat-gateway, chat-delivery-service, media-service, core-service, social-service
 ```
 
-## Monitoring
+Le frontend tourne séparément (Vite HMR) :
+```bash
+cd frontend && bun run dev
+# → http://localhost:1420
+```
 
-### Logs en temps réel
+### Makefiles targets
+
+```makefile
+install           # npm install + cargo build + husky hooks
+install-hooks     # Husky hooks uniquement
+build-frontend    # WASM + SvelteKit build
+run-services      # Docker Compose local up
+reload-services   # Docker Compose restart
+stop-services     # Docker Compose down
+test              # Tous les tests
+test-gateway      # Tests Rust chat-gateway
+test-libs         # Tests Rust libs partagées
+test-history      # Tests NestJS chat-delivery-service
+production        # Pull images GHCR + up (sur le serveur de prod)
+```
+
+---
+
+## 7. Mise à jour en production
+
+Les déploiements suivants sont entièrement automatisés :
+
+```
+git push origin main
+  → GitHub Actions CI (lint, tests)
+  → Build WASM + SvelteKit + Docker images
+  → Push images vers GHCR
+  → Runner self-hosted : git pull + docker compose pull + up -d
+```
+
+Pour un déploiement manuel d'urgence :
+```bash
+# Sur le serveur
+cd ~/canari
+git pull
+docker compose -f infrastructure/docker-compose.prod.yml pull
+docker compose -f infrastructure/docker-compose.prod.yml up -d --force-recreate
+```
+
+---
+
+## 8. Monitoring et logs
 
 ```bash
-# Cloudflare Tunnel
-sudo journalctl -u cloudflared -f
+# Logs d'un service
+docker compose -f infrastructure/docker-compose.prod.yml logs -f chat-gateway
 
-# Nginx
-sudo tail -f /var/log/nginx/access.log
-sudo tail -f /var/log/nginx/error.log
+# État des conteneurs
+docker compose -f infrastructure/docker-compose.prod.yml ps
 
-# Services Docker
-docker compose -f infrastructure/docker-compose.prod.yml logs -f
+# Ressources
+docker stats
 ```
 
-### Métriques Cloudflare
-
-Dashboard Cloudflare → Zero Trust → Tunnels → Metrics
-
-- Trafic entrant/sortant
-- Nombre de connexions
-- Latence
-- Erreurs
-
-## Sécurité
-
-### Recommendations
-
-1. **Pare-feu** : Bloquez tous les ports sauf SSH
-
-   ```bash
-   sudo ufw allow 22/tcp
-   sudo ufw enable
-   ```
-
-   Les ports 80/443 ne doivent PAS être ouverts (Cloudflare Tunnel gère tout)
-
-2. **Headers de sécurité** : Déjà configurés dans nginx
-   - `X-Forwarded-Proto: https`
-   - `X-Real-IP`
-   - `X-Forwarded-For`
-
-3. **Authentification Cloudflare** : Credentials dans `/root/.cloudflared/`
-   ```bash
-   sudo chmod 600 /root/.cloudflared/*.json
-   ```
-
-## Alternatives
-
-Si vous ne voulez pas utiliser Cloudflare Tunnel, consultez [docs/SSL_SETUP.md](SSL_SETUP.md) pour une configuration avec :
-
-- Let's Encrypt (certificats SSL gratuits)
-- Nginx HTTPS direct
-- Port 443 ouvert publiquement
-
-## Ressources
-
-- [Cloudflare Tunnel Documentation](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/)
-- [Configuration nginx pour reverse proxy](https://docs.nginx.com/nginx/admin-guide/web-server/reverse-proxy/)
-- [WebSocket avec Cloudflare](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/configuration/websockets/)
+Les niveaux de log sont configurables via `RUST_LOG` (chat-gateway) et les variables d'environnement NestJS standard.

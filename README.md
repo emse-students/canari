@@ -3,7 +3,7 @@
 
 # Canari
 
-**Messagerie Sécurisée E2E · Architecture Microservices**
+**Messagerie sécurisée E2E pour l'EMSE · Architecture microservices**
 
 [![Built with SvelteKit](https://img.shields.io/badge/Built%20with-SvelteKit-FF3E00?logo=svelte)](https://kit.svelte.dev/)
 [![Powered by Bun](https://img.shields.io/badge/Powered%20by-Bun-000000?logo=bun)](https://bun.sh/)
@@ -18,516 +18,180 @@
 
 ---
 
-## 📋 Vue d'ensemble
-
-Canari est une application de **messagerie instantanée sécurisée** avec chiffrement de bout en bout utilisant le **protocole MLS** (Messaging Layer Security). Bâtie sur une architecture **microservices moderne**, elle combine un frontend Svelte performant avec une infrastructure backend robuste en Rust et NestJS.
-
-### ✨ Fonctionnalités principales
-
-- 🔐 **Chiffrement E2E (MLS)** - Protocole de sécurité standard pour la messagerie de groupe
-- 👥 **Conversations de groupe** - Support complet des groupes avec gestion des membres
-- 💬 **Historique sécurisé** - Messages indexés et stockés en base de données
-- 🔔 **Notifications en temps réel** - WebSocket avec routage smart online/offline
-- 🖼️ **Partage de médias chiffrés E2E** - Images/vidéos/fichiers chiffrés côté client
-- 📱 **Support multi-device** - Synchronisation fluide entre appareils
-- 🖥️ **Desktop & Web** - Frontend Tauri (desktop) et SvelteKit (web)
-- ⚡ **Infrastructure scalable** - Kafka, Redis, PostgreSQL, MongoDB
-- 🚀 **Déploiement automatisé** - CI/CD complet avec GitHub Actions et Docker
+Canari est la plateforme de messagerie et de vie associative de l'École des Mines de Saint-Étienne. Les conversations privées et les groupes sont chiffrés de bout en bout avec le **protocole MLS** (RFC 9420). Les communautés (workspaces/channels) utilisent un chiffrement symétrique dérivé par HKDF.
 
 ---
 
-## 🏗️ Architecture
+## Architecture en un coup d'œil
 
 ```
-┌──────────────────────────────────────────────────────┐
-│   Frontend (SvelteKit + Tauri + Form Builder)        │
-│   Chiffrement MLS côté client                        │
-└────────────────────┬─────────────────────────────────┘
-                     │
-                [WebSocket]
-                     │
-      ┌──────────────▼───────────┐
-      │ Chat Gateway (Rust - Axum) │
-      │ • Routage temps réel       │
-      │ • WebSocket management     │
-      │ • Redis PubSub             │
-      └────┬────────┬────────┬─────┘
-           │        │        │
-     ┌─────▼──────┐ ┌─▼─────────┐ ┌──────────┐ ┌──────────┐
-     │   Core     │ │ Chat Del. │ │  Social  │ │  Media   │
-     │  Service   │ │  Service  │ │ Service  │ │ Service  │
-     │  (NestJS)  │ │ (NestJS)  │ │ (NestJS) │ │ (NestJS) │
-     │Auth+Users  │ │           │ │Posts+Forms│ │          │
-     │ +Payments  │ │           │ │+Channels │ │          │
-     └────┬───────┘ └─┬─────────┘ └─┬────────┘ └────┬─────┘
-          │           │             │               │
-     ┌────▼───────────▼─────────────▼───────────────▼────┐
-     │ PostgreSQL • MongoDB • Redis • MinIO              │
-     │ Kafka • ZooKeeper • Stripe (API externe)          │
-     └───────────────────────────────────────────────────┘
+Navigateur / Tauri
+    │  (HTTPS + WS)
+    ▼
+ Nginx  ──auth_request──► core-service:3012
+    │
+    ├──► chat-gateway:3000      (Rust/Axum)  WebSocket temps réel, présence
+    ├──► chat-delivery:3010     (NestJS)     API MLS, messages offline, historique
+    ├──► media-service:3011     (NestJS)     Blobs chiffrés (MinIO)
+    ├──► core-service:3012      (NestJS)     Auth OIDC, utilisateurs, paiements
+    └──► social-service:3014    (NestJS)     Posts, formulaires, channels/communautés
+
+Infrastructure : PostgreSQL · MongoDB · Redis · Kafka · MinIO
 ```
 
-### 📦 Stack Technique
-
-| Couche       | Technologies                                       |
-| ------------ | -------------------------------------------------- |
-| **Frontend** | SvelteKit 2.9 • Svelte 5 • TailwindCSS 4 • Tauri 2 |
-| **Gateway**  | Rust (Axum) • Tokio • Tonic • Rdkafka              |
-| **Services** | NestJS • Node.js 20                                |
-| **Data**     | PostgreSQL • MongoDB • Redis • Kafka • MinIO       |
-| **Payment**  | Stripe (via Form Service)                          |
-| **DevOps**   | Docker • Docker Compose • GitHub Actions • Nginx   |
-| **Quality**  | ESLint • Prettier • Clippy • Husky • Pre-commit    |
+> En production, Cloudflare Tunnel termine le TLS et pointe sur `http://localhost:8080 → Nginx`.
 
 ---
 
-## 🚀 Installation Rapide
+## Documentation
+
+| Document | Contenu |
+|---|---|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Topologie complète, routage Nginx, flux inter-services |
+| [docs/MLS.md](docs/MLS.md) | Protocole MLS, implémentation Rust/WASM, flux de messages |
+| [docs/COMMUNITIES.md](docs/COMMUNITIES.md) | Workspaces, channels, chiffrement des communautés |
+| [docs/BACKEND.md](docs/BACKEND.md) | Services NestJS : endpoints, entités, auth |
+| [docs/CHAT_GATEWAY.md](docs/CHAT_GATEWAY.md) | Gateway Rust : WebSocket, Redis Pub/Sub, présence |
+| [docs/FRONTEND.md](docs/FRONTEND.md) | SvelteKit, Tauri, stores, routes, UI |
+| [docs/DEPLOIEMENT.md](docs/DEPLOIEMENT.md) | Docker Compose, CI/CD, premier déploiement |
+
+---
+
+## Démarrage rapide (dev local)
 
 ### Prérequis
 
-- **Docker** + **Docker Compose**
-- **Make** (GNU Make)
-- **Python** 3.9+ _(optionnel, pour pre-commit hooks avancés)_
+- Docker + Docker Compose
+- Node.js 20+, [Bun](https://bun.sh/), [Rust stable](https://rustup.rs/), `cargo install wasm-pack`
+- `make`
 
-**Auto-installé par `make` sur Linux/macOS :**
-
-- Node.js 20+ LTS + npm (via nvm)
-- Bun (gestionnaire de paquets rapide)
-- Rust stable + cargo (via rustup)
-- wasm-pack (build WASM)
-
-Vérifier les dépendances :
-
-```bash
-node --version
-npm --version
-rustc --version
-docker --version
-docker compose version
-make --version
-```
-
-### Démarrage local (dev)
-
-1. **Cloner le dépôt**
+### Lancer l'environnement
 
 ```bash
 git clone https://github.com/emse-students/canari.git
 cd canari
-```
 
-2. **Créer les fichiers `.env` et générer les secrets**
-
-```bash
-chmod +x scripts/setup-env.sh
+# Génère infrastructure/.env et frontend/.env avec des secrets aléatoires
 ./scripts/setup-env.sh
-# Crée infrastructure/.env et frontend/.env avec un JWT_SECRET généré automatiquement
-# Synchronise aussi VITE_MEDIA_URL=http://localhost:3011 pour le dev local
-```
 
-3. **Installer les dépendances**
-
-```bash
+# Installe les dépendances (Node + Rust + hooks)
 make install
+
+# Démarre tous les services Docker (DB, Kafka, Redis, gateway, services)
+make run-services
+
+# Dans un autre terminal : frontend avec HMR
+cd frontend && bun run dev
+# → http://localhost:1420
 ```
 
-4. **Lancer les services Docker + frontend**
+> **Windows** : utiliser `scripts/windows/setup_environment.ps1` puis `scripts/windows/start_all.ps1`.
 
-```bash
-make run-services              # Lance Redis, Kafka, MongoDB, PostgreSQL, Chat Gateway, Delivery, Media, MinIO
-cd frontend && bun run dev     # Frontend sur http://localhost:1420
-```
+### URLs locales
 
-> **Windows** : installer manuellement [Node.js](https://nodejs.org/), [Bun](https://bun.sh/), [Rust](https://rustup.rs/) et `cargo install wasm-pack`, puis `npm install` à la place de `bun install`.
-
-### Infrastructure locale
-
-Services disponibles après `make run-services` :
-
-| Service        | URL                    |
-| -------------- | ---------------------- |
-| Frontend dev   | http://localhost:1420  |
-| Chat Gateway   | ws://localhost:3000/ws |
-| Chat Delivery  | http://localhost:3010  |
-| Media Service  | http://localhost:3011  |
-| Core Service   | http://localhost:3012  |
-| Social Service | http://localhost:3014  |
-| PostgreSQL     | localhost:5432         |
-| MongoDB        | localhost:27017        |
-| Redis          | localhost:6379         |
-| Kafka          | localhost:9092         |
-
-### Déploiement production (premier déploiement)
-
-**Architecture** : `Cloudflare Tunnel → http://localhost:8080 → Docker frontend:80 → nginx interne → services`
-
-> Le frontend est un **bundle statique compilé par le CI**. Le fichier `frontend/.env` sur le serveur n'est jamais lu. Les variables `VITE_*` sont injectées lors du build GitHub Actions depuis les **GitHub Secrets**.
-
-1. **Sur le serveur** — cloner et configurer
-
-```bash
-git clone https://github.com/emse-students/canari.git ~/canari
-cd ~/canari
-./scripts/setup-env.sh --prod
-# Crée infrastructure/.env avec un JWT_SECRET généré
-```
-
-2. **Éditer `infrastructure/.env`** — remplir les valeurs obligatoires
-
-```bash
-nano infrastructure/.env
-# POSTGRES_PASSWORD=<mot-de-passe-fort>
-# DOMAIN=canari-emse.fr
-# ALLOW_ORIGIN=https://canari-emse.fr
-```
-
-3. **Ajouter le `JWT_SECRET` dans les GitHub Secrets**
-
-`Settings → Secrets and variables → Actions → New repository secret`
-
-```
-JWT_SECRET=<même valeur que dans infrastructure/.env>
-```
-
-> Ce secret est injecté dans le bundle JS lors du build CI. **Il doit correspondre** à `infrastructure/.env` pour que le chat-gateway valide les tokens.
-
-4. **Déployer**
-
-```bash
-make production
-# Pull les images depuis GHCR et démarre les services
-```
-
-5. **Configurer Cloudflare Tunnel** pour pointer vers `http://localhost:8080`
-
-**Les déploiements suivants** se font automatiquement via GitHub Actions à chaque push sur `main`.
+| Service | Adresse |
+|---|---|
+| Frontend (dev) | http://localhost:1420 |
+| Chat Gateway (WS) | ws://localhost:3000 |
+| Chat Delivery | http://localhost:3010 |
+| Media Service | http://localhost:3011 |
+| Core Service | http://localhost:3012 |
+| Social Service | http://localhost:3014 |
+| MinIO Console | http://localhost:9001 |
 
 ---
 
-## 🔧 Développement
-
-### Scripts Principaux
+## Commandes utiles
 
 ```bash
-# Setup environnement (dev)
-./scripts/setup-env.sh        # Crée frontend/.env + infrastructure/.env
-
-# Setup environnement (prod, sur le serveur)
-./scripts/setup-env.sh --prod # Crée uniquement infrastructure/.env
-
-# Installation dépendances (dev)
-make install
-make install-hooks
-
-# Build
-make build-frontend           # Compile WASM + SvelteKit
-
-# Services locaux
-make run-services             # Lance les services Docker locaux
-make reload-services          # Redémarre les services
-
-# Déploiement production
-make production               # Pull images GHCR + démarrage services
-
 # Tests
-make test                     # Tous les tests
-make test-libs                # Tests Rust libs
-make test-gateway             # Tests Chat Gateway
-make test-history             # Tests Chat Delivery (NestJS)
+make test                 # Tous les tests (Rust + NestJS)
+make test-gateway         # Uniquement le chat-gateway Rust
 
-# Nginx (optionnel, hors Docker)
-make nginx-install            # Configure nginx hôte
-```
+# Build production
+make build-frontend       # Compile WASM + bundle SvelteKit
 
-### Frontend (SvelteKit)
+# Services
+make run-services         # Démarre les conteneurs locaux
+make reload-services      # Redémarre
 
-```bash
+# Déploiement prod (sur le serveur)
+make production           # Pull images GHCR + restart Docker Compose
+
+# Qualité de code (frontend)
 cd frontend
-
-# Développement avec HMR
-bun run dev
-
-# Vérifications
-bun run check         # TypeScript + Svelte
-bun run check:watch   # Avec watch mode
-
-# Linting & Formatage
-bun run lint          # Vérifier avec ESLint
-bun run lint:fix      # Auto-corriger les erreurs
-bun run format        # Formatter avec Prettier
-bun run format:check  # Vérifier le formatage
-
-# Production
-bun run build         # Compilation
-bun run preview       # Prévisualisation
-```
-
-### Rust Gateway & Libs
-
-```bash
-# Format check
-cargo fmt -- --check
-cargo fmt             # Auto-fix
-
-# Linting
-cargo clippy --all-features -- -D warnings
-
-# Tests
-cargo test
-
-# Build release
-cargo build --release
-```
-
-### Services NestJS
-
-```bash
-cd apps/chat-delivery-service
-
-npm install
-npm run lint
-npm test
-npm run build  # Compilation TypeScript
-npm start      # Lancer le service
+bun run lint:fix          # Corrige les erreurs ESLint
+bun run format            # Formate avec Prettier
+bun run check             # svelte-check (TypeScript + Svelte)
 ```
 
 ---
 
-## 📋 Vérifications de Qualité
+## Stack technique
 
-### 🪝 Pre-commit Hooks (Husky)
-
-Les vérifications s'exécutent **automatiquement avant chaque commit** :
-
-```bash
-# Installation automatique avec `make install`
-# Pour passer les hooks :
-git commit --no-verify
-```
-
-Vérifications incluses :
-
-- ✅ ESLint (TypeScript/JavaScript)
-- ✅ Prettier (Formatage)
-- ✅ Trailing whitespace
-- ✅ YAML/JSON validation
-- ✅ Détection de clés privées
-
-### 🧪 Pre-commit Framework
-
-Pour des vérifications locales complètes avant le push :
-
-```bash
-# Installation (une seule fois)
-pip install pre-commit
-pre-commit install
-
-# Exécution manuelle
-pre-commit run --all-files
-```
-
-Vérifications :
-
-- ✅ Trailing whitespace
-- ✅ YAML/JSON/Markdown validation
-- ✅ Détection clés privées
-- ✅ Markdown linting
-- ✅ Cargo fmt (Rust)
-- ✅ ESLint (TypeScript/JavaScript)
-
-### 🔍 Code Analysis Workflow
-
-Workflow GitHub qui s'exécute à chaque push et quotidiennement à 2h UTC :
-
-- 🔍 **CodeQL** - Vulnérabilités JavaScript/TypeScript
-- 🔐 **TruffleHog** - Scannage des secrets
-- 🧹 **ESLint** - Linting TypeScript/JavaScript
-- 📦 **Audit dépendances** - npm audit + cargo audit
-- 🦀 **Rust Analysis** - Clippy + cargo fmt
-
-### 🤖 Dependabot
-
-Mise à jour automatique des dépendances (exécution hebdomadaire) :
-
-- **GitHub Actions** : Hebdomadaire
-- **npm packages** : Hebdomadaire avec grouping intelligent
-- **Cargo crates** : Hebdomadaire
-
-Toutes les PR de Dependabot sont testées automatiquement via CI/CD
+| Couche | Technologies |
+|---|---|
+| **Frontend** | SvelteKit 2.9 · Svelte 5 (runes) · TailwindCSS 4 · Tauri 2 |
+| **MLS client** | Rust (openmls, ChaCha20-Poly1305, Argon2) compilé en WASM |
+| **Gateway** | Rust · Axum · Tokio · Redis Pub/Sub |
+| **Services** | NestJS 10 · TypeORM · Node.js 20 |
+| **Infrastructure** | PostgreSQL · MongoDB · Redis · Kafka · MinIO |
+| **Auth** | Authentik (OIDC) · JWT HS256 · cookies HttpOnly |
+| **DevOps** | Docker · GitHub Actions · Nginx · Cloudflare Tunnel |
 
 ---
 
-## 🚀 Déploiement
-
-### Déploiement Automatique (CI/CD)
-
-Chaque `push` sur `main` déclenche automatiquement :
-
-1. **CI Pipeline** ✅
-   - `cargo fmt --check` (Rust)
-   - `cargo clippy` (Rust linting)
-   - `cargo test` (Rust tests)
-   - `npm run lint` (TypeScript linting)
-   - Tests complets
-
-2. **Frontend Build** 🏗️
-   - Build WASM (mls-core, mls-wasm)
-   - Build SvelteKit
-   - Production artifacts
-
-3. **Docker Build** 🐳
-   - Construction 6 images Docker :
-     - `chat-gateway` (Rust)
-     - `chat-delivery-service` (NestJS)
-     - `core-service` (NestJS)
-     - `media-service` (NestJS)
-     - `social-service` (NestJS)
-     - `frontend` (Nginx + SvelteKit statique)
-   - Push sur **GitHub Container Registry** (`ghcr.io/emse-students/canari/*`)
-
-4. **Déploiement 🚀**
-   - Sur le runner self-hosted (serveur de prod)
-   - Pull des images GHCR
-   - Redémarrage services Docker Compose
-   - Health checks post-déploiement
-
-### Configuration du Déploiement
-
-**GitHub Secrets** (Settings → Secrets and variables → Actions)
-
-| Secret       | Description                                                                                                                                         |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `JWT_SECRET` | Secret JWT 64 chars hex — `openssl rand -hex 32`. **Doit correspondre** à `infrastructure/.env` sur le serveur. Injecté dans le bundle JS au build. |
-
-**Runner self-hosted** : le déploiement utilise un runner GitHub Actions hébergé sur le serveur. Pas de SSH externe nécessaire.
-
-## 📁 Structure du Projet
+## Structure du monorepo
 
 ```
 canari/
-├── frontend/                      # SvelteKit + Tauri
-│   ├── src/
-│   │   ├── routes/               # Pages SvelteKit
-│   │   ├── lib/
-│   │   │   ├── components/       # Composants réutilisables
-│   │   │   ├── encryption.ts     # Service MLS
-│   │   │   └── db.ts             # BD locale
-│   │   └── app.html
-│   ├── mls-core/                 # Core MLS (Rust)
-│   ├── mls-wasm/                 # WASM bindings
-│   ├── src-tauri/                # Config Tauri
-│   └── build/                    # Build output
-│
 ├── apps/
-│   ├── chat-gateway/             # Gateway WebSocket (Rust - Axum)
-│   ├── chat-delivery-service/    # Chat Delivery Service (NestJS)
-│   ├── core-service/             # Auth + Users + Payments (NestJS)
-│   ├── media-service/            # Media upload/download (NestJS)
-│   └── social-service/           # Posts + Forms + Channels (NestJS)
-│
+│   ├── chat-gateway/          # WebSocket gateway (Rust/Axum)
+│   ├── chat-delivery-service/ # API MLS + messages (NestJS)
+│   ├── core-service/          # Auth + users + paiements (NestJS)
+│   ├── media-service/         # Blobs chiffrés (NestJS + MinIO)
+│   └── social-service/        # Posts + channels + formulaires (NestJS)
+├── frontend/
+│   ├── src/                   # Application SvelteKit
+│   ├── mls-core/              # Librairie MLS (Rust pur)
+│   ├── mls-wasm/              # Bindings WASM (wasm-bindgen)
+│   └── src-tauri/             # Application desktop Tauri
 ├── libs/
-│   ├── event-contracts/          # Shared event schemas (Kafka)
-│   ├── proto/                    # Protobuf definitions
-│   ├── shared-rust/              # Shared Rust utilities
-│   └── shared-ts/                # Shared TypeScript utilities
-│
+│   ├── proto/                 # Définitions Protobuf
+│   ├── event-contracts/       # Schémas Kafka (JSON Schema)
+│   ├── shared-rust/           # Utilitaires Rust partagés
+│   └── shared-ts/             # Types TypeScript partagés
 ├── infrastructure/
-│   ├── local/                    # Docker Compose local dev
-│   │   ├── docker-compose.yml
-│   │   ├── Dockerfile.chat-delivery-service
-│   │   ├── Dockerfile.chat-gateway
-│   │   ├── Dockerfile.core-service
-│   │   ├── Dockerfile.frontend
-│   │   ├── Dockerfile.media-service
-│   │   └── Dockerfile.social-service
-│   ├── docker-compose.prod.yml   # Production config
-│   └── .env.example              # Template variables
-│
-├── .github/
-│   ├── workflows/
-│   │   ├── ci.yml                # Tests & Linting
-│   │   ├── cd.yml                # Build & Deployment
-│   │   └── code-analysis.yml     # Security & Quality
-│   └── dependabot.yml            # Auto-updates
-│
-├── scripts/
-│   ├── setup-env.sh              # Configuration .env (dev + prod)
-│   ├── deploy.sh                 # Déploiement manuel
-│   ├── windows/                  # Scripts Windows
-│   └── linux/                    # Scripts Linux (start/stop services)
-│
-├── docs/
-│   ├── ARCHITECTURE.md           # Architecture decisions
-│   ├── DEVELOPMENT.md            # Development guide
-│   ├── ROADMAP.md                  # Roadmap globale
-│   └── DEPLOIEMENT.md              # Guide de déploiement et d'infra
-│
-├── Makefile                      # Build automation
-├── .prettierrc                   # Prettier config
-├── .editorconfig                 # Editor config
-├── .pre-commit-config.yaml       # Pre-commit hooks
-├── .gitignore                    # Git ignore
-└── README.md                     # This file
+│   ├── local/                 # Docker Compose + Dockerfiles (dev)
+│   ├── docker-compose.prod.yml
+│   └── docker-compose.dev.yml
+├── scripts/                   # Setup, déploiement, utilitaires
+├── docs/                      # Documentation technique
+└── Makefile
 ```
 
 ---
 
-## 📚 Documentation Complète
+## CI/CD
 
-- **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** - Décisions architecturales et patterns
-- **[DEVELOPMENT.md](docs/DEVELOPMENT.md)** - Guide de développement détaillé
-- **[ROADMAP.md](docs/ROADMAP.md)** - Actions passées et futures
-- **[DEPLOIEMENT.md](docs/DEPLOIEMENT.md)** - Guide de déploiement CI/CD et Cloudflare Tunnel
+Chaque push sur `main` déclenche automatiquement :
 
----
+1. **CI** — `cargo clippy`, `cargo test`, `eslint`, `svelte-check`
+2. **Build** — WASM + SvelteKit + 6 images Docker → `ghcr.io/emse-students/canari/*`
+3. **Déploiement** — Pull des images sur le serveur via runner self-hosted, restart Docker Compose
 
-## 🤝 Contribution
-
-Les contributions sont bienvenues ! Avant de commencer :
-
-1. **Fork** le dépôt
-2. **Créez une branche** (`git checkout -b feature/ma-feature`)
-3. **Committez** vos changements (`git commit -m 'feat: description'`)
-4. **Poussez** la branche (`git push origin feature/ma-feature`)
-5. **Ouvrez une Pull Request**
-
-### Conventions
-
-- **Commits** : Utiliser les conventional commits (`feat:`, `fix:`, `docs:`, etc.)
-- **Code** : Assurez-vous que `bun run lint:fix` passe avant de commiter
-- **Tests** : Ajoutez des tests pour les nouvelles fonctionnalités
-- **Documentation** : Mettez à jour les docs pertinentes
+Le seul secret à configurer dans GitHub est `JWT_SECRET` (voir [docs/DEPLOIEMENT.md](docs/DEPLOIEMENT.md)).
 
 ---
 
-## 📄 Licence
+## Contribuer
 
-Ce projet est licencié sous la [MIT License](LICENSE).
+```bash
+git checkout -b feat/ma-feature
+# … faire les changements …
+git commit -m "feat: description"   # conventional commits
+git push origin feat/ma-feature
+# → ouvrir une Pull Request
+```
 
----
-
-## 🙋 Support & Contact
-
-Avez-vous des questions ? Besoin d'aide ?
-
-- 📖 Consultez la [documentation](docs/)
-- 🐛 Signalez un bug via [GitHub Issues](https://github.com/emse-students/canari/issues)
-- 💬 Posez des questions via [GitHub Discussions](https://github.com/emse-students/canari/discussions)
-- 📧 Contactez l'équipe de développement
-
----
-
-## 🙏 Remerciements
-
-- **[SvelteKit](https://kit.svelte.dev/)** - Framework frontend moderne
-- **[Tauri](https://tauri.app/)** - Framework desktop léger
-- **[Rust](https://www.rust-lang.org/)** - Langage système sécurisé
-- **[MLS Protocol](https://messaginglayersecurity.rocks/)** - Standard de sécurité
-- **[PRICE Website](https://github.com/So6oN-Maximix/Price_Website)** par Maxime Leost — Inspiration pour le fil social (posts, commentaires, likes)
-- **EMSE** - École supportant ce projet
-
----
-
-**Fait avec ❤️ par les étudiants de l'EMSE**
-
-_Dernière mise à jour : Avril 2026_
+Les hooks Husky vérifient automatiquement ESLint + Prettier au commit, et `svelte-check` + `cargo clippy` au push.
