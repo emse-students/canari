@@ -13,12 +13,15 @@
     Smartphone,
     Monitor,
     User,
+    Bell,
     Moon,
     Sun,
     LogOut,
   } from 'lucide-svelte';
   import { goto } from '$app/navigation';
   import { clearAuth } from '$lib/stores/auth';
+  import { apiFetch } from '$lib/utils/apiFetch';
+  import { isGlobalAdmin } from '$lib/stores/user';
   import { useSyncSession } from '$lib/composables/useSyncSession.svelte';
   import SyncSessionModal from '$lib/components/chat/SyncSessionModal.svelte';
   import DeviceManagementPanel from '$lib/components/chat/DeviceManagementPanel.svelte';
@@ -98,6 +101,9 @@
   let pendingInvitationCount = $state(0);
   let fileInput: HTMLInputElement | undefined = $state();
   let isDarkMode = $state(false);
+  let isPushTestRunning = $state(false);
+  let pushTestResult = $state('');
+  let isAdmin = $derived(isGlobalAdmin());
 
   function applyTheme(isDark: boolean) {
     document.documentElement.dataset.theme = isDark ? 'dark' : 'light';
@@ -112,6 +118,38 @@
   async function handleLogout() {
     await clearAuth();
     void goto('/login', { replaceState: true });
+  }
+
+  async function handleBroadcastPushTest() {
+    if (isPushTestRunning) return;
+
+    isPushTestRunning = true;
+    pushTestResult = '';
+    try {
+      const response = await apiFetch(`${session.historyBaseUrl}/api/mls-api/push/broadcast-test`, {
+        method: 'POST',
+        body: JSON.stringify({
+          title: 'Canari - test push global',
+          message: `Diagnostic ${new Date().toLocaleTimeString()}`,
+        }),
+      });
+      if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        throw new Error(`HTTP ${response.status}${text ? `: ${text}` : ''}`);
+      }
+
+      const data = (await response.json()) as {
+        traceId: string;
+        targetedDevices: number;
+        sent: number;
+        failed: number;
+      };
+      pushTestResult = `Test envoye. trace=${data.traceId} devices=${data.targetedDevices} sent=${data.sent} failed=${data.failed}`;
+    } catch (error) {
+      pushTestResult = `Echec test push: ${error instanceof Error ? error.message : String(error)}`;
+    } finally {
+      isPushTestRunning = false;
+    }
   }
 
   function syncCtx() {
@@ -356,7 +394,27 @@
         <span class="text-sm font-medium text-text-main">Appareils</span>
         <span class="text-xs text-text-muted text-center">Gérer les appareils connectés</span>
       </button>
+
+      {#if isAdmin}
+        <button
+          type="button"
+          onclick={() => void handleBroadcastPushTest()}
+          disabled={isPushTestRunning}
+          class="flex flex-col items-center gap-2 p-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] hover:border-cn-yellow hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))] transition-colors disabled:opacity-50"
+          title="Envoyer un test push global"
+        >
+          <Bell size={22} class="text-text-muted" />
+          <span class="text-sm font-medium text-text-main">
+            {isPushTestRunning ? 'Envoi...' : 'Test push'}
+          </span>
+          <span class="text-xs text-text-muted text-center">Tous les appareils avec token</span>
+        </button>
+      {/if}
     </div>
+
+    {#if pushTestResult}
+      <p class="mt-3 text-sm text-text-muted">{pushTestResult}</p>
+    {/if}
   </section>
 </div>
 

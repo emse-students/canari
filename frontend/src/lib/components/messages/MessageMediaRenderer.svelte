@@ -60,15 +60,6 @@
     return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
   }
 
-  function openBlob(url: string) {
-    if ((window as any).__TAURI_INTERNALS__) {
-      const win = window.open('', '_blank');
-      if (win) win.location.href = url;
-    } else {
-      window.open(url, '_blank', 'noopener,noreferrer');
-    }
-  }
-
   function downloadBlob(url: string, fileName: string) {
     const link = document.createElement('a');
     link.href = url;

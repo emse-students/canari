@@ -713,53 +713,6 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  private parseOnlineDeviceKey(
-    key: string,
-  ): { userId: string; deviceId: string } | null {
-    const prefix = 'user:online:';
-    if (!key.startsWith(prefix)) return null;
-
-    const payload = key.slice(prefix.length);
-    const splitAt = payload.lastIndexOf(':');
-    if (splitAt <= 0 || splitAt >= payload.length - 1) return null;
-
-    const userId = payload.slice(0, splitAt);
-    const deviceId = payload.slice(splitAt + 1);
-    if (!userId || !deviceId) return null;
-
-    return { userId, deviceId };
-  }
-
-  private async listOnlineDevices(): Promise<
-    Array<{ userId: string; deviceId: string }>
-  > {
-    let cursor = '0';
-    const unique = new Set<string>();
-    const result: Array<{ userId: string; deviceId: string }> = [];
-
-    do {
-      const [nextCursor, keys] = await this.redis.scan(
-        cursor,
-        'MATCH',
-        'user:online:*:*',
-        'COUNT',
-        '500',
-      );
-      cursor = nextCursor;
-
-      for (const key of keys) {
-        const parsed = this.parseOnlineDeviceKey(key);
-        if (!parsed) continue;
-        const uniqKey = `${parsed.userId}:${parsed.deviceId}`;
-        if (unique.has(uniqKey)) continue;
-        unique.add(uniqKey);
-        result.push(parsed);
-      }
-    } while (cursor !== '0');
-
-    return result;
-  }
-
   /**
    * Detect devices whose membership hasn't been touched within the message
    * retention window.  Once their queued messages have been garbage-collected,
@@ -3086,6 +3039,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    * Upserts on (userId, deviceId) — one token per device per user.
    */
   @UseGuards(HeaderAuthGuard)
+  @Post('mls-api/push/register')
   @Post('push/register')
   async registerPushToken(
     @Body() body: { token: string; deviceId: string; platform?: string },
@@ -3128,6 +3082,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    * Unregister the push token of a specific device (e.g. on logout).
    */
   @UseGuards(HeaderAuthGuard)
+  @Delete('mls-api/push/unregister/:deviceId')
   @Delete('push/unregister/:deviceId')
   async unregisterPushToken(
     @Param('deviceId') deviceIdRaw: string,
@@ -3142,10 +3097,11 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Diagnostic route: sends a push notification test to all devices currently
-   * marked online in Redis and having a registered push token.
+   * Diagnostic route: sends a push notification test to every device that has
+   * a registered push token (online or offline).
    */
   @UseGuards(HeaderAuthGuard)
+  @Post('mls-api/push/broadcast-test')
   @Post('push/broadcast-test')
   async broadcastTestPush(
     @Body() body: { title?: string; message?: string },
@@ -3168,22 +3124,12 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       `[PUSH_TEST][${traceId}] START requester=${requester ?? 'unknown'} title=${title}`,
     );
 
-    const onlineDevices = await this.listOnlineDevices();
+    const targets = await this.pushTokenRepo.find();
     let withToken = 0;
     let sent = 0;
     let failed = 0;
 
-    for (const target of onlineDevices) {
-      const pushToken = await this.pushTokenRepo.findOne({
-        where: { userId: target.userId, deviceId: target.deviceId },
-      });
-      if (!pushToken) {
-        this.logger.log(
-          `[PUSH_TEST][${traceId}] SKIP no-token user=${target.userId} device=${target.deviceId}`,
-        );
-        continue;
-      }
-
+    for (const pushToken of targets) {
       withToken++;
       try {
         await admin.messaging().send({
@@ -3210,30 +3156,30 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         });
         sent++;
         this.logger.log(
-          `[PUSH_TEST][${traceId}] SENT user=${target.userId} device=${target.deviceId}`,
+          `[PUSH_TEST][${traceId}] SENT user=${pushToken.userId} device=${pushToken.deviceId}`,
         );
       } catch (e) {
         failed++;
         if (this.isTerminalPushTokenError(e)) {
           await this.pushTokenRepo.delete({ id: pushToken.id });
           this.logger.warn(
-            `[PUSH_TEST][${traceId}] DELETED invalid token user=${target.userId} device=${target.deviceId}`,
+            `[PUSH_TEST][${traceId}] DELETED invalid token user=${pushToken.userId} device=${pushToken.deviceId}`,
           );
         }
         this.logger.warn(
-          `[PUSH_TEST][${traceId}] FAILED user=${target.userId} device=${target.deviceId} err=${e}`,
+          `[PUSH_TEST][${traceId}] FAILED user=${pushToken.userId} device=${pushToken.deviceId} err=${e}`,
         );
       }
     }
 
     this.logger.log(
-      `[PUSH_TEST][${traceId}] DONE online=${onlineDevices.length} withToken=${withToken} sent=${sent} failed=${failed}`,
+      `[PUSH_TEST][${traceId}] DONE targeted=${targets.length} sent=${sent} failed=${failed}`,
     );
 
     return {
       status: 'done',
       traceId,
-      onlineDevices: onlineDevices.length,
+      targetedDevices: targets.length,
       withToken,
       sent,
       failed,
