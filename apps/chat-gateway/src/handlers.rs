@@ -20,10 +20,10 @@ fn extract_cookie_value(headers: &HeaderMap, key: &str) -> Option<String> {
     let cookie_header = headers.get("cookie")?.to_str().ok()?;
     for part in cookie_header.split(';') {
         let trimmed = part.trim();
-        if let Some((name, value)) = trimmed.split_once('=') {
-            if name.trim() == key {
-                return Some(value.trim().to_string());
-            }
+        if let Some((name, value)) = trimmed.split_once('=')
+            && name.trim() == key
+        {
+            return Some(value.trim().to_string());
         }
     }
     None
