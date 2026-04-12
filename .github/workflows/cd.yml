@@ -392,6 +392,9 @@ jobs:
           AUTHENTIK_BASE_URL: ${{ secrets.AUTHENTIK_URL }}
           AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
           AUTHENTIK_CLIENT_SECRET: ${{ secrets.AUTHENTIK_CLIENT_SECRET }}
+          FRONTEND_URL: ${{ secrets.BASE_URL }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
         run: |
           if [ -z "$JWT_SECRET" ]; then
             echo "::error::Missing required GitHub secret: JWT_SECRET"
@@ -400,6 +403,16 @@ jobs:
 
           if [ -z "$AUTHENTIK_CLIENT_SECRET" ]; then
             echo "::error::Missing required GitHub secret: AUTHENTIK_CLIENT_SECRET"
+            exit 1
+          fi
+
+          if [ -z "$POSTGRES_USER" ]; then
+            echo "::error::Missing required GitHub secret: POSTGRES_USER"
+            exit 1
+          fi
+
+          if [ -z "$POSTGRES_PASSWORD" ]; then
+            echo "::error::Missing required GitHub secret: POSTGRES_PASSWORD"
             exit 1
           fi
 
@@ -426,6 +439,9 @@ jobs:
           upsert_env_var "AUTHENTIK_BASE_URL" "$AUTHENTIK_BASE_URL"
           upsert_env_var "AUTHENTIK_CLIENT_ID" "$AUTHENTIK_CLIENT_ID"
           upsert_env_var "AUTHENTIK_CLIENT_SECRET" "$AUTHENTIK_CLIENT_SECRET"
+          upsert_env_var "FRONTEND_URL" "$FRONTEND_URL"
+          upsert_env_var "POSTGRES_USER" "$POSTGRES_USER"
+          upsert_env_var "POSTGRES_PASSWORD" "$POSTGRES_PASSWORD"
 
           if [ -n "$STRIPE_SECRET_KEY" ]; then
             upsert_env_var "STRIPE_SECRET_KEY" "$STRIPE_SECRET_KEY"

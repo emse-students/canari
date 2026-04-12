@@ -241,17 +241,17 @@
       </div>
 
       <!-- Recipient Association -->
-      {#if associations.length > 0}
-        <div class="mt-4">
-          <label for="association-select" class="block text-sm font-bold text-text-main mb-2 ml-1"
-            >Bénéficiaire (association)</label
-          >
+      <div class="mt-4">
+        <label for="association-select" class="block text-sm font-bold text-text-main mb-2 ml-1"
+          >Association bénéficiaire</label
+        >
+        {#if associations.length > 0}
           <select
             id="association-select"
             bind:value={associationId}
             class="w-full px-4 py-3 border-2 border-cn-border rounded-2xl text-base text-text-main bg-[var(--cn-surface)] outline-none transition-all focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)]"
           >
-            <option value="">Aucune — paiement vers le compte principal</option>
+            <option value="">Sélectionner une association…</option>
             {#each associations as a (a.id)}
               <option value={a.id}>{a.name}</option>
             {/each}
@@ -259,8 +259,13 @@
           <p class="text-xs text-text-muted mt-1 ml-1">
             Les paiements seront transférés au compte Stripe de l'association sélectionnée.
           </p>
-        </div>
-      {/if}
+        {:else}
+          <p class="text-sm text-text-muted bg-cn-border/20 rounded-2xl px-4 py-3">
+            Aucune association n'a encore connecté un compte Stripe. Rendez-vous dans les paramètres
+            d'une association pour activer les paiements.
+          </p>
+        {/if}
+      </div>
     {/if}
   </section>
 

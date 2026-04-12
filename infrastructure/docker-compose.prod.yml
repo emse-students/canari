@@ -54,11 +54,21 @@ services:
     expose:
       - "5432"
     environment:
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: password
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: auth_db
     volumes:
       - postgres_data:/var/lib/postgresql/data
+
+  adminer:
+    image: adminer:latest
+    restart: unless-stopped
+    ports:
+      - "8888:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    depends_on:
+      - postgres
 
   # ─────────────────────────────────────────────────────
   # RUST SERVICES (3000-3009 range)
@@ -101,7 +111,7 @@ services:
       - "3010"
     environment:
       PORT: "3010"
-      POSTGRES_URL: postgres://admin:password@postgres:5432/auth_db
+      POSTGRES_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/auth_db
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       KAFKA_BROKERS: kafka:29092
@@ -177,10 +187,11 @@ services:
       AUTHENTIK_BASE_URL: ${AUTHENTIK_BASE_URL:-}
       AUTHENTIK_CLIENT_ID: ${AUTHENTIK_CLIENT_ID:-}
       AUTHENTIK_CLIENT_SECRET: ${AUTHENTIK_CLIENT_SECRET:-}
+      FRONTEND_URL: ${FRONTEND_URL:-}
       DB_HOST: postgres
       DB_PORT: "5432"
-      DB_USERNAME: admin
-      DB_PASSWORD: password
+      DB_USERNAME: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
       DB_DATABASE: auth_db
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       AVATAR_API_URL: ${AVATAR_API_URL:-https://gallery.mitv.fr}
@@ -203,16 +214,17 @@ services:
       - "3014"
     environment:
       PORT: "3014"
+      FRONTEND_URL: ${FRONTEND_URL:-}
       DB_HOST: postgres
       DB_PORT: "5432"
-      DB_USERNAME: admin
-      DB_PASSWORD: password
+      DB_USERNAME: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
       DB_DATABASE: auth_db
       CHANNELS_ENCRYPTION_SECRET: ${CHANNELS_ENCRYPTION_SECRET:-dev-channel-secret-change-me}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
-      STRIPE_SUCCESS_URL: ${STRIPE_SUCCESS_URL:-http://localhost:5173/posts?registration=success}
-      STRIPE_CANCEL_URL: ${STRIPE_CANCEL_URL:-http://localhost:5173/posts?registration=cancel}
-      USER_SERVICE_URL: http://core-service:3012
+      STRIPE_SUCCESS_URL: ${FRONTEND_URL:-http://localhost:5173}/posts?registration=success
+      STRIPE_CANCEL_URL: ${FRONTEND_URL:-http://localhost:5173}/posts?registration=cancel
+      USER_SERVICE_URL: ${FRONTEND_URL:-http://core-service:3012}
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
     depends_on:
       postgres:
