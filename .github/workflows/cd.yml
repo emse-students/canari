@@ -707,18 +707,18 @@ jobs:
             "^(2|3)[0-9][0-9]$" \
             "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:${FRONTEND_HOST_PORT}/"
 
-          # Check chat-delivery-service reachability on MLS endpoint.
+          # Check chat-delivery-service reachability on MLS endpoint via Nginx.
           # 400 is expected here because verifier format is intentionally invalid.
           retry_http \
             "chat-delivery-service MLS health check" \
             "^(200|400)$" \
-            "curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:3010/api/mls-api/pin-verifier/check -H 'Content-Type: application/json' -d '{\"userId\":\"healthcheck\",\"verifier\":\"invalid\"}'"
+            "curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:${FRONTEND_HOST_PORT}/api/mls-api/pin-verifier/check -H 'Content-Type: application/json' -d '{\"userId\":\"healthcheck\",\"verifier\":\"invalid\"}'"
 
-          # Check media-service TCP/HTTP reachability (status may be 2xx/4xx depending on route).
+          # Check media-service TCP/HTTP reachability via Nginx (status may be 2xx/4xx depending on route).
           retry_http \
             "media-service reachability check" \
             "^[1-5][0-9][0-9]$" \
-            "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3011/api/media"
+            "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:${FRONTEND_HOST_PORT}/api/media"
 
           echo "✅ Health checks completed"
 
