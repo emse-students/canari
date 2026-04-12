@@ -509,7 +509,9 @@ export class TauriMlsService implements IMlsService {
 
   async fetchUserDevices(
     userId: string
-  ): Promise<Array<{ keyPackage: Uint8Array; deviceId: string }>> {
+  ): Promise<
+    Array<{ keyPackage: Uint8Array; deviceId: string; deviceName?: string; deviceOs?: string }>
+  > {
     try {
       const res = await fetch(`${this.historyUrl}/api/mls-api/devices/${userId}`, {
         headers: await this.withAuthHeaders(),
@@ -523,7 +525,12 @@ export class TauriMlsService implements IMlsService {
         for (let i = 0; i < binaryString.length; i++) {
           bytes[i] = binaryString.charCodeAt(i);
         }
-        return { keyPackage: bytes, deviceId: d.deviceId };
+        return {
+          keyPackage: bytes,
+          deviceId: d.deviceId,
+          deviceName: typeof d.deviceName === 'string' ? d.deviceName : undefined,
+          deviceOs: typeof d.deviceOs === 'string' ? d.deviceOs : undefined,
+        };
       });
     } catch (e) {
       console.error('Fetch User Devices Error:', e);
@@ -545,6 +552,9 @@ export class TauriMlsService implements IMlsService {
 
   async publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void> {
     const base64 = btoa(String.fromCharCode(...keyPackageBytes));
+    const storedName =
+      localStorage.getItem(`device-name:${this.userId}:${this.deviceId}`) || undefined;
+    const deviceOs = this.detectRuntimeDeviceOs();
     const response = await fetch(`${this.historyUrl}/api/mls-api/register-device`, {
       method: 'POST',
       headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
@@ -552,6 +562,8 @@ export class TauriMlsService implements IMlsService {
         userId: this.userId,
         deviceId: this.deviceId,
         keyPackage: base64,
+        ...(storedName ? { deviceName: storedName } : {}),
+        deviceOs,
       }),
     });
 
@@ -576,6 +588,35 @@ export class TauriMlsService implements IMlsService {
     if (!response.ok) {
       throw new Error(`Failed to publish key packages: ${response.status} ${response.statusText}`);
     }
+  }
+
+  async updateDeviceMetadata(
+    userId: string,
+    deviceId: string,
+    metadata: { deviceName?: string; deviceOs?: string }
+  ): Promise<{ status: string; deviceName: string | null; deviceOs: string | null }> {
+    const response = await fetch(
+      `${this.historyUrl}/api/mls-api/devices/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}/metadata`,
+      {
+        method: 'PATCH',
+        headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(metadata),
+      }
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to update device metadata: ${response.status}`);
+    }
+    return await response.json();
+  }
+
+  private detectRuntimeDeviceOs(): string {
+    const ua = navigator.userAgent.toLowerCase();
+    if (ua.includes('android')) return 'android';
+    if (ua.includes('iphone') || ua.includes('ipad')) return 'ios';
+    if (ua.includes('windows')) return 'windows';
+    if (ua.includes('mac os') || ua.includes('macintosh')) return 'macos';
+    if (ua.includes('linux')) return 'linux';
+    return 'desktop';
   }
 
   async sendWelcome(

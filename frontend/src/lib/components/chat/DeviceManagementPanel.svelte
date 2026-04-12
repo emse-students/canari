@@ -10,6 +10,8 @@
     Clock,
     Loader,
     ShieldAlert,
+    Edit2,
+    X,
   } from 'lucide-svelte';
   import Modal from '../shared/Modal.svelte';
   import type { IMlsService } from '$lib/services/IMlsService';
@@ -26,6 +28,8 @@
   interface DeviceInfo {
     deviceId: string;
     keyPackage: Uint8Array;
+    deviceName?: string;
+    deviceOs?: string;
   }
 
   interface Props {
@@ -42,12 +46,29 @@
   let memberships = new SvelteMap<string, DeviceMembership[]>();
   let loading = $state(false);
   let error = $state('');
+  let editingDeviceId = $state<string | null>(null);
+  let editingName = $state('');
 
   $effect(() => {
     if (open && userId) {
       void loadDeviceData();
     }
   });
+
+  function getDeviceOsLabel(device: DeviceInfo): string {
+    const os = (device.deviceOs || '').toLowerCase();
+    if (os === 'windows') return 'Windows';
+    if (os === 'macos') return 'macOS';
+    if (os === 'linux') return 'Linux';
+    if (os === 'android') return 'Android';
+    if (os === 'ios') return 'iOS';
+    if (os === 'desktop') return 'Desktop';
+    if (os === 'web') return 'Navigateur';
+    if (device.deviceId.startsWith('tauri-')) return 'Desktop (Tauri)';
+    if (device.deviceId.startsWith('web-')) return 'Navigateur';
+    if (device.deviceId.startsWith('mobile-')) return 'Mobile';
+    return 'Inconnu';
+  }
 
   async function loadDeviceData() {
     loading = true;
@@ -98,6 +119,32 @@
     }
   }
 
+  function startEditing(deviceId: string) {
+    editingDeviceId = deviceId;
+    const device = devices.find((d) => d.deviceId === deviceId);
+    editingName = device?.deviceName ?? '';
+  }
+
+  function cancelEditing() {
+    editingDeviceId = null;
+    editingName = '';
+  }
+
+  async function saveName() {
+    if (!editingDeviceId) return;
+    try {
+      await mlsService.updateDeviceMetadata(userId, editingDeviceId, {
+        deviceName: editingName.trim(),
+      });
+      editingDeviceId = null;
+      editingName = '';
+      await loadDeviceData();
+    } catch (e) {
+      console.error('[DevicePanel] Failed to rename device', e);
+      error = 'Impossible de renommer cet appareil.';
+    }
+  }
+
   function _statusLabel(status: string) {
     switch (status) {
       case 'welcome_received':
@@ -122,6 +169,7 @@
     const inProgress = deviceMemberships.filter((m) => m.status === 'welcome_sent').length;
     return { total, active, pending, inProgress };
   }
+
 </script>
 
 <Modal {open} title="Gestion des appareils" {onClose} maxWidth="max-w-xl">
@@ -177,24 +225,63 @@
                 </div>
 
                 <div class="flex-1 min-w-0 pt-0.5 sm:pt-0">
-                  <div class="flex flex-wrap items-center gap-2.5 mb-1">
-                    <span class="font-bold text-[0.95rem] text-text-main truncate">
-                      Appareil {device.deviceId.slice(0, 4).toUpperCase()}
-                    </span>
-                    {#if isCurrentDevice}
-                      <span
-                        class="text-[0.65rem] px-2 py-0.5 rounded-full bg-amber-500 text-[#151B2C] font-extrabold uppercase tracking-wider shadow-sm"
+                  {#if editingDeviceId === device.deviceId}
+                    <div class="flex gap-2 items-center mb-2">
+                      <input
+                        type="text"
+                        bind:value={editingName}
+                        placeholder="Nom de l'appareil"
+                        maxlength="80"
+                        class="flex-1 px-3 py-1.5 rounded-lg text-sm bg-white/50 dark:bg-white/10 border border-black/10 dark:border-white/10 text-text-main placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-amber-500"
+                      />
+                      <button
+                        onclick={() => void saveName()}
+                        class="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-amber-500 text-white hover:bg-amber-600 transition-all active:scale-95"
                       >
-                        Cet appareil
+                        OK
+                      </button>
+                      <button
+                        onclick={cancelEditing}
+                        class="p-1.5 rounded-lg text-text-muted hover:bg-black/5 dark:hover:bg-white/5 transition-all"
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+                  {:else}
+                    <div class="flex flex-wrap items-center gap-2 mb-1">
+                      <span class="font-bold text-[0.95rem] text-text-main truncate">
+                        {device.deviceName || `Appareil ${device.deviceId.slice(0, 4).toUpperCase()}`}
                       </span>
-                    {/if}
-                  </div>
-                  <div
-                    class="text-[0.7rem] font-mono text-text-muted opacity-80 truncate"
-                    title={device.deviceId}
-                  >
-                    ID: {device.deviceId.slice(0, 24)}…
-                  </div>
+                      <span
+                        class="text-[0.65rem] px-2 py-0.5 rounded-full bg-black/5 dark:bg-white/10 font-semibold text-text-muted uppercase tracking-wider"
+                      >
+                        {getDeviceOsLabel(device)}
+                      </span>
+                      {#if isCurrentDevice}
+                        <span
+                          class="text-[0.65rem] px-2 py-0.5 rounded-full bg-amber-500 text-[#151B2C] font-extrabold uppercase tracking-wider shadow-sm"
+                        >
+                          Cet appareil
+                        </span>
+                      {/if}
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <div
+                        class="text-[0.7rem] font-mono text-text-muted opacity-80 truncate flex-1"
+                        title={device.deviceId}
+                      >
+                        ID: {device.deviceId.slice(0, 24)}…
+                      </div>
+                      <button
+                        onclick={() => startEditing(device.deviceId)}
+                        class="p-1.5 rounded-lg text-text-muted hover:text-amber-600 dark:hover:text-amber-400 hover:bg-black/5 dark:hover:bg-white/5 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                        title="Renommer cet appareil"
+                        aria-label="Renommer"
+                      >
+                        <Edit2 size={14} strokeWidth={2} />
+                      </button>
+                    </div>
+                  {/if}
                 </div>
 
                 {#if !isCurrentDevice}

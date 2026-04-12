@@ -23,6 +23,12 @@ export class KeyPackage {
   @Column()
   keyPackage: string; // Base64 encoded
 
+  @Column({ type: 'varchar', length: 80, nullable: true })
+  deviceName?: string | null;
+
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  deviceOs?: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 }

@@ -31,7 +31,14 @@ export interface IMlsService {
 
   // Networking
   connect(token: string): Promise<void>;
-  fetchUserDevices(userId: string): Promise<Array<{ keyPackage: Uint8Array; deviceId: string }>>;
+  fetchUserDevices(userId: string): Promise<
+    Array<{
+      keyPackage: Uint8Array;
+      deviceId: string;
+      deviceName?: string;
+      deviceOs?: string;
+    }>
+  >;
   publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void>;
   /** Bulk-upload multiple one-time prekeys to the server pool. */
   publishKeyPackages(packages: Uint8Array[]): Promise<void>;
@@ -143,6 +150,13 @@ export interface IMlsService {
     keyPackagesDeleted: number;
     oneTimeKeyPackagesDeleted: number;
   }>;
+
+  /** Update a device metadata (label and/or OS) */
+  updateDeviceMetadata(
+    userId: string,
+    deviceId: string,
+    metadata: { deviceName?: string; deviceOs?: string }
+  ): Promise<{ status: string; deviceName: string | null; deviceOs: string | null }>;
 
   // Callbacks
   onChannelEvent?: (event: { type: string; data: any }) => void;

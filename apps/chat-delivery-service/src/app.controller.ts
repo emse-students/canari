@@ -408,6 +408,25 @@ function sanitizeDisplayText(value: unknown, fieldName: string): string {
   return text;
 }
 
+function sanitizeOptionalDeviceName(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  const name = sanitizeDisplayText(value, 'deviceName');
+  return name.slice(0, 80);
+}
+
+function sanitizeOptionalDeviceOs(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value !== 'string') {
+    throw new BadRequestException('deviceOs must be a string');
+  }
+  const os = value.trim().toLowerCase();
+  if (!os) return undefined;
+  if (!/^[a-z0-9_.-]{1,32}$/.test(os)) {
+    throw new BadRequestException('deviceOs contains invalid characters');
+  }
+  return os;
+}
+
 function sanitizeSerializedChunks(value: unknown): SyncSerializedChunk[] {
   if (!Array.isArray(value)) {
     throw new BadRequestException('chunks must be an array');
@@ -561,7 +580,9 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
   ) {}
 
-  onModuleInit() {
+  async onModuleInit() {
+    await this.ensureDeviceMetadataColumns();
+
     // Initialize Firebase Admin SDK once if a service account is provided
     if (!admin.apps.length) {
       const sa = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
@@ -621,6 +642,16 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     this.logger.log(
       '[CRON] Stale device detection (1h), message cleanup (1h), ' +
         'key-package cleanup (1h), orphaned Redis groups cleanup (6h) scheduled',
+    );
+  }
+
+  private async ensureDeviceMetadataColumns() {
+    const tableName = this.keyPackageRepo.metadata.tableName;
+    await this.keyPackageRepo.query(
+      `ALTER TABLE "${tableName}" ADD COLUMN IF NOT EXISTS "deviceName" varchar(80)`,
+    );
+    await this.keyPackageRepo.query(
+      `ALTER TABLE "${tableName}" ADD COLUMN IF NOT EXISTS "deviceOs" varchar(32)`,
     );
   }
 
@@ -1819,25 +1850,51 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   @UseGuards(HeaderAuthGuard)
   @Post('mls-api/register-device')
   async registerDevice(
-    @Body() body: { userId: string; deviceId: string; keyPackage: string },
+    @Body()
+    body: {
+      userId: string;
+      deviceId: string;
+      keyPackage: string;
+      deviceName?: string;
+      deviceOs?: string;
+    },
   ) {
+    const userId = sanitizeQueryValue(body.userId, 'userId');
+    const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
+    if (
+      typeof body.keyPackage !== 'string' ||
+      body.keyPackage.trim().length === 0 ||
+      body.keyPackage.length > 16384
+    ) {
+      throw new BadRequestException(
+        'keyPackage must be a non-empty base64 string',
+      );
+    }
+    const keyPackagePayload = body.keyPackage;
+    const deviceName = sanitizeOptionalDeviceName(body.deviceName);
+    const deviceOs = sanitizeOptionalDeviceOs(body.deviceOs);
+
     const traceId = this.makeTraceId('reg-device');
     this.logger.log(
-      `[REGISTER_DEVICE][${traceId}] START user=${body.userId} device=${body.deviceId} kpLen=${body.keyPackage?.length ?? 0}`,
+      `[REGISTER_DEVICE][${traceId}] START user=${userId} device=${deviceId} kpLen=${keyPackagePayload.length}`,
     );
     let keyPackage = await this.keyPackageRepo.findOne({
-      where: { userId: body.userId, deviceId: body.deviceId },
+      where: { userId, deviceId },
     });
     const isNew = !keyPackage;
     if (!keyPackage) {
       keyPackage = this.keyPackageRepo.create({
-        userId: body.userId,
-        deviceId: body.deviceId,
-        keyPackage: body.keyPackage,
+        userId,
+        deviceId,
+        keyPackage: keyPackagePayload,
+        deviceName,
+        deviceOs,
         createdAt: new Date(),
       });
     } else {
-      keyPackage.keyPackage = body.keyPackage;
+      keyPackage.keyPackage = keyPackagePayload;
+      if (deviceName !== undefined) keyPackage.deviceName = deviceName;
+      if (deviceOs !== undefined) keyPackage.deviceOs = deviceOs;
       keyPackage.createdAt = new Date();
     }
     await this.keyPackageRepo.save(keyPackage);
@@ -1846,16 +1903,16 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     // already belongs to.  Without this, getPendingInvitations on other
     // devices won't see the new device and will never send it a Welcome.
     const userGroups = await this.groupMemberRepo.find({
-      where: { userId: body.userId },
+      where: { userId },
     });
     for (const gm of userGroups) {
       const existing = await this.deviceGroupRepo.findOne({
-        where: { deviceId: body.deviceId, groupId: gm.groupId },
+        where: { deviceId, groupId: gm.groupId },
       });
       if (!existing) {
         const membership = this.deviceGroupRepo.create({
-          userId: body.userId,
-          deviceId: body.deviceId,
+          userId,
+          deviceId,
           groupId: gm.groupId,
           status: 'pending' as const,
         });
@@ -1864,9 +1921,43 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     }
 
     this.logger.log(
-      `[REGISTER_DEVICE][${traceId}] DONE user=${body.userId} device=${body.deviceId} isNew=${isNew} pendingGroups=${userGroups.length}`,
+      `[REGISTER_DEVICE][${traceId}] DONE user=${userId} device=${deviceId} isNew=${isNew} pendingGroups=${userGroups.length}`,
     );
     return { status: 'registered' };
+  }
+
+  @UseGuards(HeaderAuthGuard)
+  @Patch('mls-api/devices/:userId/:deviceId/metadata')
+  async updateDeviceMetadata(
+    @Param('userId') userId: string,
+    @Param('deviceId') deviceId: string,
+    @Body() body: { deviceName?: string; deviceOs?: string },
+  ) {
+    const safeUserId = sanitizeQueryValue(userId, 'userId');
+    const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
+    const deviceName = sanitizeOptionalDeviceName(body.deviceName);
+    const deviceOs = sanitizeOptionalDeviceOs(body.deviceOs);
+
+    if (deviceName === undefined && deviceOs === undefined) {
+      throw new BadRequestException('At least one metadata field is required');
+    }
+
+    const keyPackage = await this.keyPackageRepo.findOne({
+      where: { userId: safeUserId, deviceId: safeDeviceId },
+    });
+    if (!keyPackage) {
+      throw new BadRequestException('Device not found');
+    }
+
+    if (deviceName !== undefined) keyPackage.deviceName = deviceName;
+    if (deviceOs !== undefined) keyPackage.deviceOs = deviceOs;
+    await this.keyPackageRepo.save(keyPackage);
+
+    return {
+      status: 'updated',
+      deviceName: keyPackage.deviceName ?? null,
+      deviceOs: keyPackage.deviceOs ?? null,
+    };
   }
 
   @UseGuards(HeaderAuthGuard)
