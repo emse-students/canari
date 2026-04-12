@@ -243,4 +243,9 @@ export class PaymentService {
       };
     }
   }
+
+  async retrieveSession(sessionId: string): Promise<Stripe.Checkout.Session> {
+    if (!this.stripe) throw new BadRequestException('Stripe not configured');
+    return this.stripe.checkout.sessions.retrieve(sessionId);
+  }
 }

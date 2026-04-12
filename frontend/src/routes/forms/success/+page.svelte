@@ -1,8 +1,36 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import { CircleCheck } from 'lucide-svelte';
+  import { onMount } from 'svelte';
+  import { CircleCheck, CircleX, Loader } from 'lucide-svelte';
 
   const sessionId = $derived(page.url.searchParams.get('session_id'));
+
+  let status = $state<'loading' | 'confirmed' | 'error'>('loading');
+  let formId = $state<string | null>(null);
+
+  onMount(async () => {
+    if (!sessionId) {
+      status = 'error';
+      return;
+    }
+    try {
+      const coreUrl = (import.meta as any).env?.VITE_CORE_URL?.trim() || '';
+      const res = await fetch(`${coreUrl}/api/payments/verify-session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        formId = data.formId ?? null;
+        status = 'confirmed';
+      } else {
+        status = 'error';
+      }
+    } catch {
+      status = 'error';
+    }
+  });
 </script>
 
 <svelte:head>
@@ -11,27 +39,49 @@
 
 <div class="min-h-screen flex items-center justify-center px-4">
   <div class="max-w-md w-full text-center space-y-6">
-    <div class="flex justify-center">
-      <div class="p-4 rounded-full bg-green-100">
-        <CircleCheck size={48} class="text-green-600" />
+    {#if status === 'loading'}
+      <div class="flex justify-center">
+        <div class="p-4 rounded-full bg-cn-border/30 animate-pulse">
+          <Loader size={48} class="text-text-muted animate-spin" />
+        </div>
       </div>
-    </div>
-    <div>
-      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">Paiement confirmé !</h1>
-      <p class="text-text-muted mt-2">
-        Votre inscription a bien été enregistrée. Vous recevrez une confirmation par email.
-      </p>
-    </div>
-    {#if sessionId}
-      <p class="text-xs text-text-muted font-mono bg-cn-border/20 rounded-xl px-3 py-2 break-all">
-        Référence : {sessionId}
-      </p>
+      <p class="text-text-muted">Vérification du paiement…</p>
+    {:else if status === 'confirmed'}
+      <div class="flex justify-center">
+        <div class="p-4 rounded-full bg-green-100">
+          <CircleCheck size={48} class="text-green-600" />
+        </div>
+      </div>
+      <div>
+        <h1 class="text-2xl font-extrabold text-text-main tracking-tight">Paiement confirmé !</h1>
+        <p class="text-text-muted mt-2">
+          Votre inscription a bien été enregistrée. Vous recevrez une confirmation par email.
+        </p>
+      </div>
+      <a
+        href={formId ? `/forms/${formId}` : '/forms'}
+        class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-6 py-3 text-sm font-bold text-cn-dark shadow-sm transition-all hover:bg-cn-yellow-hover"
+      >
+        Retour au formulaire
+      </a>
+    {:else}
+      <div class="flex justify-center">
+        <div class="p-4 rounded-full bg-red-100">
+          <CircleX size={48} class="text-red-500" />
+        </div>
+      </div>
+      <div>
+        <h1 class="text-2xl font-extrabold text-text-main tracking-tight">Paiement introuvable</h1>
+        <p class="text-text-muted mt-2">
+          Impossible de confirmer votre paiement. Si vous avez été débité, contactez le support.
+        </p>
+      </div>
+      <a
+        href="/forms"
+        class="inline-flex items-center gap-2 rounded-xl bg-cn-border/40 px-6 py-3 text-sm font-bold text-text-main transition-all hover:bg-cn-border/60"
+      >
+        Retour aux formulaires
+      </a>
     {/if}
-    <a
-      href="/forms"
-      class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-6 py-3 text-sm font-bold text-cn-dark shadow-sm transition-all hover:bg-cn-yellow-hover"
-    >
-      Retour aux formulaires
-    </a>
   </div>
 </div>

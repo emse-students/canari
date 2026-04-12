@@ -51,13 +51,21 @@ export class FormsService {
 
   async getSubmission(formId: string, userId: string) {
     return this.submissionRepo.findOne({
-      where: { formId, userId },
+      where: [
+        { formId, userId, paymentStatus: 'paid' },
+        { formId, userId, paymentStatus: 'free' },
+      ],
       order: { createdAt: 'DESC' },
     });
   }
 
   async hasSubmission(formId: string, userId: string): Promise<boolean> {
-    const count = await this.submissionRepo.count({ where: { formId, userId } });
+    const count = await this.submissionRepo.count({
+      where: [
+        { formId, userId, paymentStatus: 'paid' },
+        { formId, userId, paymentStatus: 'free' },
+      ],
+    });
     return count > 0;
   }
 
@@ -94,20 +102,41 @@ export class FormsService {
     }
 
     if (form.maxSubmissions) {
-      const count = await this.submissionRepo.count({ where: { formId: id } });
+      const count = await this.submissionRepo.count({
+        where: [
+          { formId: id, paymentStatus: 'paid' },
+          { formId: id, paymentStatus: 'free' },
+        ],
+      });
       if (count >= form.maxSubmissions) throw new BadRequestException('Form is full');
     }
 
-    const submission = this.submissionRepo.create({
-      formId: id,
-      userId: input.userId,
-      email: input.email,
-      answers: input.answers,
-      totalPaid: totalCents,
-      paymentStatus: totalCents > 0 ? 'pending' : 'free',
-    });
+    // If a pending submission already exists for this user/form, reuse it to avoid duplicates
+    const existingPending =
+      totalCents > 0
+        ? await this.submissionRepo.findOne({
+            where: { formId: id, userId: input.userId, paymentStatus: 'pending' },
+            order: { createdAt: 'DESC' },
+          })
+        : null;
 
-    const savedSubmission = await this.submissionRepo.save(submission);
+    let savedSubmission: Submission;
+    if (existingPending) {
+      existingPending.answers = input.answers;
+      existingPending.totalPaid = totalCents;
+      existingPending.email = input.email;
+      savedSubmission = await this.submissionRepo.save(existingPending);
+    } else {
+      const submission = this.submissionRepo.create({
+        formId: id,
+        userId: input.userId,
+        email: input.email,
+        answers: input.answers,
+        totalPaid: totalCents,
+        paymentStatus: totalCents > 0 ? 'pending' : 'free',
+      });
+      savedSubmission = await this.submissionRepo.save(submission);
+    }
 
     if (totalCents > 0) {
       // Delegate checkout creation to the central payment service as a single consolidated item

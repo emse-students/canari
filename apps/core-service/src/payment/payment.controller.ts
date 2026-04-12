@@ -107,6 +107,51 @@ export class PaymentController {
     return { ok: true, url: session.url, id: session.id };
   }
 
+  @Post('verify-session')
+  @HttpCode(200)
+  async verifySession(@Body() body: { sessionId: string }) {
+    if (!body?.sessionId || !/^cs_[a-zA-Z0-9_]+$/.test(body.sessionId)) {
+      throw new BadRequestException('Invalid sessionId');
+    }
+    if (!this.paymentService.isConfigured()) {
+      return { ok: false, message: 'Stripe not configured' };
+    }
+
+    const session = await this.paymentService.retrieveSession(body.sessionId);
+
+    if (session.payment_status !== 'paid') {
+      return { ok: false, message: 'Payment not completed' };
+    }
+
+    const submissionId = session.metadata?.submissionId;
+    const formId = session.metadata?.formId;
+
+    if (!submissionId || !/^[a-zA-Z0-9_-]{1,128}$/.test(submissionId)) {
+      this.logger.error(
+        `Missing or invalid submissionId in session ${body.sessionId}`,
+      );
+      return { ok: false, message: 'No submission linked to this session' };
+    }
+
+    try {
+      const socialBase = process.env.FORM_URL || 'http://localhost:3014';
+      await axios.post(
+        `${socialBase.replace(/\/$/, '')}/api/forms/submissions/${submissionId}/mark-paid`,
+        { sessionId: body.sessionId },
+        { maxRedirects: 0 },
+      );
+    } catch (err: unknown) {
+      const error = err as Error & { response?: { data?: unknown } };
+      this.logger.error(
+        'verify-session: mark-paid failed',
+        error?.response?.data || error?.message,
+      );
+      // Non-fatal if already paid — webhook may have already handled it
+    }
+
+    return { ok: true, submissionId, formId };
+  }
+
   // ── Payment Methods (user) ────────────────────────────────────────────────
 
   @UseGuards(NginxAuthGuard)
