@@ -208,7 +208,15 @@
       showPaymentModal = false;
       setTimeout(() => goto(redirectTo), 1500);
     }
+    // If requiresAction, PaymentModal handles 3DS inline and calls onSuccess
     return result;
+  }
+
+  function handlePaySuccess() {
+    submitted = true;
+    successMessage = 'Paiement effectué avec succès !';
+    showPaymentModal = false;
+    setTimeout(() => goto(redirectTo), 1500);
   }
 
   function handlePayWithNew() {
@@ -225,6 +233,7 @@
       currency={form?.currency ?? 'eur'}
       onPayWithSaved={handlePayWithSaved}
       onPayWithNew={handlePayWithNew}
+      onSuccess={handlePaySuccess}
       onClose={() => (showPaymentModal = false)}
     />
   {/if}

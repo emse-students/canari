@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { loadStripe } from '@stripe/stripe-js';
   import { CreditCard, X, Loader2, CheckCircle2, AlertCircle, ChevronRight } from 'lucide-svelte';
   import type { PaymentMethod } from '$lib/stores/user';
 
@@ -12,6 +13,8 @@
     ) => Promise<{ ok: boolean; requiresAction?: boolean; clientSecret?: string; error?: string }>;
     /** Called when user wants to pay with a new card (Stripe hosted checkout). */
     onPayWithNew: () => void;
+    /** Called when inline 3DS authentication succeeds. */
+    onSuccess: () => void;
     onClose: () => void;
   }
 
@@ -21,6 +24,7 @@
     currency = 'eur',
     onPayWithSaved,
     onPayWithNew,
+    onSuccess,
     onClose,
   }: Props = $props();
 
@@ -57,9 +61,27 @@
     try {
       const result = await onPayWithSaved(selectedMethodId);
       if (!result.ok) {
-        if (result.requiresAction) {
-          // Fall back to hosted checkout for 3DS
-          onPayWithNew();
+        if (result.requiresAction && result.clientSecret) {
+          // Handle 3DS inline — user stays in the app
+          const key = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY;
+          if (key) {
+            const stripe = await loadStripe(key);
+            if (!stripe) {
+              error = 'Impossible de charger le module de paiement.';
+              paying = false;
+            } else {
+              const { error: confirmError } = await stripe.confirmCardPayment(result.clientSecret);
+              if (confirmError) {
+                error = confirmError.message ?? 'Authentification 3D Secure échouée.';
+                paying = false;
+              } else {
+                onSuccess();
+              }
+            }
+          } else {
+            // No publishable key configured — fall back to hosted checkout
+            onPayWithNew();
+          }
         } else {
           error = result.error ?? 'Le paiement a échoué. Veuillez réessayer.';
           paying = false;

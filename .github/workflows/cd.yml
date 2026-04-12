@@ -224,6 +224,7 @@ jobs:
           BASE_URL: ${{ secrets.BASE_URL }}
           AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
           AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
+          STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUB_KEY }}
         run: |
           # VITE_GATEWAY_URL et VITE_DELIVERY_URL intentionnellement vides :
           # le code utilise window.location.origin comme fallback, ce qui fonctionne
@@ -236,6 +237,9 @@ jobs:
           echo "VITE_CORE_URL=${BASE_URL}" >> .env
           echo "VITE_AUTHENTIK_URL=${AUTHENTIK_URL}" >> .env
           echo "VITE_AUTHENTIK_CLIENT_ID=${AUTHENTIK_CLIENT_ID}" >> .env
+          if [ -n "$STRIPE_PUBLISHABLE_KEY" ]; then
+            echo "VITE_STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY}" >> .env
+          fi
 
       - name: Build frontend
         working-directory: frontend
