@@ -186,12 +186,12 @@
     }
   }
 
-  async function handleAddComment() {
+  async function handleAddComment(parentId?: string) {
     const text = commentText.trim();
     if (!text || !currentUserId.trim()) return;
     submittingComment = true;
     try {
-      await addComment(post.id, { text });
+      await addComment(post.id, { text, parentId });
       commentText = '';
       onRefresh();
     } catch (err) {
@@ -236,8 +236,9 @@
   }
 </script>
 
-<Card class="mb-6 overflow-hidden !p-0 transition-all duration-300 hover:shadow-xl hover:-translate-y-0.5 border border-black/5 dark:border-white/10 bg-white/70 dark:bg-[#151B2C]/70 backdrop-blur-xl">
-
+<Card
+  class="mb-6 overflow-hidden !p-0 transition-all duration-300 hover:shadow-xl hover:-translate-y-0.5 border border-black/5 dark:border-white/10 bg-white/70 dark:bg-[#151B2C]/70 backdrop-blur-xl"
+>
   <PostHeader {post} />
   <PostContent {post} {authToken} />
 
@@ -303,8 +304,8 @@
           class="flex items-start gap-3 p-3.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 shadow-inner"
         >
           <div transition:fade={{ duration: 150 }} class="flex items-center gap-3">
-             <AlertCircle size={18} class="shrink-0 mt-0.5" />
-             <span class="text-sm font-bold leading-snug">{errorMessage}</span>
+            <AlertCircle size={18} class="shrink-0 mt-0.5" />
+            <span class="text-sm font-bold leading-snug">{errorMessage}</span>
           </div>
         </div>
       {/if}
@@ -315,8 +316,8 @@
           class="flex items-start gap-3 p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400 shadow-inner mt-2"
         >
           <div transition:fade={{ duration: 150 }} class="flex items-center gap-3">
-             <CheckCircle2 size={18} class="shrink-0 mt-0.5" />
-             <span class="text-sm font-bold leading-snug">{actionMessage}</span>
+            <CheckCircle2 size={18} class="shrink-0 mt-0.5" />
+            <span class="text-sm font-bold leading-snug">{actionMessage}</span>
           </div>
         </div>
       {/if}

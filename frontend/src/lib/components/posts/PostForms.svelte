@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Check, ClipboardList, ExternalLink } from 'lucide-svelte';
+  import { CheckCircle2, ClipboardList, ArrowRight, ExternalLink } from 'lucide-svelte';
 
   interface Props {
     formInfos: Array<{ id: string; title: string; submitted: boolean }>;
@@ -9,35 +9,45 @@
 </script>
 
 {#if formInfos.length > 0}
-  <div class="px-5 py-4 border-b border-cn-border/40 space-y-2">
+  <div class="px-5 py-3 space-y-3">
     {#each formInfos as fi (fi.id)}
       <a
         href="/forms/{fi.id}?redirect=/posts"
-        class="flex items-center justify-between p-3 rounded-xl border border-cn-border bg-[var(--cn-surface)] hover:border-cn-yellow/50 transition-all group"
+        class="relative flex items-center justify-between p-4 rounded-2xl border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 backdrop-blur-xl shadow-sm hover:shadow-md transition-all duration-300 hover:-translate-y-0.5 group outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50 {fi.submitted ? 'hover:border-emerald-500/30' : 'hover:border-amber-500/30'}"
       >
-        <div class="flex items-center gap-3">
+        <div class="flex items-center gap-3.5 min-w-0">
+          <!-- Icône d'état -->
           <div
-            class="p-2 rounded-lg {fi.submitted
-              ? 'bg-green-ok/10 text-green-ok'
-              : 'bg-cn-yellow/15 text-cn-dark'}"
+            class="p-2.5 rounded-xl flex-shrink-0 transition-colors {fi.submitted
+              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+              : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 group-hover:bg-amber-500/20'}"
           >
             {#if fi.submitted}
-              <Check size={18} />
+              <CheckCircle2 size={20} strokeWidth={2.5} />
             {:else}
-              <ClipboardList size={18} />
+              <ClipboardList size={20} strokeWidth={2.5} />
             {/if}
           </div>
-          <div>
-            <h3 class="font-bold text-sm text-text-main">{fi.title}</h3>
-            <p class="text-xs text-text-muted">
+
+          <!-- Informations du Formulaire -->
+          <div class="flex-1 min-w-0">
+            <h3 class="font-bold text-[0.95rem] text-text-main truncate transition-colors {fi.submitted ? 'group-hover:text-emerald-600 dark:group-hover:text-emerald-400' : 'group-hover:text-amber-600 dark:group-hover:text-amber-400'}">
+              {fi.title || 'Formulaire'}
+            </h3>
+            <p class="text-[0.75rem] font-semibold mt-0.5 {fi.submitted ? 'text-emerald-600/80 dark:text-emerald-400/80' : 'text-text-muted'}">
               {fi.submitted ? 'Réponse envoyée' : 'Remplir le formulaire'}
             </p>
           </div>
         </div>
-        <ExternalLink
-          size={14}
-          class="text-text-muted group-hover:text-cn-dark transition-colors"
-        />
+
+        <!-- Flèche / Icône d'action externe -->
+        <div class="flex-shrink-0 ml-4 opacity-40 group-hover:opacity-100 transition-all duration-300 group-hover:translate-x-1 {fi.submitted ? 'group-hover:text-emerald-500' : 'group-hover:text-amber-500'}">
+          {#if fi.submitted}
+            <ArrowRight size={18} strokeWidth={2.5} />
+          {:else}
+            <ExternalLink size={18} strokeWidth={2.5} />
+          {/if}
+        </div>
       </a>
     {/each}
   </div>
