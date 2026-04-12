@@ -181,7 +181,7 @@ export class FormsService {
         const res = await axios.post(checkoutUrl, {
           lineItems: singleLineItem,
           successUrl: `${this.configService.get('FRONTEND_URL')}/forms/success?session_id={CHECKOUT_SESSION_ID}`,
-          cancelUrl: `${this.configService.get('FRONTEND_URL')}/forms/cancel`,
+          cancelUrl: `${this.configService.get('FRONTEND_URL')}/forms/cancel?session_id={CHECKOUT_SESSION_ID}`,
           metadata: { submissionId: savedSubmission.id, formId: id, userId: input.userId ?? '' },
           stripeConnectAccountId,
           ...(customerId ? { customerId, saveForFuture: true } : {}),
@@ -241,6 +241,16 @@ export class FormsService {
     if (!submission) throw new NotFoundException('Submission not found');
     submission.paymentStatus = 'paid';
     if (sessionId) submission.stripeSessionId = sessionId;
+    await this.submissionRepo.save(submission);
+    return { ok: true };
+  }
+
+  async cancelSubmission(submissionId: string) {
+    const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
+    if (!submission) throw new NotFoundException('Submission not found');
+    // Only cancel pending submissions — never touch paid ones
+    if (submission.paymentStatus !== 'pending') return { ok: true };
+    submission.paymentStatus = 'cancelled';
     await this.submissionRepo.save(submission);
     return { ok: true };
   }

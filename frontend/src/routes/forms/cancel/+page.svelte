@@ -1,5 +1,26 @@
 <script lang="ts">
+  import { page } from '$app/state';
+  import { onMount } from 'svelte';
   import { CircleX } from 'lucide-svelte';
+
+  const sessionId = $derived(page.url.searchParams.get('session_id'));
+  let formId = $state<string | null>(null);
+
+  onMount(async () => {
+    if (!sessionId) return;
+    try {
+      const coreUrl = (import.meta as any).env?.VITE_CORE_URL?.trim() || '';
+      const res = await fetch(`${coreUrl}/api/payments/cancel-session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId }),
+      });
+      const data = await res.json();
+      if (data.ok) formId = data.formId ?? null;
+    } catch {
+      // Non-fatal — submission will remain pending and can be reused on next attempt
+    }
+  });
 </script>
 
 <svelte:head>
@@ -20,10 +41,10 @@
       </p>
     </div>
     <a
-      href="/forms"
+      href={formId ? `/forms/${formId}` : '/forms'}
       class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-6 py-3 text-sm font-bold text-cn-dark shadow-sm transition-all hover:bg-cn-yellow-hover"
     >
-      Retour aux formulaires
+      {formId ? 'Réessayer' : 'Retour aux formulaires'}
     </a>
   </div>
 </div>

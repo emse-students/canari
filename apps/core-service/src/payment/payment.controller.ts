@@ -152,6 +152,48 @@ export class PaymentController {
     return { ok: true, submissionId, formId };
   }
 
+  @Post('cancel-session')
+  @HttpCode(200)
+  async cancelSession(@Body() body: { sessionId: string }) {
+    if (!body?.sessionId || !/^cs_[a-zA-Z0-9_]+$/.test(body.sessionId)) {
+      throw new BadRequestException('Invalid sessionId');
+    }
+    if (!this.paymentService.isConfigured()) {
+      return { ok: false, message: 'Stripe not configured' };
+    }
+
+    const session = await this.paymentService.retrieveSession(body.sessionId);
+
+    // Safety guard: never cancel a session that was actually paid
+    if (session.payment_status === 'paid') {
+      return { ok: false, message: 'Session already paid' };
+    }
+
+    const submissionId = session.metadata?.submissionId;
+    const formId = session.metadata?.formId;
+
+    if (!submissionId || !/^[a-zA-Z0-9_-]{1,128}$/.test(submissionId)) {
+      return { ok: false, message: 'No submission linked to this session' };
+    }
+
+    try {
+      const socialBase = process.env.FORM_URL || 'http://localhost:3014';
+      await axios.post(
+        `${socialBase.replace(/\/$/, '')}/api/forms/submissions/${submissionId}/cancel`,
+        {},
+        { maxRedirects: 0 },
+      );
+    } catch (err: unknown) {
+      const error = err as Error & { response?: { data?: unknown } };
+      this.logger.error(
+        'cancel-session: cancel submission failed',
+        error?.response?.data || error?.message,
+      );
+    }
+
+    return { ok: true, submissionId, formId };
+  }
+
   // ── Payment Methods (user) ────────────────────────────────────────────────
 
   @UseGuards(NginxAuthGuard)

@@ -73,6 +73,11 @@ export class FormsController {
     return this.service.markPaid(submissionId, body.sessionId);
   }
 
+  @Post('submissions/:submissionId/cancel')
+  cancelSubmission(@Param('submissionId') submissionId: string) {
+    return this.service.cancelSubmission(submissionId);
+  }
+
   @Get(':id/export')
   async export(@Param('id') id: string, @Res() res: Response) {
     const buffer = await this.service.exportSubmissions(id);
