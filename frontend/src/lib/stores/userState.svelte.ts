@@ -19,3 +19,18 @@ export function currentUserId(): string | null {
 export function setCurrentUserId(id: string | null): void {
   _userId = id;
 }
+
+const initialAdmin =
+  typeof localStorage !== 'undefined'
+    ? localStorage.getItem('canari_global_admin') === 'true'
+    : false;
+
+let _isAdmin = $state<boolean>(initialAdmin);
+
+export function globalAdminState(): boolean {
+  return _isAdmin;
+}
+
+export function setGlobalAdmin(value: boolean): void {
+  _isAdmin = value;
+}

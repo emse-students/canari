@@ -11,6 +11,7 @@
  */
 
 import { saveUserLocally, clearUserLocally, currentUserId } from '$lib/stores/user';
+import { setGlobalAdmin } from '$lib/stores/userState.svelte';
 
 const OIDC_STATE_KEY = 'canari_oidc_state';
 const OIDC_RETURN_KEY = 'canari_oidc_return';
@@ -217,6 +218,20 @@ export async function refresh(): Promise<string> {
   const data = (await res.json()) as { access_token: string };
   _accessToken = data.access_token;
   setWsSessionCookie(data.access_token);
+
+  // Decode admin claim from the new JWT and keep reactive state in sync.
+  try {
+    const payload = data.access_token.split('.')[1];
+    if (payload) {
+      const { admin } = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/'))) as {
+        admin?: boolean;
+      };
+      setGlobalAdmin(!!admin);
+    }
+  } catch {
+    /* ignore malformed token */
+  }
+
   return data.access_token;
 }
 

@@ -14,7 +14,7 @@ import type { IStorage } from '$lib/db';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { computePinVerifier } from '$lib/utils/chat/auth';
 import { getToken, clearAuth } from '$lib/stores/auth';
-import { saveUserLocally, clearUserLocally, currentUserId } from '$lib/stores/user';
+import { saveUserLocally, clearUserLocally, currentUserId, isGlobalAdmin } from '$lib/stores/user';
 import {
   addDevMember,
   discoverMissingGroups,
@@ -194,7 +194,7 @@ export function useChatSession() {
       authToken = await getToken();
 
       isLoggedIn = true;
-      saveUserLocally({ id: userId });
+      saveUserLocally({ id: userId, admin: isGlobalAdmin() });
       // On Tauri (mobile): rely exclusively on the hardware-backed keystore —
       // never cache the PIN in any browser storage. The biometric enrolment
       // prompt that follows will call BiometricService.enableBiometric(pin).

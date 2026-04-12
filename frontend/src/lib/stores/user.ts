@@ -1,7 +1,7 @@
 import { apiFetch } from '$lib/utils/apiFetch';
-import { setCurrentUserId } from '$lib/stores/userState.svelte';
+import { setCurrentUserId, setGlobalAdmin } from '$lib/stores/userState.svelte';
 
-export { currentUserId } from '$lib/stores/userState.svelte';
+export { currentUserId, globalAdminState as isGlobalAdmin } from '$lib/stores/userState.svelte';
 
 export interface UserProfile {
   id: string;
@@ -36,11 +36,6 @@ export function getSavedEmail(): string | null {
   return localStorage.getItem(USER_EMAIL_KEY);
 }
 
-export function isGlobalAdmin(): boolean {
-  if (typeof localStorage === 'undefined') return false;
-  return localStorage.getItem(USER_GLOBAL_ADMIN_KEY) === 'true';
-}
-
 export function saveUserLocally(user: {
   id: string;
   email?: string;
@@ -51,6 +46,7 @@ export function saveUserLocally(user: {
   if (user.email) localStorage.setItem(USER_EMAIL_KEY, user.email);
   if (user.displayName) localStorage.setItem(USER_DISPLAY_NAME_KEY, user.displayName);
   localStorage.setItem(USER_GLOBAL_ADMIN_KEY, user.admin ? 'true' : 'false');
+  setGlobalAdmin(!!user.admin);
   setCurrentUserId(user.id);
 }
 
@@ -59,6 +55,7 @@ export function clearUserLocally(): void {
   localStorage.removeItem(USER_EMAIL_KEY);
   localStorage.removeItem(USER_DISPLAY_NAME_KEY);
   localStorage.removeItem(USER_GLOBAL_ADMIN_KEY);
+  setGlobalAdmin(false);
   setCurrentUserId(null);
 }
 
