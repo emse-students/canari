@@ -6,6 +6,7 @@ import { ConfigService } from '@nestjs/config';
 import { Form } from './entities/form.entity';
 import { Submission } from './entities/submission.entity';
 import { CreateFormDto, SubmitFormDto } from './dto/form.dto';
+import axios from 'axios';
 import * as ExcelJS from 'exceljs';
 import { AssociationsService } from '../associations/associations.service';
 
@@ -109,7 +110,88 @@ export class FormsService {
     const savedSubmission = await this.submissionRepo.save(submission);
 
     if (totalCents > 0) {
-      return { needsPayment: true, submissionId: savedSubmission.id };
+      // Delegate checkout creation to the central payment service as a single consolidated item
+      const singleLineItem: any[] = [
+        {
+          price_data: {
+            currency,
+            product_data: { name: `${form.title} (Registration)` },
+            unit_amount: totalCents,
+          },
+          quantity: 1,
+        },
+      ];
+
+      const paymentServiceBase =
+        this.configService.get<string>('PAYMENT_SERVICE_URL') || 'http://localhost:3012';
+      const checkoutUrl = `${paymentServiceBase.replace(/\/$/, '')}/api/payments/create-checkout-session`;
+
+      try {
+        // If the form belongs to an association, route payment via Stripe Connect
+        let stripeConnectAccountId: string | undefined;
+        if (form.associationId) {
+          const acctId = await this.associationsService.getStripeAccountId(form.associationId);
+          if (acctId) stripeConnectAccountId = acctId;
+        }
+
+        // Resolve the Stripe customer ID for the user so the card gets saved after checkout
+        let customerId: string | undefined;
+        if (input.userId) {
+          try {
+            const customerResp = await axios.post<{ customerId: string | null }>(
+              `${paymentServiceBase.replace(/\/$/, '')}/api/payments/internal/customer-id`,
+              { userId: input.userId },
+              { maxRedirects: 0 }
+            );
+            customerId = customerResp.data.customerId ?? undefined;
+          } catch {
+            // Non-fatal — proceed without customer ID
+          }
+        }
+
+        const paymentMethods = form.paymentMethods?.length ? form.paymentMethods : ['card'];
+
+        const res = await axios.post(checkoutUrl, {
+          lineItems: singleLineItem,
+          successUrl: `${this.configService.get('FRONTEND_URL')}/forms/success?session_id={CHECKOUT_SESSION_ID}`,
+          cancelUrl: `${this.configService.get('FRONTEND_URL')}/forms/cancel`,
+          metadata: { submissionId: savedSubmission.id, formId: id, userId: input.userId ?? '' },
+          stripeConnectAccountId,
+          paymentMethods,
+          ...(customerId && paymentMethods.includes('card')
+            ? { customerId, saveForFuture: true }
+            : customerId
+              ? { customerId }
+              : {}),
+        });
+
+        const data = res.data || {};
+        const sessionUrl = data.url || data.checkoutUrl || null;
+        const sessionId = data.id || data.sessionId || null;
+
+        if (!sessionUrl) {
+          return {
+            message: data.message || 'Payment service did not return a checkout URL',
+            submissionId: savedSubmission.id,
+          };
+        }
+
+        if (sessionId) {
+          savedSubmission.stripeSessionId = sessionId;
+          await this.submissionRepo.save(savedSubmission);
+        }
+
+        return { checkoutUrl: sessionUrl, submissionId: savedSubmission.id };
+      } catch (err: any) {
+        const stripeMsg =
+          err?.response?.data?.message ||
+          err?.response?.data?.error ||
+          err?.response?.data ||
+          err?.message ||
+          String(err);
+        this.logger.error('Payment service error', stripeMsg);
+        throw new BadRequestException(`Failed to create checkout session: ${stripeMsg}`);
+      }
     }
 
     return { message: 'Form submitted successfully', submissionId: savedSubmission.id };

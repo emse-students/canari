@@ -152,36 +152,3 @@ export async function chargeWithSavedMethod(
     error?: string;
   };
 }
-
-export async function createPaymentIntent(submissionId: string): Promise<{
-  ok: boolean;
-  clientSecret?: string;
-  paymentIntentId?: string;
-  alreadyPaid?: boolean;
-  error?: string;
-}> {
-  const res = await apiFetch(`${coreUrl()}/api/payments/create-payment-intent`, {
-    method: 'POST',
-    body: JSON.stringify({ submissionId }),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body?.message || `Failed to create payment intent (${res.status})`);
-  }
-  return res.json();
-}
-
-export async function confirmSubmissionPayment(
-  submissionId: string,
-  paymentIntentId: string
-): Promise<{ ok: boolean; error?: string }> {
-  const res = await apiFetch(`${coreUrl()}/api/payments/confirm-submission-payment`, {
-    method: 'POST',
-    body: JSON.stringify({ submissionId, paymentIntentId }),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body?.message || `Confirmation failed (${res.status})`);
-  }
-  return res.json();
-}
