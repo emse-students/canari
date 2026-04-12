@@ -9,6 +9,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.enableEdgeToEdge
 import com.google.firebase.messaging.FirebaseMessaging
+import java.io.File
 
 class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -25,6 +26,11 @@ class MainActivity : TauriActivity() {
           Context.MODE_PRIVATE
         )
         prefs.edit().putString(CanariFirebaseMessagingService.KEY_FCM_TOKEN, token).apply()
+        try {
+          File(filesDir, "fcm_token.txt").writeText(token)
+        } catch (_: Exception) {
+          // onNewToken() écrira aussi le fichier plus tard si nécessaire.
+        }
       }
     }
 

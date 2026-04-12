@@ -1590,7 +1590,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Returns all device-group memberships for a specific device (so the device
-   * knows which groups it's pending/added/welcomed for).
+   * knows which groups it's pending / welcome_sent / welcome_received / stale for).
    */
   @UseGuards(HeaderAuthGuard)
   @Get('mls-api/device-memberships/:userId/:deviceId')
@@ -1611,7 +1611,9 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Update the status of a device-group membership.
-   * Transitions: pending→added, added→welcome_sent, welcome_sent→welcome_received
+   * Valid membership states are: pending, welcome_sent, welcome_received, stale.
+   * The add-member endpoint separately returns { status: 'added' }, but that is
+   * not a persisted DeviceGroupMembership state.
    */
   @UseGuards(HeaderAuthGuard)
   @Post('mls-api/invitation-status')
