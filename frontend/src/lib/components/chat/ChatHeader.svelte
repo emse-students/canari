@@ -1,10 +1,10 @@
 <script lang="ts">
   import {
     ChevronLeft,
-    PanelLeft,
     LockKeyhole,
     Clock,
     Settings,
+    Search,
     Trash2,
     UserMinus,
     Check,
@@ -34,7 +34,6 @@
     imageMediaId?: string | null;
     onInviteMembers?: (ids: string[]) => void;
     onBack?: () => void;
-    onOpenConversations?: () => void;
     onOpenSettings?: () => void;
     // Group management
     groupMembers?: string[];
@@ -42,6 +41,9 @@
     onGroupDelete?: () => void;
     onGroupRemoveMember?: (userId: string) => void;
     onStartCall?: () => void;
+    onToggleSearch?: () => void;
+    searchActive?: boolean;
+    onOpenMembers?: () => void;
   }
 
   let {
@@ -53,13 +55,15 @@
     imageMediaId = null,
     onInviteMembers,
     onBack,
-    onOpenConversations,
     groupMembers = [],
     onGroupRename,
     onGroupDelete,
     onGroupRemoveMember,
     onOpenSettings,
     onStartCall,
+    onToggleSearch,
+    searchActive = false,
+    onOpenMembers,
   }: Props = $props();
 
   let showPanel = $state(false);
@@ -148,16 +152,6 @@
   class="bg-white/70 dark:bg-black/50 px-3 md:px-6 py-3 border-b border-black/5 dark:border-white/10 flex items-center gap-3 md:gap-4 relative backdrop-blur-2xl z-20"
 >
   <div class="flex items-center gap-1 md:hidden">
-    {#if onOpenConversations}
-      <button
-        onclick={onOpenConversations}
-        aria-label="Ouvrir les conversations"
-        class="p-2 rounded-xl text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10 active:scale-95 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
-      >
-        <PanelLeft size={22} />
-      </button>
-    {/if}
-
     <!-- Bouton Retour (Mobile) -->
     {#if onBack}
       <button
@@ -230,6 +224,30 @@
         aria-label="Démarrer un appel"
       >
         <Phone size={20} strokeWidth={2.5} />
+      </button>
+    {/if}
+
+    {#if onOpenMembers}
+      <button
+        onclick={onOpenMembers}
+        aria-label="Membres du canal"
+        title="Membres"
+        class="p-2.5 rounded-xl text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95"
+      >
+        <Users size={20} strokeWidth={2.5} />
+      </button>
+    {/if}
+
+    {#if onToggleSearch}
+      <button
+        onclick={onToggleSearch}
+        aria-label="Rechercher dans la conversation"
+        title="Rechercher"
+        class="p-2.5 rounded-xl transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 {searchActive
+          ? 'text-amber-500 bg-amber-500/10'
+          : 'text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main'}"
+      >
+        <Search size={20} strokeWidth={2.5} />
       </button>
     {/if}
 

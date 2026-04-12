@@ -30,6 +30,7 @@
     keyPackage: Uint8Array;
     deviceName?: string;
     deviceOs?: string;
+    deviceAppVersion?: string;
   }
 
   interface Props {
@@ -68,6 +69,11 @@
     if (device.deviceId.startsWith('web-')) return 'Navigateur';
     if (device.deviceId.startsWith('mobile-')) return 'Mobile';
     return 'Inconnu';
+  }
+
+  function isMobileOs(device: DeviceInfo): boolean {
+    const os = (device.deviceOs || '').toLowerCase();
+    return os === 'android' || os === 'ios';
   }
 
   async function loadDeviceData() {
@@ -109,6 +115,10 @@
     console.log(`[DevicePanel] Deleting device ${deviceId.slice(0, 8)}…`);
     try {
       const result = await mlsService.deleteDevice(userId, deviceId);
+      if (result.status !== 'device_deleted') {
+        error = "La suppression de l'appareil a échoué (auth/serveur).";
+        return;
+      }
       console.log(
         `[DevicePanel] Deleted device ${deviceId.slice(0, 8)}… (groups cleaned: ${result.groupsCleaned}, keyPackages: ${result.keyPackagesDeleted})`
       );
@@ -169,7 +179,6 @@
     const inProgress = deviceMemberships.filter((m) => m.status === 'welcome_sent').length;
     return { total, active, pending, inProgress };
   }
-
 </script>
 
 <Modal {open} title="Gestion des appareils" {onClose} maxWidth="max-w-xl">
@@ -250,7 +259,8 @@
                   {:else}
                     <div class="flex flex-wrap items-center gap-2 mb-1">
                       <span class="font-bold text-[0.95rem] text-text-main truncate">
-                        {device.deviceName || `Appareil ${device.deviceId.slice(0, 4).toUpperCase()}`}
+                        {device.deviceName ||
+                          `Appareil ${device.deviceId.slice(0, 4).toUpperCase()}`}
                       </span>
                       <span
                         class="text-[0.65rem] px-2 py-0.5 rounded-full bg-black/5 dark:bg-white/10 font-semibold text-text-muted uppercase tracking-wider"
@@ -271,6 +281,9 @@
                         title={device.deviceId}
                       >
                         ID: {device.deviceId.slice(0, 24)}…
+                        {#if isMobileOs(device) && device.deviceAppVersion}
+                          <span class="ml-2 font-semibold">v{device.deviceAppVersion}</span>
+                        {/if}
                       </div>
                       <button
                         onclick={() => startEditing(device.deviceId)}

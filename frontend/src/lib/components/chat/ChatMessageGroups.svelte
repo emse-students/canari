@@ -25,6 +25,7 @@
     onDelete?: (messageId: string) => void;
     onEdit?: (messageId: string, text: string) => void;
     switchTime: number;
+    currentUserId?: string;
     authToken: string;
   }
 
@@ -40,10 +41,30 @@
     onDelete,
     onEdit,
     switchTime,
+    currentUserId = '',
     authToken,
   }: Props = $props();
 
   let resolvedSenderNames = $state<Record<string, string>>({});
+
+  // ID du dernier message envoyé par l'utilisateur courant (isOwn) :
+  // le statut Lu/Envoyé n'est affiché que sur ce message.
+  const lastOwnMessageId = $derived(
+    [...visibleMessageGroups]
+      .reverse()
+      .find((g) => g.type === 'message' && g.message?.isOwn && !g.message?.isSystem)?.message?.id ??
+      null
+  );
+
+  function firstNameOnly(value: string): string {
+    const cleaned = value.trim();
+    if (!cleaned) return value;
+    if (cleaned.includes('@')) {
+      return cleaned.split('@')[0];
+    }
+    const parts = cleaned.split(/\s+/).filter(Boolean);
+    return parts[0] || cleaned;
+  }
 
   $effect(() => {
     const senderIds = new SvelteSet<string>();
@@ -155,6 +176,7 @@
             {reactions}
             onReply={onReply ? () => onReply?.(msg) : undefined}
             {onReact}
+            {currentUserId}
             shouldAnimate={msg.timestamp.getTime() > switchTime}
             {authToken}
           />
@@ -184,7 +206,7 @@
                   class="hover:text-text-main transition-colors"
                   onclick={(e) => e.stopPropagation()}
                 >
-                  {resolvedSenderNames[msg.senderId] || msg.senderId}
+                  {firstNameOnly(resolvedSenderNames[msg.senderId] || msg.senderId)}
                 </a>
               </div>
             {/if}
@@ -199,6 +221,7 @@
               replyTo={msg.replyTo}
               {reactions}
               readBy={msg.readBy}
+              isLastOwn={msg.id === lastOwnMessageId}
               isEdited={msg.isEdited}
               editedAt={msg.editedAt}
               isDeleted={msg.isDeleted}
@@ -208,6 +231,7 @@
               {onReact}
               {onDelete}
               {onEdit}
+              {currentUserId}
               shouldAnimate={msg.timestamp.getTime() > switchTime}
               searchTerm={searchQuery}
               {authToken}

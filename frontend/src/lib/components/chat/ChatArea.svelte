@@ -2,6 +2,7 @@
   import { ShieldCheck, TriangleAlert } from 'lucide-svelte';
   import { ArrowDown, Search, ChevronUp, ChevronDown, X } from 'lucide-svelte';
   import { tick, untrack } from 'svelte';
+  import { slide } from 'svelte/transition';
   import ChatHeader from './ChatHeader.svelte';
   import ChatMessageGroups from './ChatMessageGroups.svelte';
   import ChatComposer from './ChatComposer.svelte';
@@ -43,6 +44,8 @@
     isUploading?: boolean;
     onStartCall?: () => void;
     imageMediaId?: string | null;
+    onOpenMembers?: () => void;
+    currentUserId?: string;
   }
 
   let {
@@ -76,6 +79,8 @@
     isUploading = false,
     onStartCall,
     imageMediaId = null,
+    onOpenMembers,
+    currentUserId = '',
   }: Props = $props();
 
   const INITIAL_RENDER_GROUPS = 180;
@@ -95,6 +100,7 @@
   let searchQuery = $state('');
   let searchMatches = $state<string[]>([]);
   let activeSearchIndex = $state(-1);
+  let showSearch = $state(false);
 
   function scrollToBottom(smooth = true) {
     if (!chatContainer) return;
@@ -279,69 +285,80 @@
         {imageMediaId}
         {onInviteMembers}
         {onBack}
-        {onOpenConversations}
         {onOpenSettings}
         {groupMembers}
         {onGroupRename}
         {onGroupDelete}
         {onGroupRemoveMember}
         {onStartCall}
+        {onOpenMembers}
+        onToggleSearch={() => {
+          showSearch = !showSearch;
+          if (!showSearch) {
+            searchQuery = '';
+            searchMatches = [];
+            activeSearchIndex = -1;
+          }
+        }}
+        searchActive={showSearch}
       />
     </div>
 
-    <div class="px-3 md:px-6 pt-2 pb-1">
-      <div class="chat-search-panel">
-        <div class="chat-search-input-wrap">
-          <Search size={15} class="opacity-60" />
-          <input
-            type="text"
-            value={searchQuery}
-            oninput={(e) => (searchQuery = e.currentTarget.value)}
-            placeholder="Rechercher dans la conversation"
-            class="chat-search-input"
-          />
-          {#if searchQuery}
+    {#if showSearch}
+      <div class="px-3 md:px-6 pt-2 pb-0.5" transition:slide={{ duration: 180 }}>
+        <div class="chat-search-panel">
+          <div class="chat-search-input-wrap">
+            <Search size={15} class="opacity-60" />
+            <input
+              type="text"
+              value={searchQuery}
+              oninput={(e) => (searchQuery = e.currentTarget.value)}
+              placeholder="Rechercher dans la conversation"
+              class="chat-search-input"
+            />
+            {#if searchQuery}
+              <button
+                type="button"
+                onclick={() => {
+                  searchQuery = '';
+                  searchMatches = [];
+                  activeSearchIndex = -1;
+                }}
+                class="chat-search-action"
+                aria-label="Effacer la recherche"
+              >
+                <X size={15} />
+              </button>
+            {/if}
+          </div>
+          <div class="chat-search-nav">
+            <span class="chat-search-count">
+              {searchMatches.length > 0 && activeSearchIndex >= 0
+                ? `${activeSearchIndex + 1}/${searchMatches.length}`
+                : '0/0'}
+            </span>
             <button
               type="button"
-              onclick={() => {
-                searchQuery = '';
-                searchMatches = [];
-                activeSearchIndex = -1;
-              }}
+              onclick={() => void jumpSearch(-1)}
               class="chat-search-action"
-              aria-label="Effacer la recherche"
+              aria-label="Occurrence précédente"
+              disabled={searchMatches.length === 0}
             >
-              <X size={15} />
+              <ChevronUp size={16} />
             </button>
-          {/if}
-        </div>
-        <div class="chat-search-nav">
-          <span class="chat-search-count">
-            {searchMatches.length > 0 && activeSearchIndex >= 0
-              ? `${activeSearchIndex + 1}/${searchMatches.length}`
-              : '0/0'}
-          </span>
-          <button
-            type="button"
-            onclick={() => void jumpSearch(-1)}
-            class="chat-search-action"
-            aria-label="Occurrence précédente"
-            disabled={searchMatches.length === 0}
-          >
-            <ChevronUp size={16} />
-          </button>
-          <button
-            type="button"
-            onclick={() => void jumpSearch(1)}
-            class="chat-search-action"
-            aria-label="Occurrence suivante"
-            disabled={searchMatches.length === 0}
-          >
-            <ChevronDown size={16} />
-          </button>
+            <button
+              type="button"
+              onclick={() => void jumpSearch(1)}
+              class="chat-search-action"
+              aria-label="Occurrence suivante"
+              disabled={searchMatches.length === 0}
+            >
+              <ChevronDown size={16} />
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+    {/if}
 
     <!-- Messages -->
     <div
@@ -354,6 +371,7 @@
         {hiddenGroupCount}
         {loadOlderGroups}
         {messageReactions}
+        {currentUserId}
         searchQuery={searchQuery.trim()}
         {onReply}
         onNavigateToMessage={navigateToMessage}

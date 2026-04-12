@@ -594,10 +594,14 @@ export class WebMlsService implements IMlsService {
     return false;
   }
 
-  async fetchUserDevices(
-    userId: string
-  ): Promise<
-    Array<{ keyPackage: Uint8Array; deviceId: string; deviceName?: string; deviceOs?: string }>
+  async fetchUserDevices(userId: string): Promise<
+    Array<{
+      keyPackage: Uint8Array;
+      deviceId: string;
+      deviceName?: string;
+      deviceOs?: string;
+      deviceAppVersion?: string;
+    }>
   > {
     try {
       const res = await fetch(`${this.historyUrl}/api/mls-api/devices/${userId}`, {
@@ -617,6 +621,7 @@ export class WebMlsService implements IMlsService {
           deviceId: d.deviceId,
           deviceName: typeof d.deviceName === 'string' ? d.deviceName : undefined,
           deviceOs: typeof d.deviceOs === 'string' ? d.deviceOs : undefined,
+          deviceAppVersion: typeof d.deviceAppVersion === 'string' ? d.deviceAppVersion : undefined,
         };
       });
     } catch (e) {
@@ -652,6 +657,7 @@ export class WebMlsService implements IMlsService {
         keyPackage: base64,
         ...(storedName ? { deviceName: storedName } : {}),
         deviceOs,
+        deviceAppVersion: undefined,
       }),
     });
 
@@ -681,8 +687,13 @@ export class WebMlsService implements IMlsService {
   async updateDeviceMetadata(
     userId: string,
     deviceId: string,
-    metadata: { deviceName?: string; deviceOs?: string }
-  ): Promise<{ status: string; deviceName: string | null; deviceOs: string | null }> {
+    metadata: { deviceName?: string; deviceOs?: string; deviceAppVersion?: string }
+  ): Promise<{
+    status: string;
+    deviceName: string | null;
+    deviceOs: string | null;
+    deviceAppVersion: string | null;
+  }> {
     const response = await fetch(
       `${this.historyUrl}/api/mls-api/devices/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}/metadata`,
       {

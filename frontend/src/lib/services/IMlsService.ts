@@ -37,6 +37,7 @@ export interface IMlsService {
       deviceId: string;
       deviceName?: string;
       deviceOs?: string;
+      deviceAppVersion?: string;
     }>
   >;
   publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void>;
@@ -155,8 +156,13 @@ export interface IMlsService {
   updateDeviceMetadata(
     userId: string,
     deviceId: string,
-    metadata: { deviceName?: string; deviceOs?: string }
-  ): Promise<{ status: string; deviceName: string | null; deviceOs: string | null }>;
+    metadata: { deviceName?: string; deviceOs?: string; deviceAppVersion?: string }
+  ): Promise<{
+    status: string;
+    deviceName: string | null;
+    deviceOs: string | null;
+    deviceAppVersion: string | null;
+  }>;
 
   // Callbacks
   onChannelEvent?: (event: { type: string; data: any }) => void;

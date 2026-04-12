@@ -1,4 +1,16 @@
 <script lang="ts">
+  import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
+
+  function firstNameOnly(value: string): string {
+    const cleaned = value.trim();
+    if (!cleaned) return value;
+    if (cleaned.includes('@')) {
+      const local = cleaned.split('@')[0];
+      return local.split('.')[0];
+    }
+    return cleaned.split(' ')[0];
+  }
+
   interface Props {
     groupedReactions: Record<string, string[]>;
     isOwn?: boolean;
@@ -7,6 +19,28 @@
   }
 
   let { groupedReactions = {}, isOwn = false, currentUserId, onReact }: Props = $props();
+
+  // Resolved display names: userId → first name
+  let resolvedNames = $state<Record<string, string>>({});
+
+  $effect(() => {
+    const allIds = Object.values(groupedReactions).flat();
+    const unique = [...new Set(allIds)];
+    for (const uid of unique) {
+      if (!resolvedNames[uid]) {
+        const sync = getUserDisplayNameSync(uid);
+        resolvedNames[uid] = firstNameOnly(sync || uid);
+        // Async refresh
+        resolveUserDisplayName(uid).then((name) => {
+          if (name) resolvedNames = { ...resolvedNames, [uid]: firstNameOnly(name) };
+        });
+      }
+    }
+  });
+
+  function resolveNames(userIds: string[]): string {
+    return userIds.map((id) => resolvedNames[id] || firstNameOnly(id)).join(', ');
+  }
 </script>
 
 {#if Object.keys(groupedReactions).length > 0}
@@ -25,7 +59,7 @@
           e.stopPropagation(); // Empêche d'ouvrir les infos du message en cliquant sur la réaction
           onReact?.(emoji);
         }}
-        title={users.join(', ')}
+        title={resolveNames(users)}
         aria-pressed={hasReacted}
         aria-label="{emoji} ({users.length} personnes)"
       >

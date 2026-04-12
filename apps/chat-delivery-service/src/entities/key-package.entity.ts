@@ -29,6 +29,9 @@ export class KeyPackage {
   @Column({ type: 'varchar', length: 32, nullable: true })
   deviceOs?: string | null;
 
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  deviceAppVersion?: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 }

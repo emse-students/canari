@@ -25,6 +25,7 @@ import { Group } from './entities/group.entity';
 import { PinVerifier } from './entities/pin-verifier.entity';
 import { DeviceGroupMembership } from './entities/device-group-membership.entity';
 import { PushToken } from './entities/push-token.entity';
+import { RevokedDevice } from './entities/revoked-device.entity';
 import Redis from 'ioredis';
 import * as admin from 'firebase-admin';
 import * as crypto from 'crypto';
@@ -427,6 +428,21 @@ function sanitizeOptionalDeviceOs(value: unknown): string | undefined {
   return os;
 }
 
+function sanitizeOptionalDeviceAppVersion(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value !== 'string') {
+    throw new BadRequestException('deviceAppVersion must be a string');
+  }
+  const version = value.trim();
+  if (!version) return undefined;
+  if (!/^[0-9A-Za-z._+-]{1,32}$/.test(version)) {
+    throw new BadRequestException(
+      'deviceAppVersion contains invalid characters',
+    );
+  }
+  return version;
+}
+
 function sanitizeSerializedChunks(value: unknown): SyncSerializedChunk[] {
   if (!Array.isArray(value)) {
     throw new BadRequestException('chunks must be an array');
@@ -577,11 +593,14 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     private deviceGroupRepo: Repository<DeviceGroupMembership>,
     @InjectRepository(PushToken)
     private pushTokenRepo: Repository<PushToken>,
+    @InjectRepository(RevokedDevice)
+    private revokedDeviceRepo: Repository<RevokedDevice>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
   ) {}
 
   async onModuleInit() {
     await this.ensureDeviceMetadataColumns();
+    await this.ensureRevokedDevicesTable();
 
     // Initialize Firebase Admin SDK once if a service account is provided
     if (!admin.apps.length) {
@@ -652,6 +671,25 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     );
     await this.keyPackageRepo.query(
       `ALTER TABLE "${tableName}" ADD COLUMN IF NOT EXISTS "deviceOs" varchar(32)`,
+    );
+    await this.keyPackageRepo.query(
+      `ALTER TABLE "${tableName}" ADD COLUMN IF NOT EXISTS "deviceAppVersion" varchar(32)`,
+    );
+  }
+
+  private async ensureRevokedDevicesTable() {
+    const tableName = this.revokedDeviceRepo.metadata.tableName;
+    await this.revokedDeviceRepo.query(
+      `CREATE TABLE IF NOT EXISTS "${tableName}" (
+        "id" varchar(36) PRIMARY KEY,
+        "userId" varchar(128) NOT NULL,
+        "deviceId" varchar(128) NOT NULL,
+        "revokedAt" TIMESTAMP NOT NULL DEFAULT now(),
+        CONSTRAINT "UQ_${tableName}_user_device" UNIQUE ("userId", "deviceId")
+      )`,
+    );
+    await this.revokedDeviceRepo.query(
+      `CREATE INDEX IF NOT EXISTS "IDX_${tableName}_user" ON "${tableName}" ("userId")`,
     );
   }
 
@@ -1155,9 +1193,12 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    *   { status: 'mismatch' }    – verifier differs; wrong PIN for this user.
    */
   @Post('mls-api/pin-verifier/check')
-  async checkPinVerifier(@Body() body: { userId: string; verifier: string }) {
+  async checkPinVerifier(
+    @Body() body: { userId: string; verifier: string; deviceId?: string },
+  ) {
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
     const safeVerifier = sanitizeQueryValue(body.verifier, 'verifier');
+    const safeDeviceId = sanitizeOptionalQueryValue(body.deviceId, 'deviceId');
 
     // Verifier must be a 64-char lowercase hex string (32 bytes PBKDF2 output).
     if (!/^[0-9a-f]{64}$/.test(safeVerifier)) {
@@ -1174,7 +1215,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         verifier: safeVerifier,
       });
       await this.pinVerifierRepo.save(newDoc);
-      return { status: 'registered' };
+      return { status: 'registered', resetRequired: false };
     }
 
     if (typeof doc.verifier !== 'string') {
@@ -1188,7 +1229,23 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       stored.length === incoming.length &&
       crypto.timingSafeEqual(stored, incoming);
 
-    return { status: match ? 'ok' : 'mismatch' };
+    let resetRequired = false;
+    if (match && safeDeviceId) {
+      const revoked = await this.revokedDeviceRepo.findOne({
+        where: { userId: safeUserId, deviceId: safeDeviceId },
+      });
+      if (revoked) {
+        // One-shot reset: signal the client once, then clear marker so the
+        // same physical device can register again as a fresh device.
+        await this.revokedDeviceRepo.delete(revoked.id);
+        resetRequired = true;
+        this.logger.log(
+          `[PIN_VERIFIER] one-shot reset required for ${safeUserId}:${safeDeviceId}`,
+        );
+      }
+    }
+
+    return { status: match ? 'ok' : 'mismatch', resetRequired };
   }
 
   @Get('mls-api/link-preview')
@@ -1789,6 +1846,20 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       deviceId: safeDeviceId,
     });
 
+    // 5. Mark device as revoked to prevent immediate re-registration
+    const existingRevoked = await this.revokedDeviceRepo.findOne({
+      where: { userId: safeUserId, deviceId: safeDeviceId },
+    });
+    if (!existingRevoked) {
+      await this.revokedDeviceRepo.save(
+        this.revokedDeviceRepo.create({
+          id: crypto.randomUUID(),
+          userId: safeUserId,
+          deviceId: safeDeviceId,
+        }),
+      );
+    }
+
     this.logger.log(
       `[DELETE_DEVICE] user=${safeUserId} device=${safeDeviceId} groupsCleaned=${groupIds.length} keyPackagesDeleted=${kpResult.affected ?? 0} oneTimeKeyPackagesDeleted=${otkpResult.affected ?? 0}`,
     );
@@ -1857,6 +1928,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       keyPackage: string;
       deviceName?: string;
       deviceOs?: string;
+      deviceAppVersion?: string;
     },
   ) {
     const userId = sanitizeQueryValue(body.userId, 'userId');
@@ -1873,8 +1945,12 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     const keyPackagePayload = body.keyPackage;
     const deviceName = sanitizeOptionalDeviceName(body.deviceName);
     const deviceOs = sanitizeOptionalDeviceOs(body.deviceOs);
+    const deviceAppVersion = sanitizeOptionalDeviceAppVersion(
+      body.deviceAppVersion,
+    );
 
     const traceId = this.makeTraceId('reg-device');
+
     this.logger.log(
       `[REGISTER_DEVICE][${traceId}] START user=${userId} device=${deviceId} kpLen=${keyPackagePayload.length}`,
     );
@@ -1889,12 +1965,16 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         keyPackage: keyPackagePayload,
         deviceName,
         deviceOs,
+        deviceAppVersion,
         createdAt: new Date(),
       });
     } else {
       keyPackage.keyPackage = keyPackagePayload;
       if (deviceName !== undefined) keyPackage.deviceName = deviceName;
       if (deviceOs !== undefined) keyPackage.deviceOs = deviceOs;
+      if (deviceAppVersion !== undefined) {
+        keyPackage.deviceAppVersion = deviceAppVersion;
+      }
       keyPackage.createdAt = new Date();
     }
     await this.keyPackageRepo.save(keyPackage);
@@ -1931,14 +2011,22 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   async updateDeviceMetadata(
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
-    @Body() body: { deviceName?: string; deviceOs?: string },
+    @Body()
+    body: { deviceName?: string; deviceOs?: string; deviceAppVersion?: string },
   ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
     const deviceName = sanitizeOptionalDeviceName(body.deviceName);
     const deviceOs = sanitizeOptionalDeviceOs(body.deviceOs);
+    const deviceAppVersion = sanitizeOptionalDeviceAppVersion(
+      body.deviceAppVersion,
+    );
 
-    if (deviceName === undefined && deviceOs === undefined) {
+    if (
+      deviceName === undefined &&
+      deviceOs === undefined &&
+      deviceAppVersion === undefined
+    ) {
       throw new BadRequestException('At least one metadata field is required');
     }
 
@@ -1951,12 +2039,16 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
     if (deviceName !== undefined) keyPackage.deviceName = deviceName;
     if (deviceOs !== undefined) keyPackage.deviceOs = deviceOs;
+    if (deviceAppVersion !== undefined) {
+      keyPackage.deviceAppVersion = deviceAppVersion;
+    }
     await this.keyPackageRepo.save(keyPackage);
 
     return {
       status: 'updated',
       deviceName: keyPackage.deviceName ?? null,
       deviceOs: keyPackage.deviceOs ?? null,
+      deviceAppVersion: keyPackage.deviceAppVersion ?? null,
     };
   }
 
@@ -1970,10 +2062,18 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       order: { createdAt: 'DESC' },
     });
 
+    const revokedRows = await this.revokedDeviceRepo.find({
+      where: { userId },
+    });
+    const revokedSet = new Set(revokedRows.map((r) => r.deviceId));
+    const activeDevices = registeredDevices.filter(
+      (d) => !revokedSet.has(d.deviceId),
+    );
+
     // For each device, try to pop one one-time prekey from the pool (FIFO).
     // Falls back to the static registration key package when the pool is empty.
     const results = await Promise.all(
-      registeredDevices.map(async (device) => {
+      activeDevices.map(async (device) => {
         const otkp = await this.oneTimeKeyPackageRepo.findOne({
           where: { userId: device.userId, deviceId: device.deviceId },
           order: { createdAt: 'ASC' },

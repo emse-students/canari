@@ -14,7 +14,7 @@ use tokio::sync::mpsc;
 
 use crate::models::{AuthParams, Claims};
 use crate::state::AppState;
-use crate::ws_dispatch::WsFrame;
+use crate::ws_dispatch::{WsConn, WsFrame, handle_reinvite_request, handle_welcome_request};
 
 fn extract_cookie_value(headers: &HeaderMap, key: &str) -> Option<String> {
     let cookie_header = headers.get("cookie")?.to_str().ok()?;
@@ -219,6 +219,7 @@ async fn handle_socket(
         let user_id = user_id.clone();
         let device_id = device_id.clone();
 
+        let tx_for_dispatch = tx.clone();
         tokio::spawn(async move {
             while let Some(msg) = receiver.next().await {
                 // Refresh presence on any activity.
@@ -268,15 +269,26 @@ async fn handle_socket(
                             raw_len
                         );
 
-                        if frame.msg_type == "welcome_request"
-                            || frame.msg_type == "reinvite_request"
-                        {
-                            tracing::warn!(
-                                "[WS RX] control frame '{}' received from {}:{} but WS dispatch is currently diagnostic-only",
-                                frame.msg_type,
-                                user_id,
-                                device_id
-                            );
+                        match frame.msg_type.as_str() {
+                            "welcome_request" => {
+                                let conn = WsConn {
+                                    state: &state,
+                                    user_id: &user_id,
+                                    device_id: &device_id,
+                                    tx: &tx_for_dispatch,
+                                };
+                                handle_welcome_request(&conn, &frame).await;
+                            }
+                            "reinvite_request" => {
+                                let conn = WsConn {
+                                    state: &state,
+                                    user_id: &user_id,
+                                    device_id: &device_id,
+                                    tx: &tx_for_dispatch,
+                                };
+                                handle_reinvite_request(&conn, &frame).await;
+                            }
+                            _ => {}
                         }
 
                         log_routing_diagnostics(&state, &user_id, &device_id, &frame).await;

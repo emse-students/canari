@@ -128,6 +128,42 @@ export function useChatSession() {
     return mls;
   }
 
+  async function resetDeviceAsFresh(userIdToReset: string, cb: ChatSessionCallbacks) {
+    // Purge all local state tied to this logical device so next init creates
+    // a brand new MLS device identity.
+    localStorage.removeItem(`mls_autosave_${userIdToReset}`);
+    localStorage.removeItem(`mls_device_id_${userIdToReset}`);
+    localStorage.removeItem(`canari_sync_guide_seen_${userIdToReset}`);
+
+    const deviceNamePrefix = `device-name:${userIdToReset}:`;
+    const keysToDelete: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(deviceNamePrefix)) {
+        keysToDelete.push(key);
+      }
+    }
+    for (const key of keysToDelete) {
+      localStorage.removeItem(key);
+    }
+
+    try {
+      const storageToClear = await getStorage(userIdToReset);
+      await storageToClear.clear();
+    } catch {
+      // Best-effort cleanup: continue even if local DB is not accessible.
+    }
+
+    mls = null;
+    storage = null;
+    myDeviceId = '';
+    isLoggedIn = false;
+    isWsConnected = false;
+    clearPinAndKey();
+    clearUserLocally();
+    cb.log('[SECURITY] Appareil revoque detecte: etat local purgé, reconnexion requise.');
+  }
+
   // ── Login ─────────────────────────────────────────────────────────────────
 
   async function login(cb: ChatSessionCallbacks) {
@@ -156,7 +192,8 @@ export function useChatSession() {
       cb.log('Verification du PIN...');
 
       const verifier = await computePinVerifier(userId, pin);
-      const verifierPayload = JSON.stringify({ userId, verifier });
+      const deviceId = mlsService.getDeviceId();
+      const verifierPayload = JSON.stringify({ userId, verifier, deviceId });
       let verifierRes = await fetch(`${historyBaseUrl}/api/mls-api/pin-verifier/check`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -174,6 +211,13 @@ export function useChatSession() {
       if (verifierData.status === 'mismatch') {
         throw new Error(
           'PIN incorrect : ce PIN ne correspond pas a celui enregistre pour cet utilisateur. Tous vos appareils doivent utiliser le meme PIN.'
+        );
+      }
+      if (verifierData.resetRequired === true) {
+        await resetDeviceAsFresh(userId, cb);
+        pin = '';
+        throw new Error(
+          'Cet appareil a ete revoque. L etat local a ete reinitialise: reconnectez-vous avec votre PIN pour l enregistrer comme nouvel appareil.'
         );
       }
       if (verifierData.status === 'registered') cb.log('Premier appareil : PIN enregistre.');

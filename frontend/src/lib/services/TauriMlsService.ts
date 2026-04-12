@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { getVersion } from '@tauri-apps/api/app';
 import { fetch } from '@tauri-apps/plugin-http';
 import type { IMlsService } from './IMlsService';
 import { getToken } from '$lib/stores/auth';
@@ -61,6 +62,7 @@ export class TauriMlsService implements IMlsService {
   private _knownGroups: Set<string> = new Set();
   /** Resolved when init() completes; shared across concurrent callers to avoid double native init. */
   private initPromise: Promise<void> | null = null;
+  private appVersionCache: string | null | undefined = undefined;
 
   // Message queue for sequential processing
   private messageQueue: QueuedMessage[] = [];
@@ -507,10 +509,14 @@ export class TauriMlsService implements IMlsService {
     return this.deviceId;
   }
 
-  async fetchUserDevices(
-    userId: string
-  ): Promise<
-    Array<{ keyPackage: Uint8Array; deviceId: string; deviceName?: string; deviceOs?: string }>
+  async fetchUserDevices(userId: string): Promise<
+    Array<{
+      keyPackage: Uint8Array;
+      deviceId: string;
+      deviceName?: string;
+      deviceOs?: string;
+      deviceAppVersion?: string;
+    }>
   > {
     try {
       const res = await fetch(`${this.historyUrl}/api/mls-api/devices/${userId}`, {
@@ -530,6 +536,7 @@ export class TauriMlsService implements IMlsService {
           deviceId: d.deviceId,
           deviceName: typeof d.deviceName === 'string' ? d.deviceName : undefined,
           deviceOs: typeof d.deviceOs === 'string' ? d.deviceOs : undefined,
+          deviceAppVersion: typeof d.deviceAppVersion === 'string' ? d.deviceAppVersion : undefined,
         };
       });
     } catch (e) {
@@ -555,6 +562,7 @@ export class TauriMlsService implements IMlsService {
     const storedName =
       localStorage.getItem(`device-name:${this.userId}:${this.deviceId}`) || undefined;
     const deviceOs = this.detectRuntimeDeviceOs();
+    const deviceAppVersion = await this.getRuntimeAppVersion();
     const response = await fetch(`${this.historyUrl}/api/mls-api/register-device`, {
       method: 'POST',
       headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
@@ -564,6 +572,7 @@ export class TauriMlsService implements IMlsService {
         keyPackage: base64,
         ...(storedName ? { deviceName: storedName } : {}),
         deviceOs,
+        ...(deviceAppVersion ? { deviceAppVersion } : {}),
       }),
     });
 
@@ -593,8 +602,13 @@ export class TauriMlsService implements IMlsService {
   async updateDeviceMetadata(
     userId: string,
     deviceId: string,
-    metadata: { deviceName?: string; deviceOs?: string }
-  ): Promise<{ status: string; deviceName: string | null; deviceOs: string | null }> {
+    metadata: { deviceName?: string; deviceOs?: string; deviceAppVersion?: string }
+  ): Promise<{
+    status: string;
+    deviceName: string | null;
+    deviceOs: string | null;
+    deviceAppVersion: string | null;
+  }> {
     const response = await fetch(
       `${this.historyUrl}/api/mls-api/devices/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}/metadata`,
       {
@@ -617,6 +631,20 @@ export class TauriMlsService implements IMlsService {
     if (ua.includes('mac os') || ua.includes('macintosh')) return 'macos';
     if (ua.includes('linux')) return 'linux';
     return 'desktop';
+  }
+
+  private async getRuntimeAppVersion(): Promise<string | undefined> {
+    if (this.appVersionCache !== undefined) {
+      return this.appVersionCache ?? undefined;
+    }
+    try {
+      const v = await getVersion();
+      this.appVersionCache = v?.trim() ? v.trim() : null;
+      return this.appVersionCache ?? undefined;
+    } catch {
+      this.appVersionCache = null;
+      return undefined;
+    }
   }
 
   async sendWelcome(
@@ -1166,7 +1194,7 @@ export class TauriMlsService implements IMlsService {
     try {
       const res = await fetch(
         `${this.historyUrl}/api/mls-api/device-memberships/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}/${encodeURIComponent(groupId)}`,
-        { method: 'DELETE' }
+        { method: 'DELETE', headers: await this.withAuthHeaders() }
       );
       if (!res.ok) return { status: 'error', affected: 0 };
       return await res.json();
@@ -1183,7 +1211,7 @@ export class TauriMlsService implements IMlsService {
     try {
       const res = await fetch(
         `${this.historyUrl}/api/mls-api/device-memberships/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}`,
-        { method: 'DELETE' }
+        { method: 'DELETE', headers: await this.withAuthHeaders() }
       );
       if (!res.ok) return { status: 'error', affected: 0 };
       return await res.json();
@@ -1205,7 +1233,7 @@ export class TauriMlsService implements IMlsService {
     try {
       const res = await fetch(
         `${this.historyUrl}/api/mls-api/devices/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}`,
-        { method: 'DELETE' }
+        { method: 'DELETE', headers: await this.withAuthHeaders() }
       );
       if (!res.ok)
         return {

@@ -572,8 +572,12 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             if (msg?.reaction) {
               const msgId = msg.reaction.messageId ?? '';
               const reactions = messageReactions.get(msgId) || [];
-              const filtered = reactions.filter((r) => r.userId !== senderNorm);
-              filtered.push({ emoji: msg.reaction.emoji ?? '', userId: senderNorm });
+              const emoji = msg.reaction.emoji ?? '';
+              // Déduplique l'emoji exact, puis ajoute (permet plusieurs emojis par utilisateur)
+              const filtered = reactions.filter(
+                (r) => !(r.userId === senderNorm && r.emoji === emoji)
+              );
+              filtered.push({ emoji, userId: senderNorm });
               messageReactions.set(msgId, filtered);
 
               // Also persist the reaction into the message's DB row
@@ -866,6 +870,39 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                       } catch {
                         // Non-blocking
                       }
+                    }
+                  }
+                }
+                return true;
+              }
+              // Unknown system event — ignore silently
+              if (event === 'remove_reaction' && data.messageId && data.emoji) {
+                const reactions = messageReactions.get(data.messageId) || [];
+                const filtered = reactions.filter(
+                  (r) => !(r.userId === senderNorm && r.emoji === data.emoji)
+                );
+                messageReactions.set(data.messageId, filtered);
+
+                // Persister la suppression en DB
+                const c = conversations.get(convoKey);
+                if (storage && c) {
+                  const target = c.messages.find((m) => m.id === data.messageId);
+                  if (target) {
+                    try {
+                      await storage.saveMessage(
+                        {
+                          id: target.id,
+                          conversationId: convoKey,
+                          senderId: target.senderId,
+                          content: target.content,
+                          timestamp: target.timestamp.getTime(),
+                          readBy: target.readBy,
+                          reactions: filtered,
+                        },
+                        pin
+                      );
+                    } catch {
+                      // Non-blocking
                     }
                   }
                 }

@@ -493,6 +493,7 @@
       />
 
       <ChatArea
+        currentUserId={session.userId}
         conversation={convs.currentConvo}
         {messageText}
         isChannel={convs.selectedContact?.startsWith('channel_') ?? false}
@@ -548,6 +549,9 @@
             }
           }
         }}
+        onOpenMembers={routeMode === 'communities' && convs.selectedContact?.startsWith('channel_')
+          ? () => (convs.isChannelMembersDrawerOpen = true)
+          : undefined}
       />
 
       {#if routeMode === 'communities'}
@@ -556,17 +560,6 @@
             currentUserId={session.userId}
             selectedChannelId={channels.selectedChannelConversationId}
           />
-          <button
-            type="button"
-            onclick={() => {
-              convs.isChannelMembersDrawerOpen = true;
-            }}
-            class="fixed bottom-24 right-4 z-30 inline-flex items-center gap-2 rounded-full border border-cn-border bg-white/90 px-3 py-2 text-sm font-semibold text-text-main shadow-md xl:hidden"
-            aria-label="Ouvrir les membres du canal"
-          >
-            <Users size={14} />
-            Membres
-          </button>
         {/if}
 
         {#if convs.isChannelMembersDrawerOpen}

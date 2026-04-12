@@ -43,6 +43,7 @@
     };
     reactions?: MessageReaction[];
     readBy?: string[];
+    isLastOwn?: boolean;
     isEdited?: boolean;
     isDeleted?: boolean;
     groupPosition?: 'single' | 'start' | 'middle' | 'end';
@@ -51,6 +52,7 @@
     onReact?: (messageId: string, emoji: string) => void;
     onDelete?: (messageId: string) => void;
     onEdit?: (messageId: string, newText: string) => void;
+    currentUserId?: string;
     authToken?: string;
     shouldAnimate?: boolean;
     isHighlighted?: boolean;
@@ -68,6 +70,7 @@
     replyTo,
     reactions = [],
     readBy = [],
+    isLastOwn = false,
     isEdited = false,
     isDeleted = false,
     groupPosition = 'single',
@@ -76,6 +79,7 @@
     onReact,
     onDelete,
     onEdit,
+    currentUserId = '',
     authToken = '',
     shouldAnimate = false,
     isHighlighted = false,
@@ -540,23 +544,18 @@
       {/if}
 
       <!-- Méta données du message (Modifié, Lu) -->
-      {#if isEdited || isOwn}
+      {#if isEdited || (isOwn && isLastOwn)}
         <div class="flex items-center justify-end gap-1.5 mt-1.5">
           {#if isEdited}
             <span class="italic text-[0.65rem] opacity-65 font-medium">(modifié)</span>
           {/if}
-          {#if isOwn}
+          {#if isOwn && isLastOwn}
             {#if readBy.length > 0}
               <span
                 class="inline-flex items-center gap-1 text-[0.65rem] font-bold text-emerald-700 dark:text-emerald-400"
               >
                 <CheckCheck size={12} strokeWidth={2.5} class="animate-pulse" />
                 Lu{readBy.length > 1 ? ` (${readBy.length})` : ''}
-              </span>
-            {:else if Date.now() - timestamp.getTime() > 3000}
-              <span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold opacity-80">
-                <CheckCheck size={12} strokeWidth={2.2} />
-                Distribué
               </span>
             {:else}
               <span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold opacity-80">
@@ -628,7 +627,12 @@
       {/if}
     </div>
 
-    <MessageReactions {groupedReactions} {isOwn} onReact={(emoji) => onReact?.(messageId, emoji)} />
+    <MessageReactions
+      {groupedReactions}
+      {isOwn}
+      {currentUserId}
+      onReact={(emoji) => onReact?.(messageId, emoji)}
+    />
 
     <MessageEmojiPicker
       visible={showEmojiPicker}

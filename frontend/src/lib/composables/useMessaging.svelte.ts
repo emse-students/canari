@@ -13,6 +13,7 @@ import { getToken } from '$lib/stores/auth';
 import {
   sendChatMessage,
   addReaction,
+  removeReaction,
   editMessage,
   deleteMessage,
   sendReadReceipt,
@@ -352,12 +353,20 @@ export function useMessaging() {
     if (!convo) return;
     const meNorm = ctx.userId.toLowerCase();
     const existing = messageReactions.get(messageId) ?? [];
-    const updated = existing.filter((r) => r.userId !== meNorm);
-    updated.push({ emoji, userId: meNorm });
+    const alreadyReacted = existing.some((r) => r.userId === meNorm && r.emoji === emoji);
+
+    // Toggle off: même emoji déjà posée → retirer
+    // Toggle on: nouvelle emoji → ajouter (sans retirer les autres emojis de l'utilisateur)
+    const updated = alreadyReacted
+      ? existing.filter((r) => !(r.userId === meNorm && r.emoji === emoji))
+      : [
+          ...existing.filter((r) => !(r.userId === meNorm && r.emoji === emoji)),
+          { emoji, userId: meNorm },
+        ];
+
     messageReactions.set(messageId, updated);
 
-    // Keep in-memory conversation + DB in sync immediately so reactions survive reload,
-    // even if the network echo arrives late or fails.
+    // Mise à jour immédiate en mémoire et en DB pour survivre au rechargement
     const msgIdx = convo.messages.findIndex((m) => m.id === messageId);
     if (msgIdx !== -1) {
       const nextMsgs = [...convo.messages];
@@ -387,12 +396,17 @@ export function useMessaging() {
       }
     }
 
-    await addReaction(messageId, emoji, {
+    const reactionDeps = {
       mlsService: ctx.ensureMls(),
       userId: ctx.userId,
       pin: ctx.pin,
       conversation: convo,
-    });
+    };
+    if (alreadyReacted) {
+      await removeReaction(messageId, emoji, reactionDeps);
+    } else {
+      await addReaction(messageId, emoji, reactionDeps);
+    }
   }
 
   async function handleDeleteMessage(messageId: string, ctx: MessagingContext) {

@@ -241,8 +241,9 @@ export async function replayConversationHistory(params: {
           const messageId = parsed.reaction.messageId ?? '';
           const senderNorm = msg.sender_id.toLowerCase();
           const reactions = messageReactions.get(messageId) || [];
-          const filtered = reactions.filter((r) => r.userId !== senderNorm);
-          filtered.push({ emoji: parsed.reaction.emoji ?? '', userId: senderNorm });
+          const emoji = parsed.reaction.emoji ?? '';
+          const filtered = reactions.filter((r) => !(r.userId === senderNorm && r.emoji === emoji));
+          filtered.push({ emoji, userId: senderNorm });
           messageReactions.set(messageId, filtered);
           mlsUpdated = true;
           continue;
@@ -325,6 +326,13 @@ export async function replayConversationHistory(params: {
                   setConversation(contactName, { ...convo, messages: newMsgs });
                 }
               }
+            } else if (parsed.system.event === 'remove_reaction' && data.messageId && data.emoji) {
+              const senderReactNorm = msg.sender_id.toLowerCase();
+              const cur = messageReactions.get(data.messageId) || [];
+              const trimmed = cur.filter(
+                (r) => !(r.userId === senderReactNorm && r.emoji === data.emoji)
+              );
+              messageReactions.set(data.messageId, trimmed);
             }
           } catch {
             // Keep history replay robust even if a control payload is malformed.

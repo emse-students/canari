@@ -154,6 +154,30 @@ export async function addReaction(
     console.warn('Failed to send reaction:', e);
   }
 }
+
+/**
+ * Retire une réaction emoji d'un message (envoi d'un event système).
+ */
+export async function removeReaction(
+  messageId: string,
+  emoji: string,
+  deps: AddReactionDeps
+): Promise<void> {
+  const { mlsService, userId, pin, conversation } = deps;
+
+  if (!conversation.isReady) return;
+
+  try {
+    const payload = encodeAppMessage(
+      mkSystem('remove_reaction', JSON.stringify({ messageId, emoji }))
+    );
+    await mlsService.sendMessage(conversation.id, payload);
+    const stateBytes = await mlsService.saveState(pin);
+    localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
+  } catch (e) {
+    console.warn('Failed to send remove_reaction:', e);
+  }
+}
 export async function editMessage(
   messageId: string,
   newContent: string,
