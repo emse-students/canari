@@ -15,10 +15,13 @@
 
 import { isTauri } from '@tauri-apps/api/core';
 import { invoke } from '@tauri-apps/api/core';
+import { currentUserId } from '$lib/stores/user';
 
 const FCM_TOKEN_STORAGE_KEY = 'canari_fcm_token';
-const TOKEN_POLL_RETRIES = 5;
+const TOKEN_POLL_RETRIES = 20;
 const TOKEN_POLL_DELAY_MS = 1000;
+const BACKGROUND_RETRY_ATTEMPTS = 6;
+const BACKGROUND_RETRY_DELAY_MS = 5000;
 
 type PushPlatform = 'android' | 'ios';
 
@@ -56,7 +59,7 @@ export async function getFcmToken(): Promise<string | null> {
  */
 export async function registerPushToken(
   registerFn: (token: string) => Promise<void>
-): Promise<void> {
+): Promise<boolean> {
   console.info('[Push] registerPushToken start');
   // On Android, the FCM service may provide the token a bit after startup.
   let token: string | null = null;
@@ -72,22 +75,24 @@ export async function registerPushToken(
   }
   if (!token) {
     console.warn('[Push] No FCM token available after polling');
-    return;
+    return false;
   }
 
   // Évite de ré-enregistrer le même token inutilement
   const stored = sessionStorage.getItem(FCM_TOKEN_STORAGE_KEY);
   if (stored === token) {
     console.info('[Push] Token unchanged, skip backend registration');
-    return;
+    return true;
   }
 
   try {
     await registerFn(token);
     sessionStorage.setItem(FCM_TOKEN_STORAGE_KEY, token);
     console.info('[Push] Token FCM enregistré avec succès');
+    return true;
   } catch (err) {
     console.error('[Push] Échec enregistrement du token FCM', err);
+    return false;
   }
 }
 
@@ -112,19 +117,42 @@ export async function startPushService(
 
   console.info(`[Push] startPushService platform=${platform} device=${deviceId}`);
 
-  await registerPushToken(async (pushToken) => {
-    const response = await fetch(`${apiBaseUrl}/api/mls-api/push/register`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${bearerToken}`,
-      },
-      body: JSON.stringify({ token: pushToken, deviceId, platform }),
+  const userId = currentUserId();
+  if (!userId) {
+    console.warn('[Push] startPushService aborted: missing currentUserId');
+    return;
+  }
+
+  const registerOnce = async (): Promise<boolean> => {
+    return await registerPushToken(async (pushToken) => {
+      const response = await fetch(`${apiBaseUrl}/api/mls-api/push/register`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${bearerToken}`,
+          'x-user-logged-in': 'true',
+          'x-user-id': userId,
+        },
+        body: JSON.stringify({ token: pushToken, deviceId, platform }),
+      });
+      if (!response.ok) {
+        const errText = await response.text().catch(() => '');
+        throw new Error(`HTTP ${response.status}${errText ? `: ${errText}` : ''}`);
+      }
     });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-  });
+  };
+
+  const immediateOk = await registerOnce();
+  if (immediateOk) return;
+
+  // Fallback: token generation can be delayed on some Android devices.
+  for (let i = 0; i < BACKGROUND_RETRY_ATTEMPTS; i++) {
+    await new Promise((resolve) => setTimeout(resolve, BACKGROUND_RETRY_DELAY_MS));
+    const ok = await registerOnce();
+    if (ok) return;
+  }
+
+  console.warn('[Push] startPushService exhausted retries without successful registration');
 }
 
 export async function stopPushService(
@@ -147,6 +175,8 @@ export async function stopPushService(
         method: 'DELETE',
         headers: {
           Authorization: `Bearer ${bearerToken}`,
+          'x-user-logged-in': 'true',
+          'x-user-id': currentUserId() ?? '',
         },
       }
     );
