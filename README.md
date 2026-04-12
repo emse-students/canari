@@ -45,15 +45,15 @@ Infrastructure : PostgreSQL · MongoDB · Redis · Kafka · MinIO
 
 ## Documentation
 
-| Document | Contenu |
-|---|---|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Topologie complète, routage Nginx, flux inter-services |
-| [docs/MLS.md](docs/MLS.md) | Protocole MLS, implémentation Rust/WASM, flux de messages |
-| [docs/COMMUNITIES.md](docs/COMMUNITIES.md) | Workspaces, channels, chiffrement des communautés |
-| [docs/BACKEND.md](docs/BACKEND.md) | Services NestJS : endpoints, entités, auth |
-| [docs/CHAT_GATEWAY.md](docs/CHAT_GATEWAY.md) | Gateway Rust : WebSocket, Redis Pub/Sub, présence |
-| [docs/FRONTEND.md](docs/FRONTEND.md) | SvelteKit, Tauri, stores, routes, UI |
-| [docs/DEPLOIEMENT.md](docs/DEPLOIEMENT.md) | Docker Compose, CI/CD, premier déploiement |
+| Document                                     | Contenu                                                   |
+| -------------------------------------------- | --------------------------------------------------------- |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Topologie complète, routage Nginx, flux inter-services    |
+| [docs/MLS.md](docs/MLS.md)                   | Protocole MLS, implémentation Rust/WASM, flux de messages |
+| [docs/COMMUNITIES.md](docs/COMMUNITIES.md)   | Workspaces, channels, chiffrement des communautés         |
+| [docs/BACKEND.md](docs/BACKEND.md)           | Services NestJS : endpoints, entités, auth                |
+| [docs/CHAT_GATEWAY.md](docs/CHAT_GATEWAY.md) | Gateway Rust : WebSocket, Redis Pub/Sub, présence         |
+| [docs/FRONTEND.md](docs/FRONTEND.md)         | SvelteKit, Tauri, stores, routes, UI                      |
+| [docs/DEPLOIEMENT.md](docs/DEPLOIEMENT.md)   | Docker Compose, CI/CD, premier déploiement                |
 
 ---
 
@@ -89,15 +89,15 @@ cd frontend && bun run dev
 
 ### URLs locales
 
-| Service | Adresse |
-|---|---|
-| Frontend (dev) | http://localhost:1420 |
-| Chat Gateway (WS) | ws://localhost:3000 |
-| Chat Delivery | http://localhost:3010 |
-| Media Service | http://localhost:3011 |
-| Core Service | http://localhost:3012 |
-| Social Service | http://localhost:3014 |
-| MinIO Console | http://localhost:9001 |
+| Service           | Adresse               |
+| ----------------- | --------------------- |
+| Frontend (dev)    | http://localhost:1420 |
+| Chat Gateway (WS) | ws://localhost:3000   |
+| Chat Delivery     | http://localhost:3010 |
+| Media Service     | http://localhost:3011 |
+| Core Service      | http://localhost:3012 |
+| Social Service    | http://localhost:3014 |
+| MinIO Console     | http://localhost:9001 |
 
 ---
 
@@ -129,15 +129,15 @@ bun run check             # svelte-check (TypeScript + Svelte)
 
 ## Stack technique
 
-| Couche | Technologies |
-|---|---|
-| **Frontend** | SvelteKit 2.9 · Svelte 5 (runes) · TailwindCSS 4 · Tauri 2 |
-| **MLS client** | Rust (openmls, ChaCha20-Poly1305, Argon2) compilé en WASM |
-| **Gateway** | Rust · Axum · Tokio · Redis Pub/Sub |
-| **Services** | NestJS 10 · TypeORM · Node.js 20 |
-| **Infrastructure** | PostgreSQL · MongoDB · Redis · Kafka · MinIO |
-| **Auth** | Authentik (OIDC) · JWT HS256 · cookies HttpOnly |
-| **DevOps** | Docker · GitHub Actions · Nginx · Cloudflare Tunnel |
+| Couche             | Technologies                                               |
+| ------------------ | ---------------------------------------------------------- |
+| **Frontend**       | SvelteKit 2.9 · Svelte 5 (runes) · TailwindCSS 4 · Tauri 2 |
+| **MLS client**     | Rust (openmls, ChaCha20-Poly1305, Argon2) compilé en WASM  |
+| **Gateway**        | Rust · Axum · Tokio · Redis Pub/Sub                        |
+| **Services**       | NestJS 10 · TypeORM · Node.js 20                           |
+| **Infrastructure** | PostgreSQL · MongoDB · Redis · Kafka · MinIO               |
+| **Auth**           | Authentik (OIDC) · JWT HS256 · cookies HttpOnly            |
+| **DevOps**         | Docker · GitHub Actions · Nginx · Cloudflare Tunnel        |
 
 ---
 
