@@ -176,8 +176,14 @@ export class FormsService {
 
         return { checkoutUrl: sessionUrl, submissionId: savedSubmission.id };
       } catch (err: any) {
-        this.logger.error('Payment service error', err?.response?.data || err.message || err);
-        return { message: 'Failed to create checkout session', submissionId: savedSubmission.id };
+        const stripeMsg =
+          err?.response?.data?.message ||
+          err?.response?.data?.error ||
+          err?.response?.data ||
+          err?.message ||
+          String(err);
+        this.logger.error('Payment service error', stripeMsg);
+        throw new BadRequestException(`Failed to create checkout session: ${stripeMsg}`);
       }
     }
 

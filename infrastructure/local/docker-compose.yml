@@ -193,6 +193,7 @@ services:
       DB_PASSWORD: password
       DB_DATABASE: auth_db
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
       FORM_SERVICE_URL: http://social-service:3014
       AVATAR_API_URL: ${AVATAR_API_URL:-https://gallery.mitv.fr}
       AVATAR_API_KEY: ${AVATAR_API_KEY:-}
@@ -221,6 +222,7 @@ services:
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_SUCCESS_URL: ${STRIPE_SUCCESS_URL:-http://localhost:5173/posts?registration=success}
       STRIPE_CANCEL_URL: ${STRIPE_CANCEL_URL:-http://localhost:5173/posts?registration=cancel}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
       USER_SERVICE_URL: http://core-service:3012
       PAYMENT_SERVICE_URL: http://core-service:3012
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
