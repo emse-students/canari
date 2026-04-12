@@ -65,7 +65,7 @@ export class PaymentService {
   }) {
     if (!this.stripe) throw new BadRequestException('Stripe not configured');
 
-    const allowedMethods = new Set(['card', 'paypal']);
+    const allowedMethods = new Set(['card']);
     const methods = (params.paymentMethods ?? ['card']).filter((m) =>
       allowedMethods.has(m),
     ) as Stripe.Checkout.SessionCreateParams.PaymentMethodType[];
@@ -250,5 +250,48 @@ export class PaymentService {
         error: stripeErr?.message ?? 'Payment failed',
       };
     }
+  }
+
+  async createPaymentIntent(params: {
+    customerId: string;
+    amountCents: number;
+    currency: string;
+    metadata?: Record<string, string>;
+    stripeConnectAccountId?: string;
+    saveForFuture?: boolean;
+  }): Promise<{ clientSecret: string; paymentIntentId: string }> {
+    if (!this.stripe) throw new BadRequestException('Stripe not configured');
+
+    const intentParams: Stripe.PaymentIntentCreateParams = {
+      amount: params.amountCents,
+      currency: params.currency,
+      customer: params.customerId,
+      automatic_payment_methods: { enabled: true },
+      metadata: params.metadata,
+    };
+
+    if (params.saveForFuture) {
+      intentParams.setup_future_usage = 'off_session';
+    }
+
+    if (params.stripeConnectAccountId) {
+      intentParams.transfer_data = {
+        destination: params.stripeConnectAccountId,
+      };
+    }
+
+    const intent = await this.stripe.paymentIntents.create(intentParams);
+    if (!intent.client_secret) {
+      throw new BadRequestException('Failed to create payment intent');
+    }
+    return { clientSecret: intent.client_secret, paymentIntentId: intent.id };
+  }
+
+  async verifyPaymentIntentSucceeded(
+    paymentIntentId: string,
+  ): Promise<boolean> {
+    if (!this.stripe) throw new BadRequestException('Stripe not configured');
+    const intent = await this.stripe.paymentIntents.retrieve(paymentIntentId);
+    return intent.status === 'succeeded';
   }
 }

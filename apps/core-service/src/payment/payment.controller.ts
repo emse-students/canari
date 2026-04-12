@@ -324,4 +324,131 @@ export class PaymentController {
 
     return result;
   }
+
+  @UseGuards(NginxAuthGuard)
+  @Post('create-payment-intent')
+  @HttpCode(200)
+  async createPaymentIntent(
+    @Headers('x-user-id') userId: string,
+    @Body() body: { submissionId: string },
+  ) {
+    if (!this.paymentService.isConfigured()) {
+      return { ok: false, message: 'Stripe not configured' };
+    }
+
+    const { submissionId } = body;
+    if (!submissionId || !/^[a-zA-Z0-9_-]{1,128}$/.test(submissionId)) {
+      throw new BadRequestException('Invalid submissionId');
+    }
+
+    const user = await this.usersService.findOne(userId);
+    const customerId = await this.paymentService.getOrCreateCustomer(
+      user.stripeCustomerId,
+      { userId: user.id, displayName: user.displayName },
+    );
+    if (customerId !== user.stripeCustomerId) {
+      await this.usersService.update(userId, { stripeCustomerId: customerId });
+    }
+
+    const socialBase = process.env.FORM_URL || 'http://localhost:3014';
+
+    interface SubmissionData {
+      paymentStatus: string;
+      totalPaid: number;
+      currency: string;
+      stripeAccountId: string | null;
+    }
+
+    let submissionData: SubmissionData;
+    try {
+      const resp = await axios.get<SubmissionData>(
+        `${socialBase.replace(/\/$/, '')}/api/forms/submissions/${submissionId}`,
+        { maxRedirects: 0 },
+      );
+      submissionData = resp.data;
+    } catch (err: unknown) {
+      const error = err as Error & { response?: { data?: unknown } };
+      this.logger.error(
+        'Failed to fetch submission',
+        error?.response?.data || error?.message,
+      );
+      throw new BadRequestException('Could not retrieve submission details');
+    }
+
+    if (submissionData.paymentStatus === 'paid') {
+      return { ok: true, alreadyPaid: true };
+    }
+    if (submissionData.paymentStatus === 'free' || !submissionData.totalPaid) {
+      return { ok: true, noPaymentRequired: true };
+    }
+
+    const { clientSecret, paymentIntentId } =
+      await this.paymentService.createPaymentIntent({
+        customerId,
+        amountCents: submissionData.totalPaid,
+        currency: submissionData.currency ?? 'eur',
+        metadata: { submissionId, userId },
+        stripeConnectAccountId: submissionData.stripeAccountId ?? undefined,
+        saveForFuture: true,
+      });
+
+    // Store paymentIntentId on submission for later verification
+    try {
+      await axios.patch(
+        `${socialBase.replace(/\/$/, '')}/api/forms/submissions/${submissionId}/payment-intent`,
+        { paymentIntentId },
+        { maxRedirects: 0 },
+      );
+    } catch {
+      // Non-fatal — verification will use stripe directly
+    }
+
+    return { ok: true, clientSecret, paymentIntentId };
+  }
+
+  @UseGuards(NginxAuthGuard)
+  @Post('confirm-submission-payment')
+  @HttpCode(200)
+  async confirmSubmissionPayment(
+    @Headers('x-user-id') userId: string,
+    @Body() body: { submissionId: string; paymentIntentId: string },
+  ) {
+    if (!this.paymentService.isConfigured()) {
+      return { ok: false, message: 'Stripe not configured' };
+    }
+
+    const { submissionId, paymentIntentId } = body;
+    if (!submissionId || !/^[a-zA-Z0-9_-]{1,128}$/.test(submissionId)) {
+      throw new BadRequestException('Invalid submissionId');
+    }
+    if (!paymentIntentId || !/^pi_[a-zA-Z0-9_]{1,200}$/.test(paymentIntentId)) {
+      throw new BadRequestException('Invalid paymentIntentId');
+    }
+
+    const succeeded =
+      await this.paymentService.verifyPaymentIntentSucceeded(paymentIntentId);
+    if (!succeeded) {
+      return { ok: false, error: 'Payment not confirmed yet' };
+    }
+
+    const socialBase = process.env.FORM_URL || 'http://social-service:3014';
+    try {
+      await axios.post(
+        `${socialBase.replace(/\/$/, '')}/api/forms/submissions/${submissionId}/mark-paid`,
+        {},
+        { maxRedirects: 0 },
+      );
+    } catch (err: unknown) {
+      const error = err as Error & { response?: { data?: unknown } };
+      this.logger.error(
+        'Failed to mark submission as paid',
+        error?.response?.data || error?.message,
+      );
+      throw new BadRequestException(
+        'Payment confirmed but failed to record. Contact support.',
+      );
+    }
+
+    return { ok: true };
+  }
 }

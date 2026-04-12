@@ -7,6 +7,7 @@
     currentUserId,
     listPaymentMethods,
     chargeWithSavedMethod,
+    createPaymentIntent,
     type PaymentMethod,
   } from '$lib/stores/user';
   import {
@@ -20,6 +21,7 @@
   import Button from '$lib/components/ui/Button.svelte';
   import Card from '$lib/components/ui/Card.svelte';
   import PaymentModal from '$lib/components/ui/PaymentModal.svelte';
+  import StripePaymentModal from '$lib/components/ui/StripePaymentModal.svelte';
   import { ArrowLeft, ClipboardList, Check, Send } from 'lucide-svelte';
 
   const formId = $derived(page.params.id);
@@ -35,9 +37,11 @@
 
   // Payment
   let paymentMethods = $state<PaymentMethod[]>([]);
-  let showPaymentModal = $state(false);
-  let pendingCheckoutUrl = $state('');
+  let showPaymentModal = $state(false); // saved card modal
+  let showStripeModal = $state(false); // embedded Payment Element modal
   let pendingSubmissionId = $state('');
+  let pendingClientSecret = $state('');
+  let pendingPaymentIntentId = $state('');
 
   onMount(async () => {
     const savedUser = currentUserId();
@@ -180,15 +184,14 @@
         email: '',
         answers: selections,
       });
-      if (res.checkoutUrl) {
-        // Payment required — check if user has saved payment methods
-        if (paymentMethods.length > 0 && res.submissionId) {
-          pendingCheckoutUrl = res.checkoutUrl;
-          pendingSubmissionId = res.submissionId;
+      if (res.needsPayment && res.submissionId) {
+        pendingSubmissionId = res.submissionId;
+        if (paymentMethods.length > 0) {
+          // User has saved cards — show saved card modal first
           showPaymentModal = true;
         } else {
-          // No saved methods: redirect to Stripe-hosted checkout
-          window.location.href = res.checkoutUrl;
+          // No saved cards — fetch PaymentIntent and show embedded form
+          await openStripeModal(res.submissionId);
         }
       } else {
         submitted = true;
@@ -216,12 +219,34 @@
     submitted = true;
     successMessage = 'Paiement effectué avec succès !';
     showPaymentModal = false;
+    showStripeModal = false;
     setTimeout(() => goto(redirectTo), 1500);
   }
 
-  function handlePayWithNew() {
+  async function openStripeModal(submissionId: string) {
+    try {
+      const result = await createPaymentIntent(submissionId);
+      if (result.alreadyPaid) {
+        submitted = true;
+        successMessage = 'Paiement déjà effectué.';
+        setTimeout(() => goto(redirectTo), 1500);
+        return;
+      }
+      if (!result.clientSecret || !result.paymentIntentId) {
+        error = "Impossible d'initialiser le paiement.";
+        return;
+      }
+      pendingClientSecret = result.clientSecret;
+      pendingPaymentIntentId = result.paymentIntentId;
+      showStripeModal = true;
+    } catch (e: any) {
+      error = e.message || "Erreur lors de l'initialisation du paiement.";
+    }
+  }
+
+  async function handlePayWithNew() {
     showPaymentModal = false;
-    window.location.href = pendingCheckoutUrl;
+    await openStripeModal(pendingSubmissionId);
   }
 </script>
 
@@ -235,6 +260,17 @@
       onPayWithNew={handlePayWithNew}
       onSuccess={handlePaySuccess}
       onClose={() => (showPaymentModal = false)}
+    />
+  {/if}
+  {#if showStripeModal && pendingClientSecret}
+    <StripePaymentModal
+      clientSecret={pendingClientSecret}
+      paymentIntentId={pendingPaymentIntentId}
+      submissionId={pendingSubmissionId}
+      totalCents={calculateTotal()}
+      currency={form?.currency ?? 'eur'}
+      onSuccess={handlePaySuccess}
+      onClose={() => (showStripeModal = false)}
     />
   {/if}
   <div class="max-w-2xl mx-auto px-4 py-8">

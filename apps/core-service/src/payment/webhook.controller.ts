@@ -107,6 +107,65 @@ export class PaymentWebhookController {
       }
     }
 
+    if (event.type === 'payment_intent.succeeded') {
+      const intent = event.data.object;
+      const submissionId = intent.metadata?.submissionId;
+      const userId = intent.metadata?.userId;
+
+      if (userId && intent.customer && typeof intent.customer === 'string') {
+        if (!/^[a-zA-Z0-9_@.-]{1,256}$/.test(userId)) {
+          this.logger.error(
+            `Invalid userId in payment_intent metadata: ${userId}`,
+          );
+        } else {
+          try {
+            const user = await this.usersService
+              .findOne(userId)
+              .catch(() => null);
+            if (user && !user.stripeCustomerId) {
+              await this.usersService.update(userId, {
+                stripeCustomerId: intent.customer,
+              });
+            }
+          } catch (err: unknown) {
+            const error = err as Error;
+            this.logger.error(
+              'Failed to save stripeCustomerId from payment_intent',
+              error?.message,
+            );
+          }
+        }
+      }
+
+      if (submissionId) {
+        if (!/^[a-zA-Z0-9_-]{1,128}$/.test(submissionId)) {
+          this.logger.error(
+            `Invalid submissionId in payment_intent metadata: ${submissionId}`,
+          );
+          return res.status(400).send('Invalid submissionId');
+        }
+        try {
+          const formServiceBase =
+            this.config.get<string>('FORM_URL') || 'http://localhost:3014';
+          await axios.post(
+            `${formServiceBase.replace(/\/$/, '')}/api/forms/submissions/${submissionId}/mark-paid`,
+            {},
+            { maxRedirects: 0 },
+          );
+          this.logger.log(
+            `Marked submission ${submissionId} as paid via payment_intent.succeeded`,
+          );
+        } catch (err: unknown) {
+          const error = err as Error & { response?: { data?: unknown } };
+          this.logger.error(
+            'Failed to mark submission paid from payment_intent webhook',
+            error?.response?.data || error?.message,
+          );
+          return res.status(500).send('Failed to notify form-service');
+        }
+      }
+    }
+
     if (event.type === 'account.updated') {
       const account = event.data.object;
       const associationId = account.metadata?.associationId;
