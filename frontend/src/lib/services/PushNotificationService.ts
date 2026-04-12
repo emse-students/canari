@@ -23,6 +23,11 @@ const TOKEN_POLL_DELAY_MS = 1000;
 const BACKGROUND_RETRY_ATTEMPTS = 6;
 const BACKGROUND_RETRY_DELAY_MS = 5000;
 
+function isTauriRuntime(): boolean {
+  if (typeof window === 'undefined') return false;
+  return isTauri() || !!(window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+}
+
 /**
  * Lit le token push depuis la couche Rust (Android/iOS uniquement).
  * – Android : token FCM depuis les SharedPreferences Kotlin
@@ -30,7 +35,7 @@ const BACKGROUND_RETRY_DELAY_MS = 5000;
  * Retourne null hors mobile ou si le token n'est pas encore disponible.
  */
 export async function getFcmToken(): Promise<string | null> {
-  if (!isTauri()) return null;
+  if (!isTauriRuntime()) return null;
   try {
     const token = await invoke<string | null>('get_fcm_token');
     return token ?? null;
@@ -98,7 +103,7 @@ export async function startPushService(
   bearerToken: string,
   deviceId: string
 ): Promise<void> {
-  if (!isTauri()) {
+  if (!isTauriRuntime()) {
     console.info('[Push] startPushService noop (non-Tauri environment)');
     return; // web : pas de push
   }
@@ -150,7 +155,7 @@ export async function stopPushService(
   bearerToken: string,
   deviceId: string
 ): Promise<void> {
-  if (!isTauri()) {
+  if (!isTauriRuntime()) {
     console.info('[Push] stopPushService noop (non-Tauri environment)');
     return;
   }
