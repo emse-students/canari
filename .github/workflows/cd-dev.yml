@@ -391,6 +391,7 @@ jobs:
           AUTHENTIK_BASE_URL: ${{ secrets.AUTHENTIK_URL }}
           AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
           AUTHENTIK_CLIENT_SECRET: ${{ secrets.AUTHENTIK_CLIENT_SECRET }}
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
         run: |
           if [ -z "$JWT_SECRET" ]; then
             echo "::error::Missing required GitHub secret: JWT_SECRET"
@@ -418,6 +419,13 @@ jobs:
           upsert_env_var "AUTHENTIK_BASE_URL" "$AUTHENTIK_BASE_URL"
           upsert_env_var "AUTHENTIK_CLIENT_ID" "$AUTHENTIK_CLIENT_ID"
           upsert_env_var "AUTHENTIK_CLIENT_SECRET" "$AUTHENTIK_CLIENT_SECRET"
+
+          if [ -n "$FIREBASE_SERVICE_ACCOUNT_JSON" ]; then
+            FIREBASE_SERVICE_ACCOUNT_JSON_COMPACT="$(printf '%s' "$FIREBASE_SERVICE_ACCOUNT_JSON" | tr -d '\r\n')"
+            upsert_env_var "FIREBASE_SERVICE_ACCOUNT_JSON" "$FIREBASE_SERVICE_ACCOUNT_JSON_COMPACT"
+          else
+            echo "⚠️ FIREBASE_SERVICE_ACCOUNT_JSON is not set in GitHub secrets (push notifications will be disabled)"
+          fi
 
           if [ -n "$STRIPE_SECRET_KEY" ]; then
             upsert_env_var "STRIPE_SECRET_KEY" "$STRIPE_SECRET_KEY"

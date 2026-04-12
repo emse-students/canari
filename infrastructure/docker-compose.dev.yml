@@ -105,6 +105,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: "6380"
       KAFKA_BROKERS: kafka:29093
+      FIREBASE_SERVICE_ACCOUNT_JSON: ${FIREBASE_SERVICE_ACCOUNT_JSON:-}
     depends_on:
       redis:
         condition: service_healthy

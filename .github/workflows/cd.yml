@@ -399,6 +399,7 @@ jobs:
           FRONTEND_URL: ${{ secrets.BASE_URL }}
           POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
         run: |
           if [ -z "$JWT_SECRET" ]; then
             echo "::error::Missing required GitHub secret: JWT_SECRET"
@@ -446,6 +447,13 @@ jobs:
           upsert_env_var "FRONTEND_URL" "$FRONTEND_URL"
           upsert_env_var "POSTGRES_USER" "$POSTGRES_USER"
           upsert_env_var "POSTGRES_PASSWORD" "$POSTGRES_PASSWORD"
+
+          if [ -n "$FIREBASE_SERVICE_ACCOUNT_JSON" ]; then
+            FIREBASE_SERVICE_ACCOUNT_JSON_COMPACT="$(printf '%s' "$FIREBASE_SERVICE_ACCOUNT_JSON" | tr -d '\r\n')"
+            upsert_env_var "FIREBASE_SERVICE_ACCOUNT_JSON" "$FIREBASE_SERVICE_ACCOUNT_JSON_COMPACT"
+          else
+            echo "⚠️ FIREBASE_SERVICE_ACCOUNT_JSON is not set in GitHub secrets (push notifications will be disabled)"
+          fi
 
           if [ -n "$STRIPE_SECRET_KEY" ]; then
             upsert_env_var "STRIPE_SECRET_KEY" "$STRIPE_SECRET_KEY"
