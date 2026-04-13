@@ -12,6 +12,8 @@ interface QueuedMessage {
   isWelcome: boolean;
   isCommit: boolean;
   ratchetTreeBytes?: Uint8Array;
+  /** ID from the delivery service queue — used for at-least-once ACK */
+  queuedMessageId?: string;
 }
 
 // Implémentation pour Tauri (App Mobile/Desktop)
@@ -69,6 +71,9 @@ export class TauriMlsService implements IMlsService {
   private isProcessingQueue = false;
   // Groups currently being joined (Welcome in progress) - buffer messages for these
   private pendingWelcomeGroups = new Map<string, QueuedMessage[]>();
+  // Serialization lock: prevents fetchPendingMessages and processQueue from calling
+  // messageCallback concurrently (both await Rust invoke calls asynchronously).
+  private callbackLock: Promise<void> = Promise.resolve();
 
   constructor() {
     // Device ID is initialized per-user in init() — see WebMlsService for rationale.
@@ -112,7 +117,7 @@ export class TauriMlsService implements IMlsService {
     }).catch((e) => console.warn(`[HTTP] ${path} failed:`, e));
   }
 
-  async connect(): Promise<void> {
+  async connect(token?: string): Promise<void> {
     // Close existing socket before creating a new one
     if (this.ws) {
       try {
@@ -126,10 +131,23 @@ export class TauriMlsService implements IMlsService {
       this.ws = null;
     }
 
-    // Reuse direct WebSocket logic for now (Tauri allows localhost by default)
+    // Resolve token: use provided token, fall back to getToken().
+    // On Tauri mobile the cookie is not sent cross-origin, so we pass the
+    // Bearer token explicitly in the URL query string.
+    let resolvedToken = token;
+    if (!resolvedToken) {
+      try {
+        resolvedToken = await getToken();
+      } catch {
+        // Proceed without token; gateway will reject with 401 if required.
+      }
+    }
+
     return new Promise((resolve, reject) => {
+      const wsBase = this.baseUrl.replace(/^http/, 'ws');
+      const tokenParam = resolvedToken ? `&token=${encodeURIComponent(resolvedToken)}` : '';
       this.ws = new WebSocket(
-        `${this.baseUrl.replace('http', 'ws')}/api/ws?device_id=${encodeURIComponent(this.deviceId)}`
+        `${wsBase}/api/ws?device_id=${encodeURIComponent(this.deviceId)}${tokenParam}`
       );
       let resolved = false;
 
@@ -181,7 +199,7 @@ export class TauriMlsService implements IMlsService {
                 : new TextDecoder().decode(event.data as ArrayBuffer);
 
           const msg = JSON.parse(text);
-          if (msg.type && msg.type.startsWith('channel.')) {
+          if (msg.type && (msg.type.startsWith('channel.') || msg.type === 'post_created')) {
             if (this.onChannelEvent) {
               console.log(`[WS RCV] Triggering onChannelEvent for ${msg.type}`);
               this.onChannelEvent({ type: msg.type, data: msg.data });
@@ -248,8 +266,11 @@ export class TauriMlsService implements IMlsService {
                 isWelcome: !!msg.isWelcome,
                 isCommit: !!msg.isCommit,
                 ratchetTreeBytes,
+                queuedMessageId: (msg.queuedMessageId as string) || undefined,
               });
             }
+          } else {
+            console.warn(`[WS RCV] No proto or no messageCallback set. Message ignored.`);
           }
         } catch (e) {
           console.error('Failed to process WebSocket message:', e);
@@ -276,29 +297,54 @@ export class TauriMlsService implements IMlsService {
         if (Array.isArray(messages) && messages.length > 0) {
           console.log(`Fetched ${messages.length} pending messages`);
 
-          const successfullyProcessedIds: string[] = [];
-
+          // Route all pending messages through the serialized queue so they
+          // never race with live WebSocket messages calling messageCallback.
           for (const msg of messages) {
             const msgId = (msg.id || msg._id) as string | undefined;
-            const processed = await this.simulateMessageReceive(msg);
-            if (msgId && processed) successfullyProcessedIds.push(msgId);
-          }
+            const proto: string | undefined = msg.proto || undefined;
+            const content: string | undefined = msg.content || undefined;
 
-          if (successfullyProcessedIds.length > 0) {
-            const ackRes = await fetch(`${this.historyUrl}/api/mls-api/messages/ack`, {
-              method: 'POST',
-              headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-              body: JSON.stringify({
-                userId: this.userId,
-                deviceId: this.deviceId,
-                messageIds: successfullyProcessedIds,
-              }),
-              keepalive: true,
-            });
-            if (!ackRes.ok) {
-              console.error(`Message ACK failed: ${ackRes.status}`);
-            } else {
-              console.log(`Acknowledged ${successfullyProcessedIds.length} messages`);
+            if (proto) {
+              try {
+                const ciphertext = Uint8Array.from(atob(proto), (c) => c.charCodeAt(0));
+                if (ciphertext.length > 0) {
+                  this.enqueueMessage({
+                    senderId: (msg.senderId as string) || 'unknown',
+                    ciphertext,
+                    groupId: (msg.groupId as string) || undefined,
+                    isWelcome: msg.isWelcome === true,
+                    isCommit: msg.isCommit === true,
+                    ratchetTreeBytes:
+                      typeof msg.ratchetTree === 'string' && msg.ratchetTree.length > 0
+                        ? Uint8Array.from(atob(msg.ratchetTree as string), (c) => c.charCodeAt(0))
+                        : undefined,
+                    queuedMessageId: msgId,
+                  });
+                }
+              } catch (e) {
+                console.error('[PENDING] Failed to enqueue proto message:', e);
+              }
+            } else if (content) {
+              // Legacy format (mlsWelcome offline inbox)
+              try {
+                const bytes = Uint8Array.from(atob(content), (c) => c.charCodeAt(0));
+                if (bytes.length > 0) {
+                  this.enqueueMessage({
+                    senderId: (msg.senderId || 'unknown') as string,
+                    ciphertext: bytes,
+                    groupId: (msg.groupId || msg.session_id) as string | undefined,
+                    isWelcome: msg.type === 'mlsWelcome',
+                    isCommit: msg.isCommit === true,
+                    ratchetTreeBytes:
+                      typeof msg.ratchetTree === 'string' && msg.ratchetTree.length > 0
+                        ? Uint8Array.from(atob(msg.ratchetTree as string), (c) => c.charCodeAt(0))
+                        : undefined,
+                    queuedMessageId: msgId,
+                  });
+                }
+              } catch (e) {
+                console.error('[PENDING] Failed to enqueue content message:', e);
+              }
             }
           }
         } else {
@@ -314,55 +360,8 @@ export class TauriMlsService implements IMlsService {
     }
   }
 
-  private async simulateMessageReceive(data: any): Promise<boolean> {
-    if (!this.messageCallback) return false;
-
-    // Flat format: proto = base64(raw ciphertext), metadata fields alongside
-    if (data.proto) {
-      try {
-        const binaryString = atob(data.proto as string);
-        const ciphertext = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) ciphertext[i] = binaryString.charCodeAt(i);
-        if (ciphertext.length > 0) {
-          return await this.messageCallback(
-            (data.senderId as string) || 'unknown',
-            ciphertext,
-            (data.groupId as string) || undefined,
-            data.isWelcome === true,
-            typeof data.ratchetTree === 'string' && data.ratchetTree.length > 0
-              ? Uint8Array.from(atob(data.ratchetTree as string), (c) => c.charCodeAt(0))
-              : undefined,
-            data.isCommit === true
-          );
-        }
-      } catch (e) {
-        console.error('Message processing failed', e);
-      }
-      return false;
-    }
-
-    // Legacy format: raw base64 ciphertext + metadata (from /api/mls-api/welcome offline inbox)
-    if (data.content) {
-      try {
-        const binaryString = atob(data.content as string);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
-        return await this.messageCallback(
-          (data.senderId || 'unknown') as string,
-          bytes,
-          (data.groupId || data.session_id) as string | undefined,
-          data.type === 'mlsWelcome',
-          typeof data.ratchetTree === 'string' && data.ratchetTree.length > 0
-            ? Uint8Array.from(atob(data.ratchetTree as string), (c) => c.charCodeAt(0))
-            : undefined,
-          data.isCommit === true
-        );
-      } catch (e) {
-        console.error('Message processing failed', e);
-      }
-    }
-    return false;
-  }
+  // simulateMessageReceive removed — pending messages now go through enqueueMessage
+  // so they are serialized with live WebSocket messages via processQueue.
 
   onMessage(
     callback: (
@@ -412,6 +411,7 @@ export class TauriMlsService implements IMlsService {
   /**
    * Process messages from the queue one by one.
    * This ensures Welcome messages complete before regular messages.
+   * Uses callbackLock to serialise with any concurrent fetchPendingMessages path.
    */
   private async processQueue() {
     if (this.isProcessingQueue || !this.messageCallback) return;
@@ -419,15 +419,24 @@ export class TauriMlsService implements IMlsService {
     this.isProcessingQueue = true;
     console.log(`[QUEUE] Starting queue processing (${this.messageQueue.length} messages)`);
 
+    const ackIds: string[] = [];
+
     while (this.messageQueue.length > 0) {
       const msg = this.messageQueue.shift()!;
       const groupId = msg.groupId;
 
+      // Serialize through callbackLock so fetchPendingMessages injections
+      // never race with this path (both await async Tauri invoke calls).
+      let resolve!: () => void;
+      const prevLock = this.callbackLock;
+      this.callbackLock = new Promise<void>((r) => (resolve = r));
+      await prevLock;
+
       try {
         console.log(
-          `[QUEUE] Processing ${msg.isWelcome ? 'Welcome' : 'message'} for group ${groupId ?? 'unknown'}`
+          `[QUEUE] Processing ${msg.isWelcome ? 'Welcome' : msg.isCommit ? 'Commit' : 'message'} groupe=${groupId ?? 'inconnu'} sender=${msg.senderId}${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`
         );
-        await this.messageCallback(
+        const cbResult = await this.messageCallback(
           msg.senderId,
           msg.ciphertext,
           msg.groupId,
@@ -435,6 +444,11 @@ export class TauriMlsService implements IMlsService {
           msg.ratchetTreeBytes,
           msg.isCommit
         );
+        console.log(
+          `[QUEUE] messageCallback → ${cbResult} (groupe=${groupId ?? 'inconnu'})${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`
+        );
+
+        if (msg.queuedMessageId) ackIds.push(msg.queuedMessageId);
 
         // If this was a Welcome, process buffered messages for this group
         if (msg.isWelcome && groupId && this.pendingWelcomeGroups.has(groupId)) {
@@ -449,11 +463,22 @@ export class TauriMlsService implements IMlsService {
         }
       } catch (e) {
         console.error(`[QUEUE] Error processing message:`, e);
-        // Clean up pending Welcome state on error to prevent buffering forever
-        if (groupId) {
-          this.pendingWelcomeGroups.delete(groupId);
-        }
+        // ACK even on error to avoid infinite retry — MLS state has likely
+        // already advanced past this message (e.g. duplicate commit).
+        if (msg.queuedMessageId) ackIds.push(msg.queuedMessageId);
+        if (groupId) this.pendingWelcomeGroups.delete(groupId);
+      } finally {
+        resolve();
       }
+    }
+
+    // Batch-ACK all processed real-time messages
+    if (ackIds.length > 0) {
+      void this.deliveryPost('messages/ack', {
+        userId: this.userId,
+        deviceId: this.deviceId,
+        messageIds: ackIds,
+      });
     }
 
     this.isProcessingQueue = false;
@@ -913,30 +938,22 @@ export class TauriMlsService implements IMlsService {
     groupId: string,
     devices: Array<{ keyPackage: Uint8Array; deviceId: string }>
   ) {
-    // Tauri: call add_member once per device (Tauri backend may not have bulk yet),
-    // but wrap in a single logical operation and return combined result.
-    // The welcome from the LAST successful add covers all added members (openMLS behaviour).
-    let lastCommit: Uint8Array | undefined;
-    let lastWelcome: Uint8Array | undefined;
-    let lastRatchetTree: Uint8Array | undefined;
-    const addedDeviceIds: string[] = [];
-    for (const device of devices) {
-      try {
-        const res = await this.addMember(groupId, device.keyPackage);
-        lastCommit = res.commit;
-        lastWelcome = res.welcome;
-        lastRatchetTree = res.ratchetTree;
-        addedDeviceIds.push(device.deviceId);
-      } catch (e) {
-        console.warn(`Skipping device ${device.deviceId}: ${e}`);
-      }
-    }
-    if (!lastCommit) throw new Error('No valid devices to add');
+    // Single bulk Tauri invoke: all key packages are added in one OpenMLS commit
+    // so all new members share the same epoch and a single Welcome covers them all.
+    const keyPackagesBytes = devices.map((d) => Array.from(d.keyPackage));
+    // Returns (commit: Vec<u8>, welcome: Option<Vec<u8>>, count: usize, ratchetTree: Option<Vec<u8>>)
+    const result = await invoke<[number[], number[] | null, number, number[] | null]>(
+      'ajouter_membres_bulk',
+      { groupId, keyPackagesBytes }
+    );
+    const addedCount = result[2] as number;
+    // Map back to device IDs in the same order as the input (first `addedCount` entries).
+    const addedDeviceIds = devices.slice(0, addedCount).map((d) => d.deviceId);
     return {
-      commit: lastCommit,
-      welcome: lastWelcome,
+      commit: Uint8Array.from(result[0]),
+      welcome: result[1] ? Uint8Array.from(result[1]) : undefined,
       addedDeviceIds,
-      ratchetTree: lastRatchetTree,
+      ratchetTree: result[3] ? Uint8Array.from(result[3]) : undefined,
     };
   }
 

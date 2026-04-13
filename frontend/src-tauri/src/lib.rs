@@ -7,9 +7,9 @@ use tauri::Manager;
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 use tauri::{
     image::Image,
-    WindowEvent,
     menu::{MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
+    WindowEvent,
 };
 
 // State wrapper
@@ -138,6 +138,24 @@ fn ajouter_membre(
 
     manager
         .add_member(&group_id, &key_package_bytes)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn ajouter_membres_bulk(
+    group_id: String,
+    key_packages_bytes: Vec<Vec<u8>>,
+    state: tauri::State<AppState>,
+) -> Result<(Vec<u8>, Option<Vec<u8>>, usize, Option<Vec<u8>>), String> {
+    let mut lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+
+    let refs: Vec<&[u8]> = key_packages_bytes.iter().map(|v| v.as_slice()).collect();
+    manager
+        .add_members_bulk(&group_id, &refs)
         .map_err(|e| e.to_string())
 }
 
@@ -301,7 +319,11 @@ fn get_fcm_token(app: tauri::AppHandle) -> Option<String> {
         let data_dir = app.path().app_data_dir().ok()?;
         let token = std::fs::read_to_string(data_dir.join("fcm_token.txt")).ok()?;
         let token = token.trim().to_string();
-        if token.is_empty() { None } else { Some(token) }
+        if token.is_empty() {
+            None
+        } else {
+            Some(token)
+        }
     }
     #[cfg(not(target_os = "android"))]
     {
@@ -419,7 +441,9 @@ fn extract_app_message_text(bytes: &[u8]) -> Option<String> {
 /// Retourne le texte du message, ou "" si le déchiffrement échoue.
 #[cfg(target_os = "android")]
 #[no_mangle]
-pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeDecryptMessage<'a>(
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeDecryptMessage<
+    'a,
+>(
     mut env: jni::JNIEnv<'a>,
     _service: jni::objects::JObject<'a>,
     state_bytes: jni::objects::JByteArray<'a>,
@@ -471,8 +495,7 @@ fn store_push_context(
         "deviceId": device_id,
         "baseUrl": base_url
     });
-    std::fs::write(data_dir.join("push_context.json"), json.to_string())
-        .map_err(|e| e.to_string())
+    std::fs::write(data_dir.join("push_context.json"), json.to_string()).map_err(|e| e.to_string())
 }
 
 /// Chiffre l'état MLS courant et l'écrit dans {app_data_dir}/mls_push.bin
@@ -493,8 +516,7 @@ fn save_mls_state_for_push(
     };
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
-    std::fs::write(data_dir.join("mls_push.bin"), &encrypted_bytes)
-        .map_err(|e| e.to_string())
+    std::fs::write(data_dir.join("mls_push.bin"), &encrypted_bytes).map_err(|e| e.to_string())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -594,6 +616,7 @@ pub fn run() {
             generer_key_package,
             generer_key_packages,
             ajouter_membre,
+            ajouter_membres_bulk,
             retirer_membres,
             retirer_membres_par_appareil,
             trailer_welcome,

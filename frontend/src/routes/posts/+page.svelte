@@ -103,9 +103,9 @@
   });
 </script>
 
-<main class="flex gap-6 px-4 py-6 md:px-8 md:py-8 h-full">
+<main class="flex gap-6 px-4 py-6 md:px-8 md:py-8">
   <!-- Posts feed -->
-  <div class="flex-1 min-w-0 overflow-y-auto">
+  <div class="flex-1 min-w-0">
     <div class="mx-auto max-w-xl animate-rise-in">
       <!-- Header -->
       <header class="mb-6 flex items-center justify-between gap-3">
