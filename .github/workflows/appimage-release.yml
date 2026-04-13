@@ -80,13 +80,11 @@ jobs:
 
       - name: Validate required secrets
         env:
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
           BASE_URL: ${{ secrets.BASE_URL }}
           AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
           AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
         run: |
           required=(
-            JWT_SECRET
             BASE_URL
             AUTHENTIK_URL
             AUTHENTIK_CLIENT_ID
@@ -101,6 +99,24 @@ jobs:
 
           echo "✅ Required secrets are present"
 
+      - name: Create frontend .env
+        working-directory: frontend
+        env:
+          BASE_URL: ${{ secrets.BASE_URL }}
+          AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
+          AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
+        run: |
+          # Use empty values for URLs to trigger fallback to window.location logic (or defaults)
+          # Or set specific production URLs here if desired.
+          echo "VITE_GATEWAY_URL=${BASE_URL}" >> .env
+          echo "VITE_DELIVERY_URL=${BASE_URL}" >> .env
+          echo "VITE_MEDIA_URL=${BASE_URL}" >> .env
+          echo "VITE_CALL_URL=${BASE_URL}" >> .env
+          echo "VITE_SOCIAL_URL=${BASE_URL}" >> .env
+          echo "VITE_CORE_URL=${BASE_URL}" >> .env
+          echo "VITE_AUTHENTIK_URL=${AUTHENTIK_URL}" >> .env
+          echo "VITE_AUTHENTIK_CLIENT_ID=${AUTHENTIK_CLIENT_ID}" >> .env
+
       - name: Import GPG signing key
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
@@ -110,12 +126,9 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
           PUBLIC_BASE_URL: ${{ secrets.BASE_URL }}
           PUBLIC_AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
           PUBLIC_AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           SIGN: ${{ secrets.GPG_PRIVATE_KEY != '' && '1' || '0' }}
           SIGN_KEY: ${{ secrets.GPG_KEY_ID }}
           APPIMAGETOOL_SIGN_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
