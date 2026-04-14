@@ -1,12 +1,11 @@
-import {
-  Injectable,
-  Logger,
-  PayloadTooLargeException,
-} from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, PayloadTooLargeException } from '@nestjs/common';
 import { StorageService } from './storage.service';
 import { v4 as uuidv4 } from 'uuid';
 import * as fs from 'fs-extra';
 import * as path from 'path';
+
+/** UUID v4 pattern — used to validate user-supplied IDs before path joins and property accesses. */
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const CHUNK_DIR = path.join(process.cwd(), 'chunks_temp');
 const MEDIA_META_FILE = path.join(process.cwd(), 'media_metadata.json');
@@ -35,9 +34,11 @@ type DownloadResult =
 export class MediaService {
   private readonly logger = new Logger(MediaService.name);
   private readonly meta: MediaMetadataStore = { items: {} };
+  /** Per-uploadId locks that serialize concurrent chunk writes to prevent TOCTOU races. */
+  private readonly uploadLocks = new Map<string, Promise<void>>();
   private readonly sweepIntervalMs = Number.parseInt(
     process.env.MEDIA_RETENTION_SWEEP_MS ?? `${DEFAULT_SWEEP_MS}`,
-    10,
+    10
   );
 
   constructor(private readonly storage: StorageService) {
@@ -64,6 +65,10 @@ export class MediaService {
   }
 
   async download(mediaId: string): Promise<DownloadResult> {
+    // Validate mediaId is a UUID to prevent path traversal and prototype pollution.
+    if (!UUID_REGEX.test(mediaId)) {
+      throw new BadRequestException('Invalid mediaId');
+    }
     await this.purgeExpiredMedia();
 
     const entry = this.meta.items[mediaId];
@@ -87,6 +92,10 @@ export class MediaService {
   }
 
   async remove(mediaId: string): Promise<void> {
+    // Validate mediaId is a UUID to prevent prototype pollution via property key injection.
+    if (!UUID_REGEX.test(mediaId)) {
+      throw new BadRequestException('Invalid mediaId');
+    }
     await this.storage.delete(mediaId);
     const now = Date.now();
     const current = this.meta.items[mediaId];
@@ -108,29 +117,33 @@ export class MediaService {
     return uploadId;
   }
 
-  async appendChunk(
-    uploadId: string,
-    chunk: Buffer,
-    maxBytes: number,
-  ): Promise<void> {
-    // We assume sequential chunk upload for simplicity.
-    // The client should await each part or we save per part_index and combine.
-    // Given the context, sequential client uploads are easiest.
-    const tempFile = path.join(CHUNK_DIR, uploadId);
-    if (!(await fs.pathExists(tempFile))) {
-      throw new Error('Upload session not found or expired');
+  async appendChunk(uploadId: string, chunk: Buffer, maxBytes: number): Promise<void> {
+    // Validate uploadId is a UUID to prevent path traversal (uncontrolled data in path).
+    if (!UUID_REGEX.test(uploadId)) {
+      throw new BadRequestException('Invalid uploadId');
     }
+    // Serialize concurrent chunk writes for the same uploadId to prevent TOCTOU race conditions.
+    await this.withUploadLock(uploadId, async () => {
+      const tempFile = path.join(CHUNK_DIR, uploadId);
+      if (!(await fs.pathExists(tempFile))) {
+        throw new Error('Upload session not found or expired');
+      }
 
-    const stat = await fs.stat(tempFile);
-    if (stat.size + chunk.length > maxBytes) {
-      await fs.remove(tempFile);
-      throw new PayloadTooLargeException('Chunked upload exceeds 100 MB policy');
-    }
+      const stat = await fs.stat(tempFile);
+      if (stat.size + chunk.length > maxBytes) {
+        await fs.remove(tempFile);
+        throw new PayloadTooLargeException('Chunked upload exceeds 100 MB policy');
+      }
 
-    await fs.appendFile(tempFile, chunk);
+      await fs.appendFile(tempFile, chunk);
+    });
   }
 
   async completeChunkedUpload(uploadId: string, maxBytes: number): Promise<string> {
+    // Validate uploadId is a UUID to prevent path traversal.
+    if (!UUID_REGEX.test(uploadId)) {
+      throw new BadRequestException('Invalid uploadId');
+    }
     const tempFile = path.join(CHUNK_DIR, uploadId);
     if (!(await fs.pathExists(tempFile))) {
       throw new Error('Upload session not found or expired');
@@ -153,6 +166,28 @@ export class MediaService {
     await this.persistMetadata();
 
     return mediaId;
+  }
+
+  /**
+   * Serializes concurrent operations on the same uploadId to prevent TOCTOU races.
+   * A lightweight chain-of-promises mutex: each new operation waits for the previous to finish.
+   */
+  private async withUploadLock<T>(uploadId: string, fn: () => Promise<T>): Promise<T> {
+    const prior = this.uploadLocks.get(uploadId) ?? Promise.resolve();
+    let releaseLock!: () => void;
+    const nextLock = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    this.uploadLocks.set(uploadId, nextLock);
+    await prior;
+    try {
+      return await fn();
+    } finally {
+      releaseLock();
+      if (this.uploadLocks.get(uploadId) === nextLock) {
+        this.uploadLocks.delete(uploadId);
+      }
+    }
   }
 
   private loadMetadata() {

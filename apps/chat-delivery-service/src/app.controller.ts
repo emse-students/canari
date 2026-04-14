@@ -145,12 +145,19 @@ async function assertSafeExternalUrl(rawUrl: string): Promise<URL> {
 
 function decodeHtmlEntity(value: unknown): string {
   const normalized = typeof value === 'string' ? value : '';
-  return normalized
-    .replace(/&amp;/g, '&')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>');
+  // Single-pass replacement prevents double-decoding: a chained approach would
+  // turn &amp;lt; into &lt; then < (two rounds), leaking angle brackets.
+  const entityMap: Record<string, string> = {
+    '&amp;': '&',
+    '&quot;': '"',
+    '&#39;': "'",
+    '&lt;': '<',
+    '&gt;': '>',
+  };
+  return normalized.replace(
+    /&(?:amp|quot|#39|lt|gt);/g,
+    (m) => entityMap[m] ?? m,
+  );
 }
 
 function extractMetaTags(html: string): Array<Record<string, string>> {

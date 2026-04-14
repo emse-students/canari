@@ -86,8 +86,14 @@ export class PaymentWebhookController {
         }
         try {
           const formServiceBase =
-            this.config.get<string>('FORM_URL') || 'http://localhost:3014';
-          const url = `${formServiceBase.replace(/\/$/, '')}/api/forms/submissions/${submissionId}/mark-paid`;
+            this.config.get<string>('FORM_SERVICE_URL') ||
+            'http://localhost:3014';
+          // Prevent SSRF: validate FORM_SERVICE_URL uses only http/https before use.
+          const parsedBase = new URL(formServiceBase);
+          if (!['http:', 'https:'].includes(parsedBase.protocol)) {
+            throw new Error('FORM_SERVICE_URL must use http or https');
+          }
+          const url = `${parsedBase.origin}/api/forms/submissions/${submissionId}/mark-paid`;
           await axios.post(url, { sessionId: session.id }, { maxRedirects: 0 });
           this.logger.log(
             `Marked submission ${submissionId} as paid via form-service`,
@@ -120,8 +126,14 @@ export class PaymentWebhookController {
         } else {
           try {
             const socialServiceBase =
-              this.config.get<string>('FORM_URL') || 'http://localhost:3014';
-            const url = `${socialServiceBase.replace(/\/$/, '')}/api/associations/${associationId}/stripe-complete`;
+              this.config.get<string>('SOCIAL_SERVICE_URL') ||
+              'http://localhost:3015';
+            // Prevent SSRF: validate SOCIAL_SERVICE_URL uses only http/https before use.
+            const parsedBase = new URL(socialServiceBase);
+            if (!['http:', 'https:'].includes(parsedBase.protocol)) {
+              throw new Error('SOCIAL_SERVICE_URL must use http or https');
+            }
+            const url = `${parsedBase.origin}/api/associations/${associationId}/stripe-complete`;
             await axios.post(url, undefined, { maxRedirects: 0 });
             this.logger.log(
               `Marked association ${associationId} stripe onboarding complete`,

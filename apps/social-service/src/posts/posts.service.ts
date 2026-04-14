@@ -64,18 +64,32 @@ export class PostsService {
     // Enrich with author display names (users table is in the same DB).
     const authorIds = [...new Set(posts.map((p) => p.authorId).filter(Boolean))];
     if (authorIds.length > 0) {
-      const rows: { id: string; displayName: string | null; firstName: string | null; lastName: string | null }[] = await this.postRepo.manager.query(
+      const rows: {
+        id: string;
+        displayName: string | null;
+        firstName: string | null;
+        lastName: string | null;
+      }[] = await this.postRepo.manager.query(
         `SELECT id, "displayName", "firstName", "lastName" FROM users WHERE id = ANY($1)`,
         [authorIds]
       );
-      const nameMap = Object.fromEntries(rows.map((r) => [r.id, { displayName: r.displayName, firstName: r.firstName, lastName: r.lastName }]));
+      const nameMap = Object.fromEntries(
+        rows.map((r) => [
+          r.id,
+          { displayName: r.displayName, firstName: r.firstName, lastName: r.lastName },
+        ])
+      );
       return posts.map((p) => {
-        const authorInfo = nameMap[p.authorId] || { displayName: null, firstName: null, lastName: null };
+        const authorInfo = nameMap[p.authorId] || {
+          displayName: null,
+          firstName: null,
+          lastName: null,
+        };
         return {
           ...p,
           authorDisplayName: authorInfo.displayName,
           authorFirstName: authorInfo.firstName,
-          authorLastName: authorInfo.lastName
+          authorLastName: authorInfo.lastName,
         };
       });
     }
@@ -342,6 +356,10 @@ export class PostsService {
   async addReaction(postId: string, userId: string, reactionType: string) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
+    // Guard against remote property injection: reject keys that could pollute Object.prototype.
+    if (userId === '__proto__' || userId === 'constructor' || userId === 'prototype') {
+      throw new BadRequestException('Invalid userId');
+    }
     const reactions: Record<string, string> = post.reactions ?? {};
     reactions[userId] = reactionType;
     post.reactions = reactions;
@@ -352,6 +370,10 @@ export class PostsService {
   async removeReaction(postId: string, userId: string) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
+    // Guard against remote property injection: reject keys that could pollute Object.prototype.
+    if (userId === '__proto__' || userId === 'constructor' || userId === 'prototype') {
+      throw new BadRequestException('Invalid userId');
+    }
     const reactions: Record<string, string> = post.reactions ?? {};
     delete reactions[userId];
     post.reactions = reactions;
@@ -368,7 +390,11 @@ export class PostsService {
     let firstName: string | null = null;
     let lastName: string | null = null;
     try {
-      const rows: { displayName: string | null; firstName: string | null; lastName: string | null }[] = await this.postRepo.manager.query(
+      const rows: {
+        displayName: string | null;
+        firstName: string | null;
+        lastName: string | null;
+      }[] = await this.postRepo.manager.query(
         `SELECT "displayName", "firstName", "lastName" FROM users WHERE id = $1 LIMIT 1`,
         [data.userId]
       );

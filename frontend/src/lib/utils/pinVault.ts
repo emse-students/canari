@@ -20,11 +20,11 @@
  * keystore and call PinVault.clear() after successful biometric enrolment.
  */
 
-const VAULT_KEY_KEY = 'canari_pin_vault_key'; // localStorage — random wrap key (b64)
+const VAULT_KEY_KEY = 'canari_pin_vault_key'; // sessionStorage — random wrap key (b64), session-scoped so it never persists to disk
 const VAULT_BLOB_KEY = 'canari_pin_vault'; // sessionStorage — iv:ciphertext (b64)
 
 async function getOrCreateWrapKey(): Promise<CryptoKey> {
-  const stored = localStorage.getItem(VAULT_KEY_KEY);
+  const stored = sessionStorage.getItem(VAULT_KEY_KEY);
   if (stored) {
     const raw = Uint8Array.from(atob(stored), (c) => c.charCodeAt(0));
     return crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
@@ -34,7 +34,10 @@ async function getOrCreateWrapKey(): Promise<CryptoKey> {
     'decrypt',
   ]);
   const exported = await crypto.subtle.exportKey('raw', key);
-  localStorage.setItem(VAULT_KEY_KEY, btoa(String.fromCharCode(...new Uint8Array(exported))));
+  // Store the wrap key in sessionStorage (not localStorage) so raw key material is never
+  // written to persistent storage on disk. Both the key and the encrypted blob are
+  // session-scoped and cleared when the tab closes.
+  sessionStorage.setItem(VAULT_KEY_KEY, btoa(String.fromCharCode(...new Uint8Array(exported))));
   return key;
 }
 
@@ -79,5 +82,5 @@ export function clearPin(): void {
 /** Drop both the blob and the wrapping key (e.g. on logout or key compromise). */
 export function clearPinAndKey(): void {
   sessionStorage.removeItem(VAULT_BLOB_KEY);
-  localStorage.removeItem(VAULT_KEY_KEY);
+  sessionStorage.removeItem(VAULT_KEY_KEY);
 }
