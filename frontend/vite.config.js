@@ -106,8 +106,11 @@ export default defineConfig(async () => ({
       },
     },
     watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ['**/src-tauri/**'],
+      // 3. tell Vite to ignore watching `src-tauri` and all Rust build artifacts.
+      // mls-core/target and mls-wasm/target contain hundreds of thousands of files
+      // (doc HTML, object files) that exhaust the system inotify watcher limit,
+      // causing ENOSPC errors that crash the dev server before the window loads.
+      ignored: ['**/src-tauri/**', '**/target/**', '**/.git/**'],
     },
     fs: {
       strict: false,
