@@ -384,6 +384,34 @@ export class IndexedDbStorage implements IStorage {
 // Requires the @tauri-apps/plugin-sql npm package and the Rust crate.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Helper: encode/decode binary data as base64 for SQLite TEXT columns.
+// The Tauri SQL plugin binds serde_json::Value::Array as JSON text, not as a
+// binary BLOB, so raw number[] round-trips are broken after an app restart.
+// Storing binary as base64 (TEXT storage class) ensures reliable persistence.
+// ---------------------------------------------------------------------------
+
+function uint8ToBase64(arr: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < arr.length; i++) binary += String.fromCharCode(arr[i]);
+  return btoa(binary);
+}
+
+function base64ToUint8(val: unknown): Uint8Array {
+  if (val == null) return new Uint8Array(0);
+  // New format: base64-encoded string
+  if (typeof val === 'string') {
+    try {
+      return Uint8Array.from(atob(val), (c) => c.charCodeAt(0));
+    } catch {
+      return new Uint8Array(0);
+    }
+  }
+  // Fallback: plain number array (e.g. if the plugin ever writes real BLOBs)
+  if (Array.isArray(val)) return new Uint8Array(val as number[]);
+  return new Uint8Array(0);
+}
+
 export class SqliteStorage implements IStorage {
   private db: any = null;
   private readonly dbPath: string;
@@ -470,7 +498,9 @@ export class SqliteStorage implements IStorage {
       })
     );
 
-    // Tauri SQL plugin doesn't support bulk insert nicely, so we loop but parallelize encryption
+    // Tauri SQL plugin doesn't support bulk insert nicely, so we loop but parallelize encryption.
+    // Binary data is stored as base64 strings: passing number[] as a parameter causes the plugin
+    // to bind it as JSON text (not a real BLOB), corrupting the stored bytes on restart.
     for (const item of encryptedMessages) {
       await this.db.execute(
         'INSERT OR REPLACE INTO messages (id, conversation_id, timestamp, iv, salt, cipher_text) VALUES ($1, $2, $3, $4, $5, $6)',
@@ -478,9 +508,9 @@ export class SqliteStorage implements IStorage {
           item.msg.id,
           item.msg.conversationId,
           item.msg.timestamp,
-          Array.from(item.encrypted.iv),
-          Array.from(item.encrypted.salt),
-          Array.from(item.encrypted.cipherText),
+          uint8ToBase64(item.encrypted.iv),
+          uint8ToBase64(item.encrypted.salt),
+          uint8ToBase64(item.encrypted.cipherText),
         ]
       );
     }
@@ -494,9 +524,9 @@ export class SqliteStorage implements IStorage {
     const results: StoredMessage[] = [];
     for (const row of rows) {
       try {
-        const iv = new Uint8Array(row.iv);
-        const salt = new Uint8Array(row.salt);
-        const cipherText = new Uint8Array(row.cipher_text);
+        const iv = base64ToUint8(row.iv);
+        const salt = base64ToUint8(row.salt);
+        const cipherText = base64ToUint8(row.cipher_text);
         const payload = await decryptData(cipherText, iv, salt, pin);
         results.push({
           id: row.id,
@@ -524,9 +554,9 @@ export class SqliteStorage implements IStorage {
       id: row.id,
       conversationId: row.conversation_id,
       timestamp: row.timestamp,
-      iv: new Uint8Array(row.iv),
-      salt: new Uint8Array(row.salt),
-      cipherText: new Uint8Array(row.cipher_text),
+      iv: base64ToUint8(row.iv),
+      salt: base64ToUint8(row.salt),
+      cipherText: base64ToUint8(row.cipher_text),
     }));
   }
 
@@ -547,9 +577,9 @@ export class SqliteStorage implements IStorage {
         row.id,
         row.conversationId,
         row.timestamp,
-        Array.from(row.iv),
-        Array.from(row.salt),
-        Array.from(row.cipherText),
+        uint8ToBase64(row.iv),
+        uint8ToBase64(row.salt),
+        uint8ToBase64(row.cipherText),
       ]
     );
   }

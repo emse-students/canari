@@ -309,6 +309,42 @@ fn exporter_secret(
         .map_err(|e| e.to_string())
 }
 
+/// Sauvegarde un fichier binaire sur le système de fichiers de l'appareil.
+/// Sur desktop : écrit dans le dossier Téléchargements (~/Downloads).
+/// Sur mobile  : écrit dans le répertoire privé de l'application.
+/// Retourne le chemin absolu du fichier créé.
+#[tauri::command]
+fn save_backup_file(
+    app: tauri::AppHandle,
+    filename: String,
+    data: Vec<u8>,
+) -> Result<String, String> {
+    use tauri::Manager;
+
+    // Validate filename: no path separators, no null bytes, not empty.
+    if filename.is_empty()
+        || filename.contains('/')
+        || filename.contains('\\')
+        || filename.contains('\0')
+    {
+        return Err("Nom de fichier invalide.".into());
+    }
+
+    let dir = app
+        .path()
+        .download_dir()
+        .or_else(|_| app.path().app_data_dir())
+        .map_err(|e| format!("Impossible de trouver le dossier de destination: {}", e))?;
+
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Impossible de créer le dossier: {}", e))?;
+
+    let file_path = dir.join(&filename);
+    std::fs::write(&file_path, &data)
+        .map_err(|e| format!("Impossible d'écrire le fichier: {}", e))?;
+
+    Ok(file_path.to_string_lossy().into_owned())
+}
+
 /// Retourne le token FCM stocké par CanariFirebaseMessagingService.
 /// Sur Android, lit {app_data_dir}/fcm_token.txt (écrit par onNewToken).
 /// Sur desktop/iOS, retourne None (pas de FCM).
@@ -626,6 +662,7 @@ pub fn run() {
             recevoir_message_bytes,
             exporter_secret,
             get_fcm_token,
+            save_backup_file,
             store_push_context,
             save_mls_state_for_push
         ])

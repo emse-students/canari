@@ -552,15 +552,28 @@ export async function exportUserBackup(params: {
   const date = new Date().toISOString().split('T')[0];
   const filename = `canari-backup-${userId}-${date}.canari`;
 
-  const url = URL.createObjectURL(
-    new Blob([blob.buffer as ArrayBuffer], { type: 'application/octet-stream' })
-  );
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-  log(`[OK] Sauvegarde exportee : ${filename}`);
+  const isTauri = !!(window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+  if (isTauri) {
+    // In Tauri (desktop/mobile) blob URLs and anchor downloads do not work.
+    // Delegate file writing to the Rust side which saves to the Downloads
+    // folder (desktop) or app data dir (mobile).
+    const { invoke } = await import('@tauri-apps/api/core');
+    const savedPath: string = await invoke('save_backup_file', {
+      filename,
+      data: Array.from(blob),
+    });
+    log(`[OK] Sauvegarde exportée : ${savedPath}`);
+  } else {
+    const url = URL.createObjectURL(
+      new Blob([blob.buffer as ArrayBuffer], { type: 'application/octet-stream' })
+    );
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+    log(`[OK] Sauvegarde exportée : ${filename}`);
+  }
 }
 
 export async function importUserBackup(params: {
