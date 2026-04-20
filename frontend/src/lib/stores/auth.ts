@@ -117,9 +117,15 @@ export async function startOidcLogin(returnTo = '/chat'): Promise<void> {
   if (isTauriDesktop()) {
     // On desktop Tauri, open Authentik in the system browser (bypasses WebKitGTK restrictions),
     // then navigate the webview to the waiting callback page.
-    const { openUrl } = await import('@tauri-apps/plugin-opener');
-    await openUrl(authUrl);
-    window.location.href = '/auth/callback?tauri=1';
+    // IMPORTANT: fire-and-forget openUrl — awaiting it blocks the webview on Linux
+    // because xdg-open may not return until the browser process exits.
+    import('@tauri-apps/plugin-opener')
+      .then(({ openUrl }) => openUrl(authUrl))
+      .catch(console.error);
+
+    // Use SvelteKit client-side navigation (no full page reload).
+    const { goto } = await import('$app/navigation');
+    await goto('/auth/callback?tauri=1', { replaceState: true });
   } else {
     window.location.href = authUrl;
   }

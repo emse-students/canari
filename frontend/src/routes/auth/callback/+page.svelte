@@ -23,10 +23,23 @@
 
     // ── Tauri desktop mode : attente d'un deep link canari://auth/callback ─
     const platform = (import.meta.env.TAURI_ENV_PLATFORM as string | undefined) ?? '';
-    if (params.get('tauri') === '1' && '__TAURI_INTERNALS__' in window && platform !== 'android' && platform !== 'ios') {
+    if (
+      params.get('tauri') === '1' &&
+      '__TAURI_INTERNALS__' in window &&
+      platform !== 'android' &&
+      platform !== 'ios'
+    ) {
       status = 'En attente de la réponse du navigateur…';
       try {
-        const { onOpenUrl, getCurrent } = await import('@tauri-apps/plugin-deep-link');
+        const { onOpenUrl, getCurrent, register } = await import('@tauri-apps/plugin-deep-link');
+
+        // Ensure the canari:// scheme is registered with the OS (needed in dev mode
+        // on Linux where no .desktop file is bundled).
+        try {
+          await register('canari');
+        } catch {
+          /* already registered or unsupported */
+        }
 
         // Handle the case where the app was opened/focused by the deep link
         const current = await getCurrent();
