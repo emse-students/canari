@@ -555,6 +555,56 @@ fn save_mls_state_for_push(
     std::fs::write(data_dir.join("mls_push.bin"), &encrypted_bytes).map_err(|e| e.to_string())
 }
 
+// ─── Desktop: open URL in system browser (non-blocking) ─────────────────────
+
+/// Spawns the system browser via `xdg-open` (Linux), `open` (macOS), or
+/// `cmd /c start` (Windows) as a fully detached process.
+/// Unlike plugin-opener's `openUrl`, this never blocks the IPC thread.
+#[tauri::command]
+fn open_in_browser(url: String) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&url)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&url)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/c", "start", "", &url])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())?;
+    }
+
+    // On mobile this command is never called, but it compiles fine as a no-op.
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    let _ = url;
+
+    Ok(())
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -678,7 +728,8 @@ pub fn run() {
             get_fcm_token,
             save_backup_file,
             store_push_context,
-            save_mls_state_for_push
+            save_mls_state_for_push,
+            open_in_browser
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
