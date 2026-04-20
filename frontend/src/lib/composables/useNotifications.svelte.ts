@@ -140,6 +140,12 @@ export function useNotifications() {
     if (typeof window === 'undefined') return;
 
     if ((window as any).__TAURI_INTERNALS__) {
+      // Notification permission requests via the Tauri plugin block the GLib
+      // main loop on Linux desktop (dbus call never returns in WebKitGTK).
+      // The plugin is only strictly needed on mobile — skip on desktop.
+      const isMobile =
+        typeof navigator !== 'undefined' && /android|iphone|ipad|ipod/i.test(navigator.userAgent);
+      if (!isMobile) return;
       try {
         const { isPermissionGranted, requestPermission } =
           await import('@tauri-apps/plugin-notification');

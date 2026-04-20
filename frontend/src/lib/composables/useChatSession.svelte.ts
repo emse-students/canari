@@ -7,7 +7,7 @@
  * has a single place to change.
  */
 import { goto } from '$app/navigation';
-import { TauriMlsService, WebMlsService } from '$lib/mlsService';
+import { MlsService } from '$lib/mlsService';
 import type { IMlsService } from '$lib/mlsService';
 import { getStorage } from '$lib/db';
 import type { IStorage } from '$lib/db';
@@ -122,8 +122,7 @@ export function useChatSession() {
   function ensureMls(): IMlsService {
     if (!mls) {
       if (typeof window === 'undefined') throw new Error('MLS unavailable outside browser context');
-      const w = window as Window & { __TAURI_INTERNALS__?: unknown };
-      mls = w.__TAURI_INTERNALS__ ? new TauriMlsService() : new WebMlsService();
+      mls = new MlsService();
     }
     return mls;
   }
@@ -672,14 +671,12 @@ export function useChatSession() {
    */
   function initServices(log: (msg: string) => void) {
     if (mls) return; // already initialised
-    const w = window as Window & { __TAURI_INTERNALS__?: unknown };
-    if (w.__TAURI_INTERNALS__) {
-      mls = new TauriMlsService();
-      log('Initialisé en mode TAURI');
-    } else {
-      mls = new WebMlsService();
-      log('Initialisé en mode WEB (WASM)');
-    }
+    mls = new MlsService();
+    log(
+      (window as any).__TAURI_INTERNALS__
+        ? 'Initialisé en mode TAURI'
+        : 'Initialisé en mode WEB (WASM)'
+    );
     callService = new CallService(mls);
     callService.callState.subscribe((s: any) => (callState = s));
   }

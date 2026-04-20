@@ -1,18 +1,12 @@
 export type { IMlsService } from './services/IMlsService';
-export { WebMlsService } from './services/WebMlsService';
-export { TauriMlsService } from './services/TauriMlsService';
-
-// Factory to automatically pick the right implementation
-import { WebMlsService } from './services/WebMlsService';
-import { TauriMlsService } from './services/TauriMlsService';
 import type { IMlsService } from './services/IMlsService';
+import { TauriMlsService } from './services/TauriMlsService';
+import { WebMlsService } from './services/WebMlsService';
 
-export function createMlsService(): IMlsService {
-  // Basic detection for Tauri environment
-  if (typeof window !== 'undefined' && window.__TAURI_INTERNALS__) {
-    console.log('Detecting Tauri environment -> Using TauriMlsService');
-    return new TauriMlsService();
-  }
-  console.log('Detecting Web environment -> Using WebMlsService');
-  return new WebMlsService();
-}
+// Synchronous platform detection — no top-level await, no TDZ risk.
+// The mlsWasmStub Vite plugin stubs out mlsWasmLoader for TAURI_TARGET builds,
+// so the WASM binary is excluded from Tauri bundles even though WebMlsService
+// is statically imported here.
+const _isTauri = typeof window !== 'undefined' && !!(window as any).__TAURI_INTERNALS__;
+
+export const MlsService: new () => IMlsService = _isTauri ? TauriMlsService : WebMlsService;

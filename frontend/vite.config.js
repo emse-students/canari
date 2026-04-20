@@ -6,6 +6,37 @@ import tailwindcss from '@tailwindcss/vite';
 const host = process.env.TAURI_DEV_HOST;
 const devOrigin = host ? `http://${host}:1420` : undefined;
 
+/**
+ * Stubs out the WASM loader for Tauri builds (AppImage, Android, etc.).
+ *
+ * When the TAURI_TARGET env var is set, any import of `mlsWasmLoader` is
+ * redirected to a virtual module that throws if ever called. This prevents
+ * Vite from resolving or bundling the .wasm assets in native Tauri builds,
+ * where TauriMlsService is used instead.
+ *
+ * @returns {import('vite').Plugin}
+ */
+function mlsWasmStub() {
+  // eslint-disable-next-line no-undef
+  const isTauri = !!process.env.TAURI_TARGET;
+  const VIRTUAL_ID = '\0mls-wasm-stub';
+  return {
+    name: 'mls-wasm-stub',
+    resolveId(id) {
+      if (isTauri && id.includes('mlsWasmLoader')) {
+        return VIRTUAL_ID;
+      }
+    },
+    load(id) {
+      if (id === VIRTUAL_ID) {
+        return `export async function loadAndInitWasm() {
+  throw new Error('[mls-wasm-stub] WASM is not available in Tauri builds — TauriMlsService should be used instead.');
+}`;
+      }
+    },
+  };
+}
+
 /** @returns {import('vite').Plugin} */
 function protobufPatch() {
   return {
@@ -24,7 +55,7 @@ function protobufPatch() {
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-  plugins: [tailwindcss(), sveltekit(), protobufPatch()],
+  plugins: [mlsWasmStub(), tailwindcss(), sveltekit(), protobufPatch()],
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
@@ -34,7 +65,7 @@ export default defineConfig(async () => ({
   server: {
     port: 1420,
     strictPort: true,
-    host: host || false,
+    host: host || '127.0.0.1',
     origin: devOrigin,
     hmr: host
       ? {

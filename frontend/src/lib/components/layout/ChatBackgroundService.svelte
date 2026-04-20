@@ -12,7 +12,7 @@
    * connexion persiste sur toutes les routes et non seulement sur /chat.
    */
   import { onMount, untrack } from 'svelte';
-  import { goto, afterNavigate } from '$app/navigation';
+  import { afterNavigate } from '$app/navigation';
   import { BiometricService } from '$lib/services/biometric';
   import { loadPin } from '$lib/utils/pinVault';
   import { currentUserId } from '$lib/stores/user';
@@ -269,8 +269,7 @@
               globalSession.userId = savedUser2;
               showPinModal = true;
             } else {
-              const cur2 = window.location.pathname + window.location.search;
-              void goto(`/login?returnTo=${encodeURIComponent(cur2)}`, { replaceState: true });
+              // No saved user — the layout auth guard will redirect to /login.
             }
           }
           return;
@@ -292,8 +291,7 @@
           globalSession.userId = savedUser;
           showPinModal = true;
         } else {
-          const cur = window.location.pathname + window.location.search;
-          void goto(`/login?returnTo=${encodeURIComponent(cur)}`, { replaceState: true });
+          // No saved user — the layout auth guard will redirect to /login.
         }
       } finally {
         // Reset flag so afterNavigate can re-try if this invocation did nothing
@@ -317,25 +315,6 @@
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    // ── Tauri notification click → show & focus window ─────────────────────
-    let _unlistenNotif: (() => void) | null = null;
-    if ((window as any).__TAURI_INTERNALS__) {
-      import('@tauri-apps/plugin-notification')
-        .then(({ onAction }) => {
-          onAction((_notification) => {
-            import('@tauri-apps/api/window')
-              .then(({ getCurrentWindow }) => {
-                const win = getCurrentWindow();
-                win.show().catch(() => {});
-                win.unminimize().catch(() => {});
-                win.setFocus().catch(() => {});
-              })
-              .catch(() => {});
-          });
-        })
-        .catch(() => {});
-    }
 
     // ── IndexedDB garbage collection: delete messages older than 90 days ───
     const GC_INTERVAL = 6 * 60 * 60 * 1000; // 6 hours

@@ -40,20 +40,13 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android,wasm32-unknown-unknown
-
-      - name: Install wasm-pack
-        run: cargo install wasm-pack
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
 
       - name: Install frontend dependencies
         working-directory: frontend
         run: |
           bun install
           bunx svelte-kit sync
-
-      - name: Build WASM
-        working-directory: frontend/mls-wasm
-        run: wasm-pack build --target web --out-dir ../src/lib/wasm
 
       - name: Generate protobuf bindings
         working-directory: frontend
@@ -157,6 +150,7 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_TARGET: android
         with:
           projectPath: ./frontend
           tauriScript: bun tauri android

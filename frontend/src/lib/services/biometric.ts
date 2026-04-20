@@ -4,6 +4,8 @@ import {
   remove as keystoreRemove,
 } from '@impierce/tauri-plugin-keystore';
 
+import { BiometryType, checkStatus, type Status } from '@tauri-apps/plugin-biometric';
+
 // Service/user are parsed but ignored by the plugin internally (uses a hardcoded
 // Android Keystore alias); values are kept here for forward compatibility.
 const KEYSTORE_SERVICE = 'fr.emse.canari';
@@ -47,6 +49,16 @@ export class BiometricService {
 
   static async isConfigured(): Promise<boolean> {
     return localStorage.getItem(CONFIG_FLAG_KEY) === 'true';
+  }
+
+  static async isAvailable(): Promise<boolean> {
+    // checkStatus() invokes a Tauri IPC that blocks the WebKitGTK event loop
+    // on Linux/macOS/Windows desktop where biometrics don't exist anyway.
+    const isMobile =
+      typeof navigator !== 'undefined' && /android|iphone|ipad|ipod/i.test(navigator.userAgent);
+    if (!isMobile) return false;
+    const status: Status = await checkStatus();
+    return status.isAvailable && status.biometryType !== BiometryType.None;
   }
 
   static async disable(): Promise<void> {

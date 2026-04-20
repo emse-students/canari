@@ -44,7 +44,11 @@
 
       // Vérification biométrique spécifique à Tauri
       if (isTauri) {
-        biometricAvailable = await BiometricService.isConfigured();
+        try {
+          biometricAvailable = await BiometricService.isAvailable();
+        } catch {
+          biometricAvailable = false;
+        }
       }
 
       // Vérification de session unifiée (Tauri + Web)
@@ -60,7 +64,7 @@
           }
         } catch {
           // Le token est expiré ou invalide : on reste sur la page pour se reconnecter
-          console.debug("Session invalide, re-connexion requise.");
+          console.debug('Session invalide, re-connexion requise.');
         }
       }
     };

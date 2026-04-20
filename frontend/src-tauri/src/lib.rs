@@ -576,6 +576,14 @@ pub fn run() {
             mls_manager: Mutex::new(None),
         })
         .setup(|app| {
+            // Open devtools automatically in debug mode
+            #[cfg(debug_assertions)]
+            {
+                if let Some(win) = app.get_webview_window("main") {
+                    win.open_devtools();
+                }
+            }
+
             // Paramètre utilisé uniquement sur desktop (system tray).
             #[cfg(mobile)]
             let _ = app;

@@ -1,9 +1,14 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
+  import { currentUserId } from '$lib/stores/user';
 
   onMount(() => {
-    void goto('/posts', { replaceState: true });
+    // Only redirect to /posts when authenticated.
+    // The layout auth guard handles the redirect to /login when no user exists.
+    if (currentUserId()) {
+      goto('/posts', { replaceState: true }).catch(() => {});
+    }
   });
 </script>
 

@@ -51,7 +51,20 @@
   --surface-elevated: color-mix(in srgb, var(--cn-surface) 92%, #ffffff 8%);
 }
 
-* {
+/* Theme transitions — scoped to elements that actually change theme colors.
+   Avoid `*` selector: it forces WebKitGTK to track animation state for every
+   DOM node, causing compositor memory pressure during route transitions. */
+:root,
+body,
+.theme-transition,
+nav,
+aside,
+header,
+button,
+a,
+input,
+textarea,
+select {
   transition:
     background-color 180ms ease,
     color 180ms ease,

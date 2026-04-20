@@ -1,5 +1,6 @@
 import type { IMlsService } from './IMlsService';
 import { getToken } from '$lib/stores/auth';
+import { loadAndInitWasm } from './mlsWasmLoader';
 
 /** Message pending in the processing queue */
 interface QueuedMessage {
@@ -863,67 +864,8 @@ export class WebMlsService implements IMlsService {
       localStorage.setItem(deviceKey, this.deviceId);
     }
 
-    // Import dynamique du WASM généré
     try {
-      // Import from local lib and force the .wasm asset URL through Vite.
-      const [initWasm, wasmAsset] = await Promise.all([
-        import('$lib/wasm/mls_wasm.js'),
-        import('$lib/wasm/mls_wasm_bg.wasm?url'),
-      ]);
-
-      const wasmUrl = (wasmAsset as { default: string }).default;
-      const wasmResponse = await fetch(wasmUrl, { credentials: 'same-origin' });
-      if (!wasmResponse.ok) {
-        throw new Error(
-          `Chargement WASM impossible (${wasmResponse.status} ${wasmResponse.statusText}) depuis ${wasmUrl}`
-        );
-      }
-
-      const contentType = wasmResponse.headers.get('Content-Type')?.toLowerCase() ?? '';
-      if (contentType.includes('text/html')) {
-        throw new Error(
-          `Réponse HTML reçue à la place du binaire WASM (${wasmUrl}). Vérifiez le routage statique / MIME.`
-        );
-      }
-
-      const magic = new Uint8Array((await wasmResponse.clone().arrayBuffer()).slice(0, 4));
-      const isWasmMagic =
-        magic[0] === 0x00 && magic[1] === 0x61 && magic[2] === 0x73 && magic[3] === 0x6d;
-      if (!isWasmMagic) {
-        throw new Error(`Binaire WASM invalide (${wasmUrl}) : signature incorrecte.`);
-      }
-
-      await initWasm.default({ module_or_path: wasmResponse });
-
-      const w = window as Window & { wasm_bindings_log?: (level: string, msg: string) => void };
-      if (typeof w.wasm_bindings_log !== 'function') {
-        // Defensive fallback: logger must exist before init_logger() is called.
-        w.wasm_bindings_log = (level: string, msg: string) => {
-          // Filter out expected MLS errors that are handled gracefully:
-          // - WrongEpoch: happens when receiving own commits (already merged locally)
-          // - CannotDecryptOwnMessage: expected for self-sent messages
-          const isExpectedError =
-            level === 'ERROR' &&
-            (msg.includes('Wrong Epoch') ||
-              msg.includes('CannotDecryptOwnMessage') ||
-              msg.includes('wrong epoch'));
-          if (isExpectedError) {
-            // Downgrade to debug level - these are expected during normal operation
-            console.debug(`[RUST::${level}] ${msg}`);
-          } else if (level === 'DEBUG') {
-            console.debug(`[RUST::${level}] ${msg}`);
-          } else {
-            console.log(`[RUST::${level}] ${msg}`);
-          }
-        };
-      }
-
-      // Initialize logger if available
-      if (initWasm.init_logger) {
-        initWasm.init_logger();
-      }
-
-      this.client = new initWasm.WasmMlsClient(userId, this.deviceId, state, pin);
+      this.client = await loadAndInitWasm(userId, this.deviceId, state, pin);
     } catch (e) {
       console.error('WASM Init Failed:', e);
       throw e;
