@@ -58,18 +58,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Install wasm-pack
-        run: cargo install wasm-pack
-
       - name: Install frontend dependencies
         working-directory: frontend
         run: |
           bun install
           bunx svelte-kit sync
-
-      - name: Build WASM
-        working-directory: frontend/mls-wasm
-        run: wasm-pack build --target web --out-dir ../src/lib/wasm
 
       - name: Generate protobuf bindings
         working-directory: frontend

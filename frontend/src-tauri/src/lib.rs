@@ -574,8 +574,8 @@ pub fn run() {
 
     #[cfg(mobile)]
     let builder = builder
-      .plugin(tauri_plugin_biometric::init())
-      .plugin(tauri_plugin_keystore::init());
+        .plugin(tauri_plugin_biometric::init())
+        .plugin(tauri_plugin_keystore::init());
 
     builder
         .manage(AppState {
