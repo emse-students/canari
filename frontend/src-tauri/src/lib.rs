@@ -565,11 +565,17 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_sql::Builder::default().build());
 
-    #[cfg(mobile)]
-    let builder = builder.plugin(tauri_plugin_biometric::init());
+    // Desktop-only: single-instance ensures the OS sends deep links to the
+    // already-running instance instead of spawning a new process (Linux/Windows).
+    #[cfg(desktop)]
+    let builder = builder
+        .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}))
+        .plugin(tauri_plugin_deep_link::init());
 
     #[cfg(mobile)]
-    let builder = builder.plugin(tauri_plugin_keystore::init());
+    let builder = builder
+      .plugin(tauri_plugin_biometric::init())
+      .plugin(tauri_plugin_keystore::init());
 
     builder
         .manage(AppState {

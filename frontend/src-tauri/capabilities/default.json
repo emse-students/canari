@@ -21,6 +21,7 @@
     {
       "identifier": "http:default",
       "allow": ["http://*", "https://*"]
-    }
+    },
+    "deep-link:default"
   ]
 }

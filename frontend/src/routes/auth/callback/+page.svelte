@@ -6,8 +6,74 @@
   let error = $state('');
   let status = $state('Authentification en cours…');
 
+  async function processCallback(code: string, state: string) {
+    try {
+      status = "Échange du code d'autorisation…";
+      await handleOidcCallback(code, state);
+      status = 'Connexion réussie ! Redirection…';
+      const returnTo = getOidcReturnTo();
+      await goto(returnTo, { replaceState: true });
+    } catch (e: unknown) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
   onMount(async () => {
     const params = new URLSearchParams(window.location.search);
+
+    // ── Tauri desktop mode : attente d'un deep link canari://auth/callback ─
+    const platform = (import.meta.env.TAURI_ENV_PLATFORM as string | undefined) ?? '';
+    if (params.get('tauri') === '1' && '__TAURI_INTERNALS__' in window && platform !== 'android' && platform !== 'ios') {
+      status = 'En attente de la réponse du navigateur…';
+      try {
+        const { onOpenUrl, getCurrent } = await import('@tauri-apps/plugin-deep-link');
+
+        // Handle the case where the app was opened/focused by the deep link
+        const current = await getCurrent();
+        if (current && current.length > 0) {
+          const url = new URL(current[0]);
+          const code = url.searchParams.get('code');
+          const state = url.searchParams.get('state');
+          const authError = url.searchParams.get('error');
+          if (authError) {
+            error = `Authentik a refusé la connexion : ${url.searchParams.get('error_description') || authError}`;
+            return;
+          }
+          if (code && state) {
+            await processCallback(code, state);
+            return;
+          }
+        }
+
+        // Otherwise wait for the deep link event while the app is already running
+        const unlisten = await onOpenUrl(async (urls: string[]) => {
+          unlisten();
+          const raw = urls[0];
+          try {
+            const url = new URL(raw);
+            const code = url.searchParams.get('code');
+            const state = url.searchParams.get('state');
+            const authError = url.searchParams.get('error');
+            if (authError) {
+              error = `Authentik a refusé la connexion : ${url.searchParams.get('error_description') || authError}`;
+              return;
+            }
+            if (!code || !state) {
+              error = 'Paramètres manquants dans la redirection Authentik.';
+              return;
+            }
+            await processCallback(code, state);
+          } catch {
+            error = `URL de callback invalide : ${raw}`;
+          }
+        });
+      } catch (e: unknown) {
+        error = e instanceof Error ? e.message : String(e);
+      }
+      return;
+    }
+
+    // ── Mode navigateur standard : paramètres dans l'URL ────────────────────
     const code = params.get('code');
     const state = params.get('state');
     const authError = params.get('error');
@@ -22,16 +88,7 @@
       return;
     }
 
-    try {
-      status = "Échange du code d'autorisation…";
-      await handleOidcCallback(code, state);
-
-      status = 'Connexion réussie ! Redirection…';
-      const returnTo = getOidcReturnTo();
-      await goto(returnTo, { replaceState: true });
-    } catch (e: unknown) {
-      error = e instanceof Error ? e.message : String(e);
-    }
+    await processCallback(code, state);
   });
 </script>
 
@@ -56,7 +113,9 @@
       </div>
     {:else}
       <div class="space-y-4">
-        <div class="w-16 h-16 rounded-full bg-cn-yellow/20 flex items-center justify-center mx-auto">
+        <div
+          class="w-16 h-16 rounded-full bg-cn-yellow/20 flex items-center justify-center mx-auto"
+        >
           <span
             class="inline-block w-6 h-6 border-3 border-cn-dark/20 border-t-cn-dark rounded-full animate-spin"
           ></span>

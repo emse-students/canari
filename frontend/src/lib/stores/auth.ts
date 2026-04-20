@@ -45,6 +45,21 @@ function isEnvFlagEnabled(value: string | boolean | undefined): boolean {
   }
 }
 
+function isTauriContext(): boolean {
+  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+}
+
+/**
+ * True only on Tauri desktop (Linux/macOS/Windows).
+ * On Android/iOS the webview handles OIDC redirects natively — no workaround needed.
+ * TAURI_ENV_PLATFORM is injected at build time by the Tauri CLI (android | ios | linux | darwin | windows).
+ */
+function isTauriDesktop(): boolean {
+  if (!isTauriContext()) return false;
+  const platform = import.meta.env.TAURI_ENV_PLATFORM as string | undefined;
+  return platform !== 'android' && platform !== 'ios';
+}
+
 function coreUrl(): string {
   const url = import.meta.env.VITE_CORE_URL as string | undefined;
   if (url?.trim()) return url.trim();
@@ -62,6 +77,7 @@ function authentikClientId(): string {
 function oidcRedirectUri(): string {
   const configured = (import.meta.env.VITE_AUTHENTIK_REDIRECT_URI as string | undefined)?.trim();
   if (configured) return configured;
+  if (isTauriDesktop()) return 'canari://auth/callback';
   return `${window.location.origin}/auth/callback`;
 }
 
@@ -73,7 +89,7 @@ export function devRoutesEnabled(): boolean {
  * Redirect the user to Authentik's authorize endpoint.
  * After login, Authentik will redirect back to `/auth/callback`.
  */
-export function startOidcLogin(returnTo = '/chat'): void {
+export async function startOidcLogin(returnTo = '/chat'): Promise<void> {
   const baseUrl = authentikUrl();
   const clientId = authentikClientId();
   if (!baseUrl || !clientId) {
@@ -96,7 +112,17 @@ export function startOidcLogin(returnTo = '/chat'): void {
     state,
   });
 
-  window.location.href = `${baseUrl}/application/o/authorize/?${params}`;
+  const authUrl = `${baseUrl}/application/o/authorize/?${params}`;
+
+  if (isTauriDesktop()) {
+    // On desktop Tauri, open Authentik in the system browser (bypasses WebKitGTK restrictions),
+    // then navigate the webview to the waiting callback page.
+    const { openUrl } = await import('@tauri-apps/plugin-opener');
+    await openUrl(authUrl);
+    window.location.href = '/auth/callback?tauri=1';
+  } else {
+    window.location.href = authUrl;
+  }
 }
 
 /**
