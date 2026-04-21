@@ -555,6 +555,16 @@ fn save_mls_state_for_push(
     std::fs::write(data_dir.join("mls_push.bin"), &encrypted_bytes).map_err(|e| e.to_string())
 }
 
+/// Lit {app_data_dir}/mls_push.bin et retourne son contenu chiffré.
+/// Retourne None si le fichier n'existe pas (première installation).
+/// Utilisé au démarrage sur mobile quand localStorage est vide (WebView nettoyé).
+#[tauri::command]
+fn load_mls_state_from_push(app: tauri::AppHandle) -> Option<Vec<u8>> {
+    let data_dir = app.path().app_data_dir().ok()?;
+    let path = data_dir.join("mls_push.bin");
+    std::fs::read(&path).ok()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // In production desktop builds, `tauri://` scheme redirects are blocked by
@@ -721,7 +731,8 @@ pub fn run() {
             get_fcm_token,
             save_backup_file,
             store_push_context,
-            save_mls_state_for_push
+            save_mls_state_for_push,
+            load_mls_state_from_push
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

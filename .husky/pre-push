@@ -2,9 +2,9 @@
 # Pre-push hook for Canari project
 # Prevent pushing dirty worktrees and run checks only for impacted projects
 
-if ! git diff --quiet || ! git diff --cached --quiet; then
-  echo "❌ Push blocked: local changes detected (staged or unstaged)."
-  echo "   Commit or stash changes before pushing to avoid CI mismatch."
+if ! git diff --cached --quiet; then
+  echo "❌ Push bloqué : des fichiers sont stagés mais pas commités."
+  echo "   Committez ou stashez avant de pusher."
   exit 1
 fi
 

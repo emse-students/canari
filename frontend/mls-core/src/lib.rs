@@ -37,6 +37,10 @@ pub struct PersistedState {
     pub identity_bundle: Vec<u8>,
     pub storage_values: HashMap<Vec<u8>, Vec<u8>>,
     pub group_ids: Vec<Vec<u8>>,
+    /// Epoch minimale à accepter par groupe après un forget_group().
+    /// #[serde(default)] assure la compatibilité avec les états sauvegardés avant ce champ.
+    #[serde(default)]
+    pub forgotten_group_min_epochs: HashMap<String, u64>,
 }
 
 // Struct request wrapper for serialization
@@ -97,6 +101,22 @@ impl MlsManager {
             let credential =
                 BasicCredential::try_from(credential_enum).map_err(|_| MlsError::InvalidData)?;
 
+            // Vérifier que l'identité du credential correspond à l'identité attendue.
+            // Un état corrompu ou modifié pourrait contenir un credential pour un autre user/device.
+            let expected_identity = format!("{}:{}", user_id, device_id);
+            let loaded_identity = String::from_utf8_lossy(credential.identity()).to_string();
+            if loaded_identity != expected_identity {
+                log::warn!(
+                    "load_or_create: identity mismatch — expected={} loaded={}",
+                    expected_identity,
+                    loaded_identity
+                );
+                return Err(MlsError::OpenMls(format!(
+                    "Credential identity mismatch: expected {} but state contains {}",
+                    expected_identity, loaded_identity
+                )));
+            }
+
             // 2. Restaurer le stockage mémoire
             {
                 let storage = provider.storage();
@@ -123,7 +143,7 @@ impl MlsManager {
                 keypair,
                 credential,
                 groups,
-                forgotten_group_min_epochs: HashMap::new(),
+                forgotten_group_min_epochs: state.forgotten_group_min_epochs,
             })
         } else {
             // CAS 2 : Première création
@@ -486,30 +506,11 @@ impl MlsManager {
         let staged_welcome =
             StagedWelcome::new_from_welcome(&self.provider, &group_config, welcome.clone(), ratchet_tree)
                 .map_err(|e| {
-                     // DEBUG: Check storage for keys
-                    let storage = self.provider.storage();
-                    let lock = storage.values.read().unwrap();
-                    let keys: Vec<String> = lock.keys()
-                        .map(|k| {
-                            let hex_str = k.iter().map(|b| format!("{:02x}", b)).collect::<String>();
-                             if let Ok(s) = String::from_utf8(k.clone()) {
-                                 format!("(utf8){} [hex:{}]", s, hex_str)
-                             } else {
-                                 format!("(hex){}", hex_str)
-                             }
-                        })
-                        .collect();
-
-                    // Try to inspect secrets from welcome
-                    let requested_refs: Vec<String> = welcome.secrets().iter().map(|s| {
-                        // Just debug format the struct, we don't know the fields easily without docs
-                        let new_member = s.new_member(); // This returns KeyPackageRef (which is HashReference)
-                        let bytes = new_member.as_slice();
-                        let hex = bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>();
-                        format!("Ref: {}", hex)
-                    }).collect();
-
-                    MlsError::OpenMls(format!("Join error (staged): {:?}. \nWanted Refs (len={}): {:?}. \nStorage keys (len={}): {:?}", e, welcome.secrets().len(), requested_refs, keys.len(), keys))
+                    MlsError::OpenMls(format!(
+                        "Join error (staged): {:?} [n_secrets={}]",
+                        e,
+                        welcome.secrets().len()
+                    ))
                 })?;
 
         let group = staged_welcome
@@ -679,6 +680,7 @@ impl MlsManager {
             identity_bundle: bundle_bytes,
             storage_values,
             group_ids,
+            forgotten_group_min_epochs: self.forgotten_group_min_epochs.clone(),
         };
 
         let mut final_bytes = Vec::new();

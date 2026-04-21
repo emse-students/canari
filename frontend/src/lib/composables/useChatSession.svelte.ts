@@ -223,9 +223,27 @@ export function useChatSession() {
 
       cb.log('Initialisation MLS...');
       const { fromHex } = await import('$lib/utils/hex');
+      const _isTauri = !!(window as any).__TAURI_INTERNALS__;
+      let stateBytes: Uint8Array | undefined;
+
       const saved = localStorage.getItem('mls_autosave_' + userId);
-      const stateBytes = saved ? fromHex(saved) : undefined;
-      if (stateBytes) cb.log('Etat charge depuis le stockage local.');
+      if (saved) {
+        stateBytes = fromHex(saved);
+        cb.log('Etat MLS charge depuis localStorage.');
+      } else if (_isTauri) {
+        // Fallback mobile : localStorage peut être vidé par le WebView (mémoire, app kill).
+        // mls_push.bin est écrit dans le répertoire natif de l'app — plus fiable.
+        try {
+          const { invoke } = await import('@tauri-apps/api/core');
+          const fallback = await invoke<number[] | null>('load_mls_state_from_push');
+          if (fallback && fallback.length > 0) {
+            stateBytes = new Uint8Array(fallback);
+            cb.log('Etat MLS restaure depuis la sauvegarde native (mls_push.bin).');
+          }
+        } catch {
+          // Non-bloquant : le manager sera créé à vide et re-bootstrappé
+        }
+      }
 
       await mlsService.init(userId, pin, stateBytes);
       myDeviceId = mlsService.getDeviceId();

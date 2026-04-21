@@ -9,6 +9,7 @@ import {
   Query,
   Inject,
   BadRequestException,
+  ForbiddenException,
   UseGuards,
   Headers,
   OnModuleInit,
@@ -16,7 +17,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, MoreThanOrEqual, LessThan } from 'typeorm';
+import { Repository, In, MoreThanOrEqual, LessThan, DataSource } from 'typeorm';
 import { QueuedMessage } from './entities/queued-message.entity';
 import { KeyPackage } from './entities/key-package.entity';
 import { OneTimeKeyPackage } from './entities/one-time-key-package.entity';
@@ -603,6 +604,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     @InjectRepository(RevokedDevice)
     private revokedDeviceRepo: Repository<RevokedDevice>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
+    private readonly dataSource: DataSource,
   ) {}
 
   async onModuleInit() {
@@ -1432,39 +1434,42 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       `[ADD_MEMBER][${traceId}] START group=${safeGroupId} user=${safeUserId}`,
     );
 
-    let member = await this.groupMemberRepo.findOne({
-      where: { groupId: safeGroupId, userId: safeUserId },
-    });
-    if (!member) {
-      member = this.groupMemberRepo.create({
-        groupId: safeGroupId,
-        userId: safeUserId,
-        joinedAt: new Date(),
-      });
-    } else {
-      member.joinedAt = new Date();
-    }
-    await this.groupMemberRepo.save(member);
-
-    // Create DeviceGroupMembership for all devices of this user
+    // Upsert atomique : INSERT ... ON CONFLICT DO UPDATE évite la race findOne+save.
     const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     const userDevices = await this.keyPackageRepo.find({
       where: { userId: safeUserId, createdAt: MoreThanOrEqual(cutoff) },
     });
-    for (const device of userDevices) {
-      const existing = await this.deviceGroupRepo.findOne({
-        where: { deviceId: device.deviceId, groupId: safeGroupId },
-      });
-      if (!existing) {
-        const membership = this.deviceGroupRepo.create({
-          userId: safeUserId,
-          deviceId: device.deviceId,
+
+    await this.dataSource.transaction(async (manager) => {
+      // Upsert GroupMember : met à jour joinedAt si déjà présent
+      await manager
+        .createQueryBuilder()
+        .insert()
+        .into(GroupMember)
+        .values({
           groupId: safeGroupId,
-          status: 'pending' as any,
-        });
-        await this.deviceGroupRepo.save(membership);
+          userId: safeUserId,
+          joinedAt: new Date(),
+        })
+        .orUpdate(['joinedAt'], ['groupId', 'userId'])
+        .execute();
+
+      // Upsert DeviceGroupMembership pour chaque appareil actif : ignore si déjà présent
+      for (const device of userDevices) {
+        await manager
+          .createQueryBuilder()
+          .insert()
+          .into(DeviceGroupMembership)
+          .values({
+            userId: safeUserId,
+            deviceId: device.deviceId,
+            groupId: safeGroupId,
+            status: 'pending' as any,
+          })
+          .orIgnore()
+          .execute();
       }
-    }
+    });
 
     // NB: NOT added to group:members Redis here — devices only enter the routing
     // set once welcome_sent so pre-welcome devices never receive group messages.
@@ -2092,16 +2097,30 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       (d) => !revokedSet.has(d.deviceId),
     );
 
-    // For each device, try to pop one one-time prekey from the pool (FIFO).
-    // Falls back to the static registration key package when the pool is empty.
+    // For each device, atomically pop one one-time prekey from the pool (FIFO).
+    // FOR UPDATE SKIP LOCKED prevents two concurrent calls from consuming the same OTKP.
+    // Falls back to the static registration KP when the pool is empty.
     const results = await Promise.all(
       activeDevices.map(async (device) => {
-        const otkp = await this.oneTimeKeyPackageRepo.findOne({
-          where: { userId: device.userId, deviceId: device.deviceId },
-          order: { createdAt: 'ASC' },
+        const otkp = await this.dataSource.transaction(async (manager) => {
+          const found = await manager
+            .getRepository(OneTimeKeyPackage)
+            .createQueryBuilder('otkp')
+            .where('otkp.userId = :userId AND otkp.deviceId = :deviceId', {
+              userId: device.userId,
+              deviceId: device.deviceId,
+            })
+            .orderBy('otkp.createdAt', 'ASC')
+            .limit(1)
+            .setLock('pessimistic_partial_write') // FOR UPDATE SKIP LOCKED — atomic
+            .getOne();
+          if (found) {
+            await manager.delete(OneTimeKeyPackage, found.id);
+            return found;
+          }
+          return null;
         });
         if (otkp) {
-          await this.oneTimeKeyPackageRepo.delete(otkp.id);
           return { ...device, keyPackage: otkp.keyPackage };
         }
         // Pool exhausted — serve the static registration KP as a fallback, never delete it.
@@ -2143,15 +2162,18 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
     const lockKey = `mls:addlock:${groupId}`;
-    // Libérer seulement si c'est ce deviceId qui détient le verrou
-    const holder = await this.redis.get(lockKey);
-    if (holder === deviceId) {
-      await this.redis.del(lockKey);
-    }
-    this.logger.log(
-      `[RELEASE_LOCK] group=${groupId} device=${deviceId} released=${holder === deviceId} holder=${holder ?? 'none'}`,
+    // Script Lua atomique : libère le verrou seulement si c'est bien ce device qui le détient.
+    // GET + DEL séparés seraient une race condition (un autre device peut s'intercaler).
+    const released = await this.redis.eval(
+      `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end`,
+      1,
+      lockKey,
+      deviceId,
     );
-    return { released: holder === deviceId };
+    this.logger.log(
+      `[RELEASE_LOCK] group=${groupId} device=${deviceId} released=${released === 1}`,
+    );
+    return { released: released === 1 };
   }
 
   /**
@@ -2391,16 +2413,20 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
       return { accepted: true, newEpoch: group.activeEpoch };
     } finally {
-      // Always release the commit lock
-      const holder = await this.redis.get(lockKey);
-      if (holder === deviceId) {
-        await this.redis.del(lockKey);
+      // Libération atomique via Lua : évite la race GET→DEL
+      const released = await this.redis.eval(
+        `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end`,
+        1,
+        lockKey,
+        deviceId,
+      );
+      if (released === 1) {
         this.logger.log(
           `[COMMIT][${traceId}] Lock released for group=${groupId}`,
         );
       } else {
         this.logger.warn(
-          `[COMMIT][${traceId}] Lock holder changed (holder=${holder ?? 'none'}) for group=${groupId}`,
+          `[COMMIT][${traceId}] Lock already expired or stolen for group=${groupId}`,
         );
       }
     }
@@ -2572,6 +2598,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   @UseGuards(HeaderAuthGuard)
   @Post('mls-api/welcome')
   async sendWelcome(
+    @Headers('x-user-id') authUserIdRaw: string | undefined,
     @Body()
     body: {
       targetDeviceId: string;
@@ -2594,6 +2621,23 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     const senderUserId =
       sanitizeOptionalQueryValue(body.senderUserId, 'senderUserId') || 'system';
     const safeGroupId = sanitizeQueryValue(body.groupId, 'groupId');
+
+    // Vérifier que l'expéditeur authentifié est membre du groupe.
+    // authUserIdRaw provient du header x-user-id positionné par le proxy après validation JWT.
+    const authUserId = sanitizeOptionalQueryValue(authUserIdRaw, 'x-user-id');
+    if (authUserId) {
+      const membership = await this.groupMemberRepo.findOne({
+        where: { groupId: safeGroupId, userId: authUserId },
+      });
+      if (!membership) {
+        this.logger.warn(
+          `[WELCOME][${traceId}] AUTHZ FAIL sender=${authUserId} not member of group=${safeGroupId}`,
+        );
+        throw new ForbiddenException(
+          `User ${authUserId} is not a member of group ${safeGroupId}`,
+        );
+      }
+    }
 
     this.logger.log(
       `[WELCOME][${traceId}] START group=${safeGroupId} sender=${senderUserId} target=${targetUserId ?? 'unknown'}:${targetDeviceId} payloadLen=${body.welcomePayload?.length ?? 0} ratchetTreeLen=${body.ratchetTreePayload?.length ?? 0}`,
