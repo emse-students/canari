@@ -49,9 +49,6 @@ export interface IStorage {
   // Garbage collection – delete messages older than the given threshold.
   deleteOldMessages(maxAgeMs: number): Promise<number>;
 
-  // Garbage collection – delete messages older than the given threshold.
-  deleteOldMessages(maxAgeMs: number): Promise<number>;
-
   // Backup helpers – expose raw encrypted rows so backups don't require
   // re-encryption and can be imported to a new device with the same PIN.
   getAllEncryptedRows(): Promise<EncryptedMessageRow[]>;
@@ -424,6 +421,10 @@ export class SqliteStorage implements IStorage {
     const Database = (await import('@tauri-apps/plugin-sql')).default;
     this.db = await Database.load(this.dbPath);
 
+    // WAL mode : lectures concurrentes non bloquantes, critique sur mobile
+    await this.db.execute('PRAGMA journal_mode=WAL');
+
+    // Schéma v1 : création initiale
     await this.db.execute(`
             CREATE TABLE IF NOT EXISTS conversations (
                 id         TEXT    PRIMARY KEY,
@@ -433,14 +434,17 @@ export class SqliteStorage implements IStorage {
             )
         `);
 
+    // Colonnes TEXT (base64) pour iv/salt/cipher_text.
+    // L'ancien schéma utilisait BLOB, ce qui amenait le plugin Tauri SQL à
+    // sérialiser les Uint8Array en JSON text "[1,2,3]" → données illisibles au redémarrage.
     await this.db.execute(`
             CREATE TABLE IF NOT EXISTS messages (
                 id              TEXT PRIMARY KEY,
                 conversation_id TEXT NOT NULL,
                 timestamp       INTEGER,
-                iv              BLOB,
-                salt            BLOB,
-                cipher_text     BLOB,
+                iv              TEXT,
+                salt            TEXT,
+                cipher_text     TEXT,
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id)
             )
         `);
@@ -448,6 +452,25 @@ export class SqliteStorage implements IStorage {
     await this.db.execute(
       'CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id)'
     );
+
+    // Migration v1→v2 : colonnes BLOB → TEXT (base64).
+    // Détecte les lignes dont iv/salt/cipher_text ne sont pas des chaînes base64 valides
+    // (stockées avec l'ancien format JSON "[1,2,3]") et les supprime car elles ne peuvent
+    // pas être déchiffrées sans la clé privée du device source.
+    const versionRows: any[] = await this.db.select('PRAGMA user_version');
+    const currentVersion: number = versionRows[0]?.user_version ?? 0;
+
+    if (currentVersion < 2) {
+      // Supprimer les lignes illisibles (iv non-base64 = ancien format JSON)
+      await this.db.execute(`
+        DELETE FROM messages
+        WHERE typeof(iv) != 'text'
+           OR iv LIKE '[%'
+           OR salt LIKE '[%'
+           OR cipher_text LIKE '[%'
+      `);
+      await this.db.execute('PRAGMA user_version = 2');
+    }
   }
 
   // -- Conversations -------------------------------------------------------
@@ -498,21 +521,28 @@ export class SqliteStorage implements IStorage {
       })
     );
 
-    // Tauri SQL plugin doesn't support bulk insert nicely, so we loop but parallelize encryption.
-    // Binary data is stored as base64 strings: passing number[] as a parameter causes the plugin
-    // to bind it as JSON text (not a real BLOB), corrupting the stored bytes on restart.
-    for (const item of encryptedMessages) {
-      await this.db.execute(
-        'INSERT OR REPLACE INTO messages (id, conversation_id, timestamp, iv, salt, cipher_text) VALUES ($1, $2, $3, $4, $5, $6)',
-        [
-          item.msg.id,
-          item.msg.conversationId,
-          item.msg.timestamp,
-          uint8ToBase64(item.encrypted.iv),
-          uint8ToBase64(item.encrypted.salt),
-          uint8ToBase64(item.encrypted.cipherText),
-        ]
-      );
+    // Enveloppe tous les inserts dans une transaction pour l'atomicité et la performance.
+    // Binary data stockée en base64 TEXT : passer number[] causerait le plugin à sérialiser
+    // en JSON "[1,2,3]" (non-BLOB), illisible après redémarrage.
+    await this.db.execute('BEGIN');
+    try {
+      for (const item of encryptedMessages) {
+        await this.db.execute(
+          'INSERT OR REPLACE INTO messages (id, conversation_id, timestamp, iv, salt, cipher_text) VALUES ($1, $2, $3, $4, $5, $6)',
+          [
+            item.msg.id,
+            item.msg.conversationId,
+            item.msg.timestamp,
+            uint8ToBase64(item.encrypted.iv),
+            uint8ToBase64(item.encrypted.salt),
+            uint8ToBase64(item.encrypted.cipherText),
+          ]
+        );
+      }
+      await this.db.execute('COMMIT');
+    } catch (e) {
+      await this.db.execute('ROLLBACK');
+      throw e;
     }
   }
 
