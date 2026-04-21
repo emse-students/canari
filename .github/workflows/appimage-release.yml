@@ -98,6 +98,7 @@ jobs:
           echo "VITE_CORE_URL=${BASE_URL}" >> .env
           echo "VITE_AUTHENTIK_URL=${AUTHENTIK_URL}" >> .env
           echo "VITE_AUTHENTIK_CLIENT_ID=${AUTHENTIK_CLIENT_ID}" >> .env
+          echo "VITE_AUTHENTIK_REDIRECT_URI=http://localhost:1421/auth/callback" >> .env
 
       - name: Build Tauri AppImage
         uses: tauri-apps/tauri-action@v0

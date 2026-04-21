@@ -73,12 +73,12 @@
   });
 
   // ─── Gestionnaires d'événements ───────────────────────────────────────────
-  async function handleLogin() {
+  function handleLogin() {
     loginError = '';
     isLoggingIn = true;
     try {
-      await startOidcLogin(getSafeReturnTarget());
-      // Le navigateur (ou la webview) navigue vers la suite — pas besoin de réinitialiser isLoggingIn
+      startOidcLogin(getSafeReturnTarget());
+      // Le navigateur navigue vers Authentik — pas besoin de réinitialiser isLoggingIn
     } catch (e: unknown) {
       loginError = e instanceof Error ? e.message : String(e);
       isLoggingIn = false;

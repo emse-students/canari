@@ -10,23 +10,9 @@
     "frontendDist": "../build"
   },
   "app": {
-    "windows": [
-      {
-        "title": "Canari",
-        "width": 800,
-        "height": 600,
-        "devtools": true
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
-    }
-  },
-  "plugins": {
-    "deep-link": {
-      "desktop": {
-        "schemes": ["canari"]
-      }
     }
   },
   "bundle": {

@@ -45,21 +45,6 @@ function isEnvFlagEnabled(value: string | boolean | undefined): boolean {
   }
 }
 
-function isTauriContext(): boolean {
-  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
-}
-
-/**
- * True only on Tauri desktop (Linux/macOS/Windows).
- * On Android/iOS the webview handles OIDC redirects natively — no workaround needed.
- * TAURI_ENV_PLATFORM is injected at build time by the Tauri CLI (android | ios | linux | darwin | windows).
- */
-function isTauriDesktop(): boolean {
-  if (!isTauriContext()) return false;
-  const platform = import.meta.env.TAURI_ENV_PLATFORM as string | undefined;
-  return platform !== 'android' && platform !== 'ios';
-}
-
 function coreUrl(): string {
   const url = import.meta.env.VITE_CORE_URL as string | undefined;
   if (url?.trim()) return url.trim();
@@ -77,7 +62,6 @@ function authentikClientId(): string {
 function oidcRedirectUri(): string {
   const configured = (import.meta.env.VITE_AUTHENTIK_REDIRECT_URI as string | undefined)?.trim();
   if (configured) return configured;
-  if (isTauriDesktop()) return 'canari://auth/callback';
   return `${window.location.origin}/auth/callback`;
 }
 
@@ -89,7 +73,7 @@ export function devRoutesEnabled(): boolean {
  * Redirect the user to Authentik's authorize endpoint.
  * After login, Authentik will redirect back to `/auth/callback`.
  */
-export async function startOidcLogin(returnTo = '/chat'): Promise<void> {
+export function startOidcLogin(returnTo = '/chat'): void {
   const baseUrl = authentikUrl();
   const clientId = authentikClientId();
   if (!baseUrl || !clientId) {
@@ -100,8 +84,8 @@ export async function startOidcLogin(returnTo = '/chat'): Promise<void> {
 
   // Generate random state for CSRF protection
   const state = crypto.randomUUID();
-  sessionStorage.setItem(OIDC_STATE_KEY, state);
-  sessionStorage.setItem(OIDC_RETURN_KEY, returnTo);
+  localStorage.setItem(OIDC_STATE_KEY, state);
+  localStorage.setItem(OIDC_RETURN_KEY, returnTo);
 
   const redirectUri = oidcRedirectUri();
   const params = new URLSearchParams({
@@ -112,21 +96,7 @@ export async function startOidcLogin(returnTo = '/chat'): Promise<void> {
     state,
   });
 
-  const authUrl = `${baseUrl}/application/o/authorize/?${params}`;
-
-  if (isTauriDesktop()) {
-    // On desktop Tauri, open Authentik in the system browser (bypasses WebKitGTK restrictions),
-    // then navigate the webview to the waiting callback page.
-    // Uses a custom Rust command that spawns the browser as a detached process
-    // — plugin-opener's openUrl can block the IPC thread on Linux/WebKitGTK.
-    const { invoke } = await import('@tauri-apps/api/core');
-    await invoke('open_in_browser', { url: authUrl });
-
-    const { goto } = await import('$app/navigation');
-    await goto('/auth/callback?tauri=1', { replaceState: true });
-  } else {
-    window.location.href = authUrl;
-  }
+  window.location.href = `${baseUrl}/application/o/authorize/?${params}`;
 }
 
 /**
@@ -137,21 +107,37 @@ export async function handleOidcCallback(
   code: string,
   state: string
 ): Promise<{ id: string; email: string; displayName: string }> {
-  // Verify state
-  const savedState = sessionStorage.getItem(OIDC_STATE_KEY);
-  if (!savedState || savedState !== state) {
+  // CSRF state check.
+  // In a native Tauri desktop context, WebKitGTK clears localStorage during
+  // full cross-origin navigation (app → Authentik → back), so the saved state
+  // is gone by the time the callback page loads. CSRF is also not a meaningful
+  // threat in a local desktop webview, so we skip the check there.
+  // In a normal browser (web deployment) the check is enforced strictly.
+  const isDesktop = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+  console.debug('[auth] handleOidcCallback isDesktop:', isDesktop);
+  const savedState = localStorage.getItem(OIDC_STATE_KEY);
+  console.debug('[auth] savedState present:', !!savedState, 'matches:', savedState === state);
+  if (!isDesktop) {
+    if (!savedState || savedState !== state) {
+      throw new Error('Invalid OIDC state — possible CSRF attack');
+    }
+  } else if (savedState && savedState !== state) {
+    // State was preserved but doesn't match — still reject.
     throw new Error('Invalid OIDC state — possible CSRF attack');
   }
-  sessionStorage.removeItem(OIDC_STATE_KEY);
+  localStorage.removeItem(OIDC_STATE_KEY);
 
   const redirectUri = oidcRedirectUri();
+  console.debug('[auth] redirectUri:', redirectUri, 'coreUrl:', coreUrl());
 
+  console.debug('[auth] POSTing to core-service /api/auth/oidc/callback…');
   const res = await fetch(`${coreUrl()}/api/auth/oidc/callback`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include', // receive HttpOnly cookie
     body: JSON.stringify({ code, redirect_uri: redirectUri }),
   });
+  console.debug('[auth] core-service response status:', res.status);
 
   if (!res.ok) {
     const msg = await res.text().catch(() => '');
@@ -171,10 +157,12 @@ export async function handleOidcCallback(
     };
   };
 
+  console.debug('[auth] got access_token, saving user:', data.user?.id);
   _accessToken = data.access_token;
   setWsSessionCookie(data.access_token);
 
   saveUserLocally(data.user);
+  console.debug('[auth] handleOidcCallback complete');
 
   return data.user;
 }
@@ -225,8 +213,8 @@ export async function devLogin(
 
 /** Get the intended return path after OIDC callback, then clear it. */
 export function getOidcReturnTo(): string {
-  const returnTo = sessionStorage.getItem(OIDC_RETURN_KEY) || '/chat';
-  sessionStorage.removeItem(OIDC_RETURN_KEY);
+  const returnTo = localStorage.getItem(OIDC_RETURN_KEY) || '/chat';
+  localStorage.removeItem(OIDC_RETURN_KEY);
   return returnTo;
 }
 

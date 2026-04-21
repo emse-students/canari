@@ -6,87 +6,8 @@
   let error = $state('');
   let status = $state('Authentification en cours…');
 
-  async function processCallback(code: string, state: string) {
-    try {
-      status = "Échange du code d'autorisation…";
-      await handleOidcCallback(code, state);
-      status = 'Connexion réussie ! Redirection…';
-      const returnTo = getOidcReturnTo();
-      await goto(returnTo, { replaceState: true });
-    } catch (e: unknown) {
-      error = e instanceof Error ? e.message : String(e);
-    }
-  }
-
   onMount(async () => {
     const params = new URLSearchParams(window.location.search);
-
-    // ── Tauri desktop mode : attente d'un deep link canari://auth/callback ─
-    const platform = (import.meta.env.TAURI_ENV_PLATFORM as string | undefined) ?? '';
-    if (
-      params.get('tauri') === '1' &&
-      '__TAURI_INTERNALS__' in window &&
-      platform !== 'android' &&
-      platform !== 'ios'
-    ) {
-      status = 'En attente de la réponse du navigateur…';
-      try {
-        const { onOpenUrl, getCurrent, register } = await import('@tauri-apps/plugin-deep-link');
-
-        // Ensure the canari:// scheme is registered with the OS (needed in dev mode
-        // on Linux where no .desktop file is bundled).
-        try {
-          await register('canari');
-        } catch {
-          /* already registered or unsupported */
-        }
-
-        // Handle the case where the app was opened/focused by the deep link
-        const current = await getCurrent();
-        if (current && current.length > 0) {
-          const url = new URL(current[0]);
-          const code = url.searchParams.get('code');
-          const state = url.searchParams.get('state');
-          const authError = url.searchParams.get('error');
-          if (authError) {
-            error = `Authentik a refusé la connexion : ${url.searchParams.get('error_description') || authError}`;
-            return;
-          }
-          if (code && state) {
-            await processCallback(code, state);
-            return;
-          }
-        }
-
-        // Otherwise wait for the deep link event while the app is already running
-        const unlisten = await onOpenUrl(async (urls: string[]) => {
-          unlisten();
-          const raw = urls[0];
-          try {
-            const url = new URL(raw);
-            const code = url.searchParams.get('code');
-            const state = url.searchParams.get('state');
-            const authError = url.searchParams.get('error');
-            if (authError) {
-              error = `Authentik a refusé la connexion : ${url.searchParams.get('error_description') || authError}`;
-              return;
-            }
-            if (!code || !state) {
-              error = 'Paramètres manquants dans la redirection Authentik.';
-              return;
-            }
-            await processCallback(code, state);
-          } catch {
-            error = `URL de callback invalide : ${raw}`;
-          }
-        });
-      } catch (e: unknown) {
-        error = e instanceof Error ? e.message : String(e);
-      }
-      return;
-    }
-
-    // ── Mode navigateur standard : paramètres dans l'URL ────────────────────
     const code = params.get('code');
     const state = params.get('state');
     const authError = params.get('error');
@@ -101,7 +22,21 @@
       return;
     }
 
-    await processCallback(code, state);
+    try {
+      console.debug('[callback] starting handleOidcCallback, code length:', code.length);
+      status = "Échange du code d'autorisation…";
+      const user = await handleOidcCallback(code, state);
+      console.debug('[callback] handleOidcCallback resolved, user:', user?.id);
+
+      status = 'Connexion réussie ! Redirection…';
+      const returnTo = getOidcReturnTo();
+      console.debug('[callback] goto ->', returnTo);
+      await goto(returnTo, { replaceState: true });
+      console.debug('[callback] goto resolved');
+    } catch (e: unknown) {
+      console.error('[callback] error:', e);
+      error = e instanceof Error ? e.message : String(e);
+    }
   });
 </script>
 

@@ -555,72 +555,22 @@ fn save_mls_state_for_push(
     std::fs::write(data_dir.join("mls_push.bin"), &encrypted_bytes).map_err(|e| e.to_string())
 }
 
-// ─── Desktop: open URL in system browser (non-blocking) ─────────────────────
-
-/// Spawns the system browser via `xdg-open` (Linux), `open` (macOS), or
-/// `cmd /c start` (Windows) as a fully detached process.
-/// Unlike plugin-opener's `openUrl`, this never blocks the IPC thread.
-#[tauri::command]
-fn open_in_browser(url: String) -> Result<(), String> {
-    #[cfg(target_os = "linux")]
-    {
-        std::process::Command::new("xdg-open")
-            .arg(&url)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .map(|_| ())
-            .map_err(|e| e.to_string())?;
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open")
-            .arg(&url)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .map(|_| ())
-            .map_err(|e| e.to_string())?;
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        std::process::Command::new("cmd")
-            .args(["/c", "start", "", &url])
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .map(|_| ())
-            .map_err(|e| e.to_string())?;
-    }
-
-    // On mobile this command is never called, but it compiles fine as a no-op.
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-    let _ = url;
-
-    Ok(())
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // In production desktop builds, `tauri://` scheme redirects are blocked by
+    // WebKitGTK. We serve app assets via a local HTTP server instead, so the
+    // OIDC redirect URI stays http://, which WebKitGTK accepts without complaint.
+    #[cfg(all(desktop, not(dev)))]
+    let port: u16 = 1421;
+
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_sql::Builder::default().build());
 
-    // Desktop-only: single-instance ensures the OS sends deep links to the
-    // already-running instance instead of spawning a new process (Linux/Windows).
-    #[cfg(desktop)]
-    let builder = builder
-        .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}))
-        .plugin(tauri_plugin_deep_link::init());
+    #[cfg(all(desktop, not(dev)))]
+    let builder = builder.plugin(tauri_plugin_localhost::Builder::new(port).build());
 
     #[cfg(mobile)]
     let builder = builder
@@ -631,7 +581,50 @@ pub fn run() {
         .manage(AppState {
             mls_manager: Mutex::new(None),
         })
-        .setup(|app| {
+        .setup(move |app| {
+            // ── Create main window on desktop ────────────────────────────────────
+            // In dev mode: use the Vite dev server (already HTTP, no issues).
+            // In production: use tauri-plugin-localhost so assets are served over
+            // http://localhost:<port>. This means the OIDC redirect URI is HTTP,
+            // and WebKitGTK won't block it with its "non-HTTP(S) scheme" error.
+            #[cfg(desktop)]
+            {
+                #[cfg(dev)]
+                let url = tauri::WebviewUrl::App(std::path::PathBuf::from("/"));
+
+                #[cfg(not(dev))]
+                let url = {
+                    let localhost_url: tauri::Url =
+                        format!("http://localhost:{}", port).parse().unwrap();
+                    // Grant all app permissions to the localhost-served window.
+                    app.add_capability(
+                        tauri::ipc::CapabilityBuilder::new("localhost-cap")
+                            .permission("core:default")
+                            .permission("core:window:allow-show")
+                            .permission("core:window:allow-hide")
+                            .permission("core:window:allow-set-focus")
+                            .permission("core:window:allow-unminimize")
+                            .permission("core:window:allow-is-visible")
+                            .permission("core:window:allow-close")
+                            .permission("core:window:allow-destroy")
+                            .permission("core:tray:default")
+                            .permission("opener:default")
+                            .permission("notification:default")
+                            .permission("sql:default")
+                            .permission("sql:allow-execute")
+                            .remote(localhost_url.to_string())
+                            .window("main"),
+                    )?;
+                    tauri::WebviewUrl::External(localhost_url)
+                };
+
+                tauri::WebviewWindowBuilder::new(app, "main", url)
+                    .title("Canari")
+                    .inner_size(1280.0, 720.0)
+                    .devtools(true)
+                    .build()?;
+            }
+
             // Open devtools automatically in debug mode
             #[cfg(debug_assertions)]
             {
@@ -728,8 +721,7 @@ pub fn run() {
             get_fcm_token,
             save_backup_file,
             store_push_context,
-            save_mls_state_for_push,
-            open_in_browser
+            save_mls_state_for_push
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

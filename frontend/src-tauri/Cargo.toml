@@ -19,6 +19,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "image-png", "devtools"] }
+tauri-plugin-localhost = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-sql = { version = "2", features = ["sqlite"] }
@@ -28,10 +29,6 @@ mls-core = { path = "../mls-core" }
 tauri-plugin-biometric = "2"
 tauri-plugin-keystore = "2.1.0-alpha.1"
 tauri-plugin-http = "2"
-
-[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
-tauri-plugin-deep-link = "2"
-tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = { version = "0.21", default-features = false }
