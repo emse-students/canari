@@ -1446,7 +1446,11 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         .createQueryBuilder()
         .insert()
         .into(GroupMember)
-        .values({ groupId: safeGroupId, userId: safeUserId, joinedAt: new Date() })
+        .values({
+          groupId: safeGroupId,
+          userId: safeUserId,
+          joinedAt: new Date(),
+        })
         .orUpdate(['joinedAt'], ['groupId', 'userId'])
         .execute();
 
