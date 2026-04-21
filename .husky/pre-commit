@@ -1,6 +1,5 @@
 #!/bin/sh
-# Pre-commit hook for Canari project
-# Runs CI-aligned checks only for impacted projects
+# Pre-commit hook — auto-fixe et re-stage plutôt que de bloquer.
 
 STAGED_FILES=$(git diff --cached --name-only)
 
@@ -20,37 +19,27 @@ if [ "$RUN_ALL" -eq 1 ]; then
 fi
 
 if [ "$RUN_FRONTEND" -eq 1 ]; then
-  (
-    cd frontend && bun run lint -- --no-cache --quiet
-  ) || {
-    echo "❌ Frontend lint failed. Use 'cd frontend && bun run lint:fix'."
+  (cd frontend && bun run lint:fix -- --no-cache --quiet && bun run format) || {
+    echo "❌ Frontend lint/format échoué."
     exit 1
   }
-  
-  (
-    cd frontend && bun run format:check
-  ) || {
-    echo "❌ Frontend format check failed. Use 'cd frontend && bun run format'."
-    exit 1
-  }
+  git diff --name-only -- frontend/ | xargs -r git add
 fi
 
 if [ "$RUN_DELIVERY" -eq 1 ]; then
-  (
-    cd apps/chat-delivery-service && npm run lint
-  ) || {
-    echo "❌ chat-delivery-service checks failed (lint)."
+  (cd apps/chat-delivery-service && npm run lint) || {
+    echo "❌ chat-delivery-service lint échoué."
     exit 1
   }
+  git diff --name-only -- apps/chat-delivery-service/ | xargs -r git add
 fi
 
 if [ "$RUN_GATEWAY" -eq 1 ]; then
-  (
-    cd apps/chat-gateway && cargo fmt -- --check
-  ) || {
-    echo "❌ chat-gateway formatting failed. Run 'cd apps/chat-gateway && cargo fmt'."
+  (cd apps/chat-gateway && cargo fmt) || {
+    echo "❌ chat-gateway cargo fmt échoué."
     exit 1
   }
+  git diff --name-only -- apps/chat-gateway/ | xargs -r git add
 fi
 
 exit 0
