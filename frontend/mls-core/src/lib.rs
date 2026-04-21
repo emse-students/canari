@@ -515,7 +515,7 @@ impl MlsManager {
                 e,
                 welcome.secrets().len()
             ))
-        })?
+        })?;
 
         let group = staged_welcome
             .into_group(&self.provider)
