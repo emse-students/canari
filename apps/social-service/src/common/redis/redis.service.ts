@@ -1,5 +1,6 @@
 import { Injectable, OnModuleDestroy, Logger } from '@nestjs/common';
 import Redis from 'ioredis';
+import { inspect } from 'util';
 
 /**
  * Redis service for publishing events to the chat gateway.
@@ -39,7 +40,9 @@ export class RedisService implements OnModuleDestroy {
       await this.client.publish(channel, JSON.stringify(message));
       this.logger.debug(`Published to ${channel}: ${JSON.stringify(message)}`);
     } catch (err) {
-      this.logger.error(`Failed to publish to ${channel}: ${err}`);
+      const trace =
+        err instanceof Error ? (err.stack ?? err.message) : inspect(err, { depth: null });
+      this.logger.error(`Failed to publish to ${channel}`, trace);
     }
   }
 

@@ -595,7 +595,10 @@ export class ChannelService {
     return this.buildChannelBootstrap(channel);
   }
 
-  async getChannelHistoryKeysForUser(channelId: string, userId: string): Promise<ChannelHistoryKeysDto> {
+  async getChannelHistoryKeysForUser(
+    channelId: string,
+    userId: string
+  ): Promise<ChannelHistoryKeysDto> {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
 

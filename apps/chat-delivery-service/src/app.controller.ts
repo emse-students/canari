@@ -1464,7 +1464,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
             userId: safeUserId,
             deviceId: device.deviceId,
             groupId: safeGroupId,
-            status: 'pending' as any,
+            status: 'pending',
           })
           .orIgnore()
           .execute();
