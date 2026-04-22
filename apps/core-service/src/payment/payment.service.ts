@@ -109,7 +109,7 @@ export class PaymentService {
   // ── Customer & Payment Methods ────────────────────────────────────────────
 
   async getOrCreateCustomer(
-    existingCustomerId: string | null,
+    existingCustomerId: string | null | undefined,
     meta: { userId: string; displayName?: string | null },
   ): Promise<string> {
     if (!this.stripe) throw new BadRequestException('Stripe not configured');

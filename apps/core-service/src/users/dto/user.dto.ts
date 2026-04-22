@@ -10,7 +10,7 @@ import {
 export class CreateUserDto {
   @IsString()
   @IsNotEmpty()
-  id: string;
+  id!: string;
 
   @IsString()
   @IsOptional()
@@ -50,12 +50,12 @@ export class UpdateUserDto {
 }
 
 export class PublicUserDto {
-  id: string;
-  displayName: string | null;
-  firstName: string | null;
-  lastName: string | null;
-  promo: number | null;
-  formation: string | null;
-  bio: string | null;
-  createdAt: Date;
+  id?: string;
+  displayName?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  promo?: number | null;
+  formation?: string | null;
+  bio?: string | null;
+  createdAt?: Date;
 }

@@ -3,39 +3,39 @@ import { Entity, Column, PrimaryColumn } from 'typeorm';
 @Entity('users')
 export class User {
   @PrimaryColumn()
-  id: string;
+  id!: string;
 
   @Column({ type: 'varchar', nullable: true })
-  displayName: string | null;
+  displayName?: string | null;
 
   @Column({ type: 'varchar', nullable: true })
-  firstName: string | null;
+  firstName?: string | null;
 
   @Column({ type: 'varchar', nullable: true })
-  lastName: string | null;
+  lastName?: string | null;
 
   @Column({ type: 'int', nullable: true })
-  promo: number | null;
+  promo?: number | null;
 
   @Column({ type: 'varchar', nullable: true })
-  formation: string | null;
+  formation?: string | null;
 
   @Column({ type: 'text', nullable: true })
-  bio: string | null;
+  bio?: string | null;
 
   @Column({ type: 'varchar', nullable: true })
-  stripeCustomerId: string | null;
+  stripeCustomerId?: string | null;
 
   @Column({ type: 'boolean', default: false })
-  admin: boolean;
+  admin?: boolean;
 
   @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
-  createdAt: Date;
+  createdAt?: Date;
 
   @Column({
     type: 'timestamp',
     default: () => 'CURRENT_TIMESTAMP',
     onUpdate: 'CURRENT_TIMESTAMP',
   })
-  updatedAt: Date;
+  updatedAt?: Date;
 }
