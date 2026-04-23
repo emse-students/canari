@@ -10,7 +10,15 @@
     "frontendDist": "../build"
   },
   "app": {
-    "windows": [],
+    "windows": [
+      {
+        "create": false,
+        "title": "Canari",
+        "width": 800,
+        "height": 600,
+        "devtools": true
+      }
+    ],
     "security": {
       "csp": null
     }

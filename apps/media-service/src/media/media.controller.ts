@@ -106,6 +106,7 @@ export class MediaController {
     }),
   )
   async upload(
+    //@ts-expect-error - There are conflicting namespaces
     @UploadedFile() file: Express.Multer.File,
     @Req() req: Request,
   ): Promise<{ mediaId: string }> {
@@ -144,6 +145,7 @@ export class MediaController {
   )
   async appendChunk(
     @Param('id') id: string,
+    //@ts-expect-error - There are conflicting namespaces
     @UploadedFile() file: Express.Multer.File,
     @Req() req: Request,
   ): Promise<{ ok: boolean }> {

@@ -628,11 +628,7 @@ pub fn run() {
                     tauri::WebviewUrl::External(localhost_url)
                 };
 
-                tauri::WebviewWindowBuilder::new(app, "main", url)
-                    .title("Canari")
-                    .inner_size(1280.0, 720.0)
-                    .devtools(true)
-                    .build()?;
+                tauri::WebviewWindowBuilder::from_config(app.handle(), &app.config().app.windows[0])?.build()?;
             }
 
             // Open devtools automatically in debug mode

@@ -36,18 +36,22 @@ Nginx est l'unique entrée HTTP. Il implémente l'authentification via le sous-m
 | Route publique | Upstream | Auth ? | Notes |
 |---|---|---|---|
 | `/api/ws` | `chat-gateway:3000` | ✅ | WebSocket upgrade, token cookie |
-| `/api/groups` | `chat-gateway:3000` | — | Groupes MLS |
-| `/api/mls-api/*` | `chat-delivery-service:3010` | ✅ | API MLS principal |
+| `/api/presence` | `chat-gateway:3000` | ✅ | Présence en ligne (Redis) |
+| `/api/mls-api/*` | `chat-delivery-service:3010` | ✅ | API MLS principal (messages, groupes, sync) |
 | `/api/history/*` | `chat-delivery-service:3010` | ✅ | Redis Stream historique |
-| `/api/media/*` | `media-service:3011` | — | Blobs — auth interne au service |
+| `/api/media/*` | `media-service:3011` | ✅ | Blobs chiffrés (MinIO) |
 | `/api/posts/*` | `social-service:3014` | ✅ | Fil d'actualités |
-| `/api/forms/*` | `social-service:3014` | ✅ | Formulaires |
-| `/api/channels/*` | `social-service:3014` | — | Channels communautés |
-| `/api/auth/*` | `core-service:3012` | — | Login, refresh, logout |
-| `/api/users/*` | `core-service:3012` | — | Profils utilisateurs |
-| `/api/payments/*` | `core-service:3012` | ✅ | Stripe |
+| `/api/forms/*` | `social-service:3014` | ✅ | Formulaires avec paiements |
+| `/api/associations/*` | `social-service:3014` | ✅ | Associations (Stripe Connect) |
+| `/api/channels/*` | `social-service:3014` | ✅ | Workspaces et channels |
+| `/api/auth/*` | `core-service:3012` | — | Login OIDC, refresh, logout |
+| `/api/users/*` | `core-service:3012` | ✅ | Profils utilisateurs, recherche |
+| `/api/payments/*` | `core-service:3012` | ✅ | Stripe (checkout, webhooks) |
+
+> **Note**: La route `/api/groups` a été supprimée. La gestion des groupes est maintenant via `/api/mls-api/*` (chat-delivery-service).
 
 **Headers réinjectés par Nginx** après `auth_request` réussi :
+
 - `X-User-Id` — identifiant utilisateur (sub OIDC)
 - `X-User-Logged-In` — booléen
 
@@ -96,6 +100,7 @@ Nginx est l'unique entrée HTTP. Il implémente l'authentification via le sous-m
 | `chat:channel_events` | social-service | chat-gateway | `{ type, data, userIds[], timestamp }` |
 
 **Types d'événements canal** (`chat:channel_events`) :
+
 - `channel.member.joined`
 - `channel.member.kicked`
 - `channel.message.created`

@@ -429,6 +429,8 @@ Le chiffrement des chunks utilise la clé dérivée de l'échange ECDH, en AES-2
 ---
 
 ## 10. API chat-delivery-service (endpoints MLS)
+> **Attention**: Cette liste est incomplète. Pour la liste complète des endpoints (~40+), voir `apps/chat-delivery-service/src/app.controller.ts`.
+
 
 | Méthode | Route                                    | Description                                                       |
 | ------- | ---------------------------------------- | ----------------------------------------------------------------- |

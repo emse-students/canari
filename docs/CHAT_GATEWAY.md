@@ -5,6 +5,7 @@
 Le `chat-gateway` (port 3000) est le point d'entrée WebSocket temps réel. Il est écrit en **Rust** avec le framework **Axum** (Tokio async runtime).
 
 Ses responsabilités :
+
 - Gérer les connexions WebSocket des clients
 - Valider les JWT à la connexion
 - Maintenir un registre des devices connectés en mémoire
@@ -39,6 +40,7 @@ pub struct AppState {
 ### ConnectionGuard
 
 Un `ConnectionGuard` est créé à chaque connexion WS. Son `Drop` nettoie automatiquement :
+
 - Retire le sender de `connected_users`
 - Supprime la clé de présence Redis `user:online:{userId}:{deviceId}`
 
@@ -47,10 +49,12 @@ Un `ConnectionGuard` est créé à chaque connexion WS. Son `Drop` nettoie autom
 ## 3. Authentification WebSocket
 
 À la connexion (`GET /api/ws?device_id=...`), le token JWT est extrait depuis :
+
 1. Le cookie `canari_ws_token` (priorité)
 2. Le query parameter `token=` (fallback)
 
 Validation :
+
 ```rust
 // handlers.rs
 fn validate_jwt(token: &str, secret: &str) -> Option<String> {
@@ -86,6 +90,7 @@ La clé Redis `user:online:{userId}:{deviceId}` est rafraîchie toutes les **30s
 ### Déconnexion
 
 `ConnectionGuard::drop()` :
+
 - Retire le sender de `connected_users`
 - `DEL user:online:{userId}:{deviceId}` dans Redis
 
@@ -102,6 +107,7 @@ La clé Redis `user:online:{userId}:{deviceId}` est rafraîchie toutes les **30s
 | `read` | `messageId` | Acquittement lecture (no-op) |
 
 **Logique de forward du Welcome** :
+
 ```rust
 // ws_dispatch.rs
 // 1. Lit les membres du groupe dans Redis "group:members:{groupId}"
@@ -135,6 +141,7 @@ Le gateway subscribe en permanence à deux canaux Redis au démarrage.
 Producteur : `chat-delivery-service` (à chaque `POST /api/mls-api/send`)
 
 Format :
+
 ```json
 {
   "recipientId": "userId",
@@ -149,6 +156,7 @@ Format :
 ```
 
 Traitement :
+
 ```
 1. Lookup connected_users["recipientId:deviceId"]
 2. Si présent et sender actif → envoie via mpsc
@@ -160,6 +168,7 @@ Traitement :
 Producteur : `social-service`
 
 Format :
+
 ```json
 {
   "type": "channel.message.created",
@@ -170,6 +179,7 @@ Format :
 ```
 
 Traitement :
+
 ```
 Pour chaque userId dans userIds :
   Pour chaque deviceId connu pour cet userId dans connected_users :
@@ -183,8 +193,10 @@ Pour chaque userId dans userIds :
 | Méthode | Route | Description |
 |---|---|---|
 | `GET` | `/api/ws` | Upgrade WebSocket |
-| `GET` | `/api/groups/:groupId/members` | Liste des membres d'un groupe (depuis Redis) |
-| `POST` | `/api/groups` | Crée ou met à jour un groupe dans Redis |
+| `GET` | `/api/presence` | Récupère l'état de présence des utilisateurs |
+| `GET` | `/api/health` | Health check du service |
+
+> **Note**: Les routes `/api/groups` mentionnées dans les versions précédentes ne sont pas implémentées. La gestion des groupes se fait via le chat-delivery-service (`/api/mls-api/groups/*`).
 
 ---
 
