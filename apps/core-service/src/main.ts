@@ -12,7 +12,9 @@ async function bootstrap() {
 
   // Allowed origins: production frontend + any localhost port (Tauri dev / local dev).
   const frontendUrl = (process.env.FRONTEND_URL || '').replace(/\/+$/, '');
-  const allowedOrigins = new Set<string>();
+  const allowedOrigins = new Set<string>([
+    'http://tauri.localhost', // Tauri Android/iOS WebView origin (production)
+  ]);
   if (frontendUrl) allowedOrigins.add(frontendUrl);
   app.enableCors({
     origin: (
