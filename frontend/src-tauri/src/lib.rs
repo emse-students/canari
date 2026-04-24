@@ -628,8 +628,24 @@ pub fn run() {
                     tauri::WebviewUrl::External(localhost_url)
                 };
 
-                tauri::WebviewWindowBuilder::from_config(app.handle(), &app.config().app.windows[0])?.build()?;
+                tauri::WebviewWindowBuilder::from_config(
+                    app.handle(),
+                    &app.config().app.windows[0],
+                )?
+                .build()?;
             }
+
+            // ── Create main window on mobile ─────────────────────────────────────
+            // On mobile tauri.conf.json uses "create": false (desktop-only builder
+            // path above handles desktop). We build the window explicitly here so
+            // the WebView actually loads instead of showing a blank screen.
+            #[cfg(mobile)]
+            tauri::WebviewWindowBuilder::new(
+                app.handle(),
+                "main",
+                tauri::WebviewUrl::App(std::path::PathBuf::from("/")),
+            )
+            .build()?;
 
             // Open devtools automatically in debug mode
             #[cfg(debug_assertions)]

@@ -13,14 +13,16 @@
     "core:window:allow-destroy",
     "core:tray:default",
     "opener:default",
+    "opener:allow-open-url",
     "notification:default",
     "sql:default",
     "sql:allow-execute",
     "biometric:default",
     "keystore:default",
-    {
-      "identifier": "http:default",
-      "allow": ["http://*", "https://*", "tauri://*"]
-    }
+    "http:default",
+    "http:allow-fetch",
+    "http:allow-fetch-cancel",
+    "http:allow-fetch-send",
+    "http:allow-fetch-read-body"
   ]
 }

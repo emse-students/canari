@@ -30,6 +30,17 @@ if (typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__) {
           return originalFetch.call(window, input, init);
         }
 
+        // Cookie-bearing requests (credentials: 'include') MUST use the
+        // browser's native fetch. The Tauri HTTP plugin runs in a separate
+        // Rust thread whose cookie jar is isolated from the WebView's — it
+        // can't write Set-Cookie responses back to the WebView, which breaks
+        // HttpOnly session cookies (refresh token). Using native fetch here
+        // also prevents a deadlock where the plugin stalls waiting for a
+        // cookie-jar sync that never completes.
+        if ((init as RequestInit | undefined)?.credentials === 'include') {
+          return originalFetch.call(window, input, init);
+        }
+
         return tauriFetch(input, init) as ReturnType<typeof window.fetch>;
       } as typeof window.fetch;
     })
