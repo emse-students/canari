@@ -16,6 +16,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Set version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          jq --arg v "$VERSION" '.version = $v' frontend/package.json > tmp.json && mv tmp.json frontend/package.json
+          jq --arg v "$VERSION" '.version = $v' frontend/src-tauri/tauri.conf.json > tmp.json && mv tmp.json frontend/src-tauri/tauri.conf.json
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+
       - name: Install system dependencies
         run: |
           sudo apt-get update
