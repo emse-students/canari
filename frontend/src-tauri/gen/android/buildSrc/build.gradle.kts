@@ -18,6 +18,6 @@ repositories {
 
 dependencies {
     compileOnly(gradleApi())
-    compileOnly("com.android.tools.build:gradle:9.0.1")
+    implementation("com.android.tools.build:gradle:9.0.1")
 }
 

@@ -1,7 +1,7 @@
 plugins {
-    id("com.android.application") version "9.0.1" apply false
-    id("com.android.library") version "9.0.1" apply false
-    id("org.jetbrains.kotlin.android") version "2.2.21" apply false
+    id("com.android.application") apply false
+    id("com.android.library") apply false
+    id("org.jetbrains.kotlin.android") apply false
     // Google services Gradle plugin (apply false = activé uniquement dans les modules qui l'utilisent)
     id("com.google.gms.google-services") version "4.4.4" apply false
 }
@@ -37,8 +37,8 @@ allprojects {
 subprojects {
     afterEvaluate {
         if (pluginManager.hasPlugin("com.android.library") || pluginManager.hasPlugin("com.android.application")) {
-            extensions.configure<com.android.build.gradle.BaseExtension>("android") {
-                compileSdkVersion(36)
+            extensions.configure<com.android.build.api.dsl.CommonExtension>("android") {
+                compileSdk = 36
             }
         }
     }
