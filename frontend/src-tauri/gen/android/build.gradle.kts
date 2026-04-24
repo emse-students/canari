@@ -1,4 +1,7 @@
 plugins {
+    id("com.android.application") version "9.0.1" apply false
+    id("com.android.library") version "9.0.1" apply false
+    id("org.jetbrains.kotlin.android") version "2.2.21" apply false
     // Google services Gradle plugin (apply false = activé uniquement dans les modules qui l'utilisent)
     id("com.google.gms.google-services") version "4.4.4" apply false
 }
@@ -21,17 +24,6 @@ run {
                 }
             }
         }
-    }
-}
-
-buildscript {
-    repositories {
-        google()
-        mavenCentral()
-    }
-    dependencies {
-        classpath("com.android.tools.build:gradle:9.0.1")
-        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.21")
     }
 }
 
