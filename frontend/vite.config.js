@@ -57,6 +57,24 @@ function protobufPatch() {
 export default defineConfig(async () => ({
   plugins: [mlsWasmStub(), tailwindcss(), sveltekit(), protobufPatch()],
 
+  // Pre-bundle Tauri/heavy deps at startup so Vite never re-optimizes them
+  // mid-session — which triggers an HMR full-reload that Android WebView
+  // cannot handle (Failed to fetch dynamically imported module).
+  optimizeDeps: {
+    include: [
+      '@impierce/tauri-plugin-keystore',
+      '@tauri-apps/api/app',
+      '@tauri-apps/api/core',
+      '@tauri-apps/api/window',
+      '@tauri-apps/plugin-biometric',
+      '@tauri-apps/plugin-http',
+      '@tauri-apps/plugin-notification',
+      '@tauri-apps/plugin-sql',
+      'lucide-svelte',
+      'protobufjs/minimal',
+    ],
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors
