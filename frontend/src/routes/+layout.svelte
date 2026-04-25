@@ -133,7 +133,7 @@
     <AppSidebar />
   {/if}
 
-  <div class="relative flex flex-1 flex-col overflow-hidden">
+  <div class="relative z-10 flex flex-1 flex-col overflow-hidden">
     {#if !isAuthRoute}
       <Navbar />
     {/if}
