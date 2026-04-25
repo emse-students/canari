@@ -13,7 +13,6 @@
     X,
     PencilLine,
     Shield,
-    Phone,
   } from 'lucide-svelte';
   import Avatar from '../shared/Avatar.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
@@ -60,7 +59,6 @@
     onGroupDelete,
     onGroupRemoveMember,
     onOpenSettings,
-    onStartCall,
     onToggleSearch,
     searchActive = false,
     onOpenMembers,
@@ -151,13 +149,13 @@
 <header
   class="bg-white/70 dark:bg-black/50 px-3 md:px-6 py-3 border-b border-black/5 dark:border-white/10 flex items-center gap-3 md:gap-4 relative backdrop-blur-2xl z-20"
 >
-  <div class="flex items-center gap-1 md:hidden">
-    <!-- Bouton Retour (Mobile) -->
+  <!-- Bouton Retour (Mobile) — largeur fixe pour que l'avatar soit centré -->
+  <div class="w-8 flex-shrink-0 flex items-center justify-start md:hidden">
     {#if onBack}
       <button
         onclick={onBack}
         aria-label="Retour au menu"
-        class="p-2 rounded-xl text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10 active:scale-95 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+        class="p-1 rounded-xl text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10 active:scale-95 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
       >
         <ChevronLeft size={24} />
       </button>
@@ -166,15 +164,15 @@
 
   <!-- Icône de la conversation (Avatar, Groupe ou Canal) -->
   {#if isChannel}
-    <div class="w-10 h-10 flex-shrink-0">
+    <div class="w-10 h-10 flex-shrink-0 flex items-center justify-center">
       <GroupAvatar {imageMediaId} name={displayName} variant="channel" size="lg" />
     </div>
   {:else if isGroupConversation}
-    <div class="w-10 h-10 flex-shrink-0">
+    <div class="w-10 h-10 flex-shrink-0 flex items-center justify-center">
       <GroupAvatar {imageMediaId} name={displayName} variant="group" size="lg" />
     </div>
   {:else}
-    <div class="relative shrink-0">
+    <div class="relative shrink-0 w-10 h-10 flex items-center justify-center">
       <Avatar userId={contactName} size="lg" fallbackLabel={effectiveDisplayName} />
       {#if isOnline}
         <span
@@ -213,20 +211,6 @@
 
   <!-- Actions (Appel, Paramètres) -->
   <div class="flex items-center gap-1 shrink-0">
-    {#if onStartCall && !isChannel}
-      <button
-        onclick={onStartCall}
-        class="p-2.5 rounded-xl transition-all outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 active:scale-95 {isReady
-          ? 'text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-emerald-600 dark:hover:text-emerald-400'
-          : 'text-text-muted/40 cursor-not-allowed'}"
-        title={isReady ? 'Démarrer un appel vidéo' : 'En attente de connexion sécurisée...'}
-        disabled={!isReady}
-        aria-label="Démarrer un appel"
-      >
-        <Phone size={20} strokeWidth={2.5} />
-      </button>
-    {/if}
-
     {#if onOpenMembers}
       <button
         onclick={onOpenMembers}

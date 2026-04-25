@@ -254,14 +254,21 @@ h6,
   padding-top: 0.75rem;
   padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
   pointer-events: none;
-  z-index: 20;
+  z-index: 40;
+}
+
+/* On mobile the BottomNav (h-16 = 4rem) sits above the composer — push it up */
+@media (max-width: 767px) {
+  .chat-composer-footer {
+    padding-bottom: calc(4rem + max(0.75rem, env(safe-area-inset-bottom)));
+  }
 }
 
 /* When virtual keyboard is open, env(safe-area-inset-bottom) may still be
    non-zero (gesture nav bar). Remove it so the composer sits flush against
    the keyboard top edge. */
 :global(.keyboard-open) .chat-composer-footer {
-  padding-bottom: 0;
+  padding-bottom: 0 !important;
 }
 
 :global([data-theme='dark']) .chat-composer-footer {

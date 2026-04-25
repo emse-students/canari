@@ -41,11 +41,10 @@
   function setupWebSocket(devId: string) {
     if (ws) return;
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = import.meta.env.VITE_GATEWAY_URL
-      ? new URL(import.meta.env.VITE_GATEWAY_URL).host
-      : window.location.host;
-    const wsUrl = `${protocol}//${host}/api/ws?device_id=${encodeURIComponent(devId)}`;
+    const wsBase = import.meta.env.VITE_GATEWAY_URL
+      ? (import.meta.env.VITE_GATEWAY_URL as string).replace(/^http/, 'ws')
+      : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
+    const wsUrl = `${wsBase}/api/ws?device_id=${encodeURIComponent(devId)}`;
 
     console.log('[Posts] Connecting to WS:', wsUrl);
     ws = new WebSocket(wsUrl);

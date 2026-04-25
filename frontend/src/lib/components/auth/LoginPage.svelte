@@ -30,6 +30,14 @@
 
   // ─── Initialisation ─────────────────────────────────────────────────────────
   onMount(() => {
+    // Reset isLoggingIn when the user returns to the page (e.g. after a failed
+    // navigation to Authentik or after a biometric prompt).
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') isLoggingIn = false;
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+
     // 1. Récupération sécurisée de l'URL de retour
     try {
       const url = new URL(window.location.href);
@@ -70,6 +78,11 @@
     };
 
     void initAuth();
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
   });
 
   // ─── Gestionnaires d'événements ───────────────────────────────────────────

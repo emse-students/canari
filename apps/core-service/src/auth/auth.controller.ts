@@ -70,8 +70,8 @@ export class AuthController {
   private setRefreshCookie(res: Response, token: string): void {
     res.cookie(REFRESH_COOKIE, token, {
       httpOnly: true,
-      secure: this.isProduction,
-      sameSite: 'lax',
+      secure: true, // required by SameSite=None
+      sameSite: 'none', // cross-origin POST from tauri.localhost → canari-emse.fr
       path: '/api/auth', // only sent to auth endpoints
       maxAge: REFRESH_MAX_AGE * 1000, // express uses milliseconds
     });
@@ -81,8 +81,8 @@ export class AuthController {
   private clearRefreshCookie(res: Response): void {
     res.clearCookie(REFRESH_COOKIE, {
       httpOnly: true,
-      secure: this.isProduction,
-      sameSite: 'lax',
+      secure: true,
+      sameSite: 'none',
       path: '/api/auth',
     });
   }

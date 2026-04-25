@@ -140,7 +140,7 @@
 
     <main class="relative flex-1 overflow-hidden">
       <BackgroundBlobs />
-      <div class="absolute inset-0 overflow-y-auto">
+      <div class="absolute inset-0 overflow-y-auto pb-16 md:pb-0">
         {@render children?.()}
       </div>
     </main>

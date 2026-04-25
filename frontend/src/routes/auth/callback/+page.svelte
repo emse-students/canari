@@ -22,6 +22,14 @@
       return;
     }
 
+    // Guard against double-load (Android WebView may navigate to the callback URL twice)
+    const dedupKey = `oidc_code_${code}`;
+    if (sessionStorage.getItem(dedupKey)) {
+      console.warn('[callback] code already processed, ignoring duplicate load');
+      return;
+    }
+    sessionStorage.setItem(dedupKey, '1');
+
     try {
       console.debug('[callback] starting handleOidcCallback, code length:', code.length);
       status = "Échange du code d'autorisation…";

@@ -441,8 +441,8 @@
   </div>
 {/if}
 
-<!-- Overlay d'appel (toutes routes) -->
-{#if globalSession.callService && globalSession.callState !== 'idle'}
+<!-- Overlay d'appel désactivé temporairement -->
+{#if false}
   <CallOverlay
     callService={globalSession.callService}
     remoteName={globalConvs.currentConvo?.name ?? 'Correspondant'}

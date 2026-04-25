@@ -75,16 +75,28 @@ class RustWebViewClient(context: Context): WebViewClient() {
         request: WebResourceRequest,
         error: WebResourceError
     ) {
-        // we get a net::ERR_CONNECTION_REFUSED when an external URL redirects to a custom protocol
-        // e.g. oauth flow, because shouldInterceptRequest is not called on redirects
-        // so we must force retry here with loadUrl() to get a chance of the custom protocol to kick in
-        if (error.errorCode == ERROR_CONNECT && request.isForMainFrame && request.url != lastInterceptedUrl) {
-            // prevent the default error page from showing
-            view.stopLoading()
-            // without this initial loadUrl the app is stuck
-            view.loadUrl(request.url.toString())
-            // ensure the URL is actually loaded - for some reason there's a race condition and we need to call loadUrl() again later
-            pendingUrlRedirect = request.url.toString()
+        // shouldInterceptRequest is not called on server-side redirects from external pages,
+        // so if the redirect target is tauri.localhost the WebView fails with a network error.
+        // We force-retry with loadUrl() so shouldInterceptRequest fires for the target URL.
+        if (request.isForMainFrame && request.url != lastInterceptedUrl) {
+            when (error.errorCode) {
+                ERROR_CONNECT -> {
+                    // ERR_CONNECTION_REFUSED — external URL redirects to custom protocol (physical device)
+                    view.stopLoading()
+                    view.loadUrl(request.url.toString())
+                    // pendingUrlRedirect guards against a race condition specific to ERROR_CONNECT
+                    pendingUrlRedirect = request.url.toString()
+                }
+                ERROR_HOST_LOOKUP -> {
+                    // ERR_NAME_NOT_RESOLVED — emulator can't DNS-resolve tauri.localhost from an
+                    // external HTTPS redirect. A simple loadUrl() is enough; setting pendingUrlRedirect
+                    // here would schedule a second load of the same URL (e.g. /auth/callback?code=X),
+                    // consuming the OAuth code twice and causing invalid_grant on the second attempt.
+                    view.stopLoading()
+                    view.loadUrl(request.url.toString())
+                }
+                else -> super.onReceivedError(view, request, error)
+            }
         } else {
             super.onReceivedError(view, request, error)
         }

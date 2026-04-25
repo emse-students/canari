@@ -1,37 +1,15 @@
 <script lang="ts">
   import StatusPill from '../shared/StatusPill.svelte';
   import CanariBrand from './CanariBrand.svelte';
-  import ThemeToggleButton from './ThemeToggleButton.svelte';
   import SessionActionButtons from './SessionActionButtons.svelte';
   import Avatar from '../shared/Avatar.svelte';
   import { goto } from '$app/navigation';
   import { clearAuth } from '$lib/stores/auth';
   import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
 
-  let isDarkMode = $state(false);
-
-  function applyTheme(isDark: boolean) {
-    document.documentElement.dataset.theme = isDark ? 'dark' : 'light';
-    localStorage.setItem('canari-theme', isDark ? 'dark' : 'light');
-  }
-
-  function toggleTheme() {
-    isDarkMode = !isDarkMode;
-    applyTheme(isDarkMode);
-  }
-
   if (typeof window !== 'undefined') {
-    const saved = localStorage.getItem('canari-theme');
-    if (saved === 'dark') {
-      isDarkMode = true;
-      applyTheme(true);
-    } else if (saved === 'light') {
-      isDarkMode = false;
-      applyTheme(false);
-    } else {
-      isDarkMode = true;
-      applyTheme(true);
-    }
+    document.documentElement.dataset.theme = 'light';
+    localStorage.setItem('canari-theme', 'light');
   }
 
   function handleToggleLogs() {
@@ -56,8 +34,7 @@
     <!-- Right: Status + Theme + actions -->
     <div class="flex items-center gap-2 flex-shrink-0 ml-auto">
       <StatusPill isConnected={globalSession.isWsConnected} />
-      <ThemeToggleButton {isDarkMode} onToggle={toggleTheme} />
-      <SessionActionButtons onToggleLogs={handleToggleLogs} onLogout={handleLogout} />
+<SessionActionButtons onToggleLogs={handleToggleLogs} onLogout={handleLogout} />
       {#if globalSession.isLoggedIn && globalSession.userId}
         <button
           type="button"
