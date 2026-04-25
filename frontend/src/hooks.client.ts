@@ -7,6 +7,39 @@
  * built-in `fetch` so the client-side router keeps working.
  */
 
+// Deep link handler: captures fr.emse.canari://callback?code=…&state=…
+// after the system browser completes the OIDC flow on Android.
+if (typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__) {
+  import('@tauri-apps/plugin-deep-link')
+    .then(({ onOpenUrl }) => {
+      onOpenUrl((urls) => {
+        for (const raw of urls) {
+          try {
+            const u = new URL(raw);
+            if (u.protocol === 'fr.emse.canari:' && u.host === 'callback') {
+              const code = u.searchParams.get('code');
+              const state = u.searchParams.get('state');
+              const authError = u.searchParams.get('error');
+              if (authError) {
+                window.location.href = `/auth/callback?error=${encodeURIComponent(authError)}`;
+                return;
+              }
+              if (code && state) {
+                // Reuse the existing /auth/callback page which handles dedup + exchange.
+                window.location.href = `/auth/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`;
+              }
+            }
+          } catch {
+            // Malformed URL — ignore.
+          }
+        }
+      });
+    })
+    .catch(() => {
+      // Plugin not available on desktop — no-op.
+    });
+}
+
 if (typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__) {
   import('@tauri-apps/plugin-http')
     .then(({ fetch: tauriFetch }) => {

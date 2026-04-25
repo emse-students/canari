@@ -13,13 +13,11 @@
  * Sur desktop/web, les méthodes sont des no-op silencieux.
  */
 
-import { isTauri } from '@tauri-apps/api/core';
-import { invoke } from '@tauri-apps/api/core';
+import { isTauri, invoke } from '@tauri-apps/api/core';
+import { once } from '@tauri-apps/api/event';
 import { currentUserId } from '$lib/stores/user';
 
 const FCM_TOKEN_STORAGE_KEY = 'canari_fcm_token';
-const TOKEN_POLL_RETRIES = 20;
-const TOKEN_POLL_DELAY_MS = 1000;
 const BACKGROUND_RETRY_ATTEMPTS = 6;
 const BACKGROUND_RETRY_DELAY_MS = 5000;
 
@@ -29,19 +27,26 @@ function isTauriRuntime(): boolean {
 }
 
 /**
- * Lit le token push depuis la couche Rust (Android/iOS uniquement).
- * – Android : token FCM depuis les SharedPreferences Kotlin
- * – iOS     : token FCM/APNs depuis les UserDefaults Swift
- * Retourne null hors mobile ou si le token n'est pas encore disponible.
+ * Lit le token FCM. Tente d'abord un invoke immédiat (token déjà écrit),
+ * puis écoute l'événement natif `canari:fcm-token` émis par MainActivity
+ * dès que Firebase confirme le token (max 30 s).
  */
 export async function getFcmToken(): Promise<string | null> {
   if (!isTauriRuntime()) return null;
   try {
-    const token = await invoke<string | null>('get_fcm_token');
-    return token ?? null;
+    const immediate = await invoke<string | null>('get_fcm_token');
+    if (immediate) return immediate;
   } catch {
     return null;
   }
+  // Token not yet written — wait for the Tauri event emitted by notify_fcm_token.
+  return new Promise<string | null>((resolve) => {
+    const timer = setTimeout(() => resolve(null), 30_000);
+    once<string>('fcm-token', (event) => {
+      clearTimeout(timer);
+      resolve(event.payload ?? null);
+    }).catch(() => resolve(null));
+  });
 }
 
 /**
@@ -55,20 +60,11 @@ export async function registerPushToken(
   registerFn: (token: string) => Promise<void>
 ): Promise<boolean> {
   console.info('[Push] registerPushToken start');
-  // On Android, the FCM service may provide the token a bit after startup.
-  let token: string | null = null;
-  for (let i = 0; i < TOKEN_POLL_RETRIES; i++) {
-    token = await getFcmToken();
-    console.info(
-      `[Push] token poll attempt ${i + 1}/${TOKEN_POLL_RETRIES}: ${token ? 'received' : 'empty'}`
-    );
-    if (token) break;
-    if (i < TOKEN_POLL_RETRIES - 1) {
-      await new Promise((resolve) => setTimeout(resolve, TOKEN_POLL_DELAY_MS));
-    }
-  }
+  // getFcmToken() returns immediately if already written, otherwise waits for
+  // the canari:fcm-token native event emitted by MainActivity (max 30 s).
+  const token = await getFcmToken();
   if (!token) {
-    console.warn('[Push] No FCM token available after polling');
+    console.warn('[Push] No FCM token available');
     return false;
   }
 

@@ -12,6 +12,7 @@
 
 import { saveUserLocally, clearUserLocally, currentUserId } from '$lib/stores/user';
 import { setGlobalAdmin } from '$lib/stores/userState.svelte';
+import { isTauri } from '@tauri-apps/api/core';
 
 const OIDC_STATE_KEY = 'canari_oidc_state';
 const OIDC_RETURN_KEY = 'canari_oidc_return';
@@ -64,6 +65,11 @@ function authentikClientId(): string {
 function oidcRedirectUri(): string {
   const configured = (import.meta.env.VITE_AUTHENTIK_REDIRECT_URI as string | undefined)?.trim();
   if (configured) return configured;
+  // On Tauri mobile use a custom-scheme deep link so Authentik redirects back
+  // to the app via Android intent rather than navigating the main WebView.
+  if (typeof window !== 'undefined' && isTauri() && /android/i.test(navigator.userAgent)) {
+    return 'fr.emse.canari://callback';
+  }
   return `${window.location.origin}/auth/callback`;
 }
 
@@ -75,7 +81,7 @@ export function devRoutesEnabled(): boolean {
  * Redirect the user to Authentik's authorize endpoint.
  * After login, Authentik will redirect back to `/auth/callback`.
  */
-export function startOidcLogin(returnTo = '/chat'): void {
+export async function startOidcLogin(returnTo = '/chat'): Promise<void> {
   const baseUrl = authentikUrl();
   const clientId = authentikClientId();
   if (!baseUrl || !clientId) {
@@ -98,9 +104,19 @@ export function startOidcLogin(returnTo = '/chat'): void {
     state,
   });
 
+  const authUrl = `${baseUrl}/application/o/authorize/?${params}`;
   console.log(`[AUTH] startOidcLogin — returnTo=${returnTo}, redirectUri=${redirectUri}`);
   console.log(`[AUTH] Redirection vers Authentik (baseUrl=${baseUrl})`);
-  window.location.href = `${baseUrl}/application/o/authorize/?${params}`;
+
+  // On Android Tauri, open in the system browser (Chrome Custom Tabs) so the
+  // main WebView is never navigated away and the Tauri IPC bridge stays intact.
+  // The callback returns via the fr.emse.canari://callback deep link.
+  if (typeof window !== 'undefined' && isTauri() && /android/i.test(navigator.userAgent)) {
+    const { open } = await import('@tauri-apps/plugin-opener');
+    await open(authUrl);
+  } else {
+    window.location.href = authUrl;
+  }
 }
 
 /**
