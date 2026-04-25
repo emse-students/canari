@@ -125,7 +125,7 @@
   role="presentation"
   ontouchstart={handleTouchStart}
   ontouchend={handleTouchEnd}
-  class="flex h-[var(--app-viewport-height,100dvh)] w-screen overflow-hidden"
+  class="flex h-[var(--app-viewport-height,100dvh)] w-screen overflow-hidden pt-[env(safe-area-inset-top)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]"
 >
   <ChatBackgroundService />
 
@@ -140,15 +140,21 @@
 
     <main class="relative flex-1 overflow-hidden">
       <BackgroundBlobs />
-      {@render children?.()}
+      <div class="absolute inset-0 overflow-y-auto">
+        {@render children?.()}
+      </div>
     </main>
 
-    {#if !isAuthRoute}
+    {#if !isAuthRoute && !isKeyboardOpen}
       <BottomNav />
     {/if}
   </div>
 
   {#if showLogs}
-    <LogsPanel logs={statusLog} onClose={() => (showLogs = false)} />
+    <div class="fixed inset-0 z-50 flex justify-end pointer-events-none">
+      <div class="pointer-events-auto h-full w-full md:w-80">
+        <LogsPanel logs={statusLog} onClose={() => (showLogs = false)} />
+      </div>
+    </div>
   {/if}
 </div>
