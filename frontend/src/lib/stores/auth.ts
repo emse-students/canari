@@ -112,8 +112,8 @@ export async function startOidcLogin(returnTo = '/chat'): Promise<void> {
   // main WebView is never navigated away and the Tauri IPC bridge stays intact.
   // The callback returns via the fr.emse.canari://callback deep link.
   if (typeof window !== 'undefined' && isTauri() && /android/i.test(navigator.userAgent)) {
-    const { open } = await import('@tauri-apps/plugin-opener');
-    await open(authUrl);
+    const { openUrl } = await import('@tauri-apps/plugin-opener');
+    await openUrl(authUrl);
   } else {
     window.location.href = authUrl;
   }
