@@ -1,7 +1,7 @@
 import type { IMlsService } from '$lib/mlsService';
 import type { IStorage } from '$lib/db';
 import type { Conversation } from '$lib/types';
-import { toHex } from '$lib/utils/hex';
+import { saveMlsState } from '$lib/utils/hex';
 import type { SvelteMap } from 'svelte/reactivity';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
 
@@ -121,7 +121,7 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
         // En cas de crash entre le saveState et le sendCommit, l'état local
         // reste cohérent (post-addMember) et le commit peut être retenté.
         const stateBytes = await mlsService.saveState(pin);
-        localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
+        saveMlsState(userId, stateBytes);
 
         if (bulk.commit) {
           const excludeIds = bulk.addedDeviceIds.map((did) => `${userId}:${did}`);
@@ -135,7 +135,7 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
     } else {
       // Pas d'autres appareils : sauvegarder quand même après createGroup
       const stateBytes = await mlsService.saveState(pin);
-      localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
+      saveMlsState(userId, stateBytes);
     }
 
     conversations.set(conversationKey, {
@@ -219,7 +219,7 @@ async function processBulkAddition(
       const bulk = await mlsService.addMembersBulk(conversation.id, allDevices);
 
       const stateBytes = await mlsService.saveState(pin);
-      localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
+      saveMlsState(userId, stateBytes);
 
       // Send welcomes per-device; do not abort all recipients on one failure.
       log(
@@ -279,7 +279,7 @@ async function processBulkAddition(
         );
         await mlsService.sendMessage(conversation.id, controlMsg);
         const st = await mlsService.saveState(pin);
-        localStorage.setItem('mls_autosave_' + userId, toHex(st));
+        saveMlsState(userId, st);
       } catch (e) {
         console.warn('Failed to broadcast member addition:', e);
       }
@@ -441,7 +441,7 @@ export async function startNewConversation(
 
       // Sauvegarder AVANT sendCommit (crash-safety)
       const stBytes = await mlsService.saveState(pin);
-      localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
+      saveMlsState(userId, stBytes);
       if (bulk.commit) {
         const excludeIds = bulk.addedDeviceIds.map((did) => {
           const owner = contactDeviceIds.has(did) ? contact : userId;
@@ -540,7 +540,7 @@ export async function repairDirectConversation(
 
       // Sauvegarder AVANT sendCommit (crash-safety)
       const stBytes = await mlsService.saveState(pin);
-      localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
+      saveMlsState(userId, stBytes);
       if (bulk.commit) {
         const excludeIds = bulk.addedDeviceIds.map((did) => {
           const owner = contactDeviceIds.has(did) ? contact : userId;

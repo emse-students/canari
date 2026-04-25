@@ -1,6 +1,6 @@
 import type { IMlsService } from '$lib/mlsService';
 import type { ChatMessage, Conversation } from '$lib/types';
-import { toHex } from '$lib/utils/hex';
+import { saveMlsState } from '$lib/utils/hex';
 import { encodeAppMessage, mkText, mkReply, mkReaction, mkSystem } from '$lib/proto/codec';
 import { serializeEnvelope, mkTextEnvelope, parseEnvelope } from '$lib/envelope';
 import { sendEncryptedChannelMessage } from '$lib/utils/chat/channelCrypto';
@@ -94,8 +94,12 @@ export async function sendChatMessage(
       // before resolving — the UI will only show the message after the gateway confirms delivery.
       await mlsService.sendMessage(conversation.id, payload, messageId);
       deps.log(`[SEND] mlsService.sendMessage confirmé — sauvegarde état MLS...`);
-      const stateBytes = await mlsService.saveState(pin);
-      localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
+      try {
+        const stateBytes = await mlsService.saveState(pin);
+        saveMlsState(userId, stateBytes);
+      } catch (saveErr) {
+        console.warn('[SEND] MLS state persist failed (quota?)', saveErr);
+      }
       deps.log(`[SEND] État MLS sauvegardé — affichage message confirmé...`);
 
       // Display only after gateway confirmed delivery
@@ -149,7 +153,7 @@ export async function addReaction(
     const payload = encodeAppMessage(mkReaction(messageId, emoji));
     await mlsService.sendMessage(conversation.id, payload);
     const stateBytes = await mlsService.saveState(pin);
-    localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
+    saveMlsState(userId, stateBytes);
   } catch (e) {
     console.warn('Failed to send reaction:', e);
   }
@@ -173,7 +177,7 @@ export async function removeReaction(
     );
     await mlsService.sendMessage(conversation.id, payload);
     const stateBytes = await mlsService.saveState(pin);
-    localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
+    saveMlsState(userId, stateBytes);
   } catch (e) {
     console.warn('Failed to send remove_reaction:', e);
   }
@@ -192,7 +196,7 @@ export async function editMessage(
     );
     await mlsService.sendMessage(conversation.id, payload);
     const stateBytes = await mlsService.saveState(pin);
-    localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
+    saveMlsState(userId, stateBytes);
   } catch (e) {
     console.warn('Failed to edit message:', e);
   }
@@ -205,7 +209,7 @@ export async function deleteMessage(messageId: string, deps: AddReactionDeps): P
     const payload = encodeAppMessage(mkSystem('delete_message', JSON.stringify({ messageId })));
     await mlsService.sendMessage(conversation.id, payload);
     const stateBytes = await mlsService.saveState(pin);
-    localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
+    saveMlsState(userId, stateBytes);
   } catch (e) {
     console.warn('Failed to delete message:', e);
   }
@@ -221,7 +225,7 @@ export async function sendReadReceipt(
     const payload = encodeAppMessage(mkSystem('read_receipt', JSON.stringify({ messageIds })));
     await mlsService.sendMessage(conversation.id, payload);
     const stateBytes = await mlsService.saveState(pin);
-    localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
+    saveMlsState(userId, stateBytes);
     return true;
   } catch (e) {
     console.warn('Failed to send read receipt:', e);

@@ -1,4 +1,4 @@
-import { toHex } from '$lib/utils/hex';
+import { saveMlsState } from '$lib/utils/hex';
 import type { StoredMessage } from '$lib/db';
 import type { ChatMessage, Conversation, MessageReaction } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
@@ -399,7 +399,7 @@ export async function replayConversationHistory(params: {
 
     if (mlsUpdated) {
       const stateBytes = await mlsService.saveState(pin);
-      localStorage.setItem('mls_autosave_' + userId, toHex(stateBytes));
+      saveMlsState(userId, stateBytes);
       log(`[OK] ${addedMsg} msg rattrapes pour ${contactName}.`);
     }
   } catch (err) {

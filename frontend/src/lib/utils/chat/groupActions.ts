@@ -1,4 +1,4 @@
-import { toHex } from '$lib/utils/hex';
+import { saveMlsState } from '$lib/utils/hex';
 import type { IMlsService } from '$lib/mlsService';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
 
@@ -41,7 +41,7 @@ export async function deleteGroupAndBroadcast(params: {
   // 3. Sauvegarder l'état MLS (le groupe n'existe plus localement après forgetGroup)
   try {
     const stBytes = await mlsService.saveState(pin);
-    localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
+    saveMlsState(userId, stBytes);
   } catch {
     // Non-blocking
   }
@@ -67,7 +67,7 @@ export async function renameGroupAndBroadcast(params: {
     // Non-blocking: rename already applied server-side
   }
   const stBytes = await mlsService.saveState(pin);
-  localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
+  saveMlsState(userId, stBytes);
 }
 
 export async function removeMemberAndBroadcast(params: {
@@ -103,5 +103,5 @@ export async function removeMemberAndBroadcast(params: {
   }
 
   const stBytes = await mlsService.saveState(pin);
-  localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
+  saveMlsState(userId, stBytes);
 }

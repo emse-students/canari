@@ -222,13 +222,13 @@ export function useChatSession() {
       if (verifierData.status === 'registered') cb.log('Premier appareil : PIN enregistre.');
 
       cb.log('Initialisation MLS...');
-      const { fromHex } = await import('$lib/utils/hex');
+      const { loadMlsState } = await import('$lib/utils/hex');
       const _isTauri = !!(window as any).__TAURI_INTERNALS__;
       let stateBytes: Uint8Array | undefined;
 
-      const saved = localStorage.getItem('mls_autosave_' + userId);
-      if (saved) {
-        stateBytes = fromHex(saved);
+      const loaded = loadMlsState(userId);
+      if (loaded) {
+        stateBytes = loaded;
         cb.log('Etat MLS charge depuis localStorage.');
       } else if (_isTauri) {
         // Fallback mobile : localStorage peut être vidé par le WebView (mémoire, app kill).

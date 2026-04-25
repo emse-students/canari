@@ -8,7 +8,7 @@
  */
 import { tick } from 'svelte';
 import { SvelteMap, SvelteDate } from 'svelte/reactivity';
-import { toHex } from '$lib/utils/hex';
+import { saveMlsState } from '$lib/utils/hex';
 import { getToken } from '$lib/stores/auth';
 import {
   sendChatMessage,
@@ -252,7 +252,7 @@ export function useMessaging() {
           } else if (mlsService) {
             await mlsService.sendMessage(convo.id, protoBytes, messageId);
             const stateBytes = await mlsService.saveState(ctx.pin);
-            localStorage.setItem('mls_autosave_' + ctx.userId, toHex(stateBytes));
+            saveMlsState(ctx.userId, stateBytes);
           }
           const payload = serializeEnvelope(mkMediaEnvelope({ ...mediaRef }, captionForFile));
           await addMessageToChat(

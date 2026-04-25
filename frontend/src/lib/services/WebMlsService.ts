@@ -1,6 +1,7 @@
 import type { IMlsService } from './IMlsService';
 import { getToken } from '$lib/stores/auth';
 import { loadAndInitWasm } from './mlsWasmLoader';
+import { saveMlsState } from '$lib/utils/hex';
 
 /** Message pending in the processing queue */
 interface QueuedMessage {
@@ -941,10 +942,7 @@ export class WebMlsService implements IMlsService {
     // Save state once after all generations so the private key material is persisted.
     try {
       const stateBytes = this.client.save_state(pin);
-      const hex = Array.from(stateBytes as Uint8Array)
-        .map((b: number) => b.toString(16).padStart(2, '0'))
-        .join('');
-      localStorage.setItem('mls_autosave_' + this.userId, hex);
+      saveMlsState(this.userId, stateBytes as Uint8Array);
     } catch (e) {
       console.warn('Auto-save failed in WASM mode', e);
     }

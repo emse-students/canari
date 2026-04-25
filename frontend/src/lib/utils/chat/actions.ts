@@ -1,5 +1,5 @@
 import { exportBackup, importBackup } from '$lib/backup';
-import { fromHex, toHex } from '$lib/utils/hex';
+import { fromHex, toHex, saveMlsState, exportMlsStateAsHex } from '$lib/utils/hex';
 import type { IStorage } from '$lib/db';
 import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
@@ -102,7 +102,7 @@ export async function processPendingInvitations(params: {
 
           // Persist MLS state after the remove commit
           const stBytes = await mlsService.saveState(pin);
-          localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
+          saveMlsState(userId, stBytes);
 
           // Short delay for commit propagation
           await new Promise((r) => setTimeout(r, 150));
@@ -174,7 +174,7 @@ export async function processPendingInvitations(params: {
 
           // Save MLS state before commit (crash-safety)
           const stBytes = await mlsService.saveState(pin);
-          localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
+          saveMlsState(userId, stBytes);
 
           // Send commit, excluding the inviter (self) and the newly-welcomed device
           if (result.commit) {
@@ -511,7 +511,7 @@ export async function discoverMissingGroups(params: {
 
         // Sauvegarder l'état MLS AVANT sendCommit (crash-safety)
         const stBytes = await mlsService.saveState(pin);
-        localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
+        saveMlsState(userId, stBytes);
 
         if (bulk.commit) {
           // group_reset a déjà remis l'epoch serveur à 0 — le premier commit
@@ -547,7 +547,7 @@ export async function exportUserBackup(params: {
   log: (msg: string) => void;
 }) {
   const { storage, userId, pin, myDeviceId, log } = params;
-  const mlsStateHex = localStorage.getItem('mls_autosave_' + userId) ?? undefined;
+  const mlsStateHex = exportMlsStateAsHex(userId);
   const blob = await exportBackup(storage, userId, pin, myDeviceId, mlsStateHex);
   const date = new Date().toISOString().split('T')[0];
   const filename = `canari-backup-${userId}-${date}.canari`;
@@ -740,7 +740,7 @@ export async function handleWelcomeRequest(params: {
 
         // Sauvegarder l'état MLS après le remove commit
         const stBytes = await mlsService.saveState(pin);
-        localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
+        saveMlsState(userId, stBytes);
 
         // Court délai pour la propagation du commit de remove
         await new Promise((r) => setTimeout(r, 150));
@@ -777,7 +777,7 @@ export async function handleWelcomeRequest(params: {
 
     // Sauvegarder l'état MLS avant le commit (crash-safety)
     const stBytes = await mlsService.saveState(pin);
-    localStorage.setItem('mls_autosave_' + userId, toHex(stBytes));
+    saveMlsState(userId, stBytes);
 
     // Broadcaster le commit en excluant l'inviteur (self) et l'invité
     if (result.commit) {

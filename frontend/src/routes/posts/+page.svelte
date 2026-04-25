@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
   import { listPosts, type PostEntity } from '$lib/posts/api';
   import CreatePostForm from '$lib/components/posts/CreatePostForm.svelte';
   import PostCard from '$lib/components/posts/PostCard.svelte';
@@ -19,7 +19,6 @@
   let errorMessage = $state('');
 
   let showCreateModal = $state(false);
-  let ws: WebSocket | null = null;
 
   async function refreshPosts() {
     loading = true;
@@ -38,66 +37,17 @@
     void refreshPosts();
   }
 
-  function setupWebSocket(devId: string) {
-    if (ws) return;
-
-    const wsBase = import.meta.env.VITE_GATEWAY_URL
-      ? (import.meta.env.VITE_GATEWAY_URL as string).replace(/^http/, 'ws')
-      : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
-    const wsUrl = `${wsBase}/api/ws?device_id=${encodeURIComponent(devId)}`;
-
-    console.log('[Posts] Connecting to WS:', wsUrl);
-    ws = new WebSocket(wsUrl);
-
-    ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        if (msg.type === 'post_created' && msg.data) {
-          console.log('[Posts] Received new post via WS', msg.data);
-          const newPost = msg.data as PostEntity;
-          if (!posts.find((p) => p.id === newPost.id)) {
-            posts = [newPost, ...posts];
-          }
-        }
-      } catch (e) {
-        console.error('[Posts] WS message error', e);
-      }
-    };
-
-    ws.onclose = () => {
-      console.log('[Posts] WS disconnected');
-      ws = null;
-    };
-
-    ws.onerror = (e) => console.error('[Posts] WS error', e);
-  }
-
   onMount(async () => {
     void refreshPosts();
 
     const savedUser = currentUserId();
     if (savedUser) {
       userId = savedUser;
-      const deviceKey = `mls_device_id_${savedUser}`;
-      let deviceId = localStorage.getItem(deviceKey);
-      if (!deviceId) {
-        deviceId = crypto.randomUUID();
-        localStorage.setItem(deviceKey, deviceId);
-      }
-
       try {
-        const token = await getToken();
-        authToken = token;
-        setupWebSocket(deviceId);
+        authToken = await getToken();
       } catch (e) {
         console.error('[Posts] Failed to get token', e);
       }
-    }
-  });
-
-  onDestroy(() => {
-    if (ws) {
-      ws.close();
     }
   });
 </script>
