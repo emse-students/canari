@@ -12,7 +12,8 @@
    * connexion persiste sur toutes les routes et non seulement sur /chat.
    */
   import { onMount, untrack } from 'svelte';
-  import { afterNavigate } from '$app/navigation';
+  import { afterNavigate, goto } from '$app/navigation';
+  import { clearAuth } from '$lib/stores/auth';
   import { BiometricService } from '$lib/services/biometric';
   import { loadPin } from '$lib/utils/pinVault';
   import { currentUserId } from '$lib/stores/user';
@@ -399,6 +400,11 @@
 <PinModal
   open={showPinModal}
   onSubmit={handlePinSubmit}
+  onClose={async () => {
+    showPinModal = false;
+    await clearAuth();
+    void goto('/login', { replaceState: true });
+  }}
   externalError={pinError}
   isLoading={pinLoading}
 />

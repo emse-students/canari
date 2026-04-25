@@ -5,11 +5,12 @@
   interface Props {
     open: boolean;
     onSubmit: (pin: string) => void;
+    onClose?: () => void;
     externalError?: string;
     isLoading?: boolean;
   }
 
-  let { open, onSubmit, externalError = '', isLoading = false }: Props = $props();
+  let { open, onSubmit, onClose, externalError = '', isLoading = false }: Props = $props();
 
   let pin = $state('');
   let internalError = $state('');
@@ -33,7 +34,7 @@
   }
 </script>
 
-<Modal {open} title="PIN de chiffrement" onClose={() => {}}>
+<Modal {open} title="PIN de chiffrement" onClose={onClose ?? (() => {})}>
   <form onsubmit={handleSubmit} class="space-y-6 p-1">
     <p class="text-sm text-text-muted leading-relaxed text-center">
       Entrez votre PIN pour déverrouiller le chiffrement de bout en bout. Ce PIN est le même sur
