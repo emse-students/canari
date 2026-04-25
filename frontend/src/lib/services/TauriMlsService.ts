@@ -146,14 +146,17 @@ export class TauriMlsService implements IMlsService {
     return new Promise((resolve, reject) => {
       const wsBase = this.baseUrl.replace(/^http/, 'ws');
       const tokenParam = resolvedToken ? `&token=${encodeURIComponent(resolvedToken)}` : '';
-      this.ws = new WebSocket(
-        `${wsBase}/api/ws?device_id=${encodeURIComponent(this.deviceId)}${tokenParam}`
+      const wsUrl = `${wsBase}/api/ws?device_id=${encodeURIComponent(this.deviceId)}${tokenParam}`;
+      console.log(
+        `[WS] Ouverture connexion → ${wsBase}/api/ws?device_id=${this.deviceId}${resolvedToken ? '&token=***' : ' (sans token)'}`
       );
+      this.ws = new WebSocket(wsUrl);
       let resolved = false;
 
       const timeout = setTimeout(() => {
         if (!resolved) {
           resolved = true;
+          console.error(`[WS] Timeout connexion après 15s — device=${this.deviceId}`);
           this.ws?.close();
           reject(new Error('WebSocket connection timeout after 15s'));
         }
@@ -162,17 +165,17 @@ export class TauriMlsService implements IMlsService {
       this.ws.onopen = async () => {
         clearTimeout(timeout);
         resolved = true;
-        console.log('Connected to Chat Gateway (Tauri) with DeviceID:', this.deviceId);
+        console.log(`[WS] Connecté au Chat Gateway — device=${this.deviceId}`);
         try {
           await this.fetchPendingMessages();
         } catch (e) {
-          console.error('Failed to fetch pending messages on connect (Tauri):', e);
-          // Non-blocking: connection is still valid, proceed
+          console.error('[WS] Echec fetchPendingMessages au connect (non bloquant):', e);
         }
         resolve();
       };
       this.ws.onerror = (e) => {
         clearTimeout(timeout);
+        console.error(`[WS] Erreur connexion — device=${this.deviceId}`, e);
         if (!resolved) {
           resolved = true;
           reject(e);
@@ -180,11 +183,24 @@ export class TauriMlsService implements IMlsService {
       };
       this.ws.onclose = (event) => {
         clearTimeout(timeout);
+        const codeDesc =
+          event.code === 1000
+            ? 'fermeture normale'
+            : event.code === 1001
+              ? 'serveur en arrêt'
+              : event.code === 1006
+                ? 'fermeture anormale (pas de close frame)'
+                : event.code === 1008
+                  ? 'violation de politique (auth?)'
+                  : event.code === 1011
+                    ? 'erreur serveur interne'
+                    : `code=${event.code}`;
         if (!resolved) {
           resolved = true;
+          console.error(`[WS] Fermé avant ouverture — ${codeDesc}, reason="${event.reason}"`);
           reject(new Error(`WebSocket closed before opening. Code: ${event.code}`));
         } else {
-          console.warn(`WebSocket disconnected. Code: ${event.code}`);
+          console.warn(`[WS] Déconnecté — ${codeDesc}, reason="${event.reason}"`);
           this.disconnectCallback?.();
         }
       };

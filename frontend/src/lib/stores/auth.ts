@@ -22,12 +22,14 @@ function setWsSessionCookie(token: string): void {
   if (typeof document === 'undefined') return;
   const secure = window.location.protocol === 'https:' ? '; Secure' : '';
   document.cookie = `canari_ws_token=${encodeURIComponent(token)}; Path=/; SameSite=Lax${secure}`;
+  console.log('[AUTH] setWsSessionCookie — cookie WS mis à jour');
 }
 
 function clearWsSessionCookie(): void {
   if (typeof document === 'undefined') return;
   const secure = window.location.protocol === 'https:' ? '; Secure' : '';
   document.cookie = `canari_ws_token=; Path=/; Max-Age=0; SameSite=Lax${secure}`;
+  console.log('[AUTH] clearWsSessionCookie — cookie WS supprimé');
 }
 
 function isEnvFlagEnabled(value: string | boolean | undefined): boolean {
@@ -96,6 +98,8 @@ export function startOidcLogin(returnTo = '/chat'): void {
     state,
   });
 
+  console.log(`[AUTH] startOidcLogin — returnTo=${returnTo}, redirectUri=${redirectUri}`);
+  console.log(`[AUTH] Redirection vers Authentik (baseUrl=${baseUrl})`);
   window.location.href = `${baseUrl}/application/o/authorize/?${params}`;
 }
 
@@ -223,12 +227,16 @@ export function getOidcReturnTo(): string {
  * The browser sends the cookie automatically with `credentials: 'include'`.
  */
 export async function refresh(): Promise<string> {
-  const res = await fetch(`${coreUrl()}/api/auth/refresh`, {
+  const endpoint = `${coreUrl()}/api/auth/refresh`;
+  console.log(`[AUTH] refresh → POST ${endpoint}`);
+  const t0 = Date.now();
+  const res = await fetch(endpoint, {
     method: 'POST',
     credentials: 'include', // send HttpOnly cookie
   });
 
   if (!res.ok) {
+    console.warn(`[AUTH] refresh FAILED — status=${res.status} (${Date.now() - t0}ms)`);
     await clearAuth();
     throw new Error('Session expired — please log in again');
   }
@@ -238,18 +246,25 @@ export async function refresh(): Promise<string> {
   setWsSessionCookie(data.access_token);
 
   // Decode admin claim from the new JWT and keep reactive state in sync.
+  let tokenExp: number | null = null;
   try {
     const payload = data.access_token.split('.')[1];
     if (payload) {
-      const { admin } = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/'))) as {
+      const decoded = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/'))) as {
         admin?: boolean;
+        exp?: number;
       };
-      setGlobalAdmin(!!admin);
+      setGlobalAdmin(!!decoded.admin);
+      tokenExp = decoded.exp ?? null;
     }
   } catch {
     /* ignore malformed token */
   }
 
+  const expIn = tokenExp ? tokenExp - Math.floor(Date.now() / 1000) : null;
+  console.log(
+    `[AUTH] refresh OK (${Date.now() - t0}ms)${expIn !== null ? ` — token expire dans ${expIn}s` : ''}`
+  );
   return data.access_token;
 }
 
@@ -274,10 +289,12 @@ function jwtExpiresAt(token: string): number | null {
 export async function getToken(): Promise<string> {
   if (_accessToken) {
     const exp = jwtExpiresAt(_accessToken);
-    const expiresWithinGrace = exp !== null && exp - Math.floor(Date.now() / 1000) < 60;
-    if (!expiresWithinGrace) return _accessToken;
-    // Token is about to expire — clear it so refresh() runs.
+    const remaining = exp !== null ? exp - Math.floor(Date.now() / 1000) : null;
+    if (remaining === null || remaining >= 60) return _accessToken;
+    console.log(`[AUTH] getToken — token expire dans ${remaining}s, refresh forcé`);
     _accessToken = null;
+  } else {
+    console.log('[AUTH] getToken — aucun token en mémoire, appel refresh()');
   }
   return await refresh();
 }
@@ -289,14 +306,16 @@ export function setToken(token: string): void {
 }
 
 export async function clearAuth(): Promise<void> {
+  console.log('[AUTH] clearAuth — déconnexion, token mémoire effacé');
   _accessToken = null;
   clearWsSessionCookie();
   // Tell the backend to clear the HttpOnly cookie
   await fetch(`${coreUrl()}/api/auth/logout`, {
     method: 'POST',
     credentials: 'include',
-  }).catch(() => {});
+  }).catch((e) => console.warn('[AUTH] logout POST failed (ignoré):', e));
   clearUserLocally();
+  console.log('[AUTH] clearAuth — terminé');
 }
 
 /**
@@ -305,14 +324,18 @@ export async function clearAuth(): Promise<void> {
  * AND we have a saved user in localStorage (prevents loops after logout).
  */
 export async function hasStoredSession(): Promise<boolean> {
-  // If no saved user, consider the session invalid even if we could refresh
-  if (!currentUserId()) {
+  const uid = currentUserId();
+  console.log(`[AUTH] hasStoredSession — userId=${uid ?? 'null'}`);
+  if (!uid) {
+    console.log('[AUTH] hasStoredSession → false (aucun utilisateur local)');
     return false;
   }
   try {
     await refresh();
+    console.log('[AUTH] hasStoredSession → true (refresh OK)');
     return true;
   } catch {
+    console.log('[AUTH] hasStoredSession → false (refresh échoué)');
     return false;
   }
 }

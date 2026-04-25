@@ -35,6 +35,7 @@ import { BiometricService } from '$lib/services/biometric';
 import { savePin, clearPin, clearPinAndKey } from '$lib/utils/pinVault';
 import { CallService } from '$lib/services/CallService';
 import { startPushService, stopPushService } from '$lib/services/PushNotificationService';
+import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 import type { Conversation } from '$lib/types';
 
 export interface ChatSessionCallbacks {
@@ -479,39 +480,49 @@ export function useChatSession() {
 
   async function biometricLogin(cb: ChatSessionCallbacks) {
     loginError = '';
+    cb.log('[BIOMETRIE] Tentative de connexion biométrique...');
     try {
       const savedUser = currentUserId();
       if (!savedUser) {
         loginError = 'Aucun utilisateur enregistre pour la biometrie.';
+        cb.log('[BIOMETRIE] Echec — aucun utilisateur local');
         return;
       }
+      cb.log(`[BIOMETRIE] Authentification pour userId=${savedUser.slice(0, 8)}...`);
       const retrieved = await BiometricService.authenticateAndGetSecret();
       if (!retrieved) {
         loginError = "L'authentification biometrique a echoue. Entrez votre PIN manuellement.";
+        cb.log('[BIOMETRIE] Echec — secret non récupéré, PIN manuel requis');
         return;
       }
+      cb.log('[BIOMETRIE] PIN récupéré via biométrie — appel login()');
       userId = savedUser;
       pin = retrieved;
       await login(cb);
     } catch (e) {
       loginError = 'Echec de la biometrie. Entrez votre PIN manuellement.';
+      cb.log(`[BIOMETRIE] Exception: ${e instanceof Error ? e.message : String(e)}`);
       console.error(e);
     }
   }
 
   async function enrollBiometric() {
+    appendLog('[BIOMETRIE] Inscription biométrique en cours...');
     try {
       await BiometricService.enableBiometric(pin);
       // PIN is now protected by the hardware keystore — wipe the session cache
       // so the app cannot reopen without biometric authentication.
       clearPinAndKey();
       showBiometricEnrollPrompt = false;
+      appendLog('[BIOMETRIE] Inscription OK — PIN effacé de la session (keystore matériel)');
     } catch (e) {
+      appendLog(`[BIOMETRIE] Echec inscription: ${e instanceof Error ? e.message : String(e)}`);
       console.error('Biometric enrollment failed:', e);
     }
   }
 
   function logout(cb: ChatSessionCallbacks) {
+    cb.log(`[LOGOUT] Déconnexion de userId=${userId?.slice(0, 8) ?? 'inconnu'}...`);
     const tokenForPushCleanup = authToken;
     const deviceForPushCleanup = myDeviceId;
 
@@ -535,6 +546,7 @@ export function useChatSession() {
     clearUserLocally();
     clearPinAndKey();
     clearAuth();
+    cb.log('[LOGOUT] État local effacé — redirection vers /login');
     void goto('/login', { replaceState: true });
   }
 

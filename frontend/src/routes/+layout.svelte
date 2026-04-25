@@ -86,6 +86,7 @@
     if (!currentUserId()) {
       if (_authNavigating) return;
       _authNavigating = true;
+      console.log(`[NAV] Auth guard — aucun userId, redirection vers /login (returnTo=${pathname})`);
       setTimeout(() => {
         goto(`/login?returnTo=${encodeURIComponent(pathname)}`, { replaceState: true })
           .catch(() => {})
