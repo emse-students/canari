@@ -6,6 +6,7 @@ import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { lastValueFrom } from 'rxjs';
 import { Post } from './entities/post.entity';
+import { RedisService } from '../common/redis/redis.service';
 import * as cheerio from 'cheerio';
 import { URL } from 'url';
 
@@ -14,12 +15,28 @@ export class PostsService {
   private readonly logger = new Logger(PostsService.name);
   private readonly userServiceUrl: string;
 
+  private static readonly LIST_CACHE_TTL = 30; // seconds
+
   constructor(
     @InjectRepository(Post) private readonly postRepo: Repository<Post>,
     private readonly httpService: HttpService,
-    private readonly configService: ConfigService
+    private readonly configService: ConfigService,
+    private readonly redis: RedisService
   ) {
     this.userServiceUrl = configService.get<string>('USER_SERVICE_URL', 'http://core-service:3012');
+  }
+
+  private listCacheKey(limit: number, offset: number) {
+    return `posts:list:${limit}:${offset}`;
+  }
+
+  private async invalidateListCache() {
+    // Bust the most common pages; a full scan is overkill for 30s TTL.
+    await this.redis.del(
+      this.listCacheKey(20, 0),
+      this.listCacheKey(30, 0),
+      this.listCacheKey(50, 0)
+    );
   }
 
   async createPost(data: any) {
@@ -44,10 +61,20 @@ export class PostsService {
       }));
     }
     const post = this.postRepo.create(data);
-    return this.postRepo.save(post);
+    const saved = await this.postRepo.save(post);
+    await this.invalidateListCache();
+    return saved;
   }
 
   async listPosts(limit: number = 20, offset: number = 0) {
+    const cacheKey = this.listCacheKey(Number(limit), Number(offset));
+    try {
+      const cached = await this.redis.get(cacheKey);
+      if (cached) return JSON.parse(cached);
+    } catch {
+      // Redis miss or error — fall through to DB
+    }
+
     const posts = await this.postRepo.find({
       order: { createdAt: 'DESC' },
       take: Number(limit),
@@ -63,37 +90,40 @@ export class PostsService {
 
     // Enrich with author display names (users table is in the same DB).
     const authorIds = [...new Set(posts.map((p) => p.authorId).filter(Boolean))];
+    let nameMap: Record<string, { displayName: string | null; firstName: string | null; lastName: string | null }> = {};
     if (authorIds.length > 0) {
-      const rows: {
-        id: string;
-        displayName: string | null;
-        firstName: string | null;
-        lastName: string | null;
-      }[] = await this.postRepo.manager.query(
-        `SELECT id, "displayName", "firstName", "lastName" FROM users WHERE id = ANY($1)`,
-        [authorIds]
+      const rows: { id: string; displayName: string | null; firstName: string | null; lastName: string | null }[] =
+        await this.postRepo.manager.query(
+          `SELECT id, "displayName", "firstName", "lastName" FROM users WHERE id = ANY($1)`,
+          [authorIds]
+        );
+      nameMap = Object.fromEntries(
+        rows.map((r) => [r.id, { displayName: r.displayName, firstName: r.firstName, lastName: r.lastName }])
       );
-      const nameMap = Object.fromEntries(
-        rows.map((r) => [
-          r.id,
-          { displayName: r.displayName, firstName: r.firstName, lastName: r.lastName },
-        ])
-      );
-      return posts.map((p) => {
-        const authorInfo = nameMap[p.authorId] || {
-          displayName: null,
-          firstName: null,
-          lastName: null,
-        };
-        return {
-          ...p,
-          authorDisplayName: authorInfo.displayName,
-          authorFirstName: authorInfo.firstName,
-          authorLastName: authorInfo.lastName,
-        };
-      });
     }
-    return posts;
+
+    const result = posts.map((p) => {
+      const authorInfo = nameMap[p.authorId] ?? { displayName: null, firstName: null, lastName: null };
+      const comments: any[] = p.comments ?? [];
+      return {
+        ...p,
+        // Return only the 3 most recent comments in list view to keep payload small.
+        // The full comment list is available when the user opens a post detail.
+        comments: comments.slice(-3),
+        commentCount: comments.length,
+        authorDisplayName: authorInfo.displayName,
+        authorFirstName: authorInfo.firstName,
+        authorLastName: authorInfo.lastName,
+      };
+    });
+
+    try {
+      await this.redis.setex(cacheKey, PostsService.LIST_CACHE_TTL, JSON.stringify(result));
+    } catch {
+      // Non-fatal
+    }
+
+    return result;
   }
 
   async listMentions(userId: string, limit = 20) {
@@ -350,6 +380,7 @@ export class PostsService {
 
   async delete(id: string) {
     await this.postRepo.delete(id);
+    await this.invalidateListCache();
     return { success: true };
   }
 

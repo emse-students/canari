@@ -1,6 +1,6 @@
 <script lang="ts">
   import { MessageCircle, Newspaper, Users, LayoutDashboard } from 'lucide-svelte';
-  import { goto, afterNavigate } from '$app/navigation';
+  import { afterNavigate } from '$app/navigation';
   import { APP_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
   import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import { page } from '$app/state';
@@ -76,9 +76,9 @@
       {@const isActive = place.id === activePlaceId}
       {@const unread = place.id === 'chat' && activePlaceId !== 'chat' ? totalUnread : 0}
 
-      <button
-        type="button"
-        onclick={() => goto(place.href)}
+      <a
+        href={place.href}
+        data-sveltekit-preload-code="viewport"
         title={isExpanded ? undefined : place.label}
         aria-current={isActive ? 'page' : undefined}
         class="group relative flex items-center gap-4 h-12 rounded-2xl px-3 text-left transition-all duration-200 w-full overflow-hidden
@@ -123,7 +123,7 @@
             {unread > 99 ? '99+' : unread}
           </span>
         {/if}
-      </button>
+      </a>
     {/each}
   </nav>
 </aside>

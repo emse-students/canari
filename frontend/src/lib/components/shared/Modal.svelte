@@ -43,18 +43,28 @@
 <svelte:window onkeydown={open ? handleKeydown : undefined} onpopstate={handlePopState} />
 
 {#if open}
-  <div use:portal class="fixed inset-0 z-[280] pointer-events-none">
+  <!-- Portal + full-screen backdrop. Using fixed+inset-0 on both layers ensures
+       correct coverage even when Tauri's WebView insets are non-zero. -->
+  <div use:portal>
     <div
       role="presentation"
-      class="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm pointer-events-auto"
+      class="fixed inset-0 z-[280] flex items-end justify-center bg-black/40 backdrop-blur-sm sm:items-center"
+      style="padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)"
       onclick={handleBackdropClick}
-      in:fly={{ duration: 150, y: 8 }}
+      in:fly={{ duration: 200, y: 0, opacity: 0 }}
     >
       <div
-        class="bg-[var(--cn-surface)] border border-cn-border rounded-2xl shadow-2xl w-full {maxWidth} mx-4 overflow-hidden text-text-main flex flex-col max-h-[90dvh]"
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        tabindex="-1"
+        class="bg-[var(--cn-surface)] border border-cn-border rounded-t-3xl sm:rounded-2xl shadow-2xl w-full {maxWidth} sm:mx-4 text-text-main flex flex-col max-h-[92dvh]"
+        in:fly={{ duration: 220, y: 24 }}
+        onclick={(e) => e.stopPropagation()}
+        onkeydown={(e) => e.stopPropagation()}
       >
         {#if title}
-          <div class="px-6 py-4 border-b border-cn-border flex items-center justify-between">
+          <div class="px-6 py-4 border-b border-cn-border flex items-center justify-between shrink-0">
             <h2 class="text-base font-semibold text-cn-dark">{title}</h2>
             <button
               onclick={onClose}
@@ -66,12 +76,12 @@
           </div>
         {/if}
 
-        <div class="px-6 py-4 overflow-y-auto flex-1">
+        <div class="px-6 py-4 overflow-y-auto flex-1 overscroll-contain">
           {@render children?.()}
         </div>
 
         {#if footer}
-          <div class="px-6 pb-4 flex justify-end gap-2">
+          <div class="px-6 pb-4 flex justify-end gap-2 shrink-0">
             {@render footer?.()}
           </div>
         {/if}

@@ -264,11 +264,18 @@ h6,
   }
 }
 
-/* When virtual keyboard is open, env(safe-area-inset-bottom) may still be
-   non-zero (gesture nav bar). Remove it so the composer sits flush against
-   the keyboard top edge. */
-:global(.keyboard-open) .chat-composer-footer {
+/* When virtual keyboard is open the BottomNav is hidden — remove ALL padding
+   so the composer sits flush against the keyboard top edge.
+   NOTE: must be a plain descendant selector (.keyboard-open is on <html>);
+   :global() is a Svelte-only construct that browsers reject in plain .css files. */
+.keyboard-open .chat-composer-footer {
   padding-bottom: 0 !important;
+}
+
+/* Chat layout fills the full viewport — neutralise the BottomNav dead-zone
+   created by .page-scroll-wrap's pb-16 (only scrollable pages need that space). */
+.page-scroll-wrap:has(.app-layout) {
+  padding-bottom: 0;
 }
 
 :global([data-theme='dark']) .chat-composer-footer {

@@ -37,17 +37,17 @@
     void refreshPosts();
   }
 
-  onMount(async () => {
+  onMount(() => {
+    // Kick off both in parallel — don't await one before starting the other.
+    // refreshPosts resolves its own token internally via apiFetch.
     void refreshPosts();
 
     const savedUser = currentUserId();
     if (savedUser) {
       userId = savedUser;
-      try {
-        authToken = await getToken();
-      } catch (e) {
-        console.error('[Posts] Failed to get token', e);
-      }
+      getToken()
+        .then((t) => { authToken = t; })
+        .catch((e) => console.error('[Posts] Failed to get token', e));
     }
   });
 </script>
@@ -106,11 +106,22 @@
 
         <div class="space-y-5">
           {#if loading && posts.length === 0}
-            <div class="flex justify-center py-20">
-              <div
-                class="w-10 h-10 border-3 border-cn-yellow border-t-transparent rounded-full animate-spin"
-              ></div>
-            </div>
+            {#each { length: 4 } as _, i (i)}
+              <div class="rounded-3xl border border-cn-border bg-[var(--cn-surface)]/60 p-5 space-y-3 animate-pulse">
+                <div class="flex items-center gap-3">
+                  <div class="w-9 h-9 rounded-full bg-cn-border/60 shrink-0"></div>
+                  <div class="space-y-1.5 flex-1">
+                    <div class="h-3 w-28 rounded-full bg-cn-border/60"></div>
+                    <div class="h-2.5 w-20 rounded-full bg-cn-border/40"></div>
+                  </div>
+                </div>
+                <div class="space-y-2">
+                  <div class="h-3 rounded-full bg-cn-border/60" style="width: {85 - i * 5}%"></div>
+                  <div class="h-3 rounded-full bg-cn-border/50" style="width: {70 - i * 3}%"></div>
+                  <div class="h-3 w-1/2 rounded-full bg-cn-border/40"></div>
+                </div>
+              </div>
+            {/each}
           {:else if posts.length === 0}
             <div
               class="text-center py-16 px-6 bg-[var(--cn-surface)]/50 backdrop-blur-xl rounded-3xl border border-dashed border-cn-border"
