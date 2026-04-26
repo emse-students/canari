@@ -418,11 +418,13 @@ export async function discoverMissingGroups(params: {
         await mlsService.sendGroupReset(convo.id, 'bootstrap');
         log(`[DISCOVERY] group_reset envoyé pour "${convo.name}".`);
       } catch (resetErr) {
-        log(
-          `[DISCOVERY] Échec group_reset (non-bloquant): ${resetErr instanceof Error ? resetErr.message : String(resetErr)}`
+        // group_reset MUST succeed before we can commit at epoch 0.
+        // If it fails the server epoch is still > 0 and the commit would
+        // be rejected with epoch_mismatch — abort this attempt entirely.
+        throw new Error(
+          `group_reset échoué — re-bootstrap annulé (${resetErr instanceof Error ? resetErr.message : String(resetErr)})`,
+          { cause: resetErr }
         );
-        // Continue quand même : le reset côté serveur n'est pas obligatoire
-        // pour que le bootstrap fonctionne (le lock empêche les races).
       }
 
       // ── Étape 2 : Créer le groupe MLS localement ────────────────────
@@ -509,10 +511,24 @@ export async function discoverMissingGroups(params: {
         await saveMlsState(userId, stBytes);
 
         if (bulk.commit) {
-          // group_reset a déjà remis l'epoch serveur à 0 — le premier commit
-          // du nouveau groupe MLS (baseEpoch=0) sera accepté par la gateway.
-          // Pas besoin d'appeler resetGroupEpoch séparément.
-          await mlsService.sendCommit(bulk.commit, convo.id);
+          // group_reset already reset the server epoch to 0 — the first commit
+          // from the new epoch-0 group will be accepted by the gateway.
+          try {
+            await mlsService.sendCommit(bulk.commit, convo.id);
+          } catch (commitErr) {
+            const msg = commitErr instanceof Error ? commitErr.message : String(commitErr);
+            if (msg.includes('epoch_mismatch')) {
+              // Race condition: another device committed after group_reset.
+              // Discard our epoch-0 state and clear the discovery timer so the
+              // next discoverMissingGroups cycle tries a fresh group_reset.
+              mlsService.forgetGroup(convo.id, 0);
+              localStorage.removeItem(pendingKey);
+              log(
+                `[DISCOVERY] Race epoch détectée sur "${convo.name}" — re-bootstrap sera retenté.`
+              );
+            }
+            throw commitErr;
+          }
         }
       }
 

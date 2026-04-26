@@ -75,12 +75,39 @@ export class PostsService {
       // Redis miss or error — fall through to DB
     }
 
-    const posts = await this.postRepo.find({
-      order: { createdAt: 'DESC' },
-      take: Number(limit),
-      skip: Number(offset),
-    });
-    for (const post of posts) {
+    // Raw SQL avoids deserializing the full comments JSONB through the ORM layer.
+    // For posts with many comments this column can be hundreds of KB per row;
+    // fetching all 50 posts × full comments caused the 20+ second response time.
+    // Instead we compute the last 3 comments and a count directly in PostgreSQL.
+    const rawPosts: any[] = await this.postRepo.manager.query(
+      `SELECT
+         id, "authorId", markdown, "createdAt", "updatedAt",
+         mentions, links, "attachedFormId", "associationId", "paymentAssociationId",
+         images, polls, "eventButtons", forms, reactions,
+         jsonb_array_length(COALESCE(comments, '[]'::jsonb)) AS "commentCount",
+         (
+           SELECT COALESCE(jsonb_agg(elem ORDER BY ord), '[]'::jsonb)
+           FROM (
+             SELECT elem, ord
+             FROM jsonb_array_elements(COALESCE(comments, '[]'::jsonb))
+               WITH ORDINALITY AS t(elem, ord)
+             ORDER BY ord DESC LIMIT 3
+           ) sub
+         ) AS comments
+       FROM posts
+       ORDER BY "createdAt" DESC
+       LIMIT $1 OFFSET $2`,
+      [Number(limit), Number(offset)]
+    );
+
+    for (const post of rawPosts) {
+      // TypeORM simple-array stores as comma-separated text; parse it back to array.
+      if (typeof post.mentions === 'string') {
+        post.mentions = post.mentions ? post.mentions.split(',').filter(Boolean) : [];
+      } else {
+        post.mentions = post.mentions ?? [];
+      }
+      post.commentCount = Number(post.commentCount) || 0;
       if (Array.isArray(post.eventButtons)) {
         for (const btn of post.eventButtons) {
           if (!Array.isArray(btn.registrants)) btn.registrants = [];
@@ -89,7 +116,7 @@ export class PostsService {
     }
 
     // Enrich with author display names (users table is in the same DB).
-    const authorIds = [...new Set(posts.map((p) => p.authorId).filter(Boolean))];
+    const authorIds = [...new Set(rawPosts.map((p: any) => p.authorId).filter(Boolean))] as string[];
     let nameMap: Record<string, { displayName: string | null; firstName: string | null; lastName: string | null }> = {};
     if (authorIds.length > 0) {
       const rows: { id: string; displayName: string | null; firstName: string | null; lastName: string | null }[] =
@@ -102,15 +129,10 @@ export class PostsService {
       );
     }
 
-    const result = posts.map((p) => {
+    const result = rawPosts.map((p: any) => {
       const authorInfo = nameMap[p.authorId] ?? { displayName: null, firstName: null, lastName: null };
-      const comments: any[] = p.comments ?? [];
       return {
         ...p,
-        // Return only the 3 most recent comments in list view to keep payload small.
-        // The full comment list is available when the user opens a post detail.
-        comments: comments.slice(-3),
-        commentCount: comments.length,
         authorDisplayName: authorInfo.displayName,
         authorFirstName: authorInfo.firstName,
         authorLastName: authorInfo.lastName,

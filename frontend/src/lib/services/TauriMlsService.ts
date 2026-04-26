@@ -532,10 +532,13 @@ export class TauriMlsService implements IMlsService {
   }
 
   async sendGroupReset(groupId: string, reason = 'bootstrap'): Promise<void> {
+    // Do NOT include triggeredBy: user IDs may contain characters (e.g. '+' in
+    // email addresses) that fail the server-side sanitizeQueryValue regex, which
+    // would return 400 and silently abort the entire re-bootstrap.
     const res = await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}/reset`, {
       method: 'POST',
       headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ reason, triggeredBy: `${this.userId}:${this.deviceId}` }),
+      body: JSON.stringify({ reason }),
     });
     if (!res.ok) {
       throw new Error(`group_reset failed: ${res.status}`);
@@ -776,6 +779,7 @@ export class TauriMlsService implements IMlsService {
       // (e.g. state restored from mls_push.bin but device ID regenerated).
       // Discard the stale state and start fresh so the user is not permanently blocked.
       if (String(e).includes('identity mismatch') || String(e).includes('Credential identity')) {
+        const oldDeviceId = this.deviceId; // capture before overwriting
         console.warn('[MLS] Credential mismatch — discarding stale state, starting fresh');
         this.deviceId =
           'tauri-' +
@@ -791,6 +795,13 @@ export class TauriMlsService implements IMlsService {
           pin,
           encryptedState: null,
         });
+        // Deregister the stale device from the server so other devices no longer
+        // try to use its key packages when generating Welcome messages.
+        // Without this, re-bootstrap sends a Welcome for the OLD key package
+        // (which is now gone from our fresh state), causing NoMatchingKeyPackage.
+        this.deleteDevice(userId, oldDeviceId).catch((err) =>
+          console.warn(`[MLS] Cleanup old device ${oldDeviceId} failed:`, err)
+        );
       } else {
         throw e;
       }

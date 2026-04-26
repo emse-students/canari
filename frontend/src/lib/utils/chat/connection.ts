@@ -1284,10 +1284,17 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       } catch (_e) {
         const errStr = String(_e);
         if (errStr.includes('NoMatchingKeyPackage')) {
-          // Ce Welcome n'était pas destiné à cet appareil — ignoré silencieusement
+          // The Welcome was generated for a key package whose private key is no
+          // longer in local state (consumed one-time prekey, or device was reset
+          // and old registration was not yet cleaned up). Log explicitly so the
+          // problem is visible in debug logs rather than silently returning false.
+          log(
+            `[WELCOME] KeyPackage introuvable pour groupe ${groupId} — Welcome ignoré ` +
+              `(KeyPackage consommé ou appareil réinitialisé). Erreur: ${errStr.slice(0, 200)}`
+          );
           return false;
         }
-        log(`Ignoré: pas un message pour un groupe existant ni un welcome. Erreur: ${errStr}`);
+        log(`[WELCOME] Erreur processWelcome pour groupe ${groupId}: ${errStr.slice(0, 300)}`);
         return false;
       }
     }
