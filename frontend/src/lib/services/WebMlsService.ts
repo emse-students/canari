@@ -927,9 +927,11 @@ export class WebMlsService implements IMlsService {
     // Always generate a fresh static fallback KP for this device.
     const fallback = this.client.generate_key_package() as Uint8Array;
 
-    // Replenish the one-time prekey pool up to 200 on each connection.
+    // Replenish the one-time prekey pool up to 50 on each connection.
+    // 50 is sufficient for normal use and avoids bloating the MLS state
+    // with hundreds of unused private key bundles (each ~400 bytes).
     const existing = await this.fetchPrekeyCount();
-    const needed = Math.max(0, 200 - existing);
+    const needed = Math.max(0, 50 - existing);
 
     let poolPackages: Uint8Array[] = [];
     if (needed > 0) {
@@ -942,7 +944,7 @@ export class WebMlsService implements IMlsService {
     // Save state once after all generations so the private key material is persisted.
     try {
       const stateBytes = this.client.save_state(pin);
-      saveMlsState(this.userId, stateBytes as Uint8Array);
+      await saveMlsState(this.userId, stateBytes as Uint8Array);
     } catch (e) {
       console.warn('Auto-save failed in WASM mode', e);
     }

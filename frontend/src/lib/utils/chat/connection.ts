@@ -334,7 +334,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           epochRecoveryGroups.add(groupId);
           mlsService.forgetGroup(groupId, currentEpoch);
           const stBytes = await mlsService.saveState(pin);
-          saveMlsState(userId, stBytes);
+          await saveMlsState(userId, stBytes);
           await mlsService.sendReinviteRequest(groupId);
         }
         return;
@@ -463,7 +463,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         try {
           await mlsService.processWelcome(content, ratchetTreeBytes);
           const stBytes = await mlsService.saveState(pin);
-          saveMlsState(userId, stBytes);
+          await saveMlsState(userId, stBytes);
 
           // If the conversation was a placeholder (created by discoverMissingGroups
           // before the Welcome arrived), activate it now — no page reload needed.
@@ -512,7 +512,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           // Auto-save MLS state
           try {
             const stBytes = await mlsService.saveState(pin);
-            saveMlsState(userId, stBytes);
+            await saveMlsState(userId, stBytes);
           } catch {
             // Silent fallback if autosave fails
           }
@@ -1096,7 +1096,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         // would lose the joined group and require a fresh Welcome.
         try {
           const stBytes = await mlsService.saveState(pin);
-          saveMlsState(userId, stBytes);
+          await saveMlsState(userId, stBytes);
         } catch {
           // Non-blocking: state will be saved on next message
         }
@@ -1274,7 +1274,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           // Sauvegarder l'état MLS une seule fois après tout le replay
           try {
             const stBytes = await mlsService.saveState(pin);
-            saveMlsState(userId, stBytes);
+            await saveMlsState(userId, stBytes);
           } catch {
             /* non-blocking */
           }

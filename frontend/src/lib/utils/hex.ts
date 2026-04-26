@@ -11,12 +11,6 @@ export function fromHex(hex: string): Uint8Array {
   return bytes;
 }
 
-function toBase64(bytes: Uint8Array): string {
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-  return btoa(binary);
-}
-
 function fromBase64(b64: string): Uint8Array {
   const binary = atob(b64);
   const bytes = new Uint8Array(binary.length);
@@ -26,20 +20,89 @@ function fromBase64(b64: string): Uint8Array {
 
 const B64_PREFIX = 'b64:';
 
-export function saveMlsState(userId: string, bytes: Uint8Array): void {
-  localStorage.setItem('mls_autosave_' + userId, B64_PREFIX + toBase64(bytes));
+// ── IndexedDB storage for MLS state ──────────────────────────────────────────
+// IndexedDB has no meaningful size limit (typically GBs), unlike localStorage
+// which is capped at ~5 MB. The MLS state blob grows with group count and
+// prekey pool size, so we store it as raw binary here.
+
+const IDB_NAME = 'canari-mls';
+const IDB_STORE = 'state';
+
+let _dbPromise: Promise<IDBDatabase> | null = null;
+
+function openMlsDb(): Promise<IDBDatabase> {
+  if (!_dbPromise) {
+    _dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
+      const req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = () => {
+        req.result.createObjectStore(IDB_STORE);
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => {
+        _dbPromise = null;
+        reject(req.error);
+      };
+    });
+  }
+  return _dbPromise;
 }
 
-export function loadMlsState(userId: string): Uint8Array | null {
+/**
+ * Persist the MLS state blob for `userId` in IndexedDB.
+ * Stores raw bytes — no base64 overhead.
+ */
+export async function saveMlsState(userId: string, bytes: Uint8Array): Promise<void> {
+  const db = await openMlsDb();
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).put(bytes, 'mls_autosave_' + userId);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+/**
+ * Load the MLS state blob for `userId` from IndexedDB.
+ *
+ * Includes a one-time migration: if the key is absent in IDB but present in
+ * localStorage (old format), the data is migrated automatically and the
+ * localStorage entry is removed.
+ */
+export async function loadMlsState(userId: string): Promise<Uint8Array | null> {
+  const db = await openMlsDb();
+  const idbResult = await new Promise<Uint8Array | null>((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readonly');
+    const req = tx.objectStore(IDB_STORE).get('mls_autosave_' + userId);
+    req.onsuccess = () => resolve((req.result as Uint8Array) ?? null);
+    req.onerror = () => reject(req.error);
+  });
+  if (idbResult) return idbResult;
+
+  // Migration path: read legacy localStorage entry, move it to IDB, erase from localStorage.
   const saved = localStorage.getItem('mls_autosave_' + userId);
   if (!saved) return null;
-  if (saved.startsWith(B64_PREFIX)) return fromBase64(saved.slice(B64_PREFIX.length));
-  // Migration: old hex format — decode and let the next save re-encode as base64
-  return fromHex(saved);
+  const bytes = saved.startsWith(B64_PREFIX)
+    ? fromBase64(saved.slice(B64_PREFIX.length))
+    : fromHex(saved);
+  await saveMlsState(userId, bytes);
+  localStorage.removeItem('mls_autosave_' + userId);
+  return bytes;
+}
+
+/** Remove the MLS state for `userId` from IndexedDB (and legacy localStorage). */
+export async function removeMlsState(userId: string): Promise<void> {
+  localStorage.removeItem('mls_autosave_' + userId);
+  const db = await openMlsDb();
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).delete('mls_autosave_' + userId);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
 }
 
 /** Returns the MLS state as hex for backup file format (backward-compatible). */
-export function exportMlsStateAsHex(userId: string): string | undefined {
-  const bytes = loadMlsState(userId);
+export async function exportMlsStateAsHex(userId: string): Promise<string | undefined> {
+  const bytes = await loadMlsState(userId);
   return bytes ? toHex(bytes) : undefined;
 }

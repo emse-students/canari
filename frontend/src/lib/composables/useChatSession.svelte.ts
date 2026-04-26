@@ -131,7 +131,8 @@ export function useChatSession() {
   async function resetDeviceAsFresh(userIdToReset: string, cb: ChatSessionCallbacks) {
     // Purge all local state tied to this logical device so next init creates
     // a brand new MLS device identity.
-    localStorage.removeItem(`mls_autosave_${userIdToReset}`);
+    const { removeMlsState } = await import('$lib/utils/hex');
+    await removeMlsState(userIdToReset);
     localStorage.removeItem(`mls_device_id_${userIdToReset}`);
     localStorage.removeItem(`canari_sync_guide_seen_${userIdToReset}`);
 
@@ -178,7 +179,6 @@ export function useChatSession() {
 
     loginError = '';
     userId = userId.trim().toLowerCase();
-    const hadLocalState = Boolean(localStorage.getItem('mls_autosave_' + userId));
 
     // Clear any stale reconnect timer from a previous session
     if (reconnectTimer !== null) {
@@ -227,10 +227,11 @@ export function useChatSession() {
       const _isTauri = !!(window as any).__TAURI_INTERNALS__;
       let stateBytes: Uint8Array | undefined;
 
-      const loaded = loadMlsState(userId);
+      const loaded = await loadMlsState(userId);
+      const hadLocalState = Boolean(loaded);
       if (loaded) {
         stateBytes = loaded;
-        cb.log('Etat MLS charge depuis localStorage.');
+        cb.log('Etat MLS charge depuis IndexedDB.');
       } else if (_isTauri) {
         // Fallback mobile : localStorage peut être vidé par le WebView (mémoire, app kill).
         // mls_push.bin est écrit dans le répertoire natif de l'app — plus fiable.

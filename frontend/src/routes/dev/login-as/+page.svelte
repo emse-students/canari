@@ -6,14 +6,15 @@
   let status = 'Initialisation…';
   let errorMsg = '';
 
-  function clearMlsState(userId: string) {
-    // Effface tout state MLS corrompu ou résiduel pour cet utilisateur,
+  async function clearMlsState(userId: string) {
+    // Efface tout state MLS corrompu ou résiduel pour cet utilisateur,
     // ainsi que le PIN sauvegardé. Force une initialisation propre.
-    localStorage.removeItem(`mls_autosave_${userId}`);
+    const { removeMlsState } = await import('$lib/utils/hex');
+    await removeMlsState(userId);
+    await removeMlsState(`dev-${userId}`);
     localStorage.removeItem(`mls_device_id_${userId}`);
     localStorage.removeItem('canari_saved_pin');
     // Effacer aussi les clés avec anciens formats (dev-<userId>)
-    localStorage.removeItem(`mls_autosave_dev-${userId}`);
     localStorage.removeItem(`mls_device_id_dev-${userId}`);
   }
 

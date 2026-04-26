@@ -1,5 +1,5 @@
 import { exportBackup, importBackup } from '$lib/backup';
-import { fromHex, toHex, saveMlsState, exportMlsStateAsHex } from '$lib/utils/hex';
+import { fromHex, toHex, saveMlsState, loadMlsState, exportMlsStateAsHex } from '$lib/utils/hex';
 import type { IStorage } from '$lib/db';
 import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
@@ -102,7 +102,7 @@ export async function processPendingInvitations(params: {
 
           // Persist MLS state after the remove commit
           const stBytes = await mlsService.saveState(pin);
-          saveMlsState(userId, stBytes);
+          await saveMlsState(userId, stBytes);
 
           // Short delay for commit propagation
           await new Promise((r) => setTimeout(r, 150));
@@ -174,7 +174,7 @@ export async function processPendingInvitations(params: {
 
           // Save MLS state before commit (crash-safety)
           const stBytes = await mlsService.saveState(pin);
-          saveMlsState(userId, stBytes);
+          await saveMlsState(userId, stBytes);
 
           // Send commit, excluding the inviter (self) and the newly-welcomed device
           if (result.commit) {
@@ -224,12 +224,7 @@ export async function processPendingInvitations(params: {
  * Force re-processing of pending device invitations.
  * Clears any stale local MLS autosave so the next reload starts fresh.
  */
-export function forceSyncReset(userId: string, log: (msg: string) => void) {
-  // Remove stale autosave so MLS re-init is clean on reload
-  const hadState = Boolean(localStorage.getItem('mls_autosave_' + userId));
-  if (hadState) {
-    log(`[SYNC] MLS autosave supprimé pour ${userId}. Rechargez pour forcer le re-bootstrap.`);
-  }
+export function forceSyncReset(_userId: string, log: (msg: string) => void) {
   log(`[SYNC] Reset forcé. Rechargez la page pour relancer le traitement des invitations.`);
 }
 
@@ -511,7 +506,7 @@ export async function discoverMissingGroups(params: {
 
         // Sauvegarder l'état MLS AVANT sendCommit (crash-safety)
         const stBytes = await mlsService.saveState(pin);
-        saveMlsState(userId, stBytes);
+        await saveMlsState(userId, stBytes);
 
         if (bulk.commit) {
           // group_reset a déjà remis l'epoch serveur à 0 — le premier commit
@@ -547,7 +542,7 @@ export async function exportUserBackup(params: {
   log: (msg: string) => void;
 }) {
   const { storage, userId, pin, myDeviceId, log } = params;
-  const mlsStateHex = exportMlsStateAsHex(userId);
+  const mlsStateHex = await exportMlsStateAsHex(userId);
   const blob = await exportBackup(storage, userId, pin, myDeviceId, mlsStateHex);
   const date = new Date().toISOString().split('T')[0];
   const filename = `canari-backup-${userId}-${date}.canari`;
@@ -598,9 +593,9 @@ export async function importUserBackup(params: {
   );
 
   if (isSameDevice) {
-    const existingMlsState = localStorage.getItem('mls_autosave_' + userId);
+    const existingMlsState = await loadMlsState(userId);
     if (backup.mlsState && !existingMlsState) {
-      localStorage.setItem('mls_autosave_' + userId, backup.mlsState);
+      await saveMlsState(userId, fromHex(backup.mlsState));
       log('État MLS restauré (même appareil).');
     } else if (existingMlsState) {
       log('État MLS local conservé (appareil déjà actif).');
@@ -740,7 +735,7 @@ export async function handleWelcomeRequest(params: {
 
         // Sauvegarder l'état MLS après le remove commit
         const stBytes = await mlsService.saveState(pin);
-        saveMlsState(userId, stBytes);
+        await saveMlsState(userId, stBytes);
 
         // Court délai pour la propagation du commit de remove
         await new Promise((r) => setTimeout(r, 150));
@@ -777,7 +772,7 @@ export async function handleWelcomeRequest(params: {
 
     // Sauvegarder l'état MLS avant le commit (crash-safety)
     const stBytes = await mlsService.saveState(pin);
-    saveMlsState(userId, stBytes);
+    await saveMlsState(userId, stBytes);
 
     // Broadcaster le commit en excluant l'inviteur (self) et l'invité
     if (result.commit) {

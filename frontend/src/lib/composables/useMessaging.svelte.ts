@@ -270,7 +270,7 @@ export function useMessaging() {
           } else if (mlsService) {
             await mlsService.sendMessage(convo.id, protoBytes, messageId);
             const stateBytes = await mlsService.saveState(ctx.pin);
-            saveMlsState(ctx.userId, stateBytes);
+            await saveMlsState(ctx.userId, stateBytes);
           }
           const payload = serializeEnvelope(mkMediaEnvelope({ ...mediaRef }, captionForFile));
           await addMessageToChat(

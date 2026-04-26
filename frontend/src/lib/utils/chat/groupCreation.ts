@@ -121,7 +121,7 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
         // En cas de crash entre le saveState et le sendCommit, l'état local
         // reste cohérent (post-addMember) et le commit peut être retenté.
         const stateBytes = await mlsService.saveState(pin);
-        saveMlsState(userId, stateBytes);
+        await saveMlsState(userId, stateBytes);
 
         if (bulk.commit) {
           const excludeIds = bulk.addedDeviceIds.map((did) => `${userId}:${did}`);
@@ -135,7 +135,7 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
     } else {
       // Pas d'autres appareils : sauvegarder quand même après createGroup
       const stateBytes = await mlsService.saveState(pin);
-      saveMlsState(userId, stateBytes);
+      await saveMlsState(userId, stateBytes);
     }
 
     conversations.set(conversationKey, {
@@ -219,7 +219,7 @@ async function processBulkAddition(
       const bulk = await mlsService.addMembersBulk(conversation.id, allDevices);
 
       const stateBytes = await mlsService.saveState(pin);
-      saveMlsState(userId, stateBytes);
+      await saveMlsState(userId, stateBytes);
 
       // Send welcomes per-device; do not abort all recipients on one failure.
       log(
@@ -279,7 +279,7 @@ async function processBulkAddition(
         );
         await mlsService.sendMessage(conversation.id, controlMsg);
         const st = await mlsService.saveState(pin);
-        saveMlsState(userId, st);
+        await saveMlsState(userId, st);
       } catch (e) {
         console.warn('Failed to broadcast member addition:', e);
       }
