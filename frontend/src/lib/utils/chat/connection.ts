@@ -1386,6 +1386,22 @@ export async function initializeConnection(deps: ConnectionDeps): Promise<void> 
         log(`[SYNC] welcome_request envoyé (état local manquant pour ${m.groupId})`);
       }
     }
+
+    // Detect groups where this device has no DeviceGroupMembership row at all.
+    // Happens after a device ID reset (credential mismatch recovery) — the new device
+    // ID has never been registered, so getDeviceMemberships returns nothing for it.
+    // getUserGroups returns every group the USER belongs to; send welcome_request for
+    // any group that is absent from both the DB rows and the local MLS state.
+    const membershipGroupIds = new Set(memberships.map((m) => m.groupId));
+    const userGroups = await mlsService
+      .getUserGroups(_userId)
+      .catch(() => [] as { groupId: string; name: string; isGroup: boolean }[]);
+    for (const group of userGroups) {
+      if (!membershipGroupIds.has(group.groupId) && !localGroups.has(group.groupId)) {
+        mlsService.sendWelcomeRequest(group.groupId).catch(() => {});
+        log(`[SYNC] welcome_request envoyé (device inconnu du groupe ${group.groupId})`);
+      }
+    }
   } catch (e) {
     log(`[SYNC] Échec récupération memberships: ${e}`);
   }

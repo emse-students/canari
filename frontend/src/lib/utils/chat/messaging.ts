@@ -16,8 +16,15 @@ interface SendMessageDeps {
     contactName: string,
     replyTo?: ChatMessage['replyTo'],
     isSystem?: boolean,
-    messageId?: string
+    messageId?: string,
+    timestamp?: Date,
+    status?: ChatMessage['status']
   ) => Promise<void>;
+  patchMessage?: (
+    messageId: string,
+    contactName: string,
+    patch: { status: ChatMessage['status'] }
+  ) => void;
   log: (msg: string) => void;
 }
 
@@ -89,29 +96,37 @@ export async function sendChatMessage(
         messageId
       );
     } else {
-      deps.log(`[SEND] Appel mlsService.sendMessage groupId="${conversation.id}"...`);
-      // Passes messageId so WebMlsService can wait for the gateway ACK (message_sent event)
-      // before resolving — the UI will only show the message after the gateway confirms delivery.
-      await mlsService.sendMessage(conversation.id, payload, messageId);
-      deps.log(`[SEND] mlsService.sendMessage confirmé — sauvegarde état MLS...`);
-      try {
-        const stateBytes = await mlsService.saveState(pin);
-        saveMlsState(userId, stateBytes);
-      } catch (saveErr) {
-        console.warn('[SEND] MLS state persist failed (quota?)', saveErr);
-      }
-      deps.log(`[SEND] État MLS sauvegardé — affichage message confirmé...`);
+      const envelope = serializeEnvelope(mkTextEnvelope(text, replyToData));
 
-      // Display only after gateway confirmed delivery
+      // Optimistic UI: show the bubble immediately so the user gets instant feedback.
+      // The dedup guard in addMessageToChat will drop the WS echo when it arrives.
       await addMessageToChat(
         userId,
-        serializeEnvelope(mkTextEnvelope(text, replyToData)),
+        envelope,
         contactName,
         undefined,
         false,
-        messageId
+        messageId,
+        undefined,
+        'sending'
       );
-      deps.log(`[SEND] Message affiché (confirmé gateway) pour messageId=${messageId}`);
+      deps.log(`[SEND] Message affiché (optimiste) — appel mlsService.sendMessage...`);
+
+      try {
+        await mlsService.sendMessage(conversation.id, payload, messageId);
+        deps.log(`[SEND] mlsService.sendMessage confirmé — sauvegarde état MLS...`);
+        try {
+          const stateBytes = await mlsService.saveState(pin);
+          saveMlsState(userId, stateBytes);
+        } catch (saveErr) {
+          console.warn('[SEND] MLS state persist failed (quota?)', saveErr);
+        }
+        deps.patchMessage?.(messageId, contactName, { status: 'sent' });
+        deps.log(`[SEND] Message envoyé pour messageId=${messageId}`);
+      } catch (sendErr) {
+        deps.patchMessage?.(messageId, contactName, { status: 'error' });
+        throw sendErr;
+      }
     }
     return { success: true };
   } catch (error: any) {

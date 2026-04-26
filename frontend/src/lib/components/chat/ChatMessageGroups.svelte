@@ -225,6 +225,7 @@
               isEdited={msg.isEdited}
               editedAt={msg.editedAt}
               isDeleted={msg.isDeleted}
+              status={msg.status}
               {groupPosition}
               onReply={onReply ? () => onReply?.(msg) : undefined}
               {onNavigateToMessage}

@@ -62,6 +62,22 @@ export function useMessaging() {
 
   // ── Incoming message ──────────────────────────────────────────────────────
 
+  function patchMessage(
+    messageId: string,
+    contactName: string,
+    patch: { status: ChatMessage['status'] },
+    ctx: MessagingContext
+  ) {
+    const key = contactName.toLowerCase();
+    const convo = ctx.conversations.get(key);
+    if (!convo) return;
+    const idx = convo.messages.findIndex((m) => m.id === messageId);
+    if (idx === -1) return;
+    const msgs = [...convo.messages];
+    msgs[idx] = { ...msgs[idx], ...patch };
+    ctx.conversations.set(key, { ...convo, messages: msgs });
+  }
+
   async function addMessageToChat(
     senderId: string,
     content: string,
@@ -70,7 +86,8 @@ export function useMessaging() {
     replyTo?: { id: string; senderId: string; content: string },
     isSystem = false,
     messageId?: string,
-    timestamp?: Date
+    timestamp?: Date,
+    status?: ChatMessage['status']
   ) {
     const normalized = contactName.toLowerCase();
     const convo = ctx.conversations.get(normalized);
@@ -90,6 +107,7 @@ export function useMessaging() {
       isOwn,
       replyTo,
       isSystem,
+      status,
     };
 
     if (convo.messages.some((m) => m.id === newMsg.id)) {
@@ -294,8 +312,15 @@ export function useMessaging() {
         contactName: string,
         replyTo?: { id: string; senderId: string; content: string },
         isSystem?: boolean,
-        msgId?: string
-      ) => addMessageToChat(sid, content, contactName, ctx, replyTo, isSystem, msgId),
+        msgId?: string,
+        ts?: Date,
+        st?: ChatMessage['status']
+      ) => addMessageToChat(sid, content, contactName, ctx, replyTo, isSystem, msgId, ts, st),
+      patchMessage: (
+        msgId: string,
+        contactName: string,
+        patch: { status: ChatMessage['status'] }
+      ) => patchMessage(msgId, contactName, patch, ctx),
       log: ctx.log,
     });
 

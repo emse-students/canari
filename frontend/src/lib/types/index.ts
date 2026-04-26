@@ -11,6 +11,8 @@ export interface ChatMessage {
   editedAt?: Date;
   isOwn: boolean;
   isSystem?: boolean;
+  /** Optimistic send state: undefined = received/confirmed, 'sending' = in-flight, 'error' = failed */
+  status?: 'sending' | 'sent' | 'error';
   replyTo?: {
     id: string;
     senderId: string;
