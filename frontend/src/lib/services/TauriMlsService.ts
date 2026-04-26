@@ -926,10 +926,15 @@ export class TauriMlsService implements IMlsService {
   }
 
   async saveState(pin: string) {
-    // Pass the PIN to the Tauri command
     const bytes = await invoke<Uint8Array>('sauvegarder_mls', { pin });
-    // Persiste aussi l'état chiffré pour les notifications push Android (no-op desktop).
-    void invoke('save_mls_state_for_push', { pin }).catch(() => {});
+    // Await the push-state write so mls_push.bin is guaranteed up-to-date
+    // before the app can be backgrounded. Fire-and-forget caused a race where
+    // the Android FCM service loaded a stale epoch and decryption failed.
+    try {
+      await invoke('save_mls_state_for_push', { pin });
+    } catch {
+      // Non-blocking on desktop (no-op) and on write errors.
+    }
     return bytes;
   }
 
