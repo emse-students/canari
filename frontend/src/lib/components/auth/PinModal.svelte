@@ -1,21 +1,30 @@
 <script lang="ts">
   import Modal from '$lib/components/shared/Modal.svelte';
-  import { LoaderCircle } from 'lucide-svelte';
+  import { LoaderCircle, Fingerprint } from 'lucide-svelte';
 
   interface Props {
     open: boolean;
     onSubmit: (pin: string) => void;
     onClose?: () => void;
+    onBiometricRequest?: () => void;
+    showBiometricButton?: boolean;
     externalError?: string;
     isLoading?: boolean;
   }
 
-  let { open, onSubmit, onClose, externalError = '', isLoading = false }: Props = $props();
+  let {
+    open,
+    onSubmit,
+    onClose,
+    onBiometricRequest,
+    showBiometricButton = false,
+    externalError = '',
+    isLoading = false,
+  }: Props = $props();
 
   let pin = $state('');
   let internalError = $state('');
 
-  // Réinitialise l'erreur interne quand l'erreur externe change
   $effect(() => {
     if (externalError) internalError = '';
   });
@@ -40,6 +49,24 @@
       Entrez votre PIN pour déverrouiller le chiffrement de bout en bout. Ce PIN est le même sur
       tous vos appareils.
     </p>
+
+    {#if showBiometricButton && onBiometricRequest}
+      <button
+        type="button"
+        onclick={onBiometricRequest}
+        disabled={isLoading}
+        class="w-full py-3 flex items-center justify-center gap-2 rounded-xl border border-cn-border/60 bg-white/5 dark:bg-black/20 text-sm font-semibold text-text-main hover:bg-white/10 dark:hover:bg-black/30 transition-all disabled:opacity-50"
+      >
+        <Fingerprint size={18} />
+        Utiliser l'empreinte digitale
+      </button>
+
+      <div class="flex items-center gap-3">
+        <hr class="flex-1 border-cn-border/40" />
+        <span class="text-xs text-text-muted">ou entrez votre PIN</span>
+        <hr class="flex-1 border-cn-border/40" />
+      </div>
+    {/if}
 
     <div class="space-y-2">
       <label for="encryption-pin" class="sr-only">Code PIN</label>

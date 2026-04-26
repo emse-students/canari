@@ -34,6 +34,7 @@
   let showPinModal = $state(false);
   let pinError = $state('');
   let pinLoading = $state(false);
+  let biometricConfigured = $state(false);
 
   // Guard against concurrent login attempts (e.g. onMount + afterNavigate both firing).
   let _loginInProgress = false;
@@ -261,6 +262,7 @@
       _loginInProgress = true;
       try {
         const configured = await BiometricService.isConfigured().catch(() => false);
+        biometricConfigured = configured;
         if (configured && w.__TAURI_INTERNALS__) {
           await globalSession.biometricLogin(sessionCb());
           if (!globalSession.isLoggedIn) {
@@ -338,6 +340,18 @@
     };
   });
 
+  async function handleBiometricFromModal() {
+    pinError = '';
+    pinLoading = true;
+    await globalSession.biometricLogin(sessionCb());
+    pinLoading = false;
+    if (globalSession.isLoggedIn) {
+      showPinModal = false;
+    } else {
+      pinError = "L'empreinte digitale a échoué. Entrez votre PIN.";
+    }
+  }
+
   async function handlePinSubmit(submittedPin: string) {
     pinError = '';
     pinLoading = true;
@@ -405,6 +419,8 @@
     await clearAuth();
     void goto('/login', { replaceState: true });
   }}
+  onBiometricRequest={handleBiometricFromModal}
+  showBiometricButton={biometricConfigured}
   externalError={pinError}
   isLoading={pinLoading}
 />

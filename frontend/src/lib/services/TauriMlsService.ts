@@ -744,18 +744,57 @@ export class TauriMlsService implements IMlsService {
     if (storedDevice) {
       this.deviceId = storedDevice;
     } else {
+      // localStorage may have been cleared (Android WebView eviction / re-install).
+      // Try to restore the original device ID from the native push_context.json
+      // before falling back to generating a new random one — avoids credential mismatch.
+      let restoredId: string | null = null;
+      try {
+        const ctx = await invoke<{ deviceId?: string; userId?: string } | null>(
+          'load_push_context'
+        );
+        if (ctx?.deviceId && ctx.userId === userId) restoredId = ctx.deviceId;
+      } catch {
+        /* desktop / file absent */
+      }
+
       this.deviceId =
+        restoredId ??
         'tauri-' +
-        userId +
-        '-' +
-        Date.now().toString(36) +
-        '-' +
-        Math.random().toString(36).slice(2, 6);
+          userId +
+          '-' +
+          Date.now().toString(36) +
+          '-' +
+          Math.random().toString(36).slice(2, 6);
       localStorage.setItem(deviceKey, this.deviceId);
     }
 
     const encryptedState = state ? Array.from(state) : null;
-    await invoke('initialiser_mls', { userId, deviceId: this.deviceId, pin, encryptedState });
+    try {
+      await invoke('initialiser_mls', { userId, deviceId: this.deviceId, pin, encryptedState });
+    } catch (e) {
+      // Credential identity mismatch: the saved state embeds a different device ID
+      // (e.g. state restored from mls_push.bin but device ID regenerated).
+      // Discard the stale state and start fresh so the user is not permanently blocked.
+      if (String(e).includes('identity mismatch') || String(e).includes('Credential identity')) {
+        console.warn('[MLS] Credential mismatch — discarding stale state, starting fresh');
+        this.deviceId =
+          'tauri-' +
+          userId +
+          '-' +
+          Date.now().toString(36) +
+          '-' +
+          Math.random().toString(36).slice(2, 6);
+        localStorage.setItem(deviceKey, this.deviceId);
+        await invoke('initialiser_mls', {
+          userId,
+          deviceId: this.deviceId,
+          pin,
+          encryptedState: null,
+        });
+      } else {
+        throw e;
+      }
+    }
 
     // Sauvegarde le contexte de session pour les notifications push Android (no-op desktop).
     void invoke('store_push_context', {

@@ -87,7 +87,7 @@ export class IndexedDbStorage implements IStorage {
       // Version 3: conversation.id is now the MLS groupId UUID (was human-readable contactName).
       // Migration: the conversations store is recreated (same keyPath 'id') and all existing
       // rows are migrated by setting id = groupId (old rows had a separate groupId field).
-      const request = indexedDB.open(this.dbName, 3);
+      const request = indexedDB.open(this.dbName, 4);
 
       request.onerror = () => reject('IndexedDB open error');
       request.onsuccess = () => {
@@ -112,6 +112,17 @@ export class IndexedDbStorage implements IStorage {
 
           const msgStore = db.createObjectStore('messages', { keyPath: 'id' });
           msgStore.createIndex('byConversation', 'conversationId', { unique: false });
+        }
+
+        if (oldVersion < 4) {
+          // Encryption format changed from Argon2+ChaCha20 (WASM) to PBKDF2+AES-GCM
+          // (SubtleCrypto). Old ciphertext is unreadable — drop all message rows.
+          // Conversations are kept; messages will be re-fetched from the server.
+          if (db.objectStoreNames.contains('messages')) {
+            db.deleteObjectStore('messages');
+          }
+          const freshMsgStore = db.createObjectStore('messages', { keyPath: 'id' });
+          freshMsgStore.createIndex('byConversation', 'conversationId', { unique: false });
         }
 
         if (oldVersion < 3 && oldVersion >= 2) {
@@ -461,7 +472,6 @@ export class SqliteStorage implements IStorage {
     const currentVersion: number = versionRows[0]?.user_version ?? 0;
 
     if (currentVersion < 2) {
-      // Supprimer les lignes illisibles (iv non-base64 = ancien format JSON)
       await this.db.execute(`
         DELETE FROM messages
         WHERE typeof(iv) != 'text'
@@ -470,6 +480,13 @@ export class SqliteStorage implements IStorage {
            OR cipher_text LIKE '[%'
       `);
       await this.db.execute('PRAGMA user_version = 2');
+    }
+
+    if (currentVersion < 3) {
+      // Encryption format changed from Argon2+ChaCha20 (WASM) to PBKDF2+AES-GCM.
+      // Old rows cannot be decrypted — drop them. Messages re-fetch from server.
+      await this.db.execute('DELETE FROM messages');
+      await this.db.execute('PRAGMA user_version = 3');
     }
   }
 

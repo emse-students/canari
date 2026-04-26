@@ -1,30 +1,42 @@
+// PIN-based encryption using the Web Crypto API (PBKDF2-HMAC-SHA256 + AES-256-GCM).
+// Works on both web and Tauri without any WASM initialisation.
+//
+// Blob format (same layout as the previous WASM implementation):
+//   salt (16 bytes) || iv (12 bytes) || ciphertext (variable)
+//
+// Note: switching from Argon2+ChaCha20 (WASM) to PBKDF2+AES-GCM breaks
+// backward compatibility — db.ts bumps its schema version and drops all
+// rows encrypted with the old format.
+
+const PBKDF2_ITERATIONS = 100_000;
+
+async function deriveKey(pin: string, salt: Uint8Array): Promise<CryptoKey> {
+  const baseKey = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(pin),
+    'PBKDF2',
+    false,
+    ['deriveKey']
+  );
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
+    baseKey,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
 export async function encryptData(
   data: any,
   pin: string
 ): Promise<{ iv: Uint8Array; salt: Uint8Array; cipherText: Uint8Array }> {
-  // Dynamic import to access WASM memory (must be initialized by Service)
-  const wasm = await import('$lib/wasm/mls_wasm.js');
-
-  // Check if initialized
-  if (!wasm.encrypt_with_pin) {
-    throw new Error('WASM not initialized or missing export');
-  }
-
-  const enc = new TextEncoder();
-  const encoded = enc.encode(JSON.stringify(data));
-
-  try {
-    const fullBlob: Uint8Array = wasm.encrypt_with_pin(pin, encoded);
-
-    // Output format from Rust: [Salt 16] [Nonce 12] [Ciphertext ...]
-    const salt = fullBlob.slice(0, 16);
-    const iv = fullBlob.slice(16, 28);
-    const cipherText = fullBlob.slice(28);
-
-    return { iv, salt, cipherText };
-  } catch (e) {
-    throw new Error(`WASM Encryption failed: ${e}`, { cause: e });
-  }
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await deriveKey(pin, salt);
+  const plaintext = new TextEncoder().encode(JSON.stringify(data));
+  const cipherBuf = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plaintext);
+  return { salt, iv, cipherText: new Uint8Array(cipherBuf) };
 }
 
 export async function decryptData(
@@ -33,19 +45,10 @@ export async function decryptData(
   salt: Uint8Array,
   pin: string
 ): Promise<any> {
-  const wasm = await import('$lib/wasm/mls_wasm.js');
-
-  // Reconstruct blob: [Salt 16] [Nonce 12] [Ciphertext ...]
-  const fullBlob = new Uint8Array(salt.length + iv.length + cipherText.length);
-  fullBlob.set(salt, 0);
-  fullBlob.set(iv, 16);
-  fullBlob.set(cipherText, 28);
-
+  const key = await deriveKey(pin, salt);
   try {
-    const decrypted: Uint8Array = wasm.decrypt_with_pin(pin, fullBlob);
-
-    const dec = new TextDecoder();
-    return JSON.parse(dec.decode(decrypted));
+    const plainBuf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, cipherText);
+    return JSON.parse(new TextDecoder().decode(plainBuf));
   } catch {
     throw new Error('Decryption failed. Wrong PIN?');
   }

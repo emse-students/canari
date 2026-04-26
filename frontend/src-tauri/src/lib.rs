@@ -568,6 +568,15 @@ fn save_mls_state_for_push(
     std::fs::write(data_dir.join("mls_push.bin"), &encrypted_bytes).map_err(|e| e.to_string())
 }
 
+/// Lit {app_data_dir}/push_context.json et retourne son contenu.
+/// Utilisé pour restaurer le device ID quand localStorage est vide (réinstall Android).
+#[tauri::command]
+fn load_push_context(app: tauri::AppHandle) -> Option<serde_json::Value> {
+    let data_dir = app.path().app_data_dir().ok()?;
+    let bytes = std::fs::read(data_dir.join("push_context.json")).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
 /// Lit {app_data_dir}/mls_push.bin et retourne son contenu chiffré.
 /// Retourne None si le fichier n'existe pas (première installation).
 /// Utilisé au démarrage sur mobile quand localStorage est vide (WebView nettoyé).
@@ -758,6 +767,7 @@ pub fn run() {
             notify_fcm_token,
             save_backup_file,
             store_push_context,
+            load_push_context,
             save_mls_state_for_push,
             load_mls_state_from_push
         ])
