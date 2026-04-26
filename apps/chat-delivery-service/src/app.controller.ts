@@ -2945,50 +2945,28 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         this.logger.log(
           `[SEND][${traceId}] PUBLISHED recipient=${queued.recipientId}:${queued.deviceId} queuedId=${queued.id}`,
         );
-      } else if (!body.isWelcome && !body.isCommit && admin.apps.length > 0) {
-        // Offline recipient: send FCM push notification
-        const pushTokens = await this.pushTokenRepo.find({
-          where: { userId: queued.recipientId, deviceId: queued.deviceId },
-        });
 
-        if (pushTokens.length === 0) {
-          this.logger.log(
-            `[PUSH_SEND][${traceId}] No push token for user=${queued.recipientId} device=${queued.deviceId}`,
+        // Deferred FCM fallback: Android keeps the WebSocket TCP connection alive
+        // even when the app is in the background, so `isOnline` can be true while
+        // the app can no longer process WebSocket frames. If the queued message is
+        // still unACKed after DEFERRED_PUSH_DELAY_MS, the WebSocket delivery failed
+        // silently → fall back to FCM so the user still gets a notification.
+        if (!body.isWelcome && !body.isCommit) {
+          this.scheduleDeferredPush(
+            queued,
+            traceId,
+            body.groupId ?? '',
+            body.senderId ?? '',
           );
         }
-
-        for (const pt of pushTokens) {
-          try {
-            await admin.messaging().send({
-              token: pt.token,
-              // Pas de clé "notification" → data-only push, onMessageReceived()
-              // est toujours appelé (foreground ET background).
-              data: {
-                type: 'message',
-                groupId: body.groupId ?? '',
-                queuedMessageId: queued.id,
-                senderId: body.senderId ?? '',
-              },
-              android: { priority: 'high' },
-              apns: {
-                payload: { aps: { contentAvailable: true, sound: 'default' } },
-              },
-            });
-            this.logger.log(
-              `[PUSH_SEND][${traceId}] FCM sent user=${queued.recipientId} device=${pt.deviceId}`,
-            );
-          } catch (e) {
-            if (this.isTerminalPushTokenError(e)) {
-              await this.pushTokenRepo.delete({ id: pt.id });
-              this.logger.warn(
-                `[PUSH_SEND][${traceId}] Deleted invalid push token user=${queued.recipientId} device=${pt.deviceId}`,
-              );
-            }
-            this.logger.warn(
-              `[PUSH_SEND][${traceId}] FCM failed user=${queued.recipientId} device=${pt.deviceId} err=${e}`,
-            );
-          }
-        }
+      } else if (!body.isWelcome && !body.isCommit) {
+        // Offline recipient: immediate FCM push notification
+        await this.sendFcmForQueued(
+          queued,
+          traceId,
+          body.groupId ?? '',
+          body.senderId ?? '',
+        );
       }
     }
 
@@ -3085,6 +3063,119 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     return { status: 'deleted', count: result.affected || 0 };
   }
 
+  // ─── Push helpers ──────────────────────────────────────────────────────
+
+  /**
+   * Send a data-only FCM push to every token registered for a given queued
+   * message's recipient.  Data-only means onMessageReceived() fires even when
+   * the app is in the background, letting the Android service decrypt and
+   * display the notification locally.
+   */
+  private async sendFcmForQueued(
+    queued: QueuedMessage,
+    traceId: string,
+    groupId: string,
+    senderId: string,
+  ): Promise<void> {
+    if (admin.apps.length === 0) return;
+
+    const pushTokens = await this.pushTokenRepo.find({
+      where: { userId: queued.recipientId, deviceId: queued.deviceId },
+    });
+
+    if (pushTokens.length === 0) {
+      this.logger.log(
+        `[PUSH_SEND][${traceId}] No push token for user=${queued.recipientId} device=${queued.deviceId}`,
+      );
+      return;
+    }
+
+    for (const pt of pushTokens) {
+      try {
+        await admin.messaging().send({
+          token: pt.token,
+          // Data-only → onMessageReceived() is always invoked (foreground AND
+          // background).  The Android service fetches + decrypts the ciphertext
+          // and builds the visible notification locally.
+          data: {
+            type: 'message',
+            groupId,
+            queuedMessageId: queued.id,
+            senderId,
+          },
+          android: {
+            priority: 'high',
+            // Keep message in FCM queue for 24 h in case the device is offline.
+            ttl: 86_400_000,
+          },
+          apns: {
+            payload: { aps: { contentAvailable: true } },
+            headers: { 'apns-push-type': 'background', 'apns-priority': '5' },
+          },
+        });
+        this.logger.log(
+          `[PUSH_SEND][${traceId}] FCM sent user=${queued.recipientId} device=${pt.deviceId}`,
+        );
+      } catch (e) {
+        if (this.isTerminalPushTokenError(e)) {
+          await this.pushTokenRepo.delete({ id: pt.id });
+          this.logger.warn(
+            `[PUSH_SEND][${traceId}] Deleted invalid push token user=${queued.recipientId} device=${pt.deviceId}`,
+          );
+        }
+        this.logger.warn(
+          `[PUSH_SEND][${traceId}] FCM failed user=${queued.recipientId} device=${pt.deviceId} err=${e}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Schedule a deferred FCM fallback for an "online" device.
+   *
+   * Android keeps the WebSocket TCP connection alive even when the app is
+   * backgrounded/frozen, making `redis.exists(presence_key)` return true.
+   * We send via WebSocket first, then check after DELAY_MS whether the client
+   * ACKed the message.  If it has not (app could not process the WS frame),
+   * we fire an FCM push so the user still gets a notification.
+   */
+  private scheduleDeferredPush(
+    queued: QueuedMessage,
+    traceId: string,
+    groupId: string,
+    senderId: string,
+  ): void {
+    const DELAY_MS = 10_000;
+    // setTimeout expects () => void; extract the async work into a separate
+    // method to satisfy @typescript-eslint/no-misused-promises.
+    setTimeout(() => {
+      void this.runDeferredPush(queued, traceId, groupId, senderId).catch((e) =>
+        this.logger.warn(
+          `[PUSH_DEFERRED][${traceId}] deferred push error: ${e}`,
+        ),
+      );
+    }, DELAY_MS);
+  }
+
+  private async runDeferredPush(
+    queued: QueuedMessage,
+    traceId: string,
+    groupId: string,
+    senderId: string,
+  ): Promise<void> {
+    const stillQueued = await this.queuedMessageRepo.findOne({
+      where: { id: queued.id },
+    });
+    if (!stillQueued) {
+      // Client ACKed via WebSocket — nothing to do.
+      return;
+    }
+    this.logger.log(
+      `[PUSH_DEFERRED][${traceId}] queuedId=${queued.id} still unACKed after 10 s → FCM fallback`,
+    );
+    await this.sendFcmForQueued(queued, `${traceId}-def`, groupId, senderId);
+  }
+
   // ─── Push Notification token management ───────────────────────────────
 
   /**
@@ -3108,23 +3199,13 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     const platform: 'android' | 'ios' =
       body.platform === 'ios' ? 'ios' : 'android';
 
-    let pushToken = await this.pushTokenRepo.findOne({
-      where: { userId, deviceId },
-    });
-
-    if (!pushToken) {
-      pushToken = this.pushTokenRepo.create({
-        userId,
-        deviceId,
-        token,
-        platform,
-      });
-    } else {
-      pushToken.token = token;
-      pushToken.platform = platform;
-    }
-
-    await this.pushTokenRepo.save(pushToken);
+    // Atomic upsert — avoids a race condition where two concurrent requests
+    // (e.g. app restart) both find no row then both try to INSERT, with the
+    // second hitting the unique(userId, deviceId) constraint.
+    await this.pushTokenRepo.upsert(
+      { userId, deviceId, token, platform },
+      { conflictPaths: ['userId', 'deviceId'] },
+    );
     this.logger.log(
       `[PUSH_REGISTER] user=${userId} device=${deviceId} platform=${platform}`,
     );
