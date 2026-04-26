@@ -19,7 +19,7 @@ async function deriveKey(pin: string, salt: Uint8Array): Promise<CryptoKey> {
     ['deriveKey']
   );
   return crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt: new Uint8Array(salt), iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
     baseKey,
     { name: 'AES-GCM', length: 256 },
     false,
@@ -47,7 +47,11 @@ export async function decryptData(
 ): Promise<any> {
   const key = await deriveKey(pin, salt);
   try {
-    const plainBuf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, cipherText);
+    const plainBuf = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: new Uint8Array(iv) },
+      key,
+      new Uint8Array(cipherText)
+    );
     return JSON.parse(new TextDecoder().decode(plainBuf));
   } catch {
     throw new Error('Decryption failed. Wrong PIN?');
