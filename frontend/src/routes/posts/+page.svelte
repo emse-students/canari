@@ -10,11 +10,14 @@
   import { currentUserId } from '$lib/stores/user';
   import { RefreshCw, PenSquare, Inbox } from 'lucide-svelte';
 
+  let { data }: { data: { posts: Promise<PostEntity[]> } } = $props();
+
   let userId = $state('');
   let email = $state('');
   let authToken = $state('');
 
-  let posts = $state<PostEntity[]>([]);
+  // null = display initialPosts from load(); set on manual refresh
+  let postsOverride = $state<PostEntity[] | null>(null);
   let loading = $state(false);
   let errorMessage = $state('');
 
@@ -24,7 +27,7 @@
     loading = true;
     errorMessage = '';
     try {
-      posts = await listPosts(50);
+      postsOverride = await listPosts(20);
     } catch (err) {
       errorMessage = err instanceof Error ? err.message : 'Impossible de charger les posts';
     } finally {
@@ -38,10 +41,6 @@
   }
 
   onMount(() => {
-    // Kick off both in parallel — don't await one before starting the other.
-    // refreshPosts resolves its own token internally via apiFetch.
-    void refreshPosts();
-
     const savedUser = currentUserId();
     if (savedUser) {
       userId = savedUser;
@@ -105,7 +104,7 @@
         {/if}
 
         <div class="space-y-5">
-          {#if loading && posts.length === 0}
+          {#snippet skeletonCards()}
             {#each { length: 4 } as _, i (i)}
               <div class="rounded-3xl border border-cn-border bg-[var(--cn-surface)]/60 p-5 space-y-3 animate-pulse">
                 <div class="flex items-center gap-3">
@@ -122,25 +121,44 @@
                 </div>
               </div>
             {/each}
-          {:else if posts.length === 0}
+          {/snippet}
+
+          {#await data.posts}
+            {@render skeletonCards()}
+          {:then initialPosts}
+            {@const resolvedPosts = postsOverride ?? initialPosts}
+            {#if loading}
+              {@render skeletonCards()}
+            {:else if resolvedPosts.length === 0}
+              <div
+                class="text-center py-16 px-6 bg-[var(--cn-surface)]/50 backdrop-blur-xl rounded-3xl border border-dashed border-cn-border"
+              >
+                <Inbox size={48} class="mx-auto mb-3 text-text-muted opacity-40" />
+                <h3 class="text-lg font-bold text-text-main mb-1">Aucun post</h3>
+                <p class="text-text-muted text-sm">Soyez le premier à partager quelque chose !</p>
+              </div>
+            {:else}
+              {#each resolvedPosts as post (post.id)}
+                <PostCard
+                  {post}
+                  currentUserId={userId}
+                  currentUserEmail={email}
+                  {authToken}
+                  onRefresh={refreshPosts}
+                />
+              {/each}
+            {/if}
+          {:catch _err}
             <div
               class="text-center py-16 px-6 bg-[var(--cn-surface)]/50 backdrop-blur-xl rounded-3xl border border-dashed border-cn-border"
             >
               <Inbox size={48} class="mx-auto mb-3 text-text-muted opacity-40" />
-              <h3 class="text-lg font-bold text-text-main mb-1">Aucun post</h3>
-              <p class="text-text-muted text-sm">Soyez le premier à partager quelque chose !</p>
+              <h3 class="text-lg font-bold text-text-main mb-1">Impossible de charger les posts</h3>
+              <button class="text-text-muted text-sm underline mt-1" onclick={refreshPosts}
+                >Réessayer</button
+              >
             </div>
-          {:else}
-            {#each posts as post (post.id)}
-              <PostCard
-                {post}
-                currentUserId={userId}
-                currentUserEmail={email}
-                {authToken}
-                onRefresh={refreshPosts}
-              />
-            {/each}
-          {/if}
+          {/await}
         </div>
       </section>
     </div>

@@ -1343,6 +1343,23 @@ export async function initializeConnection(deps: ConnectionDeps): Promise<void> 
     setReconnectAttempts(0);
     log('Connecté au réseau !');
     mlsService.onDisconnect(scheduleReconnect);
+
+    // When a sibling device (same user, different device) signals that it needs
+    // to be added to a group, immediately run the pending-invitations loop.
+    // Without these handlers the WS events are received and logged but ignored —
+    // the triggering device is never added to the MLS tree.
+    mlsService.onReinviteRequest((senderDeviceId, groupId) => {
+      log(
+        `[SIBLING] reinvite_request de ${senderDeviceId} (groupe ${groupId}) → traitement invitations`
+      );
+      processDeviceInvitationsLocally().catch(() => {});
+    });
+    mlsService.onWelcomeRequest((requesterUserId, requesterDeviceId, groupId) => {
+      log(
+        `[SIBLING] welcome_request de ${requesterUserId}:${requesterDeviceId} (groupe ${groupId}) → traitement invitations`
+      );
+      processDeviceInvitationsLocally().catch(() => {});
+    });
   } catch (_wsErr: unknown) {
     const msg = _wsErr instanceof Error ? _wsErr.message : String(_wsErr);
     log(`Gateway inaccessible: ${msg}`);
