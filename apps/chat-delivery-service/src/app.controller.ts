@@ -1914,6 +1914,24 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @UseGuards(HeaderAuthGuard)
+  @Delete('mls-api/devices/:userId/:deviceId/prekeys')
+  async purgeDevicePrekeys(
+    @Param('userId') userId: string,
+    @Param('deviceId') deviceId: string,
+  ) {
+    const safeUserId = sanitizeQueryValue(userId, 'userId');
+    const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
+    const result = await this.oneTimeKeyPackageRepo.delete({
+      userId: safeUserId,
+      deviceId: safeDeviceId,
+    });
+    this.logger.log(
+      `[PURGE_PREKEYS] user=${safeUserId} device=${safeDeviceId} deleted=${result.affected ?? 0}`,
+    );
+    return { status: 'purged', deleted: result.affected ?? 0 };
+  }
+
+  @UseGuards(HeaderAuthGuard)
   @Post('mls-api/register-device/prekeys')
   async registerDevicePrekeys(
     @Body() body: { userId: string; deviceId: string; keyPackages: unknown },

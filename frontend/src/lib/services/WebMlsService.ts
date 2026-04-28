@@ -46,6 +46,8 @@ export class WebMlsService implements IMlsService {
   private deviceId: string;
   /** Resolved when init() completes; shared across concurrent callers to avoid double WASM init. */
   private initPromise: Promise<void> | null = null;
+  /** True when initialized without existing state — triggers OTKP purge before new ones are published. */
+  private freshStart = false;
 
   // Message queue for sequential processing
   private messageQueue: QueuedMessage[] = [];
@@ -396,9 +398,14 @@ export class WebMlsService implements IMlsService {
         if (msg.queuedMessageId) {
           ackIds.push(msg.queuedMessageId);
         }
-        // Clean up pending Welcome state on error to prevent buffering forever
-        if (groupId) {
+        // Flush buffered messages back to the main queue so they are not lost.
+        // They will be processed normally (likely fail with group-not-found, get ACK'd).
+        if (groupId && this.pendingWelcomeGroups.has(groupId)) {
+          const buffered = this.pendingWelcomeGroups.get(groupId)!;
           this.pendingWelcomeGroups.delete(groupId);
+          for (let i = buffered.length - 1; i >= 0; i--) {
+            this.messageQueue.unshift(buffered[i]);
+          }
         }
       }
     }
@@ -846,6 +853,7 @@ export class WebMlsService implements IMlsService {
 
   private async _initImpl(userId: string, pin: string, state?: Uint8Array) {
     this.userId = userId;
+    this.freshStart = !state;
 
     // Per-user device ID — prevents two users in the same browser from sharing a
     // device ID, which would cause the delivery service to route the welcome message
@@ -868,8 +876,28 @@ export class WebMlsService implements IMlsService {
     try {
       this.client = await loadAndInitWasm(userId, this.deviceId, state, pin);
     } catch (e) {
-      console.error('WASM Init Failed:', e);
-      throw e;
+      // Credential identity mismatch: saved WASM state embeds a different device ID
+      // (e.g. localStorage cleared and device ID regenerated, or state imported from
+      // another device). Discard the stale state and start fresh.
+      if (String(e).includes('identity mismatch') || String(e).includes('Credential identity')) {
+        const oldDeviceId = this.deviceId;
+        console.warn('[MLS] Credential mismatch — discarding stale state, starting fresh');
+        this.deviceId =
+          'web-' +
+          userId +
+          '-' +
+          Date.now().toString(36) +
+          '-' +
+          Math.random().toString(36).slice(2, 6);
+        localStorage.setItem(deviceKey, this.deviceId);
+        this.client = await loadAndInitWasm(userId, this.deviceId, undefined, pin);
+        this.deleteDevice(userId, oldDeviceId).catch((err) =>
+          console.warn(`[MLS] Cleanup old device ${oldDeviceId} failed:`, err)
+        );
+      } else {
+        console.error('WASM Init Failed:', e);
+        throw e;
+      }
     }
   }
 
@@ -926,6 +954,17 @@ export class WebMlsService implements IMlsService {
   async generateKeyPackage(pin: string) {
     // Always generate a fresh static fallback KP for this device.
     const fallback = this.client.generate_key_package() as Uint8Array;
+
+    // On fresh start (no saved WASM state), old OTKPs on the server belong to
+    // a previous session whose private keys are gone. Purge them so inviting
+    // devices don't consume stale prekeys that would cause NoMatchingKeyPackage.
+    if (this.freshStart) {
+      this.freshStart = false;
+      await fetch(
+        `${this.historyUrl}/api/mls-api/devices/${encodeURIComponent(this.userId)}/${encodeURIComponent(this.deviceId)}/prekeys`,
+        { method: 'DELETE', headers: await this.withAuthHeaders() }
+      ).catch(() => {});
+    }
 
     // Replenish the one-time prekey pool up to 50 on each connection.
     // 50 is sufficient for normal use and avoids bloating the MLS state

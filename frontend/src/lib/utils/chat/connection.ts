@@ -1354,12 +1354,9 @@ export async function initializeConnection(deps: ConnectionDeps): Promise<void> 
       );
       processDeviceInvitationsLocally().catch(() => {});
     });
-    mlsService.onWelcomeRequest((requesterUserId, requesterDeviceId, groupId) => {
-      log(
-        `[SIBLING] welcome_request de ${requesterUserId}:${requesterDeviceId} (groupe ${groupId}) → traitement invitations`
-      );
-      processDeviceInvitationsLocally().catch(() => {});
-    });
+    // onWelcomeRequest is registered in useChatSession.login() with the targeted
+    // handleWelcomeRequest handler. Do NOT register it here — it would overwrite
+    // that handler with a generic processDeviceInvitationsLocally call.
   } catch (_wsErr: unknown) {
     const msg = _wsErr instanceof Error ? _wsErr.message : String(_wsErr);
     log(`Gateway inaccessible: ${msg}`);
