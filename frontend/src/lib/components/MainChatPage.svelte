@@ -738,7 +738,5 @@
     min-width: 0;
     overflow: hidden;
     position: relative;
-    z-index: 1;
-    backdrop-filter: saturate(1.02);
   }
 </style>

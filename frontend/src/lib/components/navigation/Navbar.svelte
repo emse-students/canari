@@ -7,11 +7,6 @@
   import { clearAuth } from '$lib/stores/auth';
   import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
 
-  if (typeof window !== 'undefined') {
-    document.documentElement.dataset.theme = 'light';
-    localStorage.setItem('canari-theme', 'light');
-  }
-
   function handleToggleLogs() {
     window.dispatchEvent(new CustomEvent('canari:toggle-logs'));
   }
@@ -23,7 +18,7 @@
 </script>
 
 <header
-  class="hidden md:block sticky top-0 z-20 bg-[var(--surface-elevated)] border-b border-cn-border backdrop-blur-sm pt-[env(safe-area-inset-top)] flex-shrink-0"
+  class="hidden md:block sticky top-0 z-20 bg-[var(--surface-elevated)] border-b border-cn-border backdrop-blur-sm flex-shrink-0"
 >
   <div class="h-14 flex items-center justify-between px-4 md:px-6 gap-3">
     <!-- Left: Brand -->
@@ -34,7 +29,7 @@
     <!-- Right: Status + Theme + actions -->
     <div class="flex items-center gap-2 flex-shrink-0 ml-auto">
       <StatusPill isConnected={globalSession.isWsConnected} />
-<SessionActionButtons onToggleLogs={handleToggleLogs} onLogout={handleLogout} />
+      <SessionActionButtons onToggleLogs={handleToggleLogs} onLogout={handleLogout} />
       {#if globalSession.isLoggedIn && globalSession.userId}
         <button
           type="button"

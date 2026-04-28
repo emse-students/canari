@@ -19,7 +19,7 @@
   import PostEventButtons from './PostEventButtons.svelte';
   import PostForms from './PostForms.svelte';
   import PostComments from './PostComments.svelte';
-  import { AlertCircle, CheckCircle2 } from 'lucide-svelte';
+  import { CircleAlert, CircleCheck } from 'lucide-svelte';
   import { slide, fade } from 'svelte/transition';
 
   interface Props {
@@ -45,6 +45,13 @@
   let actionMessage = $state('');
   let errorMessage = $state('');
   let selectedOptions = $state<string[]>([]);
+  // Synchronise selectedOptions avec les votes serveur à chaque rafraîchissement du post.
+  $effect(() => {
+    const serverVotes = (post.polls ?? []).flatMap((p) => p.votesByUser?.[currentUserId] ?? []);
+    if (serverVotes.length > 0) {
+      selectedOptions = serverVotes;
+    }
+  });
   let commentText = $state('');
   let showComments = $state(false);
   let submittingComment = $state(false);
@@ -162,9 +169,10 @@
       return;
     }
     try {
-      await votePoll(post.id, pollId, { optionIds: selectedOptions });
+      const result = await votePoll(post.id, pollId, { optionIds: selectedOptions });
       actionMessage = 'Vote enregistré !';
-      selectedOptions = [];
+      // Les options sélectionnées viennent de la réponse API pour rester en sync avec le serveur
+      selectedOptions = result.poll?.votesByUser?.[currentUserId] ?? selectedOptions;
       onRefresh();
     } catch (err) {
       errorMessage = err instanceof Error ? err.message : 'Impossible de voter';
@@ -304,7 +312,7 @@
           class="flex items-start gap-3 p-3.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 shadow-inner"
         >
           <div transition:fade={{ duration: 150 }} class="flex items-center gap-3">
-            <AlertCircle size={18} class="shrink-0 mt-0.5" />
+            <CircleAlert size={18} class="shrink-0 mt-0.5" />
             <span class="text-sm font-bold leading-snug">{errorMessage}</span>
           </div>
         </div>
@@ -316,7 +324,7 @@
           class="flex items-start gap-3 p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400 shadow-inner mt-2"
         >
           <div transition:fade={{ duration: 150 }} class="flex items-center gap-3">
-            <CheckCircle2 size={18} class="shrink-0 mt-0.5" />
+            <CircleCheck size={18} class="shrink-0 mt-0.5" />
             <span class="text-sm font-bold leading-snug">{actionMessage}</span>
           </div>
         </div>

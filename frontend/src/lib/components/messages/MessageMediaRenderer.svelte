@@ -2,7 +2,7 @@
   import {
     FileText,
     Download,
-    AlertCircle,
+    CircleAlert,
     Image as ImageIcon,
     Video as VideoIcon,
     Mic,
@@ -104,7 +104,7 @@
         <div
           class="w-full max-wxs sm:w-64 aspect-[4/3] rounded-[1.1rem] border border-dashed {glassBoxClass} flex flex-col items-center justify-center gap-3 p-4 text-center"
         >
-          <AlertCircle size={28} class="opacity-50" />
+          <CircleAlert size={28} class="opacity-50" />
           <span class="text-xs font-medium leading-snug {textMutedClass}">
             {mediaPurgedByRetention
               ? 'Média expiré (rétention 30 jours).'
@@ -162,7 +162,7 @@
         <div
           class="w-full max-w-[16rem] aspect-video rounded-[1.1rem] border border-dashed {glassBoxClass} flex flex-col items-center justify-center gap-3 p-4 text-center"
         >
-          <AlertCircle size={28} class="opacity-50" />
+          <CircleAlert size={28} class="opacity-50" />
           <span class="text-xs font-medium leading-snug {textMutedClass}">
             {mediaPurgedByRetention
               ? 'Vidéo expirée (rétention 30 jours).'
@@ -211,8 +211,11 @@
 
       <!-- ================= FICHIER (Générique) ================= -->
     {:else}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
-        class="flex items-center gap-3.5 px-3.5 py-3 min-w-[200px] sm:min-w-[240px] rounded-[1rem] border {glassBoxClass} backdrop-blur-md transition-colors group/file"
+        class="flex items-center gap-3.5 px-3.5 py-3 w-full max-w-full rounded-[1rem] border {glassBoxClass} backdrop-blur-md transition-colors group/file"
+        ontouchstart={(e) => e.stopPropagation()}
+        ontouchend={(e) => e.stopPropagation()}
       >
         <!-- Icône du fichier -->
         <div
@@ -222,7 +225,7 @@
         </div>
 
         <!-- Méta-données -->
-        <div class="flex-1 min-w-0">
+        <div class="flex-1 min-w-0 overflow-hidden">
           <p class="text-[0.85rem] font-bold truncate leading-tight mb-0.5">
             {mediaRef.fileName ?? 'Fichier joint'}
           </p>
@@ -258,7 +261,7 @@
             Expiré
           </span>
         {:else if loadError}
-          <AlertCircle size={18} class="opacity-50 text-red-500 shrink-0" />
+          <CircleAlert size={18} class="opacity-50 text-red-500 shrink-0" />
         {:else}
           <div
             class="w-8 h-8 rounded-full border-2 border-current/20 border-t-current animate-spin shrink-0"

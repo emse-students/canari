@@ -4,9 +4,9 @@
     ChartColumn,
     CalendarCheck,
     ClipboardList,
-    Loader2,
+    LoaderCircle,
     X,
-    AlertCircle,
+    CircleAlert,
   } from 'lucide-svelte';
   import { MediaService } from '$lib/media';
   import { getToken } from '$lib/stores/auth';
@@ -542,7 +542,7 @@
         transition:slide={{ duration: 200 }}
         class="flex items-start gap-3 p-3.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 shadow-inner"
       >
-        <AlertCircle size={18} class="shrink-0 mt-0.5" />
+        <CircleAlert size={18} class="shrink-0 mt-0.5" />
         <span class="text-sm font-bold leading-snug">{errorMessage}</span>
       </div>
     {/if}
@@ -620,10 +620,10 @@
       type="button"
       onclick={publishPost}
       disabled={publishing || (!markdown.trim() && selectedFiles.length === 0)}
-      class="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-500 px-6 py-2.5 text-sm font-extrabold text-[#151B2C] shadow-md shadow-amber-500/20 transition-all hover:bg-amber-400 hover:-translate-y-0.5 active:translate-y-0 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none disabled:hover:translate-y-0 w-full sm:w-auto outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50"
+      class="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-500 px-6 py-2.5 text-sm font-extrabold text-[#151B2C] shadow-md shadow-amber-500/20 transition-all hover:bg-amber-400 hover:shadow-lg hover:shadow-amber-500/30 active:scale-95 active:shadow-md disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none w-full sm:w-auto outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50"
     >
       {#if publishing}
-        <Loader2 size={18} class="animate-spin" strokeWidth={3} />
+        <LoaderCircle size={18} class="animate-spin" strokeWidth={3} />
         Publication…
       {:else}
         Publier

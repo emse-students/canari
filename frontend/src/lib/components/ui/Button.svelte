@@ -25,7 +25,8 @@
     'inline-flex items-center justify-center gap-2 px-6 py-3 rounded-2xl font-bold text-base transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed';
 
   const variants = {
-    primary: 'bg-cn-yellow text-cn-dark hover:bg-cn-yellow-hover hover:-translate-y-0.5 shadow-sm',
+    primary:
+      'bg-cn-yellow text-cn-dark hover:bg-cn-yellow-hover hover:shadow-md hover:shadow-cn-yellow/30 shadow-sm active:shadow-none',
     secondary: 'bg-cn-surface text-text-main hover:bg-cn-border/50 border border-cn-border',
     outline: 'bg-transparent border-2 border-cn-dark text-cn-dark hover:bg-cn-dark/5',
     ghost: 'bg-transparent text-text-muted hover:text-text-main hover:bg-cn-surface/50',

@@ -254,6 +254,25 @@
     return () => mq.removeEventListener('change', apply);
   });
 
+  // Quand le clavier virtuel se ferme (viewport height augmente), si on était en bas,
+  // scroller de nouveau en bas pour éviter l'espace vide sous le dernier message.
+  $effect(() => {
+    if (typeof window === 'undefined') return;
+    const vv = window.visualViewport;
+    if (!vv) return;
+    let prevHeight = vv.height;
+    const onResize = () => {
+      const newHeight = vv.height;
+      const keyboardClosed = newHeight > prevHeight;
+      prevHeight = newHeight;
+      if (keyboardClosed && isNearBottom) {
+        tick().then(() => scrollToBottom(false));
+      }
+    };
+    vv.addEventListener('resize', onResize);
+    return () => vv.removeEventListener('resize', onResize);
+  });
+
   $effect(() => {
     refreshSearchMatches();
   });

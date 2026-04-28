@@ -218,7 +218,7 @@
 {#if drawerMode}
   <button
     type="button"
-    class="fixed inset-0 z-30 bg-black/30 md:hidden"
+    class="fixed inset-0 z-[42] bg-black/30 md:hidden"
     onclick={() => onCloseDrawer?.()}
     aria-label="Fermer le volet des conversations"
   ></button>

@@ -6,7 +6,7 @@
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { deriveConversationIdentity } from '$lib/utils/chat/conversations';
   import Avatar from '$lib/components/shared/Avatar.svelte';
-  import { MessageCircle, ChevronRight, Users, Loader2 } from 'lucide-svelte';
+  import { MessageCircle, ChevronRight, Users, LoaderCircle } from 'lucide-svelte';
   import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
 
   interface ConvItem {
@@ -152,7 +152,7 @@
   <div class="flex-1 overflow-y-auto py-2 custom-scrollbar">
     {#if isLoading}
       <div class="flex flex-col justify-center items-center py-10 gap-3 text-text-muted">
-        <Loader2 size={24} class="animate-spin text-amber-500" />
+        <LoaderCircle size={24} class="animate-spin text-amber-500" />
         <span class="text-xs font-semibold">Chargement...</span>
       </div>
     {:else if displayItems.length === 0}
@@ -235,7 +235,7 @@
   >
     <a
       href="/chat"
-      class="flex items-center justify-center gap-2 w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-[0.98] hover:-translate-y-0.5 active:translate-y-0 transition-all text-[#151B2C] text-[0.85rem] font-extrabold shadow-md shadow-amber-500/20 outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50"
+      class="flex items-center justify-center gap-2 w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-[0.98] transition-all text-[#151B2C] text-[0.85rem] font-extrabold shadow-md shadow-amber-500/20 hover:shadow-lg hover:shadow-amber-500/30 outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50"
     >
       <MessageCircle size={18} strokeWidth={2.5} class="ml-0.5 mt-0.5" />
       Ouvrir la messagerie

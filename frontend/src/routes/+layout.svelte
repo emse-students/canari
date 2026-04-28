@@ -86,7 +86,9 @@
     if (!currentUserId()) {
       if (_authNavigating) return;
       _authNavigating = true;
-      console.log(`[NAV] Auth guard — aucun userId, redirection vers /login (returnTo=${pathname})`);
+      console.log(
+        `[NAV] Auth guard — aucun userId, redirection vers /login (returnTo=${pathname})`
+      );
       setTimeout(() => {
         goto(`/login?returnTo=${encodeURIComponent(pathname)}`, { replaceState: true })
           .catch(() => {})
@@ -134,14 +136,16 @@
     <AppSidebar />
   {/if}
 
-  <div class="relative z-10 flex flex-1 flex-col overflow-hidden">
+  <div class="relative z-10 flex flex-1 flex-col overflow-hidden md:pl-[4.5rem]">
     {#if !isAuthRoute}
       <Navbar />
     {/if}
 
     <main class="relative flex-1 overflow-hidden">
       <BackgroundBlobs />
-      <div class="page-scroll-wrap absolute inset-0 overflow-y-auto pb-16 md:pb-0 md:pl-[4.5rem]">
+      <div
+        class="page-scroll-wrap absolute inset-0 overflow-y-auto pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-0"
+      >
         {@render children?.()}
       </div>
     </main>

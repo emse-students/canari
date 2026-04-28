@@ -124,6 +124,13 @@ h6,
   animation: panelIn 220ms ease;
 }
 
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 @keyframes floatSoft {
   0% {
     transform: translateY(0);
@@ -245,6 +252,7 @@ h6,
 }
 
 .chat-composer-footer {
+  position: relative;
   background: linear-gradient(
     to top,
     color-mix(in srgb, var(--cn-surface) 80%, transparent),
@@ -416,7 +424,7 @@ h6,
   position: absolute;
   left: 0.75rem;
   right: 0.75rem;
-  bottom: 6rem;
+  bottom: 10rem;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -433,7 +441,7 @@ h6,
 .chat-scroll-bottom-button {
   position: absolute;
   right: 1rem;
-  bottom: 7rem;
+  bottom: 10rem;
   width: 2.75rem;
   height: 2.75rem;
   border-radius: 9999px;
