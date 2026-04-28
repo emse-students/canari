@@ -15,6 +15,7 @@
     type AssociationMember,
   } from '$lib/associations/api';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
+  import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { Users, Settings, CreditCard, Trash2, UserPlus } from 'lucide-svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
@@ -24,6 +25,7 @@
   let members = $state<AssociationMember[]>([]);
   let loading = $state(true);
   let error = $state('');
+  let resolvedMemberNames = $state<Record<string, string>>({});
 
   let userId = $derived(currentUserId());
   let myMembership = $derived(members.find((m) => m.userId === userId));
@@ -57,6 +59,18 @@
     try {
       asso = await getAssociationBySlug(slug);
       members = await listMembers(asso.id);
+      const names: Record<string, string> = {};
+      for (const m of members) {
+        names[m.userId] = m.displayName?.trim() || getUserDisplayNameSync(m.userId, m.userId);
+      }
+      resolvedMemberNames = names;
+      for (const m of members) {
+        if (!m.displayName?.trim()) {
+          resolveUserDisplayName(m.userId).then((resolved) => {
+            if (resolved) resolvedMemberNames = { ...resolvedMemberNames, [m.userId]: resolved };
+          });
+        }
+      }
       editName = asso.name;
       editDescription = asso.description ?? '';
     } catch (err) {
@@ -291,7 +305,7 @@
               <a
                 href="/profile/{encodeURIComponent(member.userId)}"
                 class="text-sm font-medium text-text-main truncate hover:underline"
-                >{member.displayName || member.userId}</a
+                >{resolvedMemberNames[member.userId] ?? member.displayName ?? member.userId}</a
               >
               <span
                 class="text-xs font-semibold px-2 py-0.5 rounded-full

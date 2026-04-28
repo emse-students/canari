@@ -6,6 +6,7 @@
   import { MediaService } from '$lib/media';
   import { getToken } from '$lib/stores/auth';
   import { channelService, type ChannelMemberDto } from '$lib/services/ChannelService';
+  import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
 
   interface ChannelItem {
     id: string;
@@ -59,6 +60,7 @@
   let membersLoading = $state(false);
   let membersError = $state('');
   let membersLoadToken = 0;
+  let resolvedMemberNames = $state<Record<string, string>>({});
   const mediaService = new MediaService();
 
   function normalizeRoleLabel(roleName: string): 'member' | 'moderator' | 'admin' {
@@ -130,6 +132,17 @@
       communityMembers = Array.from(aggregate.entries())
         .map(([userId, role]) => ({ userId, role }))
         .sort((a, b) => a.userId.localeCompare(b.userId));
+
+      const names: Record<string, string> = {};
+      for (const m of communityMembers) {
+        names[m.userId] = getUserDisplayNameSync(m.userId, m.userId);
+      }
+      resolvedMemberNames = names;
+      for (const m of communityMembers) {
+        resolveUserDisplayName(m.userId).then((resolved) => {
+          if (resolved) resolvedMemberNames = { ...resolvedMemberNames, [m.userId]: resolved };
+        });
+      }
     } catch (e) {
       if (loadToken !== membersLoadToken) return;
       membersError = e instanceof Error ? e.message : 'Impossible de charger les membres.';
@@ -359,7 +372,7 @@
               <div class="divide-y divide-cn-border/70">
                 {#each communityMembers as member (member.userId)}
                   <div class="px-4 py-3 flex items-center justify-between gap-3">
-                    <span class="font-medium text-text-main truncate">{member.userId}</span>
+                    <span class="font-medium text-text-main truncate">{resolvedMemberNames[member.userId] ?? member.userId}</span>
                     <span
                       class={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ${roleBadgeClass(member.role)}`}
                     >

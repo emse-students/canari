@@ -375,8 +375,9 @@ export class WebMlsService implements IMlsService {
           `[QUEUE] messageCallback → ${cbResult} (groupe=${groupId ?? 'inconnu'})${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`
         );
 
-        // Track for batch ACK
-        if (msg.queuedMessageId) {
+        // Track for batch ACK — only if the callback succeeded.
+        // Returning false means "keep in queue for retry" (e.g. Welcome failed).
+        if (cbResult !== false && msg.queuedMessageId) {
           ackIds.push(msg.queuedMessageId);
         }
 
@@ -393,9 +394,11 @@ export class WebMlsService implements IMlsService {
         }
       } catch (e) {
         console.error(`[QUEUE] Error processing message:`, e);
-        // ACK even on error to avoid infinite retry — MLS state has likely
-        // already advanced past this message (e.g. duplicate commit).
-        if (msg.queuedMessageId) {
+        // On exception, only ACK MLS structure messages (Welcome/Commit) — those
+        // are idempotent and re-processing them would cause duplicate state.
+        // Application messages are kept in queue so they can be retried after
+        // the group state is repaired (e.g. after a successful re-Welcome).
+        if (msg.queuedMessageId && (msg.isWelcome || msg.isCommit)) {
           ackIds.push(msg.queuedMessageId);
         }
         // Flush buffered messages back to the main queue so they are not lost.

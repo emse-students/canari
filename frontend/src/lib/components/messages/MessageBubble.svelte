@@ -24,6 +24,7 @@
   import MessageInfoTooltip from './MessageInfoTooltip.svelte';
   import { clickOutside } from '$lib/actions/clickOutside';
   import { onDestroy } from 'svelte';
+  import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
 
   interface MessageReaction {
     emoji: string;
@@ -122,6 +123,16 @@
   let replyPreviewText = $derived(shortenReplyPreview(effectiveReplyTo?.content ?? ''));
   let textSegments = $derived(splitTextWithLinks(textContent));
   const normalizedSearchTerm = $derived(searchTerm.trim().toLowerCase());
+
+  let replySenderDisplayName = $state('');
+  $effect(() => {
+    const sid = effectiveReplyTo?.senderId;
+    if (!sid) { replySenderDisplayName = ''; return; }
+    replySenderDisplayName = getUserDisplayNameSync(sid, sid);
+    resolveUserDisplayName(sid).then((resolved) => {
+      if (resolved && effectiveReplyTo?.senderId === sid) replySenderDisplayName = resolved;
+    });
+  });
 
   const groupedReactions = $derived(
     reactions.reduce(
@@ -464,7 +475,7 @@
           <a
             href="/profile/{encodeURIComponent(effectiveReplyTo.senderId)}"
             class="font-bold truncate hover:underline"
-            onclick={(e) => e.stopPropagation()}>{effectiveReplyTo.senderId}</a
+            onclick={(e) => e.stopPropagation()}>{replySenderDisplayName}</a
           >
           <div class="truncate mt-0.5">{replyPreviewText}</div>
         </button>

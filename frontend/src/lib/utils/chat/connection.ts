@@ -494,8 +494,21 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             epochRecoveryGroups.delete(convoKey);
             epochRecoveryGroups.delete(groupId!);
           }
-        } catch {
-          // Welcome was for another device or already handled — ignore
+        } catch (welcomeErr) {
+          const welcomeErrMsg = String(welcomeErr);
+          // Welcome for another device, already joined, or duplicate → safe to ACK
+          if (
+            welcomeErrMsg.includes('already') ||
+            welcomeErrMsg.includes('duplicate') ||
+            welcomeErrMsg.includes('exists') ||
+            welcomeErrMsg.includes('CannotDecryptOwnMessage')
+          ) {
+            return true;
+          }
+          // Genuine failure (OTKP mismatch, corrupted state, etc.) → keep in queue
+          // so it can be retried on next reconnect.
+          log(`[MLS] Welcome processing failed (${welcomeErrMsg}) — kept in queue for retry`);
+          return false;
         }
         return true;
       }
@@ -1060,7 +1073,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             pendingGroupMessages.set(groupId, buf);
             log(`[BUFFER] Message bufferise pour groupe ${groupId} (${buf.length} en attente)`);
           }
-          return true; // ACK pour éviter que le gateway renvoie
+          return false; // Keep in queue: Welcome may also be queued and will be retried
         }
         log(`Ignoré: message sans groupe ni conversation`);
         return false;
