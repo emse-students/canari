@@ -421,12 +421,14 @@ export function useChatSession() {
 
       // Discover groups the user belongs to on the server but doesn't have locally.
       // This catches cases where Welcomes were lost (device offline, state cleared, etc.)
+      const st0 = storage;
       discoverMissingGroups({
         mlsService,
         userId,
         pin,
         conversations: cb.conversations,
         saveConversation: cb.saveConversation,
+        deleteConversation: st0 ? (id) => st0.deleteConversation(id) : undefined,
         log: cb.log,
       }).catch((e) =>
         cb.log(`[WARN] Echec decouverte groupes: ${e instanceof Error ? e.message : String(e)}`)
@@ -443,12 +445,14 @@ export function useChatSession() {
           if (!hasPending) return;
           const svc = mlsService;
           if (!svc) return;
+          const st1 = storage;
           discoverMissingGroups({
             mlsService: svc,
             userId,
             pin,
             conversations: cb.conversations,
             saveConversation: cb.saveConversation,
+            deleteConversation: st1 ? (id) => st1.deleteConversation(id) : undefined,
             log: cb.log,
           }).catch((e) =>
             cb.log(
@@ -579,16 +583,18 @@ export function useChatSession() {
       reconnectAttempts = 0;
       cb.log('[OK] Reconnecte au reseau.');
       processDeviceInvitationsLocally(cb)
-        .then(() =>
-          discoverMissingGroups({
+        .then(() => {
+          const st2 = storage;
+          return discoverMissingGroups({
             mlsService: ensureMls(),
             userId,
             pin,
             conversations: cb.conversations,
             saveConversation: cb.saveConversation,
+            deleteConversation: st2 ? (id) => st2.deleteConversation(id) : undefined,
             log: cb.log,
-          })
-        )
+          });
+        })
         .catch((e) =>
           cb.log(
             `[WARN] Echec sync appareils (reconnect): ${e instanceof Error ? e.message : String(e)}`

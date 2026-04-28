@@ -257,21 +257,50 @@ export async function discoverMissingGroups(params: {
   pin: string;
   conversations: Map<string, Conversation>;
   saveConversation?: (key: string) => Promise<void>;
+  deleteConversation?: (key: string) => Promise<void>;
   log: (msg: string) => void;
 }) {
-  const { mlsService, userId, pin, conversations, saveConversation, log } = params;
+  const { mlsService, userId, pin, conversations, saveConversation, deleteConversation, log } =
+    params;
 
   // ── Phase 1: Create placeholders for server groups not present locally ────
 
   let serverGroups: { groupId: string; name: string; isGroup: boolean }[] = [];
+  let serverFetchSucceeded = false;
   try {
     serverGroups = await mlsService.getUserGroups(userId);
+    serverFetchSucceeded = true;
   } catch {
     // Continue to Phase 2 even if server fetch fails — there may be pending placeholders
   }
 
   // Some backends can transiently return duplicates; keep first occurrence by groupId.
   const uniqueServerGroups = Array.from(new Map(serverGroups.map((g) => [g.groupId, g])).values());
+
+  // ── Orphan cleanup: delete local groups absent from server ────────────────
+  // Only when the server fetch succeeded (avoid deleting on transient network errors).
+  // Skip channel conversations (keyed as `channel_*`) — they use a separate system.
+  if (serverFetchSucceeded) {
+    const serverGroupIds = new Set(uniqueServerGroups.map((g) => g.groupId));
+    for (const [key, convo] of conversations.entries()) {
+      if (key.startsWith('channel_')) continue;
+      if (!serverGroupIds.has(convo.id)) {
+        log(
+          `[DISCOVERY] Groupe local "${convo.name || convo.id}" absent du serveur — suppression locale`
+        );
+        try {
+          mlsService.forgetGroup(convo.id, 0);
+        } catch {
+          /* non-blocking */
+        }
+        localStorage.removeItem(`discovery_pending:${convo.id}`);
+        conversations.delete(key);
+        if (deleteConversation) {
+          await deleteConversation(key).catch(() => {});
+        }
+      }
+    }
+  }
 
   // Include both ready and placeholder conversations to avoid recreating
   // the same pending entry on each login.
