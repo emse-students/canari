@@ -64,6 +64,8 @@ export class TauriMlsService implements IMlsService {
   private _knownGroups: Set<string> = new Set();
   /** Resolved when init() completes; shared across concurrent callers to avoid double native init. */
   private initPromise: Promise<void> | null = null;
+  /** True when initialized without existing state — triggers OTKP purge before new ones are published. */
+  private freshStart = false;
   private appVersionCache: string | null | undefined = undefined;
 
   // Message queue for sequential processing
@@ -740,6 +742,7 @@ export class TauriMlsService implements IMlsService {
 
   private async _initImpl(userId: string, pin: string, state?: Uint8Array) {
     this.userId = userId;
+    this.freshStart = !state;
 
     // Per-user device ID (same rationale as WebMlsService)
     const deviceKey = `mls_device_id_${userId}`;
@@ -968,6 +971,17 @@ export class TauriMlsService implements IMlsService {
     const fallbackRaw = await invoke<number[]>('generer_key_package');
     const fallback = Uint8Array.from(fallbackRaw);
 
+    // On fresh start (no saved WASM state), old OTKPs on the server belong to
+    // a previous session whose private keys are gone. Purge them so inviting
+    // devices don't consume stale prekeys that would cause NoMatchingKeyPackage.
+    if (this.freshStart) {
+      this.freshStart = false;
+      await fetch(
+        `${this.historyUrl}/api/mls-api/devices/${encodeURIComponent(this.userId)}/${encodeURIComponent(this.deviceId)}/prekeys`,
+        { method: 'DELETE', headers: await this.withAuthHeaders() }
+      ).catch(() => {});
+    }
+
     // Replenish the one-time prekey pool up to 200 on each connection.
     const existing = await this.fetchPrekeyCount();
     const needed = Math.max(0, 200 - existing);
@@ -1175,7 +1189,9 @@ export class TauriMlsService implements IMlsService {
 
   async getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]> {
     try {
-      const res = await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}/members`);
+      const res = await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}/members`, {
+        headers: await this.withAuthHeaders(),
+      });
       if (!res.ok) return [];
       return await res.json();
     } catch {
@@ -1187,7 +1203,9 @@ export class TauriMlsService implements IMlsService {
     userId: string
   ): Promise<{ groupId: string; name: string; isGroup: boolean }[]> {
     try {
-      const res = await fetch(`${this.historyUrl}/api/mls-api/user-groups/${userId}`);
+      const res = await fetch(`${this.historyUrl}/api/mls-api/user-groups/${userId}`, {
+        headers: await this.withAuthHeaders(),
+      });
       if (!res.ok) return [];
       return await res.json();
     } catch {

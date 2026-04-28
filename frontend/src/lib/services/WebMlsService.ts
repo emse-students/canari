@@ -473,6 +473,9 @@ export class WebMlsService implements IMlsService {
     this.groupResetCallback = callback;
   }
 
+  // simulateMessageReceive removed — pending messages now go through enqueueMessage
+  // so they are serialized with live WebSocket messages via processQueue.
+
   async fetchPendingMessages() {
     if (this.userId === 'unknown') return;
 
@@ -491,45 +494,54 @@ export class WebMlsService implements IMlsService {
         if (Array.isArray(messages) && messages.length > 0) {
           console.log(`Fetched ${messages.length} pending messages`);
 
-          // Only ACK messages that were successfully processed (simulateMessageReceive
-          // returns true). Messages that fail (e.g. group not found in WASM state,
-          // unrecoverable MLS error) are left in the queue so the next reconnect can
-          // retry them — the caller must fix the MLS state first (epoch recovery,
-          // re-invite, etc.).  Known-irrecoverable errors (TooDistantInThePast,
-          // WrongEpoch, CannotDecryptOwnMessage) still return true in connection.ts
-          // so they are ACK'd and won't accumulate.
-          const allIds: string[] = [];
-
+          // Route all pending messages through the serialized queue so they
+          // never race with live WebSocket messages calling messageCallback.
           for (const msg of messages) {
-            const msgId = msg.id || msg._id;
-            console.log(
-              `[PENDING] → id=${msgId ?? '?'} groupId=${msg.groupId ?? '?'} isWelcome=${!!msg.isWelcome} isCommit=${!!msg.isCommit} senderId=${msg.senderId ?? '?'}`
-            );
-            const ok = await this.simulateMessageReceive(msg);
-            if (ok && msgId) {
-              console.log(`[PENDING] ✓ ACK enqueued pour id=${msgId}`);
-              allIds.push(msgId);
-            } else if (!ok) {
-              console.warn(
-                `[PENDING] ✗ Traitement échoué id=${msgId ?? '?'} — ${msgId ? 'laissé en queue pour retry' : "pas d'id, non ACKable"}`
-              );
-            }
-          }
+            const msgId = (msg.id || msg._id) as string | undefined;
+            const proto: string | undefined = msg.proto || undefined;
+            const content: string | undefined = msg.content || undefined;
 
-          if (allIds.length > 0) {
-            const ackRes = await fetch(`${this.historyUrl}/api/mls-api/messages/ack`, {
-              method: 'POST',
-              headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-              body: JSON.stringify({
-                userId: this.userId,
-                deviceId: this.deviceId,
-                messageIds: allIds,
-              }),
-            });
-            if (!ackRes.ok) {
-              console.error(`Message ACK failed: ${ackRes.status}`);
-            } else {
-              console.log(`Acknowledged ${allIds.length} messages`);
+            if (proto) {
+              try {
+                const ciphertext = Uint8Array.from(atob(proto), (c) => c.charCodeAt(0));
+                if (ciphertext.length > 0) {
+                  this.enqueueMessage({
+                    senderId: (msg.senderId as string) || 'unknown',
+                    ciphertext,
+                    groupId: (msg.groupId as string) || undefined,
+                    isWelcome: msg.isWelcome === true,
+                    isCommit: msg.isCommit === true,
+                    ratchetTreeBytes:
+                      typeof msg.ratchetTree === 'string' && msg.ratchetTree.length > 0
+                        ? Uint8Array.from(atob(msg.ratchetTree as string), (c) => c.charCodeAt(0))
+                        : undefined,
+                    queuedMessageId: msgId,
+                  });
+                }
+              } catch (e) {
+                console.error('[PENDING] Failed to enqueue proto message:', e);
+              }
+            } else if (content) {
+              // Legacy format (mlsWelcome offline inbox)
+              try {
+                const bytes = Uint8Array.from(atob(content), (c) => c.charCodeAt(0));
+                if (bytes.length > 0) {
+                  this.enqueueMessage({
+                    senderId: (msg.senderId || 'unknown') as string,
+                    ciphertext: bytes,
+                    groupId: (msg.groupId || msg.session_id) as string | undefined,
+                    isWelcome: msg.type === 'mlsWelcome',
+                    isCommit: msg.isCommit === true,
+                    ratchetTreeBytes:
+                      typeof msg.ratchetTree === 'string' && msg.ratchetTree.length > 0
+                        ? Uint8Array.from(atob(msg.ratchetTree as string), (c) => c.charCodeAt(0))
+                        : undefined,
+                    queuedMessageId: msgId,
+                  });
+                }
+              } catch (e) {
+                console.error('[PENDING] Failed to enqueue content message:', e);
+              }
             }
           }
         } else {
@@ -543,64 +555,6 @@ export class WebMlsService implements IMlsService {
     } catch (e) {
       console.error('Failed to fetch pending messages', e);
     }
-  }
-
-  private async simulateMessageReceive(data: any): Promise<boolean> {
-    if (!this.messageCallback) {
-      console.warn('[SIM] messageCallback absent — simulateMessageReceive skipped');
-      return false;
-    }
-
-    const shape = data.proto ? 'proto' : data.content ? 'content' : 'unknown';
-    console.log(
-      `[SIM] Traitement: shape=${shape} groupId=${data.groupId ?? data.session_id ?? '?'} isWelcome=${data.type === 'mlsWelcome' || !!data.isWelcome} isCommit=${!!data.isCommit} id=${data.id ?? data._id ?? '?'}`
-    );
-
-    // Flat format: proto = base64(raw ciphertext), metadata fields alongside
-    if (data.proto) {
-      try {
-        const binaryString = atob(data.proto as string);
-        const ciphertext = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) ciphertext[i] = binaryString.charCodeAt(i);
-        if (ciphertext.length > 0) {
-          return await this.messageCallback(
-            (data.senderId as string) || 'unknown',
-            ciphertext,
-            (data.groupId as string) || undefined,
-            data.isWelcome === true,
-            typeof data.ratchetTree === 'string' && data.ratchetTree.length > 0
-              ? Uint8Array.from(atob(data.ratchetTree as string), (c) => c.charCodeAt(0))
-              : undefined,
-            data.isCommit === true
-          );
-        }
-      } catch (e) {
-        console.error('Message processing failed', e);
-      }
-      return false;
-    }
-
-    // Legacy format: raw base64 ciphertext + metadata (from /api/mls-api/welcome offline inbox)
-    if (data.content) {
-      try {
-        const binaryString = atob(data.content as string);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
-        return await this.messageCallback(
-          (data.senderId || data.sender_id || 'unknown') as string,
-          bytes,
-          (data.groupId || data.session_id) as string | undefined,
-          data.type === 'mlsWelcome',
-          typeof data.ratchetTree === 'string' && data.ratchetTree.length > 0
-            ? Uint8Array.from(atob(data.ratchetTree as string), (c) => c.charCodeAt(0))
-            : undefined,
-          data.isCommit === true
-        );
-      } catch (e) {
-        console.error('Message processing failed', e);
-      }
-    }
-    return false;
   }
 
   async fetchUserDevices(userId: string): Promise<
