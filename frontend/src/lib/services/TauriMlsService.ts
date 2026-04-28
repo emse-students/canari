@@ -982,9 +982,11 @@ export class TauriMlsService implements IMlsService {
       ).catch(() => {});
     }
 
-    // Replenish the one-time prekey pool up to 200 on each connection.
+    // Replenish the one-time prekey pool up to 50 on each connection.
+    // 50 matches WebMlsService and avoids bloating the Rust state with hundreds
+    // of unused private key bundles (each ~400 bytes encrypted in mls_push.bin).
     const existing = await this.fetchPrekeyCount();
-    const needed = Math.max(0, 200 - existing);
+    const needed = Math.max(0, 50 - existing);
 
     let poolPackages: Uint8Array[] = [];
     if (needed > 0) {

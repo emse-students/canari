@@ -2566,12 +2566,36 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       `[REINVITE_REQ][${traceId}] START group=${groupId} requester=${senderKey} members=${members.length}`,
     );
 
+    // Ensure the requester's DeviceGroupMembership is marked stale so
+    // getPendingInvitations on any online peer will return them — even if the
+    // client-side updateInvitationStatus call failed due to a network error.
+    try {
+      const existing = await this.deviceGroupRepo.findOne({
+        where: { deviceId: requesterDeviceId, groupId },
+      });
+      if (
+        existing &&
+        existing.status !== 'stale' &&
+        existing.status !== 'pending'
+      ) {
+        existing.status = 'stale';
+        await this.deviceGroupRepo.save(existing);
+        this.logger.log(
+          `[REINVITE_REQ][${traceId}] Marked ${senderKey} as stale in group ${groupId}`,
+        );
+      }
+    } catch (e) {
+      this.logger.warn(`[REINVITE_REQ][${traceId}] DB stale-mark failed: ${e}`);
+    }
+
     const notification = JSON.stringify({
       type: 'reinvite_request',
       groupId,
       senderId: requesterUserId,
       senderDeviceId: requesterDeviceId,
     });
+
+    const pendingSetKey = `pending_reinvite:${groupId}`;
 
     for (const member of members) {
       if (member === senderKey) continue;
@@ -2603,12 +2627,56 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         this.logger.log(
           `[REINVITE_REQ][${traceId}] FORWARDED target=${member} group=${groupId} requester=${senderKey}`,
         );
+
+        // Also drain any previously stored pending reinvites for this group so the
+        // now-online member handles ALL stale devices in a single processing cycle.
+        const stored: string[] = await this.redis.smembers(pendingSetKey);
+        let drained = 0;
+        for (const storedKey of stored) {
+          if (storedKey === senderKey) continue; // current request, already forwarded
+          const [storedUserId, storedDeviceId] = storedKey.split(':');
+          if (!storedUserId || !storedDeviceId) continue;
+          await this.redis.publish(
+            'chat:messages',
+            JSON.stringify({
+              recipientId: memberUserId,
+              deviceId: memberDeviceId,
+              proto: Buffer.from(
+                JSON.stringify({
+                  type: 'reinvite_request',
+                  groupId,
+                  senderId: storedUserId,
+                  senderDeviceId: storedDeviceId,
+                }),
+              ).toString('base64'),
+              isReinviteRequest: true,
+              groupId,
+              senderId: storedUserId,
+              senderDeviceId: storedDeviceId,
+            }),
+          );
+          drained++;
+        }
+        if (stored.length > 0) {
+          await this.redis.del(pendingSetKey);
+          this.logger.log(
+            `[REINVITE_REQ][${traceId}] Drained ${drained} stored reinvite(s) for group=${groupId}`,
+          );
+        }
+
         return { status: 'forwarded', target: member };
       }
     }
 
+    // No peer online — persist the reinvite request so any future online member
+    // will drain it the next time someone in this group sends a reinvite_request.
+    const pipeline = this.redis.pipeline();
+    pipeline.sadd(pendingSetKey, senderKey);
+    pipeline.expire(pendingSetKey, 86400); // 24 h TTL
+    await pipeline.exec();
+
     this.logger.log(
-      `[REINVITE_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} — retry on next connect`,
+      `[REINVITE_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} — stored in Redis for later drain`,
     );
     return { status: 'no_peer_online' };
   }
