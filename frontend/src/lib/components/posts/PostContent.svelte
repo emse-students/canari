@@ -17,7 +17,7 @@
     <div class="text-[0.95rem] text-text-main leading-relaxed break-words">
       <!-- Texte formaté -->
       <div class="prose prose-sm dark:prose-invert max-w-none opacity-90">
-        <SvelteMarkdown source={post.markdown} />
+        <SvelteMarkdown source={post.markdown} options={{ gfm: true, breaks: true }} />
       </div>
     </div>
   </div>
@@ -28,7 +28,9 @@
   <div class="w-full mt-1">
     {#if post.images.length === 1}
       <!-- Image Unique -->
-      <div class="relative w-full max-h-[75vh] bg-black/5 dark:bg-white/5 flex items-center justify-center overflow-hidden">
+      <div
+        class="relative w-full max-h-[75vh] bg-black/5 dark:bg-white/5 flex items-center justify-center overflow-hidden"
+      >
         <PostImage media={post.images[0]} {authToken} />
       </div>
     {:else}
