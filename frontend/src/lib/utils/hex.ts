@@ -52,6 +52,19 @@ function openMlsDb(): Promise<IDBDatabase> {
  * Stores raw bytes — no base64 overhead.
  */
 export async function saveMlsState(userId: string, bytes: Uint8Array): Promise<void> {
+  const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__;
+  if (isTauri) {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      // Ensure native .bin file is written — fail fast so callers can handle errors.
+      await invoke('save_mls_state', { data: Array.from(bytes) });
+      return;
+    } catch (e) {
+      console.warn('[MLS] save_mls_state failed:', e);
+      throw e;
+    }
+  }
+
   const db = await openMlsDb();
   return new Promise<void>((resolve, reject) => {
     const tx = db.transaction(IDB_STORE, 'readwrite');
@@ -69,6 +82,19 @@ export async function saveMlsState(userId: string, bytes: Uint8Array): Promise<v
  * localStorage entry is removed.
  */
 export async function loadMlsState(userId: string): Promise<Uint8Array | null> {
+  const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__;
+  if (isTauri) {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const res = await invoke<number[] | null>('load_mls_state');
+      if (res && Array.isArray(res) && res.length > 0) return Uint8Array.from(res);
+      return null;
+    } catch (e) {
+      console.warn('[MLS] load_mls_state failed:', e);
+      return null;
+    }
+  }
+
   const db = await openMlsDb();
   const idbResult = await new Promise<Uint8Array | null>((resolve, reject) => {
     const tx = db.transaction(IDB_STORE, 'readonly');
@@ -91,7 +117,24 @@ export async function loadMlsState(userId: string): Promise<Uint8Array | null> {
 
 /** Remove the MLS state for `userId` from IndexedDB (and legacy localStorage). */
 export async function removeMlsState(userId: string): Promise<void> {
-  localStorage.removeItem('mls_autosave_' + userId);
+  const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__;
+  // Remove legacy localStorage entry always
+  try {
+    localStorage.removeItem('mls_autosave_' + userId);
+  } catch {
+    /* ignore */
+  }
+
+  if (isTauri) {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('delete_mls_state');
+    } catch (e) {
+      console.warn('[MLS] delete_mls_state failed:', e);
+    }
+    return;
+  }
+
   const db = await openMlsDb();
   return new Promise<void>((resolve, reject) => {
     const tx = db.transaction(IDB_STORE, 'readwrite');

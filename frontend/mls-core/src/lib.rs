@@ -541,7 +541,8 @@ impl MlsManager {
                 // annule toute contrainte d'epoch issue d'une récupération antérieure.
                 log::info!(
                     "process_welcome: re-bootstrap détecté pour {} (epoch {} → 0) — remplacement de l'état",
-                    group_id, existing_epoch
+                    group_id,
+                    existing_epoch
                 );
                 self.forgotten_group_min_epochs.remove(&group_id);
                 // On laisse tomber vers self.groups.insert() ci-dessous.
@@ -549,7 +550,9 @@ impl MlsManager {
                 // Welcome parallèle ou dupliqué — on conserve l'état en mémoire.
                 log::info!(
                     "process_welcome: groupe {} déjà actif (epoch={}) — Welcome ignoré (new epoch={})",
-                    group_id, existing_epoch, welcome_epoch
+                    group_id,
+                    existing_epoch,
+                    welcome_epoch
                 );
                 return Ok(group_id);
             }
@@ -565,13 +568,16 @@ impl MlsManager {
                 // Re-bootstrap : la contrainte min_epoch est levée.
                 log::info!(
                     "process_welcome: epoch-0 Welcome pour {} — suppression du guard min_epoch={}",
-                    group_id, min_ep
+                    group_id,
+                    min_ep
                 );
                 self.forgotten_group_min_epochs.remove(&group_id);
             } else if welcome_epoch < min_ep {
                 log::warn!(
                     "process_welcome: Welcome rejeté pour {} — epoch {} < minimum attendu {}",
-                    group_id, welcome_epoch, min_ep
+                    group_id,
+                    welcome_epoch,
+                    min_ep
                 );
                 return Err(MlsError::OpenMls(format!(
                     "Welcome stale: epoch {} < min_epoch {}",

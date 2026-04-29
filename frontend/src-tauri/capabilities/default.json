@@ -22,10 +22,16 @@
     "http:default",
     {
       "identifier": "http:allow-fetch",
-      "allow": [{ "url": "https://**" }]
+      "allow": [
+        {
+          "url": "https://**"
+        }
+      ]
     },
     "http:allow-fetch-cancel",
     "http:allow-fetch-send",
-    "http:allow-fetch-read-body"
+    "http:allow-fetch-read-body",
+    "fs:default",
+    "dialog:default"
   ]
 }

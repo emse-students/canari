@@ -847,7 +847,7 @@ export class TauriMlsService implements IMlsService {
       await invoke('initialiser_mls', { userId, deviceId: this.deviceId, pin, encryptedState });
     } catch (e) {
       // Credential identity mismatch: the saved state embeds a different device ID
-      // (e.g. state restored from mls_push.bin but device ID regenerated).
+      // (e.g. state restored from mls.bin but device ID regenerated).
       // Discard the stale state and start fresh so the user is not permanently blocked.
       if (String(e).includes('identity mismatch') || String(e).includes('Credential identity')) {
         const oldDeviceId = this.deviceId; // capture before overwriting
@@ -893,9 +893,9 @@ export class TauriMlsService implements IMlsService {
       )
       .catch(() => {});
 
-    // Écrit mls_push.bin dès l'init pour que le service FCM puisse déchiffrer
+    // Écrit mls.bin dès l'init pour que le service FCM puisse déchiffrer
     // même si aucun message n'a encore été traité (saveState non appelé).
-    void invoke('save_mls_state_for_push', { pin }).catch(() => {});
+    void invoke('save_mls_state', { pin }).catch(() => {});
 
     // Populate the local groups cache from Rust after init.
     try {
@@ -1016,11 +1016,11 @@ export class TauriMlsService implements IMlsService {
 
   async saveState(pin: string) {
     const bytes = await invoke<Uint8Array>('sauvegarder_mls', { pin });
-    // Await the push-state write so mls_push.bin is guaranteed up-to-date
+    // Await the push-state write so mls.bin is guaranteed up-to-date
     // before the app can be backgrounded. Fire-and-forget caused a race where
     // the Android FCM service loaded a stale epoch and decryption failed.
     try {
-      await invoke('save_mls_state_for_push', { pin });
+      await invoke('save_mls_state', { pin });
     } catch {
       // Non-blocking on desktop (no-op) and on write errors.
     }
@@ -1059,7 +1059,7 @@ export class TauriMlsService implements IMlsService {
 
     // Replenish the one-time prekey pool up to 50 on each connection.
     // 50 matches WebMlsService and avoids bloating the Rust state with hundreds
-    // of unused private key bundles (each ~400 bytes encrypted in mls_push.bin).
+    // of unused private key bundles (each ~400 bytes encrypted in mls.bin).
     const existing = await this.fetchPrekeyCount();
     const needed = Math.max(0, 50 - existing);
 

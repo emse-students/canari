@@ -234,13 +234,13 @@ export function useChatSession() {
         cb.log('Etat MLS charge depuis IndexedDB.');
       } else if (_isTauri) {
         // Fallback mobile : localStorage peut être vidé par le WebView (mémoire, app kill).
-        // mls_push.bin est écrit dans le répertoire natif de l'app — plus fiable.
+        // mls.bin est écrit dans le répertoire natif de l'app — plus fiable.
         try {
           const { invoke } = await import('@tauri-apps/api/core');
-          const fallback = await invoke<number[] | null>('load_mls_state_from_push');
+          const fallback = await invoke<number[] | null>('load_mls_state');
           if (fallback && fallback.length > 0) {
             stateBytes = new Uint8Array(fallback);
-            cb.log('Etat MLS restaure depuis la sauvegarde native (mls_push.bin).');
+            cb.log('Etat MLS restaure depuis la sauvegarde native (mls.bin).');
           }
         } catch {
           // Non-bloquant : le manager sera créé à vide et re-bootstrappé

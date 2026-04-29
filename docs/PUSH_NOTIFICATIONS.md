@@ -36,12 +36,12 @@ Le token est enregistré dans la table `push_tokens` du `chat-delivery-service`.
 Sur Android, l'application prépare deux fichiers locaux pour que le service FCM puisse travailler même si l'UI n'est pas ouverte :
 
 - `push_context.json` : contient `pin`, `userId`, `deviceId`, `baseUrl`
-- `mls_push.bin` : contient l'état MLS chiffré
+- `mls.bin` : contient l'état MLS chiffré
 
 Ces fichiers sont alimentés par les commandes Tauri suivantes :
 
 - `store_push_context`
-- `save_mls_state_for_push`
+- `save_mls_state`
 
 Le service FCM Android s'appuie sur ces fichiers pour récupérer et déchiffrer le message ciblé.
 
@@ -85,7 +85,7 @@ Le service `CanariFirebaseMessagingService` :
 
 1. reçoit le payload data-only
 2. lit `push_context.json`
-3. lit `mls_push.bin`
+3. lit `mls.bin`
 4. appelle `GET /api/mls-api/messages/:userId/:deviceId`
 5. retrouve le message par `queuedMessageId`
 6. appelle `nativeDecryptMessage(...)` côté Rust/JNI
@@ -119,7 +119,7 @@ Implémenté :
 
 Limites :
 
-- dépend d'un contexte local valide (`push_context.json`, `mls_push.bin`)
+- dépend d'un contexte local valide (`push_context.json`, `mls.bin`)
 - dépend d'un PIN encore utilisable pour déchiffrer l'état MLS
 - dépend de la permission Android de notification
 - dépend du statut Redis hors ligne du device
@@ -184,7 +184,7 @@ Un faux positif de présence suffit donc à supprimer toute notification push.
 
 ## 4.5 Le pipeline dépend d'un état MLS local à jour
 
-Si `mls_push.bin` est absent, obsolète, ou chiffré avec un PIN qui ne correspond plus, la notification peut encore arriver mais sans contenu exploitable.
+Si `mls.bin` est absent, obsolète, ou chiffré avec un PIN qui ne correspond plus, la notification peut encore arriver mais sans contenu exploitable.
 
 Le fallback utilisateur sera alors générique.
 
@@ -264,7 +264,7 @@ Symptôme :
 Causes fréquentes :
 
 - `push_context.json` absent
-- `mls_push.bin` absent
+- `mls.bin` absent
 - PIN obsolète
 - message déjà ACKé ou introuvable dans `queued_message`
 - erreur réseau lors de `GET /api/mls-api/messages/:userId/:deviceId`
@@ -333,7 +333,7 @@ Il faut choisir :
 3. Vérifier les logs backend `PUSH_REGISTER`, `SEND`, `PUSH_SEND`.
 4. Vérifier si le backend voit le device `online=true` au lieu de `offline`.
 5. Vérifier la permission notification sur Android ou dans le navigateur.
-6. Vérifier la présence de `push_context.json`, `mls_push.bin`, `fcm_token.txt` dans le répertoire applicatif Android.
+6. Vérifier la présence de `push_context.json`, `mls.bin`, `fcm_token.txt` dans le répertoire applicatif Android.
 7. Vérifier qu'un message offline existe bien encore dans `queued_message` pour le `queuedMessageId` reçu.
 8. Vérifier que le déchiffrement JNI ne tombe pas en fallback systématique.
 

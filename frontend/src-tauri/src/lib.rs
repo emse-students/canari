@@ -309,42 +309,6 @@ fn exporter_secret(
         .map_err(|e| e.to_string())
 }
 
-/// Sauvegarde un fichier binaire sur le système de fichiers de l'appareil.
-/// Sur desktop : écrit dans le dossier Téléchargements (~/Downloads).
-/// Sur mobile  : écrit dans le répertoire privé de l'application.
-/// Retourne le chemin absolu du fichier créé.
-#[tauri::command]
-fn save_backup_file(
-    app: tauri::AppHandle,
-    filename: String,
-    data: Vec<u8>,
-) -> Result<String, String> {
-    use tauri::Manager;
-
-    // Validate filename: no path separators, no null bytes, not empty.
-    if filename.is_empty()
-        || filename.contains('/')
-        || filename.contains('\\')
-        || filename.contains('\0')
-    {
-        return Err("Nom de fichier invalide.".into());
-    }
-
-    let dir = app
-        .path()
-        .download_dir()
-        .or_else(|_| app.path().app_data_dir())
-        .map_err(|e| format!("Impossible de trouver le dossier de destination: {}", e))?;
-
-    std::fs::create_dir_all(&dir).map_err(|e| format!("Impossible de créer le dossier: {}", e))?;
-
-    let file_path = dir.join(&filename);
-    std::fs::write(&file_path, &data)
-        .map_err(|e| format!("Impossible d'écrire le fichier: {}", e))?;
-
-    Ok(file_path.to_string_lossy().into_owned())
-}
-
 /// Retourne le token FCM stocké par CanariFirebaseMessagingService.
 /// Sur Android, lit {app_data_dir}/fcm_token.txt (écrit par onNewToken).
 /// Sur desktop/iOS, retourne None (pas de FCM).
@@ -551,25 +515,26 @@ fn store_push_context(
     std::fs::write(data_dir.join("push_context.json"), json.to_string()).map_err(|e| e.to_string())
 }
 
-/// Chiffre l'état MLS courant et l'écrit dans {app_data_dir}/mls_push.bin
-/// pour que CanariFirebaseMessagingService puisse le lire.
+/// Write an already-encrypted MLS state blob into {app_data_dir}/mls.bin.
+/// Accepts the encrypted bytes (as number[] from JS) and writes them verbatim.
+/// This is used by the frontend when it already holds an encrypted state and
+/// wants to persist it to the native app data directory (avoid WebView eviction).
 #[tauri::command]
-fn save_mls_state_for_push(
-    pin: String,
-    app: tauri::AppHandle,
-    state: tauri::State<AppState>,
-) -> Result<(), String> {
-    let encrypted_bytes = {
-        let lock = state
-            .mls_manager
-            .lock()
-            .map_err(|_| "Failed to lock state")?;
-        let manager = lock.as_ref().ok_or("MLS not initialized")?;
-        manager.save_encrypted(&pin).map_err(|e| e.to_string())?
-    };
+fn save_mls_state(app: tauri::AppHandle, data: Vec<u8>) -> Result<(), String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
-    std::fs::write(data_dir.join("mls_push.bin"), &encrypted_bytes).map_err(|e| e.to_string())
+    std::fs::write(data_dir.join("mls.bin"), &data).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_mls_state(app: tauri::AppHandle) -> Result<(), String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let path = data_dir.join("mls.bin");
+    if path.exists() {
+        std::fs::remove_file(path).map_err(|e| e.to_string())
+    } else {
+        Ok(())
+    }
 }
 
 /// Lit {app_data_dir}/push_context.json et retourne son contenu.
@@ -581,13 +546,13 @@ fn load_push_context(app: tauri::AppHandle) -> Option<serde_json::Value> {
     serde_json::from_slice(&bytes).ok()
 }
 
-/// Lit {app_data_dir}/mls_push.bin et retourne son contenu chiffré.
+/// Lit {app_data_dir}/mls.bin et retourne son contenu chiffré.
 /// Retourne None si le fichier n'existe pas (première installation).
 /// Utilisé au démarrage sur mobile quand localStorage est vide (WebView nettoyé).
 #[tauri::command]
-fn load_mls_state_from_push(app: tauri::AppHandle) -> Option<Vec<u8>> {
+fn load_mls_state(app: tauri::AppHandle) -> Option<Vec<u8>> {
     let data_dir = app.path().app_data_dir().ok()?;
-    let path = data_dir.join("mls_push.bin");
+    let path = data_dir.join("mls.bin");
     std::fs::read(&path).ok()
 }
 
@@ -600,6 +565,8 @@ pub fn run() {
     let port: u16 = 1421;
 
     let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
@@ -769,11 +736,11 @@ pub fn run() {
             exporter_secret,
             get_fcm_token,
             notify_fcm_token,
-            save_backup_file,
             store_push_context,
             load_push_context,
-            save_mls_state_for_push,
-            load_mls_state_from_push
+            save_mls_state,
+            delete_mls_state,
+            load_mls_state
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

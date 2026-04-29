@@ -3,6 +3,7 @@ import { fromHex, toHex, saveMlsState, loadMlsState, exportMlsStateAsHex } from 
 import type { IStorage } from '$lib/db';
 import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
+import { downloadDir } from '@tauri-apps/api/path';
 
 function parseDirectPeerFromName(rawName: string, userId: string): string | null {
   const parts = rawName
@@ -597,12 +598,22 @@ export async function exportUserBackup(params: {
     // In Tauri (desktop/mobile) blob URLs and anchor downloads do not work.
     // Delegate file writing to the Rust side which saves to the Downloads
     // folder (desktop) or app data dir (mobile).
-    const { invoke } = await import('@tauri-apps/api/core');
-    const savedPath: string = await invoke('save_backup_file', {
-      filename,
-      data: Array.from(blob),
+
+    const dialog = await import('@tauri-apps/plugin-dialog');
+    const fs = await import('@tauri-apps/plugin-fs');
+
+    const path = await dialog.open({
+      multiple: false,
+      directory: true,
+      defaultPath: await downloadDir(),
     });
-    log(`[OK] Sauvegarde exportée : ${savedPath}`);
+    if (path === null) {
+      console.info('directory selection cancelled');
+      return;
+    }
+    const file = await fs.create(`${path}/${filename}`);
+    await file.write(new Uint8Array(blob.buffer as ArrayBuffer));
+    await file.close();
   } else {
     const url = URL.createObjectURL(
       new Blob([blob.buffer as ArrayBuffer], { type: 'application/octet-stream' })

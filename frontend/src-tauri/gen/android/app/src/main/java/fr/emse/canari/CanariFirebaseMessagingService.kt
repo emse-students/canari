@@ -113,7 +113,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     }
 
     private fun loadMlsState(): ByteArray? {
-        val file = File(filesDir, "mls_push.bin")
+        val file = File(filesDir, "mls.bin")
         return if (file.exists()) try { file.readBytes() } catch (_: Exception) { null } else null
     }
 
