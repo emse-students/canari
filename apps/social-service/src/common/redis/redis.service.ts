@@ -16,6 +16,7 @@ export class RedisService implements OnModuleDestroy {
     this.client = new Redis(redisUrl, {
       retryStrategy: (times) => Math.min(times * 100, 3000),
       maxRetriesPerRequest: 3,
+      commandTimeout: 1000,
     });
 
     this.client.on('connect', () => {

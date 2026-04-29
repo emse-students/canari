@@ -18,6 +18,9 @@ const OIDC_STATE_KEY = 'canari_oidc_state';
 const OIDC_RETURN_KEY = 'canari_oidc_return';
 
 let _accessToken: string | null = null;
+// Shared in-flight refresh promise — prevents concurrent getToken() callers from
+// each firing a separate /api/auth/refresh request.
+let _pendingRefresh: Promise<string> | null = null;
 
 function setWsSessionCookie(token: string): void {
   if (typeof document === 'undefined') return;
@@ -243,6 +246,14 @@ export function getOidcReturnTo(): string {
  * The browser sends the cookie automatically with `credentials: 'include'`.
  */
 export async function refresh(): Promise<string> {
+  if (_pendingRefresh) return _pendingRefresh;
+  _pendingRefresh = _doRefresh().finally(() => {
+    _pendingRefresh = null;
+  });
+  return _pendingRefresh;
+}
+
+async function _doRefresh(): Promise<string> {
   const endpoint = `${coreUrl()}/api/auth/refresh`;
   console.log(`[AUTH] refresh → POST ${endpoint}`);
   const t0 = Date.now();

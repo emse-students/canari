@@ -69,8 +69,8 @@ export class PostsService {
   async listPosts(limit: number = 20, offset: number = 0) {
     const cacheKey = this.listCacheKey(Number(limit), Number(offset));
     try {
-      const cached = await this.redis.get(cacheKey);
-      if (cached) return JSON.parse(cached);
+      const cached = await Promise.race([this.redis.get(cacheKey), new Promise((_, reject) => setTimeout(() => reject(new Error('Redis timeout')), 100))]);
+      if (cached) return JSON.parse(cached as string);
     } catch {
       // Redis miss or error — fall through to DB
     }

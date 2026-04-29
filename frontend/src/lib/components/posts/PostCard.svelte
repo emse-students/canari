@@ -21,13 +21,13 @@
   import PostComments from './PostComments.svelte';
   import { CircleAlert, CircleCheck } from 'lucide-svelte';
   import { slide, fade } from 'svelte/transition';
+  import { untrack } from 'svelte';
 
   interface Props {
     post: PostEntity;
     currentUserId: string;
     authToken?: string;
     currentUserEmail?: string;
-    onRefresh: () => void;
   }
 
   const REACTIONS = [
@@ -40,14 +40,20 @@
     { type: 'Marteau', emoji: '🔨', icon: 'hammer' },
   ];
 
-  let { post, currentUserId, authToken = '', currentUserEmail, onRefresh }: Props = $props();
+  let { post: postProp, currentUserId, authToken = '', currentUserEmail }: Props = $props();
+
+  // Local mutable copy — updated directly after interactions to avoid a full list reload.
+  // Re-syncs from postProp whenever the parent explicitly refreshes.
+  let localPost = $derived(untrack(() => ({ ...postProp })));
 
   let actionMessage = $state('');
   let errorMessage = $state('');
   let selectedOptions = $state<string[]>([]);
   // Synchronise selectedOptions avec les votes serveur à chaque rafraîchissement du post.
   $effect(() => {
-    const serverVotes = (post.polls ?? []).flatMap((p) => p.votesByUser?.[currentUserId] ?? []);
+    const serverVotes = (localPost.polls ?? []).flatMap(
+      (p) => p.votesByUser?.[currentUserId] ?? []
+    );
     if (serverVotes.length > 0) {
       selectedOptions = serverVotes;
     }
@@ -57,8 +63,8 @@
   let submittingComment = $state(false);
   let showReactionPicker = $state(false);
 
-  let userReaction = $derived((post.reactions ?? {})[currentUserId] ?? null);
-  let reactions = $derived<Record<string, number>>((post.reactions ?? {}) as any);
+  let userReaction = $derived((localPost.reactions ?? {})[currentUserId] ?? null);
+  let reactions = $derived<Record<string, number>>((localPost.reactions ?? {}) as any);
   let reactionCounts = $derived.by(() => {
     const counts: Record<string, number> = {};
     for (const [, reactionType] of Object.entries(reactions)) {
@@ -66,7 +72,7 @@
     }
     return counts;
   });
-  let comments = $derived<PostComment[]>(post.comments ?? []);
+  let comments = $derived<PostComment[]>(localPost.comments ?? []);
   let topLevelComments = $derived(comments.filter((c) => !c.parentId));
 
   let formInfos = $state<{ id: string; title: string; submitted: boolean }[]>([]);
@@ -95,7 +101,7 @@
   });
 
   $effect(() => {
-    for (const btn of post.eventButtons ?? []) {
+    for (const btn of localPost.eventButtons ?? []) {
       if (btn.formId && !btnFormInfos[btn.id]) {
         getForm(btn.formId)
           .then((f) => {
@@ -120,10 +126,10 @@
 
   $effect(() => {
     const formSources: { id: string; title?: string }[] = [];
-    if (post.forms && post.forms.length > 0) {
-      for (const f of post.forms) formSources.push({ id: f.id, title: f.title });
-    } else if (post.attachedFormId) {
-      formSources.push({ id: post.attachedFormId });
+    if (localPost.forms && localPost.forms.length > 0) {
+      for (const f of localPost.forms) formSources.push({ id: f.id, title: f.title });
+    } else if (localPost.attachedFormId) {
+      formSources.push({ id: localPost.attachedFormId });
     }
 
     for (const src of formSources) {
@@ -169,11 +175,24 @@
       return;
     }
     try {
-      const result = await votePoll(post.id, pollId, { optionIds: selectedOptions });
+      await votePoll(localPost.id, pollId, { optionIds: selectedOptions });
       actionMessage = 'Vote enregistré !';
-      // Les options sélectionnées viennent de la réponse API pour rester en sync avec le serveur
-      selectedOptions = result.poll?.votesByUser?.[currentUserId] ?? selectedOptions;
-      onRefresh();
+      // Update the poll locally — track votesByUser + per-option vote arrays
+      const updatedPolls = (localPost.polls ?? []).map((p) => {
+        if (p.id !== pollId) return p;
+        const newVotesByUser = { ...(p.votesByUser ?? {}), [currentUserId]: selectedOptions };
+        const newOptions = (p.options ?? []).map((opt: any) => {
+          const votes = Array.isArray(opt.votes) ? opt.votes : [];
+          const hadVote = votes.includes(currentUserId);
+          const hasVote = selectedOptions.includes(opt.id);
+          if (hadVote && !hasVote)
+            return { ...opt, votes: votes.filter((v: string) => v !== currentUserId) };
+          if (!hadVote && hasVote) return { ...opt, votes: [...votes, currentUserId] };
+          return opt;
+        });
+        return { ...p, votesByUser: newVotesByUser, options: newOptions };
+      });
+      localPost = { ...localPost, polls: updatedPolls };
     } catch (err) {
       errorMessage = err instanceof Error ? err.message : 'Impossible de voter';
     }
@@ -182,13 +201,14 @@
   async function handleReaction(reactionType: string) {
     if (!currentUserId.trim()) return;
     try {
+      let result;
       if (userReaction === reactionType) {
-        await removeReaction(post.id);
+        result = await removeReaction(localPost.id);
       } else {
-        await addReaction(post.id, reactionType);
+        result = await addReaction(localPost.id, reactionType);
       }
+      localPost = { ...localPost, reactions: result.reactions };
       showReactionPicker = false;
-      onRefresh();
     } catch (err) {
       errorMessage = err instanceof Error ? err.message : 'Erreur lors de la réaction';
     }
@@ -199,9 +219,9 @@
     if (!text || !currentUserId.trim()) return;
     submittingComment = true;
     try {
-      await addComment(post.id, { text, parentId });
+      const result = await addComment(localPost.id, { text, parentId });
+      localPost = { ...localPost, comments: [...(localPost.comments ?? []), result.comment] };
       commentText = '';
-      onRefresh();
     } catch (err) {
       errorMessage = err instanceof Error ? err.message : 'Impossible de commenter';
     } finally {
@@ -211,8 +231,11 @@
 
   async function handleLikeComment(commentId: string) {
     try {
-      await likeCommentApi(post.id, commentId);
-      onRefresh();
+      const result = await likeCommentApi(localPost.id, commentId);
+      localPost = {
+        ...localPost,
+        comments: (localPost.comments ?? []).map((c) => (c.id === commentId ? result.comment : c)),
+      };
     } catch {
       // ignore silently to not disrupt UX
     }
@@ -224,7 +247,7 @@
       return;
     }
     try {
-      const response = await registerEvent(post.id, buttonId, {
+      const response = await registerEvent(localPost.id, buttonId, {
         email: currentUserEmail?.trim() || undefined,
       });
       if (response.checkoutUrl) {
@@ -237,7 +260,16 @@
       actionMessage =
         response.message ||
         (response.checkoutUrl ? 'Redirection vers le paiement...' : 'Inscription confirmée !');
-      onRefresh();
+      if (response.registered) {
+        localPost = {
+          ...localPost,
+          eventButtons: (localPost.eventButtons ?? []).map((btn) =>
+            btn.id === buttonId
+              ? { ...btn, registrants: [...(btn.registrants ?? []), currentUserId] }
+              : btn
+          ),
+        };
+      }
     } catch (err) {
       errorMessage = err instanceof Error ? err.message : 'Impossible de s\u2019inscrire';
     }
@@ -247,8 +279,8 @@
 <Card
   class="mb-6 overflow-hidden !p-0 transition-all duration-300 hover:shadow-xl hover:-translate-y-0.5 border border-black/5 dark:border-white/10 bg-white/70 dark:bg-[#151B2C]/70 backdrop-blur-xl"
 >
-  <PostHeader {post} />
-  <PostContent {post} {authToken} />
+  <PostHeader post={localPost} />
+  <PostContent post={localPost} {authToken} />
 
   <PostActions
     {userReaction}
@@ -267,14 +299,14 @@
   />
 
   <PostPolls
-    polls={post.polls}
+    polls={localPost.polls}
     {selectedOptions}
     onToggleOption={toggleOption}
     onSubmitVote={submitVote}
   />
 
   <PostEventButtons
-    eventButtons={post.eventButtons}
+    eventButtons={localPost.eventButtons}
     {currentUserId}
     {btnFormInfos}
     onRegisterEvent={registerForEvent}
