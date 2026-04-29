@@ -130,6 +130,13 @@ export async function startPushService(
         const errText = await response.text().catch(() => '');
         throw new Error(`HTTP ${response.status}${errText ? `: ${errText}` : ''}`);
       }
+      const data = await response.json().catch(() => null);
+      const pushSecret: string | undefined = data?.pushSecret;
+      if (pushSecret) {
+        invoke('store_push_secret', { secret: pushSecret }).catch((err) =>
+          console.warn('[Push] Failed to store push secret', err)
+        );
+      }
     });
   };
 

@@ -2357,6 +2357,22 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       `[GROUP_RESET][${traceId}] DONE group=${safeGroupId} online=${notifiedOnline} offline_queued=${notifiedOffline} memberships=${memberships.length}`,
     );
 
+    // ── Alerte de sécurité ────────────────────────────────────────────────
+    // Un group_reset est un événement exceptionnel qui indique soit une perte
+    // de données client (effacement app) soit un bug dans la gestion MLS.
+    // On le logue avec un préfixe structuré filtrable et on envoie un webhook
+    // optionnel (ALERT_WEBHOOK_URL, format Slack/Discord compatible).
+    this.logger.warn(
+      `[SECURITY_ALERT] group_reset triggered — group=${safeGroupId} reason=${reason} triggeredBy=${triggeredBy} ` +
+        `memberships=${memberships.length} online=${notifiedOnline} offline_queued=${notifiedOffline}`,
+    );
+    void this.sendResetAlert(
+      safeGroupId,
+      reason,
+      triggeredBy,
+      memberships.length,
+    );
+
     return {
       status: 'reset',
       groupId: safeGroupId,
@@ -2364,6 +2380,45 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       notifiedOnline,
       notifiedOffline,
     };
+  }
+
+  /**
+   * Fire-and-forget : envoie une alerte webhook quand un groupe est réinitialisé.
+   * Configuré via ALERT_WEBHOOK_URL (format Slack incoming webhook ou Discord
+   * avec /slack en suffix). Silencieux si la variable n'est pas définie.
+   */
+  private async sendResetAlert(
+    groupId: string,
+    reason: string,
+    triggeredBy: string,
+    memberCount: number,
+  ): Promise<void> {
+    const webhookUrl = process.env.ALERT_WEBHOOK_URL;
+    if (!webhookUrl) return;
+    try {
+      const body = JSON.stringify({
+        text: `⚠️ *Group Reset* — \`${groupId}\``,
+        attachments: [
+          {
+            color: 'warning',
+            fields: [
+              { title: 'Raison', value: reason, short: true },
+              { title: 'Déclenché par', value: triggeredBy, short: true },
+              { title: 'Membres', value: String(memberCount), short: true },
+              { title: 'Heure', value: new Date().toISOString(), short: true },
+            ],
+          },
+        ],
+      });
+      await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+        signal: AbortSignal.timeout(5_000),
+      });
+    } catch (e) {
+      this.logger.warn(`[SECURITY_ALERT] Webhook delivery failed: ${e}`);
+    }
   }
 
   /**
@@ -3332,17 +3387,74 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     const platform: 'android' | 'ios' =
       body.platform === 'ios' ? 'ios' : 'android';
 
+    // Génère un secret opaque long-lived pour ce device.
+    // Retourné UNE SEULE FOIS dans la réponse ; le client l'encrypte dans
+    // Android Keystore et l'utilise pour GET /mls-api/push/fetch-proto.
+    const pushSecret = crypto.randomUUID().replace(/-/g, '');
+
     // Atomic upsert — avoids a race condition where two concurrent requests
     // (e.g. app restart) both find no row then both try to INSERT, with the
     // second hitting the unique(userId, deviceId) constraint.
     await this.pushTokenRepo.upsert(
-      { userId, deviceId, token, platform },
+      { userId, deviceId, token, platform, pushSecret },
       { conflictPaths: ['userId', 'deviceId'] },
     );
     this.logger.log(
       `[PUSH_REGISTER] user=${userId} device=${deviceId} platform=${platform}`,
     );
-    return { status: 'registered' };
+    // pushSecret retourné UNE SEULE FOIS — le client doit le persister.
+    return { status: 'registered', pushSecret };
+  }
+
+  /**
+   * Endpoint pour le service FCM Android en arrière-plan (app tuée).
+   * Auth : Authorization: PushSecret {secret} — pas de JWT (token expiré).
+   * Retourne le proto MLS chiffré quand il était trop volumineux pour être
+   * inclu inline dans le payload FCM (> 3.5 KB).
+   */
+  @Get('mls-api/push/fetch-proto')
+  async fetchProtoForPush(
+    @Headers('authorization') authHeader: string,
+    @Query('messageId') messageIdRaw: string,
+    @Query('userId') userIdRaw: string,
+    @Query('deviceId') deviceIdRaw: string,
+  ) {
+    // ── Auth : PushSecret ─────────────────────────────────────────────────
+    const secret = authHeader?.startsWith('PushSecret ')
+      ? authHeader.slice('PushSecret '.length).trim()
+      : null;
+    if (!secret) {
+      throw new ForbiddenException('PushSecret header required');
+    }
+
+    const userId = sanitizeQueryValue(userIdRaw ?? '', 'userId');
+    const deviceId = sanitizeQueryValue(deviceIdRaw ?? '', 'deviceId');
+    const messageId = sanitizeQueryValue(messageIdRaw ?? '', 'messageId');
+
+    // Lookup en temps constant — on ne révèle pas si l'entrée existe.
+    const pt = await this.pushTokenRepo.findOne({
+      where: { userId, deviceId },
+    });
+    if (
+      !pt?.pushSecret ||
+      !crypto.timingSafeEqual(
+        Buffer.from(pt.pushSecret),
+        Buffer.from(
+          secret.slice(0, pt.pushSecret.length).padEnd(pt.pushSecret.length),
+        ),
+      )
+    ) {
+      throw new ForbiddenException('Invalid push secret');
+    }
+
+    const queued = await this.queuedMessageRepo.findOne({
+      where: { id: messageId, recipientId: userId, deviceId },
+    });
+    if (!queued) {
+      // Message déjà ACKé ou inexistant — retourner vide (pas d'erreur pour éviter retry loops)
+      return { proto: '' };
+    }
+    return { proto: queued.proto ?? queued.content ?? '' };
   }
 
   /**

@@ -10,7 +10,6 @@ import android.util.Base64
 import androidx.core.app.NotificationCompat
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
-import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
@@ -94,7 +93,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val userId: String,
         val deviceId: String,
         val baseUrl: String,
-        val pushToken: String, // token long-lived pour l'endpoint de fetch
     )
 
     private fun loadPushContext(): PushContext? {
@@ -103,11 +101,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         return try {
             val j = JSONObject(file.readText())
             PushContext(
-                pin       = j.optString("pin").takeIf      { it.isNotEmpty() } ?: return null,
-                userId    = j.optString("userId").takeIf   { it.isNotEmpty() } ?: return null,
-                deviceId  = j.optString("deviceId").takeIf { it.isNotEmpty() } ?: return null,
-                baseUrl   = j.optString("baseUrl").takeIf  { it.isNotEmpty() } ?: return null,
-                pushToken = j.optString("pushToken"), // vide si non renseigné (Stratégie 2 ignorée)
+                pin      = j.optString("pin").takeIf      { it.isNotEmpty() } ?: return null,
+                userId   = j.optString("userId").takeIf   { it.isNotEmpty() } ?: return null,
+                deviceId = j.optString("deviceId").takeIf { it.isNotEmpty() } ?: return null,
+                baseUrl  = j.optString("baseUrl").takeIf  { it.isNotEmpty() } ?: return null,
             )
         } catch (_: Exception) { null }
     }
@@ -119,31 +116,27 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
     /**
      * Fetch HTTP de secours quand le proto n'est pas inline (message volumineux).
-     * Utilise le pushToken stocké dans push_context.json comme Bearer token.
+     * Utilise le pushSecret stocké dans Android Keystore (long-lived, pas de JWT).
      */
     private fun fetchProtoFromBackend(queuedMessageId: String, ctx: PushContext): String? {
-        if (ctx.pushToken.isEmpty()) return null
+        val secret = PushSecretKeystore.retrieve(this) ?: return null
         return try {
-            val url  = URL("${ctx.baseUrl}/api/mls-api/messages/${ctx.userId}/${ctx.deviceId}")
+            val url = URL(
+                "${ctx.baseUrl}/api/mls-api/push/fetch-proto" +
+                    "?messageId=${java.net.URLEncoder.encode(queuedMessageId, "UTF-8")}" +
+                    "&userId=${java.net.URLEncoder.encode(ctx.userId, "UTF-8")}" +
+                    "&deviceId=${java.net.URLEncoder.encode(ctx.deviceId, "UTF-8")}"
+            )
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 connectTimeout = 5_000
                 readTimeout    = 5_000
                 requestMethod  = "GET"
-                setRequestProperty("Authorization", "Bearer ${ctx.pushToken}")
+                setRequestProperty("Authorization", "PushSecret $secret")
             }
             if (conn.responseCode != 200) { conn.disconnect(); return null }
             val text = conn.inputStream.bufferedReader().use { it.readText() }
             conn.disconnect()
-
-            val messages = JSONArray(text)
-            for (i in 0 until messages.length()) {
-                val msg = messages.getJSONObject(i)
-                if (msg.optString("id") == queuedMessageId) {
-                    if (msg.optBoolean("isWelcome") || msg.optBoolean("isCommit")) return null
-                    return msg.optString("proto").takeIf { it.isNotEmpty() }
-                }
-            }
-            null
+            JSONObject(text).optString("proto").takeIf { it.isNotEmpty() }
         } catch (_: Exception) { null }
     }
 

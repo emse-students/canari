@@ -556,6 +556,25 @@ fn load_mls_state(app: tauri::AppHandle) -> Option<Vec<u8>> {
     std::fs::read(&path).ok()
 }
 
+/// Écrit le pushSecret reçu du backend dans {app_data_dir}/pending_push_secret.txt.
+/// CanariApplication.processPendingPushSecret() le lit au prochain démarrage,
+/// le chiffre dans Android Keystore, puis supprime le fichier.
+#[tauri::command]
+fn store_push_secret(secret: String, app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
+        std::fs::write(data_dir.join("pending_push_secret.txt"), &secret)
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (secret, app);
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // In production desktop builds, `tauri://` scheme redirects are blocked by
@@ -740,7 +759,8 @@ pub fn run() {
             load_push_context,
             save_mls_state,
             delete_mls_state,
-            load_mls_state
+            load_mls_state,
+            store_push_secret
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
