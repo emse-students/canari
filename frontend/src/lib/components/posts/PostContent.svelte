@@ -1,6 +1,7 @@
 <script lang="ts">
   import PostImage from './PostImage.svelte';
   import type { PostEntity } from '$lib/posts/api';
+  import SvelteMarkdown from '@humanspeak/svelte-markdown';
 
   interface Props {
     post: PostEntity;
@@ -16,7 +17,7 @@
     <div class="text-[0.95rem] text-text-main leading-relaxed break-words">
       <!-- Texte formaté -->
       <div class="prose prose-sm dark:prose-invert max-w-none opacity-90">
-        {post.markdown}
+        <SvelteMarkdown source={post.markdown} />
       </div>
     </div>
   </div>
