@@ -528,12 +528,15 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
 
 /// Sauvegarde le PIN et le contexte de session dans {app_data_dir}/push_context.json
 /// pour que CanariFirebaseMessagingService puisse déchiffrer les notifications push.
+/// `push_token` est un Bearer token long-lived (ou vide sur desktop) utilisé par le
+/// service Kotlin pour fetcher le proto MLS quand il n'est pas inclus inline dans FCM.
 #[tauri::command]
 fn store_push_context(
     pin: String,
     user_id: String,
     device_id: String,
     base_url: String,
+    push_token: Option<String>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
@@ -542,7 +545,8 @@ fn store_push_context(
         "pin": pin,
         "userId": user_id,
         "deviceId": device_id,
-        "baseUrl": base_url
+        "baseUrl": base_url,
+        "pushToken": push_token.unwrap_or_default()
     });
     std::fs::write(data_dir.join("push_context.json"), json.to_string()).map_err(|e| e.to_string())
 }

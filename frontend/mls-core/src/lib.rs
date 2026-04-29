@@ -522,39 +522,64 @@ impl MlsManager {
             .map_err(|e| MlsError::OpenMls(format!("Join error (into_group): {:?}", e)))?;
 
         let group_id = String::from_utf8_lossy(group.group_id().as_slice()).to_string();
+        let welcome_epoch = group.epoch().as_u64();
 
-        // Don't overwrite an actively running group: a stale pending Welcome or a Welcome
-        // generated from a parallel commit at the same base epoch would silently corrupt
-        // the epoch key schedule, causing AeadError on all subsequent messages.
-        // If the group is already in our map, the in-memory state is authoritative.
-        // Recovery (group lost from memory but present in conversations) is handled by
-        // the absence of the key — only then do we insert.
-        if self.groups.contains_key(&group_id) {
-            log::info!(
-                "process_welcome: groupe {} deja actif — Welcome ignore (etat en memoire conserve)",
-                group_id
-            );
-            return Ok(group_id);
+        // ── Guard 1 : groupe déjà actif en mémoire ────────────────────────────
+        //
+        // Un Welcome "parallèle" (deux devices commitent simultanément au même
+        // epoch) ne doit PAS écraser l'état en mémoire : cela corromprait le key
+        // schedule et produirait des AeadError sur tous les messages suivants.
+        //
+        // Exception : si le Welcome est à l'epoch 0, il provient forcément d'un
+        // re-bootstrap complet (forceCreateGroup). Dans ce cas l'arbre précédent
+        // est abandonné et le nouvel arbre fait autorité. On remplace l'état.
+        if let Some(existing) = self.groups.get(&group_id) {
+            let existing_epoch = existing.epoch().as_u64();
+            if welcome_epoch == 0 && existing_epoch > 0 {
+                // Re-bootstrap légitime — on écrase l'ancien état.
+                // Le guard min_epoch éventuel est aussi effacé : un reset à 0
+                // annule toute contrainte d'epoch issue d'une récupération antérieure.
+                log::info!(
+                    "process_welcome: re-bootstrap détecté pour {} (epoch {} → 0) — remplacement de l'état",
+                    group_id, existing_epoch
+                );
+                self.forgotten_group_min_epochs.remove(&group_id);
+                // On laisse tomber vers self.groups.insert() ci-dessous.
+            } else {
+                // Welcome parallèle ou dupliqué — on conserve l'état en mémoire.
+                log::info!(
+                    "process_welcome: groupe {} déjà actif (epoch={}) — Welcome ignoré (new epoch={})",
+                    group_id, existing_epoch, welcome_epoch
+                );
+                return Ok(group_id);
+            }
         }
 
-        // Check min_epoch: if forget_group was called with a minimum expected epoch,
-        // reject Welcomes that come from a device still at a stale epoch (diverged branch).
+        // ── Guard 2 : contrainte min_epoch après un forget_group ─────────────
+        //
+        // Si forgetGroup(groupId, N) a été appelé lors d'une récupération d'epoch,
+        // on rejette les Welcomes à epoch < N (branche divergée).
+        // Exception identique : epoch 0 = re-bootstrap → on lève la contrainte.
         if let Some(&min_ep) = self.forgotten_group_min_epochs.get(&group_id) {
-            let welcome_epoch = group.epoch().as_u64();
-            if welcome_epoch < min_ep {
+            if welcome_epoch == 0 {
+                // Re-bootstrap : la contrainte min_epoch est levée.
+                log::info!(
+                    "process_welcome: epoch-0 Welcome pour {} — suppression du guard min_epoch={}",
+                    group_id, min_ep
+                );
+                self.forgotten_group_min_epochs.remove(&group_id);
+            } else if welcome_epoch < min_ep {
                 log::warn!(
                     "process_welcome: Welcome rejeté pour {} — epoch {} < minimum attendu {}",
-                    group_id,
-                    welcome_epoch,
-                    min_ep
+                    group_id, welcome_epoch, min_ep
                 );
                 return Err(MlsError::OpenMls(format!(
                     "Welcome stale: epoch {} < min_epoch {}",
                     welcome_epoch, min_ep
                 )));
+            } else {
+                self.forgotten_group_min_epochs.remove(&group_id);
             }
-            // Welcome epoch is acceptable — clear the minimum
-            self.forgotten_group_min_epochs.remove(&group_id);
         }
 
         self.groups.insert(group_id.clone(), group);

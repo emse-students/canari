@@ -450,53 +450,63 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         }
       }
 
-      // Welcome for an already-known group: process at MLS level only.
-      // The Rust layer will skip overwriting if the group is already active.
-      // This handles the recovery case (MLS state lost, conversation persists)
-      // while preventing a stale or parallel-commit Welcome from corrupting
-      // the epoch key schedule (root cause of AeadError at equal epochs).
+      // Welcome pour un groupe connu.
+      //
+      // Deux sous-cas :
+      //   A) group_reset reçu avant ce Welcome (isReady=false, groupId absent du WASM)
+      //      → processWelcome() instancie normalement le nouvel arbre.
+      //   B) Re-bootstrap sans group_reset reçu (isReady=true, groupe en mémoire WASM)
+      //      → Le WASM détecte l'epoch 0 et remplace l'état silencieusement.
+      //
+      // Dans les deux cas on met à jour le statut d'invitation côté serveur
+      // (registerMember + welcome_received) pour que le routing redis soit correct.
       if (convoKey && isWelcome) {
         const convo = conversations.get(convoKey)!;
+        const wasReady = convo.isReady;
         log(
-          `[WELCOME] Welcome pour groupe connu "${convoKey}" (groupId=${groupId}) isReady=${convo.isReady}`
+          `[WELCOME] Welcome pour groupe connu "${convoKey}" (groupId=${groupId}) wasReady=${wasReady}`
         );
         try {
           await mlsService.processWelcome(content, ratchetTreeBytes);
           const stBytes = await mlsService.saveState(pin);
           await saveMlsState(userId, stBytes);
 
-          // If the conversation was a placeholder (created by discoverMissingGroups
-          // before the Welcome arrived), activate it now — no page reload needed.
-          if (!convo.isReady) {
-            try {
-              await mlsService.registerMember(groupId!, userId);
-            } catch {
-              /* non-blocking */
-            }
-            try {
-              await mlsService.updateInvitationStatus(
-                mlsService.getDeviceId(),
-                userId,
-                groupId!,
-                'welcome_received'
-              );
-            } catch {
-              /* non-blocking */
-            }
+          // registerMember et welcome_received sont idempotents côté serveur.
+          // On les appelle dans TOUS les cas (reset ou première jonction) pour
+          // garantir que le routing Redis (group:members:groupId) est à jour.
+          try {
+            await mlsService.registerMember(groupId!, userId);
+          } catch {
+            /* non-bloquant */
+          }
+          try {
+            await mlsService.updateInvitationStatus(
+              mlsService.getDeviceId(),
+              userId,
+              groupId!,
+              'welcome_received'
+            );
+          } catch {
+            /* non-bloquant */
+          }
+
+          if (!wasReady) {
+            // Placeholder → conversation activée pour la première fois.
             conversations.set(convoKey, { ...convo, isReady: true });
             localStorage.removeItem(`discovery_pending:${groupId}`);
             if (storage) await saveConversation(convoKey);
+          } else {
+            // Re-bootstrap : la conversation était active. On force isReady=true
+            // (déjà vrai, mais on rafraîchit le store pour déclencher la réactivité).
+            conversations.set(convoKey, { ...convo, isReady: true });
           }
 
-          // If this group was in epoch recovery, replay incremental history
-          // to recover messages sent during the forgetGroup recovery window.
-          if (epochRecoveryGroups.has(convoKey) || epochRecoveryGroups.has(groupId!)) {
-            epochRecoveryGroups.delete(convoKey);
-            epochRecoveryGroups.delete(groupId!);
-          }
+          // Nettoyer le flag de récupération d'epoch si actif.
+          epochRecoveryGroups.delete(convoKey);
+          epochRecoveryGroups.delete(groupId!);
         } catch (welcomeErr) {
           const welcomeErrMsg = String(welcomeErr);
-          // Welcome for another device, already joined, or duplicate → safe to ACK
+          // Welcome pour un autre device, dupliqué, ou "CannotDecryptOwnMessage" → ACK silencieux.
           if (
             welcomeErrMsg.includes('already') ||
             welcomeErrMsg.includes('duplicate') ||
@@ -505,8 +515,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           ) {
             return true;
           }
-          // Genuine failure (OTKP mismatch, corrupted state, etc.) → keep in queue
-          // so it can be retried on next reconnect.
+          // Échec réel (OTKP mismatch, état corrompu…) → laisser en queue pour retry.
           log(`[MLS] Welcome processing failed (${welcomeErrMsg}) — kept in queue for retry`);
           return false;
         }

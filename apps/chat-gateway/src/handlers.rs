@@ -9,7 +9,10 @@ use axum::{
 use futures::{sink::SinkExt, stream::StreamExt};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use redis::AsyncCommands;
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use tokio::sync::mpsc;
 
 use crate::models::{AuthParams, Claims};
@@ -129,9 +132,14 @@ async fn handle_socket(
         redis_key: redis_key.clone(),
     };
 
+    // Shared flag: set to true when a Pong frame is received.
+    // The send task checks it at each ping interval; if false (no pong since last ping)
+    // it treats the connection as dead and breaks, triggering ConnectionGuard::drop().
+    let pong_received = Arc::new(AtomicBool::new(true));
+
     // Set initial presence + drain any legacy pending_welcomes from Redis.
     if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await {
-        let _: Result<(), _> = con.set_ex(&redis_key, "true", 120).await;
+        let _: Result<(), _> = con.set_ex(&redis_key, "true", 90).await;
 
         let welcome_key = format!("pending_welcomes:{}", user_id);
         let pending: Result<Vec<String>, _> = redis::cmd("LRANGE")
@@ -182,12 +190,15 @@ async fn handle_socket(
         }
     }
 
-    // ── Send task: relay outbound frames + periodic presence refresh ──────
+    // ── Send task: relay outbound frames + heartbeat ping ────────────────
+    // Ping every 30 s. If no Pong is received by the *next* tick, the
+    // connection is considered dead and we break (→ ConnectionGuard::drop()
+    // immediately deletes the Redis presence key).
     let conn_key_ping = conn_key.clone();
-    let redis_key_ping = redis_key.clone();
-    let redis_client_ping = state.redis_client.clone();
+    let pong_flag_send = pong_received.clone();
     let mut send_task = tokio::spawn(async move {
         let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        ping_interval.tick().await; // skip the immediate first tick
         loop {
             tokio::select! {
                 msg_opt = rx.recv() => {
@@ -201,10 +212,16 @@ async fn handle_socket(
                     }
                 }
                 _ = ping_interval.tick() => {
-                    if let Ok(mut con) = redis_client_ping.get_multiplexed_async_connection().await {
-                        let _: Result<(), _> = con.set_ex(&redis_key_ping, "true", 120).await;
+                    // If the flag is still false the client never ponged → dead connection.
+                    if !pong_flag_send.swap(false, Ordering::Relaxed) {
+                        tracing::warn!(
+                            "[heartbeat] No pong from {} — closing dead connection",
+                            conn_key_ping
+                        );
+                        break;
                     }
-                    tracing::debug!("Sending ping to {} to keep connection alive", conn_key_ping);
+                    // Redis presence is refreshed in recv_task on each Pong, not here.
+                    tracing::debug!("[heartbeat] Sending ping to {}", conn_key_ping);
                     if ws_sender.send(Message::Ping(vec![].into())).await.is_err() {
                         break;
                     }
@@ -218,21 +235,33 @@ async fn handle_socket(
         let state = state.clone();
         let user_id = user_id.clone();
         let device_id = device_id.clone();
+        let pong_flag_recv = pong_received.clone();
 
         let tx_for_dispatch = tx.clone();
         tokio::spawn(async move {
             while let Some(msg) = receiver.next().await {
-                // Refresh presence on any activity.
-                {
-                    let redis_key = format!("user:online:{}:{}", user_id, device_id);
-                    if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await
-                    {
-                        let _: Result<(), _> = con.set_ex(&redis_key, "true", 120).await;
-                    }
-                }
-
                 match msg {
+                    Ok(Message::Pong(_)) => {
+                        // Client is alive: acknowledge and refresh presence.
+                        pong_flag_recv.store(true, Ordering::Relaxed);
+                        let redis_key = format!("user:online:{}:{}", user_id, device_id);
+                        if let Ok(mut con) =
+                            state.redis_client.get_multiplexed_async_connection().await
+                        {
+                            let _: Result<(), _> = con.set_ex(&redis_key, "true", 90).await;
+                        }
+                        continue;
+                    }
                     Ok(Message::Text(text)) => {
+                        // Refresh presence on inbound data frames too.
+                        {
+                            let redis_key = format!("user:online:{}:{}", user_id, device_id);
+                            if let Ok(mut con) =
+                                state.redis_client.get_multiplexed_async_connection().await
+                            {
+                                let _: Result<(), _> = con.set_ex(&redis_key, "true", 90).await;
+                            }
+                        }
                         let raw_len = text.len();
                         tracing::info!(
                             "Received WS JSON frame from {} ({} bytes)",

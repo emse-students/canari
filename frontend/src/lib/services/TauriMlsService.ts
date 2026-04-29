@@ -14,6 +14,12 @@ interface QueuedMessage {
   ratchetTreeBytes?: Uint8Array;
   /** ID from the delivery service queue — used for at-least-once ACK */
   queuedMessageId?: string;
+  /**
+   * Type discriminant for control messages persisted by the server.
+   * 'group_reset' : signal hors-bande indiquant que l'arbre MLS du groupe
+   *                 a été reconstruit ; déclenche forgetGroup() avant le Welcome.
+   */
+  type?: string;
 }
 
 // Implémentation pour Tauri (App Mobile/Desktop)
@@ -68,8 +74,13 @@ export class TauriMlsService implements IMlsService {
   private freshStart = false;
   private appVersionCache: string | null | undefined = undefined;
 
-  // Message queue for sequential processing
-  private messageQueue: QueuedMessage[] = [];
+  // ── File de priorité à 3 niveaux ────────────────────────────────────────
+  // Ordre de traitement garanti : control (group_reset…) > Welcome > messages.
+  // Cette hiérarchie assure que forgetGroup() est appelé AVANT process_welcome()
+  // dans le scénario de re-bootstrap quand le device était hors-ligne.
+  private controlQueue: QueuedMessage[] = []; // Niveau 0 : signaux hors-bande
+  private welcomeQueue: QueuedMessage[] = []; // Niveau 1 : Welcome MLS
+  private messageQueue: QueuedMessage[] = []; // Niveau 2 : messages applicatifs
   private isProcessingQueue = false;
   // Groups currently being joined (Welcome in progress) - buffer messages for these
   private pendingWelcomeGroups = new Map<string, QueuedMessage[]>();
@@ -322,6 +333,22 @@ export class TauriMlsService implements IMlsService {
             const proto: string | undefined = msg.proto || undefined;
             const content: string | undefined = msg.content || undefined;
 
+            // ── Messages de contrôle (group_reset persisté pour devices offline) ──
+            // Ces messages n'ont pas de payload MLS (proto vide). Ils sont injectés
+            // directement dans controlQueue via enqueueMessage({ type: 'group_reset' }).
+            if (msg.type === 'group_reset') {
+              this.enqueueMessage({
+                senderId: (msg.senderId as string) || 'unknown',
+                ciphertext: new Uint8Array(0),
+                groupId: (msg.groupId as string) || undefined,
+                isWelcome: false,
+                isCommit: false,
+                queuedMessageId: msgId,
+                type: 'group_reset',
+              });
+              continue;
+            }
+
             if (proto) {
               try {
                 const ciphertext = Uint8Array.from(atob(proto), (c) => c.charCodeAt(0));
@@ -395,65 +422,107 @@ export class TauriMlsService implements IMlsService {
   }
 
   /**
-   * Enqueue a message for sequential processing.
-   * Welcome messages are prioritized and processed first.
-   * Messages for groups with pending Welcomes are buffered.
+   * Enqueue a message for sequential processing using a 3-level priority queue.
+   *
+   * Niveaux (traitement dans cet ordre strict) :
+   *   0 - controlQueue  : group_reset et autres signaux hors-bande persistés
+   *   1 - welcomeQueue  : Welcome MLS (instanciation du nouvel arbre)
+   *   2 - messageQueue  : messages applicatifs (texte, commit, media…)
+   *
+   * Les messages pour un groupe dont un Welcome est en cours sont bufférisés
+   * dans pendingWelcomeGroups jusqu'à ce que le Welcome soit traité.
    */
   private enqueueMessage(msg: QueuedMessage) {
     const groupId = msg.groupId;
 
-    // If a Welcome is being processed for this group, buffer the message
-    if (groupId && this.pendingWelcomeGroups.has(groupId) && !msg.isWelcome) {
-      console.log(`[QUEUE] Buffering message for group ${groupId} (Welcome in progress)`);
+    // Niveau 0 — signal de contrôle persisté (type: 'group_reset')
+    // Ces messages ne passent pas par messageCallback ; ils déclenchent
+    // directement groupResetCallback (forgetGroup côté WASM).
+    if (msg.type === 'group_reset') {
+      console.log(`[QUEUE] Control: group_reset pour groupe ${groupId ?? 'inconnu'}`);
+      this.controlQueue.push(msg);
+      if (!this.isProcessingQueue) this.processQueue();
+      return;
+    }
+
+    // Niveau 1 — Welcome MLS
+    if (msg.isWelcome) {
+      if (groupId) this.pendingWelcomeGroups.set(groupId, []);
+      this.welcomeQueue.push(msg);
+      if (!this.isProcessingQueue) this.processQueue();
+      return;
+    }
+
+    // Niveau 2 — Message applicatif ou commit
+    // Bufférisation si un Welcome est en attente pour ce groupe.
+    if (groupId && this.pendingWelcomeGroups.has(groupId)) {
+      console.log(`[QUEUE] Buffering message pour groupe ${groupId} (Welcome en attente)`);
       this.pendingWelcomeGroups.get(groupId)!.push(msg);
       return;
     }
 
-    // Welcome messages go to front of queue for priority processing
-    if (msg.isWelcome) {
-      // Mark this group as having a pending Welcome
-      if (groupId) {
-        this.pendingWelcomeGroups.set(groupId, []);
-      }
-      this.messageQueue.unshift(msg);
-    } else {
-      this.messageQueue.push(msg);
-    }
-
-    // Start processing if not already running
-    if (!this.isProcessingQueue) {
-      this.processQueue();
-    }
+    this.messageQueue.push(msg);
+    if (!this.isProcessingQueue) this.processQueue();
   }
 
   /**
-   * Process messages from the queue one by one.
-   * This ensures Welcome messages complete before regular messages.
-   * Uses callbackLock to serialise with any concurrent fetchPendingMessages path.
+   * Draine la file de priorité dans l'ordre strict :
+   *   controlQueue (group_reset…) → welcomeQueue (Welcome MLS) → messageQueue
+   *
+   * Les messages de contrôle (group_reset) déclenchent groupResetCallback()
+   * directement, sans passer par messageCallback (pas de bytes MLS).
+   * Après un Welcome, les messages bufférisés pour ce groupe sont réinjectés
+   * en tête de messageQueue.
+   *
+   * callbackLock sérialise avec fetchPendingMessages pour éviter toute
+   * invocation concurrente de Tauri/WASM.
    */
   private async processQueue() {
     if (this.isProcessingQueue || !this.messageCallback) return;
 
     this.isProcessingQueue = true;
-    console.log(`[QUEUE] Starting queue processing (${this.messageQueue.length} messages)`);
+    const total = this.controlQueue.length + this.welcomeQueue.length + this.messageQueue.length;
+    console.log(
+      `[QUEUE] Démarrage — control=${this.controlQueue.length} welcome=${this.welcomeQueue.length} msg=${this.messageQueue.length}`
+    );
 
     const ackIds: string[] = [];
 
-    while (this.messageQueue.length > 0) {
-      const msg = this.messageQueue.shift()!;
+    while (
+      this.controlQueue.length > 0 ||
+      this.welcomeQueue.length > 0 ||
+      this.messageQueue.length > 0
+    ) {
+      // Dépiler dans l'ordre de priorité décroissant.
+      const msg =
+        this.controlQueue.shift() ?? this.welcomeQueue.shift() ?? this.messageQueue.shift()!;
+
       const groupId = msg.groupId;
 
-      // Serialize through callbackLock so fetchPendingMessages injections
-      // never race with this path (both await async Tauri invoke calls).
+      // ── Sérialisation des appels async ────────────────────────────────
       let resolve!: () => void;
       const prevLock = this.callbackLock;
       this.callbackLock = new Promise<void>((r) => (resolve = r));
       await prevLock;
 
       try {
+        // ── Niveau 0 : signal de contrôle (group_reset persisté) ────────
+        if (msg.type === 'group_reset') {
+          console.log(`[QUEUE] group_reset (persisté) pour groupe ${groupId ?? 'inconnu'}`);
+          if (groupId) {
+            this.groupResetCallback?.(groupId, 'reset');
+            // Annuler la bufférisation en cours pour ce groupe (état perdu).
+            this.pendingWelcomeGroups.delete(groupId);
+          }
+          if (msg.queuedMessageId) ackIds.push(msg.queuedMessageId);
+          continue;
+        }
+
+        // ── Niveaux 1 et 2 : Welcome ou message applicatif ──────────────
         console.log(
-          `[QUEUE] Processing ${msg.isWelcome ? 'Welcome' : msg.isCommit ? 'Commit' : 'message'} groupe=${groupId ?? 'inconnu'} sender=${msg.senderId}${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`
+          `[QUEUE] ${msg.isWelcome ? 'Welcome' : msg.isCommit ? 'Commit' : 'Msg'} groupe=${groupId ?? '?'} sender=${msg.senderId}${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`
         );
+
         const cbResult = await this.messageCallback(
           msg.senderId,
           msg.ciphertext,
@@ -463,26 +532,26 @@ export class TauriMlsService implements IMlsService {
           msg.isCommit
         );
         console.log(
-          `[QUEUE] messageCallback → ${cbResult} (groupe=${groupId ?? 'inconnu'})${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`
+          `[QUEUE] → ${cbResult} (groupe=${groupId ?? '?'})${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`
         );
 
         if (msg.queuedMessageId) ackIds.push(msg.queuedMessageId);
 
-        // If this was a Welcome, process buffered messages for this group
+        // Après un Welcome, injecter les messages bufférisés en tête de messageQueue.
         if (msg.isWelcome && groupId && this.pendingWelcomeGroups.has(groupId)) {
           const buffered = this.pendingWelcomeGroups.get(groupId)!;
-          console.log(`[QUEUE] Welcome complete, processing ${buffered.length} buffered messages`);
+          console.log(
+            `[QUEUE] Welcome terminé — réinjection de ${buffered.length} message(s) bufférisé(s) pour ${groupId}`
+          );
           this.pendingWelcomeGroups.delete(groupId);
-
-          // Add buffered messages to front of queue (in order)
           for (let i = buffered.length - 1; i >= 0; i--) {
             this.messageQueue.unshift(buffered[i]);
           }
         }
       } catch (e) {
-        console.error(`[QUEUE] Error processing message:`, e);
-        // ACK even on error to avoid infinite retry — MLS state has likely
-        // already advanced past this message (e.g. duplicate commit).
+        console.error(`[QUEUE] Erreur traitement message:`, e);
+        // ACK quand même pour ne pas boucler indéfiniment : l'état MLS a
+        // probablement avancé au-delà (commit dupliqué, epoch divergée…).
         if (msg.queuedMessageId) ackIds.push(msg.queuedMessageId);
         if (groupId) this.pendingWelcomeGroups.delete(groupId);
       } finally {
@@ -490,7 +559,6 @@ export class TauriMlsService implements IMlsService {
       }
     }
 
-    // Batch-ACK all processed real-time messages
     if (ackIds.length > 0) {
       void this.deliveryPost('messages/ack', {
         userId: this.userId,
@@ -500,7 +568,7 @@ export class TauriMlsService implements IMlsService {
     }
 
     this.isProcessingQueue = false;
-    console.log(`[QUEUE] Queue processing complete`);
+    console.log(`[QUEUE] Terminé (${total} messages traités)`);
   }
 
   onDisconnect(callback: () => void) {
@@ -811,12 +879,19 @@ export class TauriMlsService implements IMlsService {
     }
 
     // Sauvegarde le contexte de session pour les notifications push Android (no-op desktop).
-    void invoke('store_push_context', {
-      pin,
-      userId,
-      deviceId: this.deviceId,
-      baseUrl: this.historyUrl,
-    }).catch(() => {});
+    // Le pushToken est inclus pour que le service Kotlin puisse fetch le proto MLS
+    // quand il n'est pas inclus inline dans le payload FCM (messages volumineux).
+    void getToken()
+      .then((pushToken) =>
+        invoke('store_push_context', {
+          pin,
+          userId,
+          deviceId: this.deviceId,
+          baseUrl: this.historyUrl,
+          pushToken,
+        })
+      )
+      .catch(() => {});
 
     // Écrit mls_push.bin dès l'init pour que le service FCM puisse déchiffrer
     // même si aucun message n'a encore été traité (saveState non appelé).

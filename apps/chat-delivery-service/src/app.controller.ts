@@ -2297,9 +2297,14 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       `[GROUP_RESET][${traceId}] Redis routing cleared (was ${currentMembers.length} member(s))`,
     );
 
-    // ── 4. Diffuser group_reset à tous les appareils en ligne ──────────
-    // On utilise la liste qu'on vient de vider (currentMembers) car ces
-    // appareils avaient encore la connexion WebSocket active.
+    // ── 4. Notifier tous les appareils : online via WebSocket, offline via queue ──
+    //
+    // Le signal group_reset est éphémère (pub/sub). Un device offline ne le
+    // recevrait jamais, arriverait avec un état MLS à l'epoch N et refuserait
+    // silencieusement le Welcome de re-bootstrap (epoch 0). On persiste donc un
+    // QueuedMessage { type:'group_reset' } pour chaque device offline : il sera
+    // récupéré via fetchPendingMessages() et traité en tête de queue (priorité max)
+    // AVANT le Welcome, garantissant que forgetGroup() est appelé d'abord.
     const notification = JSON.stringify({
       type: 'group_reset',
       groupId: safeGroupId,
@@ -2307,38 +2312,57 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       triggeredBy,
     });
 
-    let notifiedCount = 0;
-    for (const member of currentMembers) {
-      const [memberUserId, memberDeviceId] = member.split(':');
-      if (!memberUserId || !memberDeviceId) continue;
+    // Pivot : membres récemment online (dans Redis routing) vs membres en DB (hors-ligne).
+    const onlineSet = new Set(currentMembers); // "userId:deviceId" strings
+    let notifiedOnline = 0;
+    let notifiedOffline = 0;
 
-      const onlineKey = `user:online:${memberUserId}:${memberDeviceId}`;
-      const isOnline = await this.redis.exists(onlineKey);
+    for (const m of memberships) {
+      const memberKey = `${m.userId}:${m.deviceId}`;
+      const onlineKey = `user:online:${m.userId}:${m.deviceId}`;
+      const isOnline =
+        onlineSet.has(memberKey) && (await this.redis.exists(onlineKey));
+
       if (isOnline) {
+        // Device connecté : pub/sub temps-réel (path existant).
         await this.redis.publish(
           'chat:messages',
           JSON.stringify({
-            recipientId: memberUserId,
-            deviceId: memberDeviceId,
+            recipientId: m.userId,
+            deviceId: m.deviceId,
             proto: Buffer.from(notification).toString('base64'),
             groupId: safeGroupId,
-            // Pas isWelcome, pas isCommit : le gateway relaye le JSON brut
-            // comme un control frame, identique à welcome_request.
           }),
         );
-        notifiedCount++;
+        notifiedOnline++;
+      } else {
+        // Device hors-ligne : persister un message de contrôle durable.
+        // type='group_reset' est traité par processQueue() AVANT tout Welcome —
+        // il ne passe pas par messageCallback (pas de bytes MLS à décrypter).
+        await this.queuedMessageRepo.save(
+          this.queuedMessageRepo.create({
+            recipientId: m.userId,
+            deviceId: m.deviceId,
+            groupId: safeGroupId,
+            type: 'group_reset',
+            senderId: triggeredBy,
+            proto: '', // Pas de payload MLS, juste un signal de contrôle
+          }),
+        );
+        notifiedOffline++;
       }
     }
 
     this.logger.log(
-      `[GROUP_RESET][${traceId}] DONE group=${safeGroupId} notified=${notifiedCount}/${currentMembers.length} memberships=${memberships.length}`,
+      `[GROUP_RESET][${traceId}] DONE group=${safeGroupId} online=${notifiedOnline} offline_queued=${notifiedOffline} memberships=${memberships.length}`,
     );
 
     return {
       status: 'reset',
       groupId: safeGroupId,
       membershipsReset: memberships.length,
-      notified: notifiedCount,
+      notifiedOnline,
+      notifiedOffline,
     };
   }
 
@@ -3176,22 +3200,45 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    // Resolve group name for a meaningful fallback when the Android service
+    // cannot decrypt (app killed, JNI state unavailable).
+    let groupName = '';
+    try {
+      const group = await this.groupRepo.findOne({
+        where: { id: groupId },
+        select: ['name'],
+      });
+      groupName = group?.name ?? '';
+    } catch {
+      /* non-fatal */
+    }
+
+    // Inline ciphertext eliminates the extra HTTP round-trip in the Kotlin
+    // service and avoids auth issues when the app is cold-started.
+    // FCM data payloads are limited to 4 KB; skip inline proto for large
+    // messages (media) so the service can fall back gracefully.
+    const protoB64 = queued.proto ?? queued.content ?? '';
+    const FCM_INLINE_LIMIT = 3_500;
+    const inlineProto =
+      Buffer.byteLength(protoB64, 'utf8') <= FCM_INLINE_LIMIT ? protoB64 : '';
+
     for (const pt of pushTokens) {
       try {
         await admin.messaging().send({
           token: pt.token,
-          // Data-only → onMessageReceived() is always invoked (foreground AND
-          // background).  The Android service fetches + decrypts the ciphertext
-          // and builds the visible notification locally.
+          // Data-only → onMessageReceived() fires for foreground AND background.
           data: {
             type: 'message',
             groupId,
             queuedMessageId: queued.id,
             senderId,
+            groupName,
+            // Empty string when proto is too large; Kotlin falls back to
+            // fetching it from the backend or showing a generic notification.
+            proto: inlineProto,
           },
           android: {
             priority: 'high',
-            // Keep message in FCM queue for 24 h in case the device is offline.
             ttl: 86_400_000,
           },
           apns: {
@@ -3200,7 +3247,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
           },
         });
         this.logger.log(
-          `[PUSH_SEND][${traceId}] FCM sent user=${queued.recipientId} device=${pt.deviceId}`,
+          `[PUSH_SEND][${traceId}] FCM sent user=${queued.recipientId} device=${pt.deviceId} inlineProto=${!!inlineProto}`,
         );
       } catch (e) {
         if (this.isTerminalPushTokenError(e)) {
