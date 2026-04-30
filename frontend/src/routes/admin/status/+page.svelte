@@ -74,8 +74,8 @@
 
   function ttlClass(ttl: number): string {
     if (ttl < 0) return 'text-text-muted';
-    if (ttl < 20) return 'text-red-err font-semibold';
-    if (ttl < 50) return 'text-cn-yellow';
+    if (ttl < 5) return 'text-red-err font-semibold';
+    if (ttl < 10) return 'text-cn-yellow';
     return 'text-green-ok';
   }
 
