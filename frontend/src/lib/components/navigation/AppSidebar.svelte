@@ -67,10 +67,10 @@
 <aside
   onmouseenter={handleMouseEnter}
   onmouseleave={handleMouseLeave}
-  class="fixed hidden md:flex flex-col left-0 top-[calc(3.5rem+env(safe-area-inset-top))] h-[calc(var(--app-viewport-height,100dvh)-3.5rem-env(safe-area-inset-top))] border-r border-black/5 dark:border-white/10 bg-white/70 dark:bg-black/30 backdrop-blur-2xl overflow-hidden transition-all duration-300 ease-out shadow-[4px_0_24px_rgba(0,0,0,0.02)] dark:shadow-[4px_0_24px_rgba(0,0,0,0.2)]
+  class="fixed hidden md:flex flex-col left-0 top-[env(safe-area-inset-top)] h-[calc(var(--app-viewport-height,100dvh)-env(safe-area-inset-top))] border-r border-black/5 dark:border-white/10 bg-white/70 dark:bg-black/30 backdrop-blur-2xl overflow-hidden transition-all duration-300 ease-out shadow-[4px_0_24px_rgba(0,0,0,0.02)] dark:shadow-[4px_0_24px_rgba(0,0,0,0.2)]
     {isExpanded ? 'w-64 z-30' : 'w-[4.5rem] z-20'}"
 >
-  <nav class="flex flex-col p-3 flex-1 gap-1.5 pt-4">
+  <nav class="flex flex-col p-3 flex-1 gap-1.5 pt-[4.5rem]">
     {#each APP_PLACES as place (place.id)}
       {@const PlaceIcon = getIcon(place.icon)}
       {@const isActive = place.id === activePlaceId}
