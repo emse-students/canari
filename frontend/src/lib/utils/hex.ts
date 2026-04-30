@@ -34,7 +34,7 @@ let _dbPromise: Promise<IDBDatabase> | null = null;
 function openMlsDb(userId: string): Promise<IDBDatabase> {
   if (!_dbPromise) {
     _dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
-      const req = indexedDB.open(IDB_NAME + userId, 1);
+      const req = indexedDB.open(IDB_NAME + userId, 4);
       req.onupgradeneeded = () => {
         req.result.createObjectStore(IDB_STORE);
       };
