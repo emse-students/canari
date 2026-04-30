@@ -52,6 +52,45 @@ impl WsFrame {
     }
 }
 
+// ── Handler: "disconnect" ─────────────────────────────────────────────────
+
+/// Called when the client explicitly signals it is going offline.
+/// Returns `true` to instruct the recv loop to break immediately.
+#[allow(dead_code)]
+pub async fn handle_disconnect(
+    state: &std::sync::Arc<crate::state::AppState>,
+    user_id: &str,
+    device_id: &str,
+) {
+    use redis::AsyncCommands;
+    let redis_key = format!("user:online:{}:{}", user_id, device_id);
+    tracing::info!(
+        "[presence] Explicit disconnect from {}:{} — removing presence key immediately",
+        user_id,
+        device_id
+    );
+    match state.redis_client.get_multiplexed_async_connection().await {
+        Ok(mut con) => {
+            if let Err(e) = con.del::<_, ()>(&redis_key).await {
+                tracing::warn!(
+                    "[presence] DEL failed on explicit disconnect for {}:{}: {}",
+                    user_id,
+                    device_id,
+                    e
+                );
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                "[presence] Redis unavailable on explicit disconnect for {}:{}: {}",
+                user_id,
+                device_id,
+                e
+            );
+        }
+    }
+}
+
 // ── Handler: "welcome_request" ────────────────────────────────────────────
 
 #[allow(dead_code)]

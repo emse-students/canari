@@ -2557,10 +2557,32 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     // and since SMEMBERS returns an unordered set each call can pick a different
     // peer, causing multiple devices to concurrently commit an add for the same
     // invitation.
-    const members: string[] = await this.redis.smembers(
+    let members: string[] = await this.redis.smembers(
       `group:members:${groupId}`,
     );
     const senderKey = `${requesterUserId}:${requesterDeviceId}`;
+
+    // Redis routing set is a cache: it can be empty after a service restart or
+    // Redis flush even though devices with welcome_received status exist in the
+    // DB. Fall back to the DB and repopulate the cache so routing is restored.
+    if (members.length === 0) {
+      this.logger.log(
+        `[WELCOME_REQ][${traceId}] REDIS_EMPTY — falling back to DB for group=${groupId}`,
+      );
+      const dbMembers = await this.deviceGroupRepo.find({
+        where: {
+          groupId,
+          status: In(['welcome_received', 'welcome_sent']),
+        },
+      });
+      if (dbMembers.length > 0) {
+        members = dbMembers.map((m) => `${m.userId}:${m.deviceId}`);
+        await this.redis.sadd(`group:members:${groupId}`, ...members);
+        this.logger.log(
+          `[WELCOME_REQ][${traceId}] DB_FALLBACK found=${dbMembers.length} repopulated Redis cache`,
+        );
+      }
+    }
 
     this.logger.log(
       `[WELCOME_REQ][${traceId}] START group=${groupId} requester=${senderKey} members=${members.length}`,

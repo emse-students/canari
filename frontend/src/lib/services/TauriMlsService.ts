@@ -619,6 +619,16 @@ export class TauriMlsService implements IMlsService {
     this.groupResetCallback = callback;
   }
 
+  sendDisconnect(): void {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try {
+        this.ws.send(JSON.stringify({ type: 'disconnect' }));
+      } catch {
+        // Best-effort — ignore if the socket is already closing
+      }
+    }
+  }
+
   getDeviceId(): string {
     return this.deviceId;
   }

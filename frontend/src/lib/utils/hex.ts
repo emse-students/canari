@@ -25,15 +25,16 @@ const B64_PREFIX = 'b64:';
 // which is capped at ~5 MB. The MLS state blob grows with group count and
 // prekey pool size, so we store it as raw binary here.
 
-const IDB_NAME = 'canari-mls';
+// Use the same name as the message DB
+const IDB_NAME = `CanariDB_`;
 const IDB_STORE = 'state';
 
 let _dbPromise: Promise<IDBDatabase> | null = null;
 
-function openMlsDb(): Promise<IDBDatabase> {
+function openMlsDb(userId: string): Promise<IDBDatabase> {
   if (!_dbPromise) {
     _dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
-      const req = indexedDB.open(IDB_NAME, 1);
+      const req = indexedDB.open(IDB_NAME + userId, 1);
       req.onupgradeneeded = () => {
         req.result.createObjectStore(IDB_STORE);
       };
@@ -65,10 +66,10 @@ export async function saveMlsState(userId: string, bytes: Uint8Array): Promise<v
     }
   }
 
-  const db = await openMlsDb();
+  const db = await openMlsDb(userId);
   return new Promise<void>((resolve, reject) => {
     const tx = db.transaction(IDB_STORE, 'readwrite');
-    tx.objectStore(IDB_STORE).put(bytes, 'mls_autosave_' + userId);
+    tx.objectStore(IDB_STORE).put(bytes, 'mls_autosave');
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
@@ -95,10 +96,10 @@ export async function loadMlsState(userId: string): Promise<Uint8Array | null> {
     }
   }
 
-  const db = await openMlsDb();
+  const db = await openMlsDb(userId);
   const idbResult = await new Promise<Uint8Array | null>((resolve, reject) => {
     const tx = db.transaction(IDB_STORE, 'readonly');
-    const req = tx.objectStore(IDB_STORE).get('mls_autosave_' + userId);
+    const req = tx.objectStore(IDB_STORE).get('mls_autosave');
     req.onsuccess = () => resolve((req.result as Uint8Array) ?? null);
     req.onerror = () => reject(req.error);
   });
@@ -135,10 +136,10 @@ export async function removeMlsState(userId: string): Promise<void> {
     return;
   }
 
-  const db = await openMlsDb();
+  const db = await openMlsDb(userId);
   return new Promise<void>((resolve, reject) => {
     const tx = db.transaction(IDB_STORE, 'readwrite');
-    tx.objectStore(IDB_STORE).delete('mls_autosave_' + userId);
+    tx.objectStore(IDB_STORE).delete('mls_autosave');
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });

@@ -208,4 +208,12 @@ export interface IMlsService {
    * Le client doit : forgetGroup() + isReady=false + attendre un welcome_request.
    */
   onGroupReset(callback: (groupId: string, reason: string) => void): void;
+
+  /**
+   * Send a `disconnect` control frame over the WebSocket so the gateway
+   * removes the presence key immediately (instead of waiting for TTL / heartbeat
+   * miss). Call this in `beforeunload` or when the app is intentionally closed.
+   * No-op if the socket is not open.
+   */
+  sendDisconnect(): void;
 }

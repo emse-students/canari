@@ -17,7 +17,9 @@ use tokio::sync::mpsc;
 
 use crate::models::{AuthParams, Claims};
 use crate::state::AppState;
-use crate::ws_dispatch::{WsConn, WsFrame, handle_reinvite_request, handle_welcome_request};
+use crate::ws_dispatch::{
+    WsConn, WsFrame, handle_disconnect, handle_reinvite_request, handle_welcome_request,
+};
 
 fn extract_cookie_value(headers: &HeaderMap, key: &str) -> Option<String> {
     let cookie_header = headers.get("cookie")?.to_str().ok()?;
@@ -42,28 +44,58 @@ struct ConnectionGuard {
 
 impl Drop for ConnectionGuard {
     fn drop(&mut self) {
-        tracing::info!(
-            "Executing guaranteed cleanup (Drop) for connection keys {} / {}",
-            self.conn_key,
-            self.redis_key
-        );
-        {
+        // Prune dead senders and check whether another live session exists for
+        // the same conn_key (e.g. fast reconnect from the same device).  If one
+        // does, skip the Redis DEL so the new session keeps its presence key.
+        let still_connected = {
             let mut map = self.state.connected_users.lock().unwrap();
             if let Some(senders) = map.get_mut(&self.conn_key) {
                 senders.retain(|s| !s.is_closed());
                 if senders.is_empty() {
                     map.remove(&self.conn_key);
+                    false
+                } else {
+                    true // another session is alive — keep the presence key
                 }
+            } else {
+                false
             }
+        };
+
+        if still_connected {
+            tracing::info!(
+                "[presence] Skipping DEL for {} — another session is still active",
+                self.conn_key
+            );
+            return;
         }
+
+        tracing::info!(
+            "[presence] Cleaning up presence key {} for {}",
+            self.redis_key,
+            self.conn_key
+        );
         let state = self.state.clone();
         let redis_key = self.redis_key.clone();
+        let conn_key = self.conn_key.clone();
         tokio::spawn(async move {
-            if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await {
-                let _: Result<(), _> = redis::cmd("DEL")
-                    .arg(&redis_key)
-                    .query_async(&mut con)
-                    .await;
+            match state.redis_client.get_multiplexed_async_connection().await {
+                Ok(mut con) => {
+                    if let Err(e) = redis::cmd("DEL")
+                        .arg(&redis_key)
+                        .query_async::<()>(&mut con)
+                        .await
+                    {
+                        tracing::warn!("[presence] DEL failed for {}: {}", conn_key, e);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "[presence] Redis unavailable for DEL of {}: {}",
+                        conn_key,
+                        e
+                    );
+                }
             }
         });
     }
@@ -137,58 +169,98 @@ async fn handle_socket(
     // it treats the connection as dead and breaks, triggering ConnectionGuard::drop().
     let pong_received = Arc::new(AtomicBool::new(true));
 
-    // Set initial presence + drain any legacy pending_welcomes from Redis.
-    if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await {
-        let _: Result<(), _> = con.set_ex(&redis_key, "true", 90).await;
+    // Establish ONE shared Redis connection for this socket's lifetime.
+    // MultiplexedConnection is Clone — all clones share the same underlying
+    // TCP connection, so we avoid opening a new connection for every frame.
+    // If Redis is unavailable at connect time, we proceed in degraded mode
+    // (no presence) and attempt to reconnect on the first Pong / frame.
+    let redis_conn: Option<redis::aio::MultiplexedConnection> = match state
+        .redis_client
+        .get_multiplexed_async_connection()
+        .await
+    {
+        Ok(mut con) => {
+            // ── Set initial presence key ───────────────────────────────
+            if let Err(e) = con.set_ex::<_, _, ()>(&redis_key, "true", 120).await {
+                tracing::warn!(
+                    "[presence] set_ex on connect failed for {}: {}",
+                    conn_key,
+                    e
+                );
+            } else {
+                tracing::info!("[presence] Online: {} (TTL=120s)", conn_key);
+            }
 
-        let welcome_key = format!("pending_welcomes:{}", user_id);
-        let pending: Result<Vec<String>, _> = redis::cmd("LRANGE")
-            .arg(&welcome_key)
-            .arg(0)
-            .arg(-1)
-            .query_async(&mut con)
-            .await;
-
-        if let Ok(msgs) = pending {
-            for msg in msgs {
-                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&msg) {
-                    let b64_payload = parsed["content"]
-                        .as_str()
-                        .or_else(|| parsed["payload"].as_str())
-                        .unwrap_or_default();
-                    let sender_id = parsed["senderId"]
-                        .as_str()
-                        .or_else(|| parsed["sender_id"].as_str())
-                        .unwrap_or_default()
-                        .to_string();
-                    let group_id = parsed["groupId"]
-                        .as_str()
-                        .or_else(|| parsed["group_id"].as_str())
-                        .unwrap_or_default()
-                        .to_string();
-                    let json_msg = serde_json::json!({
-                        "senderId": sender_id,
-                        "senderDeviceId": "",
-                        "groupId": group_id,
-                        "isWelcome": true,
-                        "proto": b64_payload
-                    })
-                    .to_string();
-                    if ws_sender
-                        .send(Message::Text(json_msg.into()))
+            // ── Drain legacy pending_welcomes ─────────────────────────
+            let welcome_key = format!("pending_welcomes:{}", user_id);
+            match redis::cmd("LRANGE")
+                .arg(&welcome_key)
+                .arg(0)
+                .arg(-1)
+                .query_async::<Vec<String>>(&mut con)
+                .await
+            {
+                Ok(msgs) if !msgs.is_empty() => {
+                    for msg in msgs {
+                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&msg) {
+                            let b64_payload = parsed["content"]
+                                .as_str()
+                                .or_else(|| parsed["payload"].as_str())
+                                .unwrap_or_default();
+                            let sender_id = parsed["senderId"]
+                                .as_str()
+                                .or_else(|| parsed["sender_id"].as_str())
+                                .unwrap_or_default()
+                                .to_string();
+                            let group_id = parsed["groupId"]
+                                .as_str()
+                                .or_else(|| parsed["group_id"].as_str())
+                                .unwrap_or_default()
+                                .to_string();
+                            let json_msg = serde_json::json!({
+                                "senderId": sender_id,
+                                "senderDeviceId": "",
+                                "groupId": group_id,
+                                "isWelcome": true,
+                                "proto": b64_payload
+                            })
+                            .to_string();
+                            if ws_sender
+                                .send(Message::Text(json_msg.into()))
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                    }
+                    if let Err(e) = redis::cmd("DEL")
+                        .arg(&welcome_key)
+                        .query_async::<()>(&mut con)
                         .await
-                        .is_err()
                     {
-                        break;
+                        tracing::warn!(
+                            "[presence] DEL pending_welcomes failed for {}: {}",
+                            user_id,
+                            e
+                        );
                     }
                 }
+                Err(e) => tracing::warn!("[presence] LRANGE pending_welcomes failed: {}", e),
+                _ => {}
             }
-            let _: Result<(), _> = redis::cmd("DEL")
-                .arg(&welcome_key)
-                .query_async(&mut con)
-                .await;
+
+            Some(con)
         }
-    }
+        Err(e) => {
+            tracing::warn!(
+                "[presence] Redis unavailable at connect for {} — proceeding in degraded mode: {}",
+                conn_key,
+                e
+            );
+            None
+        }
+    };
 
     // ── Send task: relay outbound frames + heartbeat ping ────────────────
     // Ping every 30 s. If no Pong is received by the *next* tick, the
@@ -220,7 +292,6 @@ async fn handle_socket(
                         );
                         break;
                     }
-                    // Redis presence is refreshed in recv_task on each Pong, not here.
                     tracing::debug!("[heartbeat] Sending ping to {}", conn_key_ping);
                     if ws_sender.send(Message::Ping(vec![].into())).await.is_err() {
                         break;
@@ -235,33 +306,41 @@ async fn handle_socket(
         let state = state.clone();
         let user_id = user_id.clone();
         let device_id = device_id.clone();
+        let conn_key_recv = conn_key.clone();
         let pong_flag_recv = pong_received.clone();
-
         let tx_for_dispatch = tx.clone();
+
         tokio::spawn(async move {
+            // Take ownership of the shared connection (or None in degraded mode).
+            // On any Redis error we attempt a single reconnect via the client.
+            let mut con_opt = redis_conn;
+
             while let Some(msg) = receiver.next().await {
                 match msg {
                     Ok(Message::Pong(_)) => {
-                        // Client is alive: acknowledge and refresh presence.
+                        // Client is alive: acknowledge and refresh presence TTL.
                         pong_flag_recv.store(true, Ordering::Relaxed);
-                        let redis_key = format!("user:online:{}:{}", user_id, device_id);
-                        if let Ok(mut con) =
-                            state.redis_client.get_multiplexed_async_connection().await
-                        {
-                            let _: Result<(), _> = con.set_ex(&redis_key, "true", 90).await;
-                        }
+                        refresh_presence(
+                            &mut con_opt,
+                            &state,
+                            &user_id,
+                            &device_id,
+                            &conn_key_recv,
+                        )
+                        .await;
                         continue;
                     }
                     Ok(Message::Text(text)) => {
-                        // Refresh presence on inbound data frames too.
-                        {
-                            let redis_key = format!("user:online:{}:{}", user_id, device_id);
-                            if let Ok(mut con) =
-                                state.redis_client.get_multiplexed_async_connection().await
-                            {
-                                let _: Result<(), _> = con.set_ex(&redis_key, "true", 90).await;
-                            }
-                        }
+                        // Refresh presence on any inbound data frame.
+                        refresh_presence(
+                            &mut con_opt,
+                            &state,
+                            &user_id,
+                            &device_id,
+                            &conn_key_recv,
+                        )
+                        .await;
+
                         let raw_len = text.len();
                         tracing::info!(
                             "Received WS JSON frame from {} ({} bytes)",
@@ -299,6 +378,13 @@ async fn handle_socket(
                         );
 
                         match frame.msg_type.as_str() {
+                            "disconnect" => {
+                                // Client is going offline intentionally — DEL presence
+                                // immediately so peers see them offline right away,
+                                // then close the connection cleanly.
+                                handle_disconnect(&state, &user_id, &device_id).await;
+                                break;
+                            }
                             "welcome_request" => {
                                 let conn = WsConn {
                                     state: &state,
@@ -341,6 +427,64 @@ async fn handle_socket(
         _ = (&mut recv_task) => send_task.abort(),
     };
     // Cleanup handled by ConnectionGuard's Drop.
+}
+
+// ── Presence refresh helper ───────────────────────────────────────────────
+//
+// Refreshes the TTL on the presence key.  Uses the socket-local connection
+// (`con_opt`) to avoid opening a new TCP connection per frame.  If the
+// connection is missing or has gone stale, it attempts a single reconnect and
+// stores the new connection back into `con_opt` for future calls.
+
+async fn refresh_presence(
+    con_opt: &mut Option<redis::aio::MultiplexedConnection>,
+    state: &Arc<AppState>,
+    user_id: &str,
+    device_id: &str,
+    conn_key: &str,
+) {
+    let redis_key = format!("user:online:{}:{}", user_id, device_id);
+
+    // Try the existing connection first.
+    if let Some(con) = con_opt.as_mut() {
+        match con.set_ex::<_, _, ()>(&redis_key, "true", 120).await {
+            Ok(_) => return,
+            Err(e) => {
+                tracing::warn!(
+                    "[presence] set_ex failed for {} (will reconnect): {}",
+                    conn_key,
+                    e
+                );
+                *con_opt = None; // mark as dead
+            }
+        }
+    }
+
+    // Connection is dead or was never established — attempt a single reconnect.
+    match state.redis_client.get_multiplexed_async_connection().await {
+        Ok(mut new_con) => {
+            if let Err(e) = new_con.set_ex::<_, _, ()>(&redis_key, "true", 120).await {
+                tracing::warn!(
+                    "[presence] set_ex after reconnect failed for {}: {}",
+                    conn_key,
+                    e
+                );
+            } else {
+                tracing::info!(
+                    "[presence] Reconnected to Redis and refreshed TTL for {}",
+                    conn_key
+                );
+                *con_opt = Some(new_con);
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                "[presence] Redis unreachable during presence refresh for {}: {}",
+                conn_key,
+                e
+            );
+        }
+    }
 }
 
 // ── Routing diagnostics ───────────────────────────────────────────────────
@@ -420,15 +564,36 @@ pub async fn get_presence(
                 continue;
             }
             let pattern = format!("user:online:{}:*", user);
-            if let Ok(keys) = redis::cmd("KEYS")
-                .arg(&pattern)
-                .query_async::<Vec<String>>(&mut con)
-                .await
-            {
-                presence.insert(user.to_string(), !keys.is_empty());
-            } else {
-                presence.insert(user.to_string(), false);
+            // Use SCAN with COUNT hint instead of KEYS to avoid blocking Redis.
+            let mut cursor: u64 = 0;
+            let mut found = false;
+            loop {
+                match redis::cmd("SCAN")
+                    .arg(cursor)
+                    .arg("MATCH")
+                    .arg(&pattern)
+                    .arg("COUNT")
+                    .arg(100u64)
+                    .query_async::<(u64, Vec<String>)>(&mut con)
+                    .await
+                {
+                    Ok((next_cursor, keys)) => {
+                        if !keys.is_empty() {
+                            found = true;
+                            break;
+                        }
+                        cursor = next_cursor;
+                        if cursor == 0 {
+                            break; // full scan complete, nothing found
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("[presence] SCAN failed for {}: {}", user, e);
+                        break;
+                    }
+                }
             }
+            presence.insert(user.to_string(), found);
         }
     }
 

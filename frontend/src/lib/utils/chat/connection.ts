@@ -1366,6 +1366,15 @@ export async function initializeConnection(deps: ConnectionDeps): Promise<void> 
     log('Connecté au réseau !');
     mlsService.onDisconnect(scheduleReconnect);
 
+    // Notify the gateway immediately when the tab / app is closed so the
+    // presence key is removed right away, rather than waiting for the TTL
+    // or heartbeat timeout (up to 60 s).  Only registered on the leader tab
+    // (this function is only called on the leader).
+    if (typeof window !== 'undefined') {
+      const sendDisconnectOnUnload = () => mlsService.sendDisconnect();
+      window.addEventListener('beforeunload', sendDisconnectOnUnload, { once: true });
+    }
+
     // When a sibling device (same user, different device) signals that it needs
     // to be added to a group, immediately run the pending-invitations loop.
     // Without these handlers the WS events are received and logged but ignored —

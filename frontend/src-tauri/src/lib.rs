@@ -556,6 +556,22 @@ fn load_mls_state(app: tauri::AppHandle) -> Option<Vec<u8>> {
     std::fs::read(&path).ok()
 }
 
+// Supprime tous les fichiers .db dans le dossier de l'app
+#[tauri::command]
+fn clear_app_data(app: tauri::AppHandle) -> Result<(), String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    if data_dir.exists() {
+        for entry in std::fs::read_dir(data_dir).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("db") {
+                std::fs::remove_file(path).map_err(|e| e.to_string())?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Écrit le pushSecret reçu du backend dans {app_data_dir}/pending_push_secret.txt.
 /// CanariApplication.processPendingPushSecret() le lit au prochain démarrage,
 /// le chiffre dans Android Keystore, puis supprime le fichier.
@@ -760,7 +776,8 @@ pub fn run() {
             save_mls_state,
             delete_mls_state,
             load_mls_state,
-            store_push_secret
+            store_push_secret,
+            clear_app_data
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

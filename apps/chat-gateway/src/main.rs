@@ -234,7 +234,7 @@ async fn main() {
                                 };
 
                                 let mut found = false;
-                                let mut to_remove = false;
+                                let mut any_failed = false;
                                 if let Some(senders) = senders {
                                     found = true;
                                     for tx in &senders {
@@ -246,22 +246,76 @@ async fn main() {
                                                 queue_id
                                             );
                                         } else {
+                                            // The mpsc channel is full or the receiver was dropped
+                                            // (device disconnected). The message is already in the
+                                            // DB queue and will be fetched via fetchPendingMessages
+                                            // on the next reconnect — it is NOT lost.
                                             tracing::warn!(
-                                                "Backpressure/disconnected: dropping message for slow client {} (queuedId={})",
+                                                "[PubSub] Real-time delivery failed for {} (queuedId={}) — message stays in DB queue, will be fetched on reconnect",
                                                 key,
                                                 queue_id
                                             );
-                                            to_remove = true;
+                                            any_failed = true;
                                         }
                                     }
                                 }
 
-                                if to_remove {
-                                    let mut map = connected_users.lock().unwrap();
-                                    map.remove(&key);
+                                if any_failed {
+                                    // Prune only dead senders instead of wiping all connections
+                                    // for this key. A multi-tab user would lose live connections
+                                    // if we blindly map.remove() on the first failure.
+                                    // If no live senders remain the device is confirmed offline:
+                                    // immediately DEL the presence key so the delivery service
+                                    // stops routing via pub/sub and goes straight to queue.
+                                    let all_gone = {
+                                        let mut map = connected_users.lock().unwrap();
+                                        if let Some(senders) = map.get_mut(&key) {
+                                            senders.retain(|s| !s.is_closed());
+                                            if senders.is_empty() {
+                                                map.remove(&key);
+                                                true
+                                            } else {
+                                                false
+                                            }
+                                        } else {
+                                            true
+                                        }
+                                    };
+                                    if all_gone {
+                                        let rc = redis_client.clone();
+                                        let rk = format!("user:online:{}", key);
+                                        let k2 = key.clone();
+                                        tokio::spawn(async move {
+                                            match rc.get_multiplexed_async_connection().await {
+                                                Ok(mut con) => {
+                                                    if let Err(e) = redis::cmd("DEL")
+                                                        .arg(&rk)
+                                                        .query_async::<()>(&mut con)
+                                                        .await
+                                                    {
+                                                        tracing::warn!(
+                                                            "[presence] DEL failed after delivery failure for {}: {}",
+                                                            k2,
+                                                            e
+                                                        );
+                                                    } else {
+                                                        tracing::info!(
+                                                            "[presence] Removed stale presence key for {} after delivery failure",
+                                                            k2
+                                                        );
+                                                    }
+                                                }
+                                                Err(e) => tracing::warn!(
+                                                    "[presence] Redis unavailable for DEL after delivery failure for {}: {}",
+                                                    k2,
+                                                    e
+                                                ),
+                                            }
+                                        });
+                                    }
                                 } else if !found {
-                                    tracing::warn!(
-                                        "[PubSub] {} not connected to this gateway instance — message kept in queue (queuedId={}).",
+                                    tracing::info!(
+                                        "[PubSub] {} not connected to this gateway — message stays in DB queue, will be fetched on reconnect (queuedId={}).",
                                         key,
                                         queue_id
                                     );

@@ -133,6 +133,17 @@
       } catch (e) {
         console.warn('Erreur lors du nettoyage de la base de données:', e);
       }
+    } else {
+      const { invoke } = await import('@tauri-apps/api/core');
+
+      await invoke('delete_mls_state');
+
+      await import('$lib/services/biometric').then(({ BiometricService }) =>
+        BiometricService.disable()
+      );
+
+      // Delete all .db files in the Tauri app data directory
+      await invoke('clear_app_data');
     }
 
     // Nettoyage complet du stockage local

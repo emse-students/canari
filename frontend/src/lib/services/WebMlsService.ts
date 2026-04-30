@@ -476,6 +476,16 @@ export class WebMlsService implements IMlsService {
     this.groupResetCallback = callback;
   }
 
+  sendDisconnect(): void {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try {
+        this.ws.send(JSON.stringify({ type: 'disconnect' }));
+      } catch {
+        // Best-effort — ignore if the socket is already closing
+      }
+    }
+  }
+
   // simulateMessageReceive removed — pending messages now go through enqueueMessage
   // so they are serialized with live WebSocket messages via processQueue.
 
