@@ -185,9 +185,11 @@ export class WebMlsService implements IMlsService {
         clearTimeout(timeout);
         resolved = true;
         console.log('Connected to Chat Gateway with DeviceID:', this.deviceId);
-        // Send an application-level ping every 25 s so the client→server
-        // direction also has regular traffic. This keeps NAT entries alive and
-        // lets us detect a dead send path before the next server ping cycle.
+        // Application-level heartbeat every 8 s. Sent as a data frame so it
+        // travels end-to-end through nginx (unlike WebSocket Ping control
+        // frames which can be absorbed by the proxy on mobile networks).
+        // The gateway uses it to clear the awaiting-pong flag and refresh
+        // the Redis presence TTL, giving ≤16 s dead-connection detection.
         this.heartbeatTimer = setInterval(() => {
           if (this.ws?.readyState === WebSocket.OPEN) {
             try {
@@ -196,7 +198,7 @@ export class WebMlsService implements IMlsService {
               /* socket closed between check and send */
             }
           }
-        }, 25_000);
+        }, 8_000);
         try {
           await this.fetchPendingMessages();
         } catch (e) {

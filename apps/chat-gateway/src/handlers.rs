@@ -357,7 +357,9 @@ async fn handle_socket(
                         continue;
                     }
                     Ok(Message::Text(text)) => {
-                        // Refresh presence on any inbound data frame.
+                        // Any inbound data frame proves the client is reachable
+                        // end-to-end (not just the nginx TCP layer).
+                        pong_flag_recv.store(false, Ordering::Relaxed);
                         refresh_presence(
                             &mut con_opt,
                             &state,
@@ -367,13 +369,6 @@ async fn handle_socket(
                         )
                         .await;
 
-                        let raw_len = text.len();
-                        tracing::info!(
-                            "Received WS JSON frame from {} ({} bytes)",
-                            user_id,
-                            raw_len
-                        );
-
                         let json = match serde_json::from_str::<serde_json::Value>(&text) {
                             Ok(v) => v,
                             Err(e) => {
@@ -381,6 +376,18 @@ async fn handle_socket(
                                 continue;
                             }
                         };
+
+                        // Client heartbeat — liveness already registered above.
+                        if json.get("type").and_then(|v| v.as_str()) == Some("ping") {
+                            continue;
+                        }
+
+                        let raw_len = text.len();
+                        tracing::info!(
+                            "Received WS JSON frame from {} ({} bytes)",
+                            user_id,
+                            raw_len
+                        );
 
                         let frame = match WsFrame::parse(&json) {
                             Some(f) => f,
