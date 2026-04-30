@@ -78,25 +78,45 @@ impl Drop for ConnectionGuard {
         let state = self.state.clone();
         let redis_key = self.redis_key.clone();
         let conn_key = self.conn_key.clone();
+        // Retry up to 3 times so a brief Redis blip doesn't leave a stale key
+        // (TTL=20s is the last-resort fallback if all attempts fail).
         tokio::spawn(async move {
-            match state.redis_client.get_multiplexed_async_connection().await {
-                Ok(mut con) => {
-                    if let Err(e) = redis::cmd("DEL")
-                        .arg(&redis_key)
-                        .query_async::<()>(&mut con)
-                        .await
-                    {
-                        tracing::warn!("[presence] DEL failed for {}: {}", conn_key, e);
+            for attempt in 0u8..3 {
+                if attempt > 0 {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+                }
+                match state.redis_client.get_multiplexed_async_connection().await {
+                    Ok(mut con) => {
+                        if redis::cmd("DEL")
+                            .arg(&redis_key)
+                            .query_async::<()>(&mut con)
+                            .await
+                            .is_ok()
+                        {
+                            tracing::info!(
+                                "[presence] DEL {} ok (attempt {})",
+                                conn_key,
+                                attempt + 1
+                            );
+                            return;
+                        }
+                        tracing::warn!(
+                            "[presence] DEL {} failed (attempt {})",
+                            conn_key,
+                            attempt + 1
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "[presence] Redis unavailable for DEL of {} (attempt {}): {}",
+                            conn_key,
+                            attempt + 1,
+                            e
+                        );
                     }
                 }
-                Err(e) => {
-                    tracing::warn!(
-                        "[presence] Redis unavailable for DEL of {}: {}",
-                        conn_key,
-                        e
-                    );
-                }
             }
+            tracing::warn!("[presence] DEL abandoned after 3 attempts for {}", conn_key);
         });
     }
 }
@@ -167,7 +187,11 @@ async fn handle_socket(
     // Shared flag: set to true when a Pong frame is received.
     // The send task checks it at each ping interval; if false (no pong since last ping)
     // it treats the connection as dead and breaks, triggering ConnectionGuard::drop().
-    let pong_received = Arc::new(AtomicBool::new(true));
+    // true = we sent a Ping and are still waiting for the Pong.
+    // Starts false (no ping sent yet). Set to true when a Ping is sent, back
+    // to false when the Pong arrives. If still true at the next Ping tick the
+    // client has missed an entire interval → considered dead.
+    let awaiting_pong = Arc::new(AtomicBool::new(false));
 
     // Establish ONE shared Redis connection for this socket's lifetime.
     // MultiplexedConnection is Clone — all clones share the same underlying
@@ -181,14 +205,14 @@ async fn handle_socket(
     {
         Ok(mut con) => {
             // ── Set initial presence key ───────────────────────────────
-            if let Err(e) = con.set_ex::<_, _, ()>(&redis_key, "true", 120).await {
+            if let Err(e) = con.set_ex::<_, _, ()>(&redis_key, "true", 20).await {
                 tracing::warn!(
                     "[presence] set_ex on connect failed for {}: {}",
                     conn_key,
                     e
                 );
             } else {
-                tracing::info!("[presence] Online: {} (TTL=120s)", conn_key);
+                tracing::info!("[presence] Online: {} (TTL=20s)", conn_key);
             }
 
             // ── Drain legacy pending_welcomes ─────────────────────────
@@ -263,15 +287,14 @@ async fn handle_socket(
     };
 
     // ── Send task: relay outbound frames + heartbeat ping ────────────────
-    // Ping every 20 s. If no Pong is received by the *next* tick, the
-    // connection is considered dead and we break (→ ConnectionGuard::drop()
-    // immediately deletes the Redis presence key).
-    // 20 s beats the 30 s inactivity timeout used by most NAT devices and
-    // corporate proxies, reducing spurious drops on idle connections.
+    // Ping every 8s. Detection: if awaiting_pong is STILL true when the next
+    // tick fires, the client never answered → dead → break immediately.
+    // This gives a max detection window of 1 ping interval (8 s) from the
+    // moment the unanswered ping was sent, i.e. ≤16 s from connection loss.
     let conn_key_ping = conn_key.clone();
-    let pong_flag_send = pong_received.clone();
+    let pong_flag_send = awaiting_pong.clone();
     let mut send_task = tokio::spawn(async move {
-        let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(20));
+        let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(8));
         ping_interval.tick().await; // skip the immediate first tick
         loop {
             tokio::select! {
@@ -286,8 +309,9 @@ async fn handle_socket(
                     }
                 }
                 _ = ping_interval.tick() => {
-                    // If the flag is still false the client never ponged → dead connection.
-                    if !pong_flag_send.swap(false, Ordering::Relaxed) {
+                    // swap(true): set flag to "awaiting pong".
+                    // If it was already true the previous ping went unanswered.
+                    if pong_flag_send.swap(true, Ordering::Relaxed) {
                         tracing::warn!(
                             "[heartbeat] No pong from {} — closing dead connection",
                             conn_key_ping
@@ -309,7 +333,7 @@ async fn handle_socket(
         let user_id = user_id.clone();
         let device_id = device_id.clone();
         let conn_key_recv = conn_key.clone();
-        let pong_flag_recv = pong_received.clone();
+        let pong_flag_recv = awaiting_pong.clone();
         let tx_for_dispatch = tx.clone();
 
         tokio::spawn(async move {
@@ -320,8 +344,8 @@ async fn handle_socket(
             while let Some(msg) = receiver.next().await {
                 match msg {
                     Ok(Message::Pong(_)) => {
-                        // Client is alive: acknowledge and refresh presence TTL.
-                        pong_flag_recv.store(true, Ordering::Relaxed);
+                        // Client is alive: clear the awaiting flag and refresh TTL.
+                        pong_flag_recv.store(false, Ordering::Relaxed);
                         refresh_presence(
                             &mut con_opt,
                             &state,
@@ -449,7 +473,7 @@ async fn refresh_presence(
 
     // Try the existing connection first.
     if let Some(con) = con_opt.as_mut() {
-        match con.set_ex::<_, _, ()>(&redis_key, "true", 120).await {
+        match con.set_ex::<_, _, ()>(&redis_key, "true", 20).await {
             Ok(_) => return,
             Err(e) => {
                 tracing::warn!(
@@ -465,7 +489,7 @@ async fn refresh_presence(
     // Connection is dead or was never established — attempt a single reconnect.
     match state.redis_client.get_multiplexed_async_connection().await {
         Ok(mut new_con) => {
-            if let Err(e) = new_con.set_ex::<_, _, ()>(&redis_key, "true", 120).await {
+            if let Err(e) = new_con.set_ex::<_, _, ()>(&redis_key, "true", 20).await {
                 tracing::warn!(
                     "[presence] set_ex after reconnect failed for {}: {}",
                     conn_key,
