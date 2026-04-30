@@ -25,8 +25,8 @@ const B64_PREFIX = 'b64:';
 // which is capped at ~5 MB. The MLS state blob grows with group count and
 // prekey pool size, so we store it as raw binary here.
 
-// Use the same name as the message DB
-const IDB_NAME = `CanariDB_`;
+// Separate DB from the message/conversation DB to avoid version conflicts
+const IDB_NAME = `CanariDBMls_`;
 const IDB_STORE = 'state';
 
 let _dbPromise: Promise<IDBDatabase> | null = null;
@@ -34,7 +34,7 @@ let _dbPromise: Promise<IDBDatabase> | null = null;
 function openMlsDb(userId: string): Promise<IDBDatabase> {
   if (!_dbPromise) {
     _dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
-      const req = indexedDB.open(IDB_NAME + userId, 4);
+      const req = indexedDB.open(IDB_NAME + userId, 1);
       req.onupgradeneeded = () => {
         req.result.createObjectStore(IDB_STORE);
       };
