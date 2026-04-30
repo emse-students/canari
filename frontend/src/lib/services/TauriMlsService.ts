@@ -211,7 +211,7 @@ export class TauriMlsService implements IMlsService {
               /* socket closed between check and send */
             }
           }
-        }, 25_000);
+        }, 8_000); // data frame bypasses nginx proxy_read_timeout; keeps presence TTL fresh
         try {
           await this.fetchPendingMessages();
         } catch (e) {
