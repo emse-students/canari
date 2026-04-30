@@ -631,24 +631,23 @@ pub async fn get_admin_presence(
     // Redis: scan all user:online:* keys with their TTL
     // NOTE: KEYS blocks Redis — acceptable for a low-traffic admin endpoint.
     let mut redis_entries: Vec<(String, String, i64)> = Vec::new();
-    if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await {
-        if let Ok(keys) = redis::cmd("KEYS")
+    if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await
+        && let Ok(keys) = redis::cmd("KEYS")
             .arg("user:online:*")
             .query_async::<Vec<String>>(&mut con)
             .await
-        {
-            for key in &keys {
-                // format: user:online:{userId}:{deviceId}
-                // splitn(4) so deviceIds containing ":" are preserved
-                let parts: Vec<&str> = key.splitn(4, ':').collect();
-                if parts.len() == 4 {
-                    let ttl: i64 = redis::cmd("TTL")
-                        .arg(key)
-                        .query_async(&mut con)
-                        .await
-                        .unwrap_or(-1);
-                    redis_entries.push((parts[2].to_string(), parts[3].to_string(), ttl));
-                }
+    {
+        for key in &keys {
+            // format: user:online:{userId}:{deviceId}
+            // splitn(4) so deviceIds containing ":" are preserved
+            let parts: Vec<&str> = key.splitn(4, ':').collect();
+            if parts.len() == 4 {
+                let ttl: i64 = redis::cmd("TTL")
+                    .arg(key)
+                    .query_async(&mut con)
+                    .await
+                    .unwrap_or(-1);
+                redis_entries.push((parts[2].to_string(), parts[3].to_string(), ttl));
             }
         }
     }
