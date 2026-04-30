@@ -263,13 +263,15 @@ async fn handle_socket(
     };
 
     // ── Send task: relay outbound frames + heartbeat ping ────────────────
-    // Ping every 30 s. If no Pong is received by the *next* tick, the
+    // Ping every 20 s. If no Pong is received by the *next* tick, the
     // connection is considered dead and we break (→ ConnectionGuard::drop()
     // immediately deletes the Redis presence key).
+    // 20 s beats the 30 s inactivity timeout used by most NAT devices and
+    // corporate proxies, reducing spurious drops on idle connections.
     let conn_key_ping = conn_key.clone();
     let pong_flag_send = pong_received.clone();
     let mut send_task = tokio::spawn(async move {
-        let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(20));
         ping_interval.tick().await; // skip the immediate first tick
         loop {
             tokio::select! {

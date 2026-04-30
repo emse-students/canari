@@ -48,6 +48,8 @@ export class WebMlsService implements IMlsService {
   private initPromise: Promise<void> | null = null;
   /** True when initialized without existing state — triggers OTKP purge before new ones are published. */
   private freshStart = false;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private networkListenersRegistered = false;
 
   // Message queue for sequential processing
   private messageQueue: QueuedMessage[] = [];
@@ -134,6 +136,31 @@ export class WebMlsService implements IMlsService {
       this.ws = null;
     }
 
+    // Clear any heartbeat from a previous connection.
+    if (this.heartbeatTimer !== null) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+
+    // Register visibility/online listeners once — trigger reconnect when the
+    // tab becomes visible or the network comes back after a gap.
+    if (!this.networkListenersRegistered && typeof document !== 'undefined') {
+      this.networkListenersRegistered = true;
+      document.addEventListener('visibilitychange', () => {
+        if (
+          document.visibilityState === 'visible' &&
+          (!this.ws || this.ws.readyState !== WebSocket.OPEN)
+        ) {
+          this.disconnectCallback?.();
+        }
+      });
+      window.addEventListener('online', () => {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+          this.disconnectCallback?.();
+        }
+      });
+    }
+
     return new Promise((resolve, reject) => {
       // Convert HTTP(S) URL to WS(S) URL
       // https:// -> wss://, http:// -> ws://
@@ -158,6 +185,18 @@ export class WebMlsService implements IMlsService {
         clearTimeout(timeout);
         resolved = true;
         console.log('Connected to Chat Gateway with DeviceID:', this.deviceId);
+        // Send an application-level ping every 25 s so the client→server
+        // direction also has regular traffic. This keeps NAT entries alive and
+        // lets us detect a dead send path before the next server ping cycle.
+        this.heartbeatTimer = setInterval(() => {
+          if (this.ws?.readyState === WebSocket.OPEN) {
+            try {
+              this.ws.send(JSON.stringify({ type: 'ping' }));
+            } catch {
+              /* socket closed between check and send */
+            }
+          }
+        }, 25_000);
         try {
           await this.fetchPendingMessages();
         } catch (e) {
@@ -177,6 +216,10 @@ export class WebMlsService implements IMlsService {
       };
       this.ws.onclose = (event) => {
         clearTimeout(timeout);
+        if (this.heartbeatTimer !== null) {
+          clearInterval(this.heartbeatTimer);
+          this.heartbeatTimer = null;
+        }
         if (!resolved) {
           resolved = true;
           reject(

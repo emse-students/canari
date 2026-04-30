@@ -73,6 +73,8 @@ export class TauriMlsService implements IMlsService {
   /** True when initialized without existing state — triggers OTKP purge before new ones are published. */
   private freshStart = false;
   private appVersionCache: string | null | undefined = undefined;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private networkListenersRegistered = false;
 
   // ── File de priorité à 3 niveaux ────────────────────────────────────────
   // Ordre de traitement garanti : control (group_reset…) > Welcome > messages.
@@ -144,6 +146,28 @@ export class TauriMlsService implements IMlsService {
       this.ws = null;
     }
 
+    if (this.heartbeatTimer !== null) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+
+    if (!this.networkListenersRegistered && typeof document !== 'undefined') {
+      this.networkListenersRegistered = true;
+      document.addEventListener('visibilitychange', () => {
+        if (
+          document.visibilityState === 'visible' &&
+          (!this.ws || this.ws.readyState !== WebSocket.OPEN)
+        ) {
+          this.disconnectCallback?.();
+        }
+      });
+      window.addEventListener('online', () => {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+          this.disconnectCallback?.();
+        }
+      });
+    }
+
     // Resolve token: use provided token, fall back to getToken().
     // On Tauri mobile the cookie is not sent cross-origin, so we pass the
     // Bearer token explicitly in the URL query string.
@@ -179,6 +203,15 @@ export class TauriMlsService implements IMlsService {
         clearTimeout(timeout);
         resolved = true;
         console.log(`[WS] Connecté au Chat Gateway — device=${this.deviceId}`);
+        this.heartbeatTimer = setInterval(() => {
+          if (this.ws?.readyState === WebSocket.OPEN) {
+            try {
+              this.ws.send(JSON.stringify({ type: 'ping' }));
+            } catch {
+              /* socket closed between check and send */
+            }
+          }
+        }, 25_000);
         try {
           await this.fetchPendingMessages();
         } catch (e) {
@@ -196,6 +229,10 @@ export class TauriMlsService implements IMlsService {
       };
       this.ws.onclose = (event) => {
         clearTimeout(timeout);
+        if (this.heartbeatTimer !== null) {
+          clearInterval(this.heartbeatTimer);
+          this.heartbeatTimer = null;
+        }
         const codeDesc =
           event.code === 1000
             ? 'fermeture normale'
