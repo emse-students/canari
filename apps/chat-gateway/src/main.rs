@@ -15,7 +15,7 @@ use std::{net::SocketAddr, sync::Arc};
 use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::handlers::{get_presence, ws_handler};
+use crate::handlers::{get_admin_presence, get_presence, ws_handler};
 use crate::state::AppState;
 
 /// Decode a standard base64 string to a UTF-8 string, returning None on any error.
@@ -523,6 +523,7 @@ async fn main() {
         .route("/api/health", get(health_check))
         .route("/api/ws", get(ws_handler))
         .route("/api/presence", get(get_presence))
+        .route("/api/admin/presence", get(get_admin_presence))
         .layer(cors)
         .with_state(app_state);
 
