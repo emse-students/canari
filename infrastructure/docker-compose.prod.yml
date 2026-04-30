@@ -14,7 +14,7 @@ services:
     restart: on-failure
     depends_on:
       - zookeeper
-    ports:
+    expose:
       - "9092"
     environment:
       KAFKA_BROKER_ID: 1
@@ -32,7 +32,7 @@ services:
 
   redis:
     image: redis:alpine
-    ports:
+    expose:
       - "6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -42,7 +42,7 @@ services:
 
   mongo:
     image: mongo:latest
-    ports:
+    expose:
       - "27017"
     environment:
       MONGO_INITDB_DATABASE: chat_db
@@ -222,6 +222,7 @@ services:
       DB_USERNAME: ${POSTGRES_USER}
       DB_PASSWORD: ${POSTGRES_PASSWORD}
       DB_DATABASE: auth_db
+      REDIS_URL: redis://redis:6379
       CHANNELS_ENCRYPTION_SECRET: ${CHANNELS_ENCRYPTION_SECRET:-dev-channel-secret-change-me}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_SUCCESS_URL: ${FRONTEND_URL:-https://canari-emse.fr}/posts?registration=success
