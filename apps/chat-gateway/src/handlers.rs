@@ -40,17 +40,23 @@ struct ConnectionGuard {
     state: Arc<AppState>,
     conn_key: String,
     redis_key: String,
+    /// Unique ID assigned to this connection, used for O(1) removal from the map.
+    conn_id: u64,
 }
 
 impl Drop for ConnectionGuard {
     fn drop(&mut self) {
-        // Prune dead senders and check whether another live session exists for
-        // the same conn_key (e.g. fast reconnect from the same device).  If one
-        // does, skip the Redis DEL so the new session keeps its presence key.
+        // Remove this specific connection by its unique ID, then check whether
+        // any other live sessions remain for the same conn_key (e.g. other tabs
+        // or a fast reconnect).  This avoids the race where `is_closed()` still
+        // returns false for an aborted send_task whose receiver hasn't been
+        // dropped yet by the async runtime.
         let still_connected = {
             let mut map = self.state.connected_users.lock().unwrap();
             if let Some(senders) = map.get_mut(&self.conn_key) {
-                senders.retain(|s| !s.is_closed());
+                senders.remove(&self.conn_id);
+                // Also prune any other stale senders while the lock is held.
+                senders.retain(|_, s| !s.is_closed());
                 if senders.is_empty() {
                     map.remove(&self.conn_key);
                     false
@@ -167,12 +173,20 @@ async fn handle_socket(
     let (tx, mut rx) = mpsc::channel::<String>(256);
     let conn_key = format!("{}:{}", user_id, device_id);
 
+    // Assign a unique monotonic ID to this connection so ConnectionGuard::drop
+    // can remove it from the map without relying on is_closed(), which has a
+    // race with abort() on the send task.
+    let conn_id = state.next_conn_id.fetch_add(1, Ordering::Relaxed);
+
     {
         let mut map = state.connected_users.lock().unwrap();
-        map.entry(conn_key.clone()).or_default().push(tx.clone());
+        map.entry(conn_key.clone())
+            .or_default()
+            .insert(conn_id, tx.clone());
         tracing::info!(
-            "Registered connection key: {} ({} active)",
+            "Registered connection key: {} (conn_id={}, {} active)",
             conn_key,
+            conn_id,
             map[&conn_key].len()
         );
     }
@@ -182,6 +196,7 @@ async fn handle_socket(
         state: state.clone(),
         conn_key: conn_key.clone(),
         redis_key: redis_key.clone(),
+        conn_id,
     };
 
     // Shared flag: set to true when a Pong frame is received.
@@ -539,7 +554,7 @@ async fn log_routing_diagnostics(
 
     let online_all: Vec<String> = {
         let map = state.connected_users.lock().unwrap();
-        map.keys().cloned().collect()
+        map.keys().cloned().collect::<Vec<_>>()
     };
 
     let member_status: Vec<String> =
