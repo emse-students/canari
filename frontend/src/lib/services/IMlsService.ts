@@ -69,6 +69,9 @@ export interface IMlsService {
     afterStreamId?: string
   ): Promise<{ id?: string; sender_id: string; content: string; timestamp: string }[]>;
   getDeviceId(): string;
+  /** Fetches messages queued on the delivery service that were not yet delivered
+   * (e.g. during a disconnect). Should be called after every connect/reconnect. */
+  fetchPendingMessages(): Promise<void>;
 
   // Group management
   getLocalGroups(): string[];

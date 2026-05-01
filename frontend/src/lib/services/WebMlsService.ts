@@ -48,7 +48,6 @@ export class WebMlsService implements IMlsService {
   private initPromise: Promise<void> | null = null;
   /** True when initialized without existing state — triggers OTKP purge before new ones are published. */
   private freshStart = false;
-  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private networkListenersRegistered = false;
 
   // Message queue for sequential processing
@@ -136,12 +135,6 @@ export class WebMlsService implements IMlsService {
       this.ws = null;
     }
 
-    // Clear any heartbeat from a previous connection.
-    if (this.heartbeatTimer !== null) {
-      clearInterval(this.heartbeatTimer);
-      this.heartbeatTimer = null;
-    }
-
     // Register visibility/online listeners once — trigger reconnect when the
     // tab becomes visible or the network comes back after a gap.
     if (!this.networkListenersRegistered && typeof document !== 'undefined') {
@@ -181,30 +174,10 @@ export class WebMlsService implements IMlsService {
         }
       }, 15_000);
 
-      this.ws.onopen = async () => {
+      this.ws.onopen = () => {
         clearTimeout(timeout);
         resolved = true;
         console.log('Connected to Chat Gateway with DeviceID:', this.deviceId);
-        // Application-level heartbeat every 8 s. Sent as a data frame so it
-        // travels end-to-end through nginx (unlike WebSocket Ping control
-        // frames which can be absorbed by the proxy on mobile networks).
-        // The gateway uses it to clear the awaiting-pong flag and refresh
-        // the Redis presence TTL, giving ≤16 s dead-connection detection.
-        this.heartbeatTimer = setInterval(() => {
-          if (this.ws?.readyState === WebSocket.OPEN) {
-            try {
-              this.ws.send(JSON.stringify({ type: 'ping' }));
-            } catch {
-              /* socket closed between check and send */
-            }
-          }
-        }, 8_000);
-        try {
-          await this.fetchPendingMessages();
-        } catch (e) {
-          console.error('Failed to fetch pending messages on connect:', e);
-          // Non-blocking: connection is still valid, proceed
-        }
         resolve();
       };
       this.ws.onerror = (event) => {
@@ -218,10 +191,6 @@ export class WebMlsService implements IMlsService {
       };
       this.ws.onclose = (event) => {
         clearTimeout(timeout);
-        if (this.heartbeatTimer !== null) {
-          clearInterval(this.heartbeatTimer);
-          this.heartbeatTimer = null;
-        }
         if (!resolved) {
           resolved = true;
           reject(

@@ -15,6 +15,8 @@ RUN printf 'server {\n\
     index index.html;\n\
     # Limite d\'upload pour les médias (évite les 413 nginx par défaut ~1MB)\n\
     client_max_body_size 100m;\n\
+    proxy_buffering off;\n\
+    tcp_nodelay on;\n\
     \n\
     # Utilise le resolver DNS interne de Docker pour la résolution des upstreams\n\
     # Cela évite que nginx refuse de démarrer si un upstream est temporairement absent\n\
@@ -53,7 +55,8 @@ RUN printf 'server {\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
     proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
-    proxy_read_timeout 3600s;\n\
+    proxy_read_timeout 10s;\n\
+    proxy_send_timeout 10s;\n\
     }\n\
     \n\
     location /api/groups {\n\

@@ -73,7 +73,6 @@ export class TauriMlsService implements IMlsService {
   /** True when initialized without existing state — triggers OTKP purge before new ones are published. */
   private freshStart = false;
   private appVersionCache: string | null | undefined = undefined;
-  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private networkListenersRegistered = false;
 
   // ── File de priorité à 3 niveaux ────────────────────────────────────────
@@ -146,11 +145,6 @@ export class TauriMlsService implements IMlsService {
       this.ws = null;
     }
 
-    if (this.heartbeatTimer !== null) {
-      clearInterval(this.heartbeatTimer);
-      this.heartbeatTimer = null;
-    }
-
     if (!this.networkListenersRegistered && typeof document !== 'undefined') {
       this.networkListenersRegistered = true;
       document.addEventListener('visibilitychange', () => {
@@ -199,24 +193,10 @@ export class TauriMlsService implements IMlsService {
         }
       }, 15_000);
 
-      this.ws.onopen = async () => {
+      this.ws.onopen = () => {
         clearTimeout(timeout);
         resolved = true;
         console.log(`[WS] Connecté au Chat Gateway — device=${this.deviceId}`);
-        this.heartbeatTimer = setInterval(() => {
-          if (this.ws?.readyState === WebSocket.OPEN) {
-            try {
-              this.ws.send(JSON.stringify({ type: 'ping' }));
-            } catch {
-              /* socket closed between check and send */
-            }
-          }
-        }, 8_000); // data frame bypasses nginx proxy_read_timeout; keeps presence TTL fresh
-        try {
-          await this.fetchPendingMessages();
-        } catch (e) {
-          console.error('[WS] Echec fetchPendingMessages au connect (non bloquant):', e);
-        }
         resolve();
       };
       this.ws.onerror = (e) => {
@@ -229,10 +209,6 @@ export class TauriMlsService implements IMlsService {
       };
       this.ws.onclose = (event) => {
         clearTimeout(timeout);
-        if (this.heartbeatTimer !== null) {
-          clearInterval(this.heartbeatTimer);
-          this.heartbeatTimer = null;
-        }
         const codeDesc =
           event.code === 1000
             ? 'fermeture normale'

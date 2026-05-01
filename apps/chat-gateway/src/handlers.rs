@@ -287,14 +287,13 @@ async fn handle_socket(
     };
 
     // ── Send task: relay outbound frames + heartbeat ping ────────────────
-    // Ping every 8s. Detection: if awaiting_pong is STILL true when the next
+    // Ping every 1s. Detection: if awaiting_pong is STILL true when the next
     // tick fires, the client never answered → dead → break immediately.
-    // This gives a max detection window of 1 ping interval (8 s) from the
-    // moment the unanswered ping was sent, i.e. ≤16 s from connection loss.
+    // This gives a max dead-connection detection window of ~1 s.
     let conn_key_ping = conn_key.clone();
     let pong_flag_send = awaiting_pong.clone();
     let mut send_task = tokio::spawn(async move {
-        let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(8));
+        let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(1));
         ping_interval.tick().await; // skip the immediate first tick
         loop {
             tokio::select! {

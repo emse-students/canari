@@ -1364,6 +1364,16 @@ export async function initializeConnection(deps: ConnectionDeps): Promise<void> 
     setIsWsConnected(true);
     setReconnectAttempts(0);
     log('Connecté au réseau !');
+    // Fetch any messages that arrived while this device was disconnected or
+    // offline. Called here (rather than inside connect/onopen) so the intent
+    // is explicit and the caller controls the lifecycle.
+    mlsService
+      .fetchPendingMessages()
+      .catch((e) =>
+        log(
+          `[WARN] Echec récupération messages initiaux: ${e instanceof Error ? e.message : String(e)}`
+        )
+      );
     mlsService.onDisconnect(scheduleReconnect);
 
     // Notify the gateway immediately when the tab / app is closed so the

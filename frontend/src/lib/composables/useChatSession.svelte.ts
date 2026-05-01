@@ -416,9 +416,6 @@ export function useChatSession() {
       // Only the leader tab syncs history and devices
       if (!getIsTabLeader()) return;
 
-      // MLS message history is fetched automatically from the delivery service
-      // (fetchPendingMessages) on WS open — no separate MLS replay needed here.
-
       // Discover groups the user belongs to on the server but doesn't have locally.
       // This catches cases where Welcomes were lost (device offline, state cleared, etc.)
       const st0 = storage;
@@ -582,6 +579,14 @@ export function useChatSession() {
       isWsConnected = true;
       reconnectAttempts = 0;
       cb.log('[OK] Reconnecte au reseau.');
+      cb.log('[SYNC] Récupération des messages manquants...');
+      mlsService
+        .fetchPendingMessages()
+        .catch((e) =>
+          cb.log(
+            `[WARN] Echec récupération messages manquants: ${e instanceof Error ? e.message : String(e)}`
+          )
+        );
       processDeviceInvitationsLocally(cb)
         .then(() => {
           const st2 = storage;
