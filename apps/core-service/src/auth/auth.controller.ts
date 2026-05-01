@@ -66,23 +66,40 @@ export class AuthController {
     this.devRoutesEnabled = isEnvFlagEnabled(process.env.ENABLE_DEV_ROUTES);
   }
 
-  /** Set the refresh token as an HttpOnly cookie. */
-  private setRefreshCookie(res: Response, token: string): void {
+  /**
+   * Detect if request is from development environment.
+   * Returns true for localhost and tauri.localhost origins.
+   */
+  private isDevEnvironment(req: Request): boolean {
+    const origin = req.get('origin') || req.get('referer') || '';
+    return (
+      origin.includes('localhost') ||
+      origin.includes('127.0.0.1') ||
+      origin.includes('tauri.localhost')
+    );
+  }
+
+  /** Set the refresh token as an HttpOnly cookie with environment-aware security settings. */
+  private setRefreshCookie(req: Request, res: Response, token: string): void {
+    const isDev = this.isDevEnvironment(req);
+
     res.cookie(REFRESH_COOKIE, token, {
       httpOnly: true,
-      secure: true, // required by SameSite=None
-      sameSite: 'none', // cross-origin POST from tauri.localhost → canari-emse.fr
-      path: '/api/auth', // only sent to auth endpoints
+      secure: isDev ? false : true, // dev: HTTP allowed; prod: HTTPS required
+      sameSite: isDev ? 'lax' : 'none', // dev: lax (avoid cross-origin blocking); prod: none (cross-origin)
+      path: '/api/auth',
       maxAge: REFRESH_MAX_AGE * 1000, // express uses milliseconds
     });
   }
 
-  /** Clear the refresh cookie (e.g. on logout or expired session). */
-  private clearRefreshCookie(res: Response): void {
+  /** Clear the refresh cookie with environment-aware security settings. */
+  private clearRefreshCookie(req: Request, res: Response): void {
+    const isDev = this.isDevEnvironment(req);
+
     res.clearCookie(REFRESH_COOKIE, {
       httpOnly: true,
-      secure: true,
-      sameSite: 'none',
+      secure: isDev ? false : true,
+      sameSite: isDev ? 'lax' : 'none',
       path: '/api/auth',
     });
   }
@@ -99,6 +116,7 @@ export class AuthController {
   @HttpCode(200)
   async devLogin(
     @Body() body: { id?: string },
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ): Promise<{
     access_token: string;
@@ -156,7 +174,7 @@ export class AuthController {
       { expiresIn: '7d' },
     );
 
-    this.setRefreshCookie(res, refresh_token);
+    this.setRefreshCookie(req, res, refresh_token);
 
     return {
       access_token,
@@ -282,7 +300,7 @@ export class AuthController {
     );
 
     // Set refresh token as HttpOnly cookie (not accessible to JS)
-    this.setRefreshCookie(res, refresh_token);
+    this.setRefreshCookie(req, res, refresh_token);
 
     return {
       access_token,
@@ -307,7 +325,7 @@ export class AuthController {
   ): Promise<{ access_token: string }> {
     const refresh_token = req.cookies?.[REFRESH_COOKIE] as string | undefined;
     if (!refresh_token) {
-      this.clearRefreshCookie(res);
+      this.clearRefreshCookie(req, res);
       throw new UnauthorizedException('No refresh token — please log in again');
     }
 
@@ -318,11 +336,11 @@ export class AuthController {
         type: string;
       };
     } catch {
-      this.clearRefreshCookie(res);
+      this.clearRefreshCookie(req, res);
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
     if (payload.type !== 'refresh') {
-      this.clearRefreshCookie(res);
+      this.clearRefreshCookie(req, res);
       throw new UnauthorizedException('Invalid token type');
     }
 
@@ -344,7 +362,7 @@ export class AuthController {
     );
 
     // Rotate the refresh cookie
-    this.setRefreshCookie(res, new_refresh);
+    this.setRefreshCookie(req, res, new_refresh);
 
     return { access_token };
   }
@@ -352,8 +370,11 @@ export class AuthController {
   // ─── Logout ────────────────────────────────────────────────────────────────
   @Post('logout')
   @HttpCode(200)
-  logout(@Res({ passthrough: true }) res: Response): { ok: true } {
-    this.clearRefreshCookie(res);
+  logout(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): { ok: true } {
+    this.clearRefreshCookie(req, res);
     return { ok: true };
   }
 

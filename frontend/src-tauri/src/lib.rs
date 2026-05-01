@@ -593,6 +593,23 @@ fn store_push_secret(secret: String, app: tauri::AppHandle) -> Result<(), String
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // On Android: initialise le logger Rust → logcat sous le tag "CanariRust",
+    // puis installe un hook de panic pour loguer le message AVANT le SIGABRT.
+    // Sans ça, le crash ne produit qu'une trace d'adresses sans contexte.
+    #[cfg(target_os = "android")]
+    {
+        android_logger::init_once(
+            android_logger::Config::default()
+                .with_max_level(log::LevelFilter::Trace)
+                .with_tag("CanariRust"),
+        );
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            log::error!("PANIC: {info}");
+            prev(info);
+        }));
+    }
+
     // In production desktop builds, `tauri://` scheme redirects are blocked by
     // WebKitGTK. We serve app assets via a local HTTP server instead, so the
     // OIDC redirect URI stays http://, which WebKitGTK accepts without complaint.
@@ -781,5 +798,11 @@ pub fn run() {
             clear_app_data
         ])
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .unwrap_or_else(|e| {
+            // Sur Android, log::error! est routé vers logcat (tag "CanariRust")
+            // avant que le panic ne provoque le SIGABRT visible dans le crash log.
+            #[cfg(target_os = "android")]
+            log::error!("Tauri failed to start: {e:?}");
+            panic!("error while running tauri application: {e:?}");
+        });
 }

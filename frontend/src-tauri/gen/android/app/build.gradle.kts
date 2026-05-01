@@ -75,8 +75,10 @@ android {
             }
         }
     }
-    kotlinOptions {
-        jvmTarget = "11"
+    kotlin {
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
+        }
     }
     buildFeatures {
         buildConfig = true
@@ -94,20 +96,41 @@ rust {
 
 // Gradle 9.1 on Windows cannot hash symlinked .so files from Tauri's Rust build.
 // Replace symlinks with real copies before the JNI merge task runs.
+// Each task is scoped to its own ABI subdirectory to prevent concurrent file-lock
+// conflicts when Gradle runs multiple JniLibFolders tasks in parallel.
 tasks.whenTaskAdded {
-    if (name.contains("JniLibFolders")) {
-        doFirst {
-            fileTree("src/main/jniLibs").matching { include("**/*.so") }.forEach { soFile ->
-                val path = soFile.toPath()
-                if (Files.isSymbolicLink(path)) {
-                    val link = Files.readSymbolicLink(path)
-                    val resolved = if (link.isAbsolute) link else path.parent.resolve(link).normalize()
-                    if (Files.exists(resolved)) {
-                        Files.delete(path)
-                        Files.copy(resolved, path, StandardCopyOption.REPLACE_EXISTING)
-                    }
+    if (!name.contains("JniLibFolders")) return@whenTaskAdded
+    val abiSubdir = when {
+        name.startsWith("mergeArm64")  -> "arm64-v8a"
+        name.startsWith("mergeArm")    -> "armeabi-v7a"
+        name.startsWith("mergeX86_64") -> "x86_64"
+        name.startsWith("mergeX86")    -> "x86"
+        // Universal: per-ABI tasks already resolved symlinks; nothing to do.
+        else -> return@whenTaskAdded
+    }
+    doFirst {
+        fileTree("src/main/jniLibs/$abiSubdir").matching { include("**/*.so") }.forEach { soFile ->
+            val path = soFile.toPath()
+            if (Files.isSymbolicLink(path)) {
+                val link = Files.readSymbolicLink(path)
+                val resolved = if (link.isAbsolute) link else path.parent.resolve(link).normalize()
+                if (Files.exists(resolved)) {
+                    Files.delete(path)
+                    Files.copy(resolved, path, StandardCopyOption.REPLACE_EXISTING)
                 }
             }
+        }
+    }
+}
+
+// signUniversalDebugBundle reads each per-ABI .aab, so it must wait for them all to be
+// fully written. AGP doesn't always add these cross-flavor ordering constraints on Windows.
+afterEvaluate {
+    val abis = listOf("Arm64", "Arm", "X86", "X86_64")
+    for (profile in listOf("Debug", "Release")) {
+        val universalSign = tasks.findByName("signUniversal${profile}Bundle") ?: continue
+        abis.forEach { abi ->
+            tasks.findByName("sign${abi}${profile}Bundle")?.let { universalSign.mustRunAfter(it) }
         }
     }
 }

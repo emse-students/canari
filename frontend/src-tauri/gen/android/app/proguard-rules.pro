@@ -1,21 +1,47 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# ─── DIAGNOSTIC ────────────────────────────────────────────────────────────────
+# Conserve noms de fichiers et numéros de ligne pour déchiffrer les stack traces.
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# ─── TAURI 2.11 / TAO 0.35 — CHAMPS ACCÉDÉS PAR JNI ───────────────────────────
+# tao accède aux champs `id` via env.get_field() / env.set_field() par nom
+# littéral. R8 renomme ces champs en release → NoSuchFieldError → JavaException
+# → SIGABRT dans Java_fr_emse_canari_Rust_onActivityCreate.
+-keepclassmembers class fr.emse.canari.WryActivity {
+    public int id;
+}
+-keepclassmembers class fr.emse.canari.RustWebView {
+    public java.lang.String id;
+}
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# ─── LIFECYCLE OBSERVERS (nouveaux dans Tauri 2.11) ────────────────────────────
+# WryLifecycleObserver et TauriLifecycleObserver sont des Kotlin `object`
+# (singletons) enregistrés sur ProcessLifecycleOwner. AndroidX dispatch leurs
+# callbacks par nom de méthode : si R8 les renomme, les callbacks ne se déclenchent plus.
+-keep class fr.emse.canari.WryLifecycleObserver { *; }
+-keep class fr.emse.canari.TauriLifecycleObserver { *; }
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# ─── APP.TAURI — PLUGIN MANAGER ────────────────────────────────────────────────
+# PluginManager est un singleton Kotlin dans tauri-android ; ses méthodes sont
+# appelées par réflexion depuis les plugins et depuis le bridge Rust.
+-keep class app.tauri.** { *; }
+-keep interface app.tauri.** { *; }
+-dontwarn app.tauri.**
+
+# ─── NOTRE APPLICATION ─────────────────────────────────────────────────────────
+-keep class fr.emse.canari.CanariApplication { *; }
+-keep class fr.emse.canari.MainActivity { *; }
+-keep class fr.emse.canari.CanariFirebaseMessagingService { *; }
+-keep class fr.emse.canari.PushSecretKeystore { *; }
+
+# ─── FIREBASE / FCM ────────────────────────────────────────────────────────────
+-keep class com.google.firebase.** { *; }
+-keep class com.google.android.gms.** { *; }
+-dontwarn com.google.firebase.**
+-dontwarn com.google.android.gms.**
+
+# ─── SQLITE (tauri-plugin-sql) ─────────────────────────────────────────────────
+# tauri-plugin-sql embarque org.sqlite.database (repackage de SQLite pour Android).
+-keep class org.sqlite.** { *; }
+-keep class org.sqlite.database.** { *; }
+-dontwarn org.sqlite.**

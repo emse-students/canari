@@ -10,7 +10,7 @@ from typing import Optional
 
 # === CONFIGURATION ===
 PROJECT_DIR = r"D:\Documents\Programmation\EMSE\Canari\frontend"
-APK_PATH = r"src-tauri\gen\android\app\build\outputs\apk\universal\debug\app-universal-debug.apk"
+APK_PATH = r"src-tauri\gen\android\app\build\outputs\apk\universal\release\app-universal-release.apk"
 PACKAGE_NAME = "fr.emse.canari"
 ACTIVITY_NAME = f"{PACKAGE_NAME}/.MainActivity"
 
@@ -221,7 +221,7 @@ class TauriManagerApp:
             # Puis compile (--target arm64 uniquement : plus rapide + évite les bugs Gradle 9.1 universal)
             self.log("Système", "--- DÉMARRAGE DE LA COMPILATION ---")
             self.execute_command(
-                "bun tauri android build --debug --target aarch64",
+                "bun tauri android build --target aarch64",
                 "Système",
                 "Compilation terminée avec succès."
             )
@@ -231,8 +231,25 @@ class TauriManagerApp:
     def run_deploy(self, device_id: str, device_name: str) -> None:
         self.log("Système", f"--- DÉPLOIEMENT SUR {device_name} ---")
         def task() -> None:
-            # Installation
-            cmd_install = f'adb -s {device_id} install -r "{APK_PATH}"'
+            # Désinstallation préalable : évite les bases SQLite / clés Keystore
+            # corrompues laissées par une ancienne version. adb uninstall retourne
+            # un code non-nul si le package n'est pas installé — on l'ignore.
+            self.log("Système", f"Désinstallation de {PACKAGE_NAME}...")
+            result = subprocess.run(
+                f'adb -s {device_id} uninstall {PACKAGE_NAME}',
+                cwd=PROJECT_DIR,
+                shell=True,
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+            )
+            if 'Success' in result.stdout:
+                self.log("Système", f"  → {PACKAGE_NAME} désinstallé.")
+            else:
+                self.log("Système", f"  → Non installé, on continue.")
+
+            # Installation fraîche (pas besoin de -r après uninstall)
+            cmd_install = f'adb -s {device_id} install "{APK_PATH}"'
             self.execute_command(cmd_install, "Système", f"APK installé sur {device_name}")
 
             # Lancement
@@ -255,7 +272,15 @@ class TauriManagerApp:
         self.log("Système", f"Anciens logs effacés pour {device_name}.")
 
         # 2. Lancer la lecture continue
-        cmd = f'adb -s {device_id} logcat -s "Tauri/Console"'
+        # *:S = silence tout par défaut, puis on sélectionne tag par tag avec priorité minimale.
+        # Tauri/Console:V  → tous les console.log JS (Verbose+)
+        # AndroidRuntime:W → exceptions Java/Kotlin non rattrapées (Warning+)
+        # DEBUG:I          → dumps natifs du debuggerd Android (tombstones, Info+)
+        # CanariRust:I     → logs Rust via android_logger (Info+ : filtre VERBOSE jni::wrapper)
+        cmd = (
+            f'adb -s {device_id} logcat'
+            f' "*:S" "Tauri/Console:V" "AndroidRuntime:W" "DEBUG:I" "CanariRust:I"'
+        )
         self.log("Système", f"Démarrage Logcat pour {device_name}...")
 
         process = subprocess.Popen(
