@@ -237,7 +237,7 @@ async fn main() {
                                 let mut any_failed = false;
                                 if let Some(senders) = senders {
                                     found = true;
-                                    for tx in &senders {
+                                    for tx in senders.values() {
                                         if tx.try_send(json_frame.clone()).is_ok() {
                                             tracing::info!(
                                                 "[Gateway] Message directly routed to {}, json_frame length: {} bytes, queuedId={}",
@@ -270,7 +270,7 @@ async fn main() {
                                     let all_gone = {
                                         let mut map = connected_users.lock().unwrap();
                                         if let Some(senders) = map.get_mut(&key) {
-                                            senders.retain(|s| !s.is_closed());
+                                            senders.retain(|_, s| !s.is_closed());
                                             if senders.is_empty() {
                                                 map.remove(&key);
                                                 true
@@ -345,7 +345,7 @@ async fn main() {
                                         let prefix = format!("{}:", u_id);
                                         for (key, senders) in map.iter() {
                                             if key.starts_with(&prefix) {
-                                                for tx in senders {
+                                                for tx in senders.values() {
                                                     temp.push((key.clone(), tx.clone()));
                                                 }
                                             }
@@ -453,7 +453,7 @@ async fn main() {
                             let map = connected_users.lock().unwrap();
                             let mut temp = Vec::new();
                             for (key, senders) in map.iter() {
-                                for tx in senders {
+                                for tx in senders.values() {
                                     temp.push((key.clone(), tx.clone()));
                                 }
                             }

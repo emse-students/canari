@@ -168,7 +168,7 @@ async fn forward_to_one_peer(
                     .filter(|m| m.as_str() != sender_key)
                     .find_map(|m| {
                         map.get(m)
-                            .and_then(|senders| senders.first().cloned())
+                            .and_then(|senders| senders.values().next().cloned())
                             .map(|s| (m.clone(), s))
                     })
             };
