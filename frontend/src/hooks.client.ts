@@ -7,40 +7,93 @@
  * built-in `fetch` so the client-side router keeps working.
  */
 
-// Deep link handler: captures fr.emse.canari://callback?code=…&state=…
-// after the system browser completes the OIDC flow on Android.
-if (typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__) {
-  import('@tauri-apps/plugin-deep-link')
+// ════════════════════════════════════════════════════════════════════════════
+// DEEP LINK HANDLER — OIDC on Mobile Tauri
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Flow on Android Tauri:
+// 1. User taps "Login" → Opens Authentik in system browser (Chrome Custom Tabs)
+// 2. After login, Authentik redirects to fr.emse.canari://callback?code=ABC&state=XYZ
+// 3. Android OS recognizes the custom scheme (via AndroidManifest.xml intent-filter)
+// 4. Tauri's plugin-deep-link intercepts the intent and emits onOpenUrl()
+// 5. This code listens and redirects to /auth/callback?code=ABC&state=XYZ
+// 6. The callback page exchanges the code for a token
+//
+// IMPORTANT: This MUST NOT use async/await at the module level.
+// The event can arrive before async setup completes → we use Promise.resolve().then()
+
+if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+  // Initialize deep-link listener immediately (no async race condition).
+  Promise.resolve()
+    .then(() => import('@tauri-apps/plugin-deep-link'))
     .then(({ onOpenUrl }) => {
+      console.log('[hooks] Deep-link listener registered');
+
+      // This callback fires immediately if there's a pending URI (cold start),
+      // or whenever a new deep link arrives (app already running).
       onOpenUrl((urls) => {
-        for (const raw of urls) {
+        console.log('[hooks] onOpenUrl called with', urls.length, 'URL(s)');
+
+        for (const url of urls) {
+          console.log('[hooks] Processing URL:', url);
+
           try {
-            const u = new URL(raw);
-            if (u.protocol === 'fr.emse.canari:' && u.host === 'callback') {
-              const code = u.searchParams.get('code');
-              const state = u.searchParams.get('state');
-              const authError = u.searchParams.get('error');
-              if (authError) {
-                window.location.href = `/auth/callback?error=${encodeURIComponent(authError)}`;
-                return;
-              }
-              if (code && state) {
-                // Reuse the existing /auth/callback page which handles dedup + exchange.
-                window.location.href = `/auth/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`;
-              }
+            // Parse the URL
+            const u = new URL(url);
+            console.log('[hooks] Parsed URL protocol:', u.protocol, 'host:', u.host);
+
+            // Only handle our scheme
+            if (u.protocol !== 'fr.emse.canari:' || u.host !== 'callback') {
+              console.log('[hooks] URL is not our deep link, ignoring');
+              continue;
             }
-          } catch {
-            // Malformed URL — ignore.
+
+            // Extract OIDC parameters
+            const code = u.searchParams.get('code');
+            const state = u.searchParams.get('state');
+            const error = u.searchParams.get('error');
+            const error_description = u.searchParams.get('error_description');
+
+            console.log('[hooks] Deep-link parameters:', {
+              has_code: !!code,
+              has_state: !!state,
+              has_error: !!error,
+            });
+
+            // Handle error response from Authentik
+            if (error) {
+              const msg = error_description || error;
+              console.log('[hooks] Auth error:', msg);
+              window.location.href = `/auth/callback?error=${encodeURIComponent(msg)}`;
+              return;
+            }
+
+            // Handle successful OIDC response
+            if (code && state) {
+              console.log('[hooks] Valid OIDC response, redirecting to /auth/callback');
+              window.location.href = `/auth/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`;
+              return;
+            }
+
+            console.warn('[hooks] Missing code or state in callback URL');
+          } catch (err) {
+            console.error('[hooks] Error processing deep link URL:', url, err);
           }
         }
       });
     })
-    .catch(() => {
-      // Plugin not available on desktop — no-op.
+    .catch((err) => {
+      // Plugin might not be available (desktop, or in dev without Tauri).
+      // This is not an error — just log it.
+      console.log('[hooks] Deep-link plugin not available:', err.message);
     });
 }
 
-if (typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__) {
+// ════════════════════════════════════════════════════════════════════════════
+// HTTP PLUGIN WRAPPER — Use Tauri native HTTP for external API calls
+// ════════════════════════════════════════════════════════════════════════════
+
+if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
   import('@tauri-apps/plugin-http')
     .then(({ fetch: tauriFetch }) => {
       const originalFetch = window.fetch;

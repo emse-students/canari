@@ -193,6 +193,7 @@ export class AuthController {
   @HttpCode(200)
   async oidcCallback(
     @Body() body: OidcCallbackDto,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ): Promise<{
     access_token: string;

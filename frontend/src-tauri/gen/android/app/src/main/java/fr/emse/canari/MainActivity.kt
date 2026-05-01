@@ -34,6 +34,11 @@ class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+    
+    // NOTE: Deep linking is handled automatically by Tauri's plugin-deep-link.
+    // Do NOT manually override onNewIntent() — it causes JNI crashes.
+    // The plugin intercepts the intent via AndroidManifest.xml's intent-filter
+    // and emits it to the frontend via onOpenUrl().
 
     // Récupère (ou génère) le token FCM dès le démarrage.
     // Si le token est déjà connu, il est stocké dans le fichier ET notifié au
@@ -78,4 +83,10 @@ class MainActivity : TauriActivity() {
       }
     }
   }
+
+  /**
+   * FCM Token Handling — Notify frontend of Firebase Cloud Messaging token.
+   * This is used for push notifications (not related to deep linking).
+   */
+  // (FCM handling is done in onCreate via FirebaseMessaging.getInstance().token)
 }
