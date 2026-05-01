@@ -6,6 +6,7 @@ dist
 coverage
 target
 **/.gradle
+**/.kotlin
 src/lib/proto
 src/lib/wasm
 *.tsbuildinfo
