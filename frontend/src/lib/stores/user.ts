@@ -84,6 +84,15 @@ export async function fetchUserProfile(userId: string): Promise<UserProfile> {
   return (await res.json()) as UserProfile;
 }
 
+export async function userExists(userId: string): Promise<boolean> {
+  try {
+    await fetchUserProfile(userId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function updateMyProfile(data: {
   bio?: string;
   avatarMediaId?: string;

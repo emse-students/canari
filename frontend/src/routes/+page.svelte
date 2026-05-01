@@ -1,14 +1,9 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
-  import { currentUserId } from '$lib/stores/user';
 
   onMount(() => {
-    if (currentUserId()) {
-      goto('/posts', { replaceState: true }).catch(() => {});
-    } else {
-      goto('/login', { replaceState: true }).catch(() => {});
-    }
+    goto('/posts', { replaceState: true }).catch(() => {});
   });
 </script>
 

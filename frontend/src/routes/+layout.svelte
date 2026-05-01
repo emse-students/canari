@@ -8,7 +8,6 @@
   import AppSidebar from '$lib/components/navigation/AppSidebar.svelte';
   import BottomNav from '$lib/components/navigation/BottomNav.svelte';
   import LogsPanel from '$lib/components/dev/LogsPanel.svelte';
-  import { currentUserId } from '$lib/stores/user';
   import { page } from '$app/state';
   import { APP_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
   import { getStatusLog } from '$lib/stores/globalChatSingleton.svelte';
@@ -16,12 +15,6 @@
   let { children } = $props();
 
   const pathname = $derived(page.url.pathname);
-  const isAuthRoute = $derived(
-    pathname === '/login' ||
-      pathname.startsWith('/login') ||
-      pathname === '/auth/callback' ||
-      pathname.startsWith('/auth/')
-  );
   const activePlaceId = $derived(resolveActivePlaceId(pathname));
 
   // ── Logs panel (global — fonctionne sur toutes les routes) ──────────────────
@@ -77,27 +70,7 @@
     document.documentElement.classList.toggle('keyboard-open', isKeyboardOpen);
   });
 
-  let _authNavigating = false;
-  $effect(() => {
-    if (typeof window === 'undefined') return;
-    if (isAuthRoute) {
-      return;
-    }
-    if (!currentUserId()) {
-      if (_authNavigating) return;
-      _authNavigating = true;
-      console.log(
-        `[NAV] Auth guard — aucun userId, redirection vers /login (returnTo=${pathname})`
-      );
-      setTimeout(() => {
-        goto(`/login?returnTo=${encodeURIComponent(pathname)}`, { replaceState: true })
-          .catch(() => {})
-          .finally(() => {
-            _authNavigating = false;
-          });
-      }, 0);
-    }
-  });
+
 
   // ── Swipe navigation (mobile uniquement) ───────────────────────────────────
   let touchStartX = 0;
@@ -109,7 +82,6 @@
   }
 
   function handleTouchEnd(e: TouchEvent) {
-    if (isAuthRoute) return;
     const dx = e.changedTouches[0].clientX - touchStartX;
     const dy = e.changedTouches[0].clientY - touchStartY;
     // Seuil : 60px minimum, et plus horizontal que vertical
@@ -132,14 +104,10 @@
 >
   <ChatBackgroundService />
 
-  {#if !isAuthRoute}
     <AppSidebar />
-  {/if}
 
   <div class="relative z-10 flex flex-1 flex-col overflow-hidden md:pl-[4.5rem]">
-    {#if !isAuthRoute}
-      <Navbar />
-    {/if}
+    <Navbar />
 
     <main class="relative flex-1 overflow-hidden">
       <BackgroundBlobs />
@@ -150,7 +118,7 @@
       </div>
     </main>
 
-    {#if !isAuthRoute && !isKeyboardOpen}
+    {#if !isKeyboardOpen}
       <BottomNav />
     {/if}
   </div>
