@@ -14,6 +14,7 @@
   void setWebView(fr.emse.canari.RustWebView);
   java.lang.Class getAppClass(...);
   java.lang.String getVersion();
+  int startActivity(...);
 }
 
 -keep class fr.emse.canari.Ipc {

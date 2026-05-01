@@ -605,7 +605,8 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_sql::Builder::default().build());
+        .plugin(tauri_plugin_sql::Builder::default().build())
+        .plugin(tauri_plugin_websocket::init());
 
     #[cfg(all(desktop, not(dev)))]
     let builder = builder.plugin(tauri_plugin_localhost::Builder::new(port).build());

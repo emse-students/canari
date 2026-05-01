@@ -1,4 +1,6 @@
 import java.util.Properties
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 plugins {
     id("com.android.application")
@@ -88,6 +90,26 @@ android {
 
 rust {
     rootDirRel = "../../../"
+}
+
+// Gradle 9.1 on Windows cannot hash symlinked .so files from Tauri's Rust build.
+// Replace symlinks with real copies before the JNI merge task runs.
+tasks.whenTaskAdded {
+    if (name.contains("JniLibFolders")) {
+        doFirst {
+            fileTree("src/main/jniLibs").matching { include("**/*.so") }.forEach { soFile ->
+                val path = soFile.toPath()
+                if (Files.isSymbolicLink(path)) {
+                    val link = Files.readSymbolicLink(path)
+                    val resolved = if (link.isAbsolute) link else path.parent.resolve(link).normalize()
+                    if (Files.exists(resolved)) {
+                        Files.delete(path)
+                        Files.copy(resolved, path, StandardCopyOption.REPLACE_EXISTING)
+                    }
+                }
+            }
+        }
+    }
 }
 
 dependencies {

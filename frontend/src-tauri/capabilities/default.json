@@ -32,6 +32,7 @@
     "http:allow-fetch-send",
     "http:allow-fetch-read-body",
     "fs:default",
-    "dialog:default"
+    "dialog:default",
+    "websocket:default"
   ]
 }

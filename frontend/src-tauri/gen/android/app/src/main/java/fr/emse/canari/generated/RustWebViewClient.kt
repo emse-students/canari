@@ -14,14 +14,14 @@ import android.os.Handler
 import android.os.Looper
 import androidx.webkit.WebViewAssetLoader
 
-class RustWebViewClient(context: Context): WebViewClient() {
+class RustWebViewClient(webView: RustWebView, context: Context): WebViewClient() {
     private val interceptedState = mutableMapOf<String, Boolean>()
     var currentUrl: String = "about:blank"
     private var lastInterceptedUrl: Uri? = null
     private var pendingUrlRedirect: String? = null
 
     private val assetLoader = WebViewAssetLoader.Builder()
-        .setDomain(assetLoaderDomain())
+        .setDomain(Rust.assetLoaderDomain(webView.id))
         .addPathHandler("/", WebViewAssetLoader.AssetsPathHandler(context))
         .build()
 
@@ -38,11 +38,17 @@ class RustWebViewClient(context: Context): WebViewClient() {
         }
 
         lastInterceptedUrl = request.url
-        return if (withAssetLoader()) {
+        return if (Rust.withAssetLoader((view as RustWebView).id)) {
             assetLoader.shouldInterceptRequest(request.url)
         } else {
-            val rustWebview = view as RustWebView;
-            val response = handleRequest(rustWebview.id, request, rustWebview.isDocumentStartScriptEnabled)
+            val response = Rust.handleRequest(view.id, request, view.isDocumentStartScriptEnabled)
+            if (response != null) {
+                if (response.responseHeaders != null) {
+                    response.responseHeaders["Cache-Control"] = "no-store"
+                } else {
+                    response.responseHeaders = mapOf("Cache-Control" to "no-store")
+                }
+            }
             interceptedState[request.url.toString()] = response != null
             return response
         }
@@ -52,7 +58,7 @@ class RustWebViewClient(context: Context): WebViewClient() {
         view: WebView,
         request: WebResourceRequest
     ): Boolean {
-        return shouldOverride(request.url.toString())
+        return Rust.shouldOverride((view as RustWebView).id, request.url.toString())
     }
 
     override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
@@ -63,11 +69,11 @@ class RustWebViewClient(context: Context): WebViewClient() {
                 view.evaluateJavascript(script, null)
             }
         }
-        return onPageLoading(url)
+        return Rust.onPageLoading((view as RustWebView).id, url)
     }
 
     override fun onPageFinished(view: WebView, url: String) {
-        onPageLoaded(url)
+        Rust.onPageLoaded((view as RustWebView).id, url)
     }
 
     override fun onReceivedError(
@@ -75,45 +81,20 @@ class RustWebViewClient(context: Context): WebViewClient() {
         request: WebResourceRequest,
         error: WebResourceError
     ) {
-        // shouldInterceptRequest is not called on server-side redirects from external pages,
-        // so if the redirect target is tauri.localhost the WebView fails with a network error.
-        // We force-retry with loadUrl() so shouldInterceptRequest fires for the target URL.
-        if (request.isForMainFrame && request.url != lastInterceptedUrl) {
-            when (error.errorCode) {
-                ERROR_CONNECT -> {
-                    // ERR_CONNECTION_REFUSED — external URL redirects to custom protocol (physical device)
-                    view.stopLoading()
-                    view.loadUrl(request.url.toString())
-                    // pendingUrlRedirect guards against a race condition specific to ERROR_CONNECT
-                    pendingUrlRedirect = request.url.toString()
-                }
-                ERROR_HOST_LOOKUP -> {
-                    // ERR_NAME_NOT_RESOLVED — emulator can't DNS-resolve tauri.localhost from an
-                    // external HTTPS redirect. A simple loadUrl() is enough; setting pendingUrlRedirect
-                    // here would schedule a second load of the same URL (e.g. /auth/callback?code=X),
-                    // consuming the OAuth code twice and causing invalid_grant on the second attempt.
-                    view.stopLoading()
-                    view.loadUrl(request.url.toString())
-                }
-                else -> super.onReceivedError(view, request, error)
-            }
+        // we get a net::ERR_CONNECTION_REFUSED when an external URL redirects to a custom protocol
+        // e.g. oauth flow, because shouldInterceptRequest is not called on redirects
+        // so we must force retry here with loadUrl() to get a chance of the custom protocol to kick in
+        if (error.errorCode == ERROR_CONNECT && request.isForMainFrame && request.url != lastInterceptedUrl) {
+            // prevent the default error page from showing
+            view.stopLoading()
+            // without this initial loadUrl the app is stuck
+            view.loadUrl(request.url.toString())
+            // ensure the URL is actually loaded - for some reason there's a race condition and we need to call loadUrl() again later
+            pendingUrlRedirect = request.url.toString()
         } else {
             super.onReceivedError(view, request, error)
         }
     }
-
-    companion object {
-        init {
-            System.loadLibrary("mines_app_lib")
-        }
-    }
-
-    private external fun assetLoaderDomain(): String
-    private external fun withAssetLoader(): Boolean
-    private external fun handleRequest(webviewId: String, request: WebResourceRequest, isDocumentStartScriptEnabled: Boolean): WebResourceResponse?
-    private external fun shouldOverride(url: String): Boolean
-    private external fun onPageLoading(url: String)
-    private external fun onPageLoaded(url: String)
 
     
 }

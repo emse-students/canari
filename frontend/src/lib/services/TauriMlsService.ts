@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import { fetch } from '@tauri-apps/plugin-http';
+import NativeWebSocket, { type Message as WsMessage } from '@tauri-apps/plugin-websocket';
 import type { IMlsService } from './IMlsService';
 import { getToken } from '$lib/stores/auth';
 
@@ -26,7 +27,8 @@ interface QueuedMessage {
 // Note: We use a dynamic import or checks to prevent this from crashing in pure web if invoked eagerly
 
 export class TauriMlsService implements IMlsService {
-  private ws: WebSocket | null = null;
+  private ws: NativeWebSocket | null = null;
+  private wsUnlisten: (() => void) | null = null;
 
   private async assertOkResponse(response: Response, context: string): Promise<void> {
     if (response.ok) return;
@@ -73,6 +75,7 @@ export class TauriMlsService implements IMlsService {
   /** True when initialized without existing state — triggers OTKP purge before new ones are published. */
   private freshStart = false;
   private appVersionCache: string | null | undefined = undefined;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private networkListenersRegistered = false;
 
   // ── File de priorité à 3 niveaux ────────────────────────────────────────
@@ -132,37 +135,37 @@ export class TauriMlsService implements IMlsService {
   }
 
   async connect(token?: string): Promise<void> {
-    // Close existing socket before creating a new one
+    // Unlisten before disconnecting so the Close event doesn't trigger disconnectCallback.
     if (this.ws) {
       try {
-        this.ws.onclose = null;
-        this.ws.onerror = null;
-        this.ws.onmessage = null;
-        this.ws.close();
+        this.wsUnlisten?.();
+        this.wsUnlisten = null;
+        await this.ws.disconnect();
       } catch {
         /* ignore */
       }
       this.ws = null;
     }
 
+    if (this.heartbeatTimer !== null) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+
     if (!this.networkListenersRegistered && typeof document !== 'undefined') {
       this.networkListenersRegistered = true;
       document.addEventListener('visibilitychange', () => {
-        if (
-          document.visibilityState === 'visible' &&
-          (!this.ws || this.ws.readyState !== WebSocket.OPEN)
-        ) {
+        if (document.visibilityState === 'visible' && !this.ws) {
           this.disconnectCallback?.();
         }
       });
       window.addEventListener('online', () => {
-        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        if (!this.ws) {
           this.disconnectCallback?.();
         }
       });
     }
 
-    // Resolve token: use provided token, fall back to getToken().
     // On Tauri mobile the cookie is not sent cross-origin, so we pass the
     // Bearer token explicitly in the URL query string.
     let resolvedToken = token;
@@ -174,141 +177,113 @@ export class TauriMlsService implements IMlsService {
       }
     }
 
-    return new Promise((resolve, reject) => {
-      const wsBase = this.baseUrl.replace(/^http/, 'ws');
-      const tokenParam = resolvedToken ? `&token=${encodeURIComponent(resolvedToken)}` : '';
-      const wsUrl = `${wsBase}/api/ws?device_id=${encodeURIComponent(this.deviceId)}${tokenParam}`;
-      console.log(
-        `[WS] Ouverture connexion → ${wsBase}/api/ws?device_id=${this.deviceId}${resolvedToken ? '&token=***' : ' (sans token)'}`
-      );
-      this.ws = new WebSocket(wsUrl);
-      let resolved = false;
+    const wsBase = this.baseUrl.replace(/^http/, 'ws');
+    const tokenParam = resolvedToken ? `&token=${encodeURIComponent(resolvedToken)}` : '';
+    const wsUrl = `${wsBase}/api/ws?device_id=${encodeURIComponent(this.deviceId)}${tokenParam}`;
+    console.log(
+      `[WS] Ouverture connexion → ${wsBase}/api/ws?device_id=${this.deviceId}${resolvedToken ? '&token=***' : ' (sans token)'}`
+    );
 
-      const timeout = setTimeout(() => {
-        if (!resolved) {
-          resolved = true;
-          console.error(`[WS] Timeout connexion après 15s — device=${this.deviceId}`);
-          this.ws?.close();
-          reject(new Error('WebSocket connection timeout after 15s'));
-        }
-      }, 15_000);
+    // NativeWebSocket.connect() resolves when the handshake completes, rejects on failure.
+    this.ws = await NativeWebSocket.connect(wsUrl);
+    console.log(`[WS] Connecté au Chat Gateway — device=${this.deviceId}`);
 
-      this.ws.onopen = () => {
-        clearTimeout(timeout);
-        resolved = true;
-        console.log(`[WS] Connecté au Chat Gateway — device=${this.deviceId}`);
-        resolve();
-      };
-      this.ws.onerror = (e) => {
-        clearTimeout(timeout);
-        console.error(`[WS] Erreur connexion — device=${this.deviceId}`, e);
-        if (!resolved) {
-          resolved = true;
-          reject(e);
+    this.wsUnlisten = this.ws.addListener((msg: WsMessage) => {
+      if (msg.type === 'Close') {
+        this.ws = null;
+        if (this.heartbeatTimer !== null) {
+          clearInterval(this.heartbeatTimer);
+          this.heartbeatTimer = null;
         }
-      };
-      this.ws.onclose = (event) => {
-        clearTimeout(timeout);
+        const closeData = msg.data as { code: number; reason: string } | null;
+        const code = closeData?.code ?? 0;
         const codeDesc =
-          event.code === 1000
+          code === 1000
             ? 'fermeture normale'
-            : event.code === 1001
+            : code === 1001
               ? 'serveur en arrêt'
-              : event.code === 1006
+              : code === 1006
                 ? 'fermeture anormale (pas de close frame)'
-                : event.code === 1008
+                : code === 1008
                   ? 'violation de politique (auth?)'
-                  : event.code === 1011
+                  : code === 1011
                     ? 'erreur serveur interne'
-                    : `code=${event.code}`;
-        if (!resolved) {
-          resolved = true;
-          console.error(`[WS] Fermé avant ouverture — ${codeDesc}, reason="${event.reason}"`);
-          reject(new Error(`WebSocket closed before opening. Code: ${event.code}`));
-        } else {
-          console.warn(`[WS] Déconnecté — ${codeDesc}, reason="${event.reason}"`);
-          this.disconnectCallback?.();
-        }
-      };
-      this.ws.onmessage = async (event) => {
-        try {
-          // Gateway sends JSON text frames: { senderId, senderDeviceId, groupId, isWelcome, proto: base64(ciphertext) }
-          const text: string =
-            typeof event.data === 'string'
-              ? event.data
-              : event.data instanceof Blob
-                ? await (event.data as Blob).text()
-                : new TextDecoder().decode(event.data as ArrayBuffer);
+                    : `code=${code}`;
+        console.warn(`[WS] Déconnecté — ${codeDesc}, reason="${closeData?.reason ?? ''}"`);
+        this.disconnectCallback?.();
+        return;
+      }
 
-          const msg = JSON.parse(text);
-          if (msg.type && (msg.type.startsWith('channel.') || msg.type === 'post_created')) {
+      if (msg.type !== 'Text') return;
+
+      void (async () => {
+        try {
+          const parsed = JSON.parse(msg.data as string) as Record<string, unknown>;
+          const msgType = parsed.type as string | undefined;
+
+          if (msgType && (msgType.startsWith('channel.') || msgType === 'post_created')) {
             if (this.onChannelEvent) {
-              console.log(`[WS RCV] Triggering onChannelEvent for ${msg.type}`);
-              this.onChannelEvent({ type: msg.type, data: msg.data });
+              console.log(`[WS RCV] Triggering onChannelEvent for ${msgType}`);
+              this.onChannelEvent({ type: msgType, data: parsed.data });
             } else {
               console.warn(`[WS RCV] Received channel event but no onChannelEvent registered.`);
             }
             return;
           }
-          if (msg.type === 'reinvite_request') {
-            const senderDev = (msg.senderDeviceId as string) || '';
-            const groupId = (msg.groupId as string) || '';
+          if (msgType === 'reinvite_request') {
+            const senderDev = (parsed.senderDeviceId as string) || '';
+            const groupId = (parsed.groupId as string) || '';
             console.log(`[WS RCV] reinvite_request from ${senderDev} for group ${groupId}`);
             this.reinviteRequestCallback?.(senderDev, groupId);
             return;
           }
-          if (msg.type === 'welcome_request') {
-            const requesterUserId = (msg.requesterUserId as string) || '';
-            const requesterDeviceId = (msg.requesterDeviceId as string) || '';
-            const groupId = (msg.groupId as string) || '';
+          if (msgType === 'welcome_request') {
+            const requesterUserId = (parsed.requesterUserId as string) || '';
+            const requesterDeviceId = (parsed.requesterDeviceId as string) || '';
+            const groupId = (parsed.groupId as string) || '';
             console.log(
               `[WS RCV] welcome_request from ${requesterUserId}:${requesterDeviceId} for group ${groupId}`
             );
             this.welcomeRequestCallback?.(requesterUserId, requesterDeviceId, groupId);
             return;
           }
-          // ── group_reset : signal hors-bande MLS ──────────────────────────
-          // Le serveur indique que la session MLS du groupe est morte.
-          // Le client doit oublier tout état local et se faire ré-inviter.
-          if (msg.type === 'group_reset') {
-            const groupId = (msg.groupId as string) || '';
-            const reason = (msg.reason as string) || 'unknown';
+          if (msgType === 'group_reset') {
+            const groupId = (parsed.groupId as string) || '';
+            const reason = (parsed.reason as string) || 'unknown';
             console.log(`[WS RCV] group_reset for group ${groupId} reason=${reason}`);
             this.groupResetCallback?.(groupId, reason);
             return;
           }
-          if (msg.type === 'epoch_rejected') {
+          if (msgType === 'epoch_rejected') {
             console.warn(
-              `[WS RCV] Epoch rejected for group ${msg.groupId} (server epoch: ${msg.currentEpoch})`
+              `[WS RCV] Epoch rejected for group ${parsed.groupId} (server epoch: ${parsed.currentEpoch})`
             );
             if (this.onChannelEvent) {
               this.onChannelEvent({
                 type: 'epoch_rejected',
-                data: { groupId: msg.groupId, currentEpoch: msg.currentEpoch },
+                data: { groupId: parsed.groupId, currentEpoch: parsed.currentEpoch },
               });
             }
             return;
           }
-          if (msg.proto && this.messageCallback) {
-            const binaryString = atob(msg.proto as string);
+          if (parsed.proto && this.messageCallback) {
+            const binaryString = atob(parsed.proto as string);
             const ciphertext = new Uint8Array(binaryString.length);
             for (let i = 0; i < binaryString.length; i++)
               ciphertext[i] = binaryString.charCodeAt(i);
             const ratchetTreeBytes =
-              typeof msg.ratchetTree === 'string' && msg.ratchetTree.length > 0
-                ? Uint8Array.from(atob(msg.ratchetTree as string), (c) => c.charCodeAt(0))
+              typeof parsed.ratchetTree === 'string' && (parsed.ratchetTree as string).length > 0
+                ? Uint8Array.from(atob(parsed.ratchetTree as string), (c) => c.charCodeAt(0))
                 : undefined;
-
             if (ciphertext.length > 0) {
-              // Queue the message for sequential processing
               this.enqueueMessage({
-                senderId: (msg.senderId as string) || 'unknown',
+                senderId: (parsed.senderId as string) || 'unknown',
                 ciphertext,
-                groupId: (msg.groupId as string) || undefined,
-                isWelcome: !!msg.isWelcome,
-                isCommit: !!msg.isCommit,
+                groupId: (parsed.groupId as string) || undefined,
+                isWelcome: !!parsed.isWelcome,
+                isCommit: !!parsed.isCommit,
                 ratchetTreeBytes,
-                queuedMessageId: (msg.queuedMessageId as string) || undefined,
+                queuedMessageId: (parsed.queuedMessageId as string) || undefined,
               });
             }
           } else {
@@ -317,8 +292,22 @@ export class TauriMlsService implements IMlsService {
         } catch (e) {
           console.error('Failed to process WebSocket message:', e);
         }
-      };
+      })();
     });
+
+    this.heartbeatTimer = setInterval(() => {
+      if (this.ws) {
+        this.ws.send(JSON.stringify({ type: 'ping' })).catch(() => {
+          /* socket closed between check and send */
+        });
+      }
+    }, 8_000); // data frame bypasses nginx proxy_read_timeout; keeps presence TTL fresh
+
+    try {
+      await this.fetchPendingMessages();
+    } catch (e) {
+      console.error('[WS] Echec fetchPendingMessages au connect (non bloquant):', e);
+    }
   }
 
   async fetchPendingMessages() {
@@ -633,12 +622,10 @@ export class TauriMlsService implements IMlsService {
   }
 
   sendDisconnect(): void {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      try {
-        this.ws.send(JSON.stringify({ type: 'disconnect' }));
-      } catch {
+    if (this.ws) {
+      this.ws.send(JSON.stringify({ type: 'disconnect' })).catch(() => {
         // Best-effort — ignore if the socket is already closing
-      }
+      });
     }
   }
 
