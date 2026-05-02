@@ -18,6 +18,7 @@ val tauriProperties = Properties().apply {
 
 android {
     compileSdk = 36
+    ndkVersion = "29.0.13846066"
     namespace = "fr.emse.canari"
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11

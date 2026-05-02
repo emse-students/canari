@@ -144,6 +144,7 @@
                   currentUserId={userId}
                   currentUserEmail={email}
                   {authToken}
+                  onRefresh={refreshPosts}
                 />
               {/each}
             {/if}

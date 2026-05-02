@@ -20,9 +20,27 @@ class MainActivity : TauriActivity() {
   // avant toute navigation. Utilisée pour les appels IPC vers Rust.
   private var rustWebView: WebView? = null
 
+  // Guards against tao JNI NullPtr("get_object_class") crash:
+  // onNewIntent can fire before the Rust native runtime is ready (cold start via
+  // deep link when the Activity is already in the back stack). We queue the intent
+  // and re-deliver it once onWebViewCreate signals that tao is initialized.
+  private var tauriReady = false
+  private val pendingIntents = mutableListOf<Intent>()
+
+  override fun onNewIntent(intent: Intent) {
+    if (tauriReady) {
+      super.onNewIntent(intent)
+    } else {
+      pendingIntents.add(intent)
+    }
+  }
+
   override fun onWebViewCreate(webView: WebView) {
     super.onWebViewCreate(webView)
     rustWebView = webView
+    tauriReady = true
+    pendingIntents.forEach { super.onNewIntent(it) }
+    pendingIntents.clear()
 
     // Autorise les cookies cross-origin (canari_refresh HttpOnly) dans le WebView.
     // Android bloque les cookies tiers par défaut depuis l'API 21 ; sans ça le
@@ -35,10 +53,8 @@ class MainActivity : TauriActivity() {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
     
-    // NOTE: Deep linking is handled automatically by Tauri's plugin-deep-link.
-    // Do NOT manually override onNewIntent() — it causes JNI crashes.
-    // The plugin intercepts the intent via AndroidManifest.xml's intent-filter
-    // and emits it to the frontend via onOpenUrl().
+    // Deep linking is handled by Tauri's plugin-deep-link via onNewIntent (overridden above
+    // with a guard to avoid JNI NullPtr crashes on cold start).
 
     // Récupère (ou génère) le token FCM dès le démarrage.
     // Si le token est déjà connu, il est stocké dans le fichier ET notifié au
