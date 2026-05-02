@@ -92,19 +92,13 @@ export class TauriMlsService implements IMlsService {
   // messageCallback concurrently (both await Rust invoke calls asynchronously).
   private callbackLock: Promise<void> = Promise.resolve();
 
-  // ── Resynchronisation du Sender Ratchet ─────────────────────────────────
+  // ── Resynchronisation du Sender Ratchet ───────────────────────��─────────
   // PIN conservé en mémoire après init() pour chiffrer l'état MLS après
   // chaque message (Chantier 3) sans redemander le PIN à l'utilisateur.
   private _pin = '';
-  // Messages différés par groupe quand un gap de génération est détecté.
-  // Clé = groupId, valeur = messages en attente triés par ordre d'arrivée.
-  private _deferredByGroup = new Map<string, QueuedMessage[]>();
   // Dernier ID de stream Redis connu par groupe (format "timestamp-seq").
-  // Utilisé pour appeler GET /api/history/{groupId}?after={id} et récupérer les manquants.
+  // Utilisé pour GET /api/history/{groupId}?after={id} lors du gap fetching.
   private _lastHistoryId = new Map<string, string>();
-  // Connexion SQLite dédiée aux messages MLS en attente (durabilité inter-sessions).
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private _pendingDb: any = null;
 
   constructor() {
     // Device ID is initialized per-user in init() — see WebMlsService for rationale.
@@ -553,11 +547,6 @@ export class TauriMlsService implements IMlsService {
 
         if (msg.queuedMessageId) ackIds.push(msg.queuedMessageId);
 
-        // Si ce message était dans la DB pending (gap recovery), le supprimer.
-        if (msg.queuedMessageId) {
-          void this._deletePendingFromDb(msg.queuedMessageId);
-        }
-
         // Après un Welcome, injecter les messages bufférisés en tête de messageQueue.
         if (msg.isWelcome && groupId && this.pendingWelcomeGroups.has(groupId)) {
           const buffered = this.pendingWelcomeGroups.get(groupId)!;
@@ -584,21 +573,12 @@ export class TauriMlsService implements IMlsService {
         const errStr = String(e);
         console.error(`[QUEUE] Erreur traitement message:`, errStr);
 
-        // Chantier 2 : détection de gap du Sender Ratchet.
-        // Si l'erreur est une défaillance MLS (pas un crash JS) et que le groupe est
-        // connu, il est probable qu'un ou plusieurs messages intermédiaires manquent.
-        // On diffère le message courant et on va chercher l'historique manquant.
-        if (groupId && !msg.isWelcome && errStr.includes('Process error:')) {
-          console.warn(
-            `[MLS][GAP] Probable gap détecté pour groupe=${groupId} — message différé, fetch history`
-          );
-          // Persiste le message en attente dans SQLite (survie aux redémarrages).
-          await this._savePendingToDb(msg, groupId).catch(() => {});
-          // Buffer en mémoire pour retraitement dès que l'historique est récupéré.
-          if (!this._deferredByGroup.has(groupId)) this._deferredByGroup.set(groupId, []);
-          this._deferredByGroup.get(groupId)!.push(msg);
-          // Ne pas ACK : le message doit rester dans la queue serveur comme filet de sécurité.
-          // Lance le fetch d'historique de manière asynchrone pour ne pas bloquer la queue.
+        // Chantier 2 : le Rust a détecté un gap du Sender Ratchet.
+        // recevoir_message_bytes a déjà persisté le message dans SQLite (Rust/sqlx)
+        // et retourné "GAP_QUEUED:<groupId>". On déclenche juste le fetch d'historique.
+        if (groupId && !msg.isWelcome && errStr.includes('GAP_QUEUED:')) {
+          console.warn(`[MLS][GAP] Gap confirmé par Rust pour groupe=${groupId} — fetch history`);
+          // Ne pas ACK : le message reste en file serveur jusqu'au retraitement réussi.
           void this.fetchMissingMessages(groupId);
         } else {
           // Erreur non récupérable (Welcome raté, epoch divergée…) → ACK pour éviter la boucle.
@@ -622,73 +602,13 @@ export class TauriMlsService implements IMlsService {
     console.log(`[QUEUE] Terminé (${total} messages traités)`);
   }
 
-  // ── Chantier 2 : initialisation de la DB pending ─────────────────────────
-
-  private async _initPendingDb(userId: string): Promise<void> {
-    const Database = (await import('@tauri-apps/plugin-sql')).default;
-    this._pendingDb = await Database.load(`sqlite:mls_pending_${userId}.db`);
-    await this._pendingDb.execute('PRAGMA journal_mode=WAL');
-    await this._pendingDb.execute(`
-      CREATE TABLE IF NOT EXISTS pending_messages (
-        id          TEXT    PRIMARY KEY,
-        group_id    TEXT    NOT NULL,
-        sender_id   TEXT    NOT NULL,
-        ciphertext  TEXT    NOT NULL,
-        is_commit   INTEGER DEFAULT 0,
-        is_ready    INTEGER DEFAULT 0,
-        created_at  INTEGER NOT NULL
-      )
-    `);
-    await this._pendingDb.execute(
-      'CREATE INDEX IF NOT EXISTS idx_pm_group ON pending_messages(group_id, is_ready, created_at)'
-    );
-  }
-
-  private async _savePendingToDb(msg: QueuedMessage, groupId: string): Promise<void> {
-    if (!this._pendingDb) return;
-    const id = msg.queuedMessageId ?? `local-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const ciphertextB64 = btoa(String.fromCharCode(...msg.ciphertext));
-    await this._pendingDb.execute(
-      `INSERT OR IGNORE INTO pending_messages (id, group_id, sender_id, ciphertext, is_commit, is_ready, created_at)
-       VALUES ($1, $2, $3, $4, $5, 0, $6)`,
-      [id, groupId, msg.senderId, ciphertextB64, msg.isCommit ? 1 : 0, Date.now()]
-    );
-  }
-
-  private async _loadPendingFromDb(groupId: string): Promise<QueuedMessage[]> {
-    if (!this._pendingDb) return [];
-    const rows: Array<{
-      id: string;
-      sender_id: string;
-      ciphertext: string;
-      is_commit: number;
-    }> = await this._pendingDb.select(
-      `SELECT id, sender_id, ciphertext, is_commit FROM pending_messages
-       WHERE group_id = $1 AND is_ready = 0
-       ORDER BY created_at ASC`,
-      [groupId]
-    );
-    return rows.map((r) => ({
-      senderId: r.sender_id,
-      ciphertext: Uint8Array.from(atob(r.ciphertext), (c) => c.charCodeAt(0)),
-      groupId,
-      isWelcome: false,
-      isCommit: r.is_commit === 1,
-      queuedMessageId: r.id,
-    }));
-  }
-
-  private async _deletePendingFromDb(id: string): Promise<void> {
-    if (!this._pendingDb) return;
-    await this._pendingDb.execute('DELETE FROM pending_messages WHERE id = $1', [id]);
-  }
-
   // ── Chantier 2 : fetch de l'historique pour combler un gap ───────────────
 
   /**
    * Récupère les messages manquants depuis le Redis Stream pour `groupId`
-   * en utilisant le dernier ID de stream connu, puis déclenche le retraitement
-   * des messages différés.
+   * (TypeScript a le token d'auth, Rust n'y a pas accès).
+   * Délègue ensuite le déchiffrement séquentiel au Rust via process_gap_messages,
+   * puis traite les messages toujours en attente en SQLite via process_pending_mls_messages.
    */
   async fetchMissingMessages(groupId: string): Promise<void> {
     const after = this._lastHistoryId.get(groupId);
@@ -704,78 +624,59 @@ export class TauriMlsService implements IMlsService {
       }
 
       const entries: Array<Record<string, string>> = await res.json();
-      console.log(`[MLS][GAP] History fetch: ${entries.length} entrée(s) pour groupe=${groupId}`);
+      console.log(`[MLS][GAP] History: ${entries.length} entrée(s) pour groupe=${groupId}`);
 
+      // Convertir les entrées en tableaux d'octets pour Rust (Vec<Vec<u8>>).
+      const messages: number[][] = [];
       for (const entry of entries) {
-        // Mettre à jour le dernier ID connu pour les prochains appels.
-        if (entry.id) this._lastHistoryId.set(groupId, entry.id as string);
-
-        const protoB64 = entry.proto as string | undefined;
+        if (entry.id) this._lastHistoryId.set(groupId, entry.id);
+        const protoB64 = entry.proto;
         if (!protoB64 || protoB64.length === 0) continue;
-
-        let ciphertext: Uint8Array;
         try {
-          ciphertext = Uint8Array.from(atob(protoB64), (c) => c.charCodeAt(0));
+          messages.push(Array.from(Uint8Array.from(atob(protoB64), (c) => c.charCodeAt(0))));
         } catch {
           continue;
         }
-
-        const senderId = (entry.senderId as string) || 'unknown';
-        const isCommit = entry.isCommit === 'true' || entry.isCommit === '1';
-
-        // Injecter en tête de messageQueue pour traitement prioritaire.
-        this.messageQueue.unshift({
-          senderId,
-          ciphertext,
-          groupId,
-          isWelcome: false,
-          isCommit,
-        });
       }
 
-      // Retraiter dans l'ordre strict : d'abord les manquants (injectés en tête),
-      // puis les messages différés déjà en mémoire.
+      if (messages.length > 0) {
+        // Chantier 3 : Rust traite les messages manquants dans l'ordre strict
+        // et sauvegarde l'état MLS après chaque succès.
+        const processed = await invoke<number>('process_gap_messages', {
+          groupId,
+          messages,
+          pin: this._pin,
+        }).catch((e) => {
+          console.error(`[MLS][GAP] process_gap_messages failed:`, e);
+          return 0;
+        });
+        console.log(`[MLS][GAP] process_gap_messages: ${processed}/${messages.length} traités`);
+      }
+
+      // Chantier 3 : traite les messages mis en attente dans la DB Rust (is_ready=0).
       await this.processPendingMessages(groupId);
     } catch (e) {
       console.error(`[MLS][GAP] fetchMissingMessages error pour groupe=${groupId}:`, e);
     }
   }
 
-  // ── Chantier 3 : retraitement séquentiel des messages différés ───────────
+  // ── Chantier 3 : retraitement séquentiel via commande Rust ───────────────
 
   /**
-   * Trie et retraite les messages différés pour `groupId`.
-   * Appelé après que fetchMissingMessages a réinjecté les messages manquants.
+   * Délègue le retraitement séquentiel des messages en attente à la commande Rust
+   * process_pending_mls_messages : lit SQLite, passe à OpenMLS dans l'ordre,
+   * sauvegarde l'état après chaque succès.
    */
   async processPendingMessages(groupId: string): Promise<void> {
-    const deferred = this._deferredByGroup.get(groupId) ?? [];
-    const fromDb = await this._loadPendingFromDb(groupId);
-
-    // Dédupliquer et trier : les messages de l'historique (injectés dans messageQueue)
-    // passent en premier via processQueue ; les différés suivent.
-    const seen = new Set<string>();
-    const toRetry: QueuedMessage[] = [];
-    for (const m of [...deferred, ...fromDb]) {
-      const key = m.queuedMessageId ?? btoa(String.fromCharCode(...m.ciphertext.slice(0, 8)));
-      if (!seen.has(key)) {
-        seen.add(key);
-        toRetry.push(m);
-      }
-    }
-
-    this._deferredByGroup.delete(groupId);
-
-    for (const m of toRetry) {
-      this.messageQueue.push(m);
-    }
-
-    console.log(
-      `[MLS][PENDING] ${toRetry.length} message(s) différé(s) réinjecté(s) pour groupe=${groupId}`
-    );
-
-    if (!this.isProcessingQueue) {
-      void this.processQueue();
-    }
+    if (!this._pin) return;
+    const processed = await invoke<number>('process_pending_mls_messages', {
+      groupId,
+      pin: this._pin,
+    }).catch((e) => {
+      console.error(`[MLS][PENDING] process_pending_mls_messages failed:`, e);
+      return 0;
+    });
+    console.log(`[MLS][PENDING] ${processed} message(s) traité(s) pour groupe=${groupId}`);
   }
 
   onDisconnect(callback: () => void) {
@@ -1120,11 +1021,6 @@ export class TauriMlsService implements IMlsService {
     } catch {
       // Non-blocking: cache stays empty, GroupAlreadyExists fallback will handle it.
     }
-
-    // Initialise la DB des messages MLS en attente (non bloquant).
-    this._initPendingDb(userId).catch((e) =>
-      console.warn('[MLS][PENDING_DB] init failed (non-bloquant):', e)
-    );
   }
 
   async createGroup(groupId: string) {

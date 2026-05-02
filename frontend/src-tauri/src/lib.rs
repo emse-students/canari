@@ -1,6 +1,6 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use mls_core::MlsManager;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use tauri::{Emitter, Manager};
 
@@ -16,6 +16,10 @@ use tauri::{
 struct AppState {
     mls_manager: Mutex<Option<MlsManager>>,
 }
+
+/// Pool SQLite dédié aux messages MLS en attente (gap du Sender Ratchet).
+/// Séparé de tauri-plugin-sql (côté JS) pour rester accessible depuis les commandes Rust.
+struct PendingDb(Arc<sqlx::SqlitePool>);
 
 // --- COMMANDS ---
 
@@ -271,24 +275,206 @@ fn retirer_membres_par_appareil(
         .map_err(|e| e.to_string())
 }
 
+/// Déchiffre un message MLS entrant.
+/// Si le déchiffrement échoue avec "Process error:" (gap du Sender Ratchet : la
+/// génération reçue est supérieure à celle attendue), le message est stocké dans
+/// SQLite via PendingDb et la commande retourne Err("GAP_QUEUED:<group_id>") pour
+/// que le frontend sache qu'il doit aller chercher les messages manquants.
 #[tauri::command]
-fn recevoir_message_bytes(
+async fn recevoir_message_bytes(
     group_id: String,
     message_bytes: Vec<u8>,
-    state: tauri::State<AppState>,
+    state: tauri::State<'_, AppState>,
+    pending_db: tauri::State<'_, PendingDb>,
 ) -> Result<Option<Vec<u8>>, String> {
-    let mut lock = state
-        .mls_manager
-        .lock()
-        .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    // Acquiert + libère le Mutex AVANT toute opération async pour éviter les
+    // deadlocks avec std::sync::Mutex (non-Send across await points).
+    let result = {
+        let mut lock = state
+            .mls_manager
+            .lock()
+            .map_err(|_| "Failed to lock state")?;
+        let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+        manager.process_incoming_message(&group_id, &message_bytes)
+    };
 
-    manager
-        .process_incoming_message(&group_id, &message_bytes)
-        .map_err(|e| {
-            log::error!("recevoir_message_bytes failed: group={} err={}", group_id, e);
-            e.to_string()
-        })
+    match result {
+        Ok(val) => Ok(val),
+        Err(e) => {
+            let err_str = e.to_string();
+            log::error!("recevoir_message_bytes failed: group={} err={}", group_id, err_str);
+
+            // "Process error:" indique une erreur OpenMLS sur le même epoch →
+            // probable gap du Sender Ratchet (génération future reçue).
+            if err_str.contains("Process error:") {
+                log::warn!(
+                    "[GAP] Sender Ratchet gap pour group={} — message mis en file SQLite",
+                    group_id
+                );
+                let ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as i64;
+                let id = format!("{}-{}", group_id, ts);
+                sqlx::query(
+                    "INSERT OR IGNORE INTO pending_mls_messages \
+                     (id, group_id, ciphertext, created_at) VALUES (?, ?, ?, ?)",
+                )
+                .bind(&id)
+                .bind(&group_id)
+                .bind(message_bytes.as_slice())
+                .bind(ts)
+                .execute(&*pending_db.0)
+                .await
+                .unwrap_or_else(|db_e| {
+                    log::warn!("[GAP] DB store failed: {}", db_e);
+                    Default::default()
+                });
+                return Err(format!("GAP_QUEUED:{}", group_id));
+            }
+
+            Err(err_str)
+        }
+    }
+}
+
+/// Traite une liste de messages MLS récupérés depuis l'historique serveur (gap fetching).
+/// Les messages sont passés dans l'ordre chronologique strict.
+/// Après chaque succès, l'état MLS est chiffré et écrit dans mls.bin.
+/// Retourne le nombre de messages traités avec succès.
+#[tauri::command]
+async fn process_gap_messages(
+    group_id: String,
+    messages: Vec<Vec<u8>>,
+    pin: String,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<usize, String> {
+    let mut processed = 0usize;
+    for msg_bytes in &messages {
+        let result = {
+            let mut lock = state
+                .mls_manager
+                .lock()
+                .map_err(|_| "Failed to lock state")?;
+            let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+            manager.process_incoming_message(&group_id, msg_bytes)
+        };
+        match result {
+            Ok(_) => {
+                // Persister l'état MLS immédiatement après chaque message réussi.
+                let enc = {
+                    let lock = state
+                        .mls_manager
+                        .lock()
+                        .map_err(|_| "Failed to lock state")?;
+                    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+                    manager.save_encrypted(&pin).map_err(|e| e.to_string())?
+                };
+                let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+                std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
+                std::fs::write(data_dir.join("mls.bin"), &enc).map_err(|e| e.to_string())?;
+                processed += 1;
+            }
+            Err(e) => {
+                log::warn!(
+                    "[GAP] process_gap_messages: échec sur message {} pour group={}: {}",
+                    processed,
+                    group_id,
+                    e
+                );
+                break; // Ordre strict : s'arrêter au premier échec
+            }
+        }
+    }
+    log::info!(
+        "[GAP] process_gap_messages: {}/{} messages traités pour group={}",
+        processed,
+        messages.len(),
+        group_id
+    );
+    Ok(processed)
+}
+
+/// Lit les messages en attente (is_ready = 0) depuis SQLite pour `group_id`,
+/// les passe à OpenMLS dans l'ordre chronologique strict, et après chaque succès :
+///   1. Chiffre et écrit mls.bin (état MLS à jour)
+///   2. Supprime le message de la table pending
+/// Retourne le nombre de messages traités avec succès.
+#[tauri::command]
+async fn process_pending_mls_messages(
+    group_id: String,
+    pin: String,
+    state: tauri::State<'_, AppState>,
+    pending_db: tauri::State<'_, PendingDb>,
+    app: tauri::AppHandle,
+) -> Result<usize, String> {
+    let rows: Vec<(String, Vec<u8>)> = sqlx::query_as(
+        "SELECT id, ciphertext FROM pending_mls_messages \
+         WHERE group_id = ? ORDER BY created_at ASC",
+    )
+    .bind(&group_id)
+    .fetch_all(&*pending_db.0)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    log::info!(
+        "[PENDING] {} message(s) en attente pour group={}",
+        rows.len(),
+        group_id
+    );
+
+    let mut processed = 0usize;
+    for (id, ciphertext) in &rows {
+        let result = {
+            let mut lock = state
+                .mls_manager
+                .lock()
+                .map_err(|_| "Failed to lock state")?;
+            let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+            manager.process_incoming_message(&group_id, ciphertext)
+        };
+        match result {
+            Ok(_) => {
+                let enc = {
+                    let lock = state
+                        .mls_manager
+                        .lock()
+                        .map_err(|_| "Failed to lock state")?;
+                    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+                    manager.save_encrypted(&pin).map_err(|e| e.to_string())?
+                };
+                let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+                std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
+                std::fs::write(data_dir.join("mls.bin"), &enc).map_err(|e| e.to_string())?;
+                sqlx::query("DELETE FROM pending_mls_messages WHERE id = ?")
+                    .bind(id)
+                    .execute(&*pending_db.0)
+                    .await
+                    .unwrap_or_else(|db_e| {
+                        log::warn!("[PENDING] DELETE failed for id={}: {}", id, db_e);
+                        Default::default()
+                    });
+                processed += 1;
+            }
+            Err(e) => {
+                log::warn!(
+                    "[PENDING] Échec sur message id={} pour group={}: {}",
+                    id,
+                    group_id,
+                    e
+                );
+                break; // Ordre strict : s'arrêter au premier échec
+            }
+        }
+    }
+    log::info!(
+        "[PENDING] {}/{} messages traités pour group={}",
+        processed,
+        rows.len(),
+        group_id
+    );
+    Ok(processed)
 }
 
 #[tauri::command]
@@ -650,6 +836,50 @@ pub fn run() {
             mls_manager: Mutex::new(None),
         })
         .setup(move |app| {
+            // ── Pool SQLite pour les messages MLS en attente (gap recovery) ────────
+            // Initialisé ici avec le chemin appData définitif.
+            // block_on est sûr : setup() s'exécute avant le démarrage de l'event loop Tauri.
+            let data_dir = app.path().app_data_dir().map_err(|e| format!("{e}"))?;
+            std::fs::create_dir_all(&data_dir)?;
+            let db_path = data_dir.join("mls_pending.db");
+            let pending_pool = tauri::async_runtime::block_on(async {
+                sqlx::sqlite::SqlitePoolOptions::new()
+                    .max_connections(4)
+                    .connect_with(
+                        sqlx::sqlite::SqliteConnectOptions::from_path(&db_path)
+                            .map_err(|e| e.to_string())?
+                            .create_if_missing(true)
+                            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal),
+                    )
+                    .await
+                    .map_err(|e| e.to_string())
+            })
+            .map_err(|e| format!("pending DB init: {e}"))?;
+            tauri::async_runtime::block_on(async {
+                sqlx::query(
+                    "CREATE TABLE IF NOT EXISTS pending_mls_messages (\
+                        id         TEXT    PRIMARY KEY,\
+                        group_id   TEXT    NOT NULL,\
+                        ciphertext BLOB    NOT NULL,\
+                        created_at INTEGER NOT NULL\
+                    )",
+                )
+                .execute(&pending_pool)
+                .await
+                .map_err(|e| e.to_string())
+            })
+            .map_err(|e| format!("pending DB schema: {e}"))?;
+            tauri::async_runtime::block_on(async {
+                sqlx::query(
+                    "CREATE INDEX IF NOT EXISTS idx_pmm_group \
+                     ON pending_mls_messages(group_id, created_at)",
+                )
+                .execute(&pending_pool)
+                .await
+                .map_err(|e| e.to_string())
+            })
+            .map_err(|e| format!("pending DB index: {e}"))?;
+            app.manage(PendingDb(Arc::new(pending_pool)));
             // ── Create main window on desktop ────────────────────────────────────
             // In dev mode: use the Vite dev server (already HTTP, no issues).
             // In production: use tauri-plugin-localhost so assets are served over
@@ -806,7 +1036,9 @@ pub fn run() {
             delete_mls_state,
             load_mls_state,
             store_push_secret,
-            clear_app_data
+            clear_app_data,
+            process_gap_messages,
+            process_pending_mls_messages
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

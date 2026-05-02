@@ -34,6 +34,7 @@ tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2.7"
 tauri-plugin-websocket = "2.4.2"
 tauri-plugin-log = "2"
+sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "sqlite"] }
 log = "0.4"
 
 [patch.crates-io]
