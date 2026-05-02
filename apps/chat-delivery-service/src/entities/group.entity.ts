@@ -23,6 +23,12 @@ export class Group {
   @Column({ default: 0 })
   activeEpoch: number;
 
+  /** Verrou optimiste pour le re-bootstrap concurrent.
+   *  Incrémenté atomiquement par claim-bootstrap. Le premier device qui réussit gagne.
+   *  Les autres reçoivent 409 Conflict. */
+  @Column({ default: 0 })
+  bootstrapVersion: number;
+
   @Column({ type: 'jsonb', nullable: true })
   latestKeyRotationPayload: any;
 

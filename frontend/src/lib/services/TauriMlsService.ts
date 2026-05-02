@@ -66,6 +66,7 @@ export class TauriMlsService implements IMlsService {
   private groupResetCallback: ((groupId: string, reason: string) => void) | null = null;
   // Voir onSyncNeeded — passe aussi le numéro de tentative pour l'escalade reinvite.
   private syncNeededCallback: ((groupId: string, attempt: number) => void) | null = null;
+  private unrecoverableCallback: ((groupId: string) => void) | null = null;
   private baseUrl: string;
   private historyUrl: string;
   private userId: string = 'unknown';
@@ -577,10 +578,17 @@ export class TauriMlsService implements IMlsService {
         const errStr = String(e);
         console.error(`[QUEUE] Erreur traitement message:`, errStr);
 
-        // Chantier 2 : le Rust a détecté un gap du Sender Ratchet.
-        // recevoir_message_bytes a déjà persisté le message dans SQLite (Rust/sqlx)
-        // et retourné "GAP_QUEUED:<groupId>". On déclenche juste le fetch d'historique.
-        if (groupId && !msg.isWelcome && errStr.includes('GAP_QUEUED:')) {
+        // État MLS irrécupérable : 3 échecs consécutifs de gap recovery → re-bootstrap.
+        if (groupId && errStr.includes('UNRECOVERABLE:')) {
+          console.warn(
+            `[MLS][FATAL] État irrécupérable pour groupe=${groupId} — tentative de bootstrap...`
+          );
+          this.unrecoverableCallback?.(groupId);
+          // Ne pas ACK : sera re-traité après le bootstrap.
+        } else if (groupId && !msg.isWelcome && errStr.includes('GAP_QUEUED:')) {
+          // Chantier 2 : le Rust a détecté un gap du Sender Ratchet.
+          // recevoir_message_bytes a déjà persisté le message dans SQLite (Rust/sqlx)
+          // et retourné "GAP_QUEUED:<groupId>". On déclenche juste le fetch d'historique.
           const attempt = (this._gapAttempts.get(groupId) ?? 0) + 1;
           this._gapAttempts.set(groupId, attempt);
           console.warn(
@@ -750,6 +758,109 @@ export class TauriMlsService implements IMlsService {
 
   onSyncNeeded(callback: (groupId: string, attempt: number) => void): void {
     this.syncNeededCallback = callback;
+  }
+
+  onUnrecoverable(callback: (groupId: string) => void): void {
+    this.unrecoverableCallback = callback;
+  }
+
+  /**
+   * Fail-safe universel.
+   *
+   * Délègue la création MLS à la commande Rust `bootstrap_dead_conversation`
+   * (verrou optimiste + force_create_group + add_members_bulk + sauvegarde MLS),
+   * puis orchestre côté TS : enregistrement des membres, envoi des Welcomes,
+   * envoi du commit, marquage de la conversation comme prête.
+   *
+   * Retourne :
+   *   'bootstrapped' — ce device a recréé le groupe avec succès.
+   *   'conflict'     — un autre device a gagné la course ; attendre le Welcome.
+   *   'no_members'   — aucun device tiers n'a de KeyPackage disponible.
+   */
+  async bootstrapDeadConversation(
+    conversationId: string,
+    memberUserIds: string[],
+    pin: string
+  ): Promise<'bootstrapped' | 'conflict' | 'no_members'> {
+    const token = getToken();
+    if (!token) throw new Error('bootstrap: pas de token auth');
+
+    // 1. Récupère la bootstrapVersion courante pour l'optimistic lock.
+    let expectedVersion = 0;
+    try {
+      const groupRes = await fetch(
+        `${this.historyUrl}/api/mls-api/groups/${conversationId}/bootstrap-info`,
+        { headers: await this.withAuthHeaders() }
+      );
+      if (groupRes.ok) {
+        const info = await groupRes.json();
+        expectedVersion = info.bootstrapVersion ?? 0;
+      }
+    } catch {
+      // Si la route n'existe pas encore, on part de 0.
+    }
+
+    // 2. Commande Rust : verrou optimiste + création locale + ajout des membres.
+    type BootstrapResult =
+      | {
+          status: 'success';
+          commit: number[];
+          welcome?: number[];
+          added_device_ids: string[];
+          ratchet_tree?: number[];
+          new_bootstrap_version: number;
+        }
+      | { status: 'conflict' }
+      | { status: 'no_members' };
+
+    const result = await invoke<BootstrapResult>('bootstrap_dead_conversation', {
+      conversationId,
+      memberUserIds,
+      expectedBootstrapVersion: expectedVersion,
+      authToken: token,
+      baseUrl: this.historyUrl,
+      pin,
+    });
+
+    if (result.status === 'conflict') return 'conflict';
+    if (result.status === 'no_members') return 'no_members';
+
+    const { commit, welcome, added_device_ids, ratchet_tree } = result;
+    const commitBytes = new Uint8Array(commit);
+    const welcomeBytes = welcome ? new Uint8Array(welcome) : undefined;
+    const ratchetBytes = ratchet_tree ? new Uint8Array(ratchet_tree) : undefined;
+
+    // 3. Enregistrer le device bootstrapper côté serveur.
+    await this.registerMember(conversationId, this.userId).catch(() => {});
+
+    // 4. Envoyer le Welcome à chaque device invité.
+    if (welcomeBytes) {
+      for (const did of added_device_ids) {
+        // Retrouve l'userId à partir des devices qu'on vient de récupérer.
+        for (const uid of memberUserIds) {
+          const devices = await this.fetchUserDevices(uid).catch(() => []);
+          if (devices.some((d) => d.deviceId === did)) {
+            try {
+              await this.sendWelcome(welcomeBytes, uid, conversationId, did, ratchetBytes);
+              await this.registerMember(conversationId, uid);
+            } catch (e) {
+              console.warn(`[BOOTSTRAP] Welcome échoué ${uid}:${did}`, e);
+            }
+            break;
+          }
+        }
+      }
+    }
+
+    // 5. Broadcaster le commit (epoch 0 → 1).
+    if (commitBytes.length > 0) {
+      await this.sendCommit(commitBytes, conversationId);
+    }
+
+    console.log(
+      `[BOOTSTRAP] Groupe ${conversationId} re-bootstrappé (${added_device_ids.length} devices).`
+    );
+    return 'bootstrapped';
   }
 
   onDisconnect(callback: () => void) {

@@ -25,6 +25,11 @@ pub enum MlsError {
     GroupNotFound(String),
     #[error("Données invalides")]
     InvalidData,
+    /// État MLS irrécupérable : corruption de stockage, état inconsistant ou
+    /// échec persistant après plusieurs tentatives de rattrapage.
+    /// Le frontend doit déclencher un re-bootstrap complet du groupe.
+    #[error("UNRECOVERABLE: {0}")]
+    Unrecoverable(String),
 }
 
 type AddMembersBulkResult = (Vec<u8>, Option<Vec<u8>>, usize, Option<Vec<u8>>);

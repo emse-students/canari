@@ -233,4 +233,22 @@ export interface IMlsService {
    * No-op if the socket is not open.
    */
   sendDisconnect(): void;
+
+  /**
+   * Fail-safe universel : recrée le groupe MLS depuis zéro quand l'état local
+   * est irrécupérable. Gère le verrou optimiste (retourne 'conflict' si un autre
+   * device a déjà bootstrappé) et orchestre les Welcome + commit après création.
+   */
+  bootstrapDeadConversation(
+    conversationId: string,
+    memberUserIds: string[],
+    pin: string
+  ): Promise<'bootstrapped' | 'conflict' | 'no_members'>;
+
+  /**
+   * Enregistre un callback invoqué quand l'état MLS d'un groupe est détecté
+   * comme irrécupérable (UNRECOVERABLE sentinel). Le callback reçoit le groupId
+   * pour que l'appelant puisse fournir les données nécessaires au re-bootstrap.
+   */
+  onUnrecoverable(callback: (groupId: string) => void): void;
 }

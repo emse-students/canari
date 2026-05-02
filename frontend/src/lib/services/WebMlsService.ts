@@ -495,6 +495,14 @@ export class WebMlsService implements IMlsService {
   // processQueue / processIncomingMessage. These two methods are no-ops here.
   async fetchMissingMessages(_groupId: string): Promise<void> {}
   onSyncNeeded(_callback: (groupId: string, attempt: number) => void): void {}
+  async bootstrapDeadConversation(
+    _conversationId: string,
+    _memberUserIds: string[],
+    _pin: string
+  ): Promise<'bootstrapped' | 'conflict' | 'no_members'> {
+    return 'no_members';
+  }
+  onUnrecoverable(_callback: (groupId: string) => void): void {}
 
   sendDisconnect(): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {

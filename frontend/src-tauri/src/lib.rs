@@ -376,6 +376,11 @@ async fn recevoir_message_bytes(
                 err_str
             );
 
+            // Corruption détectée par mls-core → état irrécupérable, déclencher re-bootstrap.
+            if err_str.starts_with("UNRECOVERABLE:") {
+                return Err(format!("UNRECOVERABLE:{}", group_id));
+            }
+
             // "Process error:" indique une erreur OpenMLS sur le même epoch →
             // probable gap du Sender Ratchet (génération future reçue).
             if err_str.contains("Process error:") {
@@ -702,7 +707,306 @@ async fn process_pending_mls_messages(
             Default::default()
         });
 
+    // Suivi des échecs consécutifs pour la détection d'état irrécupérable.
+    // Si processed == 0 et qu'il y avait des messages à traiter, c'est un échec total.
+    if !rows.is_empty() && processed == 0 {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        // Incrémente le compteur (INSERT si absent, sinon UPDATE).
+        let _ = sqlx::query(
+            "INSERT INTO mls_failure_counts (group_id, consecutive_failures, last_failure_at) \
+             VALUES (?, 1, ?) \
+             ON CONFLICT(group_id) DO UPDATE SET \
+               consecutive_failures = consecutive_failures + 1, \
+               last_failure_at = excluded.last_failure_at",
+        )
+        .bind(&group_id)
+        .bind(ts)
+        .execute(&*pending_db.0)
+        .await;
+
+        let count: i64 = sqlx::query_scalar(
+            "SELECT consecutive_failures FROM mls_failure_counts WHERE group_id = ?",
+        )
+        .bind(&group_id)
+        .fetch_one(&*pending_db.0)
+        .await
+        .unwrap_or(0);
+
+        if count >= 3 {
+            log::error!(
+                "[PENDING] État MLS irrécupérable détecté après {} échecs consécutifs pour group={}",
+                count,
+                group_id
+            );
+            return Err(format!("UNRECOVERABLE:{}", group_id));
+        }
+    } else if processed > 0 {
+        // Succès partiel ou total : réinitialise le compteur.
+        let _ = sqlx::query(
+            "DELETE FROM mls_failure_counts WHERE group_id = ?",
+        )
+        .bind(&group_id)
+        .execute(&*pending_db.0)
+        .await;
+    }
+
     Ok(processed)
+}
+
+// ─── Re-Bootstrap (Fail-Safe) ─────────────────────────────────────────────────
+
+/// Résultat du bootstrap retourné au frontend TypeScript.
+#[derive(serde::Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+enum BootstrapOutcome {
+    /// Bootstrap réussi : le frontend doit envoyer les Welcome + le commit.
+    Success {
+        commit: Vec<u8>,
+        welcome: Option<Vec<u8>>,
+        added_device_ids: Vec<String>,
+        ratchet_tree: Option<Vec<u8>>,
+        new_bootstrap_version: u32,
+    },
+    /// Race condition : un autre device a déjà bootstrappé le groupe.
+    /// Le frontend doit ignorer et attendre le Welcome entrant.
+    Conflict,
+    /// Aucun device tiers à inviter (groupe solo ou tous hors-ligne).
+    NoMembers,
+}
+
+#[derive(serde::Deserialize)]
+struct DeviceEntry {
+    #[serde(rename = "keyPackage")]
+    key_package: String, // base64
+    #[serde(rename = "deviceId")]
+    device_id: String,
+}
+
+#[derive(serde::Deserialize)]
+struct ClaimBootstrapResponse {
+    #[serde(rename = "bootstrapVersion")]
+    bootstrap_version: u32,
+}
+
+/// Fail-Safe universel : recrée un groupe MLS mort de zéro.
+///
+/// Séquence atomique du point de vue du réseau :
+///   1. Acquiert le verrou optimiste côté serveur (`claim-bootstrap`).
+///      Si 409 → un autre device a gagné la course → retourne Conflict.
+///   2. Remet l'epoch serveur à 0 (`reset-epoch`).
+///   3. Crée un état MLS frais en local (`force_create_group`).
+///   4. Récupère les KeyPackages de tous les membres via l'API.
+///   5. Ajoute tous les devices en bulk (`add_members_bulk`).
+///   6. Sauvegarde l'état MLS chiffré (mls.bin + checkpoint SQLite).
+///   7. Remet à zéro le compteur de défaillances consécutives.
+///
+/// La complétion (envoi du Welcome + commit) est laissée au frontend TypeScript
+/// car elle implique de multiples appels réseau et de la logique applicative.
+#[tauri::command]
+async fn bootstrap_dead_conversation(
+    conversation_id: String,
+    member_user_ids: Vec<String>,
+    expected_bootstrap_version: u32,
+    auth_token: String,
+    base_url: String,
+    pin: String,
+    state: tauri::State<'_, AppState>,
+    pending_db: tauri::State<'_, PendingDb>,
+    http_client: tauri::State<'_, HttpClient>,
+    app: tauri::AppHandle,
+) -> Result<BootstrapOutcome, String> {
+    // ── Étape 1 : Acquérir le verrou optimiste ────────────────────────────────
+    let base = base_url.trim_end_matches('/');
+    let claim_url = format!(
+        "{}/api/mls-api/groups/{}/claim-bootstrap",
+        base, conversation_id
+    );
+    let claim_resp = http_client
+        .0
+        .post(&claim_url)
+        .header("Authorization", format!("Bearer {}", auth_token))
+        .header("Content-Type", "application/json")
+        .body(format!(r#"{{"expectedVersion":{}}}"#, expected_bootstrap_version))
+        .send()
+        .await
+        .map_err(|e| format!("claim-bootstrap HTTP error: {}", e))?;
+
+    if claim_resp.status() == 409 {
+        log::warn!(
+            "[BOOTSTRAP] Race condition détectée pour group={} — un autre device a déjà bootstrappé.",
+            conversation_id
+        );
+        return Ok(BootstrapOutcome::Conflict);
+    }
+    if !claim_resp.status().is_success() {
+        return Err(format!(
+            "claim-bootstrap failed: {}",
+            claim_resp.status()
+        ));
+    }
+    let claim_body: ClaimBootstrapResponse = claim_resp
+        .json()
+        .await
+        .map_err(|e| format!("claim-bootstrap response parse error: {}", e))?;
+    let new_bootstrap_version = claim_body.bootstrap_version;
+
+    // ── Étape 2 : Reset de l'epoch serveur à 0 ───────────────────────────────
+    let reset_url = format!(
+        "{}/api/mls-api/groups/{}/reset-epoch",
+        base, conversation_id
+    );
+    let reset_resp = http_client
+        .0
+        .post(&reset_url)
+        .header("Authorization", format!("Bearer {}", auth_token))
+        .send()
+        .await
+        .map_err(|e| format!("reset-epoch HTTP error: {}", e))?;
+    if !reset_resp.status().is_success() {
+        log::warn!(
+            "[BOOTSTRAP] reset-epoch failed ({}) — on continue quand même.",
+            reset_resp.status()
+        );
+    }
+
+    // ── Étape 3 : Créer un état MLS frais en local ───────────────────────────
+    {
+        let mut lock = state
+            .mls_manager
+            .lock()
+            .map_err(|_| "Failed to lock state")?;
+        let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+        manager
+            .force_create_group(conversation_id.clone())
+            .map_err(|e| e.to_string())?;
+    }
+
+    // ── Étape 4 : Récupérer les KeyPackages de chaque membre ─────────────────
+    // Tous les appels HTTP se font HORS du Mutex (pas d'await sous lock).
+    let mut all_key_packages: Vec<Vec<u8>> = Vec::new();
+    let mut added_device_ids: Vec<String> = Vec::new();
+
+    for user_id in &member_user_ids {
+        let devices_url = format!("{}/api/mls-api/devices/{}", base, user_id);
+        let resp = match http_client
+            .0
+            .get(&devices_url)
+            .header("Authorization", format!("Bearer {}", auth_token))
+            .send()
+            .await
+        {
+            Ok(r) if r.status().is_success() => r,
+            Ok(r) => {
+                log::warn!(
+                    "[BOOTSTRAP] fetchUserDevices({}) → {}",
+                    user_id,
+                    r.status()
+                );
+                continue;
+            }
+            Err(e) => {
+                log::warn!("[BOOTSTRAP] fetchUserDevices({}) network error: {}", user_id, e);
+                continue;
+            }
+        };
+
+        let devices: Vec<DeviceEntry> = match resp.json().await {
+            Ok(d) => d,
+            Err(e) => {
+                log::warn!("[BOOTSTRAP] fetchUserDevices({}) parse error: {}", user_id, e);
+                continue;
+            }
+        };
+
+        for device in devices {
+            match base64::engine::general_purpose::STANDARD.decode(&device.key_package) {
+                Ok(kp_bytes) => {
+                    all_key_packages.push(kp_bytes);
+                    added_device_ids.push(device.device_id);
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[BOOTSTRAP] base64 decode failed for device {}: {}",
+                        device.device_id,
+                        e
+                    );
+                }
+            }
+        }
+    }
+
+    if all_key_packages.is_empty() {
+        log::warn!(
+            "[BOOTSTRAP] Aucun KeyPackage valide pour group={} — bootstrap annulé.",
+            conversation_id
+        );
+        return Ok(BootstrapOutcome::NoMembers);
+    }
+
+    // ── Étape 5 : Ajouter tous les devices en bulk ───────────────────────────
+    let (commit, welcome, ratchet_tree) = {
+        let mut lock = state
+            .mls_manager
+            .lock()
+            .map_err(|_| "Failed to lock state")?;
+        let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+        let refs: Vec<&[u8]> = all_key_packages.iter().map(|v| v.as_slice()).collect();
+        let (commit_b, welcome_b, _count, rt_b) = manager
+            .add_members_bulk(&conversation_id, &refs)
+            .map_err(|e| e.to_string())?;
+        (commit_b, welcome_b, rt_b)
+    };
+
+    // ── Étape 6 : Sauvegarder l'état MLS ────────────────────────────────────
+    let enc = {
+        let lock = state
+            .mls_manager
+            .lock()
+            .map_err(|_| "Failed to lock state")?;
+        let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+        manager.save_encrypted(&pin).map_err(|e| e.to_string())?
+    };
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+    let mut tx = pending_db.0.begin().await.map_err(|e| e.to_string())?;
+    sqlx::query(
+        "INSERT OR REPLACE INTO mls_state_checkpoint (id, state, saved_at) VALUES (1, ?, ?)",
+    )
+    .bind(enc.as_slice())
+    .bind(ts)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| e.to_string())?;
+    tx.commit().await.map_err(|e| e.to_string())?;
+
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
+    std::fs::write(data_dir.join("mls.bin"), &enc).map_err(|e| e.to_string())?;
+
+    // ── Étape 7 : Réinitialiser le compteur de défaillances ──────────────────
+    let _ = sqlx::query("DELETE FROM mls_failure_counts WHERE group_id = ?")
+        .bind(&conversation_id)
+        .execute(&*pending_db.0)
+        .await;
+
+    log::info!(
+        "[BOOTSTRAP] Groupe {} re-bootstrappé avec succès ({} devices).",
+        conversation_id,
+        added_device_ids.len()
+    );
+
+    Ok(BootstrapOutcome::Success {
+        commit,
+        welcome,
+        added_device_ids,
+        ratchet_tree,
+        new_bootstrap_version,
+    })
 }
 
 #[tauri::command]
@@ -1138,6 +1442,24 @@ pub fn run() {
                 .map_err(|e| e.to_string())
             })
             .map_err(|e| format!("pending DB index: {e}"))?;
+
+            // Table de comptage des échecs consécutifs par groupe.
+            // Quand consecutive_failures >= 3, process_pending_mls_messages retourne
+            // UNRECOVERABLE:<group_id> pour déclencher le re-bootstrap.
+            tauri::async_runtime::block_on(async {
+                sqlx::query(
+                    "CREATE TABLE IF NOT EXISTS mls_failure_counts (\
+                        group_id             TEXT    PRIMARY KEY,\
+                        consecutive_failures INTEGER NOT NULL DEFAULT 0,\
+                        last_failure_at      INTEGER NOT NULL DEFAULT 0\
+                    )",
+                )
+                .execute(&pending_pool)
+                .await
+                .map_err(|e| e.to_string())
+            })
+            .map_err(|e| format!("pending DB failure_counts schema: {e}"))?;
+
             app.manage(PendingDb(Arc::new(pending_pool)));
             // ── Create main window on desktop ────────────────────────────────────
             // In dev mode: use the Vite dev server (already HTTP, no issues).
@@ -1298,7 +1620,8 @@ pub fn run() {
             clear_app_data,
             process_gap_messages,
             fetch_and_queue_missing_messages,
-            process_pending_mls_messages
+            process_pending_mls_messages,
+            bootstrap_dead_conversation
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

@@ -1394,6 +1394,34 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
     }
   );
 
+  // Fail-safe universel : déclenché après 3 échecs consécutifs de gap recovery.
+  // Recréé le groupe MLS depuis zéro avec un verrou optimiste anti-concurrence.
+  mlsService.onUnrecoverable((groupId) => {
+    const convo = conversations.get(groupId);
+    if (!convo) return;
+    log(`[BOOTSTRAP] État irrécupérable sur groupe=${groupId} — re-bootstrap en cours...`);
+    void (async () => {
+      try {
+        const members = await mlsService.getGroupMembers(groupId);
+        const memberUserIds = [...new Set(members.map((m) => m.userId))];
+        const outcome = await mlsService.bootstrapDeadConversation(groupId, memberUserIds, pin);
+        if (outcome === 'bootstrapped') {
+          conversations.set(groupId, { ...conversations.get(groupId)!, isReady: true });
+          if (storage) saveConversation(groupId).catch(() => {});
+          log(`[BOOTSTRAP] Groupe ${groupId} re-bootstrappé avec succès.`);
+        } else if (outcome === 'conflict') {
+          log(`[BOOTSTRAP] Race condition sur groupe=${groupId} — attente du Welcome du gagnant.`);
+        } else {
+          log(`[BOOTSTRAP] Aucun membre disponible pour groupe=${groupId}.`);
+        }
+      } catch (e) {
+        log(
+          `[BOOTSTRAP] Échec re-bootstrap groupe=${groupId}: ${e instanceof Error ? e.message : String(e)}`
+        );
+      }
+    })();
+  });
+
   // When server history is empty during gap recovery:
   //   attempt=1 → ask online peers to relay their cached messages (sync_request)
   //   attempt≥2 → server + peers both failed; escalate to forgetGroup + sendReinviteRequest

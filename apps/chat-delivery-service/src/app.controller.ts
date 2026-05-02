@@ -9,6 +9,7 @@ import {
   Query,
   Inject,
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   UseGuards,
   Headers,
@@ -2216,6 +2217,70 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       `[RESET_EPOCH] group=${safeGroupId} oldEpoch=${oldEpoch} → 0`,
     );
     return { groupId: safeGroupId, activeEpoch: 0 };
+  }
+
+  /**
+   * ─── Bootstrap Optimistic Lock ───────────────────────────────────────
+   *
+   * Acquiert le verrou de re-bootstrap pour un groupe.
+   * Utilise un optimistic lock sur `bootstrapVersion` pour garantir que seul
+   * le premier device à appeler cette route peut recréer le groupe.
+   *
+   * - Succès (200) : bootstrapVersion incrémenté, ce device est le bootstrapper.
+   * - 409 Conflict : un autre device a déjà incrémenté bootstrapVersion,
+   *   le client doit annuler sa création locale et attendre le Welcome du gagnant.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Post('mls-api/groups/:groupId/claim-bootstrap')
+  async claimBootstrap(
+    @Param('groupId') groupId: string,
+    @Body() body: { expectedVersion: number },
+  ) {
+    const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
+    const expectedVersion = Number(body?.expectedVersion ?? 0);
+
+    const result = await this.groupRepo
+      .createQueryBuilder()
+      .update()
+      .set({ bootstrapVersion: () => 'bootstrap_version + 1' })
+      .where('id = :id AND bootstrap_version = :ev', {
+        id: safeGroupId,
+        ev: expectedVersion,
+      })
+      .execute();
+
+    if (result.affected === 0) {
+      this.logger.warn(
+        `[BOOTSTRAP] claim-bootstrap race: group=${safeGroupId} expectedVersion=${expectedVersion}`,
+      );
+      throw new ConflictException(
+        `Bootstrap already claimed for group ${safeGroupId}`,
+      );
+    }
+
+    const group = await this.groupRepo.findOne({ where: { id: safeGroupId } });
+    this.logger.log(
+      `[BOOTSTRAP] claim-bootstrap OK: group=${safeGroupId} bootstrapVersion=${group?.bootstrapVersion}`,
+    );
+    return {
+      groupId: safeGroupId,
+      bootstrapVersion: group?.bootstrapVersion ?? expectedVersion + 1,
+    };
+  }
+
+  /** Retourne la bootstrapVersion courante d'un groupe (pour l'optimistic lock). */
+  @UseGuards(HeaderAuthGuard)
+  @Get('mls-api/groups/:groupId/bootstrap-info')
+  async getBootstrapInfo(@Param('groupId') groupId: string) {
+    const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
+    const group = await this.groupRepo.findOne({ where: { id: safeGroupId } });
+    if (!group) {
+      throw new BadRequestException(`Group ${safeGroupId} not found`);
+    }
+    return {
+      groupId: safeGroupId,
+      bootstrapVersion: group.bootstrapVersion ?? 0,
+    };
   }
 
   /**
