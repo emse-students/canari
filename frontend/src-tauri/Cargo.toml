@@ -18,7 +18,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2.10", features = ["tray-icon", "image-png", "devtools"] }
+tauri = { version = "2.11", features = ["tray-icon", "image-png", "devtools"] }
 tauri-plugin-localhost = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-opener = "2"
@@ -33,6 +33,11 @@ tauri-plugin-deep-link = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2.7"
 tauri-plugin-websocket = "2.4.2"
+
+[patch.crates-io]
+# tao 0.35.0 panics with NullPtr("get_object_class") when intent.getType() returns null
+# (e.g. deep links like fr.emse.canari://callback). Fixed by adding a null guard.
+tao = { path = "patches/tao" }
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = { version = "0.21", default-features = false }

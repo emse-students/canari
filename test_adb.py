@@ -1,3 +1,4 @@
+import os
 import tkinter as tk
 from tkinter import ttk, scrolledtext
 import subprocess
@@ -210,6 +211,38 @@ class TauriManagerApp:
         except Exception as e:
             self.log("Système", f"Exception lors de l'exécution: {str(e)}")
 
+    def execute_command_list(self, cmd: list[str], source_name: str, success_msg: Optional[str] = None) -> None:
+        """Exécute une commande via une liste d'args (shell=False) — évite les problèmes de quoting Windows."""
+        self.log("Système", f"Exécution : {' '.join(cmd)}")
+        try:
+            process = subprocess.Popen(
+                cmd,
+                cwd=PROJECT_DIR,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                bufsize=1,
+            )
+            self.current_processes.append(process)
+
+            if process.stdout:
+                for line in process.stdout:
+                    self.log(source_name, line)
+
+            process.wait()
+
+            if process in self.current_processes:
+                self.current_processes.remove(process)
+
+            if process.returncode == 0 and success_msg:
+                self.log("Système", f"Succès : {success_msg}")
+            elif process.returncode not in (0, -15, -9):
+                self.log("Système", f"ERREUR (Code {process.returncode}) : {' '.join(cmd)}")
+        except Exception as e:
+            self.log("Système", f"Exception lors de l'exécution: {str(e)}")
+
     def run_build(self) -> None:
         self.log("Système", "--- NETTOYAGE DU BUILD ---")
 
@@ -236,9 +269,8 @@ class TauriManagerApp:
             # un code non-nul si le package n'est pas installé — on l'ignore.
             self.log("Système", f"Désinstallation de {PACKAGE_NAME}...")
             result = subprocess.run(
-                f'adb -s {device_id} uninstall {PACKAGE_NAME}',
+                ['adb', '-s', device_id, 'uninstall', PACKAGE_NAME],
                 cwd=PROJECT_DIR,
-                shell=True,
                 capture_output=True,
                 text=True,
                 encoding='utf-8',
@@ -249,12 +281,18 @@ class TauriManagerApp:
                 self.log("Système", f"  → Non installé, on continue.")
 
             # Installation fraîche (pas besoin de -r après uninstall)
-            cmd_install = f'adb -s {device_id} install "{APK_PATH}"'
-            self.execute_command(cmd_install, "Système", f"APK installé sur {device_name}")
+            import os
+            apk_full = os.path.join(PROJECT_DIR, APK_PATH)
+            self.execute_command_list(
+                ['adb', '-s', device_id, 'install', apk_full],
+                "Système", f"APK installé sur {device_name}"
+            )
 
             # Lancement
-            cmd_launch = f'adb -s {device_id} shell am start -n {ACTIVITY_NAME}'
-            self.execute_command(cmd_launch, "Système", f"Application lancée sur {device_name}")
+            self.execute_command_list(
+                ['adb', '-s', device_id, 'shell', 'am', 'start', '-n', ACTIVITY_NAME],
+                "Système", f"Application lancée sur {device_name}"
+            )
 
             # Démarre automatiquement le logcat pour cet appareil (nettoie l'ancien avant)
             self.start_logcat_for_device(device_id, device_name)
@@ -268,31 +306,40 @@ class TauriManagerApp:
     # === LOGCAT ===
     def start_logcat_for_device(self, device_id: str, device_name: str) -> None:
         # 1. Nettoyer les anciens logs
-        subprocess.run(f'adb -s {device_id} logcat -c', shell=True, cwd=PROJECT_DIR)
+        subprocess.run(['adb', '-s', device_id, 'logcat', '-c'], cwd=PROJECT_DIR)
         self.log("Système", f"Anciens logs effacés pour {device_name}.")
 
         # 2. Lancer la lecture continue
-        # *:S = silence tout par défaut, puis on sélectionne tag par tag avec priorité minimale.
-        # Tauri/Console:V  → tous les console.log JS (Verbose+)
-        # AndroidRuntime:W → exceptions Java/Kotlin non rattrapées (Warning+)
-        # DEBUG:I          → dumps natifs du debuggerd Android (tombstones, Info+)
-        # CanariRust:I     → logs Rust via android_logger (Info+ : filtre VERBOSE jni::wrapper)
-        cmd = (
-            f'adb -s {device_id} logcat'
-            f' "*:S" "Tauri/Console:V" "AndroidRuntime:W" "DEBUG:I" "CanariRust:I"'
-        )
-        self.log("Système", f"Démarrage Logcat pour {device_name}...")
+        # shell=False + liste d'args : évite que cmd.exe sur Windows mange les guillemets
+        # des filtres logcat (bug silencieux avec shell=True sur Windows).
+        # *:S = silence tout par défaut, puis on sélectionne tag par tag.
+        # Tauri/Console:V      → tous les console.log JS (Verbose+)
+        # AndroidRuntime:W     → exceptions Java/Kotlin non rattrapées (Warning+)
+        # DEBUG:I              → dumps natifs du debuggerd Android (tombstones, Info+)
+        # CanariRust:I         → logs Rust via android_logger (Info+)
+        # ActivityManager:I    → réception d'Intent par l'OS (deep links)
+        # ActivityTaskManager:I→ gestion des tâches et back-stack (deep links)
+        cmd = [
+            'adb', '-s', device_id, 'logcat',
+            '*:S',
+            'Tauri/Console:V',
+            'AndroidRuntime:W',
+            'DEBUG:I',
+            'CanariRust:I',
+            'ActivityManager:I',
+            'ActivityTaskManager:I',
+        ]
+        self.log("Système", f"Démarrage Logcat pour {device_name}: {' '.join(cmd)}")
 
         process = subprocess.Popen(
             cmd,
             cwd=PROJECT_DIR,
-            shell=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
             encoding='utf-8',
             errors='replace',
-            bufsize=1 # Line buffered
+            bufsize=1,
         )
         self.logcat_processes.append(process)
 
