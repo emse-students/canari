@@ -2,6 +2,7 @@
   import '../app.css';
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
+  import { attachConsole } from '@tauri-apps/plugin-log';
   import BackgroundBlobs from '$lib/components/shared/BackgroundBlobs.svelte';
   import ChatBackgroundService from '$lib/components/layout/ChatBackgroundService.svelte';
   import Navbar from '$lib/components/navigation/Navbar.svelte';
@@ -38,6 +39,11 @@
   }
 
   onMount(() => {
+    // Redirige console.log/warn/error vers tauri-plugin-log → adb logcat sur Android.
+    if (typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__) {
+      attachConsole().catch(() => {});
+    }
+
     const handler = () => {
       showLogs = !showLogs;
     };

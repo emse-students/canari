@@ -653,6 +653,13 @@ impl MlsManager {
                     );
                     return Ok(None);
                 }
+                log::error!(
+                    "MLS decryption failed: group={} msg_epoch={} group_epoch={} err={:?}",
+                    group_id,
+                    msg_epoch,
+                    group_epoch,
+                    e
+                );
                 return Err(MlsError::OpenMls(format!(
                     "Process error: {:?} [msg_epoch={}, group_epoch={}]",
                     e, msg_epoch, group_epoch

@@ -33,6 +33,9 @@
     "http:allow-fetch-read-body",
     "fs:default",
     "dialog:default",
-    "websocket:default"
+    "websocket:default",
+    "log:default",
+    "log:allow-log",
+    "log:allow-attach-console"
   ]
 }

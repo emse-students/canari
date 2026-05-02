@@ -224,7 +224,10 @@ fn recevoir_message(
 
     let res = manager
         .process_incoming_message(&group_id, &message_bytes)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            log::error!("recevoir_message failed: group={} err={}", group_id, e);
+            e.to_string()
+        })?;
 
     match res {
         Some(bytes) => Ok(Some(String::from_utf8_lossy(&bytes).to_string())),
@@ -282,7 +285,10 @@ fn recevoir_message_bytes(
 
     manager
         .process_incoming_message(&group_id, &message_bytes)
-        .map_err(|e| e.to_string())
+        .map_err(|e| {
+            log::error!("recevoir_message_bytes failed: group={} err={}", group_id, e);
+            e.to_string()
+        })
 }
 
 #[tauri::command]
@@ -617,6 +623,11 @@ pub fn run() {
     let port: u16 = 1421;
 
     let builder = tauri::Builder::default()
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .level(log::LevelFilter::Debug)
+                .build(),
+        )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_http::init())
