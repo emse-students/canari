@@ -300,47 +300,51 @@ async fn recevoir_message_bytes(
 ) -> Result<Option<Vec<u8>>, String> {
     // Chantier 1 : détection proactive de l'epoch gap AVANT tout déchiffrement.
     // L'epoch est en clair dans l'en-tête MLS → aucune clé de ratchet consommée.
-    // Si msg_epoch > group_epoch on met directement en file sans tenter le déchiffrement.
-    {
+    // Le MutexGuard est libéré dans le bloc intérieur AVANT tout .await.
+    let epoch_gap: Option<(u64, u64)> = {
         let lock = state
             .mls_manager
             .lock()
             .map_err(|_| "Failed to lock state")?;
-        if let Some(manager) = lock.as_ref() {
-            if let (Some(msg_ep), Ok(group_ep)) = (
+        match lock.as_ref() {
+            Some(manager) => match (
                 MlsManager::parse_message_epoch(&message_bytes),
-                manager.get_epoch(&group_id),
+                manager.get_epoch(&group_id).ok(),
             ) {
-                if msg_ep > group_ep {
-                    log::warn!(
-                        "[GAP] Epoch gap détecté AVANT déchiffrement : \
-                         msg_epoch={} > group_epoch={} pour group={}. \
-                         Mise en attente et déclenchement de la resync.",
-                        msg_ep, group_ep, group_id
-                    );
-                    let ts = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_nanos() as i64;
-                    let id = format!("{}-epoch-{}", group_id, ts);
-                    sqlx::query(
-                        "INSERT OR IGNORE INTO pending_mls_messages \
-                         (id, group_id, ciphertext, created_at, is_ready) VALUES (?, ?, ?, ?, 0)",
-                    )
-                    .bind(&id)
-                    .bind(&group_id)
-                    .bind(message_bytes.as_slice())
-                    .bind(ts)
-                    .execute(&*pending_db.0)
-                    .await
-                    .unwrap_or_else(|db_e| {
-                        log::warn!("[GAP] DB insert (epoch pre-check) failed: {}", db_e);
-                        Default::default()
-                    });
-                    return Err(format!("GAP_QUEUED:{}", group_id));
-                }
-            }
+                (Some(msg_ep), Some(group_ep)) if msg_ep > group_ep => Some((msg_ep, group_ep)),
+                _ => None,
+            },
+            None => None,
         }
+        // lock est libéré ici — aucun await n'a encore eu lieu
+    };
+    if let Some((msg_ep, group_ep)) = epoch_gap {
+        log::warn!(
+            "[GAP] Epoch gap détecté AVANT déchiffrement : \
+             msg_epoch={} > group_epoch={} pour group={}. \
+             Mise en attente et déclenchement de la resync.",
+            msg_ep, group_ep, group_id
+        );
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as i64;
+        let id = format!("{}-epoch-{}", group_id, ts);
+        sqlx::query(
+            "INSERT OR IGNORE INTO pending_mls_messages \
+             (id, group_id, ciphertext, created_at, is_ready) VALUES (?, ?, ?, ?, 0)",
+        )
+        .bind(&id)
+        .bind(&group_id)
+        .bind(message_bytes.as_slice())
+        .bind(ts)
+        .execute(&*pending_db.0)
+        .await
+        .unwrap_or_else(|db_e| {
+            log::warn!("[GAP] DB insert (epoch pre-check) failed: {}", db_e);
+            Default::default()
+        });
+        return Err(format!("GAP_QUEUED:{}", group_id));
     }
 
     // Acquiert + libère le Mutex AVANT toute opération async pour éviter les
