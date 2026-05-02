@@ -2,6 +2,7 @@
   import PostImage from './PostImage.svelte';
   import type { PostEntity } from '$lib/posts/api';
   import SvelteMarkdown from '@humanspeak/svelte-markdown';
+  import LinkPreviewCard from '../messages/LinkPreviewCard.svelte';
 
   interface Props {
     post: PostEntity;
@@ -9,6 +10,13 @@
   }
 
   let { post, authToken = '' }: Props = $props();
+
+  function extractFirstUrl(text: string): string | null {
+    const match = text.match(/https?:\/\/[^\s)>\]"]+/i);
+    return match?.[0] ?? null;
+  }
+
+  const firstLink = $derived(post.markdown ? extractFirstUrl(post.markdown) : null);
 </script>
 
 <!-- Contenu Texte (Markdown) -->
@@ -20,6 +28,9 @@
         <SvelteMarkdown source={post.markdown} options={{ gfm: true, breaks: true }} />
       </div>
     </div>
+    {#if firstLink}
+      <LinkPreviewCard url={firstLink} />
+    {/if}
   </div>
 {/if}
 

@@ -2,6 +2,7 @@
   import { ChartBar, CircleCheck, Circle, SquareCheck, Square } from 'lucide-svelte';
   import type { Poll } from '$lib/posts/api';
   import { resolveUserDisplayName, getUserDisplayNameSync } from '$lib/utils/users/displayName';
+  import { portal } from '$lib/actions/portal';
 
   interface Props {
     polls: Poll[] | undefined;
@@ -224,6 +225,7 @@
 {#if tooltipOptionId && tooltipPos}
   {@const names = voterNames[tooltipOptionId]}
   <div
+    use:portal
     class="fixed z-[9999] min-w-[10rem] max-w-[16rem] rounded-xl bg-[#1a2236] text-white text-[0.72rem] font-medium shadow-xl px-3 py-2 pointer-events-none -translate-y-full -mt-1.5"
     style="top: {tooltipPos.top}px; right: {tooltipPos.right}px;"
     role="tooltip"
