@@ -15,6 +15,7 @@
   // Tooltip state
   let tooltipOptionId = $state<string | null>(null);
   let voterNames = $state<Record<string, string[]>>({});
+  let tooltipPos = $state<{ top: number; right: number } | null>(null);
 
   function getVoteCount(votes: string[] | number | undefined): number {
     if (Array.isArray(votes)) return votes.length;
@@ -35,10 +36,18 @@
     return Math.round((getVoteCount(votes) / total) * 100);
   }
 
-  async function showVoterTooltip(optionId: string, votes: string[] | number | undefined) {
+  async function showVoterTooltip(
+    optionId: string,
+    votes: string[] | number | undefined,
+    anchor?: HTMLElement
+  ) {
     const ids = getVoterIds(votes);
     if (ids.length === 0) return;
     tooltipOptionId = optionId;
+    if (anchor) {
+      const rect = anchor.getBoundingClientRect();
+      tooltipPos = { top: rect.top, right: window.innerWidth - rect.right };
+    }
     if (voterNames[optionId]) return;
     const names = await Promise.all(ids.map((id) => resolveUserDisplayName(id)));
     voterNames = {
@@ -49,13 +58,18 @@
 
   function hideTooltip() {
     tooltipOptionId = null;
+    tooltipPos = null;
   }
 
-  function toggleTooltip(optionId: string, votes: string[] | number | undefined) {
+  function toggleTooltip(
+    optionId: string,
+    votes: string[] | number | undefined,
+    anchor?: HTMLElement
+  ) {
     if (tooltipOptionId === optionId) {
       hideTooltip();
     } else {
-      showVoterTooltip(optionId, votes);
+      showVoterTooltip(optionId, votes, anchor);
     }
   }
 </script>
@@ -160,46 +174,26 @@
                     </span>
                   {/if}
                   <!-- Vote count badge — hover/tap to see voter names -->
-                  <div class="relative">
-                    <div
-                      role="button"
-                      tabindex="0"
-                      class="text-[0.7rem] font-bold text-text-muted bg-black/5 dark:bg-white/10 px-2 py-1 rounded-lg select-none"
-                      class:cursor-pointer={voterIds.length > 0}
-                      class:cursor-default={voterIds.length === 0}
-                      aria-label="{voteCount} vote(s)"
-                      onmouseenter={() =>
-                        voterIds.length > 0 && showVoterTooltip(option.id, option.votes)}
-                      onmouseleave={hideTooltip}
-                      onclick={(e) => {
-                        e.stopPropagation();
-                        toggleTooltip(option.id, option.votes);
-                      }}
-                      onkeydown={(e) => e.key === 'Enter' && toggleTooltip(option.id, option.votes)}
-                    >
-                      {voteCount}
-                    </div>
-                    {#if tooltipOptionId === option.id && voterIds.length > 0}
-                      <div
-                        class="absolute bottom-full right-0 mb-1.5 z-50 min-w-[10rem] max-w-[16rem] rounded-xl bg-[#1a2236] text-white text-[0.72rem] font-medium shadow-xl px-3 py-2 pointer-events-none"
-                        role="tooltip"
-                      >
-                        <p
-                          class="font-bold text-white/60 uppercase tracking-wide text-[0.6rem] mb-1"
-                        >
-                          Votants
-                        </p>
-                        {#if voterNames[option.id]}
-                          <ul class="space-y-0.5">
-                            {#each voterNames[option.id] as name (name)}
-                              <li class="truncate">{name}</li>
-                            {/each}
-                          </ul>
-                        {:else}
-                          <p class="opacity-60 italic">Chargement…</p>
-                        {/if}
-                      </div>
-                    {/if}
+                  <div
+                    role="button"
+                    tabindex="0"
+                    class="text-[0.7rem] font-bold text-text-muted bg-black/5 dark:bg-white/10 px-2 py-1 rounded-lg select-none"
+                    class:cursor-pointer={voterIds.length > 0}
+                    class:cursor-default={voterIds.length === 0}
+                    aria-label="{voteCount} vote(s)"
+                    onmouseenter={(e) =>
+                      voterIds.length > 0 &&
+                      showVoterTooltip(option.id, option.votes, e.currentTarget as HTMLElement)}
+                    onmouseleave={hideTooltip}
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      toggleTooltip(option.id, option.votes, e.currentTarget as HTMLElement);
+                    }}
+                    onkeydown={(e) =>
+                      e.key === 'Enter' &&
+                      toggleTooltip(option.id, option.votes, e.currentTarget as HTMLElement)}
+                  >
+                    {voteCount}
                   </div>
                 </div>
               </div>
@@ -223,5 +217,26 @@
         </div>
       </div>
     {/each}
+  </div>
+{/if}
+
+<!-- Fixed-position tooltip portal — renders above overflow-hidden containers -->
+{#if tooltipOptionId && tooltipPos}
+  {@const names = voterNames[tooltipOptionId]}
+  <div
+    class="fixed z-[9999] min-w-[10rem] max-w-[16rem] rounded-xl bg-[#1a2236] text-white text-[0.72rem] font-medium shadow-xl px-3 py-2 pointer-events-none -translate-y-full -mt-1.5"
+    style="top: {tooltipPos.top}px; right: {tooltipPos.right}px;"
+    role="tooltip"
+  >
+    <p class="font-bold text-white/60 uppercase tracking-wide text-[0.6rem] mb-1">Votants</p>
+    {#if names}
+      <ul class="space-y-0.5">
+        {#each names as name (name)}
+          <li class="truncate">{name}</li>
+        {/each}
+      </ul>
+    {:else}
+      <p class="opacity-60 italic">Chargement…</p>
+    {/if}
   </div>
 {/if}
