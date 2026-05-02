@@ -597,8 +597,16 @@ export class TauriMlsService implements IMlsService {
           // Attendre la fin du recovery avant de reprendre la queue (ordre strict).
           // Ne pas ACK : le message reste en file serveur jusqu'au retraitement réussi.
           await this.fetchMissingMessages(groupId);
+        } else if (msg.isWelcome) {
+          // Le Welcome a été rejeté avec une erreur inattendue (re-thrown depuis connection.ts).
+          // Ne PAS ACK : le message reste en file serveur et sera retenté à la prochaine connexion.
+          // C'est intentionnel — le device a besoin de ce Welcome pour rejoindre le groupe.
+          console.error(
+            `[QUEUE] Welcome échoué pour groupe=${groupId} — NE PAS ACK, retry sur reconnexion`
+          );
+          if (groupId) this.pendingWelcomeGroups.delete(groupId);
         } else {
-          // Erreur non récupérable (Welcome raté, epoch divergée…) → ACK pour éviter la boucle.
+          // Erreur non récupérable sur un message applicatif → ACK pour éviter la boucle infinie.
           if (msg.queuedMessageId) ackIds.push(msg.queuedMessageId);
           if (groupId) this.pendingWelcomeGroups.delete(groupId);
         }

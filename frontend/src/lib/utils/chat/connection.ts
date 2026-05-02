@@ -1378,18 +1378,28 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       } catch (_e) {
         const errStr = String(_e);
         if (errStr.includes('NoMatchingKeyPackage')) {
-          // The Welcome was generated for a key package whose private key is no
-          // longer in local state (consumed one-time prekey, or device was reset
-          // and old registration was not yet cleaned up). Log explicitly so the
-          // problem is visible in debug logs rather than silently returning false.
+          // Le KeyPackage utilisé pour générer ce Welcome a été consommé (one-time prekey)
+          // ou l'appareil a été réinitialisé. Ce Welcome est inutilisable pour ce device.
+          // On demande au groupe de renvoyer un Welcome avec un nouveau KeyPackage.
           log(
-            `[WELCOME] KeyPackage introuvable pour groupe ${groupId} — Welcome ignoré ` +
-              `(KeyPackage consommé ou appareil réinitialisé). Erreur: ${errStr.slice(0, 200)}`
+            `[WELCOME] KeyPackage introuvable pour groupe ${groupId} — Welcome inutilisable. ` +
+              `Envoi d'un welcome_request pour se faire ré-inviter. Erreur: ${errStr.slice(0, 200)}`
           );
+          if (groupId) {
+            mlsService.sendWelcomeRequest(groupId).catch((e) => {
+              log(`[WELCOME] sendWelcomeRequest échoué pour groupe=${groupId}: ${e}`);
+            });
+          }
+          // Retourner false pour que le caller ACK ce Welcome (il est définitivement inutile).
           return false;
         }
-        log(`[WELCOME] Erreur processWelcome pour groupe ${groupId}: ${errStr.slice(0, 300)}`);
-        return false;
+        // Erreur inattendue (corruption, mismatch de cipher suite…) : on ne retourne PAS false.
+        // On relance l'exception pour que processQueue n'ACK PAS le message côté serveur.
+        // Ainsi, le Welcome reste en file de livraison et sera retenté à la prochaine connexion.
+        log(
+          `[WELCOME] Erreur irrécupérable processWelcome pour groupe ${groupId} — NE PAS ACK, retry à la prochaine connexion. Erreur: ${errStr.slice(0, 300)}`
+        );
+        throw _e;
       }
     }
   );

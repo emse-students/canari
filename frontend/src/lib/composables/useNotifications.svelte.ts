@@ -140,19 +140,21 @@ export function useNotifications() {
     if (typeof window === 'undefined') return;
 
     if ((window as any).__TAURI_INTERNALS__) {
-      // Notification permission requests via the Tauri plugin block the GLib
-      // main loop on Linux desktop (dbus call never returns in WebKitGTK).
-      // The plugin is only strictly needed on mobile — skip on desktop.
-      const isMobile =
-        typeof navigator !== 'undefined' && /android|iphone|ipad|ipod/i.test(navigator.userAgent);
-      if (!isMobile) return;
+      // Sur Linux desktop, le plugin Tauri notification bloque la boucle principale GLib
+      // (l'appel dbus ne revient jamais dans WebKitGTK). On skip Linux pur.
+      // Sur Android 13+, la permission POST_NOTIFICATIONS DOIT être demandée au runtime
+      // via le plugin Tauri (le manifest seul ne suffit pas).
+      // Détection fiable : Linux desktop = "Linux" dans platform/userAgent SANS "Android".
+      const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+      const isLinuxDesktop = /linux/i.test(ua) && !/android/i.test(ua) && !/cros/i.test(ua);
+      if (isLinuxDesktop) return;
       try {
         const { isPermissionGranted, requestPermission } =
           await import('@tauri-apps/plugin-notification');
         const granted = await isPermissionGranted();
         if (!granted) await requestPermission();
       } catch {
-        /* plugin unavailable */
+        /* plugin unavailable on this platform */
       }
       return;
     }

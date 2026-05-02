@@ -188,7 +188,10 @@ fn trailer_welcome(
 
     manager
         .process_welcome(&welcome_bytes, ratchet_tree_bytes.as_deref())
-        .map_err(|e| e.to_string())
+        .map_err(|e| {
+            log::error!("[WELCOME] Erreur critique lors du traitement du Welcome MLS: {:?}", e);
+            e.to_string()
+        })
 }
 
 #[tauri::command]
