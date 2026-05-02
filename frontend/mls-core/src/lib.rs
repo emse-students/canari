@@ -321,10 +321,15 @@ impl MlsManager {
         // Collect the leaf indices of all leaves whose identity matches one of the user IDs.
         let mut leaf_indices: Vec<LeafNodeIndex> = Vec::new();
         for member in group.members() {
-            let credential = BasicCredential::try_from(member.credential.clone())
-                .map_err(|_| MlsError::OpenMls(format!("Invalid credential for member {}", member.index)))?;
+            let credential =
+                BasicCredential::try_from(member.credential.clone()).map_err(|_| {
+                    MlsError::OpenMls(format!("Invalid credential for member {}", member.index))
+                })?;
             let identity = credential.identity().to_vec();
-            if user_ids.iter().any(|uid| uid.as_bytes() == identity.as_slice()) {
+            if user_ids
+                .iter()
+                .any(|uid| uid.as_bytes() == identity.as_slice())
+            {
                 leaf_indices.push(member.index);
             }
         }
@@ -364,8 +369,10 @@ impl MlsManager {
 
         let mut leaf_indices: Vec<LeafNodeIndex> = Vec::new();
         for member in group.members() {
-            let credential = BasicCredential::try_from(member.credential.clone())
-                .map_err(|_| MlsError::OpenMls(format!("Invalid credential for member {}", member.index)))?;
+            let credential =
+                BasicCredential::try_from(member.credential.clone()).map_err(|_| {
+                    MlsError::OpenMls(format!("Invalid credential for member {}", member.index))
+                })?;
             let identity = credential.identity().to_vec();
             if device_identities
                 .iter()
@@ -645,7 +652,9 @@ impl MlsManager {
             log::warn!(
                 "Gap détecté : msg_epoch={} > group_epoch={} pour group={}. \
                  Mise en attente et déclenchement de la resync.",
-                msg_epoch, group_epoch, group_id
+                msg_epoch,
+                group_epoch,
+                group_id
             );
             return Err(MlsError::OpenMls(format!(
                 "Process error: epoch gap [msg_epoch={}, group_epoch={}]",
