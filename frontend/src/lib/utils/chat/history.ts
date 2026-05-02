@@ -377,6 +377,14 @@ export async function replayConversationHistory(params: {
         }
       } catch (err) {
         const errStr = String(err);
+        if (errStr.includes('GAP_QUEUED:')) {
+          // The ratchet is behind. Trigger async recovery and abort this history
+          // batch — it will be replayed on the next loadHistory call after the
+          // ratchet has caught up via fetchMissingMessages.
+          console.warn(`[HISTORY] GAP détecté sur groupe=${id} — déclenchement recovery`);
+          void mlsService.fetchMissingMessages(id);
+          break;
+        }
         if (
           errStr.includes('CannotDecryptOwnMessage') ||
           errStr.includes('WrongEpoch') ||

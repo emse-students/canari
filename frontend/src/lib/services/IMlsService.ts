@@ -72,6 +72,20 @@ export interface IMlsService {
   /** Fetches messages queued on the delivery service that were not yet delivered
    * (e.g. during a disconnect). Should be called after every connect/reconnect. */
   fetchPendingMessages(): Promise<void>;
+  /**
+   * Fetches missing messages from server history and processes them through OpenMLS
+   * to catch up the ratchet after a gap. Retries on network failure, then re-polls
+   * the delivery queue so the unACK'd triggering message is retried.
+   * If the server has no history, fires the onSyncNeeded callback for device-to-device relay.
+   */
+  fetchMissingMessages(groupId: string): Promise<void>;
+  /**
+   * Register a callback invoked when server history is empty during gap recovery.
+   * `attempt` is the number of consecutive failed recovery attempts for this group.
+   * - attempt === 1 → try peer relay (sync_request)
+   * - attempt >= 2 → server + peers both failed; escalate to forgetGroup + reinvite
+   */
+  onSyncNeeded(callback: (groupId: string, attempt: number) => void): void;
 
   // Group management
   getLocalGroups(): string[];

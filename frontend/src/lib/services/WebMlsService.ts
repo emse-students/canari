@@ -490,6 +490,12 @@ export class WebMlsService implements IMlsService {
     this.groupResetCallback = callback;
   }
 
+  // WebMlsService runs in the browser (WASM) and has direct access to the
+  // server history via fetchHistory(). Gap recovery is handled inline by
+  // processQueue / processIncomingMessage. These two methods are no-ops here.
+  async fetchMissingMessages(_groupId: string): Promise<void> {}
+  onSyncNeeded(_callback: (groupId: string, attempt: number) => void): void {}
+
   sendDisconnect(): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       try {

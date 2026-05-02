@@ -1,4 +1,3 @@
-import os
 import tkinter as tk
 from tkinter import ttk, scrolledtext
 import subprocess
@@ -11,7 +10,7 @@ from typing import Optional
 
 # === CONFIGURATION ===
 PROJECT_DIR = r"D:\Documents\Programmation\EMSE\Canari\frontend"
-APK_PATH = r"src-tauri\gen\android\app\build\outputs\apk\universal\release\app-universal-release.apk"
+APK_PATH = r"src-tauri\gen\android\app\build\outputs\apk\universal\debug\app-universal-debug.apk"
 PACKAGE_NAME = "fr.emse.canari"
 ACTIVITY_NAME = f"{PACKAGE_NAME}/.MainActivity"
 
@@ -254,9 +253,9 @@ class TauriManagerApp:
             # Puis compile (--target arm64 uniquement : plus rapide + évite les bugs Gradle 9.1 universal)
             self.log("Système", "--- DÉMARRAGE DE LA COMPILATION ---")
             self.execute_command(
-                "bun tauri android build --target aarch64",
+                "bun tauri android build --target aarch64 --debug",
                 "Système",
-                "Compilation terminée avec succès."
+                "Compilation terminée avec succès (Mode DEBUG)."
             )
 
         threading.Thread(target=build_task, daemon=True).start()
@@ -321,13 +320,13 @@ class TauriManagerApp:
         # ActivityTaskManager:I→ gestion des tâches et back-stack (deep links)
         cmd = [
             'adb', '-s', device_id, 'logcat',
-            '*:S',
-            'Tauri/Console:V',
-            'AndroidRuntime:W',
-            'DEBUG:I',
-            'CanariRust:I',
-            'ActivityManager:I',
-            'ActivityTaskManager:I',
+            '*:S',                      # Silence total par défaut
+            'CanariRust:D',             # <-- Remis sur D (Debug) pour voir le moteur OpenMLS !
+            'fr.emse.canari:D',         # Les logs émis par le plugin log de Tauri
+            'chromium:I',               # Les console.log() JS si le plugin Tauri les rate
+            'Tauri/Console:V',          # Les erreurs Tauri internes
+            'AndroidRuntime:E',         # Les crashs (Panic/Exceptions)
+            'System.err:W',
         ]
         self.log("Système", f"Démarrage Logcat pour {device_name}: {' '.join(cmd)}")
 

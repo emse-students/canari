@@ -64,6 +64,8 @@ export class TauriMlsService implements IMlsService {
   // Callback déclenché quand le serveur signale qu'un groupe est mort.
   // Même pattern que welcome_request/reinvite_request : signal hors-bande MLS.
   private groupResetCallback: ((groupId: string, reason: string) => void) | null = null;
+  // Voir onSyncNeeded — passe aussi le numéro de tentative pour l'escalade reinvite.
+  private syncNeededCallback: ((groupId: string, attempt: number) => void) | null = null;
   private baseUrl: string;
   private historyUrl: string;
   private userId: string = 'unknown';
@@ -99,6 +101,8 @@ export class TauriMlsService implements IMlsService {
   // Dernier ID de stream Redis connu par groupe (format "timestamp-seq").
   // Utilisé pour GET /api/history/{groupId}?after={id} lors du gap fetching.
   private _lastHistoryId = new Map<string, string>();
+  // Nombre de tentatives de gap recovery par groupe (réinitialisé après succès).
+  private _gapAttempts = new Map<string, number>();
 
   constructor() {
     // Device ID is initialized per-user in init() — see WebMlsService for rationale.
@@ -577,9 +581,14 @@ export class TauriMlsService implements IMlsService {
         // recevoir_message_bytes a déjà persisté le message dans SQLite (Rust/sqlx)
         // et retourné "GAP_QUEUED:<groupId>". On déclenche juste le fetch d'historique.
         if (groupId && !msg.isWelcome && errStr.includes('GAP_QUEUED:')) {
-          console.warn(`[MLS][GAP] Gap confirmé par Rust pour groupe=${groupId} — fetch history`);
+          const attempt = (this._gapAttempts.get(groupId) ?? 0) + 1;
+          this._gapAttempts.set(groupId, attempt);
+          console.warn(
+            `[MLS][GAP] Gap confirmé par Rust pour groupe=${groupId} (tentative ${attempt}) — fetch history`
+          );
+          // Attendre la fin du recovery avant de reprendre la queue (ordre strict).
           // Ne pas ACK : le message reste en file serveur jusqu'au retraitement réussi.
-          void this.fetchMissingMessages(groupId);
+          await this.fetchMissingMessages(groupId);
         } else {
           // Erreur non récupérable (Welcome raté, epoch divergée…) → ACK pour éviter la boucle.
           if (msg.queuedMessageId) ackIds.push(msg.queuedMessageId);
@@ -605,45 +614,82 @@ export class TauriMlsService implements IMlsService {
   // ── Chantier 2 : fetch de l'historique pour combler un gap ───────────────
 
   /**
-   * Délègue entièrement le fetch + mise en file à la commande Rust
-   * fetch_and_queue_missing_messages (reqwest → SQLite is_ready=0), puis
-   * déclenche le traitement séquentiel atomique via process_pending_mls_messages.
-   * Le token d'auth est passé explicitement car Rust ne le stocke pas en mémoire.
+   * Fetch server history to fill a detected gap, then replay pending messages
+   * through OpenMLS in strict chronological order.
+   *
+   * Retry policy: up to 3 attempts with exponential backoff (1 s, 2 s) on
+   * network failure so a momentary disconnect doesn't leave the gap open.
+   *
+   * After replay, re-polls the delivery queue so the unACK'd message that
+   * triggered the gap is retried now that the ratchet is caught up.
+   *
+   * If the server had nothing to provide (history empty or expired), fires
+   * syncNeededCallback so connection.ts can ask peers to relay their cache.
    */
   async fetchMissingMessages(groupId: string): Promise<void> {
-    try {
-      const after = this._lastHistoryId.get(groupId) ?? null;
-      const authToken = await getToken();
+    const MAX_RETRIES = 3;
+    let lastId = '';
 
-      // Rust fetche l'historique et insère chaque message dans SQLite (is_ready=0).
-      const lastId = await invoke<string>('fetch_and_queue_missing_messages', {
-        groupId,
-        afterStreamId: after,
-        authToken,
-        historyBaseUrl: this.historyUrl,
-      }).catch((e) => {
-        console.error(`[MLS][GAP] fetch_and_queue_missing_messages failed:`, e);
-        return '';
-      });
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      try {
+        const after = this._lastHistoryId.get(groupId) ?? null;
+        const authToken = await getToken();
+        lastId = await invoke<string>('fetch_and_queue_missing_messages', {
+          groupId,
+          afterStreamId: after,
+          authToken,
+          historyBaseUrl: this.historyUrl,
+        });
+        break; // success — exit retry loop
+      } catch (e) {
+        if (attempt < MAX_RETRIES - 1) {
+          const delayMs = Math.pow(2, attempt) * 1000; // 1 s, 2 s
+          console.warn(
+            `[MLS][GAP] fetch_and_queue_missing_messages failed (tentative ${attempt + 1}/${MAX_RETRIES}), retry dans ${delayMs}ms:`,
+            e
+          );
+          await new Promise((r) => setTimeout(r, delayMs));
+        } else {
+          console.error(
+            `[MLS][GAP] fetch_and_queue_missing_messages échoué après ${MAX_RETRIES} tentatives:`,
+            e
+          );
+        }
+      }
+    }
 
-      if (lastId) this._lastHistoryId.set(groupId, lastId);
+    if (lastId) this._lastHistoryId.set(groupId, lastId);
 
-      // Chantier 3 : traitement séquentiel atomique depuis la file SQLite.
-      await this.processPendingMessages(groupId);
-    } catch (e) {
-      console.error(`[MLS][GAP] fetchMissingMessages error pour groupe=${groupId}:`, e);
+    const processed = await this.processPendingMessages(groupId);
+
+    // Re-poll the delivery queue: the message that triggered the gap was not ACK'd
+    // and is still waiting on the server. Now that the ratchet is caught up it can
+    // be decrypted successfully.
+    await this.fetchPendingMessages();
+
+    // If the server had nothing (history empty or already expired), escalate.
+    // attempt=1 → ask peers to relay; attempt≥2 → server+peers both failed, reinvite.
+    if (processed === 0) {
+      const attempt = this._gapAttempts.get(groupId) ?? 1;
+      console.warn(
+        `[MLS][GAP] Historique serveur vide pour groupe=${groupId} (tentative ${attempt})`
+      );
+      this.syncNeededCallback?.(groupId, attempt);
+    } else {
+      // Recovery succeeded — reset attempt counter.
+      this._gapAttempts.delete(groupId);
     }
   }
 
-  // ── Chantier 3 : retraitement séquentiel via commande Rust ───────────────
+  // ── Retraitement séquentiel via commande Rust ─────────────────────────────
 
   /**
-   * Délègue le retraitement séquentiel des messages en attente à la commande Rust
-   * process_pending_mls_messages : lit SQLite, passe à OpenMLS dans l'ordre,
-   * sauvegarde l'état après chaque succès.
+   * Processes pending SQLite messages through OpenMLS in strict chronological
+   * order. Returns the number of messages successfully processed so callers can
+   * detect whether the server history was empty.
    */
-  async processPendingMessages(groupId: string): Promise<void> {
-    if (!this._pin) return;
+  async processPendingMessages(groupId: string): Promise<number> {
+    if (!this._pin) return 0;
     const processed = await invoke<number>('process_pending_mls_messages', {
       groupId,
       pin: this._pin,
@@ -652,6 +698,11 @@ export class TauriMlsService implements IMlsService {
       return 0;
     });
     console.log(`[MLS][PENDING] ${processed} message(s) traité(s) pour groupe=${groupId}`);
+    return processed;
+  }
+
+  onSyncNeeded(callback: (groupId: string, attempt: number) => void): void {
+    this.syncNeededCallback = callback;
   }
 
   onDisconnect(callback: () => void) {

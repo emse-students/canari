@@ -4,7 +4,7 @@ import type { ChatMessage, Conversation } from '$lib/types';
 import { saveMlsState } from '$lib/utils/hex';
 import type { SvelteMap } from 'svelte/reactivity';
 import type { MessageReaction } from '$lib/types';
-import { decodeAppMessage, MediaKind } from '$lib/proto/codec';
+import { decodeAppMessage, encodeAppMessage, mkSystem, MediaKind } from '$lib/proto/codec';
 import { serializeEnvelope, mkTextEnvelope, mkMediaEnvelope } from '$lib/envelope';
 import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
 import { ChannelService } from '$lib/services/ChannelService';
@@ -930,6 +930,71 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                 }
                 return true;
               }
+              // ── Relai peer-to-peer : un device en retard demande les messages manquants ──
+              //
+              // Répondre uniquement si le demandeur n'est pas nous-même.
+              // On renvoie jusqu'à 50 messages text/reply après lastTimestamp,
+              // encapsulés dans un unique sync_reply pour limiter le bruit réseau.
+              // Les messages media sont omis (clés CEK non stockées localement).
+              if (
+                event === 'sync_request' &&
+                data.requesterDeviceId &&
+                data.requesterDeviceId !== mlsService.getDeviceId()
+              ) {
+                const lastTs: number = data.lastTimestamp ?? 0;
+                const c = conversations.get(convoKey);
+                if (c) {
+                  const toRelay = c.messages
+                    .filter((m) => m.timestamp.getTime() > lastTs && !m.isSystem)
+                    .slice(-50) // cap à 50 pour éviter un message géant
+                    .map((m) => ({
+                      id: m.id,
+                      senderId: m.senderId,
+                      content: m.content,
+                      timestamp: m.timestamp.getTime(),
+                    }));
+
+                  if (toRelay.length > 0) {
+                    log(
+                      `[SYNC] sync_request de ${data.requesterDeviceId} — relai de ${toRelay.length} message(s) pour groupe=${convoKey}`
+                    );
+                    const replyPayload = encodeAppMessage(
+                      mkSystem('sync_reply', JSON.stringify({ messages: toRelay }))
+                    );
+                    mlsService.sendMessage(convoKey, replyPayload).catch(() => {});
+                  }
+                }
+                return true;
+              }
+
+              // ── Réception d'un relai peer-to-peer ──────────────────────────────────────
+              //
+              // Les messages sync_reply contiennent les `content` (enveloppes déjà
+              // sérialisées) d'un pair qui les a déchiffrés. On les injecte directement
+              // dans addMessageToChat : le dedup par messageId absorbe les doublons.
+              if (event === 'sync_reply' && Array.isArray(data.messages)) {
+                log(
+                  `[SYNC] sync_reply reçu — ${data.messages.length} message(s) à injecter pour groupe=${convoKey}`
+                );
+                const sorted = [...data.messages].sort(
+                  (a: any, b: any) => a.timestamp - b.timestamp
+                );
+                for (const m of sorted) {
+                  if (m.id && m.senderId && m.content) {
+                    await addMessageToChat(
+                      String(m.senderId).toLowerCase(),
+                      String(m.content),
+                      convoKey,
+                      undefined,
+                      false,
+                      String(m.id),
+                      new Date(m.timestamp)
+                    );
+                  }
+                }
+                return true;
+              }
+
               // Unknown system event — ignore silently
               return true;
             }
@@ -963,6 +1028,13 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           return true;
         } catch (_e) {
           const errMsg = String(_e);
+          // Re-throw GAP errors so TauriMlsService.processQueue can trigger the catch-up mechanism.
+          // The catch block there (TauriMlsService.ts) detects GAP_QUEUED:, skips the ACK, and
+          // calls fetchMissingMessages. If we swallow it here and return false, processQueue
+          // still ACKs the message (line 548) and the gap is never recovered.
+          if (errMsg.includes('GAP_QUEUED:')) {
+            throw _e;
+          }
           if (errMsg.includes('CannotDecryptOwnMessage')) {
             return true; // ACK it so it isn't resent
           }
@@ -1394,6 +1466,47 @@ export async function initializeConnection(deps: ConnectionDeps): Promise<void> 
         `[SIBLING] reinvite_request de ${senderDeviceId} (groupe ${groupId}) → traitement invitations`
       );
       processDeviceInvitationsLocally().catch(() => {});
+    });
+
+    // When server history is empty during gap recovery:
+    //   attempt=1 → ask online peers to relay their cached messages (sync_request)
+    //   attempt≥2 → server + peers both failed to fill the gap; the MLS tree is
+    //               irrecoverably diverged → forgetGroup + sendReinviteRequest so
+    //               another device re-adds us at the current epoch.
+    mlsService.onSyncNeeded((groupId, attempt) => {
+      const convo = conversations.get(groupId);
+      if (!convo?.isReady) return;
+
+      if (attempt >= 2) {
+        log(
+          `[SYNC] Gap irrécupérable sur groupe=${groupId} après ${attempt} tentatives — oubli MLS + reinvite_request`
+        );
+        mlsService.forgetGroup(groupId);
+        conversations.set(groupId, { ...convo, isReady: false });
+        if (storage) saveConversation(groupId).catch(() => {});
+        mlsService.sendReinviteRequest(groupId).catch((e) => {
+          log(`[SYNC] sendReinviteRequest échoué pour groupe=${groupId}: ${e}`);
+        });
+        return;
+      }
+
+      // First attempt: try peer relay before giving up.
+      const lastTs =
+        convo.messages.length > 0
+          ? Math.max(...convo.messages.map((m) => m.timestamp.getTime()))
+          : 0;
+      log(
+        `[SYNC] Relai peer-to-peer pour groupe=${groupId} (lastTs=${lastTs}, tentative ${attempt})`
+      );
+      const payload = encodeAppMessage(
+        mkSystem(
+          'sync_request',
+          JSON.stringify({ requesterDeviceId: mlsService.getDeviceId(), lastTimestamp: lastTs })
+        )
+      );
+      mlsService.sendMessage(groupId, payload).catch((e) => {
+        log(`[SYNC] Impossible d'envoyer sync_request pour groupe=${groupId}: ${e}`);
+      });
     });
     // onWelcomeRequest is registered in useChatSession.login() with the targeted
     // handleWelcomeRequest handler. Do NOT register it here — it would overwrite
