@@ -846,8 +846,8 @@ pub fn run() {
                 sqlx::sqlite::SqlitePoolOptions::new()
                     .max_connections(4)
                     .connect_with(
-                        sqlx::sqlite::SqliteConnectOptions::from_path(&db_path)
-                            .map_err(|e| e.to_string())?
+                        sqlx::sqlite::SqliteConnectOptions::new()
+                            .filename(&db_path)
                             .create_if_missing(true)
                             .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal),
                     )
