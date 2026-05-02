@@ -28,6 +28,7 @@
     currentUserId: string;
     authToken?: string;
     currentUserEmail?: string;
+    onRefresh?: () => void;
   }
 
   const REACTIONS = [
@@ -40,7 +41,7 @@
     { type: 'Marteau', emoji: '🔨', icon: 'hammer' },
   ];
 
-  let { post: postProp, currentUserId, authToken = '', currentUserEmail }: Props = $props();
+  let { post: postProp, currentUserId, authToken = '', currentUserEmail, onRefresh }: Props = $props();
 
   // Local mutable copy — updated directly after interactions to avoid a full list reload.
   // Re-syncs from postProp whenever the parent explicitly refreshes.
