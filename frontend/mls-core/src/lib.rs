@@ -272,6 +272,19 @@ impl MlsManager {
         Ok(group.epoch().as_u64())
     }
 
+    /// Parse the MLS epoch from raw message bytes without decrypting anything.
+    /// Both PrivateMessage and PublicMessage carry the epoch in cleartext in their header.
+    /// Returns None if the bytes cannot be parsed as a valid MLS message.
+    pub fn parse_message_epoch(message_bytes: &[u8]) -> Option<u64> {
+        let msg_in = MlsMessageIn::tls_deserialize(&mut &message_bytes[..]).ok()?;
+        let protocol_message: ProtocolMessage = match msg_in.extract() {
+            MlsMessageBodyIn::PublicMessage(m) => m.into(),
+            MlsMessageBodyIn::PrivateMessage(m) => m.into(),
+            _ => return None,
+        };
+        Some(protocol_message.epoch().as_u64())
+    }
+
     /// Oublie l'état MLS local d'un groupe sans toucher au stockage de clés.
     /// `min_epoch` : epoch minimale qu'un Welcome doit atteindre pour être accepté.
     /// Passer 0 pour ne pas imposer de minimum (aucune restriction).
@@ -635,6 +648,21 @@ impl MlsManager {
         // before decryption and invaluable for diagnosing epoch-mismatch errors.
         let msg_epoch = protocol_message.epoch();
         let group_epoch = group.epoch();
+
+        // Epoch-gap fast-fail: a future epoch means we missed at least one commit.
+        // Returning early avoids consuming any ratchet key material needlessly and
+        // lets the caller queue the message for gap recovery.
+        if msg_epoch.as_u64() > group_epoch.as_u64() {
+            log::warn!(
+                "Gap détecté : msg_epoch={} > group_epoch={} pour group={}. \
+                 Mise en attente et déclenchement de la resync.",
+                msg_epoch, group_epoch, group_id
+            );
+            return Err(MlsError::OpenMls(format!(
+                "Process error: epoch gap [msg_epoch={}, group_epoch={}]",
+                msg_epoch, group_epoch
+            )));
+        }
 
         let processed_message = match group.process_message(&self.provider, protocol_message) {
             Ok(pm) => pm,

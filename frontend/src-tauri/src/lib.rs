@@ -1,4 +1,5 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use mls_core::MlsManager;
 use std::sync::{Arc, Mutex};
 
@@ -20,6 +21,16 @@ struct AppState {
 /// Pool SQLite dédié aux messages MLS en attente (gap du Sender Ratchet).
 /// Séparé de tauri-plugin-sql (côté JS) pour rester accessible depuis les commandes Rust.
 struct PendingDb(Arc<sqlx::SqlitePool>);
+
+/// Client HTTP réutilisable (pool de connexions) pour le gap fetching côté Rust.
+struct HttpClient(reqwest::Client);
+
+/// Entrée de l'API d'historique : Redis Stream ID + payload MLS encodé en base64.
+#[derive(serde::Deserialize)]
+struct HistoryEntry {
+    id: Option<String>,
+    proto: Option<String>,
+}
 
 // --- COMMANDS ---
 
@@ -287,6 +298,51 @@ async fn recevoir_message_bytes(
     state: tauri::State<'_, AppState>,
     pending_db: tauri::State<'_, PendingDb>,
 ) -> Result<Option<Vec<u8>>, String> {
+    // Chantier 1 : détection proactive de l'epoch gap AVANT tout déchiffrement.
+    // L'epoch est en clair dans l'en-tête MLS → aucune clé de ratchet consommée.
+    // Si msg_epoch > group_epoch on met directement en file sans tenter le déchiffrement.
+    {
+        let lock = state
+            .mls_manager
+            .lock()
+            .map_err(|_| "Failed to lock state")?;
+        if let Some(manager) = lock.as_ref() {
+            if let (Some(msg_ep), Ok(group_ep)) = (
+                MlsManager::parse_message_epoch(&message_bytes),
+                manager.get_epoch(&group_id),
+            ) {
+                if msg_ep > group_ep {
+                    log::warn!(
+                        "[GAP] Epoch gap détecté AVANT déchiffrement : \
+                         msg_epoch={} > group_epoch={} pour group={}. \
+                         Mise en attente et déclenchement de la resync.",
+                        msg_ep, group_ep, group_id
+                    );
+                    let ts = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_nanos() as i64;
+                    let id = format!("{}-epoch-{}", group_id, ts);
+                    sqlx::query(
+                        "INSERT OR IGNORE INTO pending_mls_messages \
+                         (id, group_id, ciphertext, created_at, is_ready) VALUES (?, ?, ?, ?, 0)",
+                    )
+                    .bind(&id)
+                    .bind(&group_id)
+                    .bind(message_bytes.as_slice())
+                    .bind(ts)
+                    .execute(&*pending_db.0)
+                    .await
+                    .unwrap_or_else(|db_e| {
+                        log::warn!("[GAP] DB insert (epoch pre-check) failed: {}", db_e);
+                        Default::default()
+                    });
+                    return Err(format!("GAP_QUEUED:{}", group_id));
+                }
+            }
+        }
+    }
+
     // Acquiert + libère le Mutex AVANT toute opération async pour éviter les
     // deadlocks avec std::sync::Mutex (non-Send across await points).
     let result = {
@@ -314,11 +370,11 @@ async fn recevoir_message_bytes(
                 let ts = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
-                    .as_millis() as i64;
-                let id = format!("{}-{}", group_id, ts);
+                    .as_nanos() as i64;
+                let id = format!("{}-gen-{}", group_id, ts);
                 sqlx::query(
                     "INSERT OR IGNORE INTO pending_mls_messages \
-                     (id, group_id, ciphertext, created_at) VALUES (?, ?, ?, ?)",
+                     (id, group_id, ciphertext, created_at, is_ready) VALUES (?, ?, ?, ?, 0)",
                 )
                 .bind(&id)
                 .bind(&group_id)
@@ -340,7 +396,8 @@ async fn recevoir_message_bytes(
 
 /// Traite une liste de messages MLS récupérés depuis l'historique serveur (gap fetching).
 /// Les messages sont passés dans l'ordre chronologique strict.
-/// Après chaque succès, l'état MLS est chiffré et écrit dans mls.bin.
+/// Chantier 3 : après chaque succès, l'état MLS est sauvegardé dans mls_state_checkpoint
+/// (SQLite) ET dans mls.bin pour garantir la cohérence en cas de crash.
 /// Retourne le nombre de messages traités avec succès.
 #[tauri::command]
 async fn process_gap_messages(
@@ -348,6 +405,7 @@ async fn process_gap_messages(
     messages: Vec<Vec<u8>>,
     pin: String,
     state: tauri::State<'_, AppState>,
+    pending_db: tauri::State<'_, PendingDb>,
     app: tauri::AppHandle,
 ) -> Result<usize, String> {
     let mut processed = 0usize;
@@ -362,7 +420,6 @@ async fn process_gap_messages(
         };
         match result {
             Ok(_) => {
-                // Persister l'état MLS immédiatement après chaque message réussi.
                 let enc = {
                     let lock = state
                         .mls_manager
@@ -371,6 +428,23 @@ async fn process_gap_messages(
                     let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
                     manager.save_encrypted(&pin).map_err(|e| e.to_string())?
                 };
+                let ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as i64;
+                // Sauvegarder dans le checkpoint SQLite pour crash-safety.
+                sqlx::query(
+                    "INSERT OR REPLACE INTO mls_state_checkpoint (id, state, saved_at) \
+                     VALUES (1, ?, ?)",
+                )
+                .bind(enc.as_slice())
+                .bind(ts)
+                .execute(&*pending_db.0)
+                .await
+                .unwrap_or_else(|e| {
+                    log::warn!("[GAP] checkpoint save failed: {}", e);
+                    Default::default()
+                });
                 let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
                 std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
                 std::fs::write(data_dir.join("mls.bin"), &enc).map_err(|e| e.to_string())?;
@@ -396,10 +470,106 @@ async fn process_gap_messages(
     Ok(processed)
 }
 
-/// Lit les messages en attente (is_ready = 0) depuis SQLite pour `group_id`,
-/// les passe à OpenMLS dans l'ordre chronologique strict, et après chaque succès :
-///   1. Chiffre et écrit mls.bin (état MLS à jour)
-///   2. Supprime le message de la table pending
+/// Chantier 2 : récupère les messages manquants depuis l'historique serveur (Redis Stream)
+/// et les insère dans SQLite avec is_ready = 0 pour traitement séquentiel ultérieur.
+/// Le token auth est passé depuis TypeScript (seul détenteur du token en mémoire).
+/// Retourne le dernier Redis Stream ID vu (pour le prochain appel with `after`).
+#[tauri::command]
+async fn fetch_and_queue_missing_messages(
+    group_id: String,
+    after_stream_id: Option<String>,
+    auth_token: String,
+    history_base_url: String,
+    pending_db: tauri::State<'_, PendingDb>,
+    http_client: tauri::State<'_, HttpClient>,
+) -> Result<String, String> {
+    let base = history_base_url.trim_end_matches('/');
+    let url = format!("{}/api/history/{}", base, group_id);
+
+    let mut req = http_client
+        .0
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", auth_token));
+    if let Some(ref after) = after_stream_id {
+        req = req.query(&[("after", after.as_str())]);
+    }
+
+    let resp = req.send().await.map_err(|e| format!("HTTP error: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("History fetch failed: {}", resp.status()));
+    }
+
+    let entries: Vec<HistoryEntry> = resp.json().await.map_err(|e| e.to_string())?;
+    log::info!(
+        "[GAP] fetch_and_queue: {} entrée(s) depuis le serveur pour group={}",
+        entries.len(),
+        group_id
+    );
+
+    let mut last_id = after_stream_id.unwrap_or_default();
+    let ts_base = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+
+    let mut queued = 0usize;
+    for (i, entry) in entries.iter().enumerate() {
+        let stream_id = entry.id.as_deref().unwrap_or("").to_string();
+        if !stream_id.is_empty() {
+            last_id = stream_id.clone();
+        }
+
+        let proto_b64 = match entry.proto.as_deref() {
+            Some(s) if !s.is_empty() => s,
+            _ => continue,
+        };
+
+        let ciphertext = match STANDARD.decode(proto_b64) {
+            Ok(b) => b,
+            Err(e) => {
+                log::warn!("[GAP] base64 decode failed for entry {}: {}", i, e);
+                continue;
+            }
+        };
+
+        let row_id = if !stream_id.is_empty() {
+            format!("{}-{}", group_id, stream_id)
+        } else {
+            format!("{}-fetch-{}-{}", group_id, ts_base, i)
+        };
+
+        sqlx::query(
+            "INSERT OR IGNORE INTO pending_mls_messages \
+             (id, group_id, ciphertext, created_at, is_ready) VALUES (?, ?, ?, ?, 0)",
+        )
+        .bind(&row_id)
+        .bind(&group_id)
+        .bind(ciphertext.as_slice())
+        .bind(ts_base + i as i64)
+        .execute(&*pending_db.0)
+        .await
+        .unwrap_or_else(|db_e| {
+            log::warn!("[GAP] DB insert failed for id={}: {}", row_id, db_e);
+            Default::default()
+        });
+        queued += 1;
+    }
+
+    log::warn!(
+        "[GAP] {} message(s) mis en file SQLite (is_ready=0) pour group={}",
+        queued,
+        group_id
+    );
+    Ok(last_id)
+}
+
+/// Chantier 3 : lit les messages en attente (is_ready = 0) depuis SQLite pour `group_id`,
+/// les passe à OpenMLS dans l'ordre chronologique strict.
+/// CRITIQUE : après chaque succès, dans UNE SEULE TRANSACTION SQLite :
+///   1. Marque is_ready = 1 (le message est traité)
+///   2. Sauvegarde l'état MLS chiffré dans mls_state_checkpoint
+/// Puis écrit mls.bin hors transaction (copie best-effort).
+/// Cette atomicité garantit qu'en cas de crash, le ratchet et la DB restent cohérents.
 /// Retourne le nombre de messages traités avec succès.
 #[tauri::command]
 async fn process_pending_mls_messages(
@@ -409,9 +579,10 @@ async fn process_pending_mls_messages(
     pending_db: tauri::State<'_, PendingDb>,
     app: tauri::AppHandle,
 ) -> Result<usize, String> {
+    // Filtre is_ready = 0 : ignore les messages déjà traités lors d'une exécution précédente.
     let rows: Vec<(String, Vec<u8>)> = sqlx::query_as(
         "SELECT id, ciphertext FROM pending_mls_messages \
-         WHERE group_id = ? ORDER BY created_at ASC",
+         WHERE group_id = ? AND is_ready = 0 ORDER BY created_at ASC",
     )
     .bind(&group_id)
     .fetch_all(&*pending_db.0)
@@ -419,7 +590,7 @@ async fn process_pending_mls_messages(
     .map_err(|e| e.to_string())?;
 
     log::info!(
-        "[PENDING] {} message(s) en attente pour group={}",
+        "[PENDING] {} message(s) en attente (is_ready=0) pour group={}",
         rows.len(),
         group_id
     );
@@ -444,17 +615,40 @@ async fn process_pending_mls_messages(
                     let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
                     manager.save_encrypted(&pin).map_err(|e| e.to_string())?
                 };
+                let ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as i64;
+
+                // Transaction atomique : is_ready=1 + checkpoint état MLS dans la même TX.
+                // Si le process crashe entre l'avancement du ratchet et cette TX, la TX
+                // n'a pas eu lieu → is_ready=0 → retry au prochain lancement → OK car
+                // mls.bin n'a pas encore été écrit (état ancien → déchiffrement correct).
+                // Si la TX réussit mais mls.bin pas encore écrit → crash → mls.bin ancien,
+                // is_ready=1 → le message est sauté → mls_state_checkpoint fournit l'état à jour.
+                let mut tx = pending_db.0.begin().await.map_err(|e| e.to_string())?;
+                sqlx::query(
+                    "UPDATE pending_mls_messages SET is_ready = 1 WHERE id = ?",
+                )
+                .bind(id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| e.to_string())?;
+                sqlx::query(
+                    "INSERT OR REPLACE INTO mls_state_checkpoint (id, state, saved_at) \
+                     VALUES (1, ?, ?)",
+                )
+                .bind(enc.as_slice())
+                .bind(ts)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| e.to_string())?;
+                tx.commit().await.map_err(|e| e.to_string())?;
+
+                // Copie best-effort dans mls.bin (hors transaction).
                 let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
                 std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
                 std::fs::write(data_dir.join("mls.bin"), &enc).map_err(|e| e.to_string())?;
-                sqlx::query("DELETE FROM pending_mls_messages WHERE id = ?")
-                    .bind(id)
-                    .execute(&*pending_db.0)
-                    .await
-                    .unwrap_or_else(|db_e| {
-                        log::warn!("[PENDING] DELETE failed for id={}: {}", id, db_e);
-                        Default::default()
-                    });
                 processed += 1;
             }
             Err(e) => {
@@ -468,12 +662,26 @@ async fn process_pending_mls_messages(
             }
         }
     }
+
     log::info!(
         "[PENDING] {}/{} messages traités pour group={}",
         processed,
         rows.len(),
         group_id
     );
+
+    // Nettoyage des messages traités pour éviter la croissance illimitée de la table.
+    sqlx::query(
+        "DELETE FROM pending_mls_messages WHERE group_id = ? AND is_ready = 1",
+    )
+    .bind(&group_id)
+    .execute(&*pending_db.0)
+    .await
+    .unwrap_or_else(|e| {
+        log::warn!("[PENDING] Cleanup (is_ready=1) failed for group={}: {}", group_id, e);
+        Default::default()
+    });
+
     Ok(processed)
 }
 
@@ -829,6 +1037,12 @@ pub fn run() {
         .manage(AppState {
             mls_manager: Mutex::new(None),
         })
+        .manage(HttpClient(
+            reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(15))
+                .build()
+                .expect("Failed to build reqwest client"),
+        ))
         .setup(move |app| {
             // ── Pool SQLite pour les messages MLS en attente (gap recovery) ────────
             // Initialisé ici avec le chemin appData définitif.
@@ -849,13 +1063,16 @@ pub fn run() {
                     .map_err(|e| e.to_string())
             })
             .map_err(|e| format!("pending DB init: {e}"))?;
+
+            // Chantier 1/3 : table pending avec colonne is_ready + migration pour installs existantes.
             tauri::async_runtime::block_on(async {
                 sqlx::query(
                     "CREATE TABLE IF NOT EXISTS pending_mls_messages (\
                         id         TEXT    PRIMARY KEY,\
                         group_id   TEXT    NOT NULL,\
                         ciphertext BLOB    NOT NULL,\
-                        created_at INTEGER NOT NULL\
+                        created_at INTEGER NOT NULL,\
+                        is_ready   INTEGER NOT NULL DEFAULT 0\
                     )",
                 )
                 .execute(&pending_pool)
@@ -863,6 +1080,34 @@ pub fn run() {
                 .map_err(|e| e.to_string())
             })
             .map_err(|e| format!("pending DB schema: {e}"))?;
+            // Migration silencieuse : ajoute is_ready sur installs existantes (ignore si déjà présent).
+            tauri::async_runtime::block_on(async {
+                let _ = sqlx::query(
+                    "ALTER TABLE pending_mls_messages \
+                     ADD COLUMN is_ready INTEGER NOT NULL DEFAULT 0",
+                )
+                .execute(&pending_pool)
+                .await; // duplicate column → erreur ignorée volontairement
+                Ok::<(), String>(())
+            })
+            .map_err(|e: String| format!("pending DB migration: {e}"))?;
+
+            // Chantier 3 : table de checkpoint d'état MLS (singleton row id=1).
+            // Permet une sauvegarde atomique (même transaction que is_ready=1).
+            tauri::async_runtime::block_on(async {
+                sqlx::query(
+                    "CREATE TABLE IF NOT EXISTS mls_state_checkpoint (\
+                        id       INTEGER PRIMARY KEY CHECK (id = 1),\
+                        state    BLOB    NOT NULL,\
+                        saved_at INTEGER NOT NULL\
+                    )",
+                )
+                .execute(&pending_pool)
+                .await
+                .map_err(|e| e.to_string())
+            })
+            .map_err(|e| format!("pending DB checkpoint schema: {e}"))?;
+
             tauri::async_runtime::block_on(async {
                 sqlx::query(
                     "CREATE INDEX IF NOT EXISTS idx_pmm_group \
@@ -1032,6 +1277,7 @@ pub fn run() {
             store_push_secret,
             clear_app_data,
             process_gap_messages,
+            fetch_and_queue_missing_messages,
             process_pending_mls_messages
         ])
         .run(tauri::generate_context!())

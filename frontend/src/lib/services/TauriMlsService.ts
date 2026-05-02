@@ -605,55 +605,30 @@ export class TauriMlsService implements IMlsService {
   // ── Chantier 2 : fetch de l'historique pour combler un gap ───────────────
 
   /**
-   * Récupère les messages manquants depuis le Redis Stream pour `groupId`
-   * (TypeScript a le token d'auth, Rust n'y a pas accès).
-   * Délègue ensuite le déchiffrement séquentiel au Rust via process_gap_messages,
-   * puis traite les messages toujours en attente en SQLite via process_pending_mls_messages.
+   * Délègue entièrement le fetch + mise en file à la commande Rust
+   * fetch_and_queue_missing_messages (reqwest → SQLite is_ready=0), puis
+   * déclenche le traitement séquentiel atomique via process_pending_mls_messages.
+   * Le token d'auth est passé explicitement car Rust ne le stocke pas en mémoire.
    */
   async fetchMissingMessages(groupId: string): Promise<void> {
-    const after = this._lastHistoryId.get(groupId);
-    const url =
-      `${this.historyUrl}/api/history/${encodeURIComponent(groupId)}` +
-      (after ? `?after=${encodeURIComponent(after)}` : '');
-
     try {
-      const res = await fetch(url, { headers: await this.withAuthHeaders() });
-      if (!res.ok) {
-        console.warn(`[MLS][GAP] History fetch failed: ${res.status} for group=${groupId}`);
-        return;
-      }
+      const after = this._lastHistoryId.get(groupId) ?? null;
+      const authToken = await getToken();
 
-      const entries: Array<Record<string, string>> = await res.json();
-      console.log(`[MLS][GAP] History: ${entries.length} entrée(s) pour groupe=${groupId}`);
+      // Rust fetche l'historique et insère chaque message dans SQLite (is_ready=0).
+      const lastId = await invoke<string>('fetch_and_queue_missing_messages', {
+        groupId,
+        afterStreamId: after,
+        authToken,
+        historyBaseUrl: this.historyUrl,
+      }).catch((e) => {
+        console.error(`[MLS][GAP] fetch_and_queue_missing_messages failed:`, e);
+        return '';
+      });
 
-      // Convertir les entrées en tableaux d'octets pour Rust (Vec<Vec<u8>>).
-      const messages: number[][] = [];
-      for (const entry of entries) {
-        if (entry.id) this._lastHistoryId.set(groupId, entry.id);
-        const protoB64 = entry.proto;
-        if (!protoB64 || protoB64.length === 0) continue;
-        try {
-          messages.push(Array.from(Uint8Array.from(atob(protoB64), (c) => c.charCodeAt(0))));
-        } catch {
-          continue;
-        }
-      }
+      if (lastId) this._lastHistoryId.set(groupId, lastId);
 
-      if (messages.length > 0) {
-        // Chantier 3 : Rust traite les messages manquants dans l'ordre strict
-        // et sauvegarde l'état MLS après chaque succès.
-        const processed = await invoke<number>('process_gap_messages', {
-          groupId,
-          messages,
-          pin: this._pin,
-        }).catch((e) => {
-          console.error(`[MLS][GAP] process_gap_messages failed:`, e);
-          return 0;
-        });
-        console.log(`[MLS][GAP] process_gap_messages: ${processed}/${messages.length} traités`);
-      }
-
-      // Chantier 3 : traite les messages mis en attente dans la DB Rust (is_ready=0).
+      // Chantier 3 : traitement séquentiel atomique depuis la file SQLite.
       await this.processPendingMessages(groupId);
     } catch (e) {
       console.error(`[MLS][GAP] fetchMissingMessages error pour groupe=${groupId}:`, e);
