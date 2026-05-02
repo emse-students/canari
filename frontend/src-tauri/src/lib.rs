@@ -307,12 +307,15 @@ async fn recevoir_message_bytes(
             .lock()
             .map_err(|_| "Failed to lock state")?;
         match lock.as_ref() {
-            Some(manager) => match (
-                MlsManager::parse_message_epoch(&message_bytes),
-                manager.get_epoch(&group_id).ok(),
-            ) {
-                (Some(msg_ep), Some(group_ep)) if msg_ep > group_ep => Some((msg_ep, group_ep)),
-                _ => None,
+            Some(manager) => {
+                let group_epoch = match manager.get_epoch(&group_id) {
+                    Ok(epoch) => Some(epoch),
+                    Err(_) => None,
+                };
+                match (MlsManager::parse_message_epoch(&message_bytes), group_epoch) {
+                    (Some(msg_ep), Some(group_ep)) if msg_ep > group_ep => Some((msg_ep, group_ep)),
+                    _ => None,
+                }
             },
             None => None,
         }
@@ -330,7 +333,7 @@ async fn recevoir_message_bytes(
             .unwrap_or_default()
             .as_nanos() as i64;
         let id = format!("{}-epoch-{}", group_id, ts);
-        sqlx::query(
+        let insert_result = sqlx::query(
             "INSERT OR IGNORE INTO pending_mls_messages \
              (id, group_id, ciphertext, created_at, is_ready) VALUES (?, ?, ?, ?, 0)",
         )
@@ -339,11 +342,14 @@ async fn recevoir_message_bytes(
         .bind(message_bytes.as_slice())
         .bind(ts)
         .execute(&*pending_db.0)
-        .await
-        .unwrap_or_else(|db_e| {
-            log::warn!("[GAP] DB insert (epoch pre-check) failed: {}", db_e);
-            Default::default()
-        });
+        .await;
+        match insert_result {
+            Ok(_) => (),
+            Err(db_e) => {
+                log::error!("[GAP] DB insert (epoch pre-check) failed: {}", db_e);
+                return Err(format!("GAP_DB_INSERT_FAILED:{}:{}", group_id, db_e));
+            }
+        }
         return Err(format!("GAP_QUEUED:{}", group_id));
     }
 
@@ -376,7 +382,7 @@ async fn recevoir_message_bytes(
                     .unwrap_or_default()
                     .as_nanos() as i64;
                 let id = format!("{}-gen-{}", group_id, ts);
-                sqlx::query(
+                let insert_result = sqlx::query(
                     "INSERT OR IGNORE INTO pending_mls_messages \
                      (id, group_id, ciphertext, created_at, is_ready) VALUES (?, ?, ?, ?, 0)",
                 )
@@ -385,11 +391,14 @@ async fn recevoir_message_bytes(
                 .bind(message_bytes.as_slice())
                 .bind(ts)
                 .execute(&*pending_db.0)
-                .await
-                .unwrap_or_else(|db_e| {
-                    log::warn!("[GAP] DB store failed: {}", db_e);
-                    Default::default()
-                });
+                .await;
+                match insert_result {
+                    Ok(_) => (),
+                    Err(db_e) => {
+                        log::error!("[GAP] DB store failed: {}", db_e);
+                        return Err(format!("GAP_DB_INSERT_FAILED:{}:{}", group_id, db_e));
+                    }
+                }
                 return Err(format!("GAP_QUEUED:{}", group_id));
             }
 
@@ -436,19 +445,17 @@ async fn process_gap_messages(
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_millis() as i64;
-                // Sauvegarder dans le checkpoint SQLite pour crash-safety.
+                let mut tx = pending_db.0.begin().await.map_err(|e| e.to_string())?;
                 sqlx::query(
                     "INSERT OR REPLACE INTO mls_state_checkpoint (id, state, saved_at) \
                      VALUES (1, ?, ?)",
                 )
                 .bind(enc.as_slice())
                 .bind(ts)
-                .execute(&*pending_db.0)
+                .execute(&mut *tx)
                 .await
-                .unwrap_or_else(|e| {
-                    log::warn!("[GAP] checkpoint save failed: {}", e);
-                    Default::default()
-                });
+                .map_err(|e| e.to_string())?;
+                tx.commit().await.map_err(|e| e.to_string())?;
                 let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
                 std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
                 std::fs::write(data_dir.join("mls.bin"), &enc).map_err(|e| e.to_string())?;
@@ -542,7 +549,7 @@ async fn fetch_and_queue_missing_messages(
             format!("{}-fetch-{}-{}", group_id, ts_base, i)
         };
 
-        sqlx::query(
+        let insert_result = sqlx::query(
             "INSERT OR IGNORE INTO pending_mls_messages \
              (id, group_id, ciphertext, created_at, is_ready) VALUES (?, ?, ?, ?, 0)",
         )
@@ -551,11 +558,14 @@ async fn fetch_and_queue_missing_messages(
         .bind(ciphertext.as_slice())
         .bind(ts_base + i as i64)
         .execute(&*pending_db.0)
-        .await
-        .unwrap_or_else(|db_e| {
-            log::warn!("[GAP] DB insert failed for id={}: {}", row_id, db_e);
-            Default::default()
-        });
+        .await;
+        match insert_result {
+            Ok(_) => (),
+            Err(db_e) => {
+                log::error!("[GAP] DB insert failed for id={}: {}", row_id, db_e);
+                return Err(format!("GAP_DB_INSERT_FAILED:{}:{}", row_id, db_e));
+            }
+        }
         queued += 1;
     }
 

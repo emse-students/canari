@@ -629,46 +629,94 @@ export class TauriMlsService implements IMlsService {
   async fetchMissingMessages(groupId: string): Promise<void> {
     const MAX_RETRIES = 3;
     let lastId = '';
+    let pendingMessages: Uint8Array[] = [];
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
         const after = this._lastHistoryId.get(groupId) ?? null;
-        const authToken = await getToken();
-        lastId = await invoke<string>('fetch_and_queue_missing_messages', {
-          groupId,
-          afterStreamId: after,
-          authToken,
-          historyBaseUrl: this.historyUrl,
+        const url = new URL(`${this.historyUrl}/api/history/${encodeURIComponent(groupId)}`);
+        if (after) url.searchParams.set('after', after);
+
+        const res = await fetch(url.toString(), {
+          method: 'GET',
+          headers: await this.withAuthHeaders(),
         });
+
+        if (!res.ok) {
+          throw new Error(`History fetch failed: ${res.status}`);
+        }
+
+        const entries = (await res.json()) as Array<{
+          id?: string;
+          proto?: string;
+        }>;
+
+        const messageEntries: Array<{ id: string; ciphertext: Uint8Array }> = [];
+        for (const entry of entries) {
+          const streamId = entry.id?.trim() ?? '';
+          if (!entry.proto) {
+            continue;
+          }
+
+          try {
+            const ciphertext = Uint8Array.from(atob(entry.proto), (c) => c.charCodeAt(0));
+            if (ciphertext.length > 0) {
+              messageEntries.push({
+                id: streamId || `${messageEntries.length}`,
+                ciphertext,
+              });
+              if (streamId) {
+                lastId = streamId;
+              }
+            }
+          } catch (err) {
+            console.warn(`[MLS][GAP] history entry decode failed for group=${groupId}:`, err);
+          }
+        }
+
+        messageEntries.sort((a, b) =>
+          a.id.localeCompare(b.id, undefined, { numeric: true, sensitivity: 'base' })
+        );
+        pendingMessages = messageEntries.map((entry) => entry.ciphertext);
+
         break; // success — exit retry loop
       } catch (e) {
         if (attempt < MAX_RETRIES - 1) {
           const delayMs = Math.pow(2, attempt) * 1000; // 1 s, 2 s
           console.warn(
-            `[MLS][GAP] fetch_and_queue_missing_messages failed (tentative ${attempt + 1}/${MAX_RETRIES}), retry dans ${delayMs}ms:`,
+            `[MLS][GAP] history fetch failed (tentative ${attempt + 1}/${MAX_RETRIES}), retry dans ${delayMs}ms:`,
             e
           );
           await new Promise((r) => setTimeout(r, delayMs));
         } else {
-          console.error(
-            `[MLS][GAP] fetch_and_queue_missing_messages échoué après ${MAX_RETRIES} tentatives:`,
-            e
-          );
+          console.error(`[MLS][GAP] history fetch échoué après ${MAX_RETRIES} tentatives:`, e);
         }
       }
     }
 
     if (lastId) this._lastHistoryId.set(groupId, lastId);
 
+    if (pendingMessages.length > 0) {
+      try {
+        const processed = await invoke<number>('process_gap_messages', {
+          groupId,
+          messages: pendingMessages.map((ciphertext) => Array.from(ciphertext)),
+          pin: this._pin,
+        });
+        console.log(
+          `[MLS][GAP] processed ${processed}/${pendingMessages.length} history messages for group=${groupId}`
+        );
+      } catch (e) {
+        console.error(`[MLS][GAP] process_gap_messages failed for group=${groupId}:`, e);
+      }
+    } else {
+      console.log(`[MLS][GAP] aucune entrée d'historique à traiter pour group=${groupId}`);
+    }
+
     const processed = await this.processPendingMessages(groupId);
 
-    // Re-poll the delivery queue: the message that triggered the gap was not ACK'd
-    // and is still waiting on the server. Now that the ratchet is caught up it can
-    // be decrypted successfully.
     await this.fetchPendingMessages();
 
-    // If the server had nothing (history empty or already expired), escalate.
-    // attempt=1 → ask peers to relay; attempt≥2 → server+peers both failed, reinvite.
     if (processed === 0) {
       const attempt = this._gapAttempts.get(groupId) ?? 1;
       console.warn(
@@ -676,7 +724,6 @@ export class TauriMlsService implements IMlsService {
       );
       this.syncNeededCallback?.(groupId, attempt);
     } else {
-      // Recovery succeeded — reset attempt counter.
       this._gapAttempts.delete(groupId);
     }
   }

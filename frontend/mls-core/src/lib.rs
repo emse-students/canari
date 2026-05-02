@@ -276,7 +276,10 @@ impl MlsManager {
     /// Both PrivateMessage and PublicMessage carry the epoch in cleartext in their header.
     /// Returns None if the bytes cannot be parsed as a valid MLS message.
     pub fn parse_message_epoch(message_bytes: &[u8]) -> Option<u64> {
-        let msg_in = MlsMessageIn::tls_deserialize(&mut &message_bytes[..]).ok()?;
+        let msg_in = match MlsMessageIn::tls_deserialize(&mut &message_bytes[..]) {
+            Ok(m) => m,
+            Err(_) => return None,
+        };
         let protocol_message: ProtocolMessage = match msg_in.extract() {
             MlsMessageBodyIn::PublicMessage(m) => m.into(),
             MlsMessageBodyIn::PrivateMessage(m) => m.into(),
@@ -316,24 +319,15 @@ impl MlsManager {
             .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
 
         // Collect the leaf indices of all leaves whose identity matches one of the user IDs.
-        let leaf_indices: Vec<LeafNodeIndex> = group
-            .members()
-            .filter_map(|m| {
-                // Decode as BasicCredential to extract the raw identity bytes.
-                let identity = BasicCredential::try_from(m.credential.clone())
-                    .ok()
-                    .map(|bc| bc.identity().to_vec())
-                    .unwrap_or_default();
-                if user_ids
-                    .iter()
-                    .any(|uid| uid.as_bytes() == identity.as_slice())
-                {
-                    Some(m.index)
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let mut leaf_indices: Vec<LeafNodeIndex> = Vec::new();
+        for member in group.members() {
+            let credential = BasicCredential::try_from(member.credential.clone())
+                .map_err(|_| MlsError::OpenMls(format!("Invalid credential for member {}", member.index)))?;
+            let identity = credential.identity().to_vec();
+            if user_ids.iter().any(|uid| uid.as_bytes() == identity.as_slice()) {
+                leaf_indices.push(member.index);
+            }
+        }
 
         if leaf_indices.is_empty() {
             return Err(MlsError::OpenMls(format!(
@@ -368,23 +362,18 @@ impl MlsManager {
             .get_mut(group_id)
             .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
 
-        let leaf_indices: Vec<LeafNodeIndex> = group
-            .members()
-            .filter_map(|m| {
-                let identity = BasicCredential::try_from(m.credential.clone())
-                    .ok()
-                    .map(|bc| bc.identity().to_vec())
-                    .unwrap_or_default();
-                if device_identities
-                    .iter()
-                    .any(|did| did.as_bytes() == identity.as_slice())
-                {
-                    Some(m.index)
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let mut leaf_indices: Vec<LeafNodeIndex> = Vec::new();
+        for member in group.members() {
+            let credential = BasicCredential::try_from(member.credential.clone())
+                .map_err(|_| MlsError::OpenMls(format!("Invalid credential for member {}", member.index)))?;
+            let identity = credential.identity().to_vec();
+            if device_identities
+                .iter()
+                .any(|did| did.as_bytes() == identity.as_slice())
+            {
+                leaf_indices.push(member.index);
+            }
+        }
 
         if leaf_indices.is_empty() {
             return Err(MlsError::OpenMls(format!(
