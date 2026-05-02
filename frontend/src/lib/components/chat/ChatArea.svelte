@@ -290,11 +290,7 @@
     : ''}"
 >
   {#if conversation}
-    <div
-      class="transition-all duration-200 {isMobile && composerFocused
-        ? 'max-h-0 opacity-0 pointer-events-none overflow-hidden border-0'
-        : 'max-h-40 opacity-100'}"
-    >
+    <div>
       <ChatHeader
         contactName={conversation.contactName}
         displayName={conversation.name}

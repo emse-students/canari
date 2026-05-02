@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Send, Paperclip, X, FileText, UploadCloud, Loader2 } from 'lucide-svelte';
-  import { untrack } from 'svelte';
+  import { untrack, tick } from 'svelte';
   import { slide, fade, scale } from 'svelte/transition';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import VoiceRecorder from './VoiceRecorder.svelte';
@@ -88,7 +88,11 @@
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (!isSendDisabled) onSend();
+      if (!isSendDisabled) {
+        onSend();
+        // Keep keyboard open: refocus textarea after sending
+        tick().then(() => textareaEl?.focus());
+      }
     }
     if (e.key === 'Escape' && replyingTo) {
       onCancelReply?.();
@@ -409,6 +413,7 @@
       <!-- Bouton Envoyer Dynamique -->
       <div class="pb-[3px] shrink-0 pr-1">
         <button
+          onmousedown={(e) => e.preventDefault()}
           onclick={onSend}
           disabled={isSendDisabled}
           aria-label="Envoyer le message"
