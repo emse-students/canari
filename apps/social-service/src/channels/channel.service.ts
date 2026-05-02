@@ -370,6 +370,25 @@ export class ChannelService {
     return { success: true, workspaceId, imageMediaId: mediaId };
   }
 
+  async leaveWorkspace(workspaceId: string, userId: string) {
+    const workspace = await this.workspaceRepo.findOne({ where: { id: workspaceId } });
+    if (!workspace) throw new NotFoundException('Workspace not found');
+
+    const member = await this.memberRepo.findOne({ where: { workspaceId, userId } });
+    if (!member) throw new NotFoundException('Not a member of this workspace');
+
+    await this.memberRepo.delete({ workspaceId, userId });
+
+    const remainingMemberIds = await this.getWorkspaceMemberIds(workspaceId);
+    await this.redis.publishChannelEvent(
+      'channel.member.kicked',
+      { workspaceId, kickedUserId: userId, kickedBy: userId },
+      [...remainingMemberIds, userId]
+    );
+
+    return { success: true };
+  }
+
   async renameChannel(channelId: string, actorUserId: string, newName: string) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');

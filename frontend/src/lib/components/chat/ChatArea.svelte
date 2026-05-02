@@ -27,6 +27,7 @@
     sendError?: string;
     onGroupRename?: (name: string) => void;
     onGroupDelete?: () => void;
+    onGroupLeave?: () => void;
     onGroupRemoveMember?: (userId: string) => void;
     // Reactions & replies
     messageReactions?: Record<string, MessageReaction[]> | Map<string, MessageReaction[]>;
@@ -64,6 +65,7 @@
     sendError = '',
     onGroupRename,
     onGroupDelete,
+    onGroupLeave,
     onGroupRemoveMember,
     messageReactions,
     replyingTo,
@@ -307,6 +309,7 @@
         {currentUserId}
         {onGroupRename}
         {onGroupDelete}
+        {onGroupLeave}
         {onGroupRemoveMember}
         {onStartCall}
         {onOpenMembers}

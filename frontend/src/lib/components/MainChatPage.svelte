@@ -502,6 +502,15 @@
           channels.updateChannelMemberRole(channelId, memberId, roleName, channelsCtx())}
         onUpdateWorkspaceImage={(workspaceDbId, mediaId) =>
           void channels.updateCurrentWorkspaceImage(workspaceDbId, mediaId, channelsCtx())}
+        onLeaveWorkspace={(workspaceDbId) => {
+          void channels.leaveCurrentWorkspace(workspaceDbId, channelsCtx());
+          if (convs.selectedContact?.startsWith('channel_')) {
+            const ws = channels.channelWorkspaces.find((w) => w.workspaceDbId === workspaceDbId);
+            if (ws?.channels.some((c) => c.id === convs.selectedContact)) {
+              convs.selectedContact = null;
+            }
+          }
+        }}
         onSelectConversation={convs.selectConversation}
         onSelectChannelConversation={(channelId) => {
           channels.selectedChannelConversationId = channelId;
@@ -534,6 +543,7 @@
         sendError={convs.sendError}
         onGroupRename={(name) => void convs.handleRenameGroup(name, convCtx())}
         onGroupDelete={() => void convs.handleDeleteGroup(convCtx())}
+        onGroupLeave={() => void convs.handleLeaveGroup(convCtx())}
         onGroupRemoveMember={(memberId) => void convs.handleRemoveMember(memberId, convCtx())}
         messageReactions={messaging.messageReactions}
         replyingTo={messaging.replyingTo}
@@ -653,6 +663,15 @@
             channels.updateChannelMemberRole(channelId, memberId, roleName, channelsCtx())}
           onUpdateWorkspaceImage={(workspaceDbId, mediaId) =>
             void channels.updateCurrentWorkspaceImage(workspaceDbId, mediaId, channelsCtx())}
+          onLeaveWorkspace={(workspaceDbId) => {
+            void channels.leaveCurrentWorkspace(workspaceDbId, channelsCtx());
+            if (convs.selectedContact?.startsWith('channel_')) {
+              const ws = channels.channelWorkspaces.find((w) => w.workspaceDbId === workspaceDbId);
+              if (ws?.channels.some((c) => c.id === convs.selectedContact)) {
+                convs.selectedContact = null;
+              }
+            }
+          }}
           onSelectConversation={convs.selectConversation}
           onSelectChannelConversation={(channelId) => {
             channels.selectedChannelConversationId = channelId;

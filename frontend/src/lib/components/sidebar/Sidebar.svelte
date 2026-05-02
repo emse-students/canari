@@ -65,6 +65,7 @@
       roleName: 'member' | 'moderator' | 'admin'
     ) => void;
     onUpdateWorkspaceImage?: (workspaceDbId: string, mediaId: string) => void;
+    onLeaveWorkspace?: (workspaceDbId: string) => void;
     onSelectConversation: (name: string) => void;
     onSelectChannelConversation?: (channelId: string) => void;
     selectedChannelId?: string;
@@ -91,6 +92,7 @@
     onCreateWorkspace,
     onInviteChannelMember,
     onUpdateWorkspaceImage,
+    onLeaveWorkspace,
     onSelectConversation,
     onSelectChannelConversation,
     selectedChannelId = '',
@@ -476,6 +478,7 @@
   selectedWorkspaceId={selectedCommunityWorkspaceId}
   onClose={closeCommunityAdminModal}
   {onUpdateWorkspaceImage}
+  {onLeaveWorkspace}
   onInviteCommunityMember={(memberId, roleName) => {
     const workspace = selectedCommunityWorkspace;
     if (!workspace) {

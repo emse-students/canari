@@ -226,6 +226,15 @@ export class ChannelService {
     return res.json();
   }
 
+  async leaveWorkspace(workspaceId: string) {
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/workspaces/${workspaceId}/leave`,
+      { method: 'POST' }
+    );
+    await this.handleError(res);
+    return res.json();
+  }
+
   async kickMember(channelId: string, targetUserId: string) {
     const cid = this.normalizeChannelId(channelId);
     const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/members/kick`, {

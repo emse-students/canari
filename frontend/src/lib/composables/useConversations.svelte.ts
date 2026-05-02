@@ -15,6 +15,7 @@ import {
   removeMemberAndBroadcast,
   renameGroupAndBroadcast,
   deleteGroupAndBroadcast,
+  leaveGroupAndBroadcast,
 } from '$lib/utils/chat/groupActions';
 import {
   createNewGroup as createGroup,
@@ -483,6 +484,41 @@ export function useConversations() {
     groupMembers = [];
   }
 
+  async function handleLeaveGroup(ctx: ConversationContext) {
+    if (!selectedContact) return;
+    const convo = conversations.get(selectedContact);
+    if (!convo) return;
+    const contactKey = selectedContact;
+    const mlsService = ctx.ensureMls();
+
+    await leaveGroupAndBroadcast({
+      mlsService,
+      groupId: convo.id,
+      userId: ctx.userId,
+      pin: ctx.pin,
+    });
+
+    try {
+      mlsService.forgetGroup(convo.id, 0);
+    } catch {
+      /* non-blocking */
+    }
+
+    if (ctx.storage) {
+      try {
+        await ctx.storage.deleteConversation(contactKey);
+      } catch {
+        /* non-blocking */
+      }
+    }
+
+    conversations.delete(contactKey);
+    selectedContact = null;
+    isConversationDrawerOpen = false;
+    sendError = '';
+    groupMembers = [];
+  }
+
   async function handleRemoveMember(memberId: string, ctx: ConversationContext) {
     if (!selectedContact) return;
     const convo = conversations.get(selectedContact);
@@ -607,6 +643,7 @@ export function useConversations() {
     startNewConversation,
     handleRenameGroup,
     handleDeleteGroup,
+    handleLeaveGroup,
     handleRemoveMember,
   };
 }

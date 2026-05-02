@@ -105,3 +105,41 @@ export async function removeMemberAndBroadcast(params: {
   const stBytes = await mlsService.saveState(pin);
   saveMlsState(userId, stBytes);
 }
+
+/**
+ * Quitte un groupe MLS (du point de vue du membre lui-même) :
+ *  1. Diffuse un message système "memberLeft" aux autres membres.
+ *  2. Se retire du registre serveur.
+ *  3. Sauvegarde l'état MLS avant d'oublier le groupe localement.
+ */
+export async function leaveGroupAndBroadcast(params: {
+  mlsService: IMlsService;
+  groupId: string;
+  userId: string;
+  pin: string;
+}): Promise<void> {
+  const { mlsService, groupId, userId, pin } = params;
+
+  // 1. Notifier les autres membres (best-effort)
+  try {
+    const controlMsg = encodeAppMessage(mkSystem('memberLeft', JSON.stringify({ userId })));
+    await mlsService.sendMessage(groupId, controlMsg);
+  } catch {
+    // Non-blocking
+  }
+
+  // 2. Se retirer du registre serveur
+  try {
+    await mlsService.removeMemberFromServer(groupId, userId);
+  } catch {
+    // Non-blocking
+  }
+
+  // 3. Sauvegarder l'état MLS puis oublier le groupe
+  try {
+    const stBytes = await mlsService.saveState(pin);
+    saveMlsState(userId, stBytes);
+  } catch {
+    // Non-blocking
+  }
+}

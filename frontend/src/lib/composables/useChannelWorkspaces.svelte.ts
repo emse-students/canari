@@ -471,6 +471,31 @@ export function useChannelWorkspaces() {
     }
   }
 
+  async function leaveCurrentWorkspace(workspaceDbId: string, ctx: ChannelWorkspaceContext) {
+    if (!workspaceDbId) return;
+    try {
+      await service.leaveWorkspace(workspaceDbId);
+      // Remove all channels of the workspace from conversations map
+      const workspace = channelWorkspaces.find((ws) => ws.workspaceDbId === workspaceDbId);
+      if (workspace) {
+        for (const ch of workspace.channels) {
+          ctx.conversations.delete(ch.id);
+          await ctx.deleteConversation?.(ch.id).catch(() => {});
+        }
+      }
+      // Remove workspace from sidebar
+      channelWorkspaces = channelWorkspaces.filter((ws) => ws.workspaceDbId !== workspaceDbId);
+      // Deselect if current channel was in this workspace
+      const wsChannelIds = workspace?.channels.map((c) => c.id) ?? [];
+      if (wsChannelIds.includes(selectedChannelConversationId)) {
+        selectedChannelConversationId = '';
+      }
+      ctx.log('Vous avez quitté la communauté.');
+    } catch (error) {
+      ctx.log(toUiActionError('Départ de la communauté', error));
+    }
+  }
+
   async function renameCurrentChannel(
     channelConversationId: string,
     newName: string,
@@ -583,6 +608,7 @@ export function useChannelWorkspaces() {
     inviteMemberToChannel,
     updateChannelMemberRole,
     leaveCurrentChannel,
+    leaveCurrentWorkspace,
     renameCurrentChannel,
     deleteCurrentChannel,
     updateCurrentChannelImage,

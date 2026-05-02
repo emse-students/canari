@@ -205,6 +205,12 @@ export class ChannelsController {
   }
 
   @UseGuards(NginxAuthGuard)
+  @Post('workspaces/:workspaceId/leave')
+  leaveWorkspace(@Headers('x-user-id') xUserId: string, @Param('workspaceId') workspaceId: string) {
+    return this.service.leaveWorkspace(workspaceId, xUserId.trim().toLowerCase());
+  }
+
+  @UseGuards(NginxAuthGuard)
   @Patch('workspaces/:workspaceId/image')
   async updateWorkspaceImage(
     @Headers('x-user-id') xUserId: string,

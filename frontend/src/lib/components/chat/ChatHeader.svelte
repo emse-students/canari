@@ -6,6 +6,7 @@
     Settings,
     Search,
     Trash2,
+    LogOut,
     UserMinus,
     Check,
     UserPlus,
@@ -39,6 +40,7 @@
     currentUserId?: string;
     onGroupRename?: (name: string) => void;
     onGroupDelete?: () => void;
+    onGroupLeave?: () => void;
     onGroupRemoveMember?: (userId: string) => void;
     onStartCall?: () => void;
     onToggleSearch?: () => void;
@@ -59,6 +61,7 @@
     currentUserId = '',
     onGroupRename,
     onGroupDelete,
+    onGroupLeave,
     onGroupRemoveMember,
     onOpenSettings,
     onToggleSearch,
@@ -71,6 +74,7 @@
   let newMembers = $state<string[]>([]);
   let renameInput = $state('');
   let confirmDelete = $state(false);
+  let confirmLeave = $state(false);
 
   let isOnline = $derived($presenceMap[contactName] || false);
   let resolvedContactDisplayName = $state('');
@@ -115,6 +119,7 @@
   function closePanel() {
     showPanel = false;
     confirmDelete = false;
+    confirmLeave = false;
   }
 
   function submitRename() {
@@ -432,33 +437,35 @@
           {/if}
         </div>
 
-        <!-- Section Suppression (Pied du panneau) -->
-        {#if onGroupDelete}
+        <!-- Section Quitter / Supprimer (Pied du panneau) -->
+        {#if onGroupLeave || onGroupDelete}
           <div
-            class="mt-auto border-t border-black/5 dark:border-white/10 p-5 md:p-6 bg-white/40 dark:bg-black/30 backdrop-blur-md"
+            class="mt-auto border-t border-black/5 dark:border-white/10 p-5 md:p-6 bg-white/40 dark:bg-black/30 backdrop-blur-md flex flex-col gap-3"
             style="padding-bottom: max(1.25rem, env(safe-area-inset-bottom))"
           >
-            {#if !confirmDelete}
+            {#if onGroupLeave && !confirmLeave && !confirmDelete}
               <button
                 onclick={() => {
-                  confirmDelete = true;
+                  confirmLeave = true;
                 }}
-                class="w-full flex items-center justify-center gap-2.5 px-4 py-3.5 text-red-600 dark:text-red-400 font-bold bg-red-500/10 border border-red-500/20 rounded-2xl text-[0.95rem] hover:bg-red-500/20 active:scale-[0.98] transition-all outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                class="w-full flex items-center justify-center gap-2.5 px-4 py-3.5 text-orange-600 dark:text-orange-400 font-bold bg-orange-500/10 border border-orange-500/20 rounded-2xl text-[0.95rem] hover:bg-orange-500/20 active:scale-[0.98] transition-all outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
               >
-                <Trash2 size={18} strokeWidth={2.5} />
-                Supprimer {isGroupConversation ? 'le groupe' : 'la discussion'}
+                <LogOut size={18} strokeWidth={2.5} />
+                Quitter le groupe
               </button>
-            {:else}
+            {/if}
+
+            {#if confirmLeave}
               <div class="flex flex-col gap-3" transition:fade={{ duration: 150 }}>
                 <p
-                  class="text-[0.8rem] font-bold uppercase tracking-wider text-red-500 text-center"
+                  class="text-[0.8rem] font-bold uppercase tracking-wider text-orange-500 text-center"
                 >
-                  Confirmer la suppression ?
+                  Quitter ce groupe ?
                 </p>
                 <div class="flex gap-3">
                   <button
                     onclick={() => {
-                      confirmDelete = false;
+                      confirmLeave = false;
                     }}
                     class="flex-1 px-4 py-3.5 border border-black/10 dark:border-white/10 bg-white/80 dark:bg-white/5 rounded-2xl font-bold text-text-main hover:bg-black/5 dark:hover:bg-white/10 active:scale-[0.98] transition-all outline-none focus-visible:ring-2 focus-visible:ring-text-muted"
                   >
@@ -466,15 +473,56 @@
                   </button>
                   <button
                     onclick={() => {
-                      onGroupDelete?.();
+                      onGroupLeave?.();
                       closePanel();
                     }}
-                    class="flex-1 px-4 py-3.5 bg-red-500 text-white rounded-2xl font-bold hover:bg-red-600 active:scale-[0.98] transition-all shadow-md shadow-red-500/20 outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                    class="flex-1 px-4 py-3.5 bg-orange-500 text-white rounded-2xl font-bold hover:bg-orange-600 active:scale-[0.98] transition-all shadow-md shadow-orange-500/20 outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
                   >
-                    Supprimer
+                    Quitter
                   </button>
                 </div>
               </div>
+            {/if}
+
+            {#if onGroupDelete && !confirmLeave}
+              {#if !confirmDelete}
+                <button
+                  onclick={() => {
+                    confirmDelete = true;
+                  }}
+                  class="w-full flex items-center justify-center gap-2.5 px-4 py-3.5 text-red-600 dark:text-red-400 font-bold bg-red-500/10 border border-red-500/20 rounded-2xl text-[0.95rem] hover:bg-red-500/20 active:scale-[0.98] transition-all outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                >
+                  <Trash2 size={18} strokeWidth={2.5} />
+                  Supprimer {isGroupConversation ? 'le groupe' : 'la discussion'}
+                </button>
+              {:else}
+                <div class="flex flex-col gap-3" transition:fade={{ duration: 150 }}>
+                  <p
+                    class="text-[0.8rem] font-bold uppercase tracking-wider text-red-500 text-center"
+                  >
+                    Confirmer la suppression ?
+                  </p>
+                  <div class="flex gap-3">
+                    <button
+                      onclick={() => {
+                        confirmDelete = false;
+                      }}
+                      class="flex-1 px-4 py-3.5 border border-black/10 dark:border-white/10 bg-white/80 dark:bg-white/5 rounded-2xl font-bold text-text-main hover:bg-black/5 dark:hover:bg-white/10 active:scale-[0.98] transition-all outline-none focus-visible:ring-2 focus-visible:ring-text-muted"
+                    >
+                      Annuler
+                    </button>
+                    <button
+                      onclick={() => {
+                        onGroupDelete?.();
+                        closePanel();
+                      }}
+                      class="flex-1 px-4 py-3.5 bg-red-500 text-white rounded-2xl font-bold hover:bg-red-600 active:scale-[0.98] transition-all shadow-md shadow-red-500/20 outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                    >
+                      Supprimer
+                    </button>
+                  </div>
+                </div>
+              {/if}
             {/if}
           </div>
         {/if}

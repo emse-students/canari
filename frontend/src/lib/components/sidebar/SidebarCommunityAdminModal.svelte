@@ -27,6 +27,7 @@
     selectedWorkspaceId: string;
     onClose: () => void;
     onUpdateWorkspaceImage?: (workspaceDbId: string, mediaId: string) => void;
+    onLeaveWorkspace?: (workspaceDbId: string) => void;
     onInviteCommunityMember?: (
       memberId: string,
       roleName: 'member' | 'moderator' | 'admin'
@@ -39,6 +40,7 @@
     selectedWorkspaceId,
     onClose,
     onUpdateWorkspaceImage,
+    onLeaveWorkspace,
     onInviteCommunityMember,
   }: Props = $props();
 
@@ -248,6 +250,12 @@
       <div class="hidden md:block mt-auto pt-4 space-y-2">
         <button
           class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-red-600 hover:bg-red-50 transition-colors w-full"
+          onclick={() => {
+            if (confirm(`Quitter la communauté "${selectedWorkspace?.name}" ?`)) {
+              onLeaveWorkspace?.(selectedWorkspace?.workspaceDbId ?? '');
+              onClose();
+            }
+          }}
         >
           <Trash2 size={18} />
           Quitter la communauté
@@ -372,7 +380,9 @@
               <div class="divide-y divide-cn-border/70">
                 {#each communityMembers as member (member.userId)}
                   <div class="px-4 py-3 flex items-center justify-between gap-3">
-                    <span class="font-medium text-text-main truncate">{resolvedMemberNames[member.userId] ?? member.userId}</span>
+                    <span class="font-medium text-text-main truncate"
+                      >{resolvedMemberNames[member.userId] ?? member.userId}</span
+                    >
                     <span
                       class={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ${roleBadgeClass(member.role)}`}
                     >
