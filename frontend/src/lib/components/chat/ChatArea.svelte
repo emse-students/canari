@@ -306,6 +306,7 @@
         {onBack}
         {onOpenSettings}
         {groupMembers}
+        {currentUserId}
         {onGroupRename}
         {onGroupDelete}
         {onGroupRemoveMember}

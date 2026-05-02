@@ -273,6 +273,15 @@
     };
   }
 
+  // ─── Load group members when selected conversation changes ───────────────
+  $effect(() => {
+    const contact = convs.selectedContact;
+    if (!contact || !session.isLoggedIn) return;
+    const convo = convs.conversations.get(contact);
+    if (!convo?.id) return;
+    void convs.loadGroupMembers(convo.id, convCtx());
+  });
+
   // ─── Read receipts (debounced 2 s) ────────────────────────────────────────
   let pendingReadReceipts: string[] = [];
   let readReceiptTimer: ReturnType<typeof setTimeout> | null = null;

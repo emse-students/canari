@@ -36,6 +36,7 @@
     onOpenSettings?: () => void;
     // Group management
     groupMembers?: string[];
+    currentUserId?: string;
     onGroupRename?: (name: string) => void;
     onGroupDelete?: () => void;
     onGroupRemoveMember?: (userId: string) => void;
@@ -55,6 +56,7 @@
     onInviteMembers,
     onBack,
     groupMembers = [],
+    currentUserId = '',
     onGroupRename,
     onGroupDelete,
     onGroupRemoveMember,
@@ -391,6 +393,12 @@
                             userId={member}
                             class="text-[0.9rem] font-semibold text-text-main truncate"
                           />
+                          {#if currentUserId && member.toLowerCase() === currentUserId.toLowerCase()}
+                            <span
+                              class="text-[0.65rem] font-bold text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded-md shrink-0"
+                              >Vous</span
+                            >
+                          {/if}
                         </div>
 
                         {#if onGroupRemoveMember}
