@@ -1393,6 +1393,45 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       }
     }
   );
+
+  // When server history is empty during gap recovery:
+  //   attempt=1 → ask online peers to relay their cached messages (sync_request)
+  //   attempt≥2 → server + peers both failed; escalate to forgetGroup + sendReinviteRequest
+  mlsService.onSyncNeeded((groupId, attempt) => {
+    const convo = conversations.get(groupId);
+    if (!convo?.isReady) return;
+
+    if (attempt >= 2) {
+      log(
+        `[SYNC] Gap irrécupérable sur groupe=${groupId} après ${attempt} tentatives — oubli MLS + reinvite_request`
+      );
+      mlsService.forgetGroup(groupId);
+      conversations.set(groupId, { ...convo, isReady: false });
+      if (storage) saveConversation(groupId).catch(() => {});
+      mlsService.sendReinviteRequest(groupId).catch((e) => {
+        log(`[SYNC] sendReinviteRequest échoué pour groupe=${groupId}: ${e}`);
+      });
+      return;
+    }
+
+    // First attempt: try peer relay before giving up.
+    const lastTs =
+      convo.messages.length > 0
+        ? Math.max(...convo.messages.map((m: ChatMessage) => m.timestamp.getTime()))
+        : 0;
+    log(
+      `[SYNC] Relai peer-to-peer pour groupe=${groupId} (lastTs=${lastTs}, tentative ${attempt})`
+    );
+    const payload = encodeAppMessage(
+      mkSystem(
+        'sync_request',
+        JSON.stringify({ requesterDeviceId: mlsService.getDeviceId(), lastTimestamp: lastTs })
+      )
+    );
+    mlsService.sendMessage(groupId, payload).catch((e) => {
+      log(`[SYNC] Impossible d'envoyer sync_request pour groupe=${groupId}: ${e}`);
+    });
+  });
 }
 
 interface ConnectionDeps {
@@ -1468,46 +1507,6 @@ export async function initializeConnection(deps: ConnectionDeps): Promise<void> 
       processDeviceInvitationsLocally().catch(() => {});
     });
 
-    // When server history is empty during gap recovery:
-    //   attempt=1 → ask online peers to relay their cached messages (sync_request)
-    //   attempt≥2 → server + peers both failed to fill the gap; the MLS tree is
-    //               irrecoverably diverged → forgetGroup + sendReinviteRequest so
-    //               another device re-adds us at the current epoch.
-    mlsService.onSyncNeeded((groupId, attempt) => {
-      const convo = conversations.get(groupId);
-      if (!convo?.isReady) return;
-
-      if (attempt >= 2) {
-        log(
-          `[SYNC] Gap irrécupérable sur groupe=${groupId} après ${attempt} tentatives — oubli MLS + reinvite_request`
-        );
-        mlsService.forgetGroup(groupId);
-        conversations.set(groupId, { ...convo, isReady: false });
-        if (storage) saveConversation(groupId).catch(() => {});
-        mlsService.sendReinviteRequest(groupId).catch((e) => {
-          log(`[SYNC] sendReinviteRequest échoué pour groupe=${groupId}: ${e}`);
-        });
-        return;
-      }
-
-      // First attempt: try peer relay before giving up.
-      const lastTs =
-        convo.messages.length > 0
-          ? Math.max(...convo.messages.map((m) => m.timestamp.getTime()))
-          : 0;
-      log(
-        `[SYNC] Relai peer-to-peer pour groupe=${groupId} (lastTs=${lastTs}, tentative ${attempt})`
-      );
-      const payload = encodeAppMessage(
-        mkSystem(
-          'sync_request',
-          JSON.stringify({ requesterDeviceId: mlsService.getDeviceId(), lastTimestamp: lastTs })
-        )
-      );
-      mlsService.sendMessage(groupId, payload).catch((e) => {
-        log(`[SYNC] Impossible d'envoyer sync_request pour groupe=${groupId}: ${e}`);
-      });
-    });
     // onWelcomeRequest is registered in useChatSession.login() with the targeted
     // handleWelcomeRequest handler. Do NOT register it here — it would overwrite
     // that handler with a generic processDeviceInvitationsLocally call.
