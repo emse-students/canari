@@ -785,16 +785,10 @@ fn store_push_secret(secret: String, app: tauri::AppHandle) -> Result<(), String
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // On Android: initialise le logger Rust → logcat sous le tag "CanariRust",
-    // puis installe un hook de panic pour loguer le message AVANT le SIGABRT.
-    // Sans ça, le crash ne produit qu'une trace d'adresses sans contexte.
+    // On Android: installe un hook de panic pour loguer le message AVANT le SIGABRT.
+    // tauri-plugin-log gère seul l'initialisation du logger global (y compris logcat).
     #[cfg(target_os = "android")]
     {
-        android_logger::init_once(
-            android_logger::Config::default()
-                .with_max_level(log::LevelFilter::Trace)
-                .with_tag("CanariRust"),
-        );
         let prev = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
             log::error!("PANIC: {info}");
