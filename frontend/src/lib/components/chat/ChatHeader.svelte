@@ -274,6 +274,7 @@
         <!-- En-tête du panneau -->
         <div
           class="px-5 md:px-6 py-5 border-b border-black/5 dark:border-white/10 flex items-start justify-between gap-3 bg-white/40 dark:bg-black/20"
+          style="padding-top: max(1.25rem, env(safe-area-inset-top))"
         >
           <div class="min-w-0">
             <h3 class="text-lg font-extrabold text-text-main truncate tracking-wide">
@@ -291,7 +292,12 @@
         </div>
 
         <!-- Contenu scrollable -->
-        <div class="flex-1 min-h-0 overflow-y-auto p-5 md:p-6 flex flex-col gap-6">
+        <div
+          class="flex-1 min-h-0 overflow-y-auto p-5 md:p-6 flex flex-col gap-6"
+          style="padding-bottom: {onGroupDelete
+            ? '1.25rem'
+            : 'max(1.25rem, env(safe-area-inset-bottom))'}"
+        >
           <!-- Carte d'identité du groupe/contact -->
           <div
             class="rounded-[1.5rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 px-4 py-4 flex items-center gap-4 shadow-sm"
@@ -430,6 +436,7 @@
         {#if onGroupDelete}
           <div
             class="mt-auto border-t border-black/5 dark:border-white/10 p-5 md:p-6 bg-white/40 dark:bg-black/30 backdrop-blur-md"
+            style="padding-bottom: max(1.25rem, env(safe-area-inset-bottom))"
           >
             {#if !confirmDelete}
               <button

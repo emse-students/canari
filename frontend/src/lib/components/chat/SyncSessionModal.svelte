@@ -195,7 +195,11 @@
 </script>
 
 {#if isOpen}
-  <div use:portal class="fixed inset-0 z-[190] pointer-events-none flex items-center justify-center p-4">
+  <div
+    use:portal
+    class="fixed inset-0 z-[190] pointer-events-none flex items-center justify-center"
+    style="padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left))"
+  >
     <!-- Overlay Assombri -->
     <button
       class="absolute inset-0 bg-black/50 backdrop-blur-sm border-0 pointer-events-auto transition-opacity"
@@ -216,12 +220,12 @@
             <div class="p-2 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded-xl">
               <QrCode size={20} strokeWidth={2.5} />
             </div>
-            Synchronisation <span class="opacity-60 font-medium">| Source</span>
+            Synchronisation<span class="opacity-60 font-medium">| Source</span>
           {:else}
             <div class="p-2 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded-xl">
               <Smartphone size={20} strokeWidth={2.5} />
             </div>
-            Synchronisation <span class="opacity-60 font-medium">| Cible</span>
+            Synchronisation<span class="opacity-60 font-medium">| Cible</span>
           {/if}
         </h3>
         <button
@@ -236,13 +240,18 @@
       <!-- Mode: Source (Générateur de QR) -->
       {#if mode === 'offer'}
         <p class="text-sm text-text-muted leading-relaxed">
-          Scannez ce QR code avec l'appareil que vous souhaitez synchroniser, puis attendez la fin de l'opération.
+          Scannez ce QR code avec l'appareil que vous souhaitez synchroniser, puis attendez la fin
+          de l'opération.
         </p>
 
         {#if qrDataUrl}
           <div class="flex justify-center">
             <div class="rounded-[2rem] border border-black/10 bg-white p-5 shadow-inner">
-              <img src={qrDataUrl} alt="QR code de synchronisation" class="w-56 h-56 max-w-full rendering-pixelated" />
+              <img
+                src={qrDataUrl}
+                alt="QR code de synchronisation"
+                class="w-56 h-56 max-w-full rendering-pixelated"
+              />
             </div>
           </div>
         {/if}
@@ -273,7 +282,7 @@
           </div>
         {/if}
 
-      <!-- Mode: Cible (Scanner) -->
+        <!-- Mode: Cible (Scanner) -->
       {:else}
         {#if hasScannerSupport}
           <button
@@ -286,15 +295,15 @@
         {/if}
 
         {#if isScanning}
-          <div class="rounded-[2rem] border border-black/10 dark:border-white/10 bg-black overflow-hidden shadow-inner relative" transition:fade={{ duration: 200 }}>
+          <div
+            class="rounded-[2rem] border border-black/10 dark:border-white/10 bg-black overflow-hidden shadow-inner relative"
+            transition:fade={{ duration: 200 }}
+          >
             <!-- Repère de scan (Guide visuel) -->
-            <div class="absolute inset-0 pointer-events-none border-[40px] border-black/40 z-10"></div>
-            <video
-              bind:this={videoEl}
-              autoplay
-              playsinline
-              muted
-              class="w-full h-64 object-cover"
+            <div
+              class="absolute inset-0 pointer-events-none border-[40px] border-black/40 z-10"
+            ></div>
+            <video bind:this={videoEl} autoplay playsinline muted class="w-full h-64 object-cover"
             ></video>
           </div>
         {/if}
