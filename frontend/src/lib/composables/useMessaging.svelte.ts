@@ -7,7 +7,7 @@
  * - File selection + validation
  */
 import { tick } from 'svelte';
-import { SvelteMap, SvelteDate } from 'svelte/reactivity';
+import { SvelteMap, SvelteDate, SvelteSet } from 'svelte/reactivity';
 import { saveMlsState } from '$lib/utils/hex';
 import { getToken } from '$lib/stores/auth';
 import {
@@ -24,7 +24,7 @@ import { getPreviewText, mkMediaEnvelope, parseEnvelope, serializeEnvelope } fro
 import { encodeAppMessage, mkMedia, MediaKind } from '$lib/proto/codec';
 import type { ChatMessage, MessageReaction, Conversation } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
-import type { IStorage } from '$lib/db';
+import type { IStorage, StoredMessage } from '$lib/db';
 import { ChannelService } from '$lib/services/ChannelService';
 import { sendEncryptedChannelMessage } from '$lib/utils/chat/channelCrypto';
 
@@ -176,6 +176,88 @@ export function useMessaging() {
 
   async function addSystemMessage(content: string, contactName: string, ctx: MessagingContext) {
     await addMessageToChat('system', content, contactName, ctx, undefined, true);
+  }
+
+  async function batchAddMessages(
+    messages: Array<{
+      senderId: string;
+      content: string;
+      replyTo?: { id: string; senderId: string; content: string };
+      isSystem?: boolean;
+      messageId?: string;
+      timestamp?: Date;
+    }>,
+    contactName: string,
+    ctx: MessagingContext
+  ) {
+    if (messages.length === 0) return;
+    const normalized = contactName.toLowerCase();
+    const convo = ctx.conversations.get(normalized);
+    if (!convo) return;
+
+    const existingIds = new SvelteSet(convo.messages.map((m) => m.id));
+    const toStore: StoredMessage[] = [];
+    const newMessages: ChatMessage[] = [];
+
+    for (const pm of messages) {
+      const id = pm.messageId || crypto.randomUUID();
+      if (existingIds.has(id)) continue;
+      existingIds.add(id);
+
+      const isOwn = pm.senderId.toLowerCase() === ctx.userId.toLowerCase();
+      const newMsg: ChatMessage = {
+        id,
+        senderId: pm.senderId.toLowerCase(),
+        content: pm.content,
+        timestamp: pm.timestamp ?? new SvelteDate(),
+        isOwn,
+        replyTo: pm.replyTo,
+        isSystem: pm.isSystem,
+      };
+      newMessages.push(newMsg);
+
+      if (ctx.storage) {
+        toStore.push({
+          id,
+          conversationId: normalized,
+          senderId: newMsg.senderId,
+          content: pm.content,
+          timestamp: (newMsg.timestamp instanceof Date
+            ? newMsg.timestamp
+            : new SvelteDate(newMsg.timestamp)
+          ).getTime(),
+          ...(pm.isSystem ? { readBy: [] } : {}),
+        });
+      }
+    }
+
+    if (newMessages.length === 0) return;
+
+    // Sort and merge with existing messages — single reactive update
+    const merged = [...convo.messages, ...newMessages].sort((a, b) => {
+      const ta =
+        a.timestamp instanceof Date ? a.timestamp.getTime() : new SvelteDate(a.timestamp).getTime();
+      const tb =
+        b.timestamp instanceof Date ? b.timestamp.getTime() : new SvelteDate(b.timestamp).getTime();
+      return ta !== tb ? ta - tb : a.id.localeCompare(b.id);
+    });
+
+    ctx.conversations.set(normalized, { ...convo, messages: merged });
+
+    // Single batch DB write
+    if (ctx.storage && toStore.length > 0) {
+      try {
+        await ctx.storage.saveMessages(toStore, ctx.pin);
+        await ctx.saveConversation(normalized);
+      } catch (e) {
+        console.error('[DB] batchAddMessages failed:', e);
+      }
+    }
+
+    tick().then(() => {
+      const chatContainer = ctx.getChatContainer();
+      if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
+    });
   }
 
   // ── Send ──────────────────────────────────────────────────────────────────
@@ -567,6 +649,7 @@ export function useMessaging() {
 
     addMessageToChat,
     addSystemMessage,
+    batchAddMessages,
     handleSendChat,
     handleFilesSelected,
     removePendingMediaFile,

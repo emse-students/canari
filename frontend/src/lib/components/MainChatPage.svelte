@@ -103,6 +103,17 @@
           msgId,
           ts
         ),
+      batchAddMessages: (
+        msgs: Array<{
+          senderId: string;
+          content: string;
+          replyTo?: { id: string; senderId: string; content: string };
+          isSystem?: boolean;
+          messageId?: string;
+          timestamp?: Date;
+        }>,
+        contactName: string
+      ) => messaging.batchAddMessages(msgs, contactName, msgCtx()),
     };
   }
 
@@ -518,6 +529,7 @@
           ? () => (convs.isChannelSettingsModalOpen = true)
           : undefined}
         isHidden={convs.mobileView === 'list'}
+        isLoadingHistory={convs.isLoadingHistory}
         groupMembers={convs.groupMembers}
         sendError={convs.sendError}
         onGroupRename={(name) => void convs.handleRenameGroup(name, convCtx())}

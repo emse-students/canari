@@ -46,6 +46,7 @@
     imageMediaId?: string | null;
     onOpenMembers?: () => void;
     currentUserId?: string;
+    isLoadingHistory?: boolean;
   }
 
   let {
@@ -81,6 +82,7 @@
     imageMediaId = null,
     onOpenMembers,
     currentUserId = '',
+    isLoadingHistory = false,
   }: Props = $props();
 
   const INITIAL_RENDER_GROUPS = 180;
@@ -382,21 +384,40 @@
       onscroll={handleScroll}
       class="chat-scrollbar flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 py-3 md:px-6 md:py-6 pb-4 md:pb-6 flex flex-col gap-2"
     >
-      <ChatMessageGroups
-        {visibleMessageGroups}
-        {hiddenGroupCount}
-        {loadOlderGroups}
-        {messageReactions}
-        {currentUserId}
-        searchQuery={searchQuery.trim()}
-        {onReply}
-        onNavigateToMessage={navigateToMessage}
-        {onReact}
-        {onDelete}
-        {onEdit}
-        {switchTime}
-        {authToken}
-      />
+      {#if isLoadingHistory}
+        <!-- Loading skeleton — hides per-message pop-in while history replays -->
+        <div class="flex flex-col gap-3 px-1 py-4 animate-pulse" aria-hidden="true">
+          {#each [0.55, 0.8, 0.4, 0.7, 0.5, 0.65, 0.45] as w, i (i)}
+            <div class="flex {i % 2 === 0 ? 'justify-end' : 'justify-start'} gap-2">
+              {#if i % 2 !== 0}
+                <div
+                  class="w-7 h-7 rounded-full bg-black/10 dark:bg-white/10 shrink-0 self-end"
+                ></div>
+              {/if}
+              <div
+                class="h-9 rounded-2xl bg-black/8 dark:bg-white/8"
+                style="width: {Math.round(w * 100)}%; max-width: 22rem;"
+              ></div>
+            </div>
+          {/each}
+        </div>
+      {:else}
+        <ChatMessageGroups
+          {visibleMessageGroups}
+          {hiddenGroupCount}
+          {loadOlderGroups}
+          {messageReactions}
+          {currentUserId}
+          searchQuery={searchQuery.trim()}
+          {onReply}
+          onNavigateToMessage={navigateToMessage}
+          {onReact}
+          {onDelete}
+          {onEdit}
+          {switchTime}
+          {authToken}
+        />
+      {/if}
     </div>
 
     {#if sendError}

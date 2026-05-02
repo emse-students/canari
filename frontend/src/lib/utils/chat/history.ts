@@ -120,6 +120,16 @@ export async function replayConversationHistory(params: {
     messageId?: string,
     timestamp?: Date
   ) => Promise<void>;
+  batchAddMessages?: (
+    messages: Array<{
+      senderId: string;
+      content: string;
+      replyTo?: { id: string; senderId: string; content: string };
+      isSystem?: boolean;
+      messageId?: string;
+      timestamp?: Date;
+    }>
+  ) => Promise<void>;
   getConversation: (contactName: string) => Conversation | undefined;
   setConversation: (contactName: string, next: Conversation) => void;
   messageReactions: Map<string, MessageReaction[]>;
@@ -132,6 +142,7 @@ export async function replayConversationHistory(params: {
     userId,
     pin,
     addMessageToChat,
+    batchAddMessages,
     getConversation,
     setConversation,
     messageReactions,
@@ -154,6 +165,16 @@ export async function replayConversationHistory(params: {
 
     let addedMsg = 0;
     let mlsUpdated = false;
+
+    // Batch-collect decoded messages to flush in one UI update at the end.
+    const pendingMessages: Array<{
+      senderId: string;
+      content: string;
+      replyTo?: { id: string; senderId: string; content: string };
+      isSystem?: boolean;
+      messageId?: string;
+      timestamp?: Date;
+    }> = [];
 
     for (const msg of history) {
       // Update latest stream ID (Redis stream IDs sort lexicographically)
@@ -178,15 +199,12 @@ export async function replayConversationHistory(params: {
 
         if (parsed?.text) {
           if (parsed.text.content) {
-            await addMessageToChat(
-              msg.sender_id,
-              serializeEnvelope(mkTextEnvelope(parsed.text.content ?? '')),
-              contactName,
-              undefined,
-              false,
-              parsed.messageId || undefined,
-              new Date(msg.timestamp)
-            );
+            pendingMessages.push({
+              senderId: msg.sender_id,
+              content: serializeEnvelope(mkTextEnvelope(parsed.text.content ?? '')),
+              messageId: parsed.messageId || undefined,
+              timestamp: new Date(msg.timestamp),
+            });
             addedMsg++;
             mlsUpdated = true;
             continue;
@@ -199,22 +217,20 @@ export async function replayConversationHistory(params: {
                 content: parsed.reply.replyTo.preview ?? '',
               }
             : undefined;
-          await addMessageToChat(
-            msg.sender_id,
-            serializeEnvelope(mkTextEnvelope(parsed.reply.content ?? '', replyTo)),
-            contactName,
-            undefined,
-            false,
-            parsed.messageId || undefined,
-            new Date(msg.timestamp)
-          );
+          pendingMessages.push({
+            senderId: msg.sender_id,
+            content: serializeEnvelope(mkTextEnvelope(parsed.reply.content ?? '', replyTo)),
+            replyTo,
+            messageId: parsed.messageId || undefined,
+            timestamp: new Date(msg.timestamp),
+          });
           addedMsg++;
           mlsUpdated = true;
           continue;
         } else if (parsed?.media) {
-          await addMessageToChat(
-            msg.sender_id,
-            serializeEnvelope(
+          pendingMessages.push({
+            senderId: msg.sender_id,
+            content: serializeEnvelope(
               mkMediaEnvelope(
                 {
                   type: mediaKindToType(parsed.media.kind),
@@ -228,12 +244,9 @@ export async function replayConversationHistory(params: {
                 parsed.media.caption || undefined
               )
             ),
-            contactName,
-            undefined,
-            false,
-            parsed.messageId || undefined,
-            new Date(msg.timestamp)
-          );
+            messageId: parsed.messageId || undefined,
+            timestamp: new Date(msg.timestamp),
+          });
           addedMsg++;
           mlsUpdated = true;
           continue;
@@ -339,15 +352,13 @@ export async function replayConversationHistory(params: {
           }
 
           if (systemText) {
-            await addMessageToChat(
-              'system',
-              systemText,
-              contactName,
-              undefined,
-              true,
-              parsed.messageId || undefined,
-              new Date(msg.timestamp)
-            );
+            pendingMessages.push({
+              senderId: 'system',
+              content: systemText,
+              isSystem: true,
+              messageId: parsed.messageId || undefined,
+              timestamp: new Date(msg.timestamp),
+            });
             addedMsg++;
           }
           mlsUpdated = true;
@@ -355,15 +366,11 @@ export async function replayConversationHistory(params: {
         } else {
           // Legacy plain text or unknown format
           const legacyText = new TextDecoder().decode(decryptedBytes);
-          await addMessageToChat(
-            msg.sender_id,
-            serializeEnvelope(mkTextEnvelope(legacyText)),
-            contactName,
-            undefined,
-            false,
-            undefined,
-            new Date(msg.timestamp)
-          );
+          pendingMessages.push({
+            senderId: msg.sender_id,
+            content: serializeEnvelope(mkTextEnvelope(legacyText)),
+            timestamp: new Date(msg.timestamp),
+          });
           addedMsg++;
           mlsUpdated = true;
           continue;
@@ -390,6 +397,26 @@ export async function replayConversationHistory(params: {
 
     if (seenUpdated) {
       saveSeenCipherHashes(userId, id, seenCipherHashes);
+    }
+
+    // Flush all decoded messages in a single batch update.
+    if (pendingMessages.length > 0) {
+      if (batchAddMessages) {
+        await batchAddMessages(pendingMessages);
+      } else {
+        // Fallback: sequential (legacy callers without batchAddMessages)
+        for (const pm of pendingMessages) {
+          await addMessageToChat(
+            pm.senderId,
+            pm.content,
+            contactName,
+            pm.replyTo,
+            pm.isSystem,
+            pm.messageId,
+            pm.timestamp
+          );
+        }
+      }
     }
 
     // Persist the last processed Redis stream ID so the next sync is incremental.

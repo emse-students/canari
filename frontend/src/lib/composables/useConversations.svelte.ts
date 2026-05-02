@@ -43,6 +43,17 @@ export interface ConversationContext {
     messageId?: string,
     timestamp?: Date
   ) => Promise<void>;
+  batchAddMessages?: (
+    messages: Array<{
+      senderId: string;
+      content: string;
+      replyTo?: { id: string; senderId: string; content: string };
+      isSystem?: boolean;
+      messageId?: string;
+      timestamp?: Date;
+    }>,
+    contactName: string
+  ) => Promise<void>;
 }
 
 export function useConversations() {
@@ -55,6 +66,7 @@ export function useConversations() {
   let isChannelSettingsModalOpen = $state(false);
   let showSyncGuidePrompt = $state(false);
   let groupMembers = $state<string[]>([]);
+  let isLoadingHistory = $state(false);
   let sendError = $state('');
 
   // ── Input state ───────────────────────────────────────────────────────────
@@ -98,18 +110,26 @@ export function useConversations() {
     }
 
     const { replayConversationHistory } = await import('$lib/utils/chat/history');
-    await replayConversationHistory({
-      mlsService: ctx.ensureMls(),
-      id,
-      contactName,
-      userId: ctx.userId,
-      pin: ctx.pin,
-      addMessageToChat: ctx.addMessageToChat,
-      getConversation: (name) => conversations.get(name),
-      setConversation: (name, next) => conversations.set(name, next),
-      messageReactions: ctx.messageReactions,
-      log: ctx.log,
-    });
+    isLoadingHistory = true;
+    try {
+      await replayConversationHistory({
+        mlsService: ctx.ensureMls(),
+        id,
+        contactName,
+        userId: ctx.userId,
+        pin: ctx.pin,
+        addMessageToChat: ctx.addMessageToChat,
+        batchAddMessages: ctx.batchAddMessages
+          ? (msgs) => ctx.batchAddMessages!(msgs, contactName)
+          : undefined,
+        getConversation: (name) => conversations.get(name),
+        setConversation: (name, next) => conversations.set(name, next),
+        messageReactions: ctx.messageReactions,
+        log: ctx.log,
+      });
+    } finally {
+      isLoadingHistory = false;
+    }
   }
 
   async function loadChannelHistory(channelConversationId: string, ctx: ConversationContext) {
@@ -535,6 +555,9 @@ export function useConversations() {
     },
     set groupMembers(v: string[]) {
       groupMembers = v;
+    },
+    get isLoadingHistory() {
+      return isLoadingHistory;
     },
     get sendError() {
       return sendError;
