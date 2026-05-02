@@ -17,6 +17,8 @@
   const pathname = $derived(page.url.pathname);
   const activePlaceId = $derived(resolveActivePlaceId(pathname));
 
+  const isLoginPage = $derived(pathname === '/login');
+
   // ── Logs panel (global — fonctionne sur toutes les routes) ──────────────────
   let showLogs = $state(false);
   let isKeyboardOpen = $state(false);
@@ -104,10 +106,16 @@
 >
   <ChatBackgroundService />
 
+  <!-- Sidebar (navigation principale) -->
+   {#if !isLoginPage}
     <AppSidebar />
+  {/if}
 
   <div class="relative z-10 flex flex-1 flex-col overflow-hidden md:pl-[4.5rem]">
-    <Navbar />
+
+    {#if !isLoginPage}
+      <Navbar />
+    {/if}
 
     <main class="relative flex-1 overflow-hidden">
       <BackgroundBlobs />
@@ -118,7 +126,7 @@
       </div>
     </main>
 
-    {#if !isKeyboardOpen}
+    {#if !isKeyboardOpen && !isLoginPage}
       <BottomNav />
     {/if}
   </div>
