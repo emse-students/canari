@@ -327,12 +327,6 @@
     }}
     onAddComment={handleAddComment}
     onLikeComment={handleLikeComment}
-    onKeyDown={(e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        handleAddComment();
-      }
-    }}
   />
 
   <!-- Notifications intégrées à la carte -->
