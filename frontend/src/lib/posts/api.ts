@@ -6,7 +6,7 @@ export type PostImageRef = Omit<MediaRef, 'type'>;
 export interface PollOption {
   id: string;
   label: string;
-  votes: number;
+  votes: string[] | number;
 }
 
 export interface Poll {

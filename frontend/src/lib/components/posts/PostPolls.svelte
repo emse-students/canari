@@ -1,6 +1,7 @@
 <script lang="ts">
   import { ChartBar, CircleCheck, Circle, SquareCheck, Square } from 'lucide-svelte';
   import type { Poll } from '$lib/posts/api';
+  import { resolveUserDisplayName, getUserDisplayNameSync } from '$lib/utils/users/displayName';
 
   interface Props {
     polls: Poll[] | undefined;
@@ -11,15 +12,51 @@
 
   let { polls, selectedOptions, onToggleOption, onSubmitVote }: Props = $props();
 
-  // Fonction pour calculer le total des votes d'un sondage
-  function getTotalVotes(poll: Poll): number {
-    return poll.options.reduce((sum, opt) => sum + (opt.votes || 0), 0);
+  // Tooltip state
+  let tooltipOptionId = $state<string | null>(null);
+  let voterNames = $state<Record<string, string[]>>({});
+
+  function getVoteCount(votes: string[] | number | undefined): number {
+    if (Array.isArray(votes)) return votes.length;
+    return (votes as number) || 0;
   }
 
-  // Fonction pour calculer le pourcentage d'une option
-  function getPercentage(votes: number, total: number): number {
+  function getVoterIds(votes: string[] | number | undefined): string[] {
+    if (Array.isArray(votes)) return votes;
+    return [];
+  }
+
+  function getTotalVotes(poll: Poll): number {
+    return poll.options.reduce((sum, opt) => sum + getVoteCount(opt.votes), 0);
+  }
+
+  function getPercentage(votes: string[] | number | undefined, total: number): number {
     if (total === 0) return 0;
-    return Math.round((votes / total) * 100);
+    return Math.round((getVoteCount(votes) / total) * 100);
+  }
+
+  async function showVoterTooltip(optionId: string, votes: string[] | number | undefined) {
+    const ids = getVoterIds(votes);
+    if (ids.length === 0) return;
+    tooltipOptionId = optionId;
+    if (voterNames[optionId]) return;
+    const names = await Promise.all(ids.map((id) => resolveUserDisplayName(id)));
+    voterNames = {
+      ...voterNames,
+      [optionId]: names.map((n, i) => n ?? getUserDisplayNameSync(ids[i], ids[i])),
+    };
+  }
+
+  function hideTooltip() {
+    tooltipOptionId = null;
+  }
+
+  function toggleTooltip(optionId: string, votes: string[] | number | undefined) {
+    if (tooltipOptionId === optionId) {
+      hideTooltip();
+    } else {
+      showVoterTooltip(optionId, votes);
+    }
   }
 </script>
 
@@ -54,7 +91,9 @@
         <div class="space-y-2.5">
           {#each poll.options as option (option.id)}
             {@const isSelected = selectedOptions.includes(option.id)}
-            {@const percentage = getPercentage(option.votes || 0, totalVotes)}
+            {@const percentage = getPercentage(option.votes, totalVotes)}
+            {@const voteCount = getVoteCount(option.votes)}
+            {@const voterIds = getVoterIds(option.votes)}
 
             <button
               type="button"
@@ -120,12 +159,48 @@
                       {percentage}%
                     </span>
                   {/if}
-                  <span
-                    class="text-[0.7rem] font-bold text-text-muted bg-black/5 dark:bg-white/10 px-2 py-1 rounded-lg"
-                    title="{option.votes || 0} vote(s)"
-                  >
-                    {option.votes || 0}
-                  </span>
+                  <!-- Vote count badge — hover/tap to see voter names -->
+                  <div class="relative">
+                    <div
+                      role="button"
+                      tabindex="0"
+                      class="text-[0.7rem] font-bold text-text-muted bg-black/5 dark:bg-white/10 px-2 py-1 rounded-lg select-none"
+                      class:cursor-pointer={voterIds.length > 0}
+                      class:cursor-default={voterIds.length === 0}
+                      aria-label="{voteCount} vote(s)"
+                      onmouseenter={() =>
+                        voterIds.length > 0 && showVoterTooltip(option.id, option.votes)}
+                      onmouseleave={hideTooltip}
+                      onclick={(e) => {
+                        e.stopPropagation();
+                        toggleTooltip(option.id, option.votes);
+                      }}
+                      onkeydown={(e) => e.key === 'Enter' && toggleTooltip(option.id, option.votes)}
+                    >
+                      {voteCount}
+                    </div>
+                    {#if tooltipOptionId === option.id && voterIds.length > 0}
+                      <div
+                        class="absolute bottom-full right-0 mb-1.5 z-50 min-w-[10rem] max-w-[16rem] rounded-xl bg-[#1a2236] text-white text-[0.72rem] font-medium shadow-xl px-3 py-2 pointer-events-none"
+                        role="tooltip"
+                      >
+                        <p
+                          class="font-bold text-white/60 uppercase tracking-wide text-[0.6rem] mb-1"
+                        >
+                          Votants
+                        </p>
+                        {#if voterNames[option.id]}
+                          <ul class="space-y-0.5">
+                            {#each voterNames[option.id] as name (name)}
+                              <li class="truncate">{name}</li>
+                            {/each}
+                          </ul>
+                        {:else}
+                          <p class="opacity-60 italic">Chargement…</p>
+                        {/if}
+                      </div>
+                    {/if}
+                  </div>
                 </div>
               </div>
             </button>
