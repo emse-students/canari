@@ -316,7 +316,7 @@ async fn recevoir_message_bytes(
                     (Some(msg_ep), Some(group_ep)) if msg_ep > group_ep => Some((msg_ep, group_ep)),
                     _ => None,
                 }
-            },
+            }
             None => None,
         }
         // lock est libéré ici — aucun await n'a encore eu lieu
@@ -326,7 +326,9 @@ async fn recevoir_message_bytes(
             "[GAP] Epoch gap détecté AVANT déchiffrement : \
              msg_epoch={} > group_epoch={} pour group={}. \
              Mise en attente et déclenchement de la resync.",
-            msg_ep, group_ep, group_id
+            msg_ep,
+            group_ep,
+            group_id
         );
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -368,7 +370,11 @@ async fn recevoir_message_bytes(
         Ok(val) => Ok(val),
         Err(e) => {
             let err_str = e.to_string();
-            log::error!("recevoir_message_bytes failed: group={} err={}", group_id, err_str);
+            log::error!(
+                "recevoir_message_bytes failed: group={} err={}",
+                group_id,
+                err_str
+            );
 
             // "Process error:" indique une erreur OpenMLS sur le même epoch →
             // probable gap du Sender Ratchet (génération future reçue).
@@ -641,13 +647,11 @@ async fn process_pending_mls_messages(
                 // Si la TX réussit mais mls.bin pas encore écrit → crash → mls.bin ancien,
                 // is_ready=1 → le message est sauté → mls_state_checkpoint fournit l'état à jour.
                 let mut tx = pending_db.0.begin().await.map_err(|e| e.to_string())?;
-                sqlx::query(
-                    "UPDATE pending_mls_messages SET is_ready = 1 WHERE id = ?",
-                )
-                .bind(id)
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| e.to_string())?;
+                sqlx::query("UPDATE pending_mls_messages SET is_ready = 1 WHERE id = ?")
+                    .bind(id)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 sqlx::query(
                     "INSERT OR REPLACE INTO mls_state_checkpoint (id, state, saved_at) \
                      VALUES (1, ?, ?)",
@@ -685,16 +689,18 @@ async fn process_pending_mls_messages(
     );
 
     // Nettoyage des messages traités pour éviter la croissance illimitée de la table.
-    sqlx::query(
-        "DELETE FROM pending_mls_messages WHERE group_id = ? AND is_ready = 1",
-    )
-    .bind(&group_id)
-    .execute(&*pending_db.0)
-    .await
-    .unwrap_or_else(|e| {
-        log::warn!("[PENDING] Cleanup (is_ready=1) failed for group={}: {}", group_id, e);
-        Default::default()
-    });
+    sqlx::query("DELETE FROM pending_mls_messages WHERE group_id = ? AND is_ready = 1")
+        .bind(&group_id)
+        .execute(&*pending_db.0)
+        .await
+        .unwrap_or_else(|e| {
+            log::warn!(
+                "[PENDING] Cleanup (is_ready=1) failed for group={}: {}",
+                group_id,
+                e
+            );
+            Default::default()
+        });
 
     Ok(processed)
 }
