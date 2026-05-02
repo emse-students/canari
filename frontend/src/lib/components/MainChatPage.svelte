@@ -498,6 +498,7 @@
           void convs.loadHistoryForConversation(channelId, channelId, convCtx());
         }}
         isHidden={convs.mobileView === 'chat'}
+        currentUserId={session.userId}
       />
 
       <ChatArea
@@ -651,6 +652,7 @@
           onCloseDrawer={() => {
             convs.isConversationDrawerOpen = false;
           }}
+          currentUserId={session.userId}
         />
       {/if}
 

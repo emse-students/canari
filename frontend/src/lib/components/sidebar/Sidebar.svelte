@@ -71,6 +71,7 @@
     isHidden?: boolean;
     drawerMode?: boolean;
     onCloseDrawer?: () => void;
+    currentUserId?: string;
   }
 
   let {
@@ -96,6 +97,7 @@
     isHidden = false,
     drawerMode = false,
     onCloseDrawer,
+    currentUserId = '',
   }: Props = $props();
 
   let showNewChatModal = $state(false);
@@ -175,6 +177,7 @@
   function handleAddContact() {
     const value = contactId.trim();
     if (!value) return;
+    if (currentUserId && value.toLowerCase() === currentUserId.toLowerCase()) return;
     onContactInputChange(value);
     onAddContact(value);
     contactId = '';
@@ -442,6 +445,7 @@
   {activeTab}
   {contactId}
   {groupName}
+  {currentUserId}
   onClose={closeNewChatModal}
   onTabChange={(tab) => {
     activeTab = tab;

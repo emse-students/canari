@@ -7,6 +7,7 @@
     activeTab: 'contact' | 'group';
     contactId: string;
     groupName: string;
+    currentUserId?: string;
     onClose: () => void;
     onTabChange: (tab: 'contact' | 'group') => void;
     onContactIdChange: (value: string) => void;
@@ -20,6 +21,7 @@
     activeTab,
     contactId,
     groupName,
+    currentUserId = '',
     onClose,
     onTabChange,
     onContactIdChange,
@@ -28,15 +30,22 @@
     onSubmitGroup,
   }: Props = $props();
 
+  let isSelf = $derived(
+    !!currentUserId && contactId.trim().toLowerCase() === currentUserId.toLowerCase()
+  );
+
   // Utilitaires de classes pour garder le template HTML propre
-  const baseTabClass = "flex-1 px-3 py-2 text-sm font-semibold rounded-xl transition-all duration-200 outline-none focus-visible:ring-2 focus-visible:ring-amber-400";
-  const activeTabClass = "bg-white/80 dark:bg-black/40 text-text-main border border-white/60 dark:border-white/10 shadow-sm";
-  const inactiveTabClass = "text-text-muted hover:text-text-main hover:bg-white/35 dark:hover:bg-black/30 border border-transparent";
+  const baseTabClass =
+    'flex-1 px-3 py-2 text-sm font-semibold rounded-xl transition-all duration-200 outline-none focus-visible:ring-2 focus-visible:ring-amber-400';
+  const activeTabClass =
+    'bg-white/80 dark:bg-black/40 text-text-main border border-white/60 dark:border-white/10 shadow-sm';
+  const inactiveTabClass =
+    'text-text-muted hover:text-text-main hover:bg-white/35 dark:hover:bg-black/30 border border-transparent';
 
   // Gestionnaires de soumission natifs
   function handleContactSubmit(e: Event) {
     e.preventDefault();
-    if (contactId.trim()) onSubmitContact();
+    if (contactId.trim() && !isSelf) onSubmitContact();
   }
 
   function handleGroupSubmit(e: Event) {
@@ -76,10 +85,7 @@
   <!-- Contenu des onglets -->
   {#if activeTab === 'contact'}
     <div id="tabpanel-contact" role="tabpanel" aria-labelledby="tab-contact">
-      <form
-        class="space-y-4"
-        onsubmit={handleContactSubmit}
-      >
+      <form class="space-y-4" onsubmit={handleContactSubmit}>
         <div>
           <label for="new-contact-id" class="block text-sm font-medium text-text-main mb-1">
             Contact
@@ -94,19 +100,21 @@
         </div>
         <button
           type="submit"
-          disabled={!contactId.trim()}
+          disabled={!contactId.trim() || isSelf}
           class="w-full py-2.5 bg-amber-500 text-white font-semibold rounded-xl hover:bg-amber-400 focus:ring-2 focus:ring-amber-500/50 focus:outline-none transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Démarrer la discussion
         </button>
+        {#if isSelf}
+          <p class="text-xs text-red-500 font-medium text-center -mt-1">
+            Vous ne pouvez pas démarrer une discussion avec vous-même.
+          </p>
+        {/if}
       </form>
     </div>
   {:else if activeTab === 'group'}
     <div id="tabpanel-group" role="tabpanel" aria-labelledby="tab-group">
-      <form
-        class="space-y-4"
-        onsubmit={handleGroupSubmit}
-      >
+      <form class="space-y-4" onsubmit={handleGroupSubmit}>
         <div>
           <label for="new-group-name" class="block text-sm font-medium text-text-main mb-1">
             Nom du groupe
