@@ -92,6 +92,7 @@
 
   const INITIAL_RENDER_GROUPS = 180;
   const RENDER_GROUPS_STEP = 140;
+  const MAX_RENDERED_GROUPS = INITIAL_RENDER_GROUPS + RENDER_GROUPS_STEP * 2; // 460 — cap on DOM nodes
 
   let chatContainer = $state<HTMLDivElement>();
   let isNearBottom = $state(true);
@@ -99,7 +100,8 @@
   let composerFocused = $state(false);
   let lastConversationKey = $state('');
   let lastMessageCount = $state(0);
-  let renderedGroupCount = $state(INITIAL_RENDER_GROUPS);
+  /** First index (inclusive) of the sliding render window inside messageGroups. */
+  let windowStart = $state(0);
   let switchTime = $state(Date.now());
   let stickyDateLabel = $state('');
   let showStickyDate = $state(false);
@@ -164,21 +166,39 @@
 
   // Group messages by date and time gaps
   let messageGroups = $derived(conversation ? groupMessages(conversation.messages) : []);
-  let visibleMessageGroups = $derived(messageGroups.slice(-renderedGroupCount));
-  let hiddenGroupCount = $derived(Math.max(messageGroups.length - visibleMessageGroups.length, 0));
+  let windowEnd = $derived(Math.min(messageGroups.length, windowStart + MAX_RENDERED_GROUPS));
+  let visibleMessageGroups = $derived(messageGroups.slice(windowStart, windowEnd));
+  /** Groups hidden above the render window (older messages). */
+  let hiddenGroupCount = $derived(windowStart);
+  /** Groups hidden below the render window (newer messages, while scrolled far up). */
+  let hiddenBelowCount = $derived(messageGroups.length - windowEnd);
 
   async function loadOlderGroups() {
-    if (hiddenGroupCount > 0) {
-      renderedGroupCount += RENDER_GROUPS_STEP;
+    if (windowStart > 0) {
+      windowStart = Math.max(0, windowStart - RENDER_GROUPS_STEP);
     } else if (onLoadOlderMessages && hasMoreInDb && !isLoadingOlder) {
       isLoadingOlder = true;
       try {
+        const prevScrollHeight = chatContainer?.scrollHeight ?? 0;
+        const prevScrollTop = chatContainer?.scrollTop ?? 0;
         const hasMore = await onLoadOlderMessages();
         if (!hasMore) hasMoreInDb = false;
+        // New messages were prepended — restore scroll position so the
+        // viewport doesn't jump back to the top.
+        await tick();
+        if (chatContainer) {
+          chatContainer.scrollTop = prevScrollTop + (chatContainer.scrollHeight - prevScrollHeight);
+        }
       } finally {
         isLoadingOlder = false;
       }
     }
+  }
+
+  function jumpToLatest() {
+    windowStart = Math.max(0, messageGroups.length - INITIAL_RENDER_GROUPS);
+    tick().then(() => scrollToBottom(true));
+    isNearBottom = true;
   }
 
   async function navigateToMessage(messageId: string) {
@@ -190,9 +210,8 @@
       return;
     }
 
-    const groupsFromEnd = messageGroups.length - targetIndex;
-    if (groupsFromEnd > renderedGroupCount) {
-      renderedGroupCount = groupsFromEnd + 8;
+    if (targetIndex < windowStart || targetIndex >= windowEnd) {
+      windowStart = Math.max(0, targetIndex - Math.floor(MAX_RENDERED_GROUPS / 2));
       await tick();
     }
 
@@ -251,7 +270,7 @@
 
       if (hasConversationChanged) {
         switchTime = Date.now();
-        renderedGroupCount = INITIAL_RENDER_GROUPS;
+        windowStart = Math.max(0, messageGroups.length - INITIAL_RENDER_GROUPS);
         hasMoreInDb = true;
         tick().then(() => scrollToBottom(false));
         isNearBottom = true;
@@ -448,10 +467,10 @@
       </div>
     {/if}
 
-    {#if !isNearBottom}
+    {#if !isNearBottom || hiddenBelowCount > 0}
       <button
         type="button"
-        onclick={() => scrollToBottom(true)}
+        onclick={jumpToLatest}
         class="chat-scroll-bottom-button"
         aria-label="Revenir en bas de la discussion"
         title="Revenir en bas"
