@@ -26,6 +26,7 @@ android {
     }
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
+        manifestPlaceholders["debuggable"] = "true"
         applicationId = "fr.emse.canari"
         minSdk = 28
         targetSdk = 36
