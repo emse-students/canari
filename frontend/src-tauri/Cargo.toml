@@ -38,6 +38,7 @@ sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 base64 = "0.22"
 log = "0.4"
+tokio = { version = "1.0", features = ["rt", "rt-multi-thread"] }
 
 [patch.crates-io]
 # tao 0.35.0 panics with NullPtr("get_object_class") when intent.getType() returns null
