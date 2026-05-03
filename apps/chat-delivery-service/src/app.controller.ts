@@ -1548,6 +1548,8 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     await this.groupRepo.delete({ id: safeGroupId });
     await this.groupMemberRepo.delete({ groupId: safeGroupId });
+    await this.deviceGroupRepo.delete({ groupId: safeGroupId });
+    await this.queuedMessageRepo.delete({ groupId: safeGroupId });
     await this.redis.del(`group:members:${safeGroupId}`);
     this.logger.log(`[DELETE_GROUP] group=${safeGroupId}`);
     return { status: 'deleted' };
