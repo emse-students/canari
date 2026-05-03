@@ -151,8 +151,12 @@ export function useNotifications() {
       try {
         const { isPermissionGranted, requestPermission } =
           await import('@tauri-apps/plugin-notification');
-        const granted = await isPermissionGranted();
-        if (!granted) await requestPermission();
+        let granted = await isPermissionGranted();
+        if (!granted) {
+          const result = await requestPermission();
+          granted = result === 'granted';
+        }
+        console.log('[Push] Permission accordée:', granted);
       } catch {
         /* plugin unavailable on this platform */
       }

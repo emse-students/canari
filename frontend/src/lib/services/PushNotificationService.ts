@@ -15,6 +15,7 @@
 
 import { isTauri, invoke } from '@tauri-apps/api/core';
 import { once } from '@tauri-apps/api/event';
+import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
 import { currentUserId } from '$lib/stores/user';
 
 const FCM_TOKEN_STORAGE_KEY = 'canari_fcm_token';
@@ -113,6 +114,25 @@ export async function startPushService(
     console.warn('[Push] startPushService aborted: missing currentUserId');
     return;
   }
+
+  // --- GESTION PERMISSION ANDROID 13+ ---
+  try {
+    let permissionGranted = await isPermissionGranted();
+    if (!permissionGranted) {
+      const permission = await requestPermission();
+      permissionGranted = permission === 'granted';
+    }
+
+    if (!permissionGranted) {
+      console.warn(
+        "[Push] Permission de notification refusée. L'affichage des pop-ups sera bloqué par Android."
+      );
+      // On continue quand même : FCM peut recevoir des données silencieuses (background sync)
+    }
+  } catch (err) {
+    console.warn('[Push] Impossible de vérifier/demander la permission de notification', err);
+  }
+  // --------------------------------------
 
   const registerOnce = async (): Promise<boolean> => {
     return await registerPushToken(async (pushToken) => {

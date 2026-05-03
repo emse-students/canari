@@ -243,8 +243,6 @@
 
   // ── Mount ─────────────────────────────────────────────────────────────────
   onMount(() => {
-    void globalNotifs.requestSystemNotificationPermission();
-
     // Déjà connecté (ex. navigation depuis /chat) → rien à faire.
     if (globalSession.isLoggedIn) return;
 
@@ -474,22 +472,25 @@
 <!-- Prompt d'enrôlement biométrique (toutes routes) -->
 {#if globalSession.showBiometricEnrollPrompt}
   <div
-    class="fixed bottom-[calc(env(safe-area-inset-bottom,0px)+1rem)] left-4 right-4 md:left-auto md:right-6 md:w-96 z-50 p-4 sm:p-5 rounded-[1.5rem] border border-black/5 dark:border-white/10 bg-white/80 dark:bg-black/50 backdrop-blur-2xl shadow-2xl shadow-black/10 dark:shadow-black/30 flex items-start sm:items-center gap-4 transition-all duration-300"
+    class="fixed bottom-[calc(env(safe-area-inset-bottom,0px)+1rem)] left-4 right-4 md:left-auto md:right-6 md:w-fit max-w-[90vw] z-50 p-4 rounded-[1.25rem] border border-black/5 dark:border-white/10 bg-white/95 dark:bg-black/80 backdrop-blur-2xl shadow-2xl flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4 transition-all duration-300"
   >
-    <div
-      class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-400"
-    >
-      <Fingerprint size={24} strokeWidth={2.5} />
+    <div class="flex items-center gap-3 w-full sm:w-auto">
+      <div
+        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-400"
+      >
+        <Fingerprint size={24} strokeWidth={2.5} />
+      </div>
+
+      <div class="flex-1 min-w-0 pr-2">
+        <p class="text-sm font-bold text-text-main mb-0.5">Connexion rapide</p>
+        <p class="text-[11px] sm:text-xs text-text-muted leading-relaxed">
+          Activer l'empreinte digitale ?
+        </p>
+      </div>
     </div>
 
-    <div class="flex-1 min-w-0">
-      <p class="text-sm font-bold text-text-main mb-0.5">Connexion rapide</p>
-      <p class="text-[11px] sm:text-xs text-text-muted leading-relaxed">
-        Activer l'empreinte digitale ? Votre PIN sera stocké de façon sécurisée.
-      </p>
-    </div>
-
-    <div class="flex flex-col sm:flex-row gap-2 shrink-0 mt-3 sm:mt-0 w-full sm:w-auto">
+    <!-- Le conteneur des boutons est maintenant compact et aligné à droite sur mobile -->
+    <div class="flex items-center gap-2 shrink-0 self-end sm:self-auto mt-1 sm:mt-0">
       <button
         onclick={() => (globalSession.showBiometricEnrollPrompt = false)}
         class="px-3 py-2 text-xs font-semibold text-text-muted hover:text-text-main rounded-xl hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
@@ -497,8 +498,19 @@
         Plus tard
       </button>
       <button
-        onclick={() => globalSession.enrollBiometric()}
-        class="px-4 py-2 text-xs font-bold text-[#151B2C] bg-amber-500 rounded-xl hover:bg-amber-400 hover:-translate-y-0.5 shadow-sm hover:shadow-md transition-all"
+        onclick={async () => {
+          try {
+            await globalSession.enrollBiometric();
+            globalSession.showBiometricEnrollPrompt = false;
+          } catch (e) {
+            // Si l'appareil n'a pas d'empreinte configurée, on attrape l'erreur
+            if (String(e).includes('At least one biometric must be enrolled')) {
+              alert("Aucune empreinte n'est configurée sur votre téléphone. Veuillez en ajouter une dans les paramètres d'Android.");
+              globalSession.showBiometricEnrollPrompt = false;
+            }
+          }
+        }}
+        class="px-4 py-2 text-xs font-bold text-[#151B2C] bg-amber-500 rounded-xl hover:bg-amber-400 shadow-sm transition-all whitespace-nowrap"
       >
         Activer
       </button>

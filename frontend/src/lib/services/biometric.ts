@@ -25,10 +25,20 @@ export class BiometricService {
    */
   static async enableBiometric(secret: string): Promise<void> {
     try {
+      // Si aucune empreinte n'est configurée sur le téléphone, ceci va throw
       await keystoreStore(secret);
       localStorage.setItem(CONFIG_FLAG_KEY, 'true');
     } catch (e) {
-      console.error('Failed to enable biometrics:', e);
+      const errorMsg = String(e);
+      if (errorMsg.includes('At least one biometric must be enrolled')) {
+        console.warn(
+          "Matériel biométrique présent, mais aucune empreinte configurée par l'utilisateur."
+        );
+        // TODO: Gérer le fallback ici (ex: forcer l'utilisation du PIN,
+        // ou afficher un message demandant à l'utilisateur d'aller dans ses réglages Android)
+      } else {
+        console.error('Failed to enable biometrics:', e);
+      }
       throw e;
     }
   }

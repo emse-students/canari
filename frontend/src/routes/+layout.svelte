@@ -11,7 +11,10 @@
   import LogsPanel from '$lib/components/dev/LogsPanel.svelte';
   import { page } from '$app/state';
   import { APP_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
-  import { getStatusLog } from '$lib/stores/globalChatSingleton.svelte';
+
+  // NOUVEAUX IMPORTS POUR LE PUSH :
+  import { getStatusLog, globalSession } from '$lib/stores/globalChatSingleton.svelte';
+  import { startPushService } from '$lib/services/PushNotificationService';
 
   let { children } = $props();
 
@@ -78,6 +81,23 @@
     document.documentElement.classList.toggle('keyboard-open', isKeyboardOpen);
   });
 
+  // ── INIT PUSH NOTIFICATIONS (SÉCURISÉ) ─────────────────────────────────────
+  $effect(() => {
+    // On attend que la session soit totalement valide (connecté + infos présentes)
+    if (globalSession.isLoggedIn && globalSession.userId && globalSession.authToken) {
+      // On utilise un timeout pour laisser l'Activity Android se lier parfaitement à l'UI
+      // avant de faire popper la demande d'autorisation native.
+      const timer = setTimeout(() => {
+        startPushService(
+          globalSession.historyBaseUrl || "https://canari-emse.fr",
+          globalSession.authToken,
+          globalSession.myDeviceId
+        ).catch(err => console.error("[Push] Erreur d'initialisation:", err));
+      }, 500);
+
+      return () => clearTimeout(timer);
+    }
+  });
 
 
   // ── Swipe navigation (mobile uniquement) ───────────────────────────────────
