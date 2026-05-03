@@ -197,7 +197,7 @@
 
   function jumpToLatest() {
     windowStart = Math.max(0, messageGroups.length - INITIAL_RENDER_GROUPS);
-    tick().then(() => scrollToBottom(true));
+    tick().then(() => requestAnimationFrame(() => scrollToBottom(true)));
     isNearBottom = true;
   }
 
@@ -272,7 +272,7 @@
         switchTime = Date.now();
         windowStart = Math.max(0, messageGroups.length - INITIAL_RENDER_GROUPS);
         hasMoreInDb = true;
-        tick().then(() => scrollToBottom(false));
+        tick().then(() => requestAnimationFrame(() => scrollToBottom(false)));
         isNearBottom = true;
       } else if (hasNewMessage && isNearBottom) {
         tick().then(() => scrollToBottom(true));
@@ -445,7 +445,7 @@
           {visibleMessageGroups}
           {hiddenGroupCount}
           {loadOlderGroups}
-          {hasMoreInDb}
+          hasMoreInDb={hasMoreInDb && !!onLoadOlderMessages}
           {messageReactions}
           {currentUserId}
           searchQuery={searchQuery.trim()}
