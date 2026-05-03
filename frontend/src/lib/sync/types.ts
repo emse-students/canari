@@ -84,7 +84,7 @@ export interface SyncSerializedEncryptedRow {
 }
 
 export interface SyncSerializedChunk {
-  conversation: ConversationMeta;
+  conversation: ConversationMeta & { groupId: string };
   rows: SyncSerializedEncryptedRow[];
 }
 

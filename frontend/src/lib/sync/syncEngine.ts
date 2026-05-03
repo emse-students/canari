@@ -212,6 +212,7 @@ function serializeChunks(chunks: SyncTransferChunk[]): SyncSerializedChunk[] {
     conversation: {
       ...chunk.conversation,
       id: encodeConversationTransportId(normalizeConversationId(chunk.conversation.id)),
+      groupId: normalizeConversationId(chunk.conversation.id),
     },
     rows: chunk.rows.map((row) => ({
       id: row.id,
