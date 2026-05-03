@@ -48,6 +48,8 @@
     onOpenMembers?: () => void;
     currentUserId?: string;
     isLoadingHistory?: boolean;
+    /** Called when in-memory groups are exhausted; should load older messages from DB. Returns true if more may be available. */
+    onLoadOlderMessages?: () => Promise<boolean>;
   }
 
   let {
@@ -85,6 +87,7 @@
     onOpenMembers,
     currentUserId = '',
     isLoadingHistory = false,
+    onLoadOlderMessages,
   }: Props = $props();
 
   const INITIAL_RENDER_GROUPS = 180;
@@ -105,6 +108,9 @@
   let searchMatches = $state<string[]>([]);
   let activeSearchIndex = $state(-1);
   let showSearch = $state(false);
+  /** Whether local DB may have messages older than what's currently in memory. */
+  let hasMoreInDb = $state(true);
+  let isLoadingOlder = $state(false);
 
   function scrollToBottom(smooth = true) {
     if (!chatContainer) return;
@@ -161,8 +167,18 @@
   let visibleMessageGroups = $derived(messageGroups.slice(-renderedGroupCount));
   let hiddenGroupCount = $derived(Math.max(messageGroups.length - visibleMessageGroups.length, 0));
 
-  function loadOlderGroups() {
-    renderedGroupCount += RENDER_GROUPS_STEP;
+  async function loadOlderGroups() {
+    if (hiddenGroupCount > 0) {
+      renderedGroupCount += RENDER_GROUPS_STEP;
+    } else if (onLoadOlderMessages && hasMoreInDb && !isLoadingOlder) {
+      isLoadingOlder = true;
+      try {
+        const hasMore = await onLoadOlderMessages();
+        if (!hasMore) hasMoreInDb = false;
+      } finally {
+        isLoadingOlder = false;
+      }
+    }
   }
 
   async function navigateToMessage(messageId: string) {
@@ -236,6 +252,7 @@
       if (hasConversationChanged) {
         switchTime = Date.now();
         renderedGroupCount = INITIAL_RENDER_GROUPS;
+        hasMoreInDb = true;
         tick().then(() => scrollToBottom(false));
         isNearBottom = true;
       } else if (hasNewMessage && isNearBottom) {
@@ -409,6 +426,7 @@
           {visibleMessageGroups}
           {hiddenGroupCount}
           {loadOlderGroups}
+          {hasMoreInDb}
           {messageReactions}
           {currentUserId}
           searchQuery={searchQuery.trim()}

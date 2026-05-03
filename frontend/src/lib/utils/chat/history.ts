@@ -1,5 +1,5 @@
 import { saveMlsState } from '$lib/utils/hex';
-import type { StoredMessage } from '$lib/db';
+import type { IStorage, StoredMessage } from '$lib/db';
 import type { ChatMessage, Conversation, MessageReaction } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
 import { decodeAppMessage, MediaKind } from '$lib/proto/codec';
@@ -111,25 +111,8 @@ export async function replayConversationHistory(params: {
   contactName: string;
   userId: string;
   pin: string;
-  addMessageToChat: (
-    senderId: string,
-    content: string,
-    contactName: string,
-    replyTo?: { id: string; senderId: string; content: string },
-    isSystem?: boolean,
-    messageId?: string,
-    timestamp?: Date
-  ) => Promise<void>;
-  batchAddMessages?: (
-    messages: Array<{
-      senderId: string;
-      content: string;
-      replyTo?: { id: string; senderId: string; content: string };
-      isSystem?: boolean;
-      messageId?: string;
-      timestamp?: Date;
-    }>
-  ) => Promise<void>;
+  /** Write decrypted messages directly to local DB (DB-first architecture). */
+  storage: IStorage | null;
   getConversation: (contactName: string) => Conversation | undefined;
   setConversation: (contactName: string, next: Conversation) => void;
   messageReactions: Map<string, MessageReaction[]>;
@@ -141,8 +124,7 @@ export async function replayConversationHistory(params: {
     contactName,
     userId,
     pin,
-    addMessageToChat,
-    batchAddMessages,
+    storage,
     getConversation,
     setConversation,
     messageReactions,
@@ -407,24 +389,17 @@ export async function replayConversationHistory(params: {
       saveSeenCipherHashes(userId, id, seenCipherHashes);
     }
 
-    // Flush all decoded messages in a single batch update.
-    if (pendingMessages.length > 0) {
-      if (batchAddMessages) {
-        await batchAddMessages(pendingMessages);
-      } else {
-        // Fallback: sequential (legacy callers without batchAddMessages)
-        for (const pm of pendingMessages) {
-          await addMessageToChat(
-            pm.senderId,
-            pm.content,
-            contactName,
-            pm.replyTo,
-            pm.isSystem,
-            pm.messageId,
-            pm.timestamp
-          );
-        }
-      }
+    // Flush all decoded messages in a single batch DB write.
+    if (pendingMessages.length > 0 && storage) {
+      const toStore: StoredMessage[] = pendingMessages.map((pm) => ({
+        id: pm.messageId || crypto.randomUUID(),
+        conversationId: id,
+        senderId: pm.senderId.toLowerCase(),
+        content: pm.content,
+        timestamp: (pm.timestamp ?? new Date()).getTime(),
+        ...(pm.isSystem ? { readBy: [] } : {}),
+      }));
+      await storage.saveMessages(toStore, pin);
     }
 
     // Persist the last processed Redis stream ID so the next sync is incremental.

@@ -45,6 +45,13 @@ export interface IStorage {
   saveMessage(msg: StoredMessage, pin: string): Promise<void>;
   saveMessages(msgs: StoredMessage[], pin: string): Promise<void>;
   getMessages(conversationId: string, pin: string): Promise<StoredMessage[]>;
+  /** Return the most recent `limit` messages, optionally those strictly before `beforeTimestamp`. */
+  getMessagesPage(
+    conversationId: string,
+    pin: string,
+    limit: number,
+    beforeTimestamp?: number
+  ): Promise<StoredMessage[]>;
 
   // Garbage collection – delete messages older than the given threshold.
   deleteOldMessages(maxAgeMs: number): Promise<number>;
@@ -278,6 +285,56 @@ export class IndexedDbStorage implements IStorage {
 
     const results: StoredMessage[] = [];
     for (const row of rows) {
+      try {
+        const payload = await decryptData(row.cipherText, row.iv, row.salt, pin);
+        results.push({
+          id: row.id,
+          conversationId: row.conversationId,
+          timestamp: row.timestamp,
+          senderId: payload.senderId,
+          content: payload.content,
+          readBy: Array.isArray(payload.readBy) ? payload.readBy : undefined,
+          reactions: Array.isArray(payload.reactions) ? payload.reactions : undefined,
+          isDeleted: payload.isDeleted === true ? true : undefined,
+          isEdited: payload.isEdited === true ? true : undefined,
+        });
+      } catch {
+        console.warn('Failed to decrypt message', row.id);
+      }
+    }
+    return results.sort((a, b) => a.timestamp - b.timestamp);
+  }
+
+  async getMessagesPage(
+    conversationId: string,
+    pin: string,
+    limit: number,
+    beforeTimestamp?: number
+  ): Promise<StoredMessage[]> {
+    const db = this.ensureDb();
+    const allRows: any[] = await new Promise((resolve, reject) => {
+      const tx = db.transaction('messages', 'readonly');
+      const req = tx
+        .objectStore('messages')
+        .index('byConversation')
+        .getAll(IDBKeyRange.only(conversationId));
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+
+    // Sort descending by timestamp to easily pick the most recent slice
+    allRows.sort((a, b) => b.timestamp - a.timestamp);
+
+    // If beforeTimestamp is given, skip all rows at or after that timestamp
+    const filtered =
+      beforeTimestamp !== undefined
+        ? allRows.filter((r) => r.timestamp < beforeTimestamp)
+        : allRows;
+
+    const page = filtered.slice(0, limit);
+
+    const results: StoredMessage[] = [];
+    for (const row of page) {
       try {
         const payload = await decryptData(row.cipherText, row.iv, row.salt, pin);
         results.push({
@@ -591,6 +648,50 @@ export class SqliteStorage implements IStorage {
       }
     }
     return results;
+  }
+
+  async getMessagesPage(
+    conversationId: string,
+    pin: string,
+    limit: number,
+    beforeTimestamp?: number
+  ): Promise<StoredMessage[]> {
+    let rows: any[];
+    if (beforeTimestamp !== undefined) {
+      rows = await this.db.select(
+        'SELECT * FROM messages WHERE conversation_id = $1 AND timestamp < $2 ORDER BY timestamp DESC LIMIT $3',
+        [conversationId, beforeTimestamp, limit]
+      );
+    } else {
+      rows = await this.db.select(
+        'SELECT * FROM messages WHERE conversation_id = $1 ORDER BY timestamp DESC LIMIT $2',
+        [conversationId, limit]
+      );
+    }
+
+    const results: StoredMessage[] = [];
+    for (const row of rows) {
+      try {
+        const iv = base64ToUint8(row.iv);
+        const salt = base64ToUint8(row.salt);
+        const cipherText = base64ToUint8(row.cipher_text);
+        const payload = await decryptData(cipherText, iv, salt, pin);
+        results.push({
+          id: row.id,
+          conversationId: row.conversation_id,
+          timestamp: row.timestamp,
+          senderId: payload.senderId,
+          content: payload.content,
+          readBy: Array.isArray(payload.readBy) ? payload.readBy : undefined,
+          reactions: Array.isArray(payload.reactions) ? payload.reactions : undefined,
+          isDeleted: payload.isDeleted === true ? true : undefined,
+          isEdited: payload.isEdited === true ? true : undefined,
+        });
+      } catch {
+        console.warn('Failed to decrypt SQLite row', row.id);
+      }
+    }
+    return results.sort((a, b) => a.timestamp - b.timestamp);
   }
 
   // -- Backup helpers ------------------------------------------------------

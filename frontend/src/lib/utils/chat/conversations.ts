@@ -11,6 +11,9 @@ import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
 import { apiFetch } from '$lib/utils/apiFetch';
 
+/** Number of messages loaded from local DB on first display. Older messages load on scroll-up. */
+const INITIAL_MESSAGES_PAGE = 60;
+
 // ---------- Archive persistence ----------
 
 export function archiveStorageKey(uid: string): string {
@@ -202,15 +205,6 @@ export interface LoadConversationsContext {
   historyBaseUrl: string;
   log: (msg: string) => void;
   onArchivedIdsChange: (ids: string[]) => void;
-  addMessageToChat: (
-    senderId: string,
-    content: string,
-    contactName: string,
-    replyTo?: { id: string; senderId: string; content: string },
-    isSystem?: boolean,
-    messageId?: string,
-    timestamp?: Date
-  ) => Promise<void>;
 }
 
 export async function loadExistingConversations(ctx: LoadConversationsContext) {
@@ -324,7 +318,11 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
             }
           }
 
-          const storedMessages = await ctx.storage.getMessages(meta.id, ctx.pin);
+          const storedMessages = await ctx.storage.getMessagesPage(
+            meta.id,
+            ctx.pin,
+            INITIAL_MESSAGES_PAGE
+          );
           const msgs = mapStoredMessagesToChatMessages(storedMessages, ctx.userId);
           const existing = ctx.conversations.get(meta.id);
           if (existing && msgs.length > 0) {
@@ -337,18 +335,35 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
               }
             }
           }
+          // Fetch from network → decrypt → save to DB (no direct UI update)
           await replayConversationHistory({
             mlsService: ctx.mlsService,
             id: meta.id,
             contactName: meta.id,
             userId: ctx.userId,
             pin: ctx.pin,
-            addMessageToChat: ctx.addMessageToChat,
+            storage: ctx.storage,
             getConversation: (name) => ctx.conversations.get(name),
             setConversation: (name, next) => ctx.conversations.set(name, next),
             messageReactions: ctx.messageReactions,
             log: ctx.log,
           });
+          // Reload from DB after network sync so display reflects new messages
+          const refreshed = await ctx.storage.getMessagesPage(
+            meta.id,
+            ctx.pin,
+            INITIAL_MESSAGES_PAGE
+          );
+          const refreshedMsgs = mapStoredMessagesToChatMessages(refreshed, ctx.userId);
+          const current = ctx.conversations.get(meta.id);
+          if (current) {
+            ctx.conversations.set(meta.id, { ...current, messages: refreshedMsgs });
+            for (const m of refreshedMsgs) {
+              if (m.reactions && m.reactions.length > 0) {
+                ctx.messageReactions.set(m.id, m.reactions);
+              }
+            }
+          }
         } catch (e) {
           ctx.log(
             `[WARN] Echec chargement conversation ${meta.id}: ${e instanceof Error ? e.message : String(e)}`

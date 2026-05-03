@@ -6,7 +6,7 @@
  * - Group-level operations (create, rename, delete, invite, kick)
  * - Storage helpers (save, load history, reload)
  */
-import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+import { SvelteDate, SvelteMap, SvelteSet } from 'svelte/reactivity';
 import type { IStorage } from '$lib/db';
 import type { IMlsService } from '$lib/mlsService';
 import type { MessageReaction, Conversation } from '$lib/types';
@@ -24,6 +24,11 @@ import {
   repairDirectConversation,
 } from '$lib/utils/chat/groupCreation';
 import { loadExistingConversations } from '$lib/utils/chat/conversations';
+
+/** Messages loaded from DB on initial display or after network sync. */
+const INITIAL_MESSAGES_PAGE = 60;
+/** Messages loaded per scroll-up DB page request. */
+const OLDER_MESSAGES_PAGE = 50;
 
 export interface ConversationContext {
   /** The live storage instance (null until logged in) */
@@ -110,24 +115,37 @@ export function useConversations() {
       return;
     }
 
-    const { replayConversationHistory } = await import('$lib/utils/chat/history');
+    const { replayConversationHistory, mapStoredMessagesToChatMessages } =
+      await import('$lib/utils/chat/history');
     isLoadingHistory = true;
     try {
+      // Fetch from network → decrypt → save to DB (no direct UI update)
       await replayConversationHistory({
         mlsService: ctx.ensureMls(),
         id,
         contactName,
         userId: ctx.userId,
         pin: ctx.pin,
-        addMessageToChat: ctx.addMessageToChat,
-        batchAddMessages: ctx.batchAddMessages
-          ? (msgs) => ctx.batchAddMessages!(msgs, contactName)
-          : undefined,
+        storage: ctx.storage,
         getConversation: (name) => conversations.get(name),
         setConversation: (name, next) => conversations.set(name, next),
         messageReactions: ctx.messageReactions,
         log: ctx.log,
       });
+      // Reload from DB so display reflects the latest saved state
+      if (ctx.storage) {
+        const refreshed = await ctx.storage.getMessagesPage(id, ctx.pin, INITIAL_MESSAGES_PAGE);
+        const msgs = mapStoredMessagesToChatMessages(refreshed, ctx.userId);
+        const current = conversations.get(contactName);
+        if (current) {
+          conversations.set(contactName, { ...current, messages: msgs });
+          for (const m of msgs) {
+            if (m.reactions && m.reactions.length > 0) {
+              ctx.messageReactions.set(m.id, m.reactions);
+            }
+          }
+        }
+      }
     } finally {
       isLoadingHistory = false;
     }
@@ -247,8 +265,56 @@ export function useConversations() {
       historyBaseUrl: ctx.historyBaseUrl,
       log: ctx.log,
       onArchivedIdsChange: () => {},
-      addMessageToChat: ctx.addMessageToChat,
     });
+  }
+
+  /**
+   * Load a page of older messages from local DB and prepend them to the conversation.
+   * Returns true if there may be more, false if the DB is exhausted.
+   */
+  async function loadOlderMessages(
+    contactName: string,
+    ctx: ConversationContext
+  ): Promise<boolean> {
+    if (!ctx.storage) return false;
+    const convo = conversations.get(contactName);
+    if (!convo) return false;
+
+    const timestamps = convo.messages.map((m) =>
+      m.timestamp instanceof Date
+        ? m.timestamp.getTime()
+        : new SvelteDate(m.timestamp as any).getTime()
+    );
+    const beforeTimestamp = timestamps.length > 0 ? Math.min(...timestamps) : undefined;
+
+    const older = await ctx.storage.getMessagesPage(
+      convo.id,
+      ctx.pin,
+      OLDER_MESSAGES_PAGE,
+      beforeTimestamp
+    );
+    if (older.length === 0) return false;
+
+    const { mapStoredMessagesToChatMessages } = await import('$lib/utils/chat/history');
+    const mapped = mapStoredMessagesToChatMessages(older, ctx.userId);
+
+    const current = conversations.get(contactName);
+    if (!current) return false;
+
+    const merged = [...mapped, ...current.messages].sort((a, b) => {
+      const ta =
+        a.timestamp instanceof Date
+          ? a.timestamp.getTime()
+          : new SvelteDate(a.timestamp as any).getTime();
+      const tb =
+        b.timestamp instanceof Date
+          ? b.timestamp.getTime()
+          : new SvelteDate(b.timestamp as any).getTime();
+      return ta !== tb ? ta - tb : a.id.localeCompare(b.id);
+    });
+
+    conversations.set(contactName, { ...current, messages: merged });
+    return older.length === OLDER_MESSAGES_PAGE;
   }
 
   // ── Selection + navigation ────────────────────────────────────────────────
@@ -633,6 +699,7 @@ export function useConversations() {
     saveConversation,
     loadHistoryForConversation,
     loadAndRestoreConversations,
+    loadOlderMessages,
     selectConversation,
     selectConversationWithCtx,
     goBackToMenu,

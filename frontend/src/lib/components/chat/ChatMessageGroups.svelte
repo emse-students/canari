@@ -17,6 +17,7 @@
     visibleMessageGroups: MessageGroup[];
     hiddenGroupCount: number;
     loadOlderGroups: () => void;
+    hasMoreInDb?: boolean;
     searchQuery?: string;
     messageReactions?: Record<string, MessageReaction[]> | Map<string, MessageReaction[]>;
     onReply?: (message: ChatMessage) => void;
@@ -33,6 +34,7 @@
     visibleMessageGroups,
     hiddenGroupCount,
     loadOlderGroups,
+    hasMoreInDb = false,
     searchQuery = '',
     messageReactions,
     onReply,
@@ -96,7 +98,7 @@
 </script>
 
 <!-- Bouton de chargement de l'historique (Sticky) -->
-{#if hiddenGroupCount > 0}
+{#if hiddenGroupCount > 0 || hasMoreInDb}
   <div class="sticky top-2 z-10 flex justify-center mb-4 mt-2">
     <button
       type="button"
@@ -104,7 +106,11 @@
       class="group inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-white/70 dark:bg-black/40 backdrop-blur-md border border-black/5 dark:border-white/10 text-[0.75rem] font-bold text-text-muted hover:text-text-main hover:bg-white/90 dark:hover:bg-black/60 transition-all shadow-sm hover:shadow-md active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
     >
       <ChevronUp size={14} class="group-hover:-translate-y-0.5 transition-transform" />
-      Charger l'historique ({hiddenGroupCount})
+      {#if hiddenGroupCount > 0}
+        Charger l'historique ({hiddenGroupCount})
+      {:else}
+        Charger l'historique
+      {/if}
     </button>
   </div>
 {/if}
