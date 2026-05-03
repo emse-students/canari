@@ -8,6 +8,8 @@ import android.content.Intent
 import android.os.Build
 import android.util.Base64
 import androidx.core.app.NotificationCompat
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import org.json.JSONObject
@@ -15,14 +17,6 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
-/**
- * Service FCM Canari – affiche le contenu réel du message chiffré dans la notification.
- *
- * Stratégie de déchiffrement (du plus rapide au plus lent) :
- *  1. Le proto MLS est inclus inline dans le payload FCM → déchiffrement direct via JNI.
- *  2. Si le proto est absent (message trop grand), fetch HTTP avec le token stocké.
- *  3. Si JNI échoue (app "froide", lib non chargée) → fallback esthétique avec groupName.
- */
 class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
     companion object {
@@ -32,15 +26,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         const val KEY_FCM_TOKEN = "fcm_token"
     }
 
-    // Pont JNI vers la bibliothèque Rust (chargée par CanariApplication.onCreate()).
     external fun nativeDecryptMessage(
         stateBytes: ByteArray,
         pin: String,
         groupId: String,
         ciphertext: ByteArray
     ): String
-
-    // ── Cycle de vie FCM ──────────────────────────────────────────────────────
 
     override fun onNewToken(token: String) {
         super.onNewToken(token)
@@ -53,6 +44,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         super.onMessageReceived(remoteMessage)
         val data = remoteMessage.data
 
+        // 1. Vérifie si on doit déclencher un travail lourd (ex: envoyer un Welcome, traiter la queue)
+        if (data["action"] == "process_queue") {
+            val workRequest = OneTimeWorkRequestBuilder<MlsBackgroundWorker>().build()
+            WorkManager.getInstance(this).enqueue(workRequest)
+            
+            // Si c'est juste un ping de synchro (pas de message à afficher), on s'arrête là
+            if (!data.containsKey("groupId")) return
+        }
+
+        // 2. Traitement classique d'affichage de notification
         val thread = Thread {
             val groupId         = data["groupId"] ?: ""
             val groupName       = data["groupName"]?.takeIf { it.isNotEmpty() } ?: groupId
@@ -65,10 +66,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             showNotification("Canari", body, data)
         }
         thread.start()
-        thread.join(8_000) // Firebase exige un retour sous ~10 s
+        thread.join(8_000)
     }
-
-    // ── Déchiffrement ─────────────────────────────────────────────────────────
 
     private fun tryDecrypt(
         queuedMessageId: String?,
@@ -76,13 +75,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         inlineProto: String?,
     ): String? {
         if (queuedMessageId == null) return null
-
         val ctx = loadPushContext() ?: return null
         val stateBytes = loadMlsState() ?: return null
 
-        // Stratégie 1 : proto inclus dans le payload FCM (cas nominal)
         val protoB64 = inlineProto
-            ?: fetchProtoFromBackend(queuedMessageId, ctx) // Stratégie 2 : fetch HTTP
+            ?: fetchProtoFromBackend(queuedMessageId, ctx)
             ?: return null
 
         return decryptProto(stateBytes, ctx.pin, groupId, protoB64)
@@ -114,10 +111,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         return if (file.exists()) try { file.readBytes() } catch (_: Exception) { null } else null
     }
 
-    /**
-     * Fetch HTTP de secours quand le proto n'est pas inline (message volumineux).
-     * Utilise le pushSecret stocké dans Android Keystore (long-lived, pas de JWT).
-     */
     private fun fetchProtoFromBackend(queuedMessageId: String, ctx: PushContext): String? {
         val secret = PushSecretKeystore.retrieve(this) ?: return null
         return try {
@@ -140,11 +133,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         } catch (_: Exception) { null }
     }
 
-    /**
-     * Appel JNI vers Rust. Enveloppé dans un try/catch large pour gérer :
-     *  - UnsatisfiedLinkError si la lib n'est pas encore chargée (app froide)
-     *  - toute exception JNI (état MLS corrompu, epoch mismatch…)
-     */
     private fun decryptProto(
         stateBytes: ByteArray,
         pin: String,
@@ -155,19 +143,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val text = nativeDecryptMessage(stateBytes, pin, groupId, cipherBytes)
         text.takeIf { it.isNotEmpty() }?.take(200)
     } catch (_: UnsatisfiedLinkError) {
-        // Lib Rust non chargée (service démarré à froid sans Activity) → fallback
         null
     } catch (_: Exception) {
         null
     }
 
-    // ── Fallback ──────────────────────────────────────────────────────────────
-
     private fun buildFallbackText(groupName: String): String =
         if (groupName.isNotEmpty()) "Nouveau message dans « $groupName »"
         else "Vous avez reçu un message chiffré"
-
-    // ── Notification locale ───────────────────────────────────────────────────
 
     private fun showNotification(title: String, body: String, data: Map<String, String>) {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager

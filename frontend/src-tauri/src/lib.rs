@@ -1635,3 +1635,35 @@ pub fn run() {
             panic!("error while running tauri application: {e:?}");
         });
 }
+
+// Point d'entrée JNI pour le Worker en arrière-plan
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroundTasks(
+    mut env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    state_bytes: jni::objects::JByteArray,
+    pin: jni::objects::JString,
+) -> jni::sys::jboolean {
+
+    // Convertir les types JNI en types Rust
+    let state_vec = match env.convert_byte_array(state_bytes) {
+        Ok(v) => v,
+        Err(_) => return 0, // 0 = false (déclenche un retry côté Kotlin)
+    };
+
+    let pin_str: String = match env.get_string(&pin) {
+        Ok(s) => s.into(),
+        Err(_) => return 0,
+    };
+
+    // TODO: Implémenter ici la logique lourde :
+    // - Charger la structure MLS depuis `state_vec` avec le `pin_str`
+    // - Interroger l'API pour récupérer les tâches en attente (process_queue)
+    // - Envoyer les Commits/Welcome/Proposals
+    // - Réécrire la base de données mls.bin si nécessaire
+
+    log::info!("Background Worker exécuté avec succès !");
+
+    1 // 1 = true (Succès)
+}MainActivity.kt

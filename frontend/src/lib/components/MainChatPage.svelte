@@ -91,7 +91,9 @@
         replyTo?: any,
         isSystem?: boolean,
         msgId?: string,
-        ts?: Date
+        ts?: Date,
+        status?: any,
+        skipDbSave?: boolean
       ) =>
         messaging.addMessageToChat(
           sid,
@@ -101,7 +103,9 @@
           replyTo,
           isSystem,
           msgId,
-          ts
+          ts,
+          status,
+          skipDbSave
         ),
       batchAddMessages: (
         msgs: Array<{
@@ -563,9 +567,6 @@
         pendingFiles={messaging.pendingMediaFiles}
         onRemovePendingFile={messaging.removePendingMediaFile}
         isUploading={messaging.isUploadingMedia}
-        onLoadOlderMessages={convs.selectedContact
-          ? () => convs.loadOlderMessages(convs.selectedContact!, convCtx())
-          : undefined}
         onStartCall={() => {
           if (session.callService && convs.selectedContact) {
             const convo = convs.conversations.get(convs.selectedContact);

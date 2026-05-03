@@ -87,7 +87,8 @@ export function useMessaging() {
     isSystem = false,
     messageId?: string,
     timestamp?: Date,
-    status?: ChatMessage['status']
+    status?: ChatMessage['status'],
+    skipDbSave = false // <-- NOUVEAU PARAMÈTRE ICI
   ) {
     const normalized = contactName.toLowerCase();
     const convo = ctx.conversations.get(normalized);
@@ -149,7 +150,8 @@ export function useMessaging() {
       void ctx.sendSystemNotification(convo.name, preview || 'Nouveau message');
     }
 
-    if (ctx.storage) {
+    // <-- ON MODIFIE LA CONDITION ICI
+    if (ctx.storage && !skipDbSave) {
       try {
         await ctx.storage.saveMessage(
           {

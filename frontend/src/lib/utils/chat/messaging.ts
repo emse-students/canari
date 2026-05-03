@@ -18,7 +18,8 @@ interface SendMessageDeps {
     isSystem?: boolean,
     messageId?: string,
     timestamp?: Date,
-    status?: ChatMessage['status']
+    status?: ChatMessage['status'],
+    skipDbSave?: boolean
   ) => Promise<void>;
   patchMessage?: (
     messageId: string,
@@ -108,7 +109,8 @@ export async function sendChatMessage(
         false,
         messageId,
         undefined,
-        'sending'
+        'sending',
+        true
       );
       deps.log(`[SEND] Message affiché (optimiste) — appel mlsService.sendMessage...`);
 
