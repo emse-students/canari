@@ -194,6 +194,7 @@ export interface IMlsService {
     ) => Promise<boolean>
   ): void;
   onDisconnect(callback: () => void): void;
+  onWelcomeProcessed(callback: (groupId?: string) => void): void;
 
   // Device sync notification
   sendReinviteRequest(groupId: string): Promise<void>;

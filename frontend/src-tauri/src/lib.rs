@@ -1642,14 +1642,19 @@ pub fn run() {
 pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroundTasks(
     mut env: jni::JNIEnv,
     _class: jni::objects::JClass,
+    files_dir: jni::objects::JString,
     state_bytes: jni::objects::JByteArray,
     pin: jni::objects::JString,
 ) -> jni::sys::jboolean {
 
-    // Convertir les types JNI en types Rust
+    let files_dir_str: String = match env.get_string(&files_dir) {
+        Ok(s) => s.into(),
+        Err(_) => return 0,
+    };
+
     let state_vec = match env.convert_byte_array(state_bytes) {
         Ok(v) => v,
-        Err(_) => return 0, // 0 = false (déclenche un retry côté Kotlin)
+        Err(_) => return 0,
     };
 
     let pin_str: String = match env.get_string(&pin) {
@@ -1657,13 +1662,82 @@ pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroun
         Err(_) => return 0,
     };
 
-    // TODO: Implémenter ici la logique lourde :
-    // - Charger la structure MLS depuis `state_vec` avec le `pin_str`
-    // - Interroger l'API pour récupérer les tâches en attente (process_queue)
-    // - Envoyer les Commits/Welcome/Proposals
-    // - Réécrire la base de données mls.bin si nécessaire
+    let rt = match tokio::runtime::Runtime::new() {
+        Ok(r) => r,
+        Err(_) => return 0,
+    };
 
-    log::info!("Background Worker exécuté avec succès !");
+    let result = rt.block_on(async {
+        let db_path = std::path::Path::new(&files_dir_str).join("mls_pending.db");
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                sqlx::sqlite::SqliteConnectOptions::new()
+                    .filename(&db_path)
+                    .create_if_missing(true)
+                    .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
 
-    1 // 1 = true (Succès)
-}MainActivity.kt
+        let mut manager = MlsManager::load_encrypted("_push_", "_push_", Some(state_vec), &pin_str).map_err(|e| e.to_string())?;
+
+        // 1. Fetch distinct group_ids that have pending tasks
+        let group_ids: Vec<String> = sqlx::query_scalar("SELECT DISTINCT group_id FROM pending_mls_messages WHERE is_ready = 0")
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        for group_id in group_ids {
+            let rows: Vec<(String, Vec<u8>)> = sqlx::query_as(
+                "SELECT id, ciphertext FROM pending_mls_messages WHERE group_id = ? AND is_ready = 0 ORDER BY created_at ASC",
+            )
+            .bind(&group_id)
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+            for (id, ciphertext) in &rows {
+                if manager.process_incoming_message(&group_id, ciphertext).is_ok() {
+                    if let Ok(enc) = manager.save_encrypted(&pin_str) {
+                        let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+                        sqlx::query("UPDATE pending_mls_messages SET is_ready = 1 WHERE id = ?")
+                            .bind(id)
+                            .execute(&mut *tx)
+                            .await
+                            .map_err(|e| e.to_string())?;
+                        
+                        let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
+                        sqlx::query("INSERT OR REPLACE INTO mls_state_checkpoint (id, state, saved_at) VALUES (1, ?, ?)")
+                            .bind(enc.as_slice())
+                            .bind(ts)
+                            .execute(&mut *tx)
+                            .await
+                            .map_err(|e| e.to_string())?;
+                        
+                        if tx.commit().await.is_ok() {
+                            let _ = std::fs::write(std::path::Path::new(&files_dir_str).join("mls.bin"), &enc);
+                        }
+                    }
+                } else {
+                    break;
+                }
+            }
+            
+            let _ = sqlx::query("DELETE FROM pending_mls_messages WHERE group_id = ? AND is_ready = 1")
+                .bind(&group_id)
+                .execute(&pool)
+                .await;
+        }
+
+        Ok::<(), String>(())
+    });
+
+    if result.is_ok() {
+        log::info!("Background Worker exécuté avec succès !");
+        1
+    } else {
+        log::error!("Background Worker échoué: {:?}", result.err());
+        0
+    }
+}

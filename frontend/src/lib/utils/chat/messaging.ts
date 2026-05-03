@@ -3,7 +3,6 @@ import type { ChatMessage, Conversation } from '$lib/types';
 import { saveMlsState } from '$lib/utils/hex';
 import { encodeAppMessage, mkText, mkReply, mkReaction, mkSystem } from '$lib/proto/codec';
 import { serializeEnvelope, mkTextEnvelope, parseEnvelope } from '$lib/envelope';
-import { sendEncryptedChannelMessage } from '$lib/utils/chat/channelCrypto';
 
 interface SendMessageDeps {
   mlsService: IMlsService;
@@ -14,12 +13,14 @@ interface SendMessageDeps {
     senderId: string,
     content: string,
     contactName: string,
-    replyTo?: ChatMessage['replyTo'],
-    isSystem?: boolean,
-    messageId?: string,
-    timestamp?: Date,
-    status?: ChatMessage['status'],
-    skipDbSave?: boolean
+    options: {
+      replyTo?: ChatMessage['replyTo'];
+      isSystem?: boolean;
+      messageId?: string;
+      timestamp?: Date;
+      status?: ChatMessage['status'];
+      skipDbSave?: boolean;
+    }
   ) => Promise<void>;
   patchMessage?: (
     messageId: string,
@@ -83,36 +84,24 @@ export async function sendChatMessage(
     }
 
     if (contactName.startsWith('channel_')) {
-      const actualChannelId = contactName.replace('channel_', ''); // extract the db id
-      await sendEncryptedChannelMessage(actualChannelId, payload, messageId);
-      // Show message optimistically with the same messageId.
-      // When the WS echo arrives with data.id === messageId, the dedup guard
-      // in addMessageToChat silently drops it — so the message appears once.
       await addMessageToChat(
         userId,
         serializeEnvelope(mkTextEnvelope(text, replyToData)),
         contactName,
-        undefined,
-        false,
-        messageId
+        {
+          messageId,
+          skipDbSave: true,
+        }
       );
     } else {
       const envelope = serializeEnvelope(mkTextEnvelope(text, replyToData));
 
-      // Optimistic UI: show the bubble immediately so the user gets instant feedback.
-      // The dedup guard in addMessageToChat will drop the WS echo when it arrives.
-      await addMessageToChat(
-        userId,
-        envelope,
-        contactName,
-        undefined,
-        false,
+      await addMessageToChat(userId, envelope, contactName, {
         messageId,
-        undefined,
-        'sending',
-        true
-      );
-      deps.log(`[SEND] Message affiché (optimiste) — appel mlsService.sendMessage...`);
+        status: 'sending',
+        skipDbSave: false,
+      });
+      deps.log(`[SEND] Message affiché (optimiste)...`);
 
       try {
         await mlsService.sendMessage(conversation.id, payload, messageId);

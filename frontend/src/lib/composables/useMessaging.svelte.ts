@@ -76,45 +76,67 @@ export function useMessaging() {
     const msgs = [...convo.messages];
     msgs[idx] = { ...msgs[idx], ...patch };
     ctx.conversations.set(key, { ...convo, messages: msgs });
+
+    if (ctx.storage) {
+      const target = msgs[idx];
+      ctx.storage
+        .saveMessage(
+          {
+            id: target.id,
+            conversationId: key,
+            senderId: target.senderId,
+            content: target.content,
+            timestamp:
+              target.timestamp instanceof Date
+                ? target.timestamp.getTime()
+                : new SvelteDate(target.timestamp as any).getTime(),
+            readBy: target.readBy,
+            reactions: target.reactions,
+            isDeleted: target.isDeleted,
+            isEdited: target.isEdited,
+          },
+          ctx.pin
+        )
+        .catch((e) => console.error('[DB] Failed to persist patched message:', e));
+    }
   }
 
+  // --- NOUVELLE SIGNATURE AVEC UN OBJET D'OPTIONS ---
   async function addMessageToChat(
     senderId: string,
     content: string,
     contactName: string,
     ctx: MessagingContext,
-    replyTo?: { id: string; senderId: string; content: string },
-    isSystem = false,
-    messageId?: string,
-    timestamp?: Date,
-    status?: ChatMessage['status'],
-    skipDbSave = false // <-- NOUVEAU PARAMÈTRE ICI
+    options: {
+      replyTo?: { id: string; senderId: string; content: string };
+      isSystem?: boolean;
+      messageId?: string;
+      timestamp?: Date;
+      status?: ChatMessage['status'];
+      skipDbSave?: boolean;
+    } = {}
   ) {
     const normalized = contactName.toLowerCase();
     const convo = ctx.conversations.get(normalized);
     if (!convo) {
-      console.warn(
-        `[ADD_MSG] conversation "${normalized}" introuvable (${ctx.conversations.size} convos dans la map) — message de ${senderId} ignoré`
-      );
+      console.warn(`[ADD_MSG] conversation "${normalized}" introuvable...`);
       return;
     }
 
     const isOwn = senderId.toLowerCase() === ctx.userId.toLowerCase();
     const newMsg: ChatMessage = {
-      id: messageId || crypto.randomUUID(),
+      id: options.messageId || crypto.randomUUID(),
       senderId: senderId.toLowerCase(),
       content,
-      timestamp: timestamp ?? new SvelteDate(),
+      timestamp: options.timestamp ?? new SvelteDate(),
       isOwn,
-      replyTo,
-      isSystem,
-      status,
+      replyTo: options.replyTo,
+      isSystem: options.isSystem ?? false,
+      status: options.status,
     };
 
     if (convo.messages.some((m) => m.id === newMsg.id)) {
-      console.log(
-        `[ADD_MSG] Doublon ignoré id=${newMsg.id} dans "${normalized}" (${convo.messages.length} msgs existants)`
-      );
+      console.log(`[ADD_MSG] Doublon ignoré id=${newMsg.id}...`);
       return;
     }
 
@@ -131,17 +153,15 @@ export function useMessaging() {
       unreadCount: nextUnreadCount,
       messages: insertMessageOrdered(convo.messages, newMsg),
     });
-    console.log(
-      `[ADD_MSG] ✓ Message ajouté: id=${newMsg.id} conversation="${normalized}" senderId=${newMsg.senderId} isOwn=${isOwn} (total ${convo.messages.length + 1} messages)`
-    );
+    console.log(`[ADD_MSG] ✓ Message ajouté: id=${newMsg.id}...`);
 
-    if (!isOwn && !isSystem) {
+    if (!isOwn && !options.isSystem) {
       (ctx.playReceiveTone ?? ctx.playNotificationTone)();
     }
 
     const shouldSendSystemNotification =
       !isOwn &&
-      !isSystem &&
+      !options.isSystem &&
       typeof document !== 'undefined' &&
       (document.visibilityState !== 'visible' || !document.hasFocus());
 
@@ -150,8 +170,8 @@ export function useMessaging() {
       void ctx.sendSystemNotification(convo.name, preview || 'Nouveau message');
     }
 
-    // <-- ON MODIFIE LA CONDITION ICI
-    if (ctx.storage && !skipDbSave) {
+    // --- LE NOYAU DU CORRECTIF EST LÀ ---
+    if (ctx.storage && !options.skipDbSave) {
       try {
         await ctx.storage.saveMessage(
           {
@@ -160,7 +180,7 @@ export function useMessaging() {
             senderId: newMsg.senderId,
             content,
             timestamp: newMsg.timestamp.getTime(),
-            ...(isSystem ? { readBy: [] } : {}),
+            ...(options.isSystem ? { readBy: [] } : {}),
           },
           ctx.pin
         );
@@ -177,7 +197,7 @@ export function useMessaging() {
   }
 
   async function addSystemMessage(content: string, contactName: string, ctx: MessagingContext) {
-    await addMessageToChat('system', content, contactName, ctx, undefined, true);
+    await addMessageToChat('system', content, contactName, ctx, { isSystem: true });
   }
 
   async function batchAddMessages(
@@ -357,15 +377,10 @@ export function useMessaging() {
             await saveMlsState(ctx.userId, stateBytes);
           }
           const payload = serializeEnvelope(mkMediaEnvelope({ ...mediaRef }, captionForFile));
-          await addMessageToChat(
-            ctx.userId,
-            payload,
-            ctx.selectedContact!,
-            ctx,
-            undefined,
-            false,
-            messageId
-          );
+          await addMessageToChat(ctx.userId, payload, ctx.selectedContact!, ctx, {
+            messageId,
+            skipDbSave: true,
+          });
           sentMediaMessageCount++;
         }
         if (sentMediaMessageCount > 0) {
@@ -390,16 +405,8 @@ export function useMessaging() {
       userId: ctx.userId,
       pin: ctx.pin,
       conversation: convo,
-      addMessageToChat: (
-        sid: string,
-        content: string,
-        contactName: string,
-        replyTo?: { id: string; senderId: string; content: string },
-        isSystem?: boolean,
-        msgId?: string,
-        ts?: Date,
-        st?: ChatMessage['status']
-      ) => addMessageToChat(sid, content, contactName, ctx, replyTo, isSystem, msgId, ts, st),
+      addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
+        addMessageToChat(sid, content, contactName, ctx, options),
       patchMessage: (
         msgId: string,
         contactName: string,

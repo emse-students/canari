@@ -345,6 +345,36 @@ export function useChatSession() {
         log: cb.log,
       });
 
+      // Rafraîchir Svelte quand on rejoint un groupe
+      if ('onWelcomeProcessed' in mlsService) {
+        (mlsService as any).onWelcomeProcessed(async (groupId?: string) => {
+          if (groupId) {
+            cb.log(`[SYNC] Welcome traité pour ${groupId}, rafraîchissement...`);
+            if (!cb.conversations.has(groupId)) {
+              cb.conversations.set(groupId, {
+                id: groupId,
+                contactName: groupId,
+                name: groupId,
+                messages: [],
+                isReady: true,
+                mlsStateHex: null,
+                unreadCount: 0,
+                conversationType: 'group',
+              });
+              await cb.saveConversation(groupId);
+            }
+            cb.onLoadHistoryForConversation(groupId, groupId).catch((e) =>
+              cb.log(`[WARN] Erreur refresh conv ${groupId}: ${e}`)
+            );
+          } else {
+            cb.log('[SYNC] Welcome traité, rafraîchissement des conversations...');
+            cb.loadAndRestoreConversations().catch((e) =>
+              cb.log(`[WARN] Erreur refresh convs: ${e}`)
+            );
+          }
+        });
+      }
+
       // When a device in MLS recovery sends a reinvite_request, re-run
       // processPendingInvitations so we re-invite it and send a fresh Welcome.
       // The add-lock inside processPendingInvitations handles concurrent calls.

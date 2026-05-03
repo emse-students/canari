@@ -40,6 +40,7 @@ export class WebMlsService implements IMlsService {
   // être recréé. Le client fait forgetGroup() + isReady=false puis, à la
   // reconnexion, envoie un welcome_request pour être ré-invité.
   private groupResetCallback: ((groupId: string, reason: string) => void) | null = null;
+  private welcomeProcessedCallback: ((groupId?: string) => void) | null = null;
   private baseUrl: string; // Chat Gateway URL
   private historyUrl: string; // Chat Delivery Service URL
   private userId: string = 'unknown';
@@ -406,6 +407,11 @@ export class WebMlsService implements IMlsService {
             this.messageQueue.unshift(buffered[i]);
           }
         }
+
+        // Notify Svelte that a Welcome has been fully processed
+        if (msg.isWelcome) {
+          this.welcomeProcessedCallback?.(groupId);
+        }
       } catch (e) {
         console.error(`[QUEUE] Error processing message:`, e);
         // On exception, only ACK MLS structure messages (Welcome/Commit) — those
@@ -488,6 +494,10 @@ export class WebMlsService implements IMlsService {
 
   onGroupReset(callback: (groupId: string, reason: string) => void): void {
     this.groupResetCallback = callback;
+  }
+
+  onWelcomeProcessed(callback: (groupId?: string) => void): void {
+    this.welcomeProcessedCallback = callback;
   }
 
   // WebMlsService runs in the browser (WASM) and has direct access to the

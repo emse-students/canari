@@ -88,24 +88,14 @@
         sid: string,
         content: string,
         contactName: string,
-        replyTo?: any,
-        isSystem?: boolean,
-        msgId?: string,
-        ts?: Date,
-        status?: any,
-        skipDbSave?: boolean
+        options?: any
       ) =>
         messaging.addMessageToChat(
           sid,
           content,
           contactName,
           msgCtx(),
-          replyTo,
-          isSystem,
-          msgId,
-          ts,
-          status,
-          skipDbSave
+          options
         ),
       batchAddMessages: (
         msgs: Array<{
@@ -160,20 +150,14 @@
         sid: string,
         content: string,
         contactName: string,
-        replyTo?: any,
-        isSystem?: boolean,
-        msgId?: string,
-        ts?: Date
+        options?: any
       ) =>
         messaging.addMessageToChat(
           sid,
           content,
           contactName,
           msgCtx(),
-          replyTo,
-          isSystem,
-          msgId,
-          ts
+          options
         ),
       addSystemMessage: (content: string, contactName: string) =>
         messaging.addSystemMessage(content, contactName, msgCtx()),

@@ -9,15 +9,24 @@ import java.io.File
 class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
     Worker(context, workerParams) {
 
+    init {
+        try {
+            System.loadLibrary("mines_app_lib")
+        } catch (e: UnsatisfiedLinkError) {
+            // Log if needed, will be caught in doWork anyway
+        }
+    }
+
     // Pont JNI spécifique pour le traitement de la file d'attente (Welcome, etc.)
-    external fun nativeProcessBackgroundTasks(stateBytes: ByteArray, pin: String): Boolean
+    external fun nativeProcessBackgroundTasks(filesDir: String, stateBytes: ByteArray, pin: String): Boolean
 
     override fun doWork(): Result {
         val stateBytes = loadMlsState() ?: return Result.failure()
         val pin = loadPin() ?: return Result.failure()
+        val filesDir = applicationContext.filesDir.absolutePath
 
         return try {
-            val success = nativeProcessBackgroundTasks(stateBytes, pin)
+            val success = nativeProcessBackgroundTasks(filesDir, stateBytes, pin)
             if (success) {
                 Result.success()
             } else {

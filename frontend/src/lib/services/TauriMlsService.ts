@@ -61,6 +61,7 @@ export class TauriMlsService implements IMlsService {
   private welcomeRequestCallback:
     | ((requesterUserId: string, requesterDeviceId: string, groupId: string) => void)
     | null = null;
+  private welcomeProcessedCallback: ((groupId?: string) => void) | null = null;
   // Callback déclenché quand le serveur signale qu'un groupe est mort.
   // Même pattern que welcome_request/reinvite_request : signal hors-bande MLS.
   private groupResetCallback: ((groupId: string, reason: string) => void) | null = null;
@@ -564,6 +565,9 @@ export class TauriMlsService implements IMlsService {
           }
         }
 
+        // Prévenir Svelte qu'un groupe a été rejoint
+        this.welcomeProcessedCallback?.(groupId);
+
         // Chantier 3 : persister l'état MLS après chaque message traité avec succès.
         // Garantit que le Secret Tree avancé est sauvegardé avant d'ACK le serveur.
         if (this._pin) {
@@ -770,6 +774,10 @@ export class TauriMlsService implements IMlsService {
 
   onUnrecoverable(callback: (groupId: string) => void): void {
     this.unrecoverableCallback = callback;
+  }
+
+  onWelcomeProcessed(callback: (groupId?: string) => void): void {
+    this.welcomeProcessedCallback = callback;
   }
 
   /**

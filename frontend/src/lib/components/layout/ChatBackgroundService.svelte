@@ -51,16 +51,18 @@
       historyBaseUrl: globalSession.historyBaseUrl,
       messageReactions: globalMessaging.messageReactions,
       log: appendLog,
-      addMessageToChat: (sid, content, contactName, replyTo, isSystem, msgId, ts) =>
+      addMessageToChat: (
+        sid: string,
+        content: string,
+        contactName: string,
+        options?: any
+      ) =>
         globalMessaging.addMessageToChat(
           sid,
           content,
           contactName,
           msgCtx(),
-          replyTo,
-          isSystem,
-          msgId,
-          ts
+          options
         ),
     };
   }
@@ -118,20 +120,14 @@
         sid: string,
         content: string,
         contactName: string,
-        replyTo?: any,
-        isSystem?: boolean,
-        msgId?: string,
-        ts?: Date
+        options?: any
       ) =>
         globalMessaging.addMessageToChat(
           sid,
           content,
           contactName,
           msgCtx(),
-          replyTo,
-          isSystem,
-          msgId,
-          ts
+          options
         ),
       addSystemMessage: (content: string, contactName: string) =>
         globalMessaging.addSystemMessage(content, contactName, msgCtx()),
@@ -243,8 +239,6 @@
 
   // ── Mount ─────────────────────────────────────────────────────────────────
   onMount(() => {
-    void globalNotifs.requestSystemNotificationPermission();
-
     // Déjà connecté (ex. navigation depuis /chat) → rien à faire.
     if (globalSession.isLoggedIn) return;
 
