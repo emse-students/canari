@@ -551,7 +551,10 @@ export class TauriMlsService implements IMlsService {
           `[QUEUE] → ${cbResult} (groupe=${groupId ?? '?'})${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`
         );
 
-        if (msg.queuedMessageId) ackIds.push(msg.queuedMessageId);
+        // Respect callback retry semantics:
+        // returning false means "keep queued on server and retry later"
+        // (notably for Welcome processing failures).
+        if (cbResult !== false && msg.queuedMessageId) ackIds.push(msg.queuedMessageId);
 
         // Après un Welcome, injecter les messages bufférisés en tête de messageQueue.
         if (msg.isWelcome && groupId && this.pendingWelcomeGroups.has(groupId)) {
@@ -798,7 +801,7 @@ export class TauriMlsService implements IMlsService {
     memberUserIds: string[],
     pin: string
   ): Promise<'bootstrapped' | 'conflict' | 'no_members'> {
-    const token = getToken();
+    const token = await getToken();
     if (!token) throw new Error('bootstrap: pas de token auth');
 
     // 1. Récupère la bootstrapVersion courante pour l'optimistic lock.
@@ -1615,7 +1618,8 @@ export class TauriMlsService implements IMlsService {
   > {
     try {
       const res = await fetch(
-        `${this.historyUrl}/api/mls-api/pending-invitations/${userId}/${deviceId}`
+        `${this.historyUrl}/api/mls-api/pending-invitations/${userId}/${deviceId}`,
+        { headers: await this.withAuthHeaders() }
       );
       if (!res.ok) return [];
       return await res.json();
@@ -1639,7 +1643,8 @@ export class TauriMlsService implements IMlsService {
   > {
     try {
       const res = await fetch(
-        `${this.historyUrl}/api/mls-api/device-memberships/${userId}/${deviceId}`
+        `${this.historyUrl}/api/mls-api/device-memberships/${userId}/${deviceId}`,
+        { headers: await this.withAuthHeaders() }
       );
       if (!res.ok) return [];
       return await res.json();
@@ -1658,7 +1663,7 @@ export class TauriMlsService implements IMlsService {
     try {
       await fetch(`${this.historyUrl}/api/mls-api/invitation-status`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ deviceId, userId, groupId, status, lastEpochSeen }),
       });
     } catch (e) {
@@ -1669,7 +1674,7 @@ export class TauriMlsService implements IMlsService {
   async kickStaleDevice(deviceId: string, userId: string, groupId: string): Promise<void> {
     const res = await fetch(`${this.historyUrl}/api/mls-api/kick-stale-device`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ deviceId, userId, groupId }),
     });
     if (!res.ok) throw new Error(`kickStaleDevice failed: ${res.status}`);
@@ -1680,7 +1685,7 @@ export class TauriMlsService implements IMlsService {
       `${this.historyUrl}/api/mls-api/groups/${encodeURIComponent(groupId)}/reset-epoch`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
       }
     );
     if (!res.ok) throw new Error(`resetGroupEpoch failed: ${res.status}`);
