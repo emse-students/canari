@@ -414,11 +414,9 @@ export class WebMlsService implements IMlsService {
         }
       } catch (e) {
         console.error(`[QUEUE] Error processing message:`, e);
-        // On exception, only ACK MLS structure messages (Welcome/Commit) — those
-        // are idempotent and re-processing them would cause duplicate state.
-        // Application messages are kept in queue so they can be retried after
-        // the group state is repaired (e.g. after a successful re-Welcome).
-        if (msg.queuedMessageId && (msg.isWelcome || msg.isCommit)) {
+        // On exception, ACK only commit messages. Welcome exceptions are retried
+        // on reconnect (see connection.ts contract: throw => do not ACK).
+        if (msg.queuedMessageId && msg.isCommit) {
           ackIds.push(msg.queuedMessageId);
         }
         // Flush buffered messages back to the main queue so they are not lost.

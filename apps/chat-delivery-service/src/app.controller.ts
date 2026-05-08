@@ -3258,14 +3258,23 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  @UseGuards(HeaderAuthGuard)
   @Get('mls-api/messages/:userId/:deviceId')
   async fetchMessages(
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
+    @Headers('x-user-id') headerUserId?: string,
   ) {
     const traceId = this.makeTraceId('fetch-msg');
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
+    const safeHeaderUserId = sanitizeOptionalQueryValue(
+      headerUserId,
+      'x-user-id',
+    );
+    if (safeHeaderUserId && safeHeaderUserId !== safeUserId) {
+      throw new ForbiddenException('Cannot fetch messages for another user');
+    }
 
     this.logger.log(
       `[MSG_FETCH][${traceId}] START user=${safeUserId} device=${safeDeviceId}`,
@@ -3283,14 +3292,25 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   // 2. Nouvelle route d'Acquittement (ACK)
+  @UseGuards(HeaderAuthGuard)
   @Post('mls-api/messages/ack')
   async acknowledgeMessages(
     @Body() body: { userId: string; deviceId: string; messageIds: string[] },
+    @Headers('x-user-id') headerUserId?: string,
   ) {
     const traceId = this.makeTraceId('ack');
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
     const safeMessageIds = sanitizeStringIdList(body.messageIds);
+    const safeHeaderUserId = sanitizeOptionalQueryValue(
+      headerUserId,
+      'x-user-id',
+    );
+    if (safeHeaderUserId && safeHeaderUserId !== safeUserId) {
+      throw new ForbiddenException(
+        'Cannot acknowledge messages for another user',
+      );
+    }
 
     this.logger.log(
       `[ACK][${traceId}] START user=${safeUserId} device=${safeDeviceId} requested=${safeMessageIds.length}`,

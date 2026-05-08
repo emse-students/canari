@@ -317,11 +317,8 @@ export class TauriMlsService implements IMlsService {
       }
     }, 8_000); // data frame bypasses nginx proxy_read_timeout; keeps presence TTL fresh
 
-    try {
-      await this.fetchPendingMessages();
-    } catch (e) {
-      console.error('[WS] Echec fetchPendingMessages au connect (non bloquant):', e);
-    }
+    // Pending queue fetch is handled by initializeConnection() to keep
+    // behavior aligned between WebMlsService and TauriMlsService.
   }
 
   async fetchPendingMessages() {
