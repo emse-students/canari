@@ -80,6 +80,29 @@ function sanitizeStringIdList(value: unknown): string[] {
   return ids;
 }
 
+/**
+ * When the edge proxy forwards `x-user-id`, reject mismatched path/body user ids
+ * unless the caller is a global admin. If `x-user-id` is absent, behavior is
+ * unchanged from older deployments (HeaderAuthGuard still requires login).
+ */
+function assertCallerOwnsUserId(
+  headerUserId: string | undefined,
+  headerGlobalAdmin: string | undefined,
+  targetUserId: string,
+  message: string,
+): void {
+  if (headerGlobalAdmin === 'true') {
+    return;
+  }
+  const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
+  if (!caller) {
+    return;
+  }
+  if (caller !== targetUserId) {
+    throw new ForbiddenException(message);
+  }
+}
+
 function isPrivateIpAddress(ip: string): boolean {
   if (ip.includes(':')) {
     const normalized = ip.toLowerCase();
@@ -1402,8 +1425,18 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   @UseGuards(HeaderAuthGuard)
   @Get('mls-api/user-groups/:userId')
-  async getUserGroups(@Param('userId') userId: string) {
+  async getUserGroups(
+    @Param('userId') userId: string,
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string,
+  ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
+    assertCallerOwnsUserId(
+      headerUserId,
+      headerGlobalAdmin,
+      safeUserId,
+      "Cannot list another user's groups",
+    );
     const memberships = await this.groupMemberRepo.find({
       where: { userId: safeUserId },
     });
@@ -1423,6 +1456,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     }));
   }
 
+  @UseGuards(HeaderAuthGuard)
   @Post('mls-api/groups/:groupId/members')
   async addGroupMember(
     @Param('groupId') groupId: string,
@@ -1566,10 +1600,18 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   async getPendingInvitations(
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string,
   ) {
     const traceId = this.makeTraceId('pending');
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
+    assertCallerOwnsUserId(
+      headerUserId,
+      headerGlobalAdmin,
+      safeUserId,
+      'Cannot list pending invitations for another user',
+    );
     this.logger.log(
       `[PENDING][${traceId}] START user=${safeUserId} device=${safeDeviceId}`,
     );
@@ -1612,9 +1654,17 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   async getDeviceMemberships(
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string,
   ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
+    assertCallerOwnsUserId(
+      headerUserId,
+      headerGlobalAdmin,
+      safeUserId,
+      "Cannot list another user's device memberships",
+    );
     const memberships = await this.deviceGroupRepo.find({
       where: { userId: safeUserId, deviceId: safeDeviceId },
     });
@@ -3264,17 +3314,17 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
     @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string,
   ) {
     const traceId = this.makeTraceId('fetch-msg');
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
-    const safeHeaderUserId = sanitizeOptionalQueryValue(
+    assertCallerOwnsUserId(
       headerUserId,
-      'x-user-id',
+      headerGlobalAdmin,
+      safeUserId,
+      'Cannot fetch messages for another user',
     );
-    if (safeHeaderUserId && safeHeaderUserId !== safeUserId) {
-      throw new ForbiddenException('Cannot fetch messages for another user');
-    }
 
     this.logger.log(
       `[MSG_FETCH][${traceId}] START user=${safeUserId} device=${safeDeviceId}`,
@@ -3297,20 +3347,18 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   async acknowledgeMessages(
     @Body() body: { userId: string; deviceId: string; messageIds: string[] },
     @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string,
   ) {
     const traceId = this.makeTraceId('ack');
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
     const safeMessageIds = sanitizeStringIdList(body.messageIds);
-    const safeHeaderUserId = sanitizeOptionalQueryValue(
+    assertCallerOwnsUserId(
       headerUserId,
-      'x-user-id',
+      headerGlobalAdmin,
+      safeUserId,
+      'Cannot acknowledge messages for another user',
     );
-    if (safeHeaderUserId && safeHeaderUserId !== safeUserId) {
-      throw new ForbiddenException(
-        'Cannot acknowledge messages for another user',
-      );
-    }
 
     this.logger.log(
       `[ACK][${traceId}] START user=${safeUserId} device=${safeDeviceId} requested=${safeMessageIds.length}`,

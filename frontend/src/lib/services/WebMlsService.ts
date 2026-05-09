@@ -2,6 +2,8 @@ import type { IMlsService } from './IMlsService';
 import { getToken } from '$lib/stores/auth';
 import { loadAndInitWasm } from './mlsWasmLoader';
 import { saveMlsState } from '$lib/utils/hex';
+import { shouldAckAfterSuccess, shouldAckAfterWebException } from './mlsQueueAckPolicy';
+import { logMlsMetric } from './mlsRecoveryMetrics';
 
 /** Message pending in the processing queue */
 interface QueuedMessage {
@@ -390,10 +392,21 @@ export class WebMlsService implements IMlsService {
           `[QUEUE] messageCallback → ${cbResult} (groupe=${groupId ?? 'inconnu'})${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`
         );
 
-        // Track for batch ACK — only if the callback succeeded.
-        // Returning false means "keep in queue for retry" (e.g. Welcome failed).
-        if (cbResult !== false && msg.queuedMessageId) {
+        const flags = {
+          isWelcome: msg.isWelcome,
+          isCommit: msg.isCommit,
+          hasQueuedId: Boolean(msg.queuedMessageId),
+        };
+        if (shouldAckAfterSuccess(cbResult, flags) && msg.queuedMessageId) {
           ackIds.push(msg.queuedMessageId);
+        } else if (flags.hasQueuedId && cbResult === false) {
+          logMlsMetric({
+            kind: 'queue_skip_ack',
+            platform: 'web',
+            reason: 'callback_retry',
+            isWelcome: msg.isWelcome,
+            isCommit: msg.isCommit,
+          });
         }
 
         // If this was a Welcome, process buffered messages for this group
@@ -414,10 +427,21 @@ export class WebMlsService implements IMlsService {
         }
       } catch (e) {
         console.error(`[QUEUE] Error processing message:`, e);
-        // On exception, ACK only commit messages. Welcome exceptions are retried
-        // on reconnect (see connection.ts contract: throw => do not ACK).
-        if (msg.queuedMessageId && msg.isCommit) {
+        const exFlags = {
+          isWelcome: msg.isWelcome,
+          isCommit: msg.isCommit,
+          hasQueuedId: Boolean(msg.queuedMessageId),
+        };
+        if (shouldAckAfterWebException(exFlags) && msg.queuedMessageId) {
           ackIds.push(msg.queuedMessageId);
+        } else if (exFlags.hasQueuedId) {
+          logMlsMetric({
+            kind: 'queue_skip_ack',
+            platform: 'web',
+            reason: 'web_exception_non_commit',
+            isWelcome: msg.isWelcome,
+            isCommit: msg.isCommit,
+          });
         }
         // Flush buffered messages back to the main queue so they are not lost.
         // They will be processed normally (likely fail with group-not-found, get ACK'd).
@@ -433,6 +457,7 @@ export class WebMlsService implements IMlsService {
 
     // Batch-ACK all processed real-time messages
     if (ackIds.length > 0) {
+      logMlsMetric({ kind: 'queue_ack', platform: 'web', count: ackIds.length });
       void this.deliveryPost('messages/ack', {
         userId: this.userId,
         deviceId: this.deviceId,

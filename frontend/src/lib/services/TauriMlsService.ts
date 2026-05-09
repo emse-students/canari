@@ -4,6 +4,14 @@ import { fetch } from '@tauri-apps/plugin-http';
 import NativeWebSocket, { type Message as WsMessage } from '@tauri-apps/plugin-websocket';
 import type { IMlsService } from './IMlsService';
 import { getToken } from '$lib/stores/auth';
+import {
+  shouldAckAfterSuccess,
+  shouldAckAfterTauriGenericException,
+  shouldAckGroupResetControl,
+  isUnrecoverableError,
+  isGapQueuedError,
+} from './mlsQueueAckPolicy';
+import { logMlsMetric } from './mlsRecoveryMetrics';
 
 /** Message pending in the processing queue */
 interface QueuedMessage {
@@ -74,6 +82,8 @@ export class TauriMlsService implements IMlsService {
   private deviceId: string;
   /** Cache of locally known MLS group IDs, populated after init and updated on group changes. */
   private _knownGroups: Set<string> = new Set();
+  /** Last known MLS epoch per group (native); keeps sync `getEpoch()` meaningful on Tauri. */
+  private _epochByGroupId: Map<string, number> = new Map();
   /** Resolved when init() completes; shared across concurrent callers to avoid double native init. */
   private initPromise: Promise<void> | null = null;
   /** True when initialized without existing state — triggers OTKP purge before new ones are published. */
@@ -146,6 +156,17 @@ export class TauriMlsService implements IMlsService {
       body: JSON.stringify(body),
       keepalive: true,
     }).catch((e) => console.warn(`[HTTP] ${path} failed:`, e));
+  }
+
+  /** Refresh cached epoch from native MLS (best-effort). */
+  private async refreshEpochCache(groupId: string): Promise<void> {
+    try {
+      const e = await invoke<number>('obtenir_epoch', { groupId });
+      this._epochByGroupId.set(groupId, e);
+      logMlsMetric({ kind: 'epoch_cache', platform: 'tauri', groupId, epoch: e });
+    } catch {
+      this._epochByGroupId.delete(groupId);
+    }
   }
 
   async connect(token?: string): Promise<void> {
@@ -527,7 +548,9 @@ export class TauriMlsService implements IMlsService {
             // Annuler la bufférisation en cours pour ce groupe (état perdu).
             this.pendingWelcomeGroups.delete(groupId);
           }
-          if (msg.queuedMessageId) ackIds.push(msg.queuedMessageId);
+          if (shouldAckGroupResetControl({ hasQueuedId: Boolean(msg.queuedMessageId) })) {
+            ackIds.push(msg.queuedMessageId!);
+          }
           continue;
         }
 
@@ -548,10 +571,22 @@ export class TauriMlsService implements IMlsService {
           `[QUEUE] → ${cbResult} (groupe=${groupId ?? '?'})${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`
         );
 
-        // Respect callback retry semantics:
-        // returning false means "keep queued on server and retry later"
-        // (notably for Welcome processing failures).
-        if (cbResult !== false && msg.queuedMessageId) ackIds.push(msg.queuedMessageId);
+        const flags = {
+          isWelcome: msg.isWelcome,
+          isCommit: msg.isCommit,
+          hasQueuedId: Boolean(msg.queuedMessageId),
+        };
+        if (shouldAckAfterSuccess(cbResult, flags) && msg.queuedMessageId) {
+          ackIds.push(msg.queuedMessageId);
+        } else if (flags.hasQueuedId && cbResult === false) {
+          logMlsMetric({
+            kind: 'queue_skip_ack',
+            platform: 'tauri',
+            reason: 'callback_retry',
+            isWelcome: msg.isWelcome,
+            isCommit: msg.isCommit,
+          });
+        }
 
         // Après un Welcome, injecter les messages bufférisés en tête de messageQueue.
         if (msg.isWelcome && groupId && this.pendingWelcomeGroups.has(groupId)) {
@@ -578,18 +613,28 @@ export class TauriMlsService implements IMlsService {
             console.warn('[MLS] State save after message failed:', saveErr);
           }
         }
+
+        if (groupId) {
+          await this.refreshEpochCache(groupId);
+        }
       } catch (e) {
         const errStr = String(e);
         console.error(`[QUEUE] Erreur traitement message:`, errStr);
 
         // État MLS irrécupérable : 3 échecs consécutifs de gap recovery → re-bootstrap.
-        if (groupId && errStr.includes('UNRECOVERABLE:')) {
+        if (groupId && isUnrecoverableError(errStr)) {
+          logMlsMetric({
+            kind: 'queue_skip_ack',
+            platform: 'tauri',
+            reason: 'tauri_unrecoverable',
+          });
           console.warn(
             `[MLS][FATAL] État irrécupérable pour groupe=${groupId} — tentative de bootstrap...`
           );
           this.unrecoverableCallback?.(groupId);
           // Ne pas ACK : sera re-traité après le bootstrap.
-        } else if (groupId && !msg.isWelcome && errStr.includes('GAP_QUEUED:')) {
+        } else if (groupId && !msg.isWelcome && isGapQueuedError(errStr)) {
+          logMlsMetric({ kind: 'queue_skip_ack', platform: 'tauri', reason: 'tauri_gap' });
           // Chantier 2 : le Rust a détecté un gap du Sender Ratchet.
           // recevoir_message_bytes a déjà persisté le message dans SQLite (Rust/sqlx)
           // et retourné "GAP_QUEUED:<groupId>". On déclenche juste le fetch d'historique.
@@ -602,6 +647,11 @@ export class TauriMlsService implements IMlsService {
           // Ne pas ACK : le message reste en file serveur jusqu'au retraitement réussi.
           await this.fetchMissingMessages(groupId);
         } else if (msg.isWelcome) {
+          logMlsMetric({
+            kind: 'queue_skip_ack',
+            platform: 'tauri',
+            reason: 'tauri_welcome_error',
+          });
           // Le Welcome a été rejeté avec une erreur inattendue (re-thrown depuis connection.ts).
           // Ne PAS ACK : le message reste en file serveur et sera retenté à la prochaine connexion.
           // C'est intentionnel — le device a besoin de ce Welcome pour rejoindre le groupe.
@@ -610,8 +660,14 @@ export class TauriMlsService implements IMlsService {
           );
           if (groupId) this.pendingWelcomeGroups.delete(groupId);
         } else {
-          // Erreur non récupérable sur un message applicatif → ACK pour éviter la boucle infinie.
-          if (msg.queuedMessageId) ackIds.push(msg.queuedMessageId);
+          const exFlags = {
+            isWelcome: msg.isWelcome,
+            isCommit: msg.isCommit,
+            hasQueuedId: Boolean(msg.queuedMessageId),
+          };
+          if (shouldAckAfterTauriGenericException(exFlags) && msg.queuedMessageId) {
+            ackIds.push(msg.queuedMessageId);
+          }
           if (groupId) this.pendingWelcomeGroups.delete(groupId);
         }
       } finally {
@@ -620,6 +676,7 @@ export class TauriMlsService implements IMlsService {
     }
 
     if (ackIds.length > 0) {
+      logMlsMetric({ kind: 'queue_ack', platform: 'tauri', count: ackIds.length });
       void this.deliveryPost('messages/ack', {
         userId: this.userId,
         deviceId: this.deviceId,
@@ -1267,6 +1324,7 @@ export class TauriMlsService implements IMlsService {
       // Rust merges pending commit before returning bytes, so local epoch is already advanced.
       // The backend validates against the pre-commit epoch.
       const currentEpoch = await invoke<number>('obtenir_epoch', { groupId });
+      this._epochByGroupId.set(groupId, currentEpoch);
       baseEpoch = Math.max(0, currentEpoch - 1);
     } catch {
       // If epoch retrieval fails, send 0 (server will validate)
@@ -1442,6 +1500,7 @@ export class TauriMlsService implements IMlsService {
       ratchetTreeBytes: ratchetTreeBytes ? Array.from(ratchetTreeBytes) : null,
     });
     this._knownGroups.add(groupId);
+    await this.refreshEpochCache(groupId);
     return groupId;
   }
 
@@ -1528,13 +1587,12 @@ export class TauriMlsService implements IMlsService {
     return [...this._knownGroups];
   }
 
-  getEpoch(_groupId: string): number {
-    // Tauri invoke is async — for the synchronous interface we return 0.
-    // The actual epoch will be retrieved via an async pre-check in sendCommit.
-    return 0;
+  getEpoch(groupId: string): number {
+    return this._epochByGroupId.get(groupId) ?? 0;
   }
 
   forgetGroup(groupId: string, minEpoch = 0): void {
+    this._epochByGroupId.delete(groupId);
     invoke('oublier_groupe', { groupId, minEpoch }).catch((e) =>
       console.warn('[MLS] forgetGroup error:', e)
     );
