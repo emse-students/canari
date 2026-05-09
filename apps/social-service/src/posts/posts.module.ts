@@ -6,9 +6,16 @@ import { PostsService } from './posts.service';
 import { Post } from './entities/post.entity';
 import { HttpModule } from '@nestjs/axios';
 import { AssociationsModule } from '../associations/associations.module';
+import { FollowsModule } from '../follows/follows.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Post]), HttpModule, ConfigModule, AssociationsModule],
+  imports: [
+    TypeOrmModule.forFeature([Post]),
+    HttpModule,
+    ConfigModule,
+    AssociationsModule,
+    FollowsModule,
+  ],
   controllers: [PostsController],
   providers: [PostsService],
 })

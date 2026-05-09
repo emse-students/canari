@@ -5,6 +5,7 @@ import { ChannelsModule } from './channels/channels.module';
 import { PostsModule } from './posts/posts.module';
 import { FormsModule } from './forms/forms.module';
 import { AssociationsModule } from './associations/associations.module';
+import { FollowsModule } from './follows/follows.module';
 import { RedisModule } from './common/redis';
 
 @Module({
@@ -28,6 +29,7 @@ import { RedisModule } from './common/redis';
     PostsModule,
     FormsModule,
     AssociationsModule,
+    FollowsModule,
   ],
   controllers: [],
 })

@@ -8,6 +8,7 @@ import {
   Param,
   Post as HttpPost,
   Query,
+  UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
@@ -62,10 +63,19 @@ export class PostsController {
   }
 
   @Get()
-  listPosts(@Query() query: ListPostsQueryDto) {
-    const limit = query.limit || 30;
-    const offset = query.offset || 0;
-    return this.service.listPosts(limit, offset);
+  listPosts(@Query() query: ListPostsQueryDto, @Headers('x-user-id') xUserId?: string) {
+    const feed = query.feed ?? 'all';
+    if (feed === 'followed' && !xUserId) {
+      throw new UnauthorizedException('Authentication required for followed feed');
+    }
+    return this.service.listPosts({
+      limit: query.limit ?? 30,
+      offset: query.offset ?? 0,
+      feed,
+      viewerUserId: xUserId,
+      promo: query.promo,
+      formation: query.formation?.trim() || undefined,
+    });
   }
 
   @UseGuards(NginxAuthGuard)

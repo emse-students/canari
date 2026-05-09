@@ -4,6 +4,8 @@ import {
   IsArray,
   IsBoolean,
   IsDateString,
+  IsIn,
+  IsInt,
   IsNotEmpty,
   IsNumber,
   IsObject,
@@ -245,6 +247,22 @@ export class ListPostsQueryDto {
   @IsNumber()
   @Min(0)
   offset?: number;
+
+  /** Default `all` when omitted. */
+  @IsOptional()
+  @IsIn(['all', 'followed', 'custom'])
+  feed?: 'all' | 'followed' | 'custom';
+
+  /** Custom feed: filter by author promotion (personal posts only). */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  promo?: number;
+
+  /** Custom feed: filter by author formation (personal posts only), substring match. */
+  @IsOptional()
+  @IsString()
+  formation?: string;
 }
 
 export class VotePollDto {

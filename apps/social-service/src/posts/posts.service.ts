@@ -7,6 +7,7 @@ import { ConfigService } from '@nestjs/config';
 import { lastValueFrom } from 'rxjs';
 import { Post } from './entities/post.entity';
 import { RedisService } from '../common/redis/redis.service';
+import { FollowsService } from '../follows/follows.service';
 import * as cheerio from 'cheerio';
 import { URL } from 'url';
 
@@ -40,22 +41,77 @@ export class PostsService {
     @InjectRepository(Post) private readonly postRepo: Repository<Post>,
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
-    private readonly redis: RedisService
+    private readonly redis: RedisService,
+    private readonly followsService: FollowsService
   ) {
     this.userServiceUrl = configService.get<string>('USER_SERVICE_URL', 'http://core-service:3012');
   }
 
-  private listCacheKey(limit: number, offset: number) {
-    return `posts:list:${limit}:${offset}`;
+  private listPostsCacheKey(
+    feed: string,
+    viewerUserId: string | undefined,
+    promo: number | undefined,
+    formation: string | undefined,
+    limit: number,
+    offset: number
+  ) {
+    return `posts:list:v2:${feed}:${viewerUserId ?? 'anon'}:${promo ?? '-'}:${formation ?? '-'}:${limit}:${offset}`;
   }
 
   private async invalidateListCache() {
-    // Bust the most common pages; a full scan is overkill for 30s TTL.
     await this.redis.del(
-      this.listCacheKey(20, 0),
-      this.listCacheKey(30, 0),
-      this.listCacheKey(50, 0)
+      this.listPostsCacheKey('all', undefined, undefined, undefined, 20, 0),
+      this.listPostsCacheKey('all', undefined, undefined, undefined, 30, 0),
+      this.listPostsCacheKey('all', undefined, undefined, undefined, 50, 0)
     );
+  }
+
+  /** Strip publisher identity and attach association display for API responses. */
+  private shapeListRow(p: any): any {
+    if (!p.associationId) {
+      return p;
+    }
+    const out: any = { ...p };
+    delete out.authorId;
+    delete out.authorDisplayName;
+    delete out.authorFirstName;
+    delete out.authorLastName;
+    if (out.assocJoinId) {
+      out.association = {
+        id: out.assocJoinId,
+        name: out.assocName,
+        slug: out.assocSlug,
+        logoUrl: out.assocLogoUrl,
+      };
+    }
+    delete out.assocJoinId;
+    delete out.assocName;
+    delete out.assocSlug;
+    delete out.assocLogoUrl;
+    return out;
+  }
+
+  /** Anonymize association-authored posts loaded as TypeORM entities. */
+  private async toPublicPostFromEntity(post: Post): Promise<Record<string, unknown>> {
+    const raw: any = { ...(post as any) };
+    if (!raw.associationId) {
+      return raw;
+    }
+    delete raw.authorId;
+    const rows: { id: string; name: string; slug: string; logoUrl: string | null }[] =
+      await this.postRepo.manager.query(
+        `SELECT id, name, slug, "logoUrl" FROM associations WHERE id = $1`,
+        [raw.associationId]
+      );
+    if (rows[0]) {
+      raw.association = {
+        id: rows[0].id,
+        name: rows[0].name,
+        slug: rows[0].slug,
+        logoUrl: rows[0].logoUrl,
+      };
+    }
+    return raw;
   }
 
   async createPost(data: any) {
@@ -82,45 +138,97 @@ export class PostsService {
     const post = this.postRepo.create(data);
     const saved = await this.postRepo.save(post);
     await this.invalidateListCache();
-    return saved;
+    const entity = Array.isArray(saved) ? saved[0] : saved;
+    return this.toPublicPostFromEntity(entity);
   }
 
-  async listPosts(limit: number = 20, offset: number = 0) {
-    const cacheKey = this.listCacheKey(Number(limit), Number(offset));
+  async listPosts(params: {
+    limit: number;
+    offset: number;
+    feed: 'all' | 'followed' | 'custom';
+    viewerUserId?: string;
+    promo?: number;
+    formation?: string;
+  }) {
+    const { feed, viewerUserId, promo, formation } = params;
+    const limit = Number(params.limit);
+    const offset = Number(params.offset);
+    const cacheKey = this.listPostsCacheKey(feed, viewerUserId, promo, formation, limit, offset);
+
     try {
-      const cached = await Promise.race([this.redis.get(cacheKey), new Promise((_, reject) => setTimeout(() => reject(new Error('Redis timeout')), 100))]);
+      const cached = await Promise.race([
+        this.redis.get(cacheKey),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Redis timeout')), 100)),
+      ]);
       if (cached) return JSON.parse(cached as string);
     } catch {
       // Redis miss or error — fall through to DB
     }
 
-    // Raw SQL avoids deserializing the full comments JSONB through the ORM layer.
-    // For posts with many comments this column can be hundreds of KB per row;
-    // fetching all 50 posts × full comments caused the 20+ second response time.
-    // Instead we compute the last 3 comments and a count directly in PostgreSQL.
-    const rawPosts: any[] = await this.postRepo.manager.query(
-      `SELECT
-         id, "authorId", markdown, "createdAt", "updatedAt",
-         mentions, links, "attachedFormId", "associationId", "paymentAssociationId",
-         images, polls, "eventButtons", forms, reactions,
-         jsonb_array_length(COALESCE(comments, '[]'::jsonb)) AS "commentCount",
+    let followedAssocIds: string[] | undefined;
+    if (feed === 'followed') {
+      followedAssocIds = await this.followsService.getFollowedAssociationIdsForUser(viewerUserId!);
+      if (followedAssocIds.length === 0) {
+        return [];
+      }
+    }
+
+    const selectBody = `posts.id,
+         posts."authorId", posts.markdown, posts."createdAt", posts."updatedAt",
+         posts.mentions, posts.links, posts."attachedFormId", posts."associationId", posts."paymentAssociationId",
+         posts.images, posts.polls, posts."eventButtons", posts.forms, posts.reactions,
+         jsonb_array_length(COALESCE(posts.comments, '[]'::jsonb)) AS "commentCount",
          (
            SELECT COALESCE(jsonb_agg(elem ORDER BY ord), '[]'::jsonb)
            FROM (
              SELECT elem, ord
-             FROM jsonb_array_elements(COALESCE(comments, '[]'::jsonb))
+             FROM jsonb_array_elements(COALESCE(posts.comments, '[]'::jsonb))
                WITH ORDINALITY AS t(elem, ord)
              ORDER BY ord DESC LIMIT 3
            ) sub
-         ) AS comments
+         ) AS comments,
+         assoc.id AS "assocJoinId", assoc.name AS "assocName", assoc.slug AS "assocSlug", assoc."logoUrl" AS "assocLogoUrl"`;
+
+    let rawPosts: any[];
+    const promoParam = promo === undefined ? null : promo;
+    const formationParam = formation === undefined || formation === '' ? null : formation;
+
+    if (feed === 'all') {
+      rawPosts = await this.postRepo.manager.query(
+        `SELECT ${selectBody}
        FROM posts
-       ORDER BY "createdAt" DESC
+       LEFT JOIN associations assoc ON assoc.id = posts."associationId"
+       ORDER BY posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,
-      [Number(limit), Number(offset)]
-    );
+        [limit, offset]
+      );
+    } else if (feed === 'followed') {
+      rawPosts = await this.postRepo.manager.query(
+        `SELECT ${selectBody}
+       FROM posts
+       LEFT JOIN associations assoc ON assoc.id = posts."associationId"
+       WHERE posts."associationId" IS NOT NULL
+         AND posts."associationId" = ANY($3::text[])
+       ORDER BY posts."createdAt" DESC
+       LIMIT $1 OFFSET $2`,
+        [limit, offset, followedAssocIds]
+      );
+    } else {
+      rawPosts = await this.postRepo.manager.query(
+        `SELECT ${selectBody}
+       FROM posts
+       INNER JOIN users u ON u.id = posts."authorId"
+       LEFT JOIN associations assoc ON assoc.id = posts."associationId"
+       WHERE posts."associationId" IS NULL
+         AND ($3::integer IS NULL OR u.promo = $3::integer)
+         AND ($4::text IS NULL OR u.formation ILIKE '%' || $4::text || '%')
+       ORDER BY posts."createdAt" DESC
+       LIMIT $1 OFFSET $2`,
+        [limit, offset, promoParam, formationParam]
+      );
+    }
 
     for (const post of rawPosts) {
-      // TypeORM simple-array stores as comma-separated text; parse it back to array.
       if (typeof post.mentions === 'string') {
         post.mentions = post.mentions ? post.mentions.split(',').filter(Boolean) : [];
       } else {
@@ -134,9 +242,14 @@ export class PostsService {
       }
     }
 
-    // Enrich with author display names (users table is in the same DB).
-    const authorIds = [...new Set(rawPosts.map((p: any) => p.authorId).filter(Boolean))] as string[];
-    let nameMap: Record<string, { displayName: string | null; firstName: string | null; lastName: string | null }> = {};
+    const authorIds = [
+      ...new Set(
+        rawPosts.filter((p: any) => !p.associationId && p.authorId).map((p: any) => p.authorId)
+      ),
+    ] as string[];
+
+    let nameMap: Record<string, { displayName: string | null; firstName: string | null; lastName: string | null }> =
+      {};
     if (authorIds.length > 0) {
       const rows: { id: string; displayName: string | null; firstName: string | null; lastName: string | null }[] =
         await this.postRepo.manager.query(
@@ -149,13 +262,21 @@ export class PostsService {
     }
 
     const result = rawPosts.map((p: any) => {
-      const authorInfo = nameMap[p.authorId] ?? { displayName: null, firstName: null, lastName: null };
-      return {
-        ...p,
-        authorDisplayName: authorInfo.displayName,
-        authorFirstName: authorInfo.firstName,
-        authorLastName: authorInfo.lastName,
-      };
+      let row = p;
+      if (!p.associationId && p.authorId) {
+        const authorInfo = nameMap[p.authorId] ?? {
+          displayName: null,
+          firstName: null,
+          lastName: null,
+        };
+        row = {
+          ...p,
+          authorDisplayName: authorInfo.displayName,
+          authorFirstName: authorInfo.firstName,
+          authorLastName: authorInfo.lastName,
+        };
+      }
+      return this.shapeListRow(row);
     });
 
     try {
@@ -168,12 +289,13 @@ export class PostsService {
   }
 
   async listMentions(userId: string, limit = 20) {
-    return this.postRepo
+    const rows = await this.postRepo
       .createQueryBuilder('post')
       .where('post.mentions LIKE :userId', { userId: `%${userId}%` })
       .orderBy('post.createdAt', 'DESC')
       .take(Number(limit))
       .getMany();
+    return Promise.all(rows.map((p) => this.toPublicPostFromEntity(p)));
   }
 
   async getById(id: string) {
@@ -315,9 +437,11 @@ export class PostsService {
     }
 
     if (updated) {
-      return this.postRepo.save(post);
+      const saved = await this.postRepo.save(post);
+      const entity = Array.isArray(saved) ? saved[0] : saved;
+      return this.toPublicPostFromEntity(entity);
     }
-    return post;
+    return this.toPublicPostFromEntity(post);
   }
 
   async addEventButton(id: string, text: string, eventPayload: any) {
