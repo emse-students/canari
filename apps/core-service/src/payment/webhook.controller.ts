@@ -30,6 +30,13 @@ export class PaymentWebhookController {
         const sig = req.headers['stripe-signature'] as string;
         const raw = req.body as Buffer;
         event = this.stripe.webhooks.constructEvent(raw, sig, webhookSecret);
+      } else if (process.env.NODE_ENV === 'production') {
+        this.logger.error(
+          'STRIPE_WEBHOOK_SECRET is required in production — refusing unsigned webhook',
+        );
+        return res
+          .status(503)
+          .send('Stripe webhook signing secret not configured');
       } else {
         event = req.body as Stripe.Event;
       }
@@ -91,7 +98,7 @@ export class PaymentWebhookController {
           // Prevent SSRF: validate FORM_SERVICE_URL uses only http/https before use.
           const parsedBase = new URL(formServiceBase);
           if (!['http:', 'https:'].includes(parsedBase.protocol)) {
-            throw new Error('FORM_SERVICE_URL must use http or https');
+            throw new Error('Form service URL must use http or https');
           }
           const url = `${parsedBase.origin}/api/forms/submissions/${submissionId}/mark-paid`;
           await axios.post(url, { sessionId: session.id }, { maxRedirects: 0 });

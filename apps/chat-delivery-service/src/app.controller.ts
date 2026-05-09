@@ -1238,11 +1238,25 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    *   { status: 'ok' }          – verifier matches; PIN is consistent.
    *   { status: 'mismatch' }    – verifier differs; wrong PIN for this user.
    */
+  @UseGuards(HeaderAuthGuard)
   @Post('mls-api/pin-verifier/check')
   async checkPinVerifier(
     @Body() body: { userId: string; verifier: string; deviceId?: string },
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string,
   ) {
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
+    if (headerGlobalAdmin !== 'true') {
+      const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
+      if (
+        !caller ||
+        caller.trim().toLowerCase() !== safeUserId.trim().toLowerCase()
+      ) {
+        throw new ForbiddenException(
+          'PIN verifier check is restricted to the authenticated user',
+        );
+      }
+    }
     const safeVerifier = sanitizeQueryValue(body.verifier, 'verifier');
     const safeDeviceId = sanitizeOptionalQueryValue(body.deviceId, 'deviceId');
 
@@ -3282,11 +3296,30 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     return { status: 'processed', queued: ops.length, sent: sentCount };
   }
 
+  @UseGuards(HeaderAuthGuard)
   @Get('history/:groupId')
   async getHistory(
-    @Param('groupId') groupId: string,
+    @Param('groupId') groupIdRaw: string,
     @Query('after') after?: string,
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string,
   ): Promise<Record<string, unknown>[]> {
+    const groupId = sanitizeQueryValue(groupIdRaw, 'groupId');
+    const authUserId = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
+    if (headerGlobalAdmin !== 'true') {
+      if (!authUserId) {
+        throw new ForbiddenException(
+          'History requires authenticated user context',
+        );
+      }
+      const membership = await this.groupMemberRepo.findOne({
+        where: { groupId, userId: authUserId },
+      });
+      if (!membership) {
+        throw new ForbiddenException('Not a member of this group');
+      }
+    }
+
     const streamKey = `history:${groupId}`;
     try {
       // `after` = exclusive Redis stream ID (e.g. "1712345678901-0").

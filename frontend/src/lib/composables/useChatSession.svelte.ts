@@ -191,18 +191,33 @@ export function useChatSession() {
       const mlsService = ensureMls();
       cb.log('Verification du PIN...');
 
+      let accessToken: string;
+      try {
+        accessToken = await getToken();
+      } catch {
+        loginError = 'Session expiree. Merci de vous reconnecter.';
+        isLoginInProgress = false;
+        return;
+      }
+
       const verifier = await computePinVerifier(userId, pin);
       const deviceId = mlsService.getDeviceId();
       const verifierPayload = JSON.stringify({ userId, verifier, deviceId });
+      const verifierHeaders: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      };
       let verifierRes = await fetch(`${historyBaseUrl}/api/mls-api/pin-verifier/check`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        headers: verifierHeaders,
         body: verifierPayload,
       });
       if (verifierRes.status === 404 || verifierRes.status === 405) {
         verifierRes = await fetch(`${historyBaseUrl}/api/mls-api/pin-verifier/check`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          headers: verifierHeaders,
           body: verifierPayload,
         });
       }

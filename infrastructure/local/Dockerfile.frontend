@@ -60,8 +60,13 @@ RUN printf 'server {\n\
     }\n\
     \n\
     location /api/groups {\n\
-    proxy_set_header X-User-Id "";\n\
-    proxy_set_header X-User-Logged-In "";\n\
+    auth_request /internal/auth/verify;\n\
+    auth_request_set $user_id $upstream_http_x_user_id;\n\
+    auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
+    auth_request_set $global_admin $upstream_http_x_global_admin;\n\
+    proxy_set_header X-User-Id $user_id;\n\
+    proxy_set_header X-User-Logged-In $user_logged_in;\n\
+    proxy_set_header X-Global-Admin $global_admin;\n\
     set $upstream_gateway chat-gateway:3000;\n\
     proxy_pass http://$upstream_gateway;\n\
     proxy_set_header Host $host;\n\
