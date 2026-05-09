@@ -18,6 +18,11 @@ export class PostsService {
 
   private static readonly LIST_CACHE_TTL = 30; // seconds
 
+  /** PostgreSQL BIGINT / node-pg bigint fields break JSON.stringify (Nest response + Redis). */
+  private stripBigIntForJson<T>(value: T): T {
+    return JSON.parse(JSON.stringify(value, (_key, v) => (typeof v === 'bigint' ? Number(v) : v))) as T;
+  }
+
   /** Copy reactions into a null-prototype object (avoid prototype pollution from JSON-shaped keys). */
   private sanitizeReactions(raw: Record<string, string> | null | undefined): Record<string, string> {
     const out = Object.create(null) as Record<string, string>;
@@ -177,7 +182,7 @@ export class PostsService {
          posts."authorId", posts.markdown, posts."createdAt", posts."updatedAt",
          posts.mentions, posts.links, posts."attachedFormId", posts."associationId", posts."paymentAssociationId",
          posts.images, posts.polls, posts."eventButtons", posts.forms, posts.reactions,
-         jsonb_array_length(COALESCE(posts.comments, '[]'::jsonb)) AS "commentCount",
+         (jsonb_array_length(COALESCE(posts.comments, '[]'::jsonb))::integer) AS "commentCount",
          (
            SELECT COALESCE(jsonb_agg(elem ORDER BY ord), '[]'::jsonb)
            FROM (
@@ -221,7 +226,7 @@ export class PostsService {
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
        WHERE posts."associationId" IS NULL
          AND ($3::integer IS NULL OR u.promo = $3::integer)
-         AND ($4::text IS NULL OR u.formation ILIKE '%' || $4::text || '%')
+         AND ($4::text IS NULL OR u.formation ILIKE ('%' || $4::text || '%'))
        ORDER BY posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,
         [limit, offset, promoParam, formationParam]
@@ -279,13 +284,15 @@ export class PostsService {
       return this.shapeListRow(row);
     });
 
+    const safe = this.stripBigIntForJson(result);
+
     try {
-      await this.redis.setex(cacheKey, PostsService.LIST_CACHE_TTL, JSON.stringify(result));
+      await this.redis.setex(cacheKey, PostsService.LIST_CACHE_TTL, JSON.stringify(safe));
     } catch {
       // Non-fatal
     }
 
-    return result;
+    return safe;
   }
 
   async listMentions(userId: string, limit = 20) {
