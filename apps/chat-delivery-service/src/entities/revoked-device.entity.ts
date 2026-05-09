@@ -14,7 +14,7 @@ export class RevokedDevice {
   id: string;
 
   @Index()
-  @Column()
+  @Column({ type: 'varchar', length: 255 })
   userId: string;
 
   @Column()

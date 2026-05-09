@@ -13,13 +13,13 @@ export class ChannelMessage {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column()
+  @Column({ type: 'uuid' })
   workspaceId: string;
 
-  @Column()
+  @Column({ type: 'uuid' })
   channelId: string;
 
-  @Column()
+  @Column({ type: 'varchar', length: 255 })
   authorId: string;
 
   @Column('text')
@@ -31,7 +31,7 @@ export class ChannelMessage {
   @Column({ type: 'int', nullable: true })
   keyVersion: number;
 
-  @Column({ nullable: true })
+  @Column({ type: 'uuid', nullable: true })
   replyTo: string;
 
   @Column('jsonb', { default: [] })

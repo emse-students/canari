@@ -176,10 +176,14 @@ export class AssociationsService {
       .where('a.id IN (:...ids)', { ids: assoIds })
       .getMany();
 
-    return associations.map((a) => ({
-      ...a,
-      role: memberships.find((m) => m.associationId === a.id)?.role,
-    }));
+    return associations.map((a) => {
+      const m = memberships.find((mem) => mem.associationId === a.id);
+      return {
+        ...a,
+        role: m?.role,
+        permission: m?.permission,
+      };
+    });
   }
 
   // ── Stripe helpers ────────────────────────────────────────────────────────
@@ -201,7 +205,15 @@ export class AssociationsService {
 
   // ── Post authorship check ─────────────────────────────────────────────────
 
-  async canPostAs(userId: string, associationId: string): Promise<boolean> {
+  async canPostAs(
+    userId: string,
+    associationId: string,
+    opts?: { isGlobalAdmin?: boolean }
+  ): Promise<boolean> {
+    if (opts?.isGlobalAdmin) {
+      const asso = await this.assoRepo.findOne({ where: { id: associationId } });
+      return !!asso;
+    }
     const membership = await this.memberRepo.findOne({
       where: { associationId, userId },
     });

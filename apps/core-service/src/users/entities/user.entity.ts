@@ -2,7 +2,8 @@ import { Entity, Column, PrimaryColumn } from 'typeorm';
 
 @Entity('users')
 export class User {
-  @PrimaryColumn()
+  /** OIDC `sub` — not necessarily a UUID string. */
+  @PrimaryColumn({ type: 'varchar', length: 255 })
   id!: string;
 
   @Column({ type: 'varchar', nullable: true })

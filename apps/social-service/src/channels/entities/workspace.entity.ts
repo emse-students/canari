@@ -11,7 +11,7 @@ export class Workspace {
   @Column()
   name: string;
 
-  @Column()
+  @Column({ type: 'varchar', length: 255 })
   createdBy: string;
 
   @Column({ nullable: true, type: 'varchar' })

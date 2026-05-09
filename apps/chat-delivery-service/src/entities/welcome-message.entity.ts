@@ -10,16 +10,16 @@ export class WelcomeMessage {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column()
+  @Column({ type: 'varchar', length: 255 })
   userId: string; // Recipient
 
   @Column()
   deviceId: string; // Recipient Device
 
-  @Column({ nullable: true })
-  senderUserId: string;
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  senderUserId: string | null;
 
-  @Column()
+  @Column({ type: 'uuid' })
   groupId: string;
 
   @Column()

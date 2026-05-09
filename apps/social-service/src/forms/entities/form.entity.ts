@@ -12,7 +12,7 @@ export class Form {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column()
+  @Column({ type: 'varchar', length: 255 })
   @Index()
   ownerId: string;
 
@@ -40,7 +40,7 @@ export class Form {
   @Column('simple-array', { default: 'card' })
   paymentMethods: string[];
 
-  @Column({ nullable: true })
+  @Column({ type: 'uuid', nullable: true })
   @Index()
   associationId: string;
 

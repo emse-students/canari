@@ -8,6 +8,7 @@ import {
   Param,
   Post as HttpPost,
   Query,
+  UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
@@ -41,10 +42,16 @@ export class PostsController {
 
   @UseGuards(NginxAuthGuard)
   @HttpPost()
-  async createPost(@Headers('x-user-id') xUserId: string, @Body() body: CreatePostDto) {
-    // Validate association authorship
+  async createPost(
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') xGlobalAdmin: string | undefined,
+    @Body() body: CreatePostDto
+  ) {
+    // Validate association authorship (association admin, or global admin)
     if (body.associationId) {
-      const canPost = await this.associationsService.canPostAs(xUserId, body.associationId);
+      const canPost = await this.associationsService.canPostAs(xUserId, body.associationId, {
+        isGlobalAdmin: xGlobalAdmin === 'true',
+      });
       if (!canPost) {
         throw new BadRequestException('You need admin or owner role to post as this association');
       }
@@ -62,10 +69,19 @@ export class PostsController {
   }
 
   @Get()
-  listPosts(@Query() query: ListPostsQueryDto) {
-    const limit = query.limit || 30;
-    const offset = query.offset || 0;
-    return this.service.listPosts(limit, offset);
+  listPosts(@Query() query: ListPostsQueryDto, @Headers('x-user-id') xUserId?: string) {
+    const feed = query.feed ?? 'all';
+    if (feed === 'followed' && !xUserId) {
+      throw new UnauthorizedException('Authentication required for followed feed');
+    }
+    return this.service.listPosts({
+      limit: query.limit ?? 30,
+      offset: query.offset ?? 0,
+      feed,
+      viewerUserId: xUserId,
+      promo: query.promo,
+      formation: query.formation?.trim() || undefined,
+    });
   }
 
   @UseGuards(NginxAuthGuard)

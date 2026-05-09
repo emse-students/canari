@@ -69,9 +69,18 @@ export interface PostComment {
   createdAt: string;
 }
 
+/** Display payload for posts published as an association (author identity hidden). */
+export interface PostAssociationAuthor {
+  id: string;
+  name: string;
+  slug: string;
+  logoUrl: string | null;
+}
+
 export interface PostEntity {
   id: string;
-  authorId: string;
+  /** Omitted when the post is published as an association (`association` is set). */
+  authorId?: string;
   authorDisplayName?: string | null;
   authorFirstName?: string | null;
   authorLastName?: string | null;
@@ -85,10 +94,22 @@ export interface PostEntity {
   attachedFormId?: string;
   associationId?: string;
   paymentAssociationId?: string;
+  /** Present for association posts; use instead of author fields. */
+  association?: PostAssociationAuthor;
   reactions?: Record<string, string>; // userId -> reactionType
   comments?: PostComment[];
   createdAt: string;
   updatedAt: string;
+}
+
+export type PostFeed = 'all' | 'followed' | 'custom';
+
+export interface ListPostsOptions {
+  limit?: number;
+  offset?: number;
+  feed?: PostFeed;
+  promo?: number;
+  formation?: string;
 }
 
 export interface CreatePostPayload {
@@ -134,8 +155,25 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await res.json()) as T;
 }
 
-export async function listPosts(limit = 30): Promise<PostEntity[]> {
-  return request<PostEntity[]>(`/api/posts?limit=${limit}`);
+function buildListPostsSearchParams(options: ListPostsOptions): string {
+  const p = new URLSearchParams();
+  if (options.limit != null) p.set('limit', String(options.limit));
+  if (options.offset != null) p.set('offset', String(options.offset));
+  if (options.feed && options.feed !== 'all') p.set('feed', options.feed);
+  if (options.promo != null && !Number.isNaN(options.promo)) p.set('promo', String(options.promo));
+  if (options.formation?.trim()) p.set('formation', options.formation.trim());
+  const s = p.toString();
+  return s ? `?${s}` : '';
+}
+
+/** @param limitOrOptions Pass a number for backward compatibility (`limit` only) or query options. */
+export async function listPosts(
+  limitOrOptions: number | ListPostsOptions = 30
+): Promise<PostEntity[]> {
+  const opts: ListPostsOptions =
+    typeof limitOrOptions === 'number' ? { limit: limitOrOptions } : limitOrOptions;
+  const q = buildListPostsSearchParams(opts);
+  return request<PostEntity[]>(`/api/posts${q}`);
 }
 
 export async function createPost(payload: CreatePostPayload): Promise<PostEntity> {
@@ -149,8 +187,8 @@ export async function votePoll(
   postId: string,
   pollId: string,
   payload: { optionIds: string[] }
-): Promise<{ ok: boolean; poll: Poll }> {
-  return request<{ ok: boolean; poll: Poll }>(`/api/posts/${postId}/polls/${pollId}/vote`, {
+): Promise<PostEntity> {
+  return request<PostEntity>(`/api/posts/${postId}/polls/${pollId}/vote`, {
     method: 'POST',
     body: JSON.stringify(payload),
   });

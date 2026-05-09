@@ -11,12 +11,15 @@
     removeMember,
     updateMemberRole,
     startStripeOnboarding,
+    followAssociation,
+    unfollowAssociation,
+    getAssociationFollowStatus,
     type Association,
     type AssociationMember,
   } from '$lib/associations/api';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
-  import { Users, Settings, CreditCard, Trash2, UserPlus } from 'lucide-svelte';
+  import { Users, Settings, CreditCard, Trash2, UserPlus, Bell, BellOff } from 'lucide-svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
   import UserAutocomplete from '$lib/components/shared/UserAutocomplete.svelte';
@@ -49,6 +52,9 @@
   // Stripe
   let stripeLoading = $state(false);
 
+  let following = $state(false);
+  let followLoading = $state(false);
+
   const slug = $derived((page.params as Record<string, string>).slug);
 
   onMount(loadData);
@@ -73,6 +79,17 @@
       }
       editName = asso.name;
       editDescription = asso.description ?? '';
+      const uid = currentUserId();
+      if (uid) {
+        try {
+          const st = await getAssociationFollowStatus(asso.id);
+          following = st.following;
+        } catch {
+          following = false;
+        }
+      } else {
+        following = false;
+      }
     } catch (err) {
       error = err instanceof Error ? err.message : 'Association introuvable';
     } finally {
@@ -149,6 +166,24 @@
     }
   }
 
+  async function toggleFollow() {
+    if (!asso || !userId) return;
+    followLoading = true;
+    try {
+      if (following) {
+        await unfollowAssociation(asso.id);
+        following = false;
+      } else {
+        await followAssociation(asso.id);
+        following = true;
+      }
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Erreur';
+    } finally {
+      followLoading = false;
+    }
+  }
+
   async function handleStripeOnboarding() {
     if (!asso) return;
     stripeLoading = true;
@@ -208,15 +243,33 @@
             <p class="text-sm text-text-muted mt-2 whitespace-pre-wrap">{asso.description}</p>
           {/if}
         </div>
-        {#if isAdmin}
-          <button
-            onclick={() => (showSettings = !showSettings)}
-            class="rounded-lg p-2 text-text-muted hover:bg-cn-bg hover:text-text-main transition-colors"
-            title="Paramètres"
-          >
-            <Settings size={18} />
-          </button>
-        {/if}
+        <div class="flex items-center gap-1 shrink-0">
+          {#if userId}
+            <button
+              type="button"
+              onclick={() => toggleFollow()}
+              disabled={followLoading}
+              class="flex items-center gap-1.5 rounded-xl border border-cn-border px-3 py-2 text-sm font-medium text-text-main hover:bg-[var(--cn-surface)] transition-colors disabled:opacity-50"
+            >
+              {#if following}
+                <BellOff size={16} />
+                Ne plus suivre
+              {:else}
+                <Bell size={16} />
+                Suivre
+              {/if}
+            </button>
+          {/if}
+          {#if isAdmin}
+            <button
+              onclick={() => (showSettings = !showSettings)}
+              class="rounded-lg p-2 text-text-muted hover:bg-cn-bg hover:text-text-main transition-colors"
+              title="Paramètres"
+            >
+              <Settings size={18} />
+            </button>
+          {/if}
+        </div>
       </div>
     </div>
 

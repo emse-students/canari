@@ -15,6 +15,7 @@ import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { AssociationRoleGuard, MIN_ROLE_KEY } from './guards/association-role.guard';
 import { AssociationPermission } from './entities/association-member.entity';
 import { AssociationsService } from './associations.service';
+import { FollowsService } from '../follows/follows.service';
 import {
   AddMemberDto,
   CreateAssociationDto,
@@ -24,7 +25,10 @@ import {
 
 @Controller('associations')
 export class AssociationsController {
-  constructor(private readonly service: AssociationsService) {}
+  constructor(
+    private readonly service: AssociationsService,
+    private readonly followsService: FollowsService
+  ) {}
 
   // ── Public ────────────────────────────────────────────────────────────────
 
@@ -38,9 +42,16 @@ export class AssociationsController {
     return this.service.findBySlug(slug);
   }
 
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.service.findById(id);
+  @UseGuards(NginxAuthGuard)
+  @Get('me/list')
+  myAssociations(@Headers('x-user-id') userId: string) {
+    return this.service.listByUser(userId);
+  }
+
+  @UseGuards(NginxAuthGuard)
+  @Get('me/following')
+  myFollowedAssociations(@Headers('x-user-id') userId: string) {
+    return this.followsService.listFollowedAssociations(userId);
   }
 
   @Get(':id/members')
@@ -48,12 +59,29 @@ export class AssociationsController {
     return this.service.listMembers(id);
   }
 
+  @UseGuards(NginxAuthGuard)
+  @Get(':id/follow-status')
+  followStatus(@Headers('x-user-id') userId: string, @Param('id') id: string) {
+    return this.followsService.isFollowing(userId, id).then((following) => ({ following }));
+  }
+
+  @Get(':id')
+  findOne(@Param('id') id: string) {
+    return this.service.findById(id);
+  }
+
   // ── Authenticated ─────────────────────────────────────────────────────────
 
   @UseGuards(NginxAuthGuard)
-  @Get('me/list')
-  myAssociations(@Headers('x-user-id') userId: string) {
-    return this.service.listByUser(userId);
+  @Post(':id/follow')
+  followAssociation(@Headers('x-user-id') userId: string, @Param('id') id: string) {
+    return this.followsService.followAssociation(userId, id);
+  }
+
+  @UseGuards(NginxAuthGuard)
+  @Delete(':id/follow')
+  unfollowAssociation(@Headers('x-user-id') userId: string, @Param('id') id: string) {
+    return this.followsService.unfollowAssociation(userId, id);
   }
 
   // ── Global Admin only ─────────────────────────────────────────────────────

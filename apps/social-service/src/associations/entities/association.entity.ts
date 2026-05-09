@@ -31,7 +31,7 @@ export class Association {
   @Column({ default: false })
   stripeOnboardingComplete: boolean;
 
-  @Column()
+  @Column({ type: 'varchar', length: 255 })
   @Index()
   createdBy: string;
 

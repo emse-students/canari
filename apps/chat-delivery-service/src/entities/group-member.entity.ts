@@ -12,10 +12,10 @@ export class GroupMember {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column()
+  @Column({ type: 'uuid' })
   groupId: string;
 
-  @Column()
+  @Column({ type: 'varchar', length: 255 })
   userId: string;
 
   @Column({ type: 'enum', enum: ['admin', 'member'], default: 'member' })

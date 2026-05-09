@@ -21,6 +21,8 @@ export interface Association {
   createdBy: string;
   memberCount?: number;
   role?: string;
+  /** 0 = member, 1 = admin (when returned from `/api/associations/me/list`). */
+  permission?: 0 | 1;
   createdAt: string;
   updatedAt: string;
 }
@@ -87,6 +89,34 @@ export async function listMembers(associationId: string): Promise<AssociationMem
 
 export async function listMyAssociations(): Promise<Association[]> {
   return request<Association[]>('/api/associations/me/list');
+}
+
+export async function listMyFollowedAssociations(): Promise<
+  Pick<Association, 'id' | 'name' | 'slug' | 'logoUrl'>[]
+> {
+  return request<Pick<Association, 'id' | 'name' | 'slug' | 'logoUrl'>[]>(
+    '/api/associations/me/following'
+  );
+}
+
+export async function getAssociationFollowStatus(
+  associationId: string
+): Promise<{ following: boolean }> {
+  return request<{ following: boolean }>(
+    `/api/associations/${encodeURIComponent(associationId)}/follow-status`
+  );
+}
+
+export async function followAssociation(associationId: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/api/associations/${encodeURIComponent(associationId)}/follow`, {
+    method: 'POST',
+  });
+}
+
+export async function unfollowAssociation(associationId: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/api/associations/${encodeURIComponent(associationId)}/follow`, {
+    method: 'DELETE',
+  });
 }
 
 export async function createAssociation(payload: CreateAssociationPayload): Promise<Association> {
