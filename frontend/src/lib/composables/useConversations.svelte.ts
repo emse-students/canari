@@ -81,6 +81,9 @@ export function useConversations() {
   let newChannelInput = $state('');
   let chatContainer = $state<HTMLElement | undefined>(undefined);
 
+  // Short-lived cache so rapid successive sends don't re-check membership via HTTP
+  const membershipCache = new SvelteMap<string, { isMember: boolean; expiresAt: number }>();
+
   // ── Derived ───────────────────────────────────────────────────────────────
   const currentConvo = $derived(
     selectedContact ? (conversations.get(selectedContact) ?? null) : null
@@ -371,12 +374,22 @@ export function useConversations() {
     const convo = conversations.get(contactName);
     if (!convo) return false;
     if (convo.id.startsWith('channel_')) return true;
+
+    const cached = membershipCache.get(convo.id);
+    if (cached && cached.expiresAt > Date.now()) return cached.isMember;
+
     try {
       const mlsService = ctx.ensureMls();
       const members = await fetchUniqueGroupMembers(mlsService, convo.id);
-      if (members.length === 0) return true;
+      if (members.length === 0) {
+        membershipCache.set(convo.id, { isMember: true, expiresAt: Date.now() + 30_000 });
+        return true;
+      }
       const stillMember = members.some((m) => m.toLowerCase() === ctx.userId.toLowerCase());
-      if (stillMember) return true;
+      if (stillMember) {
+        membershipCache.set(convo.id, { isMember: true, expiresAt: Date.now() + 30_000 });
+        return true;
+      }
 
       // Self-heal transient server drift first: re-register this device in the
       // gateway membership set, then re-check before attempting any heavy repair.
@@ -388,6 +401,7 @@ export function useConversations() {
         );
         if (backInGroup) {
           ctx.log(`[SYNC] Réinscription serveur réussie pour ${convo.id}.`);
+          membershipCache.set(convo.id, { isMember: true, expiresAt: Date.now() + 30_000 });
           return true;
         }
       } catch {

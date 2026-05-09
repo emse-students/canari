@@ -3,6 +3,7 @@ import type { ChatMessage, Conversation } from '$lib/types';
 import { saveMlsState } from '$lib/utils/hex';
 import { encodeAppMessage, mkText, mkReply, mkReaction, mkSystem } from '$lib/proto/codec';
 import { serializeEnvelope, mkTextEnvelope, parseEnvelope } from '$lib/envelope';
+import { sendEncryptedChannelMessage } from '$lib/utils/chat/channelCrypto';
 
 interface SendMessageDeps {
   mlsService: IMlsService;
@@ -84,6 +85,8 @@ export async function sendChatMessage(
     }
 
     if (contactName.startsWith('channel_')) {
+      const rawChannelId = contactName.replace(/^channel_/, '');
+      await sendEncryptedChannelMessage(rawChannelId, payload, messageId);
       await addMessageToChat(
         userId,
         serializeEnvelope(mkTextEnvelope(text, replyToData)),
@@ -137,7 +140,7 @@ export async function sendChatMessage(
   }
 }
 
-interface AddReactionDeps {
+interface MessageActionDeps {
   mlsService: IMlsService;
   userId: string;
   pin: string;
@@ -150,7 +153,7 @@ interface AddReactionDeps {
 export async function addReaction(
   messageId: string,
   emoji: string,
-  deps: AddReactionDeps
+  deps: MessageActionDeps
 ): Promise<void> {
   const { mlsService, userId, pin, conversation } = deps;
 
@@ -172,7 +175,7 @@ export async function addReaction(
 export async function removeReaction(
   messageId: string,
   emoji: string,
-  deps: AddReactionDeps
+  deps: MessageActionDeps
 ): Promise<void> {
   const { mlsService, userId, pin, conversation } = deps;
 
@@ -192,7 +195,7 @@ export async function removeReaction(
 export async function editMessage(
   messageId: string,
   newContent: string,
-  deps: AddReactionDeps
+  deps: MessageActionDeps
 ): Promise<void> {
   const { mlsService, userId, pin, conversation } = deps;
   if (!conversation.isReady) return;
@@ -209,7 +212,7 @@ export async function editMessage(
   }
 }
 
-export async function deleteMessage(messageId: string, deps: AddReactionDeps): Promise<void> {
+export async function deleteMessage(messageId: string, deps: MessageActionDeps): Promise<void> {
   const { mlsService, userId, pin, conversation } = deps;
   if (!conversation.isReady) return;
   try {
@@ -224,7 +227,7 @@ export async function deleteMessage(messageId: string, deps: AddReactionDeps): P
 
 export async function sendReadReceipt(
   messageIds: string[],
-  deps: AddReactionDeps
+  deps: MessageActionDeps
 ): Promise<boolean> {
   const { mlsService, userId, pin, conversation } = deps;
   if (!conversation.isReady || messageIds.length === 0) return false;

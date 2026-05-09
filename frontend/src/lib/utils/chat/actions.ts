@@ -281,14 +281,33 @@ export async function discoverMissingGroups(params: {
   // ── Orphan cleanup: delete local groups absent from server ────────────────
   // Only when the server fetch succeeded (avoid deleting on transient network errors).
   // Skip channel conversations (keyed as `channel_*`) — they use a separate system.
+  // Grace period: a group must be consistently absent for >60 s before deletion
+  // to guard against slow server responses during group creation.
+  const ORPHAN_GRACE_MS = 60_000;
   if (serverFetchSucceeded) {
     const serverGroupIds = new Set(uniqueServerGroups.map((g) => g.groupId));
     for (const [key, convo] of conversations.entries()) {
       if (key.startsWith('channel_')) continue;
       if (!serverGroupIds.has(convo.id)) {
+        const absentKey = `discovery_absent:${convo.id}`;
+        const absentSince = parseInt(localStorage.getItem(absentKey) ?? '0', 10);
+        if (!absentSince) {
+          localStorage.setItem(absentKey, String(Date.now()));
+          log(
+            `[DISCOVERY] Groupe local "${convo.name || convo.id}" absent du serveur — grâce 60 s`
+          );
+          continue;
+        }
+        if (Date.now() - absentSince < ORPHAN_GRACE_MS) {
+          log(
+            `[DISCOVERY] Groupe "${convo.name || convo.id}" absent depuis ${Math.round((Date.now() - absentSince) / 1000)}s — en attente`
+          );
+          continue;
+        }
         log(
           `[DISCOVERY] Groupe local "${convo.name || convo.id}" absent du serveur — suppression locale`
         );
+        localStorage.removeItem(absentKey);
         try {
           mlsService.forgetGroup(convo.id, 0);
         } catch {
@@ -299,6 +318,9 @@ export async function discoverMissingGroups(params: {
         if (deleteConversation) {
           await deleteConversation(key).catch(() => {});
         }
+      } else {
+        // Group is present on server — clear any stale absence marker
+        localStorage.removeItem(`discovery_absent:${convo.id}`);
       }
     }
   }

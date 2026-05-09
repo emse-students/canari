@@ -37,7 +37,7 @@ interface MessageHandlerDeps {
   historyBaseUrl: string;
   conversations: SvelteMap<string, Conversation>;
   messageReactions: SvelteMap<string, MessageReaction[]>;
-  selectedContact: string | null;
+  getSelectedContact: () => string | null;
   setSelectedContact: (value: string | null) => void;
   saveConversation: (contactName: string) => Promise<void>;
   addMessageToChat: (
@@ -207,9 +207,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
     log,
   } = deps;
 
-  // Read selectedContact lazily from deps to avoid stale closure —
-  // the value captured at setup time would never update.
-  const getSelectedContact = () => deps.selectedContact;
+  const { getSelectedContact } = deps;
 
   // Compteur d'échecs MLS par conversation — détection des groupes fantômes
   const groupMlsFailures = new Map<string, number>();
@@ -1602,20 +1600,9 @@ export async function initializeConnection(deps: ConnectionDeps): Promise<void> 
       window.addEventListener('beforeunload', sendDisconnectOnUnload, { once: true });
     }
 
-    // When a sibling device (same user, different device) signals that it needs
-    // to be added to a group, immediately run the pending-invitations loop.
-    // Without these handlers the WS events are received and logged but ignored —
-    // the triggering device is never added to the MLS tree.
-    mlsService.onReinviteRequest((senderDeviceId, groupId) => {
-      log(
-        `[SIBLING] reinvite_request de ${senderDeviceId} (groupe ${groupId}) → traitement invitations`
-      );
-      processDeviceInvitationsLocally().catch(() => {});
-    });
-
-    // onWelcomeRequest is registered in useChatSession.login() with the targeted
-    // handleWelcomeRequest handler. Do NOT register it here — it would overwrite
-    // that handler with a generic processDeviceInvitationsLocally call.
+    // onReinviteRequest and onWelcomeRequest are registered in useChatSession.login()
+    // with access to the full cb context. Do NOT register them here — it would
+    // overwrite those handlers (last-write-wins) with versions lacking cb.
   } catch (_wsErr: unknown) {
     const msg = _wsErr instanceof Error ? _wsErr.message : String(_wsErr);
     log(`Gateway inaccessible: ${msg}`);

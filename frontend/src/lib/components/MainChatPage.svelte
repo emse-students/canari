@@ -412,7 +412,7 @@
 
   function handleSendChat() {
     // Expose messageText to msgCtx via a closure trick:
-    void messaging.handleSendChat({ ...msgCtx(), _messageText: messageText } as any);
+    void messaging.handleSendChat(msgCtx(), messageText);
     messageText = '';
   }
 

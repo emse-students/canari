@@ -324,6 +324,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
             INITIAL_MESSAGES_PAGE
           );
           const msgs = mapStoredMessagesToChatMessages(storedMessages, ctx.userId);
+          const preReplayMsgIds = new Set(msgs.map((m) => m.id));
           const existing = ctx.conversations.get(meta.id);
           if (existing && msgs.length > 0) {
             ctx.conversations.set(meta.id, { ...existing, messages: msgs });
@@ -357,7 +358,14 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
           const refreshedMsgs = mapStoredMessagesToChatMessages(refreshed, ctx.userId);
           const current = ctx.conversations.get(meta.id);
           if (current) {
-            ctx.conversations.set(meta.id, { ...current, messages: refreshedMsgs });
+            const newUnreadCount = refreshedMsgs.filter(
+              (m) => !m.isOwn && m.senderId !== 'system' && !preReplayMsgIds.has(m.id)
+            ).length;
+            ctx.conversations.set(meta.id, {
+              ...current,
+              messages: refreshedMsgs,
+              unreadCount: newUnreadCount,
+            });
             for (const m of refreshedMsgs) {
               if (m.reactions && m.reactions.length > 0) {
                 ctx.messageReactions.set(m.id, m.reactions);

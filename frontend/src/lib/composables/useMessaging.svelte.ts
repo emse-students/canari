@@ -16,7 +16,6 @@ import {
   removeReaction,
   editMessage,
   deleteMessage,
-  sendReadReceipt,
 } from '$lib/utils/chat/messaging';
 import { insertMessageOrdered } from '$lib/utils/chat/messageOrder';
 import { MediaService } from '$lib/media';
@@ -284,8 +283,8 @@ export function useMessaging() {
 
   // ── Send ──────────────────────────────────────────────────────────────────
 
-  async function handleSendChat(ctx: MessagingContext) {
-    const text = (ctx as any)._messageText?.trim?.() ?? '';
+  async function handleSendChat(ctx: MessagingContext, messageText: string) {
+    const text = messageText.trim();
     const filesToSend = [...pendingMediaFiles];
     const mediaCaption = text || undefined;
     let sentMediaMessageCount = 0;
@@ -379,7 +378,7 @@ export function useMessaging() {
           const payload = serializeEnvelope(mkMediaEnvelope({ ...mediaRef }, captionForFile));
           await addMessageToChat(ctx.userId, payload, ctx.selectedContact!, ctx, {
             messageId,
-            skipDbSave: true,
+            skipDbSave: false,
           });
           sentMediaMessageCount++;
         }
@@ -610,64 +609,6 @@ export function useMessaging() {
     replyingTo = null;
   }
 
-  // ── Read receipts (debounced 2 s) ─────────────────────────────────────────
-
-  let pendingReadReceipts: string[] = [];
-  let readReceiptTimer: ReturnType<typeof setTimeout> | null = null;
-
-  function scheduleReadReceipts(
-    contactName: string,
-    unreadMessageIds: string[],
-    ctx: MessagingContext
-  ) {
-    const convo = ctx.conversations.get(contactName);
-    if (!convo) return;
-
-    // 1. Filtrer les messages système pour casser la boucle infinie
-    const validIds = unreadMessageIds.filter((id) => {
-      const target = convo.messages.find((m) => m.id === id);
-      return target && !target.isSystem;
-    });
-
-    if (validIds.length === 0) return;
-
-    validIds.forEach((id) => {
-      if (!pendingReadReceipts.includes(id)) pendingReadReceipts.push(id);
-    });
-
-    const meNorm = ctx.userId.toLowerCase();
-
-    // 2. Muter directement l'état (Svelte 5) pour éviter le re-render complet
-    for (const m of convo.messages) {
-      if (validIds.includes(m.id)) {
-        if (!m.readBy) m.readBy = [];
-        if (!m.readBy.includes(meNorm)) m.readBy.push(meNorm);
-      }
-    }
-
-    if (!readReceiptTimer) {
-      readReceiptTimer = setTimeout(() => {
-        const toSend = [...pendingReadReceipts];
-        pendingReadReceipts = [];
-        readReceiptTimer = null;
-        if (toSend.length === 0) return;
-        try {
-          const mlsService = ctx.ensureMls();
-          const fresh = ctx.conversations.get(contactName);
-          if (!fresh) return;
-          sendReadReceipt(toSend, {
-            mlsService,
-            userId: ctx.userId,
-            pin: ctx.pin,
-            conversation: fresh,
-          }).catch(() => {});
-        } catch {
-          /* MLS not ready */
-        }
-      }, 2000);
-    }
-  }
-
   // ── Exposed API ───────────────────────────────────────────────────────────
 
   return {
@@ -694,6 +635,5 @@ export function useMessaging() {
     handleEditMessage,
     handleReply,
     cancelReply,
-    scheduleReadReceipts,
   };
 }

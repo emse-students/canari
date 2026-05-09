@@ -346,7 +346,7 @@ export function useChatSession() {
         historyBaseUrl,
         conversations: cb.conversations,
         messageReactions: cb.messageReactions,
-        selectedContact: cb.getSelectedContact(),
+        getSelectedContact: cb.getSelectedContact,
         setSelectedContact: cb.setSelectedContact,
         saveConversation: cb.saveConversation,
         addMessageToChat: cb.addMessageToChat,

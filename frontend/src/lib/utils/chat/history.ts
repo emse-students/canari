@@ -12,14 +12,6 @@ function bytesToHex(bytes?: Uint8Array | null): string {
     .join('');
 }
 
-function hashStringDjb2(input: string): string {
-  let hash = 5381;
-  for (let i = 0; i < input.length; i++) {
-    hash = (hash * 33) ^ input.charCodeAt(i);
-  }
-  return (hash >>> 0).toString(16);
-}
-
 function seenHistoryKey(userId: string, groupId: string): string {
   return `history_seen_cipher:${userId}:${groupId}`;
 }
@@ -148,6 +140,11 @@ export async function replayConversationHistory(params: {
     let addedMsg = 0;
     let mlsUpdated = false;
 
+    // Collect reaction mutations so we can persist them to DB in one pass after
+    // the main message batch write (reactions reference messages from previous
+    // sessions that are already in DB).
+    const reactionUpdates = new Map<string, MessageReaction[]>(); // msgId → final state
+
     // Batch-collect decoded messages to flush in one UI update at the end.
     const pendingMessages: Array<{
       senderId: string;
@@ -164,7 +161,9 @@ export async function replayConversationHistory(params: {
         latestStreamId = msg.id;
       }
 
-      const cipherFingerprint = hashStringDjb2(`${msg.timestamp}:${msg.content}`);
+      // Use the Redis stream ID as fingerprint — globally unique, no collision risk.
+      // Fall back to timestamp+content prefix for entries without an ID.
+      const cipherFingerprint = msg.id || `${msg.timestamp}:${msg.content.slice(0, 64)}`;
       if (seenCipherHashes.has(cipherFingerprint)) {
         continue;
       }
@@ -240,6 +239,7 @@ export async function replayConversationHistory(params: {
           const filtered = reactions.filter((r) => !(r.userId === senderNorm && r.emoji === emoji));
           filtered.push({ emoji, userId: senderNorm });
           messageReactions.set(messageId, filtered);
+          reactionUpdates.set(messageId, filtered);
           mlsUpdated = true;
           continue;
         } else if (parsed?.system) {
@@ -328,6 +328,7 @@ export async function replayConversationHistory(params: {
                 (r) => !(r.userId === senderReactNorm && r.emoji === data.emoji)
               );
               messageReactions.set(data.messageId, trimmed);
+              reactionUpdates.set(data.messageId, trimmed);
             }
           } catch {
             // Keep history replay robust even if a control payload is malformed.
@@ -400,6 +401,25 @@ export async function replayConversationHistory(params: {
         ...(pm.isSystem ? { readBy: [] } : {}),
       }));
       await storage.saveMessages(toStore, pin);
+    }
+
+    // Persist reaction mutations to DB. Reactions reference messages from previous
+    // sessions, so we fetch the affected rows and re-save with updated reactions.
+    if (storage && reactionUpdates.size > 0) {
+      try {
+        const allMessages = await storage.getMessages(id, pin);
+        const toUpdate: StoredMessage[] = [];
+        for (const m of allMessages) {
+          if (reactionUpdates.has(m.id)) {
+            toUpdate.push({ ...m, reactions: reactionUpdates.get(m.id) });
+          }
+        }
+        if (toUpdate.length > 0) {
+          await storage.saveMessages(toUpdate, pin);
+        }
+      } catch {
+        // Non-blocking
+      }
     }
 
     // Persist the last processed Redis stream ID so the next sync is incremental.
