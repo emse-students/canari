@@ -1774,6 +1774,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  @UseGuards(HeaderAuthGuard)
   @Post('mls-api/kick-stale-device')
   async kickStaleDevice(
     @Body() body: { deviceId: string; userId: string; groupId: string },

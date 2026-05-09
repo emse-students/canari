@@ -551,6 +551,9 @@ export class TauriMlsService implements IMlsService {
           if (shouldAckGroupResetControl({ hasQueuedId: Boolean(msg.queuedMessageId) })) {
             ackIds.push(msg.queuedMessageId!);
           }
+          if (groupId) {
+            await this.refreshEpochCache(groupId);
+          }
           continue;
         }
 

@@ -26,6 +26,16 @@ describe('mlsQueueAckPolicy', () => {
     ).toBe(true);
   });
 
+  it('shouldAckAfterSuccess requires hasQueuedId', () => {
+    expect(
+      shouldAckAfterSuccess(true, {
+        isWelcome: false,
+        isCommit: true,
+        hasQueuedId: false,
+      })
+    ).toBe(false);
+  });
+
   it('shouldAckAfterWebException only for commit', () => {
     expect(
       shouldAckAfterWebException({
@@ -58,6 +68,13 @@ describe('mlsQueueAckPolicy', () => {
         hasQueuedId: true,
       })
     ).toBe(true);
+    expect(
+      shouldAckAfterTauriGenericException({
+        isWelcome: false,
+        isCommit: true,
+        hasQueuedId: false,
+      })
+    ).toBe(false);
   });
 
   it('shouldAckGroupResetControl', () => {
