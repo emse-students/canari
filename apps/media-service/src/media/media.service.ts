@@ -33,7 +33,8 @@ type DownloadResult =
 @Injectable()
 export class MediaService {
   private readonly logger = new Logger(MediaService.name);
-  private readonly meta: MediaMetadataStore = { items: {} };
+  /** Null-prototype map of media UUID → meta; avoids prototype pollution when loading JSON. */
+  private readonly meta: MediaMetadataStore = { items: Object.create(null) };
   /** Per-uploadId locks that serialize concurrent chunk writes to prevent TOCTOU races. */
   private readonly uploadLocks = new Map<string, Promise<void>>();
   private readonly sweepIntervalMs = Number.parseInt(
@@ -112,7 +113,7 @@ export class MediaService {
 
   async initChunkedUpload(): Promise<string> {
     const uploadId = uuidv4();
-    const tempFile = path.join(CHUNK_DIR, uploadId);
+    const tempFile = this.chunkTempPath(uploadId);
     await fs.ensureFile(tempFile);
     return uploadId;
   }
@@ -124,7 +125,7 @@ export class MediaService {
     }
     // Serialize concurrent chunk writes for the same uploadId to prevent TOCTOU race conditions.
     await this.withUploadLock(uploadId, async () => {
-      const tempFile = path.join(CHUNK_DIR, uploadId);
+      const tempFile = this.chunkTempPath(uploadId);
       if (!(await fs.pathExists(tempFile))) {
         throw new Error('Upload session not found or expired');
       }
@@ -144,28 +145,28 @@ export class MediaService {
     if (!UUID_REGEX.test(uploadId)) {
       throw new BadRequestException('Invalid uploadId');
     }
-    const tempFile = path.join(CHUNK_DIR, uploadId);
-    if (!(await fs.pathExists(tempFile))) {
-      throw new Error('Upload session not found or expired');
-    }
+    return this.withUploadLock(uploadId, async () => {
+      const tempFile = this.chunkTempPath(uploadId);
+      if (!(await fs.pathExists(tempFile))) {
+        throw new Error('Upload session not found or expired');
+      }
 
-    const stat = await fs.stat(tempFile);
-    if (stat.size > maxBytes) {
+      const stat = await fs.stat(tempFile);
+      if (stat.size > maxBytes) {
+        await fs.remove(tempFile);
+        throw new PayloadTooLargeException('Chunked upload exceeds 100 MB policy');
+      }
+      const mediaId = uuidv4();
+
+      await this.storage.putFileStream(mediaId, tempFile, stat.size);
+
       await fs.remove(tempFile);
-      throw new PayloadTooLargeException('Chunked upload exceeds 100 MB policy');
-    }
-    const mediaId = uuidv4();
 
-    // Stream from local temp file to MinIO
-    await this.storage.putFileStream(mediaId, tempFile, stat.size);
+      this.setAccess(mediaId, Date.now());
+      await this.persistMetadata();
 
-    // Clean up
-    await fs.remove(tempFile);
-
-    this.setAccess(mediaId, Date.now());
-    await this.persistMetadata();
-
-    return mediaId;
+      return mediaId;
+    });
   }
 
   /**
@@ -190,20 +191,54 @@ export class MediaService {
     }
   }
 
+  /** Resolved temp directory with trailing sep for stable prefix checks (path traversal defense). */
+  private chunkDirRoot(): string {
+    return path.resolve(CHUNK_DIR) + path.sep;
+  }
+
+  /**
+   * Single temp file path for an upload UUID, confined under CHUNK_DIR.
+   */
+  private chunkTempPath(uploadId: string): string {
+    if (!UUID_REGEX.test(uploadId)) {
+      throw new BadRequestException('Invalid uploadId');
+    }
+    const resolved = path.resolve(CHUNK_DIR, uploadId);
+    if (!resolved.startsWith(this.chunkDirRoot())) {
+      throw new BadRequestException('Invalid upload path');
+    }
+    return resolved;
+  }
+
   private loadMetadata() {
     try {
       if (!fs.existsSync(MEDIA_META_FILE)) return;
       const raw = fs.readJsonSync(MEDIA_META_FILE) as Partial<MediaMetadataStore>;
-      if (raw && raw.items && typeof raw.items === 'object') {
-        this.meta.items = raw.items;
+      const items = Object.create(null) as Record<string, MediaMetaEntry>;
+      if (
+        raw?.items &&
+        typeof raw.items === 'object' &&
+        !Array.isArray(raw.items)
+      ) {
+        for (const key of Object.keys(raw.items)) {
+          if (!UUID_REGEX.test(key)) continue;
+          const entry = (raw.items as Record<string, MediaMetaEntry>)[key];
+          if (!entry || typeof entry !== 'object') continue;
+          items[key] = entry;
+        }
       }
+      this.meta.items = items;
     } catch (error) {
       this.logger.warn(`Unable to read media metadata index: ${String(error)}`);
     }
   }
 
   private async persistMetadata() {
-    await fs.writeJson(MEDIA_META_FILE, this.meta, { spaces: 2 });
+    await fs.writeJson(
+      MEDIA_META_FILE,
+      { items: { ...this.meta.items } },
+      { spaces: 2 },
+    );
   }
 
   private setAccess(mediaId: string, now: number) {

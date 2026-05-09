@@ -5,6 +5,21 @@ import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import { UsersService } from '../users/users.service';
 
+/** Parse a service base URL for server-to-server calls: http(s) only, no userinfo, path must be empty or "/". */
+function parseSafeServiceOrigin(raw: string, envName: string): URL {
+  const parsed = new URL(raw);
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error(`${envName} must use http or https`);
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error(`${envName} must not include credentials`);
+  }
+  if (parsed.pathname !== '/' && parsed.pathname !== '') {
+    throw new Error(`${envName} must be an origin only (no path)`);
+  }
+  return parsed;
+}
+
 @Controller('payments')
 export class PaymentWebhookController {
   private readonly logger = new Logger(PaymentWebhookController.name);
@@ -95,13 +110,23 @@ export class PaymentWebhookController {
           const formServiceBase =
             this.config.get<string>('FORM_SERVICE_URL') ||
             'http://localhost:3014';
-          // Prevent SSRF: validate FORM_SERVICE_URL uses only http/https before use.
-          const parsedBase = new URL(formServiceBase);
-          if (!['http:', 'https:'].includes(parsedBase.protocol)) {
-            throw new Error('Form service URL must use http or https');
-          }
-          const url = `${parsedBase.origin}/api/forms/submissions/${submissionId}/mark-paid`;
-          await axios.post(url, { sessionId: session.id }, { maxRedirects: 0 });
+          const parsedBase = parseSafeServiceOrigin(
+            formServiceBase,
+            'FORM_SERVICE_URL',
+          );
+          const url = new URL(
+            `/api/forms/submissions/${encodeURIComponent(submissionId)}/mark-paid`,
+            `${parsedBase.origin}/`,
+          ).href;
+          await axios.post(
+            url,
+            { sessionId: session.id },
+            {
+              maxRedirects: 0,
+              timeout: 15_000,
+              validateStatus: (s) => s >= 200 && s < 300,
+            },
+          );
           this.logger.log(
             `Marked submission ${submissionId} as paid via form-service`,
           );
@@ -134,14 +159,20 @@ export class PaymentWebhookController {
           try {
             const socialServiceBase =
               this.config.get<string>('SOCIAL_SERVICE_URL') ||
-              'http://localhost:3015';
-            // Prevent SSRF: validate SOCIAL_SERVICE_URL uses only http/https before use.
-            const parsedBase = new URL(socialServiceBase);
-            if (!['http:', 'https:'].includes(parsedBase.protocol)) {
-              throw new Error('SOCIAL_SERVICE_URL must use http or https');
-            }
-            const url = `${parsedBase.origin}/api/associations/${associationId}/stripe-complete`;
-            await axios.post(url, undefined, { maxRedirects: 0 });
+              'http://localhost:3014';
+            const parsedBase = parseSafeServiceOrigin(
+              socialServiceBase,
+              'SOCIAL_SERVICE_URL',
+            );
+            const url = new URL(
+              `/api/associations/${encodeURIComponent(associationId)}/stripe-complete`,
+              `${parsedBase.origin}/`,
+            ).href;
+            await axios.post(url, undefined, {
+              maxRedirects: 0,
+              timeout: 15_000,
+              validateStatus: (s) => s >= 200 && s < 300,
+            });
             this.logger.log(
               `Marked association ${associationId} stripe onboarding complete`,
             );

@@ -17,6 +17,25 @@ export class PostsService {
 
   private static readonly LIST_CACHE_TTL = 30; // seconds
 
+  /** Copy reactions into a null-prototype object (avoid prototype pollution from JSON-shaped keys). */
+  private sanitizeReactions(raw: Record<string, string> | null | undefined): Record<string, string> {
+    const out = Object.create(null) as Record<string, string>;
+    if (!raw || typeof raw !== 'object') return out;
+    for (const key of Object.keys(raw)) {
+      if (
+        key === '__proto__' ||
+        key === 'constructor' ||
+        key === 'prototype' ||
+        key === '__defineGetter__' ||
+        key === '__defineSetter__'
+      ) {
+        continue;
+      }
+      out[key] = raw[key];
+    }
+    return out;
+  }
+
   constructor(
     @InjectRepository(Post) private readonly postRepo: Repository<Post>,
     private readonly httpService: HttpService,
@@ -413,7 +432,7 @@ export class PostsService {
     if (userId === '__proto__' || userId === 'constructor' || userId === 'prototype') {
       throw new BadRequestException('Invalid userId');
     }
-    const reactions: Record<string, string> = post.reactions ?? {};
+    const reactions = this.sanitizeReactions(post.reactions);
     reactions[userId] = reactionType;
     post.reactions = reactions;
     await this.postRepo.save(post);
@@ -427,7 +446,7 @@ export class PostsService {
     if (userId === '__proto__' || userId === 'constructor' || userId === 'prototype') {
       throw new BadRequestException('Invalid userId');
     }
-    const reactions: Record<string, string> = post.reactions ?? {};
+    const reactions = this.sanitizeReactions(post.reactions);
     delete reactions[userId];
     post.reactions = reactions;
     await this.postRepo.save(post);

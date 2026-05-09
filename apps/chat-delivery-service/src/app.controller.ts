@@ -170,18 +170,26 @@ async function assertSafeExternalUrl(rawUrl: string): Promise<URL> {
 
 function decodeHtmlEntity(value: unknown): string {
   const normalized = typeof value === 'string' ? value : '';
-  // Single-pass replacement prevents double-decoding: a chained approach would
-  // turn &amp;lt; into &lt; then < (two rounds), leaking angle brackets.
-  const entityMap: Record<string, string> = {
-    '&amp;': '&',
-    '&quot;': '"',
-    '&#39;': "'",
-    '&lt;': '<',
-    '&gt;': '>',
-  };
+  // Plain-text link preview fields: decode a small set once. Omit &lt; / &gt; so one pass cannot
+  // turn &amp;lt;… into angle brackets (CWE-116 / double-unescape patterns).
   return normalized.replace(
-    /&(?:amp|quot|#39|lt|gt);/g,
-    (m) => entityMap[m] ?? m,
+    /&(amp|quot|apos);|&#39;|&#x27;/gi,
+    (full, named?: string) => {
+      if (named !== undefined)
+        switch (named.toLowerCase()) {
+          case 'amp':
+            return '&';
+          case 'quot':
+            return '"';
+          case 'apos':
+            return "'";
+          default:
+            return full;
+        }
+      const low = full.toLowerCase();
+      if (low === '&#39;' || low === '&#x27;') return "'";
+      return full;
+    },
   );
 }
 
