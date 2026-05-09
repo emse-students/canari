@@ -598,20 +598,29 @@ export function useMessaging() {
     unreadMessageIds: string[],
     ctx: MessagingContext
   ) {
-    unreadMessageIds.forEach((id) => {
+    const convo = ctx.conversations.get(contactName);
+    if (!convo) return;
+
+    // 1. Filtrer les messages système pour casser la boucle infinie
+    const validIds = unreadMessageIds.filter((id) => {
+      const target = convo.messages.find((m) => m.id === id);
+      return target && !target.isSystem;
+    });
+
+    if (validIds.length === 0) return;
+
+    validIds.forEach((id) => {
       if (!pendingReadReceipts.includes(id)) pendingReadReceipts.push(id);
     });
 
     const meNorm = ctx.userId.toLowerCase();
-    // Optimistically mark as read in UI
-    const convo = ctx.conversations.get(contactName);
-    if (convo) {
-      ctx.conversations.set(contactName, {
-        ...convo,
-        messages: convo.messages.map((m) =>
-          unreadMessageIds.includes(m.id) ? { ...m, readBy: [...(m.readBy || []), meNorm] } : m
-        ),
-      });
+
+    // 2. Muter directement l'état (Svelte 5) pour éviter le re-render complet
+    for (const m of convo.messages) {
+      if (validIds.includes(m.id)) {
+        if (!m.readBy) m.readBy = [];
+        if (!m.readBy.includes(meNorm)) m.readBy.push(meNorm);
+      }
     }
 
     if (!readReceiptTimer) {

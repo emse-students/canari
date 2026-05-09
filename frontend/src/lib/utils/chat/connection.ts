@@ -769,47 +769,30 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                 const c = conversations.get(convoKey);
                 if (c && msgIds.length > 0) {
                   let updated = false;
-                  const newMsgs = [...c.messages];
                   for (const msgId of msgIds) {
-                    const idx = newMsgs.findIndex((m) => m.id === msgId);
-                    if (idx !== -1) {
-                      const m = { ...newMsgs[idx] };
-                      const readBy = m.readBy || [];
-                      if (!readBy.includes(senderNorm)) {
-                        m.readBy = [...readBy, senderNorm];
-                        newMsgs[idx] = m;
+                    const targetMsg = c.messages.find((m) => m.id === msgId);
+                    if (targetMsg) {
+                      if (!targetMsg.readBy) targetMsg.readBy = [];
+                      if (!targetMsg.readBy.includes(senderNorm)) {
+                        targetMsg.readBy.push(senderNorm);
                         updated = true;
                       }
                     }
                   }
                   if (updated) {
-                    conversations.set(convoKey, { ...c, messages: newMsgs });
-
-                    // Persist updated readBy to DB
+                    // Ne plus faire conversations.set()
                     if (storage) {
                       for (const msgId of msgIds) {
-                        const m = newMsgs.find((x) => x.id === msgId);
+                        const m = c.messages.find((x) => x.id === msgId);
                         if (m) {
                           try {
-                            await storage.saveMessage(
-                              {
-                                id: m.id,
-                                conversationId: convoKey,
-                                senderId: m.senderId,
-                                content: m.content,
-                                timestamp: m.timestamp.getTime(),
-                                readBy: m.readBy,
-                                reactions: messageReactions.get(m.id),
-                              },
-                              pin
-                            );
+                            await storage.saveMessage({ ...m, conversationId: convoKey }, pin);
                           } catch {
                             // Non-blocking
                           }
                         }
                       }
                     }
-
                     onReadReceiptReceived?.({
                       conversationKey: convoKey,
                       senderId: senderNorm,
@@ -822,32 +805,13 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               if (event === 'delete_message') {
                 const c = conversations.get(convoKey);
                 if (c && data.messageId) {
-                  const newMsgs = [...c.messages];
-                  const idx = newMsgs.findIndex((m) => m.id === data.messageId);
-                  if (idx !== -1 && newMsgs[idx].senderId === senderNorm) {
-                    newMsgs[idx] = {
-                      ...newMsgs[idx],
-                      isDeleted: true,
-                      content: 'Ce message a été supprimé.',
-                    };
-                    conversations.set(convoKey, { ...c, messages: newMsgs });
-
-                    // Persist deletion to DB so it survives page reload
+                  const targetMsg = c.messages.find((m) => m.id === data.messageId);
+                  if (targetMsg && targetMsg.senderId === senderNorm) {
+                    targetMsg.isDeleted = true;
+                    targetMsg.content = 'Ce message a été supprimé.';
                     if (storage) {
                       try {
-                        await storage.saveMessage(
-                          {
-                            id: newMsgs[idx].id,
-                            conversationId: convoKey,
-                            senderId: newMsgs[idx].senderId,
-                            content: newMsgs[idx].content,
-                            timestamp: newMsgs[idx].timestamp.getTime(),
-                            readBy: newMsgs[idx].readBy,
-                            reactions: messageReactions.get(newMsgs[idx].id),
-                            isDeleted: true,
-                          },
-                          pin
-                        );
+                        await storage.saveMessage({ ...targetMsg, conversationId: convoKey }, pin);
                       } catch {
                         // Non-blocking
                       }
@@ -859,36 +823,16 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               if (event === 'edit_message' && data.messageId && data.newContent) {
                 const c = conversations.get(convoKey);
                 if (c) {
-                  const newMsgs = [...c.messages];
-                  const idx = newMsgs.findIndex((m) => m.id === data.messageId);
-                  if (idx !== -1 && newMsgs[idx].senderId === senderNorm) {
-                    const editedAt =
+                  const targetMsg = c.messages.find((m) => m.id === data.messageId);
+                  if (targetMsg && targetMsg.senderId === senderNorm) {
+                    targetMsg.isEdited = true;
+                    targetMsg.editedAt =
                       typeof data.editedAt === 'number' ? new Date(data.editedAt) : new Date();
-                    newMsgs[idx] = {
-                      ...newMsgs[idx],
-                      isEdited: true,
-                      editedAt,
-                      content: data.newContent,
-                      readBy: [],
-                    };
-                    conversations.set(convoKey, { ...c, messages: newMsgs });
-
-                    // Persist edit to DB so it survives page reload
+                    targetMsg.content = data.newContent;
+                    targetMsg.readBy = [];
                     if (storage) {
                       try {
-                        await storage.saveMessage(
-                          {
-                            id: newMsgs[idx].id,
-                            conversationId: convoKey,
-                            senderId: newMsgs[idx].senderId,
-                            content: data.newContent,
-                            timestamp: newMsgs[idx].timestamp.getTime(),
-                            readBy: [],
-                            reactions: messageReactions.get(newMsgs[idx].id),
-                            isEdited: true,
-                          },
-                          pin
-                        );
+                        await storage.saveMessage({ ...targetMsg, conversationId: convoKey }, pin);
                       } catch {
                         // Non-blocking
                       }
