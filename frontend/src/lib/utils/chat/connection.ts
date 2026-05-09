@@ -770,8 +770,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
 
                 if (added) {
                   await addSystemMessage(`${senderNorm} a ajouté ${added} au groupe`, convoKey);
-                  return true;
                 }
+                return true;
               }
               if (event === 'groupDeleted') {
                 await addSystemMessage(`${senderNorm} a supprimé le groupe`, convoKey);
@@ -1003,7 +1003,14 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               return true;
             }
 
-            // Fallback: treat raw bytes as legacy plain text
+            // Guard: if the proto decoded successfully but the type is unknown,
+            // never render it — system/receipt messages must never appear in the UI.
+            if (msg !== null) {
+              log(`[MLS] Unknown AppMessage type for "${convoKey}" — not rendered`);
+              console.warn(`[MLS] Unknown AppMessage type — skipping render for group ${convoKey}`);
+              return true;
+            }
+            // Fallback: treat raw bytes as legacy plain text (pre-proto messages only).
             const legacyText = new TextDecoder().decode(decryptedBytes);
             await addMessageToChat(
               senderNorm,

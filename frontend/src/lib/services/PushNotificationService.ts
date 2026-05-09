@@ -22,6 +22,9 @@ const FCM_TOKEN_STORAGE_KEY = 'canari_fcm_token';
 const BACKGROUND_RETRY_ATTEMPTS = 6;
 const BACKGROUND_RETRY_DELAY_MS = 5000;
 
+// Prevent infinite retry spam when Google Play Services are unavailable.
+let pushAttempted = false;
+
 function isTauriRuntime(): boolean {
   if (typeof window === 'undefined') return false;
   return isTauri() || !!(window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
@@ -105,6 +108,12 @@ export async function startPushService(
     console.info('[Push] startPushService noop (non-Tauri environment)');
     return; // web : pas de push
   }
+
+  if (pushAttempted) {
+    console.info('[Push] startPushService already attempted — skipping to avoid spam');
+    return;
+  }
+  pushAttempted = true;
 
   console.info(
     `[Push] startPushService device=${deviceId} (platform will be confirmed by FCM token)`
