@@ -258,9 +258,15 @@
         const configured = await BiometricService.isConfigured().catch(() => false);
         biometricConfigured = configured;
         if (configured && w.__TAURI_INTERNALS__) {
-          await globalSession.biometricLogin(sessionCb());
+          // Only invoke the biometric prompt if the device actually has enrolled
+          // biometrics. If not (e.g., fingerprint hardware present but no fingerprint
+          // set up), skip straight to PIN to avoid a confusing OS error dialog.
+          const biometricAvailable = await BiometricService.isAvailable().catch(() => false);
+          if (biometricAvailable) {
+            await globalSession.biometricLogin(sessionCb());
+          }
           if (!globalSession.isLoggedIn) {
-            // Biométrie annulée ou échouée → fallback modal PIN
+            // Biométrie annulée, échouée ou non disponible → fallback modal PIN
             const savedUser2 = currentUserId();
             if (savedUser2) {
               globalSession.userId = savedUser2;

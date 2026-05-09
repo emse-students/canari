@@ -263,8 +263,12 @@ async function _doRefresh(): Promise<string> {
   });
 
   if (!res.ok) {
+    // Don't call clearAuth() — that would wipe userId from localStorage and revoke
+    // the refresh cookie server-side, forcing a full OIDC re-auth even when the
+    // failure was transient. Just drop the in-memory token.
+    _accessToken = null;
+    clearWsSessionCookie();
     console.warn(`[AUTH] refresh FAILED — status=${res.status} (${Date.now() - t0}ms)`);
-    await clearAuth();
     throw new Error('Session expired — please log in again');
   }
 
@@ -272,17 +276,22 @@ async function _doRefresh(): Promise<string> {
   _accessToken = data.access_token;
   setWsSessionCookie(data.access_token);
 
-  // Decode admin claim from the new JWT and keep reactive state in sync.
+  // Decode claims from the new JWT and keep reactive state in sync.
   let tokenExp: number | null = null;
   try {
     const payload = data.access_token.split('.')[1];
     if (payload) {
       const decoded = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/'))) as {
+        sub?: string;
         admin?: boolean;
         exp?: number;
       };
       setGlobalAdmin(!!decoded.admin);
       tokenExp = decoded.exp ?? null;
+      // Restore userId if localStorage was cleared (e.g., Android process kill).
+      if (decoded.sub && !currentUserId()) {
+        saveUserLocally({ id: decoded.sub, admin: !!decoded.admin });
+      }
     }
   } catch {
     /* ignore malformed token */
@@ -351,11 +360,26 @@ export async function clearAuth(): Promise<void> {
  * AND we have a saved user in localStorage (prevents loops after logout).
  */
 export async function hasStoredSession(): Promise<boolean> {
-  const uid = currentUserId();
+  let uid = currentUserId();
   console.log(`[AUTH] hasStoredSession — userId=${uid ?? 'null'}`);
   if (!uid) {
-    console.log('[AUTH] hasStoredSession → false (aucun utilisateur local)');
-    return false;
+    // On Tauri mobile, localStorage may be wiped after an OS process kill while
+    // the HttpOnly refresh cookie survives in the WebView cookie store. Attempt a
+    // silent refresh — _doRefresh will restore userId from the JWT sub claim.
+    if (isTauri()) {
+      try {
+        await refresh();
+        uid = currentUserId();
+      } catch {
+        /* cookie absent or expired */
+      }
+    }
+    if (!uid) {
+      console.log('[AUTH] hasStoredSession → false (aucun utilisateur local)');
+      return false;
+    }
+    console.log('[AUTH] hasStoredSession → true (userId restauré via refresh)');
+    return true;
   }
   try {
     await refresh();
