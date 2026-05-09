@@ -786,7 +786,21 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                         const m = c.messages.find((x) => x.id === msgId);
                         if (m) {
                           try {
-                            await storage.saveMessage({ ...m, conversationId: convoKey }, pin);
+                            await storage.saveMessage(
+                              {
+                                id: m.id,
+                                conversationId: convoKey,
+                                senderId: m.senderId,
+                                content: m.content,
+                                timestamp:
+                                  m.timestamp instanceof Date
+                                    ? m.timestamp.getTime()
+                                    : new Date(m.timestamp as any).getTime(),
+                                readBy: m.readBy,
+                                reactions: messageReactions.get(m.id),
+                              },
+                              pin
+                            );
                           } catch {
                             // Non-blocking
                           }
@@ -811,7 +825,22 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                     targetMsg.content = 'Ce message a été supprimé.';
                     if (storage) {
                       try {
-                        await storage.saveMessage({ ...targetMsg, conversationId: convoKey }, pin);
+                        await storage.saveMessage(
+                          {
+                            id: targetMsg.id,
+                            conversationId: convoKey,
+                            senderId: targetMsg.senderId,
+                            content: targetMsg.content,
+                            timestamp:
+                              targetMsg.timestamp instanceof Date
+                                ? targetMsg.timestamp.getTime()
+                                : new Date(targetMsg.timestamp as any).getTime(),
+                            readBy: targetMsg.readBy,
+                            reactions: messageReactions.get(targetMsg.id),
+                            isDeleted: true,
+                          },
+                          pin
+                        );
                       } catch {
                         // Non-blocking
                       }
@@ -832,7 +861,22 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                     targetMsg.readBy = [];
                     if (storage) {
                       try {
-                        await storage.saveMessage({ ...targetMsg, conversationId: convoKey }, pin);
+                        await storage.saveMessage(
+                          {
+                            id: targetMsg.id,
+                            conversationId: convoKey,
+                            senderId: targetMsg.senderId,
+                            content: data.newContent,
+                            timestamp:
+                              targetMsg.timestamp instanceof Date
+                                ? targetMsg.timestamp.getTime()
+                                : new Date(targetMsg.timestamp as any).getTime(),
+                            readBy: [],
+                            reactions: messageReactions.get(targetMsg.id),
+                            isEdited: true,
+                          },
+                          pin
+                        );
                       } catch {
                         // Non-blocking
                       }
