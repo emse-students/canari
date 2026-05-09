@@ -12,7 +12,7 @@ export class Post {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column()
+  @Column({ type: 'varchar', length: 255 })
   @Index()
   authorId: string;
 
@@ -25,7 +25,7 @@ export class Post {
   @Column('jsonb', { default: [] })
   links: any[];
 
-  @Column({ nullable: true })
+  @Column({ type: 'uuid', nullable: true })
   attachedFormId: string;
 
   @Column('jsonb', { default: [] })
@@ -40,11 +40,11 @@ export class Post {
   @Column('jsonb', { default: [] })
   forms: any[];
 
-  @Column({ nullable: true })
+  @Column({ type: 'uuid', nullable: true })
   @Index()
   associationId: string;
 
-  @Column({ nullable: true })
+  @Column({ type: 'uuid', nullable: true })
   paymentAssociationId: string;
 
   @Column('jsonb', { default: {} })

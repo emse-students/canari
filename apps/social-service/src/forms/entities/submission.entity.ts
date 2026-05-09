@@ -13,11 +13,11 @@ export class Submission {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column()
+  @Column({ type: 'uuid' })
   @Index()
   formId: string;
 
-  @Column()
+  @Column({ type: 'varchar', length: 255 })
   @Index()
   userId: string;
 

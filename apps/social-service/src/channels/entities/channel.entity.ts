@@ -13,7 +13,7 @@ export class Channel {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column()
+  @Column({ type: 'uuid' })
   workspaceId: string;
 
   @Column()

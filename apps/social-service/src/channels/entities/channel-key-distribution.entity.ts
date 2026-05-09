@@ -20,16 +20,16 @@ export class ChannelKeyDistribution {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column()
+  @Column({ type: 'uuid' })
   workspaceId: string;
 
-  @Column()
+  @Column({ type: 'uuid' })
   channelId: string;
 
-  @Column()
+  @Column({ type: 'varchar', length: 255 })
   targetUserId: string;
 
-  @Column()
+  @Column({ type: 'varchar', length: 255 })
   invitedBy: string;
 
   @Column()

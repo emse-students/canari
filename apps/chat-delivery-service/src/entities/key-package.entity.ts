@@ -14,7 +14,7 @@ export class KeyPackage {
   id: string;
 
   @Index()
-  @Column()
+  @Column({ type: 'varchar', length: 255 })
   userId: string;
 
   @Column()

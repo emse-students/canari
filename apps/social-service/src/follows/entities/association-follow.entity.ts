@@ -13,11 +13,11 @@ export class AssociationFollow {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column()
+  @Column({ type: 'varchar', length: 255 })
   @Index()
   followerUserId: string;
 
-  @Column()
+  @Column({ type: 'uuid' })
   @Index()
   associationId: string;
 

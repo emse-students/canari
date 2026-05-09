@@ -6,13 +6,13 @@ import {
   Index,
 } from 'typeorm';
 
-@Entity()
+@Entity('queued_message')
 @Index(['recipientId', 'deviceId'])
 export class QueuedMessage {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column()
+  @Column({ type: 'varchar', length: 255 })
   recipientId: string;
 
   @Column()
@@ -27,13 +27,13 @@ export class QueuedMessage {
   @Column({ nullable: true })
   isCommit?: boolean;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', length: 255, nullable: true })
   senderId?: string;
 
   @Column({ nullable: true })
   senderDeviceId?: string;
 
-  @Column({ nullable: true })
+  @Column({ type: 'uuid', nullable: true })
   groupId?: string;
 
   @Column({ nullable: true })

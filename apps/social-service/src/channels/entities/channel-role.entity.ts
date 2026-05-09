@@ -6,7 +6,7 @@ export class ChannelRole {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column()
+  @Column({ type: 'uuid' })
   workspaceId: string;
 
   @Column()

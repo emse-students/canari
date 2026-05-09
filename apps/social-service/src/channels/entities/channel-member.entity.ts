@@ -13,10 +13,10 @@ export class ChannelMember {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column()
+  @Column({ type: 'uuid' })
   workspaceId: string;
 
-  @Column()
+  @Column({ type: 'varchar', length: 255 })
   userId: string;
 
   @Column('simple-array', { default: '' })

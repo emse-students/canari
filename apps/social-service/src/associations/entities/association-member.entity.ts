@@ -11,11 +11,11 @@ export class AssociationMember {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column()
+  @Column({ type: 'uuid' })
   @Index()
   associationId: string;
 
-  @Column()
+  @Column({ type: 'varchar', length: 255 })
   @Index()
   userId: string;
 

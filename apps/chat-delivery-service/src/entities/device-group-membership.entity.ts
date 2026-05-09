@@ -22,13 +22,13 @@ export class DeviceGroupMembership {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column()
+  @Column({ type: 'varchar', length: 255 })
   userId: string;
 
   @Column()
   deviceId: string;
 
-  @Column()
+  @Column({ type: 'uuid' })
   groupId: string;
 
   @Column({
