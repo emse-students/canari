@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.util.Base64
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
@@ -20,6 +21,7 @@ import java.net.URL
 class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
     companion object {
+        const val TAG          = "CanariFCM"
         const val CHANNEL_ID   = "canari_messages"
         const val CHANNEL_NAME = "Messages Canari"
         const val PREFS_NAME   = "canari_prefs"
@@ -35,6 +37,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
     override fun onNewToken(token: String) {
         super.onNewToken(token)
+        Log.i(TAG, "onNewToken: nouveau token FCM reçu")
         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit().putString(KEY_FCM_TOKEN, token).apply()
         try { File(filesDir, "fcm_token.txt").writeText(token) } catch (_: Exception) { }
@@ -43,14 +46,19 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         super.onMessageReceived(remoteMessage)
         val data = remoteMessage.data
+        Log.d(TAG, "onMessageReceived: action=${data["action"]} groupId=${data["groupId"]} queuedMessageId=${data["queuedMessageId"]} hasInlineProto=${!data["proto"].isNullOrEmpty()}")
 
         // 1. Vérifie si on doit déclencher un travail lourd (ex: envoyer un Welcome, traiter la queue)
         if (data["action"] == "process_queue") {
+            Log.d(TAG, "action=process_queue → enqueue MlsBackgroundWorker")
             val workRequest = OneTimeWorkRequestBuilder<MlsBackgroundWorker>().build()
             WorkManager.getInstance(this).enqueue(workRequest)
-            
+
             // Si c'est juste un ping de synchro (pas de message à afficher), on s'arrête là
-            if (!data.containsKey("groupId")) return
+            if (!data.containsKey("groupId")) {
+                Log.d(TAG, "process_queue sans groupId → pas de notification à afficher")
+                return
+            }
         }
 
         // 2. Traitement classique d'affichage de notification
@@ -60,9 +68,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val queuedMessageId = data["queuedMessageId"]
             val inlineProto     = data["proto"]?.takeIf { it.isNotEmpty() }
 
+            Log.d(TAG, "Déchiffrement: groupId=$groupId queuedMessageId=$queuedMessageId inlineProto=${inlineProto != null}")
             val body = tryDecrypt(queuedMessageId, groupId, inlineProto)
-                ?: buildFallbackText(groupName)
+                ?: buildFallbackText(groupName).also { Log.w(TAG, "Déchiffrement échoué → fallback: $it") }
 
+            Log.d(TAG, "showNotification: body=${body.take(60)}")
             showNotification("Canari", body, data)
         }
         thread.start()
@@ -74,12 +84,25 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         groupId: String,
         inlineProto: String?,
     ): String? {
-        if (queuedMessageId == null) return null
-        val ctx = loadPushContext() ?: return null
-        val stateBytes = loadMlsState() ?: return null
+        if (queuedMessageId == null) {
+            Log.w(TAG, "tryDecrypt: queuedMessageId absent → abandon")
+            return null
+        }
+        val ctx = loadPushContext()
+        if (ctx == null) {
+            Log.e(TAG, "tryDecrypt: push_context.json absent ou invalide → abandon")
+            return null
+        }
+        val stateBytes = loadMlsState()
+        if (stateBytes == null) {
+            Log.e(TAG, "tryDecrypt: mls.bin absent → abandon")
+            return null
+        }
+        Log.d(TAG, "tryDecrypt: état MLS chargé (${stateBytes.size} octets), userId=${ctx.userId} deviceId=${ctx.deviceId}")
 
         val protoB64 = inlineProto
             ?: fetchProtoFromBackend(queuedMessageId, ctx)
+                .also { if (it == null) Log.e(TAG, "tryDecrypt: fetchProtoFromBackend a échoué") }
             ?: return null
 
         return decryptProto(stateBytes, ctx.pin, groupId, protoB64)
@@ -112,7 +135,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     }
 
     private fun fetchProtoFromBackend(queuedMessageId: String, ctx: PushContext): String? {
-        val secret = PushSecretKeystore.retrieve(this) ?: return null
+        val secret = PushSecretKeystore.retrieve(this)
+        if (secret == null) {
+            Log.e(TAG, "fetchProtoFromBackend: pushSecret absent du Keystore")
+            return null
+        }
         return try {
             val url = URL(
                 "${ctx.baseUrl}/api/mls-api/push/fetch-proto" +
@@ -120,17 +147,28 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     "&userId=${java.net.URLEncoder.encode(ctx.userId, "UTF-8")}" +
                     "&deviceId=${java.net.URLEncoder.encode(ctx.deviceId, "UTF-8")}"
             )
+            Log.d(TAG, "fetchProtoFromBackend: GET $url")
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 connectTimeout = 5_000
                 readTimeout    = 5_000
                 requestMethod  = "GET"
                 setRequestProperty("Authorization", "PushSecret $secret")
             }
-            if (conn.responseCode != 200) { conn.disconnect(); return null }
+            val code = conn.responseCode
+            if (code != 200) {
+                Log.e(TAG, "fetchProtoFromBackend: HTTP $code")
+                conn.disconnect()
+                return null
+            }
             val text = conn.inputStream.bufferedReader().use { it.readText() }
             conn.disconnect()
-            JSONObject(text).optString("proto").takeIf { it.isNotEmpty() }
-        } catch (_: Exception) { null }
+            val proto = JSONObject(text).optString("proto").takeIf { it.isNotEmpty() }
+            Log.d(TAG, "fetchProtoFromBackend: proto reçu=${proto != null} (${proto?.length ?: 0} chars)")
+            proto
+        } catch (e: Exception) {
+            Log.e(TAG, "fetchProtoFromBackend: exception: ${e.message}")
+            null
+        }
     }
 
     private fun decryptProto(
@@ -141,10 +179,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     ): String? = try {
         val cipherBytes = Base64.decode(protoB64, Base64.DEFAULT)
         val text = nativeDecryptMessage(stateBytes, pin, groupId, cipherBytes)
+        Log.d(TAG, "decryptProto: succès → \"${text.take(60)}\"")
         text.takeIf { it.isNotEmpty() }?.take(200)
-    } catch (_: UnsatisfiedLinkError) {
+    } catch (e: UnsatisfiedLinkError) {
+        Log.e(TAG, "decryptProto: librairie native non chargée: ${e.message}")
         null
-    } catch (_: Exception) {
+    } catch (e: Exception) {
+        Log.e(TAG, "decryptProto: exception: ${e.message}")
         null
     }
 

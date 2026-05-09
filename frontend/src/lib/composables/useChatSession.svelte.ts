@@ -351,6 +351,10 @@ export function useChatSession() {
           if (groupId) {
             cb.log(`[SYNC] Welcome traité pour ${groupId}, rafraîchissement...`);
             if (!cb.conversations.has(groupId)) {
+              // Persist a minimal placeholder so the group survives across sessions.
+              // We use the groupId as name temporarily; loadAndRestoreConversations will
+              // replace it with the correct peer UUID and conversationType via the
+              // Phase-2 member-count check (2 members → 'direct' + normalized name).
               cb.conversations.set(groupId, {
                 id: groupId,
                 contactName: groupId,
@@ -362,6 +366,11 @@ export function useChatSession() {
                 conversationType: 'group',
               });
               await cb.saveConversation(groupId);
+              // Resync from server: Phase-2 member check will reclassify 1v1 groups
+              // as 'direct' and write the correct "userId::peerId" name to the DB.
+              await cb
+                .loadAndRestoreConversations()
+                .catch((e) => cb.log(`[WARN] Erreur resync convs (Welcome): ${e}`));
             }
             cb.onLoadHistoryForConversation(groupId, groupId).catch((e) =>
               cb.log(`[WARN] Erreur refresh conv ${groupId}: ${e}`)

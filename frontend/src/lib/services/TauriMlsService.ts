@@ -1273,7 +1273,9 @@ export class TauriMlsService implements IMlsService {
 
     // Écrit mls.bin dès l'init pour que le service FCM puisse déchiffrer
     // même si aucun message n'a encore été traité (saveState non appelé).
-    void invoke('save_mls_state', { pin }).catch(() => {});
+    void invoke<number[]>('sauvegarder_mls', { pin })
+      .then((encBytes) => invoke('save_mls_state', { data: encBytes }))
+      .catch(() => {});
 
     // Populate the local groups cache from Rust after init.
     try {
@@ -1399,7 +1401,7 @@ export class TauriMlsService implements IMlsService {
     // before the app can be backgrounded. Fire-and-forget caused a race where
     // the Android FCM service loaded a stale epoch and decryption failed.
     try {
-      await invoke('save_mls_state', { pin });
+      await invoke('save_mls_state', { data: Array.from(bytes) });
     } catch {
       // Non-blocking on desktop (no-op) and on write errors.
     }
