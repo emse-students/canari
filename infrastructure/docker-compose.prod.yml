@@ -111,6 +111,9 @@ services:
       - "3010"
     environment:
       PORT: "3010"
+      NODE_ENV: ${NODE_ENV:-production}
+      # Same as core/social: browser origin for CORS (same-site prod usually unaffected).
+      FRONTEND_URL: ${FRONTEND_URL:-}
       POSTGRES_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/auth_db
       REDIS_HOST: redis
       REDIS_PORT: "6379"
@@ -169,6 +172,8 @@ services:
       - "3011"
     environment:
       PORT: "3011"
+      NODE_ENV: ${NODE_ENV:-production}
+      FRONTEND_URL: ${FRONTEND_URL:-}
       JWT_SECRET: ${JWT_SECRET}
       MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio}
       MINIO_PORT: "${MINIO_PORT:-9000}"
@@ -195,6 +200,7 @@ services:
       - "3012"
     environment:
       PORT: "3012"
+      NODE_ENV: ${NODE_ENV:-production}
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-me}
       ENABLE_DEV_ROUTES: "${ENABLE_DEV_ROUTES:-false}"
       AUTHENTIK_BASE_URL: ${AUTHENTIK_BASE_URL:-}
@@ -228,6 +234,7 @@ services:
       - "3014"
     environment:
       PORT: "3014"
+      NODE_ENV: ${NODE_ENV:-production}
       FRONTEND_URL: ${FRONTEND_URL:-}
       DB_HOST: postgres
       DB_PORT: "5432"

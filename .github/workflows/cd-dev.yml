@@ -392,6 +392,8 @@ jobs:
           AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
           AUTHENTIK_CLIENT_SECRET: ${{ secrets.AUTHENTIK_CLIENT_SECRET }}
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          # Fallback public dev URL alignée avec secrets.BASE_URL du build frontend (si défini).
+          FRONTEND_URL_SYNC: ${{ secrets.BASE_URL }}
         run: |
           if [ -z "$JWT_SECRET" ]; then
             echo "::error::Missing required GitHub secret: JWT_SECRET"
@@ -419,6 +421,13 @@ jobs:
           upsert_env_var "AUTHENTIK_BASE_URL" "$AUTHENTIK_BASE_URL"
           upsert_env_var "AUTHENTIK_CLIENT_ID" "$AUTHENTIK_CLIENT_ID"
           upsert_env_var "AUTHENTIK_CLIENT_SECRET" "$AUTHENTIK_CLIENT_SECRET"
+
+          if [ -n "${FRONTEND_URL_SYNC:-}" ]; then
+            upsert_env_var "FRONTEND_URL" "$FRONTEND_URL_SYNC"
+          elif ! grep -q '^FRONTEND_URL=' infrastructure/.env; then
+            upsert_env_var "FRONTEND_URL" "https://${{ env.DOMAIN }}"
+            echo "ℹ️ secrets.BASE_URL absent — FRONTEND_URL défaut https://${{ env.DOMAIN }}"
+          fi
 
           if [ -n "$FIREBASE_SERVICE_ACCOUNT_JSON" ]; then
             FIREBASE_SERVICE_ACCOUNT_JSON_COMPACT="$(printf '%s' "$FIREBASE_SERVICE_ACCOUNT_JSON" | tr -d '\r\n')"

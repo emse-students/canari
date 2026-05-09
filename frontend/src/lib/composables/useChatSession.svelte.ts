@@ -207,16 +207,15 @@ export function useChatSession() {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${accessToken}`,
       };
+      // Bearer auth only — omit credentials so CORS stays simple (refresh cookie is for core-service).
       let verifierRes = await fetch(`${historyBaseUrl}/api/mls/security/pin-check`, {
         method: 'POST',
-        credentials: 'include',
         headers: verifierHeaders,
         body: verifierPayload,
       });
       if (verifierRes.status === 404 || verifierRes.status === 405) {
         verifierRes = await fetch(`${historyBaseUrl}/api/mls/security/pin-check`, {
           method: 'POST',
-          credentials: 'include',
           headers: verifierHeaders,
           body: verifierPayload,
         });

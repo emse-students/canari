@@ -118,6 +118,9 @@ services:
       - "3010:3010"
     environment:
       PORT: "3010"
+      NODE_ENV: development
+      # Vite SPA origin (PIN check MLS CORS); align with your dev URL (default SvelteKit port).
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:1420}
       POSTGRES_URL: postgres://admin:password@postgres:5432/auth_db
       REDIS_HOST: redis
       REDIS_PORT: "6379"
@@ -173,6 +176,8 @@ services:
       - "3011:3011"
     environment:
       PORT: "3011"
+      NODE_ENV: development
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:1420}
       JWT_SECRET: ${JWT_SECRET}
       MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio}
       MINIO_PORT: "${MINIO_PORT:-9000}"
@@ -197,6 +202,7 @@ services:
       - "3012:3012"
     environment:
       PORT: "3012"
+      NODE_ENV: development
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-me}
       ENABLE_DEV_ROUTES: "${ENABLE_DEV_ROUTES:-false}"
       DB_HOST: postgres
@@ -205,7 +211,7 @@ services:
       DB_PASSWORD: password
       DB_DATABASE: auth_db
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
-      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:1420}
       FORM_SERVICE_URL: http://social-service:3014
       AVATAR_API_URL: ${AVATAR_API_URL:-https://gallery.mitv.fr}
       AVATAR_API_KEY: ${AVATAR_API_KEY:-}
@@ -225,6 +231,7 @@ services:
       - "3014:3014"
     environment:
       PORT: "3014"
+      NODE_ENV: development
       DB_HOST: postgres
       DB_PORT: "5432"
       DB_USERNAME: admin
@@ -232,9 +239,9 @@ services:
       DB_DATABASE: auth_db
       CHANNELS_ENCRYPTION_SECRET: ${CHANNELS_ENCRYPTION_SECRET:-dev-channel-secret-change-me}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
-      STRIPE_SUCCESS_URL: ${STRIPE_SUCCESS_URL:-http://localhost:5173/posts?registration=success}
-      STRIPE_CANCEL_URL: ${STRIPE_CANCEL_URL:-http://localhost:5173/posts?registration=cancel}
-      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      STRIPE_SUCCESS_URL: ${STRIPE_SUCCESS_URL:-http://localhost:1420/posts?registration=success}
+      STRIPE_CANCEL_URL: ${STRIPE_CANCEL_URL:-http://localhost:1420/posts?registration=cancel}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:1420}
       USER_SERVICE_URL: http://core-service:3012
       PAYMENT_SERVICE_URL: http://core-service:3012
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}

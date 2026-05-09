@@ -439,6 +439,7 @@ jobs:
           upsert_env_var "AUTHENTIK_BASE_URL" "$AUTHENTIK_BASE_URL"
           upsert_env_var "AUTHENTIK_CLIENT_ID" "$AUTHENTIK_CLIENT_ID"
           upsert_env_var "AUTHENTIK_CLIENT_SECRET" "$AUTHENTIK_CLIENT_SECRET"
+          # SPA base URL → FRONTEND_URL (CORS pour core, social, chat-delivery, media).
           upsert_env_var "FRONTEND_URL" "$FRONTEND_URL"
           upsert_env_var "POSTGRES_USER" "$POSTGRES_USER"
           upsert_env_var "POSTGRES_PASSWORD" "$POSTGRES_PASSWORD"
