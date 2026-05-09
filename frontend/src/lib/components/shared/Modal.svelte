@@ -15,19 +15,22 @@
 
   let { open = false, title, maxWidth = 'max-w-md', onClose, children, footer }: Props = $props();
 
-  // Quand la modale s'ouvre, on pousse un état dans l'historique.
-  // Quand le bouton retour est pressé, on intercepte le popstate et on ferme
-  // la modale sans naviguer vers la page précédente.
+  // Track whether this modal pushed a history entry so we only close on the
+  // matching pop, not on unrelated SvelteKit navigation popstate events.
+  let pushedState = false;
+
   $effect(() => {
-    if (open) {
+    if (open && !pushedState) {
       history.pushState({ canariModal: true }, '');
+      pushedState = true;
+    } else if (!open) {
+      pushedState = false;
     }
   });
 
   function handlePopState(_e: PopStateEvent) {
-    if (!open) return;
-    // Empêche la navigation : on remet l'état que l'on vient de consommer
-    // (le popstate a déjà retiré notre entrée de l'historique)
+    if (!open || !pushedState) return;
+    pushedState = false;
     onClose();
   }
 
