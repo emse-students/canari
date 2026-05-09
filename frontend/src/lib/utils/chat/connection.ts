@@ -512,15 +512,22 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         } catch (welcomeErr) {
           const welcomeErrMsg = String(welcomeErr);
           // Welcome pour un autre device, dupliqué, ou "CannotDecryptOwnMessage" → ACK silencieux.
+          // NoMatchingKeyPackage / GroupAlreadyExists : erreur irrécupérable (clés désync après
+          // réinstallation) — on purge le message pour débloquer la Queue.
           if (
             welcomeErrMsg.includes('already') ||
             welcomeErrMsg.includes('duplicate') ||
             welcomeErrMsg.includes('exists') ||
-            welcomeErrMsg.includes('CannotDecryptOwnMessage')
+            welcomeErrMsg.includes('CannotDecryptOwnMessage') ||
+            welcomeErrMsg.includes('NoMatchingKeyPackage') ||
+            welcomeErrMsg.includes('GroupAlreadyExists')
           ) {
+            console.warn(
+              `[MLS] Unrecoverable/redundant welcome error — skipping to unblock queue: ${welcomeErrMsg.slice(0, 200)}`
+            );
             return true;
           }
-          // Échec réel (OTKP mismatch, état corrompu…) → laisser en queue pour retry.
+          // Échec réel (réseau, corruption temporaire…) → laisser en queue pour retry.
           log(`[MLS] Welcome processing failed (${welcomeErrMsg}) — kept in queue for retry`);
           console.error(
             `[MLS] processWelcome failed for known group ${convoKey}:`,

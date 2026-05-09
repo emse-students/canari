@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Désactive toute extraction de données vers le cloud et vers un autre appareil.
+    Référencé par android:dataExtractionRules dans AndroidManifest.xml (API 31+).
+    android:allowBackup="false" couvre les appareils plus anciens (API < 31).
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" />
+    </device-transfer>
+</data-extraction-rules>
