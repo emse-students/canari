@@ -22,11 +22,7 @@
     "http:default",
     {
       "identifier": "http:allow-fetch",
-      "allow": [
-        {
-          "url": "https://**"
-        }
-      ]
+      "allow": [{ "url": "http://**" }, { "url": "https://**" }]
     },
     "http:allow-fetch-cancel",
     "http:allow-fetch-send",
