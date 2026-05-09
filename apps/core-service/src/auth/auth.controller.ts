@@ -66,11 +66,13 @@ export class AuthController {
     this.devRoutesEnabled = isEnvFlagEnabled(process.env.ENABLE_DEV_ROUTES);
   }
 
-  /**
-   * Detect if request is from development environment.
-   * Returns true for localhost and tauri.localhost origins.
-   */
   private isDevEnvironment(req: Request): boolean {
+    // En production, on doit TOUJOURS utiliser les cookies sécurisés (SameSite=none, Secure=true)
+    // car l'application mobile (tauri.localhost) effectue des requêtes cross-origin vers le serveur.
+    if (this.isProduction) {
+      return false;
+    }
+
     const origin = req.get('origin') || req.get('referer') || '';
     return (
       origin.includes('localhost') ||

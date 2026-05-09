@@ -13,6 +13,7 @@
 
   void setWebView(fr.emse.canari.RustWebView);
   java.lang.Class getAppClass(...);
+  int getId();
   java.lang.String getVersion();
   int startActivity(...);
 }
