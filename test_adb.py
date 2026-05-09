@@ -24,6 +24,42 @@ def strip_ansi(text: str) -> str:
     ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
     return ansi_escape.sub('', text)
 
+# Lignes logcat à supprimer entièrement (polling heartbeat, bruit récurrent)
+_MUTE_RE: list[re.Pattern[str]] = [
+    re.compile(r'\[API\] [→←].*/api/presence'),
+    # Ajouter ici d'autres patterns bruyants si besoin
+]
+
+_LOGCAT_LINE_RE = re.compile(
+    r'\d{2}-\d{2} (\d{2}:\d{2}:\d{2})\.\d{3}\s+\d+\s+\d+\s+\w+\s+([^:]+):\s+(.*)'
+)
+_TAURI_MSG_RE = re.compile(r'Msg:\s+(.*)')
+
+def parse_logcat_line(raw: str) -> Optional[str]:
+    """Extrait timestamp + message utile ; retourne None pour supprimer la ligne."""
+    line = strip_ansi(raw.strip())
+    if not line:
+        return None
+
+    m = _LOGCAT_LINE_RE.match(line)
+    if not m:
+        return line  # ligne non reconnue : garder telle quelle
+
+    time_str, tag, msg = m.group(1), m.group(2).strip(), m.group(3)
+
+    if 'Tauri/Console' in tag:
+        tm = _TAURI_MSG_RE.search(msg)
+        if tm:
+            msg = tm.group(1)
+    else:
+        msg = f"[{tag}] {msg}"
+
+    for pattern in _MUTE_RE:
+        if pattern.search(msg):
+            return None
+
+    return f"{time_str} {msg}"
+
 class TauriManagerApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root: tk.Tk = root
@@ -350,7 +386,9 @@ class TauriManagerApp:
         def read_output() -> None:
             if process.stdout:
                 for line in process.stdout:
-                    self.log(device_name, line)
+                    parsed = parse_logcat_line(line)
+                    if parsed is not None:
+                        self.log(device_name, parsed)
 
         threading.Thread(target=read_output, daemon=True).start()
 
