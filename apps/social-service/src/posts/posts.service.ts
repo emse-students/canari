@@ -213,7 +213,7 @@ export class PostsService {
        FROM posts
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
        WHERE posts."associationId" IS NOT NULL
-         AND posts."associationId" = ANY($3::text[])
+         AND posts."associationId" = ANY($3::uuid[])
        ORDER BY posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,
         [limit, offset, followedAssocIds]
