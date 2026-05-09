@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { PostEntity } from '$lib/posts/api';
+  import { associationLogoSrc } from '$lib/associations/api';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import { getInitials } from '$lib/utils/avatar';
   import { Clock } from 'lucide-svelte';
@@ -58,9 +59,9 @@
       class="shrink-0 transition-transform duration-200 hover:scale-105 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 rounded-full shadow-sm"
       aria-label="Voir l'association {post.association.name}"
     >
-      {#if post.association.logoUrl}
+      {#if associationLogoSrc(post.association.logoUrl)}
         <img
-          src={post.association.logoUrl}
+          src={associationLogoSrc(post.association.logoUrl)}
           alt=""
           class="w-9 h-9 rounded-full object-cover border border-cn-border/60 bg-[var(--cn-surface)]"
         />

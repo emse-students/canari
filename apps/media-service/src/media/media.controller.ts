@@ -26,6 +26,7 @@ import {
   GoneException,
   PayloadTooLargeException,
   UnauthorizedException,
+  BadRequestException,
   Logger,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -45,6 +46,10 @@ const MAX_BYTES =
   1024 *
   1024;
 const CHUNK_MAX_BYTES = 50 * 1024 * 1024;
+
+/** Public branding images (association logos); JWT required for upload only. */
+const PUBLIC_LOGO_MAX_BYTES = 2 * 1024 * 1024;
+const ALLOWED_PUBLIC_LOGO_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
 @Controller('media')
 export class MediaController {
@@ -123,6 +128,38 @@ export class MediaController {
     return { mediaId };
   }
 
+  // ---------------------------------------------------------------------------
+  // POST /media/upload/public — small public image (not ciphertext)
+  // ---------------------------------------------------------------------------
+  @Post('upload/public')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: PUBLIC_LOGO_MAX_BYTES },
+      storage: undefined,
+    }),
+  )
+  async uploadPublic(
+    //@ts-expect-error - There are conflicting namespaces
+    @UploadedFile() file: Express.Multer.File,
+    @Req() req: Request,
+  ): Promise<{ mediaId: string }> {
+    this.verifyToken(req);
+
+    if (!file) {
+      throw new PayloadTooLargeException(
+        `No file provided or file exceeds ${PUBLIC_LOGO_MAX_BYTES} bytes`,
+      );
+    }
+    const mime = file.mimetype?.toLowerCase() ?? '';
+    if (!ALLOWED_PUBLIC_LOGO_MIMES.has(mime)) {
+      throw new BadRequestException('Logo must be JPEG, PNG, or WebP');
+    }
+
+    const mediaId = await this.mediaService.uploadPublicAsset(file.buffer, mime);
+    this.logger.log(`Stored public asset: ${mediaId} (${file.size} bytes, ${mime})`);
+    return { mediaId };
+  }
+
   // ---------------------------------------------------------------------------  // POST /media/upload/chunk/init
   // ---------------------------------------------------------------------------
   @Post('upload/chunk/init')
@@ -169,6 +206,21 @@ export class MediaController {
     const mediaId = await this.mediaService.completeChunkedUpload(id, MAX_BYTES);
     this.logger.log(`Completed chunked upload: ${id} -> ${mediaId}`);
     return { mediaId };
+  }
+
+  // ---------------------------------------------------------------------------
+  // GET /media/public/:id — no JWT (nginx should expose only this prefix publicly)
+  // ---------------------------------------------------------------------------
+  @Get('public/:id')
+  async downloadPublic(@Param('id') id: string, @Res() res: Response): Promise<void> {
+    const result = await this.mediaService.downloadPublic(id);
+    if (result.status !== 'ok' || !result.data) {
+      throw new NotFoundException('Media not found');
+    }
+    res.setHeader('Content-Type', result.contentType);
+    res.setHeader('Content-Length', result.data.length);
+    res.setHeader('Cache-Control', 'public, max-age=86400, immutable');
+    res.send(result.data);
   }
 
   // ---------------------------------------------------------------------------  // GET /media/:id

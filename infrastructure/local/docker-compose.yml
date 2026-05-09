@@ -245,10 +245,13 @@ services:
       USER_SERVICE_URL: http://core-service:3012
       PAYMENT_SERVICE_URL: http://core-service:3012
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      MEDIA_SERVICE_URL: http://media-service:3011
     depends_on:
       postgres:
         condition: service_started
       core-service:
+        condition: service_started
+      media-service:
         condition: service_started
 
 volumes:

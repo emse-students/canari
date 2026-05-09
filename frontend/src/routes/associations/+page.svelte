@@ -1,6 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { listAssociations, listMyAssociations, type Association } from '$lib/associations/api';
+  import {
+    associationLogoSrc,
+    listAssociations,
+    listMyAssociations,
+    type Association,
+  } from '$lib/associations/api';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import { Users } from 'lucide-svelte';
 
@@ -66,9 +71,9 @@
               class="rounded-2xl border border-cn-border bg-white/80 p-5 hover:shadow-md transition-shadow block"
             >
               <div class="flex items-start gap-3">
-                {#if asso.logoUrl}
+                {#if associationLogoSrc(asso.logoUrl)}
                   <img
-                    src={asso.logoUrl}
+                    src={associationLogoSrc(asso.logoUrl)}
                     alt={asso.name}
                     class="h-10 w-10 rounded-xl object-cover flex-shrink-0"
                   />
@@ -115,9 +120,9 @@
               class="rounded-2xl border border-cn-border bg-white/80 p-5 hover:shadow-md transition-shadow block"
             >
               <div class="flex items-start gap-3">
-                {#if asso.logoUrl}
+                {#if associationLogoSrc(asso.logoUrl)}
                   <img
-                    src={asso.logoUrl}
+                    src={associationLogoSrc(asso.logoUrl)}
                     alt={asso.name}
                     class="h-10 w-10 rounded-xl object-cover flex-shrink-0"
                   />

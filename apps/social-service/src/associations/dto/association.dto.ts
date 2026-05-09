@@ -30,6 +30,11 @@ export class CreateAssociationDto {
 
   @IsString()
   @IsOptional()
+  @MaxLength(16000)
+  bioMarkdown?: string;
+
+  @IsString()
+  @IsOptional()
   logoUrl?: string;
 }
 
@@ -43,6 +48,11 @@ export class UpdateAssociationDto {
   @IsOptional()
   @MaxLength(2000)
   description?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(16000)
+  bioMarkdown?: string;
 
   @IsString()
   @IsOptional()

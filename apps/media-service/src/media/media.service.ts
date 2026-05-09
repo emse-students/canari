@@ -19,6 +19,9 @@ interface MediaMetaEntry {
   lastAccessAt: number;
   purgedAt?: number;
   purgeReason?: PurgeReason;
+  /** Plaintext object served at GET /api/media/public/:id without JWT; exempt from retention purge. */
+  publicAsset?: boolean;
+  contentType?: string;
 }
 
 interface MediaMetadataStore {
@@ -29,6 +32,10 @@ type DownloadResult =
   | { status: 'ok'; data: Buffer }
   | { status: 'not_found' }
   | { status: 'purged' };
+
+type PublicDownloadResult =
+  | { status: 'ok'; data: Buffer; contentType: string }
+  | { status: 'not_found' };
 
 @Injectable()
 export class MediaService {
@@ -65,6 +72,21 @@ export class MediaService {
     return mediaId;
   }
 
+  /** Store a small public image (association logos, etc.); not encrypted; no retention purge. */
+  async uploadPublicAsset(data: Buffer, contentType: string): Promise<string> {
+    const mediaId = uuidv4();
+    await this.storage.put(mediaId, data, data.length);
+    const now = Date.now();
+    this.meta.items[mediaId] = {
+      createdAt: now,
+      lastAccessAt: now,
+      publicAsset: true,
+      contentType,
+    };
+    await this.persistMetadata();
+    return mediaId;
+  }
+
   async download(mediaId: string): Promise<DownloadResult> {
     // Validate mediaId is a UUID to prevent path traversal and prototype pollution.
     if (!UUID_REGEX.test(mediaId)) {
@@ -90,6 +112,37 @@ export class MediaService {
     this.setAccess(mediaId, Date.now());
     await this.persistMetadata();
     return { status: 'ok', data: Buffer.concat(chunks) };
+  }
+
+  async downloadPublic(mediaId: string): Promise<PublicDownloadResult> {
+    if (!UUID_REGEX.test(mediaId)) {
+      throw new BadRequestException('Invalid mediaId');
+    }
+    await this.purgeExpiredMedia();
+
+    const entry = this.meta.items[mediaId];
+    if (!entry?.publicAsset || !entry.contentType) {
+      return { status: 'not_found' };
+    }
+    if (entry.purgedAt && entry.purgeReason === 'retention_expired') {
+      return { status: 'not_found' };
+    }
+
+    const stream = await this.storage.get(mediaId);
+    if (!stream) {
+      return { status: 'not_found' };
+    }
+
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) {
+      chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+    }
+
+    return {
+      status: 'ok',
+      data: Buffer.concat(chunks),
+      contentType: entry.contentType,
+    };
   }
 
   async remove(mediaId: string): Promise<void> {
@@ -244,6 +297,7 @@ export class MediaService {
   private setAccess(mediaId: string, now: number) {
     const current = this.meta.items[mediaId];
     this.meta.items[mediaId] = {
+      ...current,
       createdAt: current?.createdAt ?? now,
       lastAccessAt: now,
     };
@@ -256,6 +310,7 @@ export class MediaService {
 
     for (const [mediaId, entry] of Object.entries(this.meta.items)) {
       if (entry.purgedAt) continue;
+      if (entry.publicAsset) continue;
       if (entry.lastAccessAt >= cutoff) continue;
 
       try {

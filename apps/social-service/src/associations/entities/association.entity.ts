@@ -22,8 +22,16 @@ export class Association {
   @Column({ type: 'text', nullable: true })
   description: string | null;
 
+  /** Public-facing markdown body (optional). */
+  @Column({ type: 'text', nullable: true })
+  bioMarkdown: string | null;
+
   @Column({ type: 'varchar', nullable: true })
   logoUrl: string | null;
+
+  /** Media-service UUID for GET /api/media/public/:id (opaque blob in MinIO). */
+  @Column({ type: 'uuid', nullable: true })
+  logoMediaId: string | null;
 
   @Column({ type: 'varchar', nullable: true })
   stripeAccountId: string | null;

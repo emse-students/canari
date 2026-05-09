@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   Headers,
   Post,
@@ -9,8 +10,11 @@ import {
   Param,
   BadRequestException,
   Logger,
+  Req,
+  UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { PaymentService } from './payment.service';
 import { UsersService } from '../users/users.service';
 import { User } from '../users/entities/user.entity';
@@ -18,6 +22,9 @@ import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { ChargeResult } from './payment.service';
 import { Stripe } from 'stripe';
 import axios from 'axios';
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 @Controller('payments')
 export class PaymentController {
@@ -28,44 +35,85 @@ export class PaymentController {
     private readonly usersService: UsersService,
   ) {}
 
+  private async assertCanManageAssociation(req: Request, associationId: string): Promise<void> {
+    const userId = (req.headers['x-user-id'] as string | undefined)?.trim();
+    if (!userId) {
+      throw new UnauthorizedException('Authentication required');
+    }
+    const socialBase = (process.env.FORM_URL || 'http://social-service:3014').replace(/\/$/, '');
+    const fwd: Record<string, string> = {
+      'X-User-Id': userId,
+      'X-Global-Admin': req.headers['x-global-admin'] === 'true' ? 'true' : 'false',
+    };
+    const nginxAuth = req.headers['x-nginx-auth'];
+    if (typeof nginxAuth === 'string') fwd['X-Nginx-Auth'] = nginxAuth;
+    const authz = req.headers['authorization'];
+    if (typeof authz === 'string') fwd['Authorization'] = authz;
+
+    try {
+      const res = await axios.get<{ ok: boolean }>(
+        `${socialBase}/api/associations/${encodeURIComponent(associationId)}/manage-permission`,
+        { headers: fwd, validateStatus: () => true },
+      );
+      if (res.status >= 400 || !res.data?.ok) {
+        throw new ForbiddenException('You cannot manage payments for this association');
+      }
+    } catch (e) {
+      if (e instanceof ForbiddenException || e instanceof UnauthorizedException) throw e;
+      this.logger.warn(`manage-permission check failed: ${e}`);
+      throw new BadRequestException('Could not verify association permissions');
+    }
+  }
+
   @Post('onboarding')
   @HttpCode(200)
   async createOnboarding(
-    @Body() body: { associationId: string; existingAccountId?: string },
+    @Body()
+    body: {
+      associationId: string;
+      existingAccountId?: string;
+      returnUrl?: string;
+      refreshUrl?: string;
+    },
+    @Req() req: Request,
   ) {
     if (!this.paymentService.isConfigured()) {
       return { ok: false, message: 'Stripe not configured' };
     }
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost';
+
+    const assocId = body.associationId?.trim();
+    if (assocId) {
+      if (!UUID_RE.test(assocId)) {
+        throw new BadRequestException('Invalid associationId');
+      }
+      await this.assertCanManageAssociation(req, assocId);
+    }
+
+    const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost').replace(/\/$/, '');
+    const returnUrl = body.returnUrl?.trim() || `${frontendUrl}/associations`;
+    const refreshUrl = body.refreshUrl?.trim() || returnUrl;
     const result = await this.paymentService.createConnectOnboarding({
       associationId: body.associationId ?? '',
       existingAccountId: body.existingAccountId,
-      refreshUrl: `${frontendUrl}/associations`,
-      returnUrl: `${frontendUrl}/associations`,
+      refreshUrl,
+      returnUrl,
     });
 
     // Persist the Stripe account ID on the association (social-service)
-    if (result.accountId && body.associationId) {
-      // Prevent SSRF: validate the ID before embedding it in a URL.
-      if (!/^[a-zA-Z0-9_-]{1,128}$/.test(body.associationId)) {
-        this.logger.error(
-          'Invalid associationId in onboarding request — skipping stripe-account sync',
+    if (result.accountId && assocId && UUID_RE.test(assocId)) {
+      try {
+        const socialBase = process.env.FORM_URL || 'http://localhost:3014';
+        await axios.post(
+          `${socialBase.replace(/\/$/, '')}/api/associations/${assocId}/stripe-account`,
+          { stripeAccountId: result.accountId },
+          { maxRedirects: 0 },
         );
-      } else {
-        try {
-          const socialBase = process.env.FORM_URL || 'http://localhost:3014';
-          await axios.post(
-            `${socialBase.replace(/\/$/, '')}/api/associations/${body.associationId}/stripe-account`,
-            { stripeAccountId: result.accountId },
-            { maxRedirects: 0 },
-          );
-        } catch (err: unknown) {
-          const error = err as Error & { response?: { data?: unknown } };
-          this.logger.error(
-            'Failed to save stripeAccountId on association',
-            error?.response?.data || error?.message,
-          );
-        }
+      } catch (err: unknown) {
+        const error = err as Error & { response?: { data?: unknown } };
+        this.logger.error(
+          'Failed to save stripeAccountId on association',
+          error?.response?.data || error?.message,
+        );
       }
     }
 

@@ -227,10 +227,13 @@ services:
       STRIPE_CANCEL_URL: ${STRIPE_CANCEL_URL:-http://localhost:5173/posts?registration=cancel}
       USER_SERVICE_URL: http://core-service:3112
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      MEDIA_SERVICE_URL: http://media-service:3011
     depends_on:
       postgres:
         condition: service_started
       core-service:
+        condition: service_started
+      media-service:
         condition: service_started
 
 

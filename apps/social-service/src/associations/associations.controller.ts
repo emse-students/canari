@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -8,11 +9,15 @@ import {
   Patch,
   Post,
   SetMetadata,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
-import { AssociationRoleGuard, MIN_ROLE_KEY } from './guards/association-role.guard';
+import { MIN_ROLE_KEY } from './guards/association-role.guard';
+import { GlobalAdminOrAssociationRoleGuard } from './guards/global-admin-or-association-role.guard';
 import { AssociationPermission } from './entities/association-member.entity';
 import { AssociationsService } from './associations.service';
 import { FollowsService } from '../follows/follows.service';
@@ -22,6 +27,8 @@ import {
   UpdateAssociationDto,
   UpdateMemberRoleDto,
 } from './dto/association.dto';
+
+const LOGO_UPLOAD_MB = 2;
 
 @Controller('associations')
 export class AssociationsController {
@@ -65,6 +72,17 @@ export class AssociationsController {
     return this.followsService.isFollowing(userId, id).then((following) => ({ following }));
   }
 
+  @UseGuards(NginxAuthGuard)
+  @Get(':id/manage-permission')
+  async managePermission(
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga: string | undefined,
+    @Param('id') id: string
+  ) {
+    const ok = await this.service.canPostAs(userId, id, { isGlobalAdmin: ga === 'true' });
+    return { ok };
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.service.findById(id);
@@ -98,24 +116,59 @@ export class AssociationsController {
     return this.service.remove(id);
   }
 
-  // ── Association Admin+ (settings) ─────────────────────────────────────────
+  // ── Global Admin OR Association Admin ─────────────────────────────────────
 
   @SetMetadata(MIN_ROLE_KEY, AssociationPermission.Admin)
-  @UseGuards(NginxAuthGuard, AssociationRoleGuard)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Patch(':id')
   update(@Param('id') id: string, @Body() dto: UpdateAssociationDto) {
     return this.service.update(id, dto);
   }
 
-  // ── Member management (Global Admin only) ─────────────────────────────────
+  @SetMetadata(MIN_ROLE_KEY, AssociationPermission.Admin)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: LOGO_UPLOAD_MB * 1024 * 1024 } })
+  )
+  @Post(':id/logo')
+  uploadLogo(
+    @Param('id') id: string,
+    @Headers('authorization') authorization: string | undefined,
+    @UploadedFile() file: { buffer: Buffer; mimetype: string; size: number } | undefined
+  ) {
+    if (!file?.buffer) {
+      throw new BadRequestException('Missing file');
+    }
+    return this.service.setLogoFromUpload(
+      id,
+      {
+        buffer: file.buffer,
+        mimetype: file.mimetype,
+        size: file.size,
+      },
+      authorization
+    );
+  }
 
-  @UseGuards(NginxAuthGuard, GlobalAdminGuard)
+  @SetMetadata(MIN_ROLE_KEY, AssociationPermission.Admin)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Delete(':id/logo')
+  deleteLogo(
+    @Param('id') id: string,
+    @Headers('authorization') authorization: string | undefined
+  ) {
+    return this.service.clearStoredLogo(id, authorization);
+  }
+
+  @SetMetadata(MIN_ROLE_KEY, AssociationPermission.Admin)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Post(':id/members')
   addMember(@Param('id') id: string, @Body() dto: AddMemberDto) {
     return this.service.addMember(id, dto.userId, dto.role, dto.permission);
   }
 
-  @UseGuards(NginxAuthGuard, GlobalAdminGuard)
+  @SetMetadata(MIN_ROLE_KEY, AssociationPermission.Admin)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Patch(':id/members/:userId')
   updateMemberRole(
     @Param('id') id: string,
@@ -125,13 +178,14 @@ export class AssociationsController {
     return this.service.updateMemberRole(id, targetUserId, dto.role, dto.permission);
   }
 
-  @UseGuards(NginxAuthGuard, GlobalAdminGuard)
+  @SetMetadata(MIN_ROLE_KEY, AssociationPermission.Admin)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Delete(':id/members/:userId')
   removeMember(@Param('id') id: string, @Param('userId') targetUserId: string) {
     return this.service.removeMember(id, targetUserId);
   }
 
-  // ── Internal (called by core-service) ───────────────────────────────────
+  // ── Internal (called by core-service, bypass nginx auth in Docker network) ─
 
   @Post(':id/stripe-account')
   setStripeAccount(@Param('id') id: string, @Body() body: { stripeAccountId: string }) {

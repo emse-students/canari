@@ -66,6 +66,20 @@ export class RedisService implements OnModuleDestroy {
     if (keys.length) await this.client.del(...keys);
   }
 
+  /** SCAN + DEL — use sparingly (e.g. cache bust after association branding changes). */
+  async deleteByPattern(match: string): Promise<number> {
+    let deleted = 0;
+    let cursor = '0';
+    do {
+      const [next, keys] = await this.client.scan(cursor, 'MATCH', match, 'COUNT', 200);
+      cursor = next;
+      if (keys.length > 0) {
+        deleted += await this.client.del(...keys);
+      }
+    } while (cursor !== '0');
+    return deleted;
+  }
+
   async publishChannelEvent(
     eventType: string,
     data: Record<string, unknown>,
