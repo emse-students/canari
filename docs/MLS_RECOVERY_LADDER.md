@@ -2,6 +2,8 @@
 
 This document describes how the **client** recovers from MLS and delivery-queue issues, and where to look when debugging.
 
+**See also:** [MLS_DESYNC_PREVENTION.md](./MLS_DESYNC_PREVENTION.md) — tactics that *prevent* client/server state drift before recovery runs.
+
 ## Ordered recovery steps
 
 1. **Queue processing** — Pending encrypted payloads are fetched (`fetchMessages`), decrypted in WASM, then **acked** only when policy allows (see below). If decryption fails or the handler returns `false`, the message may stay queued for retry.
@@ -22,6 +24,7 @@ This document describes how the **client** recovers from MLS and delivery-queue 
 | Epoch (Tauri) | After queue success (incl. persisted `group_reset`), welcome, and `sendCommit`, cache reflects `obtenir_epoch` | Code: `refreshEpochCache` after `group_reset` and on success path; `sendCommit` seeds cache |
 | Metrics | `logMlsMetric` is a no-op unless dev or `canari_mls_debug` | `mlsRecoveryMetrics.test.ts` |
 | Kick / reset API | Authenticated clients only | `HeaderAuthGuard` on `kick-stale-device`, `kick-stale-user`, `reset-epoch` |
+| Desync prevention (shared `baseEpoch`, server locks) | Covered in companion doc | [MLS_DESYNC_PREVENTION.md](./MLS_DESYNC_PREVENTION.md), `desyncPrevention.contract.test.ts` |
 
 ## Backend identity binding
 

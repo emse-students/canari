@@ -12,6 +12,7 @@ import {
   isGapQueuedError,
 } from './mlsQueueAckPolicy';
 import { logMlsMetric } from './mlsRecoveryMetrics';
+import { commitBaseEpochForValidation } from './mlsDesyncPrevention';
 
 /** Message pending in the processing queue */
 interface QueuedMessage {
@@ -1328,7 +1329,7 @@ export class TauriMlsService implements IMlsService {
       // The backend validates against the pre-commit epoch.
       const currentEpoch = await invoke<number>('obtenir_epoch', { groupId });
       this._epochByGroupId.set(groupId, currentEpoch);
-      baseEpoch = Math.max(0, currentEpoch - 1);
+      baseEpoch = commitBaseEpochForValidation(currentEpoch);
     } catch {
       // If epoch retrieval fails, send 0 (server will validate)
     }

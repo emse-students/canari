@@ -4,6 +4,7 @@ import { loadAndInitWasm } from './mlsWasmLoader';
 import { saveMlsState } from '$lib/utils/hex';
 import { shouldAckAfterSuccess, shouldAckAfterWebException } from './mlsQueueAckPolicy';
 import { logMlsMetric } from './mlsRecoveryMetrics';
+import { commitBaseEpochForValidation } from './mlsDesyncPrevention';
 
 /** Message pending in the processing queue */
 interface QueuedMessage {
@@ -805,7 +806,7 @@ export class WebMlsService implements IMlsService {
     // Rust merges pending commit before returning bytes, so local epoch is already advanced.
     // The backend validates against the pre-commit epoch.
     const currentEpoch = this.getEpoch(groupId);
-    const baseEpoch = Math.max(0, currentEpoch - 1);
+    const baseEpoch = commitBaseEpochForValidation(currentEpoch);
 
     const validateRes = await fetch(`${this.historyUrl}/api/mls-api/commit`, {
       method: 'POST',
