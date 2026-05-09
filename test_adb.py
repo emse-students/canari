@@ -321,11 +321,16 @@ class TauriManagerApp:
         cmd = [
             'adb', '-s', device_id, 'logcat',
             '*:S',                      # Silence total par défaut
-            'CanariRust:D',             # <-- Remis sur D (Debug) pour voir le moteur OpenMLS !
-            'fr.emse.canari:D',         # Les logs émis par le plugin log de Tauri
-            'chromium:I',               # Les console.log() JS si le plugin Tauri les rate
-            'Tauri/Console:V',          # Les erreurs Tauri internes
-            'AndroidRuntime:E',         # Les crashs (Panic/Exceptions)
+            'CanariRust:D',             # Moteur OpenMLS (Rust via JNI)
+            'CanariFCM:D',              # CanariFirebaseMessagingService (notifications)
+            'CanariWorker:D',           # MlsBackgroundWorker (WorkManager)
+            'CanariApp:D',              # CanariApplication (init, push secret)
+            'fr.emse.canari:D',         # Logs du plugin log de Tauri
+            'chromium:I',               # console.log() JS si le plugin Tauri les rate
+            'Tauri/Console:V',          # Logs Tauri internes
+            'FirebaseMessaging:W',      # SDK FCM Android (erreurs token, connexion)
+            'WM-WorkerWrapper:W',       # WorkManager internals (retry/failure)
+            'AndroidRuntime:E',         # Crashs (Panic/Exceptions)
             'System.err:W',
         ]
         self.log("Système", f"Démarrage Logcat pour {device_name}: {' '.join(cmd)}")
