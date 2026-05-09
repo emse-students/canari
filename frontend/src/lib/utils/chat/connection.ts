@@ -416,6 +416,11 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       log(
         `Message de ${sender} (${content.length} octets) - Grp: ${groupId} (isWelcome: ${!!isWelcome}, isCommit: ${!!isCommit})`
       );
+      if (isWelcome) {
+        console.log(
+          `[WS RCV] Welcome reçu de ${sender} pour groupe ${groupId} (${content.length}b)`
+        );
+      }
       const senderNorm = sender.toLowerCase();
 
       // Find conversation by groupId — the map is now keyed by id = groupId, so O(1) lookup.
@@ -517,6 +522,10 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           }
           // Échec réel (OTKP mismatch, état corrompu…) → laisser en queue pour retry.
           log(`[MLS] Welcome processing failed (${welcomeErrMsg}) — kept in queue for retry`);
+          console.error(
+            `[MLS] processWelcome failed for known group ${convoKey}:`,
+            welcomeErrMsg.slice(0, 200)
+          );
           return false;
         }
         return true;
@@ -1005,6 +1014,9 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             if (nullCount >= NULL_APP_THRESHOLD) {
               epochRecoveryGroups.add(convoKey);
               log(`[RECOVER] Etat MLS suspect sur "${convoKey}" — oubli MLS + reinvite_request`);
+              console.warn(
+                `[RECOVER] MLS state suspect on "${convoKey}" — forget + reinvite_request`
+              );
               mlsService.forgetGroup(convo.id);
               conversations.set(convoKey, { ...convo, isReady: false });
               if (storage) saveConversation(convoKey).catch(() => {});
@@ -1054,6 +1066,9 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               log(
                 `[RECOVER] Epoch périmée sur "${convoKey}" (local: ${ge}, msg: ${me}) — oubli MLS + reinvite_request`
               );
+              console.warn(
+                `[RECOVER] Stale epoch on "${convoKey}" (local=${ge}, msg=${me}) — forget + reinvite`
+              );
               mlsService.forgetGroup(convo.id, me); // Fix F: min_epoch = me
               conversations.set(convoKey, { ...convo, isReady: false });
               if (storage) saveConversation(convoKey).catch(() => {});
@@ -1068,6 +1083,9 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               epochRecoveryGroups.add(convoKey);
               log(
                 `[RECOVER] Divergence secrets (SenderDataDecryption) sur "${convoKey}" (epoch: ${ge}) — oubli MLS + reinvite_request`
+              );
+              console.warn(
+                `[RECOVER] SenderData secret divergence on "${convoKey}" (epoch=${ge}) — forget + reinvite`
               );
               mlsService.forgetGroup(convo.id, ge); // Fix F: min_epoch = ge
               conversations.set(convoKey, { ...convo, isReady: false });
@@ -1087,6 +1105,9 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             log(
               `[RECOVER] Divergence secrets (SenderDataDecryption) sur "${convoKey}" — oubli MLS + reinvite_request`
             );
+            console.warn(
+              `[RECOVER] SenderData secret divergence (no epoch) on "${convoKey}" — forget + reinvite`
+            );
             mlsService.forgetGroup(convo.id);
             conversations.set(convoKey, { ...convo, isReady: false });
             if (storage) saveConversation(convoKey).catch(() => {});
@@ -1095,6 +1116,10 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           }
 
           log(`Erreur message de ${senderNorm} (groupe connu): ${errMsg}`);
+          console.error(
+            `[MLS] Message error from ${senderNorm} on ${convoKey}:`,
+            errMsg.slice(0, 200)
+          );
           groupNullAppFailures.delete(convoKey);
 
           // Détection de groupe fantôme : le groupId existe dans nos conversations
@@ -1109,9 +1134,15 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             log(
               `[WARN] Groupe fantome potentiel "${convoKey}" (echec ${failures}/${PHANTOM_THRESHOLD})`
             );
+            console.warn(
+              `[MLS] Phantom group suspected: "${convoKey}" (failure ${failures}/${PHANTOM_THRESHOLD})`
+            );
             if (failures >= PHANTOM_THRESHOLD) {
               log(
                 `🧹 Suppression locale du groupe fantôme "${convoKey}" après ${failures} échecs consécutifs`
+              );
+              console.error(
+                `[MLS] Phantom group "${convoKey}" deleted after ${failures} consecutive failures`
               );
               if (storage) {
                 await storage
@@ -1151,6 +1182,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       // Unknown group → Process Welcome message
       try {
         const joinedGroupId = await mlsService.processWelcome(content, ratchetTreeBytes);
+        console.log(`[WS RCV] processWelcome ✓ → joinedGroupId=${joinedGroupId}`);
 
         // Register this device as a group member on the server so the gateway
         // routes future commits/messages to us.  Without this, we join the MLS
@@ -1273,12 +1305,25 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
 
         if (matchedExisting) {
           const convo = conversations.get(newConvoKey)!;
-          conversations.set(newConvoKey, {
+          const updated = {
             ...convo,
             id: joinedGroupId,
             name: isDirect ? directPeerId : groupName,
             isReady: true,
-          });
+          };
+          // If the groupId changed (bootstrap replaced the old group), re-key the map
+          // so that future messages routed by joinedGroupId find this conversation.
+          if (newConvoKey !== joinedGroupId) {
+            conversations.delete(newConvoKey);
+            if (storage) storage.deleteConversation(newConvoKey).catch(() => {});
+            if (getSelectedContact() === newConvoKey) setSelectedContact(joinedGroupId);
+            epochRecoveryGroups.delete(newConvoKey);
+            log(
+              `[WELCOME] Migration groupe: ${newConvoKey} → ${joinedGroupId} (contact: ${isDirect ? directPeerId : groupName})`
+            );
+            newConvoKey = joinedGroupId;
+          }
+          conversations.set(newConvoKey, updated);
           // Annuler la récupération d'epoch en cours pour ce groupe (Welcome reçu)
           epochRecoveryGroups.delete(newConvoKey);
           if (storage) await saveConversation(newConvoKey);
@@ -1365,6 +1410,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         return true;
       } catch (_e) {
         const errStr = String(_e);
+        console.error(`[WS RCV] processWelcome FAILED groupId=${groupId}:`, errStr.slice(0, 200));
         if (errStr.includes('NoMatchingKeyPackage')) {
           // Le KeyPackage utilisé pour générer ce Welcome a été consommé (one-time prekey)
           // ou l'appareil a été réinitialisé. Ce Welcome est inutilisable pour ce device.
@@ -1372,6 +1418,9 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           log(
             `[WELCOME] KeyPackage introuvable pour groupe ${groupId} — Welcome inutilisable. ` +
               `Envoi d'un welcome_request pour se faire ré-inviter. Erreur: ${errStr.slice(0, 200)}`
+          );
+          console.error(
+            `[WELCOME] NoMatchingKeyPackage for group ${groupId} — sending welcome_request`
           );
           if (groupId) {
             mlsService.sendWelcomeRequest(groupId).catch((e) => {
@@ -1387,6 +1436,10 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         log(
           `[WELCOME] Erreur irrécupérable processWelcome pour groupe ${groupId} — NE PAS ACK, retry à la prochaine connexion. Erreur: ${errStr.slice(0, 300)}`
         );
+        console.error(
+          `[WELCOME] Unrecoverable processWelcome error for group ${groupId} — will retry on reconnect:`,
+          errStr.slice(0, 200)
+        );
         throw _e;
       }
     }
@@ -1398,6 +1451,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
     const convo = conversations.get(groupId);
     if (!convo) return;
     log(`[BOOTSTRAP] État irrécupérable sur groupe=${groupId} — re-bootstrap en cours...`);
+    console.warn(`[BOOTSTRAP] Unrecoverable state on group=${groupId} — re-bootstrapping`);
     void (async () => {
       try {
         const members = await mlsService.getGroupMembers(groupId);
@@ -1407,6 +1461,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           conversations.set(groupId, { ...conversations.get(groupId)!, isReady: true });
           if (storage) saveConversation(groupId).catch(() => {});
           log(`[BOOTSTRAP] Groupe ${groupId} re-bootstrappé avec succès.`);
+          console.log(`[BOOTSTRAP] Group ${groupId} re-bootstrapped successfully`);
         } else if (outcome === 'conflict') {
           log(`[BOOTSTRAP] Race condition sur groupe=${groupId} — attente du Welcome du gagnant.`);
         } else {
@@ -1415,6 +1470,10 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       } catch (e) {
         log(
           `[BOOTSTRAP] Échec re-bootstrap groupe=${groupId}: ${e instanceof Error ? e.message : String(e)}`
+        );
+        console.error(
+          `[BOOTSTRAP] Re-bootstrap failed for group=${groupId}:`,
+          e instanceof Error ? e.message : e
         );
       }
     })();
@@ -1430,6 +1489,9 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
     if (attempt >= 2) {
       log(
         `[SYNC] Gap irrécupérable sur groupe=${groupId} après ${attempt} tentatives — oubli MLS + reinvite_request`
+      );
+      console.warn(
+        `[SYNC] Unrecoverable gap on group=${groupId} after ${attempt} attempts — forget + reinvite`
       );
       mlsService.forgetGroup(groupId);
       conversations.set(groupId, { ...convo, isReady: false });
@@ -1501,6 +1563,7 @@ export async function initializeConnection(deps: ConnectionDeps): Promise<void> 
     setIsWsConnected(true);
     setReconnectAttempts(0);
     log('Connecté au réseau !');
+    console.log('[WS] Connected to Chat Gateway');
     // Fetch any messages that arrived while this device was disconnected or
     // offline. Called here (rather than inside connect/onopen) so the intent
     // is explicit and the caller controls the lifecycle.
@@ -1539,6 +1602,7 @@ export async function initializeConnection(deps: ConnectionDeps): Promise<void> 
   } catch (_wsErr: unknown) {
     const msg = _wsErr instanceof Error ? _wsErr.message : String(_wsErr);
     log(`Gateway inaccessible: ${msg}`);
+    console.error('[WS] Gateway connection failed:', msg);
   }
 
   // Generate and publish KeyPackage FIRST (before syncing devices)
@@ -1604,6 +1668,7 @@ export async function initializeConnection(deps: ConnectionDeps): Promise<void> 
     }
   } catch (e) {
     log(`[SYNC] Échec récupération memberships: ${e}`);
+    console.error('[SYNC] Failed to fetch device memberships:', e);
   }
 
   // Small delay to allow KeyPackage propagation before syncing

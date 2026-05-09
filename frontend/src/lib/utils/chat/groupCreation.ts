@@ -111,10 +111,12 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
               log(`[GROUP] Welcome envoye a ${did}`);
             } catch (e) {
               log(`[GROUP] Erreur Welcome ${did}: ${e}`);
+              console.error(`[GROUP] Welcome failed for ${did}:`, e);
             }
           }
         } else {
           log('[GROUP] PAS DE WELCOME dans le bulk!');
+          console.warn('[GROUP] addMembersBulk returned no welcome for own devices');
         }
 
         // Sauvegarder l'état MLS AVANT d'envoyer le commit au réseau.
@@ -129,6 +131,7 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
         }
       } catch (e) {
         log(`Erreur synchro propres appareils: ${e}`);
+        console.error('[GROUP] Sync own devices failed:', e);
       } finally {
         if (lockAcquired) await mlsService.releaseAddLock(groupId).catch(() => {});
       }
@@ -150,8 +153,10 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
     selectConversation(conversationKey);
     await saveConversation(conversationKey);
     log(`[OK] Groupe "${groupDisplayName}" cree.`);
+    console.log(`[GROUP] Group "${groupDisplayName}" created successfully (id=${groupId})`);
   } catch (e) {
     log(`Erreur création groupe: ${toUiDiscussionError(e)}`);
+    console.error('[GROUP] createNewGroup failed:', e);
     if (conversationKey) conversations.delete(conversationKey);
 
     // Best-effort: clean up the orphan remote group
@@ -190,6 +195,7 @@ async function processBulkAddition(
       const devices = await fetchDevicesWithRetry(mlsService, targetUser, log);
       if (devices.length === 0) {
         log(`[WARN] Ignore: Appareils introuvables pour ${targetUser}.`);
+        console.warn(`[SYNC] No devices found for ${targetUser}, skipping`);
         continue;
       }
       devices.forEach((d: any) => {
@@ -200,6 +206,7 @@ async function processBulkAddition(
 
     if (allDevices.length === 0) {
       log('[ERREUR] Aucun appareil trouve pour les utilisateurs demandes.');
+      console.error('[SYNC] No devices found for any requested user — aborting bulk add');
       return;
     }
 
@@ -208,6 +215,7 @@ async function processBulkAddition(
       .catch(() => false);
     if (!lockAcquired) {
       log(`[WARN] Verrou occupé pour ${conversation.id}, tentative quand même...`);
+      console.warn(`[SYNC] Add-lock busy for ${conversation.id}, proceeding anyway`);
     }
 
     // Track delivery success per user. We only register server membership when a
@@ -249,6 +257,10 @@ async function processBulkAddition(
                 err instanceof Error ? err.message : String(err)
               }`
             );
+            console.warn(
+              `[SYNC] sendWelcome failed for ${tUser}:${did}:`,
+              err instanceof Error ? err.message : err
+            );
           }
         }
       }
@@ -265,6 +277,9 @@ async function processBulkAddition(
 
       log(
         `[OK] Ajoutes: ${targetUsers.join(', ')} (${bulk.addedDeviceIds.length} appareils). (${deliveredUsers.size} utilisateur(s) livrés)`
+      );
+      console.log(
+        `[SYNC] Members added: ${targetUsers.join(', ')} (${deliveredUsers.size}/${targetUsers.length} delivered)`
       );
     } finally {
       if (lockAcquired) await mlsService.releaseAddLock(conversation.id).catch(() => {});
@@ -287,9 +302,11 @@ async function processBulkAddition(
       log(
         '[WARN] Aucun Welcome livré: aucun membre ajouté ne sera annoncé tant que la livraison échoue.'
       );
+      console.warn('[SYNC] No Welcome delivered — member addition notification skipped');
     }
   } catch (e: any) {
     log(`Erreur invitation groupée: ${toUiDiscussionError(e)}`);
+    console.error('[SYNC] processBulkAddition failed:', e);
   }
 }
 
@@ -393,6 +410,8 @@ export async function startNewConversation(
   let groupId: string | undefined;
   try {
     groupId = await mlsService.createRemoteGroup(groupName, false); // false = 1-to-1 direct conversation
+    console.log(`[DM] createRemoteGroup → groupId=${groupId}`);
+    log(`[DM] Groupe distant créé: ${groupId}`);
     const conversationKey = groupId;
 
     conversations.set(conversationKey, {
@@ -408,7 +427,9 @@ export async function startNewConversation(
     selectConversation(conversationKey);
 
     await mlsService.createGroup(groupId);
+    log(`[DM] Groupe MLS local créé: ${groupId}`);
     await mlsService.registerMember(groupId, userId);
+    log(`[DM] Membership serveur enregistré pour ${userId}`);
 
     // Collect ALL devices (contact + own) for a single bulk add
     const ownDevices = (await mlsService.fetchUserDevices(userId)).filter(
@@ -416,10 +437,23 @@ export async function startNewConversation(
     );
     const allDevices = [...contactDevices, ...ownDevices];
     const contactDeviceIds = new Set(contactDevices.map((d) => d.deviceId));
+    log(
+      `[DM] Appareils à ajouter: ${allDevices.length} (contact=${contactDevices.length}, propres=${ownDevices.length})`
+    );
+    console.log(
+      `[DM] allDevices:`,
+      allDevices.map((d) => d.deviceId)
+    );
 
     const lockAcquired = await mlsService.acquireAddLock(groupId).catch(() => false);
     try {
       const bulk = await mlsService.addMembersBulk(groupId, allDevices);
+      log(
+        `[DM] addMembersBulk: added=${bulk.addedDeviceIds.length} (${bulk.addedDeviceIds.join(', ')}), welcome=${bulk.welcome ? bulk.welcome.length + 'b' : 'null'}, commit=${bulk.commit ? bulk.commit.length + 'b' : 'null'}`
+      );
+      console.log(
+        `[DM] addMembersBulk result: added=${bulk.addedDeviceIds.length}, welcome=${!!bulk.welcome}`
+      );
 
       for (const did of bulk.addedDeviceIds) {
         const owner = contactDeviceIds.has(did) ? contact : userId;
@@ -430,13 +464,19 @@ export async function startNewConversation(
         for (const did of bulk.addedDeviceIds) {
           const owner = contactDeviceIds.has(did) ? contact : userId;
           try {
+            log(`[DM] Envoi Welcome → ${owner}:${did}...`);
             await mlsService.sendWelcome(bulk.welcome, owner, groupId, did, bulk.ratchetTree);
+            log(`[DM] Welcome envoyé → ${owner}:${did} ✓`);
+            console.log(`[DM] Welcome delivered to ${owner}:${did}`);
           } catch (e) {
-            log(
-              `[DM] Welcome echoue ${owner}:${did}: ${e instanceof Error ? e.message : String(e)}`
-            );
+            const eMsg = e instanceof Error ? e.message : String(e);
+            log(`[DM] Welcome échoué → ${owner}:${did}: ${eMsg}`);
+            console.warn(`[DM] sendWelcome failed for ${owner}:${did}:`, eMsg);
           }
         }
+      } else {
+        log('[DM] AVERTISSEMENT: addMembersBulk a retourné welcome=null');
+        console.warn('[DM] addMembersBulk returned no welcome — contact may have no KeyPackage');
       }
 
       // Sauvegarder AVANT sendCommit (crash-safety)
@@ -448,6 +488,7 @@ export async function startNewConversation(
           return `${owner}:${did}`;
         });
         await mlsService.sendCommit(bulk.commit, groupId, excludeIds);
+        log(`[DM] Commit envoyé (exclu: ${excludeIds.join(', ')})`);
       }
     } finally {
       if (lockAcquired) await mlsService.releaseAddLock(groupId).catch(() => {});
@@ -457,6 +498,7 @@ export async function startNewConversation(
     conversations.set(conversationKey, { ...convo, isReady: true });
     saveConversation(conversationKey);
     log(`[OK] Canal sécurisé avec ${contact}.`);
+    console.log(`[DM] Conversation 1v1 avec ${contact} prête (groupId=${groupId})`);
   } catch (_e: unknown) {
     const msg = _e instanceof Error ? _e.message : String(_e);
     log(`Erreur création: ${toUiDiscussionError(msg)}`);
@@ -498,12 +540,14 @@ export async function repairDirectConversation(
   const devices = await fetchDevicesWithRetry(mlsService, contact, log, 3, 1000);
   if (devices.length === 0) {
     log(`Échec de la réparation : aucun appareil pour ${contact}`);
+    console.error(`[REPAIR] No devices found for ${contact} — cannot repair`);
     return false;
   }
 
   let groupId: string | undefined;
   try {
     log(`Réparation automatique de la connexion avec ${contact}...`);
+    console.log(`[REPAIR] Starting repair for direct conversation with ${contact}`);
     groupId = await mlsService.createRemoteGroup(groupName, false); // false = 1-to-1 direct conversation
 
     await mlsService.createGroup(groupId);
@@ -534,6 +578,10 @@ export async function repairDirectConversation(
             log(
               `[REPAIR] Welcome echoue ${owner}:${did}: ${e instanceof Error ? e.message : String(e)}`
             );
+            console.error(
+              `[REPAIR] Welcome failed for ${owner}:${did}:`,
+              e instanceof Error ? e.message : e
+            );
           }
         }
       }
@@ -558,9 +606,11 @@ export async function repairDirectConversation(
     conversations.set(groupId, { ...convo, id: groupId, isReady: true });
     await saveConversation(groupId);
     log(`[OK] Connexion réparée avec ${contact}.`);
+    console.log(`[REPAIR] Direct conversation with ${contact} repaired (newGroupId=${groupId})`);
     return true;
   } catch (e) {
     log(`Erreur de réparation : ${toUiDiscussionError(e)}`);
+    console.error(`[REPAIR] repairDirectConversation failed for ${contact}:`, e);
 
     // Clean up local MLS state (epoch may have advanced after addMembersBulk)
     if (groupId) {

@@ -402,6 +402,9 @@ export function useConversations() {
           ctx.log(
             `[WARN] Appartenance serveur absente pour ${convo.id}, réparation lourde ignorée (état MLS local présent).`
           );
+          console.warn(
+            `[VERIFY] Server membership missing for ${convo.id} but local MLS state present — skipping repair`
+          );
           return true;
         }
 
@@ -416,10 +419,14 @@ export function useConversations() {
           saveConversation: (name) => saveConversation(name, ctx),
           log: ctx.log,
         });
-        if (repaired) return true;
+        if (repaired) {
+          console.log(`[VERIFY] Direct conversation ${convo.id} repaired successfully`);
+          return true;
+        }
       }
       const notice =
         'Vous avez ete retire de ce groupe. Vous ne pouvez plus envoyer ni recevoir de nouveaux messages.';
+      console.warn(`[VERIFY] User no longer member of ${convo.id} — showing removal notice`);
       if (!convo.messages.some((m) => m.isSystem && m.content === notice)) {
         await ctx.addMessageToChat('system', notice, contactName, undefined, true);
       }

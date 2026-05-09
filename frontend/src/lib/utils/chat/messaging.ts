@@ -122,6 +122,7 @@ export async function sendChatMessage(
     return { success: true };
   } catch (error: any) {
     const msg = error.message || String(error);
+    console.error('[SEND] sendChatMessage failed:', msg);
     if (msg.includes('NotMember') || msg.includes('NotAMember')) {
       return {
         success: false,

@@ -265,6 +265,7 @@ export function useChatSession() {
       await mlsService.init(userId, pin, stateBytes);
       myDeviceId = mlsService.getDeviceId();
       cb.log(`Identite MLS initialisee (device: ${myDeviceId})`);
+      console.log(`[INIT] MLS initialized for userId=${userId} device=${myDeviceId}`);
 
       storage = await getStorage(userId);
       cb.log('Base de donnees locale initialisee.');
@@ -311,10 +312,13 @@ export function useChatSession() {
           cb.log(
             `[WARN] Groupes sans etat MLS local detectes — ${missingKeys.length} conversation(s) marquees non-pretes, reinvite declenchee au prochain connect.`
           );
+          console.warn(
+            `[INIT] ${missingKeys.length} conversation(s) missing local MLS state — marked not-ready`
+          );
           await Promise.all(missingKeys.map((key) => cb.saveConversation(key).catch(() => {})));
         }
-      } catch {
-        /* non-blocking diagnostic */
+      } catch (e) {
+        console.warn('[INIT] Erreur détection groupes MLS manquants:', e);
       }
 
       processDeviceInvitationsLocally(cb).catch((e) =>
@@ -521,6 +525,7 @@ export function useChatSession() {
       const msg = _e instanceof Error ? _e.message : String(_e);
       loginError = msg;
       cb.log(`Erreur: ${msg}`);
+      console.error('[INIT] Login failed:', msg);
       clearUserLocally();
       clearPin();
       if (cb.onLoginFailed) {
@@ -633,6 +638,7 @@ export function useChatSession() {
       isWsConnected = true;
       reconnectAttempts = 0;
       cb.log('[OK] Reconnecte au reseau.');
+      console.log('[WS] Reconnected to Chat Gateway');
       cb.log('[SYNC] Récupération des messages manquants...');
       mlsService
         .fetchPendingMessages()
@@ -661,6 +667,7 @@ export function useChatSession() {
         );
     } catch (err) {
       cb.log(`Reconnexion echouee: ${err instanceof Error ? err.message : String(err)}`);
+      console.error('[WS] Reconnection failed:', err instanceof Error ? err.message : err);
       scheduleReconnect(cb);
     } finally {
       isReconnecting = false;

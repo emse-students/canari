@@ -416,8 +416,30 @@ export function useMessaging() {
     });
 
     if (!result.success) {
-      ctx.setSendError(result.error || "Echec de l'envoi");
-      ctx.log(`[SEND] Échec: ${result.error}`);
+      const errStr = result.error || "Echec de l'envoi";
+      const isGroupNotFound =
+        errStr.toLowerCase().includes('groupe introuvable') ||
+        errStr.toLowerCase().includes('group not found');
+      if (isGroupNotFound && ctx.selectedContact) {
+        const staleConvo = ctx.conversations.get(ctx.selectedContact);
+        if (staleConvo) {
+          ctx.conversations.set(ctx.selectedContact, { ...staleConvo, isReady: false });
+          ctx.saveConversation(ctx.selectedContact).catch(() => {});
+          try {
+            ctx
+              .ensureMls()
+              .sendReinviteRequest(staleConvo.id)
+              .catch(() => {});
+          } catch {
+            /* non-blocking */
+          }
+        }
+        ctx.setSendError('Groupe désynchronisé. Resynchronisation en cours…');
+        ctx.log(`[SEND] GroupNotFound → isReady=false + reinvite_request (${ctx.selectedContact})`);
+      } else {
+        ctx.setSendError(errStr);
+        ctx.log(`[SEND] Échec: ${errStr}`);
+      }
       return;
     }
 
