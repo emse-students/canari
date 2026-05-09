@@ -817,26 +817,20 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                 const msgIds: string[] = data.messageIds ?? [];
                 const c = conversations.get(convoKey);
                 if (c && msgIds.length > 0) {
+                  const msgIdSet = new Set(msgIds);
                   let updated = false;
-                  for (const msgId of msgIds) {
-                    const targetMsg = c.messages.find((m) => m.id === msgId);
-                    if (targetMsg) {
-                      if (!targetMsg.readBy) targetMsg.readBy = [];
-                      if (!targetMsg.readBy.includes(senderNorm)) {
-                        targetMsg.readBy.push(senderNorm);
-                        updated = true;
-                      }
-                    }
-                  }
+                  const updatedMessages = c.messages.map((m) => {
+                    if (!msgIdSet.has(m.id)) return m;
+                    const readBy = m.readBy ?? [];
+                    if (readBy.includes(senderNorm)) return m;
+                    updated = true;
+                    return { ...m, readBy: [...readBy, senderNorm] };
+                  });
                   if (updated) {
-                    // Déclenche le re-render Svelte pour afficher l'indicateur "Lu".
-                    // Sûr : le $effect de MainChatPage filtre `!m.isOwn`, donc les propres
-                    // messages de l'utilisateur (cibles des read_receipts) ne génèrent pas
-                    // de nouveaux receipts en cascade.
-                    conversations.set(convoKey, c);
+                    conversations.set(convoKey, { ...c, messages: updatedMessages });
                     if (storage) {
                       for (const msgId of msgIds) {
-                        const m = c.messages.find((x) => x.id === msgId);
+                        const m = updatedMessages.find((x) => x.id === msgId);
                         if (m) {
                           try {
                             await storage.saveMessage(

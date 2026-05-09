@@ -120,7 +120,8 @@ export function useConversations() {
 
     const { replayConversationHistory, mapStoredMessagesToChatMessages } =
       await import('$lib/utils/chat/history');
-    isLoadingHistory = true;
+    const isSelected = selectedContact === contactName;
+    if (isSelected) isLoadingHistory = true;
     try {
       // Fetch from network → decrypt → save to DB (no direct UI update)
       await replayConversationHistory({
@@ -150,7 +151,7 @@ export function useConversations() {
         }
       }
     } finally {
-      isLoadingHistory = false;
+      if (isSelected) isLoadingHistory = false;
     }
   }
 

@@ -22,18 +22,21 @@ let _accessToken: string | null = null;
 // each firing a separate /api/auth/refresh request.
 let _pendingRefresh: Promise<string> | null = null;
 
+const alog = (msg: string) => console.log('[A] ' + msg);
+const awarn = (msg: string) => console.warn('[A] ' + msg);
+
 function setWsSessionCookie(token: string): void {
   if (typeof document === 'undefined') return;
   const secure = window.location.protocol === 'https:' ? '; Secure' : '';
   document.cookie = `canari_ws_token=${encodeURIComponent(token)}; Path=/; SameSite=Lax${secure}`;
-  console.log('[AUTH] setWsSessionCookie — cookie WS mis à jour');
+  alog('ws+');
 }
 
 function clearWsSessionCookie(): void {
   if (typeof document === 'undefined') return;
   const secure = window.location.protocol === 'https:' ? '; Secure' : '';
   document.cookie = `canari_ws_token=; Path=/; Max-Age=0; SameSite=Lax${secure}`;
-  console.log('[AUTH] clearWsSessionCookie — cookie WS supprimé');
+  alog('ws-');
 }
 
 function isEnvFlagEnabled(value: string | boolean | undefined): boolean {
@@ -108,8 +111,7 @@ export async function startOidcLogin(returnTo = '/chat'): Promise<void> {
   });
 
   const authUrl = `${baseUrl}/application/o/authorize/?${params}`;
-  console.log(`[AUTH] startOidcLogin — returnTo=${returnTo}, redirectUri=${redirectUri}`);
-  console.log(`[AUTH] Redirection vers Authentik (baseUrl=${baseUrl})`);
+  alog(`login returnTo=${returnTo} uri=${redirectUri}`);
 
   // On Android Tauri, open in the system browser (Chrome Custom Tabs) so the
   // main WebView is never navigated away and the Tauri IPC bridge stays intact.
@@ -255,7 +257,7 @@ export async function refresh(): Promise<string> {
 
 async function _doRefresh(): Promise<string> {
   const endpoint = `${coreUrl()}/api/auth/refresh`;
-  console.log(`[AUTH] refresh → POST ${endpoint}`);
+  alog(`refresh→ ${endpoint}`);
   const t0 = Date.now();
   const res = await fetch(endpoint, {
     method: 'POST',
@@ -268,7 +270,7 @@ async function _doRefresh(): Promise<string> {
     // failure was transient. Just drop the in-memory token.
     _accessToken = null;
     clearWsSessionCookie();
-    console.warn(`[AUTH] refresh FAILED — status=${res.status} (${Date.now() - t0}ms)`);
+    awarn(`refresh✗${res.status} ${Date.now() - t0}ms`);
     throw new Error('Session expired — please log in again');
   }
 
@@ -298,9 +300,7 @@ async function _doRefresh(): Promise<string> {
   }
 
   const expIn = tokenExp ? tokenExp - Math.floor(Date.now() / 1000) : null;
-  console.log(
-    `[AUTH] refresh OK (${Date.now() - t0}ms)${expIn !== null ? ` — token expire dans ${expIn}s` : ''}`
-  );
+  alog(`refresh✓ ${Date.now() - t0}ms${expIn !== null ? ` exp=${expIn}s` : ''}`);
   return data.access_token;
 }
 
@@ -327,10 +327,10 @@ export async function getToken(): Promise<string> {
     const exp = jwtExpiresAt(_accessToken);
     const remaining = exp !== null ? exp - Math.floor(Date.now() / 1000) : null;
     if (remaining === null || remaining >= 60) return _accessToken;
-    console.log(`[AUTH] getToken — token expire dans ${remaining}s, refresh forcé`);
+    alog(`token exp=${remaining}s→refresh`);
     _accessToken = null;
   } else {
-    console.log('[AUTH] getToken — aucun token en mémoire, appel refresh()');
+    alog('token→refresh');
   }
   return await refresh();
 }
@@ -342,16 +342,15 @@ export function setToken(token: string): void {
 }
 
 export async function clearAuth(): Promise<void> {
-  console.log('[AUTH] clearAuth — déconnexion, token mémoire effacé');
+  alog('clear');
   _accessToken = null;
   clearWsSessionCookie();
   // Tell the backend to clear the HttpOnly cookie
   await fetch(`${coreUrl()}/api/auth/logout`, {
     method: 'POST',
     credentials: 'include',
-  }).catch((e) => console.warn('[AUTH] logout POST failed (ignoré):', e));
+  }).catch((e) => awarn('logout✗ ' + e));
   clearUserLocally();
-  console.log('[AUTH] clearAuth — terminé');
 }
 
 /**
@@ -361,7 +360,7 @@ export async function clearAuth(): Promise<void> {
  */
 export async function hasStoredSession(): Promise<boolean> {
   let uid = currentUserId();
-  console.log(`[AUTH] hasStoredSession — userId=${uid ?? 'null'}`);
+  alog(`session uid=${uid ?? 'null'}`);
   if (!uid) {
     // On Tauri mobile, localStorage may be wiped after an OS process kill while
     // the HttpOnly refresh cookie survives in the WebView cookie store. Attempt a
@@ -375,18 +374,18 @@ export async function hasStoredSession(): Promise<boolean> {
       }
     }
     if (!uid) {
-      console.log('[AUTH] hasStoredSession → false (aucun utilisateur local)');
+      alog('session→F');
       return false;
     }
-    console.log('[AUTH] hasStoredSession → true (userId restauré via refresh)');
+    alog('session→T restored');
     return true;
   }
   try {
     await refresh();
-    console.log('[AUTH] hasStoredSession → true (refresh OK)');
+    alog('session→T');
     return true;
   } catch {
-    console.log('[AUTH] hasStoredSession → false (refresh échoué)');
+    alog('session→F refresh✗');
     return false;
   }
 }

@@ -6,7 +6,7 @@
  * - On a second 401, clears auth state and rethrows so the caller can redirect.
  */
 
-import { getToken, refresh, clearAuth } from '$lib/stores/auth';
+import { getToken, refresh } from '$lib/stores/auth';
 
 export interface ApiFetchOptions extends RequestInit {
   /** Extra headers merged in (in addition to Content-Type and Authorization). */
@@ -46,13 +46,11 @@ export async function apiFetch(url: string, init: ApiFetchOptions = {}): Promise
       res = await fetch(url, { ...init, headers });
       console.log(`[API] ← ${res.status} ${method} ${logUrl} (retry, ${Date.now() - t0}ms)`);
     } catch {
-      console.error(`[API] refresh failed — clearAuth, throw session expirée`);
-      await clearAuth();
+      console.warn(`[API] refresh failed on ${method} ${logUrl} — session expirée`);
       throw new Error('Session expirée — veuillez vous reconnecter.');
     }
     if (res.status === 401) {
-      console.error(`[API] double 401 on ${method} ${logUrl} — session invalide`);
-      await clearAuth();
+      console.warn(`[API] double 401 on ${method} ${logUrl} — session invalide`);
       throw new Error('Session expirée — veuillez vous reconnecter.');
     }
   }
