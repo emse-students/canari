@@ -35,15 +35,21 @@ export class PaymentController {
     private readonly usersService: UsersService,
   ) {}
 
-  private async assertCanManageAssociation(req: Request, associationId: string): Promise<void> {
+  private async assertCanManageAssociation(
+    req: Request,
+    associationId: string,
+  ): Promise<void> {
     const userId = (req.headers['x-user-id'] as string | undefined)?.trim();
     if (!userId) {
       throw new UnauthorizedException('Authentication required');
     }
-    const socialBase = (process.env.FORM_URL || 'http://social-service:3014').replace(/\/$/, '');
+    const socialBase = (
+      process.env.FORM_URL || 'http://social-service:3014'
+    ).replace(/\/$/, '');
     const fwd: Record<string, string> = {
       'X-User-Id': userId,
-      'X-Global-Admin': req.headers['x-global-admin'] === 'true' ? 'true' : 'false',
+      'X-Global-Admin':
+        req.headers['x-global-admin'] === 'true' ? 'true' : 'false',
     };
     const nginxAuth = req.headers['x-nginx-auth'];
     if (typeof nginxAuth === 'string') fwd['X-Nginx-Auth'] = nginxAuth;
@@ -56,11 +62,16 @@ export class PaymentController {
         { headers: fwd, validateStatus: () => true },
       );
       if (res.status >= 400 || !res.data?.ok) {
-        throw new ForbiddenException('You cannot manage payments for this association');
+        throw new ForbiddenException(
+          'You cannot manage payments for this association',
+        );
       }
     } catch (e) {
-      if (e instanceof ForbiddenException || e instanceof UnauthorizedException) throw e;
-      this.logger.warn(`manage-permission check failed: ${e}`);
+      if (e instanceof ForbiddenException || e instanceof UnauthorizedException)
+        throw e;
+      this.logger.warn(
+        `manage-permission check failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
       throw new BadRequestException('Could not verify association permissions');
     }
   }
@@ -89,7 +100,9 @@ export class PaymentController {
       await this.assertCanManageAssociation(req, assocId);
     }
 
-    const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost').replace(/\/$/, '');
+    const frontendUrl = (
+      process.env.FRONTEND_URL || 'http://localhost'
+    ).replace(/\/$/, '');
     const returnUrl = body.returnUrl?.trim() || `${frontendUrl}/associations`;
     const refreshUrl = body.refreshUrl?.trim() || returnUrl;
     const result = await this.paymentService.createConnectOnboarding({
