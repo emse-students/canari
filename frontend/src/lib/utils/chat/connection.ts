@@ -121,12 +121,28 @@ export async function initTabLeadershipAsync(log: (msg: string) => void): Promis
     tabChannel = new BroadcastChannel('canari-mls-tab');
     tabChannel.addEventListener('message', (ev: MessageEvent) => {
       if (ev.data?.type === 'leader_closing' && !isTabLeader) {
-        // Leader is closing — try to promote
-        isTabLeader = true;
-        localStorage.setItem(LEADER_KEY, TAB_ID);
-        localStorage.setItem(HEARTBEAT_KEY, String(Date.now()));
-        startHeartbeat();
-        log('[TAB] Ancien leader fermé — promotion en leader.');
+        // Leader is closing — staggered promotion to avoid simultaneous election:
+        // each follower waits a random delay then checks whether another tab
+        // already claimed leadership before writing its own TAB_ID.
+        const delay = Math.random() * 300;
+        setTimeout(() => {
+          if (isTabLeader) return;
+          const current = localStorage.getItem(LEADER_KEY);
+          if (current && current !== ev.data.tabId) return; // another tab won
+          try {
+            localStorage.setItem(LEADER_KEY, TAB_ID);
+          } catch {
+            /* quota */
+          }
+          try {
+            localStorage.setItem(HEARTBEAT_KEY, String(Date.now()));
+          } catch {
+            /* quota */
+          }
+          isTabLeader = true;
+          startHeartbeat();
+          log('[TAB] Ancien leader fermé — promotion en leader.');
+        }, delay);
       }
     });
   }
@@ -137,11 +153,26 @@ export async function initTabLeadershipAsync(log: (msg: string) => void): Promis
 
   // Claim if no leader or heartbeat stale (>5s)
   if (!currentLeader || now - lastHeartbeat > 5000) {
-    localStorage.setItem(LEADER_KEY, TAB_ID);
-    localStorage.setItem(HEARTBEAT_KEY, String(now));
-    isTabLeader = true;
-    startHeartbeat();
-    log('[TAB] Leadership acquise.');
+    try {
+      localStorage.setItem(LEADER_KEY, TAB_ID);
+    } catch {
+      /* quota */
+    }
+    try {
+      localStorage.setItem(HEARTBEAT_KEY, String(now));
+    } catch {
+      /* quota */
+    }
+    // Wait briefly then re-read to detect simultaneous-open races (last-writer-wins).
+    await new Promise((r) => setTimeout(r, 30));
+    if (localStorage.getItem(LEADER_KEY) === TAB_ID) {
+      isTabLeader = true;
+      startHeartbeat();
+      log('[TAB] Leadership acquise.');
+    } else {
+      isTabLeader = false;
+      log('[TAB] Race election — autre onglet leader.');
+    }
   } else if (currentLeader === TAB_ID) {
     isTabLeader = true;
     startHeartbeat();
@@ -174,7 +205,11 @@ function startHeartbeat(): void {
       if (heartbeatInterval) clearInterval(heartbeatInterval);
       return;
     }
-    localStorage.setItem(HEARTBEAT_KEY, String(Date.now()));
+    try {
+      localStorage.setItem(HEARTBEAT_KEY, String(Date.now()));
+    } catch {
+      /* quota */
+    }
   }, 2000);
 }
 

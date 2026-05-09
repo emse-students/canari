@@ -137,17 +137,25 @@ export async function processPendingInvitations(params: {
             continue;
           }
 
-          // Check if device is already in the MLS group (idempotency)
+          // Check if device is already in the MLS group (idempotency).
+          // If the device is in the tree but Welcome was never received (e.g. sendWelcome
+          // failed on a previous attempt), kick the stale leaf so the next round can reinvite.
           try {
             const members = await mlsService.getGroupMembers(groupId);
             if (members.some((m) => m.deviceId === inv.deviceId)) {
-              log(`[PENDING] ${inv.deviceId} déjà membre de ${groupId} — mise à jour statut`);
-              await mlsService.updateInvitationStatus(
-                inv.deviceId,
-                inv.userId,
-                groupId,
-                'welcome_received'
-              );
+              const memberships = await mlsService
+                .getDeviceMemberships(inv.userId, inv.deviceId)
+                .catch(() => []);
+              const memberStatus = memberships.find((x) => x.groupId === groupId)?.status;
+              if (memberStatus === 'welcome_received') {
+                log(`[PENDING] ${inv.deviceId} déjà membre (Welcome reçu) — skip`);
+                continue;
+              }
+              // Device is in MLS tree but Welcome was lost — kick to allow reinvite
+              log(`[PENDING] ${inv.deviceId} dans l'arbre MLS sans Welcome — kick du leaf stale`);
+              const deviceIdentity = `${inv.userId}:${inv.deviceId}`;
+              await mlsService.removeMemberDevice(groupId, [deviceIdentity]).catch(() => {});
+              await mlsService.kickStaleDevice(inv.deviceId, inv.userId, groupId).catch(() => {});
               continue;
             }
           } catch {
@@ -187,11 +195,24 @@ export async function processPendingInvitations(params: {
         } catch (e) {
           const errStr = String(e);
           if (errStr.includes('DuplicateSignatur') || errStr.includes('already')) {
-            // Already in MLS tree — update server status
+            // addMember threw DuplicateSignature — device is in MLS tree.
+            // If Welcome was received, nothing to do. If Welcome was lost (e.g. a
+            // previous addMember succeeded but sendWelcome threw), kick the stale
+            // leaf so the next round can re-add with a fresh Welcome.
             log(`[PENDING] ${inv.deviceId} déjà dans l'arbre MLS de ${groupId}`);
-            await mlsService
-              .updateInvitationStatus(inv.deviceId, inv.userId, groupId, 'welcome_received')
-              .catch(() => {});
+            try {
+              const memberships = await mlsService.getDeviceMemberships(inv.userId, inv.deviceId);
+              const memberStatus = memberships.find((x) => x.groupId === groupId)?.status;
+              if (memberStatus !== 'welcome_received') {
+                const deviceIdentity = `${inv.userId}:${inv.deviceId}`;
+                await mlsService.removeMemberDevice(groupId, [deviceIdentity]).catch(() => {});
+                await mlsService.kickStaleDevice(inv.deviceId, inv.userId, groupId).catch(() => {});
+              }
+            } catch {
+              await mlsService
+                .updateInvitationStatus(inv.deviceId, inv.userId, groupId, 'welcome_received')
+                .catch(() => {});
+            }
           } else if (errStr.includes('WrongEpoch') || errStr.includes('epoch_mismatch')) {
             // Someone else committed — check if this invitation was already handled
             log(`[PENDING] WrongEpoch pour ${inv.deviceId} dans ${groupId} — vérification...`);

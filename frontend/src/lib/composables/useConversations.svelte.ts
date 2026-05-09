@@ -304,17 +304,20 @@ export function useConversations() {
     const current = conversations.get(contactName);
     if (!current) return false;
 
-    const merged = [...mapped, ...current.messages].sort((a, b) => {
-      const ta =
-        a.timestamp instanceof Date
-          ? a.timestamp.getTime()
-          : new SvelteDate(a.timestamp as any).getTime();
-      const tb =
-        b.timestamp instanceof Date
-          ? b.timestamp.getTime()
-          : new SvelteDate(b.timestamp as any).getTime();
-      return ta !== tb ? ta - tb : a.id.localeCompare(b.id);
-    });
+    const existingIds = new SvelteSet(current.messages.map((m) => m.id));
+    const merged = [...mapped.filter((m) => !existingIds.has(m.id)), ...current.messages].sort(
+      (a, b) => {
+        const ta =
+          a.timestamp instanceof Date
+            ? a.timestamp.getTime()
+            : new SvelteDate(a.timestamp as any).getTime();
+        const tb =
+          b.timestamp instanceof Date
+            ? b.timestamp.getTime()
+            : new SvelteDate(b.timestamp as any).getTime();
+        return ta !== tb ? ta - tb : a.id.localeCompare(b.id);
+      }
+    );
 
     conversations.set(contactName, { ...current, messages: merged });
     return older.length === OLDER_MESSAGES_PAGE;
@@ -564,6 +567,7 @@ export function useConversations() {
     }
 
     // 4. Retirer de la map et reset UI
+    membershipCache.delete(convo.id);
     conversations.delete(contactKey);
     selectedContact = null;
     isConversationDrawerOpen = false;
@@ -599,6 +603,7 @@ export function useConversations() {
       }
     }
 
+    membershipCache.delete(convo.id);
     conversations.delete(contactKey);
     selectedContact = null;
     isConversationDrawerOpen = false;
@@ -618,6 +623,7 @@ export function useConversations() {
         userId: ctx.userId,
         pin: ctx.pin,
       });
+      membershipCache.delete(convo.id);
       groupMembers = groupMembers.filter((m) => m !== memberId);
       await ctx.addMessageToChat(
         'system',

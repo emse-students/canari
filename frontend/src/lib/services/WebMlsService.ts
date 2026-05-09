@@ -682,7 +682,7 @@ export class WebMlsService implements IMlsService {
 
   async publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void> {
     // Publish to Chat History Service (delivery service)
-    const base64 = btoa(String.fromCharCode(...keyPackageBytes));
+    const base64 = btoa(Array.from(keyPackageBytes, (b) => String.fromCharCode(b)).join(''));
     const storedName =
       localStorage.getItem(`device-name:${this.userId}:${this.deviceId}`) || undefined;
     const deviceOs = this.detectRuntimeDeviceOs();
@@ -763,37 +763,43 @@ export class WebMlsService implements IMlsService {
     targetDeviceId?: string,
     ratchetTreeBytes?: Uint8Array
   ): Promise<void> {
-    const base64 = btoa(String.fromCharCode(...welcomeBytes));
+    const base64 = btoa(Array.from(welcomeBytes, (b) => String.fromCharCode(b)).join(''));
     const ratchetTreeBase64 = ratchetTreeBytes
-      ? btoa(String.fromCharCode(...ratchetTreeBytes))
+      ? btoa(Array.from(ratchetTreeBytes, (b) => String.fromCharCode(b)).join(''))
       : undefined;
 
-    let resolvedDeviceId = targetDeviceId;
-    if (!resolvedDeviceId) {
+    let deviceIds: string[];
+    if (targetDeviceId) {
+      deviceIds = [targetDeviceId];
+    } else {
       const devices = await this.fetchUserDevices(targetUserId);
-      resolvedDeviceId = devices[0]?.deviceId;
+      deviceIds = devices.map((d) => d.deviceId);
     }
-    if (!resolvedDeviceId) {
+    if (deviceIds.length === 0) {
       throw new Error(
         `Impossible d'envoyer l'invitation sécurisée à ${targetUserId} : ` +
           `aucun appareil actif trouvé.`
       );
     }
-    const response = await fetch(`${this.historyUrl}/api/mls/welcome`, {
-      method: 'POST',
-      headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({
-        targetDeviceId: resolvedDeviceId,
-        targetUserId,
-        senderUserId: this.userId,
-        welcomePayload: base64,
-        ratchetTreePayload: ratchetTreeBase64,
-        groupId,
-      }),
-    });
-    await this.assertOkResponse(
-      response,
-      `Welcome delivery to ${targetUserId}:${resolvedDeviceId} (group ${groupId})`
+    await Promise.all(
+      deviceIds.map(async (deviceId) => {
+        const response = await fetch(`${this.historyUrl}/api/mls/welcome`, {
+          method: 'POST',
+          headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({
+            targetDeviceId: deviceId,
+            targetUserId,
+            senderUserId: this.userId,
+            welcomePayload: base64,
+            ratchetTreePayload: ratchetTreeBase64,
+            groupId,
+          }),
+        });
+        await this.assertOkResponse(
+          response,
+          `Welcome delivery to ${targetUserId}:${deviceId} (group ${groupId})`
+        );
+      })
     );
   }
 
@@ -802,7 +808,7 @@ export class WebMlsService implements IMlsService {
     groupId: string,
     excludeDeviceIds?: string[]
   ): Promise<void> {
-    const proto = btoa(String.fromCharCode(...commitBytes));
+    const proto = btoa(Array.from(commitBytes, (b) => String.fromCharCode(b)).join(''));
     // Rust merges pending commit before returning bytes, so local epoch is already advanced.
     // The backend validates against the pre-commit epoch.
     const currentEpoch = this.getEpoch(groupId);
@@ -1068,7 +1074,7 @@ export class WebMlsService implements IMlsService {
     _messageId?: string
   ): Promise<Uint8Array> {
     const encryptedBytes: Uint8Array = this.client.send_message_bytes(groupId, messageBytes);
-    const proto = btoa(String.fromCharCode(...encryptedBytes));
+    const proto = btoa(Array.from(encryptedBytes, (b) => String.fromCharCode(b)).join(''));
     const res = await fetch(`${this.historyUrl}/api/mls/send`, {
       method: 'POST',
       headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),

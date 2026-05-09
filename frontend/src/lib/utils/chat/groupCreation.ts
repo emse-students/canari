@@ -45,8 +45,14 @@ async function fetchDevicesWithRetry(
   delayMs = 1500
 ) {
   for (let attempt = 1; attempt <= attempts; attempt++) {
-    const devices = await mlsService.fetchUserDevices(userId);
-    if (devices.length > 0) return devices;
+    try {
+      const devices = await mlsService.fetchUserDevices(userId);
+      if (devices.length > 0) return devices;
+    } catch (err) {
+      log(
+        `[RETRY] Erreur réseau pour ${userId} (tentative ${attempt}/${attempts}): ${String(err).slice(0, 80)}`
+      );
+    }
     if (attempt < attempts) {
       log(
         `[RETRY] Appareils introuvables pour ${userId} (tentative ${attempt}/${attempts}), nouvelle tentative dans ${delayMs / 1000}s...`

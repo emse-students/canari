@@ -25,7 +25,11 @@ function loadLastStreamId(userId: string, groupId: string): string | undefined {
 }
 
 function saveLastStreamId(userId: string, groupId: string, streamId: string): void {
-  localStorage.setItem(lastStreamIdKey(userId, groupId), streamId);
+  try {
+    localStorage.setItem(lastStreamIdKey(userId, groupId), streamId);
+  } catch {
+    /* quota exceeded — graceful degradation */
+  }
 }
 
 function loadSeenCipherHashes(userId: string, groupId: string): Set<string> {
@@ -41,7 +45,11 @@ function saveSeenCipherHashes(userId: string, groupId: string, hashes: Set<strin
   const MAX_HASHES = 5000;
   const arr = [...hashes];
   const bounded = arr.length > MAX_HASHES ? arr.slice(arr.length - MAX_HASHES) : arr;
-  localStorage.setItem(seenHistoryKey(userId, groupId), JSON.stringify(bounded));
+  try {
+    localStorage.setItem(seenHistoryKey(userId, groupId), JSON.stringify(bounded));
+  } catch {
+    /* quota exceeded — graceful degradation */
+  }
 }
 
 function mediaKindToType(kind?: number | null): 'image' | 'video' | 'audio' | 'file' {
@@ -127,7 +135,25 @@ export async function replayConversationHistory(params: {
     // Incremental fetch: only retrieve messages after the last processed stream ID.
     // This avoids re-delivering messages whose ratchet keys have already been consumed
     // (which would produce TooDistantInThePast / CiphertextGenerationOutOfBounds errors).
-    const afterStreamId = loadLastStreamId(userId, id);
+    // Fix #7: If DB was cleared (e.g. browser storage wipe) without clearing localStorage,
+    // the cursor points past messages that no longer exist locally. Reset it so the full
+    // history is re-fetched.
+    let afterStreamId = loadLastStreamId(userId, id);
+    if (afterStreamId && storage) {
+      try {
+        const storedMsgs = await storage.getMessages(id, pin);
+        if (storedMsgs.length === 0) {
+          try {
+            localStorage.removeItem(lastStreamIdKey(userId, id));
+          } catch {
+            /* ignore */
+          }
+          afterStreamId = undefined;
+        }
+      } catch {
+        /* if DB check fails, proceed with existing cursor */
+      }
+    }
     const history = await mlsService.fetchHistory(id, afterStreamId);
     if (history.length === 0) return;
 
@@ -139,6 +165,7 @@ export async function replayConversationHistory(params: {
 
     let addedMsg = 0;
     let mlsUpdated = false;
+    let gapDetected = false;
 
     // Collect reaction mutations so we can persist them to DB in one pass after
     // the main message batch write (reactions reference messages from previous
@@ -364,7 +391,11 @@ export async function replayConversationHistory(params: {
           // The ratchet is behind. Trigger async recovery and abort this history
           // batch — it will be replayed on the next loadHistory call after the
           // ratchet has caught up via fetchMissingMessages.
+          // gapDetected=true prevents finally from marking this message as seen
+          // and prevents latestStreamId from being persisted, so the next call
+          // re-fetches from before the GAP and retries this message.
           console.warn(`[HISTORY] GAP détecté sur groupe=${id} — déclenchement recovery`);
+          gapDetected = true;
           void mlsService.fetchMissingMessages(id);
           break;
         }
@@ -381,8 +412,10 @@ export async function replayConversationHistory(params: {
         }
         console.warn(`History msg error: ${err}`);
       } finally {
-        seenCipherHashes.add(cipherFingerprint);
-        seenUpdated = true;
+        if (!gapDetected) {
+          seenCipherHashes.add(cipherFingerprint);
+          seenUpdated = true;
+        }
       }
     }
 
@@ -423,7 +456,8 @@ export async function replayConversationHistory(params: {
     }
 
     // Persist the last processed Redis stream ID so the next sync is incremental.
-    if (latestStreamId) {
+    // Skip if a GAP was detected — the cursor must not advance past the unprocessed message.
+    if (latestStreamId && !gapDetected) {
       saveLastStreamId(userId, id, latestStreamId);
     }
 
