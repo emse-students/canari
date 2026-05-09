@@ -202,7 +202,7 @@ export class PostsService {
       rawPosts = await this.postRepo.manager.query(
         `SELECT ${selectBody}
        FROM posts
-       LEFT JOIN associations assoc ON assoc.id = posts."associationId"
+       LEFT JOIN associations assoc ON assoc.id::text = posts."associationId"
        ORDER BY posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,
         [limit, offset]
@@ -211,7 +211,7 @@ export class PostsService {
       rawPosts = await this.postRepo.manager.query(
         `SELECT ${selectBody}
        FROM posts
-       LEFT JOIN associations assoc ON assoc.id = posts."associationId"
+       LEFT JOIN associations assoc ON assoc.id::text = posts."associationId"
        WHERE posts."associationId" IS NOT NULL
          AND posts."associationId" = ANY($3::text[])
        ORDER BY posts."createdAt" DESC
@@ -223,7 +223,7 @@ export class PostsService {
         `SELECT ${selectBody}
        FROM posts
        INNER JOIN users u ON u.id = posts."authorId"
-       LEFT JOIN associations assoc ON assoc.id = posts."associationId"
+       LEFT JOIN associations assoc ON assoc.id::text = posts."associationId"
        WHERE posts."associationId" IS NULL
          AND ($3::integer IS NULL OR u.promo = $3::integer)
          AND ($4::text IS NULL OR u.formation ILIKE ('%' || $4::text || '%'))
