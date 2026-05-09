@@ -909,6 +909,16 @@ export class TauriMlsService implements IMlsService {
 
     // 3. Enregistrer le device bootstrapper côté serveur.
     await this.registerMember(conversationId, this.userId).catch(() => {});
+    // The bootstrapping device is already in the MLS tree — mark it as
+    // welcome_received immediately so the routing set includes it and it
+    // can receive messages from newly-joined members (e.g. after reinstall
+    // where registerMember would otherwise leave the row at 'pending').
+    await this.updateInvitationStatus(
+      this.deviceId,
+      this.userId,
+      conversationId,
+      'welcome_received'
+    ).catch(() => {});
 
     // 4. Envoyer le Welcome à chaque device invité.
     if (welcomeBytes) {
