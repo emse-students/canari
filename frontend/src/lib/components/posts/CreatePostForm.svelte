@@ -4,19 +4,35 @@
     ChartColumn,
     CalendarCheck,
     ClipboardList,
-    LoaderCircle,
     X,
     CircleAlert,
+    Building2,
+    User,
+    ChevronDown,
   } from 'lucide-svelte';
   import { MediaService } from '$lib/media';
   import { getToken } from '$lib/stores/auth';
   import { createPost, type CreatePostPayload } from '$lib/posts/api';
   import { getForms, type Form } from '$lib/forms/api';
-  import { listMyAssociations, type Association } from '$lib/associations/api';
+  import { listAssociations, listMyAssociations, type Association } from '$lib/associations/api';
+  import { isGlobalAdmin } from '$lib/stores/user';
   import { onMount } from 'svelte';
   import { slide, fade } from 'svelte/transition';
   import Input from '$lib/components/ui/Input.svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
+  import Button from '$lib/components/ui/Button.svelte';
+
+  /** Shared styles: native selects stay accessible; chevron is decorative. */
+  const selectClass =
+    'w-full appearance-none rounded-xl border border-cn-border/70 bg-cn-surface/95 dark:bg-cn-dark/50 pl-11 pr-10 py-3 text-sm font-semibold text-text-main shadow-sm transition-all outline-none focus:border-cn-yellow focus:ring-2 focus:ring-cn-yellow/25 hover:border-cn-border';
+  /** Same as {@link selectClass} but without leading icon padding (nested selects). */
+  const selectPlainClass =
+    'w-full appearance-none rounded-xl border border-cn-border/70 bg-cn-surface/95 dark:bg-cn-dark/50 px-4 pr-10 py-3 text-sm font-medium text-text-main shadow-sm transition-all outline-none focus:border-cn-yellow focus:ring-2 focus:ring-cn-yellow/25 hover:border-cn-border';
+  const chevronWrapClass =
+    'pointer-events-none absolute inset-y-0 right-3 flex items-center text-text-muted';
+  const sectionIconClass = 'text-cn-yellow shrink-0';
+  const optionCardClass =
+    'rounded-2xl border border-cn-border/60 bg-cn-surface/70 dark:bg-black/25 p-5 shadow-sm ring-1 ring-black/[0.02] dark:ring-white/[0.04]';
 
   interface Props {
     onPostCreated: () => void;
@@ -50,10 +66,18 @@
   let myAssociations = $state<Association[]>([]);
   let selectedAssociationId = $state('');
   let selectedPaymentAssociationId = $state('');
-  let adminAssociations = $derived(
-    myAssociations.filter((a) => a.role === 'admin' || a.role === 'owner')
+  /** Associations the user may post as (admin/owner of membership, or any asso if global admin). */
+  let postAsAssociations = $derived(
+    isGlobalAdmin()
+      ? myAssociations
+      : myAssociations.filter(
+          (a) =>
+            a.role === 'admin' ||
+            a.role === 'owner' ||
+            a.permission === 1
+        )
   );
-  let payableAssociations = $derived(adminAssociations.filter((a) => a.stripeOnboardingComplete));
+  let payableAssociations = $derived(postAsAssociations.filter((a) => a.stripeOnboardingComplete));
 
   let publishing = $state(false);
   let errorMessage = $state('');
@@ -83,7 +107,7 @@
       console.error('Failed to load forms', e);
     }
     try {
-      myAssociations = await listMyAssociations();
+      myAssociations = isGlobalAdmin() ? await listAssociations() : await listMyAssociations();
     } catch (e) {
       console.error('Failed to load associations', e);
     }
@@ -200,136 +224,148 @@
   }
 </script>
 
-<div
-  class="relative bg-white/70 dark:bg-[#151B2C]/70 backdrop-blur-2xl border border-black/5 dark:border-white/10 rounded-[1.5rem] p-4 sm:p-5 shadow-sm transition-all duration-300 focus-within:shadow-md mb-6"
+<article
+  class="relative mb-6 overflow-hidden rounded-3xl border border-cn-border/70 bg-[var(--surface-elevated)] shadow-sm backdrop-blur-xl transition-shadow duration-300 focus-within:shadow-md focus-within:ring-1 focus-within:ring-cn-yellow/20 dark:border-cn-border/80 dark:bg-[color-mix(in_srgb,var(--cn-surface)_88%,transparent)]"
 >
-  <!-- Sélecteurs d'Association (Header) -->
-  {#if adminAssociations.length > 0}
-    <div class="flex flex-wrap gap-4 pb-4 mb-3 border-b border-black/5 dark:border-white/10">
-      <div class="flex-1 min-w-[160px]">
-        <label
-          for="post-association-select"
-          class="block text-[0.65rem] font-bold uppercase tracking-wider text-text-muted mb-1.5 ml-1"
-          >Publier en tant que</label
-        >
-        <div class="relative">
-          <select
-            id="post-association-select"
-            bind:value={selectedAssociationId}
-            class="w-full appearance-none rounded-xl border border-transparent bg-black/5 dark:bg-white/5 hover:border-black/10 dark:hover:border-white/10 px-4 py-2.5 text-sm font-bold text-text-main transition-all outline-none focus:ring-2 focus:ring-amber-500/50"
-          >
-            <option value="">👤 Mon profil personnel</option>
-            {#each adminAssociations as a (a.id)}
-              <option value={a.id}>🏢 {a.name}</option>
-            {/each}
-          </select>
-          <!-- Custom Chevron pour masquer l'icône navigateur par défaut -->
-          <div
-            class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-text-muted"
-          >
-            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"
-              ><path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M19 9l-7 7-7-7"
-              ></path></svg
-            >
-          </div>
-        </div>
-      </div>
+  <div class="border-b border-cn-border/50 bg-cn-surface/40 px-4 py-3 dark:bg-black/15 sm:px-5">
+    <p class="text-xs font-bold uppercase tracking-[0.12em] text-text-muted">Publication</p>
+    <p class="mt-0.5 text-sm font-semibold text-text-main">
+      Rédigez votre message — ajoutez des images, un sondage ou un bouton d’événement ci-dessous.
+    </p>
+  </div>
 
-      {#if payableAssociations.length > 0 && selectedAssociationId}
-        <div class="flex-1 min-w-[160px]" transition:fade={{ duration: 200 }}>
+  <div class="p-4 sm:p-5">
+    <!-- Identité (association / Stripe) -->
+    {#if postAsAssociations.length > 0}
+      <div class="mb-5 grid gap-4 sm:grid-cols-2">
+        <div>
           <label
-            for="post-payment-association-select"
-            class="block text-[0.65rem] font-bold uppercase tracking-wider text-text-muted mb-1.5 ml-1"
-            >Comptabilité (Stripe)</label
+            for="post-association-select"
+            class="mb-2 flex items-center gap-2 text-[0.7rem] font-bold uppercase tracking-wider text-text-muted"
           >
+            <User size={14} class="opacity-70" aria-hidden="true" />
+            Publier en tant que
+          </label>
           <div class="relative">
-            <select
-              id="post-payment-association-select"
-              bind:value={selectedPaymentAssociationId}
-              class="w-full appearance-none rounded-xl border border-transparent bg-black/5 dark:bg-white/5 hover:border-black/10 dark:hover:border-white/10 px-4 py-2.5 text-sm font-bold text-text-main transition-all outline-none focus:ring-2 focus:ring-amber-500/50"
+            <span
+              class="pointer-events-none absolute left-3 top-1/2 z-[1] -translate-y-1/2 text-text-muted"
+              aria-hidden="true"
             >
-              <option value="">— Aucune —</option>
-              {#each payableAssociations as a (a.id)}
+              {#if selectedAssociationId}
+                <Building2 size={18} strokeWidth={2.2} />
+              {:else}
+                <User size={18} strokeWidth={2.2} />
+              {/if}
+            </span>
+            <select
+              id="post-association-select"
+              bind:value={selectedAssociationId}
+              class={selectClass}
+            >
+              <option value="">Profil personnel</option>
+              {#each postAsAssociations as a (a.id)}
                 <option value={a.id}>{a.name}</option>
               {/each}
             </select>
-            <div
-              class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-text-muted"
-            >
-              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                ><path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M19 9l-7 7-7-7"
-                ></path></svg
-              >
+            <div class={chevronWrapClass}>
+              <ChevronDown size={18} strokeWidth={2} />
             </div>
           </div>
         </div>
+
+        {#if payableAssociations.length > 0 && selectedAssociationId}
+          <div transition:fade={{ duration: 200 }}>
+            <label
+              for="post-payment-association-select"
+              class="mb-2 flex items-center gap-2 text-[0.7rem] font-bold uppercase tracking-wider text-text-muted"
+            >
+              Encaissement (Stripe)
+            </label>
+            <div class="relative">
+              <span
+                class="pointer-events-none absolute left-3 top-1/2 z-[1] -translate-y-1/2 text-cn-yellow"
+                aria-hidden="true"
+              >
+                <Building2 size={18} strokeWidth={2.2} />
+              </span>
+              <select
+                id="post-payment-association-select"
+                bind:value={selectedPaymentAssociationId}
+                class={selectClass}
+              >
+                <option value="">Aucun compte lié</option>
+                {#each payableAssociations as a (a.id)}
+                  <option value={a.id}>{a.name}</option>
+                {/each}
+              </select>
+              <div class={chevronWrapClass}>
+                <ChevronDown size={18} strokeWidth={2} />
+              </div>
+            </div>
+          </div>
+        {/if}
+      </div>
+    {/if}
+
+    <!-- Zone de saisie -->
+    <div
+      class="rounded-2xl border border-cn-border/50 bg-cn-surface/60 p-1 shadow-inner dark:border-cn-border/50 dark:bg-cn-dark/40"
+    >
+      <textarea
+        bind:value={markdown}
+        placeholder="Votre texte (markdown supporté)…"
+        rows={5}
+        class="custom-scrollbar min-h-[120px] w-full resize-none rounded-xl bg-transparent px-4 py-3.5 text-[1rem] font-medium leading-relaxed text-text-main placeholder:text-text-muted/55 outline-none"
+      ></textarea>
+
+      {#if filePreviews.length > 0}
+        <div
+          class="flex snap-x snap-mandatory gap-2 overflow-x-auto px-3 pb-3 pt-1"
+          transition:slide={{ duration: 200 }}
+          role="list"
+        >
+          {#each filePreviews as src, i (src)}
+            <div
+              class="relative aspect-square w-[88px] shrink-0 snap-start overflow-hidden rounded-xl border border-cn-border/50 shadow-sm sm:w-[100px]"
+              role="listitem"
+            >
+              <img
+                {src}
+                alt=""
+                class="h-full w-full object-cover"
+              />
+              <button
+                type="button"
+                onclick={() => removeFile(i)}
+                class="absolute right-1 top-1 rounded-full bg-black/65 p-1.5 text-white shadow backdrop-blur-sm transition hover:bg-red-500 focus-visible:outline focus-visible:ring-2 focus-visible:ring-red-400"
+                aria-label="Retirer cette image"
+                title="Retirer"
+              >
+                <X size={14} strokeWidth={2.5} />
+              </button>
+            </div>
+          {/each}
+        </div>
       {/if}
     </div>
-  {/if}
+  </div>
 
-  <!-- Zone de Saisie Principale -->
-  <textarea
-    bind:value={markdown}
-    placeholder="Partagez une annonce, un sondage ou un événement avec la communauté…"
-    rows={4}
-    class="w-full resize-none bg-transparent px-2 py-3 text-[1rem] leading-relaxed font-medium text-text-main placeholder:text-text-muted/60 outline-none custom-scrollbar min-h-[100px]"
-  ></textarea>
-
-  <!-- Aperçus d'images -->
-  {#if filePreviews.length > 0}
-    <div
-      class="grid grid-cols-3 sm:grid-cols-4 gap-2 pt-2 pb-4 px-1"
-      transition:slide={{ duration: 200 }}
-    >
-      {#each filePreviews as src, i (src)}
-        <div
-          class="relative aspect-square overflow-hidden rounded-2xl border border-black/5 dark:border-white/10 shadow-sm group"
-        >
-          <img
-            {src}
-            alt="Aperçu de la publication"
-            class="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
-          />
-          <button
-            type="button"
-            onclick={() => removeFile(i)}
-            class="absolute right-1.5 top-1.5 rounded-full bg-black/60 backdrop-blur-md p-1.5 text-white transition-all hover:bg-red-500 hover:scale-110 active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-red-500"
-            aria-label="Supprimer l'image"
-            title="Supprimer"
-          >
-            <X size={14} strokeWidth={2.5} />
-          </button>
-        </div>
-      {/each}
-    </div>
-  {/if}
-
-  <!-- ================= OPTIONS SUPPLÉMENTAIRES (Animées) ================= -->
-  <div class="flex flex-col gap-4 mt-2">
+  <!-- Options + erreur + actions -->
+  <div class="space-y-4 border-t border-cn-border/50 px-4 pb-5 pt-4 sm:px-5">
     <!-- Section Sondage -->
     {#if includePoll}
-      <div
-        transition:slide={{ duration: 300, easing: (t) => t * (2 - t) }}
-        class="rounded-2xl border border-black/5 dark:border-white/10 bg-white/50 dark:bg-black/20 p-5 shadow-sm"
-      >
-        <div class="flex items-center justify-between mb-4">
+      <div transition:slide={{ duration: 300, easing: (t) => t * (2 - t) }} class={optionCardClass}>
+        <div class="mb-4 flex items-center justify-between gap-2">
           <p
-            class="text-[0.75rem] font-bold uppercase tracking-widest text-text-muted flex items-center gap-2"
+            class="flex items-center gap-2 text-[0.75rem] font-bold uppercase tracking-widest text-text-muted"
           >
-            <ChartColumn size={16} strokeWidth={2.5} class="text-amber-500" />
-            Créer un sondage
+            <ChartColumn size={16} strokeWidth={2.5} class={sectionIconClass} />
+            Sondage
           </p>
           <button
+            type="button"
             onclick={() => (includePoll = false)}
-            class="p-1 rounded-full text-text-muted hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+            class="rounded-full p-1.5 text-text-muted transition-colors hover:bg-cn-surface hover:text-text-main"
             title="Retirer le sondage"
           >
             <X size={16} />
@@ -344,18 +380,17 @@
           />
           <Textarea label="Options (une par ligne)" bind:value={pollOptionsRaw} rows={3} />
 
-          <!-- Switch Animé -->
           <label
-            class="flex items-center justify-between cursor-pointer select-none group/toggle bg-black/5 dark:bg-white/5 rounded-xl px-4 py-3 hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
+            class="group/toggle flex cursor-pointer select-none items-center justify-between rounded-xl bg-cn-surface/80 px-4 py-3 transition-colors hover:bg-cn-border/30 dark:bg-white/5 dark:hover:bg-white/10"
           >
-            <span class="text-sm font-semibold text-text-main"> Autoriser plusieurs réponses </span>
+            <span class="text-sm font-semibold text-text-main">Autoriser plusieurs réponses</span>
             <div class="relative flex items-center">
               <input type="checkbox" bind:checked={pollMultipleChoice} class="peer sr-only" />
               <div
-                class="w-11 h-6 bg-black/20 dark:bg-white/20 rounded-full peer-checked:bg-amber-500 shadow-inner transition-colors duration-300"
+                class="h-6 w-11 rounded-full bg-black/15 shadow-inner transition-colors duration-300 peer-checked:bg-cn-yellow dark:bg-white/20"
               ></div>
               <div
-                class="absolute left-1 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-300 peer-checked:translate-x-5"
+                class="absolute left-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-300 peer-checked:translate-x-5"
               ></div>
             </div>
           </label>
@@ -363,61 +398,53 @@
       </div>
     {/if}
 
-    <!-- Section Événement -->
     {#if includeEventButton}
-      <div
-        transition:slide={{ duration: 300, easing: (t) => t * (2 - t) }}
-        class="rounded-2xl border border-black/5 dark:border-white/10 bg-white/50 dark:bg-black/20 p-5 shadow-sm"
-      >
-        <div class="flex items-center justify-between mb-4">
+      <div transition:slide={{ duration: 300, easing: (t) => t * (2 - t) }} class={optionCardClass}>
+        <div class="mb-4 flex items-center justify-between gap-2">
           <p
-            class="text-[0.75rem] font-bold uppercase tracking-widest text-text-muted flex items-center gap-2"
+            class="flex items-center gap-2 text-[0.75rem] font-bold uppercase tracking-widest text-text-muted"
           >
-            <CalendarCheck size={16} strokeWidth={2.5} class="text-amber-500" />
-            Bouton d'Événement
+            <CalendarCheck size={16} strokeWidth={2.5} class={sectionIconClass} />
+            Bouton d’événement
           </p>
           <button
+            type="button"
             onclick={() => (includeEventButton = false)}
-            class="p-1 rounded-full text-text-muted hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
-            title="Retirer l'événement"
+            class="rounded-full p-1.5 text-text-muted transition-colors hover:bg-cn-surface hover:text-text-main"
+            title="Retirer l’événement"
           >
             <X size={16} />
           </button>
         </div>
 
         <div class="space-y-4">
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Input
               label="Libellé du bouton"
               bind:value={eventLabel}
               placeholder="Ex: S'inscrire à l'AgA"
             />
-            <Input
-              label="ID unique de l'événement"
-              bind:value={eventId}
-              placeholder="ex: wei-2026"
-            />
+            <Input label="ID unique de l'événement" bind:value={eventId} placeholder="ex: wei-2026" />
           </div>
 
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 items-end">
+          <div class="grid grid-cols-1 items-end gap-4 sm:grid-cols-2">
             <Input
               type="number"
               label="Capacité max (places)"
               bind:value={eventCapacity as unknown as string}
             />
 
-            <!-- Switch Inscription Payante -->
             <label
-              class="flex items-center justify-between cursor-pointer select-none group/toggle bg-black/5 dark:bg-white/5 rounded-xl px-4 py-3 hover:bg-black/10 dark:hover:bg-white/10 transition-colors h-[46px] sm:mb-[2px]"
+              class="flex h-[46px] cursor-pointer select-none items-center justify-between rounded-xl bg-cn-surface/80 px-4 py-3 transition-colors hover:bg-cn-border/30 dark:bg-white/5 dark:hover:bg-white/10 sm:mb-[2px]"
             >
-              <span class="text-sm font-semibold text-text-main"> Inscription payante </span>
+              <span class="text-sm font-semibold text-text-main">Inscription payante</span>
               <div class="relative flex items-center">
                 <input type="checkbox" bind:checked={eventRequiresPayment} class="peer sr-only" />
                 <div
-                  class="w-11 h-6 bg-black/20 dark:bg-white/20 rounded-full peer-checked:bg-amber-500 shadow-inner transition-colors duration-300"
+                  class="h-6 w-11 rounded-full bg-black/15 shadow-inner transition-colors duration-300 peer-checked:bg-cn-yellow dark:bg-white/20"
                 ></div>
                 <div
-                  class="absolute left-1 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-300 peer-checked:translate-x-5"
+                  class="absolute left-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-300 peer-checked:translate-x-5"
                 ></div>
               </div>
             </label>
@@ -425,7 +452,7 @@
 
           {#if eventRequiresPayment}
             <div
-              class="grid grid-cols-2 gap-4 bg-amber-500/5 p-4 rounded-xl border border-amber-500/20"
+              class="grid grid-cols-2 gap-4 rounded-xl border border-cn-yellow/25 bg-cn-yellow/5 p-4"
               transition:slide={{ duration: 200 }}
             >
               <Input
@@ -439,35 +466,22 @@
           {/if}
 
           {#if availableForms.length > 0}
-            <div class="pt-2">
+            <div class="pt-1">
               <label
                 for="post-event-form-select"
-                class="block text-[0.65rem] font-bold uppercase tracking-wider text-text-muted mb-1.5 ml-1"
+                class="ml-1 mb-1.5 block text-[0.65rem] font-bold uppercase tracking-wider text-text-muted"
               >
-                Lier à un Formulaire (Optionnel)
+                Formulaire lié (optionnel)
               </label>
               <div class="relative">
-                <select
-                  id="post-event-form-select"
-                  bind:value={eventFormId}
-                  class="w-full appearance-none rounded-xl border border-black/10 dark:border-white/10 bg-white/60 dark:bg-black/30 px-4 py-3 text-sm font-medium text-text-main transition-all outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20"
-                >
+                <select id="post-event-form-select" bind:value={eventFormId} class={selectPlainClass}>
                   <option value="">— Aucun —</option>
                   {#each availableForms as form (form.id)}
                     <option value={form.id}>{form.title}</option>
                   {/each}
                 </select>
-                <div
-                  class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-text-muted"
-                >
-                  <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                    ><path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M19 9l-7 7-7-7"
-                    ></path></svg
-                  >
+                <div class={chevronWrapClass}>
+                  <ChevronDown size={18} strokeWidth={2} />
                 </div>
               </div>
             </div>
@@ -476,22 +490,19 @@
       </div>
     {/if}
 
-    <!-- Section Formulaire Seul -->
     {#if includeForm && !includeEventButton}
-      <div
-        transition:slide={{ duration: 300, easing: (t) => t * (2 - t) }}
-        class="rounded-2xl border border-black/5 dark:border-white/10 bg-white/50 dark:bg-black/20 p-5 shadow-sm"
-      >
-        <div class="flex items-center justify-between mb-4">
+      <div transition:slide={{ duration: 300, easing: (t) => t * (2 - t) }} class={optionCardClass}>
+        <div class="mb-4 flex items-center justify-between gap-2">
           <p
-            class="text-[0.75rem] font-bold uppercase tracking-widest text-text-muted flex items-center gap-2"
+            class="flex items-center gap-2 text-[0.75rem] font-bold uppercase tracking-widest text-text-muted"
           >
-            <ClipboardList size={16} strokeWidth={2.5} class="text-amber-500" />
-            Joindre un Formulaire
+            <ClipboardList size={16} strokeWidth={2.5} class={sectionIconClass} />
+            Formulaire
           </p>
           <button
+            type="button"
             onclick={() => (includeForm = false)}
-            class="p-1 rounded-full text-text-muted hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+            class="rounded-full p-1.5 text-text-muted transition-colors hover:bg-cn-surface hover:text-text-main"
             title="Retirer le formulaire"
           >
             <X size={16} />
@@ -499,138 +510,122 @@
         </div>
 
         {#if availableForms.length === 0}
-          <div class="bg-black/5 dark:bg-white/5 rounded-xl p-4 text-center">
+          <div class="rounded-xl bg-cn-surface/60 p-4 text-center dark:bg-white/5">
             <p class="text-sm font-medium text-text-muted">Aucun formulaire disponible.</p>
             <a
               href="/forms/create"
-              class="inline-block mt-2 text-xs font-bold text-amber-600 dark:text-amber-400 hover:underline"
+              class="mt-2 inline-block text-xs font-bold text-cn-yellow hover:underline"
             >
-              Créer un nouveau formulaire
+              Créer un formulaire
             </a>
           </div>
         {:else}
           <div class="relative">
-            <select
-              bind:value={selectedFormId}
-              class="w-full appearance-none rounded-xl border border-black/10 dark:border-white/10 bg-white/60 dark:bg-black/30 px-4 py-3 text-sm font-medium text-text-main transition-all outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20"
-            >
+            <select bind:value={selectedFormId} class={selectPlainClass}>
               <option value="">— Choisir un formulaire —</option>
               {#each availableForms as form (form.id)}
                 <option value={form.id}>{form.title} ({form.items.length} questions)</option>
               {/each}
             </select>
-            <div
-              class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-text-muted"
-            >
-              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                ><path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M19 9l-7 7-7-7"
-                ></path></svg
-              >
+            <div class={chevronWrapClass}>
+              <ChevronDown size={18} strokeWidth={2} />
             </div>
           </div>
         {/if}
       </div>
     {/if}
 
-    <!-- Message d'Erreur -->
     {#if errorMessage}
       <div
         transition:slide={{ duration: 200 }}
-        class="flex items-start gap-3 p-3.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 shadow-inner"
+        class="flex items-start gap-3 rounded-xl border border-red-500/25 bg-red-500/10 p-3.5 text-red-600 shadow-inner dark:text-red-400"
       >
-        <CircleAlert size={18} class="shrink-0 mt-0.5" />
+        <CircleAlert size={18} class="mt-0.5 shrink-0" />
         <span class="text-sm font-bold leading-snug">{errorMessage}</span>
       </div>
     {/if}
-  </div>
 
-  <!-- ================= BARRE D'OUTILS ET BOUTON PUBLIER ================= -->
-  <div
-    class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-t border-black/5 dark:border-white/10 pt-4 mt-2"
-  >
-    <div class="flex items-center gap-1.5 overflow-x-auto custom-scrollbar pb-1 sm:pb-0">
-      <!-- Upload d'images -->
-      <label
-        for={imageInputId}
-        title="Ajouter des images"
-        class="cursor-pointer rounded-xl p-2.5 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 {selectedFiles.length >
-        0
-          ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-          : 'text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-amber-500'}"
+    <!-- Barre d’outils + publier -->
+    <div
+      class="flex flex-col-reverse gap-4 border-t border-cn-border/40 pt-4 sm:flex-row sm:items-center sm:justify-between"
+    >
+      <div
+        class="custom-scrollbar flex flex-wrap items-stretch gap-2 overflow-x-auto rounded-2xl bg-cn-surface/50 p-1.5 ring-1 ring-cn-border/40 dark:bg-black/20"
       >
-        <Image size={20} strokeWidth={selectedFiles.length > 0 ? 2.5 : 2} />
-      </label>
-      <input
-        id={imageInputId}
-        type="file"
-        accept="image/*"
-        multiple
-        onchange={onPickFiles}
-        class="sr-only"
-      />
+        <label
+          for={imageInputId}
+          title="Photos"
+          class="flex cursor-pointer items-center gap-2 rounded-xl px-2.5 py-2 text-text-muted transition-all outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow active:scale-[0.98] sm:px-3 {selectedFiles.length >
+          0
+            ? 'bg-cn-yellow/20 font-semibold text-cn-dark dark:text-cn-yellow'
+            : 'hover:bg-cn-border/40 hover:text-text-main'}"
+        >
+          <Image size={20} strokeWidth={selectedFiles.length > 0 ? 2.5 : 2} />
+          <span class="hidden text-xs font-semibold sm:inline">Photos</span>
+        </label>
+        <input
+          id={imageInputId}
+          type="file"
+          accept="image/*"
+          multiple
+          onchange={onPickFiles}
+          class="sr-only"
+        />
 
-      <!-- Toggle Sondage -->
-      <button
-        type="button"
-        title="Ajouter un sondage"
-        onclick={() => (includePoll = !includePoll)}
-        class="rounded-xl p-2.5 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 {includePoll
-          ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-          : 'text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-amber-500'}"
-      >
-        <ChartColumn size={20} strokeWidth={includePoll ? 2.5 : 2} />
-      </button>
-
-      <!-- Toggle Événement -->
-      <button
-        type="button"
-        title="Ajouter un événement"
-        onclick={() => {
-          includeEventButton = !includeEventButton;
-          if (includeEventButton) includeForm = false;
-        }}
-        class="rounded-xl p-2.5 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 {includeEventButton
-          ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-          : 'text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-amber-500'}"
-      >
-        <CalendarCheck size={20} strokeWidth={includeEventButton ? 2.5 : 2} />
-      </button>
-
-      <!-- Toggle Formulaire (désactivé si événement) -->
-      {#if !includeEventButton}
         <button
           type="button"
-          title="Ajouter un formulaire"
-          onclick={() => (includeForm = !includeForm)}
-          class="rounded-xl p-2.5 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 {includeForm
-            ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-            : 'text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-amber-500'}"
+          title="Sondage"
+          onclick={() => (includePoll = !includePoll)}
+          class="flex items-center gap-2 rounded-xl px-2.5 py-2 text-text-muted transition-all outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow active:scale-[0.98] sm:px-3 {includePoll
+            ? 'bg-cn-yellow/20 font-semibold text-cn-dark dark:text-cn-yellow'
+            : 'hover:bg-cn-border/40 hover:text-text-main'}"
         >
-          <ClipboardList size={20} strokeWidth={includeForm ? 2.5 : 2} />
+          <ChartColumn size={20} strokeWidth={includePoll ? 2.5 : 2} />
+          <span class="hidden text-xs font-semibold sm:inline">Sondage</span>
         </button>
-      {/if}
-    </div>
 
-    <!-- Bouton Publier -->
-    <button
-      type="button"
-      onclick={publishPost}
-      disabled={publishing || (!markdown.trim() && selectedFiles.length === 0)}
-      class="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-500 px-6 py-2.5 text-sm font-extrabold text-[#151B2C] shadow-md shadow-amber-500/20 transition-all hover:bg-amber-400 hover:shadow-lg hover:shadow-amber-500/30 active:scale-95 active:shadow-md disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none w-full sm:w-auto outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50"
-    >
-      {#if publishing}
-        <LoaderCircle size={18} class="animate-spin" strokeWidth={3} />
-        Publication…
-      {:else}
-        Publier
-      {/if}
-    </button>
+        <button
+          type="button"
+          title="Événement"
+          onclick={() => {
+            includeEventButton = !includeEventButton;
+            if (includeEventButton) includeForm = false;
+          }}
+          class="flex items-center gap-2 rounded-xl px-2.5 py-2 text-text-muted transition-all outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow active:scale-[0.98] sm:px-3 {includeEventButton
+            ? 'bg-cn-yellow/20 font-semibold text-cn-dark dark:text-cn-yellow'
+            : 'hover:bg-cn-border/40 hover:text-text-main'}"
+        >
+          <CalendarCheck size={20} strokeWidth={includeEventButton ? 2.5 : 2} />
+          <span class="hidden text-xs font-semibold sm:inline">Événement</span>
+        </button>
+
+        {#if !includeEventButton}
+          <button
+            type="button"
+            title="Formulaire"
+            onclick={() => (includeForm = !includeForm)}
+            class="flex items-center gap-2 rounded-xl px-2.5 py-2 text-text-muted transition-all outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow active:scale-[0.98] sm:px-3 {includeForm
+              ? 'bg-cn-yellow/20 font-semibold text-cn-dark dark:text-cn-yellow'
+              : 'hover:bg-cn-border/40 hover:text-text-main'}"
+          >
+            <ClipboardList size={20} strokeWidth={includeForm ? 2.5 : 2} />
+            <span class="hidden text-xs font-semibold sm:inline">Formulaire</span>
+          </button>
+        {/if}
+      </div>
+
+      <Button
+        type="button"
+        class="min-w-[9rem] shrink-0 px-8 py-2.5 text-sm !font-extrabold sm:w-auto"
+        disabled={publishing || (!markdown.trim() && selectedFiles.length === 0)}
+        loading={publishing}
+        onclick={publishPost}
+      >
+        {publishing ? 'Publication…' : 'Publier'}
+      </Button>
+    </div>
   </div>
-</div>
+</article>
 
 <style>
   .custom-scrollbar::-webkit-scrollbar {

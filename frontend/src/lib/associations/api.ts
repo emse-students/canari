@@ -21,6 +21,8 @@ export interface Association {
   createdBy: string;
   memberCount?: number;
   role?: string;
+  /** 0 = member, 1 = admin (when returned from `/api/associations/me/list`). */
+  permission?: 0 | 1;
   createdAt: string;
   updatedAt: string;
 }

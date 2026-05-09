@@ -42,10 +42,16 @@ export class PostsController {
 
   @UseGuards(NginxAuthGuard)
   @HttpPost()
-  async createPost(@Headers('x-user-id') xUserId: string, @Body() body: CreatePostDto) {
-    // Validate association authorship
+  async createPost(
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') xGlobalAdmin: string | undefined,
+    @Body() body: CreatePostDto
+  ) {
+    // Validate association authorship (association admin, or global admin)
     if (body.associationId) {
-      const canPost = await this.associationsService.canPostAs(xUserId, body.associationId);
+      const canPost = await this.associationsService.canPostAs(xUserId, body.associationId, {
+        isGlobalAdmin: xGlobalAdmin === 'true',
+      });
       if (!canPost) {
         throw new BadRequestException('You need admin or owner role to post as this association');
       }
