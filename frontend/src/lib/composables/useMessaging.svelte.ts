@@ -660,11 +660,7 @@ export function useMessaging() {
             userId: ctx.userId,
             pin: ctx.pin,
             conversation: fresh,
-          })
-            .then((sent) => {
-              if (sent) ctx.playReadTone?.();
-            })
-            .catch(() => {});
+          }).catch(() => {});
         } catch {
           /* MLS not ready */
         }

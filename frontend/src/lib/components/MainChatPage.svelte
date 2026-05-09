@@ -333,11 +333,7 @@
               userId: session.userId,
               pin: session.pin,
               conversation: fresh,
-            })
-              .then((sent) => {
-                if (sent) notifs.playReadTone();
-              })
-              .catch(() => {});
+            }).catch(() => {});
           } catch {
             /* MLS not ready */
           }

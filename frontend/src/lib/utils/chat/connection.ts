@@ -796,7 +796,11 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                     }
                   }
                   if (updated) {
-                    // Ne plus faire conversations.set()
+                    // Déclenche le re-render Svelte pour afficher l'indicateur "Lu".
+                    // Sûr : le $effect de MainChatPage filtre `!m.isOwn`, donc les propres
+                    // messages de l'utilisateur (cibles des read_receipts) ne génèrent pas
+                    // de nouveaux receipts en cascade.
+                    conversations.set(convoKey, c);
                     if (storage) {
                       for (const msgId of msgIds) {
                         const m = c.messages.find((x) => x.id === msgId);
