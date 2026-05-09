@@ -188,11 +188,11 @@ Utilisées lors des Welcomes MLS pour éviter les collisions d'epoch quand plusi
 ### Flux d'envoi d'un message
 
 ```
-POST /api/mls-api/send
+POST /api/mls/send
 { proto, groupId, recipientId, deviceId, senderId, senderDeviceId }
 
 1. Stocke le message dans Redis Stream history:{groupId}
-   (TTL configurable, utilisé par GET /api/history/:groupId)
+   (TTL configurable, utilisé par GET /api/mls/history/:groupId)
 
 2. Récupère les membres du groupe dans dm_group_members
 

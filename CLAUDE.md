@@ -69,8 +69,8 @@ cargo test
 |-------|----------|------|-------|
 | `/api/ws` | chat-gateway:3000 | ✅ | WebSocket upgrade |
 | `/api/presence` | chat-gateway:3000 | ✅ | Online presence |
-| `/api/mls-api/*` | chat-delivery:3010 | ✅ | MLS API (messages, groups, sync) |
-| `/api/history/*` | chat-delivery:3010 | ✅ | Message history (Redis Stream) |
+| `/api/mls/*` | chat-delivery:3010 | ✅ | MLS API, device sync, push, Redis history at `/api/mls/history/*` |
+| `/api/chat-delivery-health` | chat-delivery:3010 | ❌ | Liveness probe only → `GET /api/health` (no JWT) |
 | `/api/media/*` | media-service:3011 | ✅ | Encrypted blob storage |
 | `/api/posts/*` | social-service:3014 | ✅ | Posts, polls, reactions |
 | `/api/forms/*` | social-service:3014 | ✅ | Forms with payments |
@@ -109,7 +109,7 @@ cargo test
 ### MLS Protocol
 
 - All encryption/decryption happens in WASM (openmls)
-- Server stores only encrypted blobs (`/api/mls-api/send`)
+- Server stores only encrypted blobs (`/api/mls/send`)
 - Keys derived per epoch; forward secrecy via MLS epoch transitions
 - Device sync uses ECDH key exchange (SyncEngine)
 

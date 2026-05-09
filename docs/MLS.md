@@ -88,58 +88,58 @@ All routes require `X-User-Id` header (injected by Nginx auth_request) unless no
 ### Device management
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/mls-api/register-device` | Register static key package |
-| POST | `/api/mls-api/register-device/prekeys` | Bulk-upload one-time prekeys |
-| GET | `/api/mls-api/devices/:userId` | Fetch all devices for a user |
-| DELETE | `/api/mls-api/devices/:userId/:deviceId` | Delete a device (all memberships + KPs) |
-| PATCH | `/api/mls-api/devices/:userId/:deviceId/metadata` | Update device name/OS/version |
-| GET | `/api/mls-api/devices/:userId/:deviceId/prekeys/count` | Count remaining OTKPs |
-| DELETE | `/api/mls-api/devices/:userId/:deviceId/prekeys` | Purge all OTKPs for device |
+| POST | `/api/mls/register-device` | Register static key package |
+| POST | `/api/mls/register-device/prekeys` | Bulk-upload one-time prekeys |
+| GET | `/api/mls/devices/:userId` | Fetch all devices for a user |
+| DELETE | `/api/mls/devices/:userId/:deviceId` | Delete a device (all memberships + KPs) |
+| PATCH | `/api/mls/devices/:userId/:deviceId/metadata` | Update device name/OS/version |
+| GET | `/api/mls/devices/:userId/:deviceId/prekeys/count` | Count remaining OTKPs |
+| DELETE | `/api/mls/devices/:userId/:deviceId/prekeys` | Purge all OTKPs for device |
 
 ### Group management
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/mls-api/groups` | Create group |
-| GET | `/api/mls-api/groups/:groupId` | Get group metadata |
-| PATCH | `/api/mls-api/groups/:groupId` | Rename group |
-| DELETE | `/api/mls-api/groups/:groupId` | Delete group |
-| POST | `/api/mls-api/groups/:groupId/members` | Register user as member |
-| GET | `/api/mls-api/groups/:groupId/members` | List group members |
-| DELETE | `/api/mls-api/groups/:groupId/members/:userId` | Remove member |
-| POST | `/api/mls-api/groups/:groupId/reset` | Trigger group_reset broadcast |
-| POST | `/api/mls-api/groups/:groupId/reset-epoch` | Reset epoch counter |
-| GET | `/api/mls-api/user-groups/:userId` | List all groups for a user |
+| POST | `/api/mls/groups` | Create group |
+| GET | `/api/mls/groups/:groupId` | Get group metadata |
+| PATCH | `/api/mls/groups/:groupId` | Rename group |
+| DELETE | `/api/mls/groups/:groupId` | Delete group |
+| POST | `/api/mls/groups/:groupId/members` | Register user as member |
+| GET | `/api/mls/groups/:groupId/members` | List group members |
+| DELETE | `/api/mls/groups/:groupId/members/:userId` | Remove member |
+| POST | `/api/mls/groups/:groupId/reset` | Trigger group_reset broadcast |
+| POST | `/api/mls/groups/:groupId/reset-epoch` | Reset epoch counter |
+| GET | `/api/mls/users/:userId/groups` | List all groups for a user |
 
 ### Messaging
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/mls-api/send` | Send encrypted message/commit |
-| POST | `/api/mls-api/welcome` | Deliver Welcome to device |
-| GET | `/api/mls-api/messages/:userId/:deviceId` | Fetch pending messages |
-| POST | `/api/mls-api/messages/ack` | Acknowledge messages |
-| POST | `/api/mls-api/commit` | Validate commit epoch |
+| POST | `/api/mls/send` | Send encrypted message/commit |
+| POST | `/api/mls/welcome` | Deliver Welcome to device |
+| GET | `/api/mls/messages/:userId/:deviceId` | Fetch pending messages |
+| POST | `/api/mls/messages/ack` | Acknowledge messages |
+| POST | `/api/mls/commit` | Validate commit epoch |
 
 ### Device sync / invitation
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/mls-api/invitation-status` | Upsert DeviceGroupMembership |
-| GET | `/api/mls-api/pending-invitations/:userId/:deviceId` | Invitations to process |
-| GET | `/api/mls-api/device-memberships/:userId/:deviceId` | All memberships for device |
-| DELETE | `/api/mls-api/device-memberships/:userId/:deviceId/:groupId` | Delete one membership |
-| DELETE | `/api/mls-api/device-memberships/:userId/:deviceId` | Delete all memberships |
-| POST | `/api/mls-api/kick-stale-device` | Kick stale leaf from group |
-| POST | `/api/mls-api/reinvite-request` | Broadcast reinvite_request signal |
-| POST | `/api/mls-api/welcome-request` | Broadcast welcome_request signal |
-| POST | `/api/mls-api/add-lock` | Acquire distributed add-lock |
-| DELETE | `/api/mls-api/add-lock` | Release add-lock |
+| POST | `/api/mls/invitations/status` | Upsert DeviceGroupMembership |
+| GET | `/api/mls/invitations/pending/:userId/:deviceId` | Invitations to process |
+| GET | `/api/mls/device-memberships/:userId/:deviceId` | All memberships for device |
+| DELETE | `/api/mls/device-memberships/:userId/:deviceId/:groupId` | Delete one membership |
+| DELETE | `/api/mls/device-memberships/:userId/:deviceId` | Delete all memberships |
+| POST | `/api/mls/kick-stale-device` | Kick stale leaf from group |
+| POST | `/api/mls/reinvite-request` | Broadcast reinvite_request signal |
+| POST | `/api/mls/welcome-request` | Broadcast welcome_request signal |
+| POST | `/api/mls/add-lock` | Acquire distributed add-lock |
+| DELETE | `/api/mls/add-lock` | Release add-lock |
 
 ### Auth / misc
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/mls-api/pin-verifier/check` | Validate/register PIN verifier |
-| POST | `/api/mls-api/push-token` | Register FCM push token |
-| DELETE | `/api/mls-api/push-token/:deviceId` | Deregister push token |
-| GET | `/api/history/:groupId` | Redis Stream history (incremental) |
+| POST | `/api/mls/security/pin-check` | Validate/register PIN verifier |
+| POST | `/api/mls/push/register` | Register FCM push token |
+| DELETE | `/api/mls/push/unregister/:deviceId` | Deregister push token |
+| GET | `/api/mls/history/:groupId` | Redis Stream history (incremental) |
 
 ---
 
@@ -153,8 +153,8 @@ All routes require `X-User-Id` header (injected by Nginx auth_request) unless no
    - `freshStart = true` → DELETE stale OTKPs from server
    - Generate fresh static KP + pool of 50 OTKPs (web) / 200 (Tauri)
    - Save WASM state to IndexedDB
-   - POST `/api/mls-api/register-device` (static KP)
-   - POST `/api/mls-api/register-device/prekeys` (pool)
+   - POST `/api/mls/register-device` (static KP)
+   - POST `/api/mls/register-device/prekeys` (pool)
 4. `initializeConnection()`:
    - Open WebSocket
    - `fetchPendingMessages()` → process any queued Welcomes/commits via `enqueueMessage`
@@ -168,9 +168,9 @@ All routes require `X-User-Id` header (injected by Nginx auth_request) unless no
 2. Creator: `createGroup(groupId)` in WASM
 3. Creator: `fetchUserDevices(peerId)` → get peer's key packages
 4. Creator: `addMembersBulk(groupId, devices)` → WASM returns `(commit, welcome, ratchetTree)`
-5. Creator: `sendCommit(commit, groupId)` → POST `/api/mls-api/commit` + `/api/mls-api/send`
-6. Creator: `sendWelcome(welcome, peerId, groupId, deviceId, ratchetTree)` → POST `/api/mls-api/welcome`
-7. Creator: `registerMember(groupId, peerId)` + `registerMember(groupId, userId)` → POST `/api/mls-api/groups/:id/members`
+5. Creator: `sendCommit(commit, groupId)` → POST `/api/mls/commit` + `/api/mls/send`
+6. Creator: `sendWelcome(welcome, peerId, groupId, deviceId, ratchetTree)` → POST `/api/mls/welcome`
+7. Creator: `registerMember(groupId, peerId)` + `registerMember(groupId, userId)` → POST `/api/mls/groups/:id/members`
 8. Peer: Welcome arrives via WS or pending queue → `processWelcome(bytes, ratchetTree)` → group joined in WASM
 9. Peer: `registerMember(groupId, userId)` + `updateInvitationStatus(..., 'welcome_received')`
 10. Peer: `saveState(pin)` → persisted to IndexedDB
@@ -179,7 +179,7 @@ All routes require `X-User-Id` header (injected by Nginx auth_request) unless no
 
 1. `sendChatMessage()` in messaging.ts
 2. Optimistic UI: message added with `status: 'sending'`
-3. `mlsService.sendMessage(groupId, appMessageBytes)` → WASM encrypts → POST `/api/mls-api/send`
+3. `mlsService.sendMessage(groupId, appMessageBytes)` → WASM encrypts → POST `/api/mls/send`
 4. Gateway broadcasts to all group members' WebSocket connections
 5. On success: message status patched to `'sent'`; on error: `'error'`
 
@@ -224,7 +224,7 @@ After `sendReinviteRequest()`: an online peer receives `reinvite_request` → ki
 
 When no automatic recovery is possible (e.g. all devices diverged):
 
-1. Any device calls `mlsService.sendGroupReset(groupId)` → POST `/api/mls-api/groups/:id/reset`
+1. Any device calls `mlsService.sendGroupReset(groupId)` → POST `/api/mls/groups/:id/reset`
 2. Server resets all `DeviceGroupMembership` to `pending`, resets epoch
 3. Server broadcasts `group_reset` WS event to all group members
 4. Each client: `forgetGroup(groupId)` + marks conversation `isReady: false`
@@ -287,7 +287,7 @@ enqueueMessage()              enqueueMessage()
 ### One-time key packages (OTKP / prekeys)
 - Pool of 50 (web) / 200 (Tauri) replenished on connect
 - Atomically consumed by inviting devices
-- **On fresh start** (no saved MLS state): old OTKPs have no matching private keys → purged via `DELETE /api/mls-api/devices/:userId/:deviceId/prekeys` before new ones are published
+- **On fresh start** (no saved MLS state): old OTKPs have no matching private keys → purged via `DELETE /api/mls/devices/:userId/:deviceId/prekeys` before new ones are published
 
 ---
 
@@ -307,7 +307,7 @@ If the saved WASM/Rust state embeds a different device ID than what's in localSt
 `replayConversationHistory()` in `history.ts`:
 
 1. Load `lastStreamId` from localStorage (incremental — avoids re-processing consumed ratchet keys)
-2. Fetch Redis Stream from `/api/history/:groupId?after=<streamId>`
+2. Fetch Redis Stream from `/api/mls/history/:groupId?after=<streamId>`
 3. For each message: DJB2 hash of `(timestamp, content)` for deduplication
 4. `processIncomingMessage()` → decrypt → dispatch (text, reply, media, reaction, system events)
 5. Irrecoverable errors (`CannotDecryptOwnMessage`, `WrongEpoch`, `SecretReuseError`) → add to seen hashes → skip

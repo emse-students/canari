@@ -285,7 +285,7 @@ export async function getSyncSessionState(
 }> {
   const qs = new URLSearchParams({ userId: payload.userId });
   const response = await fetch(
-    `${historyBaseUrl}/api/mls-api/sync/session/${encodeURIComponent(payload.sessionId)}?${qs.toString()}`,
+    `${historyBaseUrl}/api/mls/sync/session/${encodeURIComponent(payload.sessionId)}?${qs.toString()}`,
     { method: 'GET', headers: withAuthHeaders() }
   );
   if (!response.ok) {
@@ -322,17 +322,14 @@ export async function startSyncSession(
   historyBaseUrl: string,
   req: SyncStartSessionRequest
 ): Promise<SyncStartSessionResponse> {
-  return postJson<SyncStartSessionResponse>(
-    `${historyBaseUrl}/api/mls-api/sync/session/start`,
-    req
-  );
+  return postJson<SyncStartSessionResponse>(`${historyBaseUrl}/api/mls/sync/session/start`, req);
 }
 
 export async function joinSyncSession(
   historyBaseUrl: string,
   req: SyncJoinSessionRequest
 ): Promise<{ state: 'joined'; offerDeviceId: string; offerPublicKey: string; expiresAt: number }> {
-  return postJson(`${historyBaseUrl}/api/mls-api/sync/session/join`, req);
+  return postJson(`${historyBaseUrl}/api/mls/sync/session/join`, req);
 }
 
 export async function uploadSyncManifest(
@@ -344,21 +341,21 @@ export async function uploadSyncManifest(
     manifest: SyncManifestPayload;
   }
 ): Promise<{ status: string; conversations: number; generatedAt: number }> {
-  return postJson(`${historyBaseUrl}/api/mls-api/sync/session/manifest`, payload);
+  return postJson(`${historyBaseUrl}/api/mls/sync/session/manifest`, payload);
 }
 
 export async function requestSyncDiff(
   historyBaseUrl: string,
   payload: { sessionId: string; userId: string; deviceId: string }
 ): Promise<SyncDiffResponse> {
-  return postJson<SyncDiffResponse>(`${historyBaseUrl}/api/mls-api/sync/session/diff`, payload);
+  return postJson<SyncDiffResponse>(`${historyBaseUrl}/api/mls/sync/session/diff`, payload);
 }
 
 export async function uploadSyncChunks(
   historyBaseUrl: string,
   payload: UploadSyncChunksRequest
 ): Promise<{ status: string; chunkCount: number; rowCount: number }> {
-  return postJson(`${historyBaseUrl}/api/mls-api/sync/session/chunks/upload`, payload);
+  return postJson(`${historyBaseUrl}/api/mls/sync/session/chunks/upload`, payload);
 }
 
 export async function pullSyncChunks(
@@ -376,7 +373,7 @@ export async function pullSyncChunks(
     fromDeviceId: payload.fromDeviceId,
   });
   const response = await fetch(
-    `${historyBaseUrl}/api/mls-api/sync/session/${encodeURIComponent(payload.sessionId)}/chunks/pull?${qs.toString()}`,
+    `${historyBaseUrl}/api/mls/sync/session/${encodeURIComponent(payload.sessionId)}/chunks/pull?${qs.toString()}`,
     { method: 'GET', headers: withAuthHeaders() }
   );
   if (!response.ok) {

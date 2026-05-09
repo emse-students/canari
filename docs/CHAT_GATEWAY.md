@@ -138,7 +138,7 @@ Le gateway subscribe en permanence à deux canaux Redis au démarrage.
 
 ### Canal `chat:messages`
 
-Producteur : `chat-delivery-service` (à chaque `POST /api/mls-api/send`)
+Producteur : `chat-delivery-service` (à chaque `POST /api/mls/send`)
 
 Format :
 
@@ -196,7 +196,7 @@ Pour chaque userId dans userIds :
 | `GET` | `/api/presence` | Récupère l'état de présence des utilisateurs |
 | `GET` | `/api/health` | Health check du service |
 
-> **Note**: Les routes `/api/groups` mentionnées dans les versions précédentes ne sont pas implémentées. La gestion des groupes se fait via le chat-delivery-service (`/api/mls-api/groups/*`).
+> **Note**: Les routes `/api/groups` mentionnées dans les versions précédentes ne sont pas implémentées. La gestion des groupes se fait via le chat-delivery-service (`/api/mls/groups/*`).
 
 ---
 

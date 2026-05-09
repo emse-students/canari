@@ -9,7 +9,7 @@ Internet (HTTPS)
               └── Nginx:80 (conteneur frontend, port host 8080→80)
                     ├── auth_request → core-service:3012/api/auth/verify
                     ├── /api/ws         → chat-gateway:3000
-                    ├── /api/mls-api/*  → chat-delivery-service:3010
+                    ├── /api/mls/*  → chat-delivery-service:3010
                     ├── /api/media/*    → media-service:3011
                     ├── /api/auth/*     → core-service:3012
                     ├── /api/channels/* → social-service:3014

@@ -137,7 +137,7 @@ export async function startPushService(
 
   const registerOnce = async (): Promise<boolean> => {
     return await registerPushToken(async (pushToken) => {
-      const response = await fetch(`${apiBaseUrl}/api/mls-api/push/register`, {
+      const response = await fetch(`${apiBaseUrl}/api/mls/push/register`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -194,7 +194,7 @@ export async function stopPushService(
 
   try {
     const response = await fetch(
-      `${apiBaseUrl}/api/mls-api/push/unregister/${encodeURIComponent(deviceId)}`,
+      `${apiBaseUrl}/api/mls/push/unregister/${encodeURIComponent(deviceId)}`,
       {
         method: 'DELETE',
         headers: {

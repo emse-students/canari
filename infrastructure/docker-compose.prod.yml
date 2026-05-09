@@ -123,6 +123,18 @@ services:
         condition: service_healthy
       mongo:
         condition: service_started
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:'+(process.env.PORT||3010)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 50s
 
   # ─────────────────────────────────────────────────────
   # MinIO – S3-compatible object storage for encrypted media blobs

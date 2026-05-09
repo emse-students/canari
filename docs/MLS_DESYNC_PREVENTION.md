@@ -8,19 +8,19 @@ Run `npm run test -- --run src/lib/services/desyncPrevention.contract.test.ts` i
 
 ### 1. Server — epoch-gated commits
 
-- **`POST mls-api/commit`** — `baseEpoch` must match the group row **`activeEpoch`** (except fast-forward when `activeEpoch === 0`). A **Redis lock** (`mls:commitlock:{groupId}`) serializes concurrent validators so two devices cannot both advance from the same epoch. On success, **`activeEpoch ← baseEpoch + 1`**. Rejects: **`epoch_mismatch`**, **`concurrent_commit`**. Guard: **`HeaderAuthGuard`**. Source: `app.controller.ts` → `validateCommit`.
+- **`POST /api/mls/commit`** — `baseEpoch` must match the group row **`activeEpoch`** (except fast-forward when `activeEpoch === 0`). A **Redis lock** (`mls:commitlock:{groupId}`) serializes concurrent validators so two devices cannot both advance from the same epoch. On success, **`activeEpoch ← baseEpoch + 1`**. Rejects: **`epoch_mismatch`**, **`concurrent_commit`**. Guard: **`HeaderAuthGuard`**. Source: `app.controller.ts` → `validateCommit`.
 
-- **`POST mls-api/groups/:groupId/reset-epoch`** — Sets **`activeEpoch` to 0** when replacing MLS state for the same server `groupId` (re-bootstrap). Guard: **`HeaderAuthGuard`**.
+- **`POST /api/mls/groups/:groupId/reset-epoch`** — Sets **`activeEpoch` to 0** when replacing MLS state for the same server `groupId` (re-bootstrap). Guard: **`HeaderAuthGuard`**.
 
 ### 2. Server — coordinated reset and bootstrap
 
-- **`POST mls-api/groups/:groupId/reset`** (**group_reset**) — Sets memberships to **pending**, **`activeEpoch = 0`**, clears Redis **`group:members`**, notifies clients (WebSocket + queued offline rows). Prevents forked MLS sessions from diverging without a shared line in the sand. Guard: **`HeaderAuthGuard`**.
+- **`POST /api/mls/groups/:groupId/reset`** (**group_reset**) — Sets memberships to **pending**, **`activeEpoch = 0`**, clears Redis **`group:members`**, notifies clients (WebSocket + queued offline rows). Prevents forked MLS sessions from diverging without a shared line in the sand. Guard: **`HeaderAuthGuard`**.
 
-- **`POST mls-api/groups/:groupId/claim-bootstrap`** / **`GET .../bootstrap-info`** — **Optimistic lock** on **`bootstrapVersion`** so only one device wins re-creation of a group. Guard: **`HeaderAuthGuard`**.
+- **`POST /api/mls/groups/:groupId/claim-bootstrap`** / **`GET .../bootstrap-info`** — **Optimistic lock** on **`bootstrapVersion`** so only one device wins re-creation of a group. Guard: **`HeaderAuthGuard`**.
 
 ### 3. Server — add-member races
 
-- **`POST/DELETE mls-api/add-lock`** — Redis lock **`mls:addlock:{groupId}`** so only one inviter runs **add member + Welcome** at a time for that group. Used from **`processPendingInvitations`** and discovery re-bootstrap. Guard: **`HeaderAuthGuard`**.
+- **`POST/DELETE /api/mls/add-lock`** — Redis lock **`mls:addlock:{groupId}`** so only one inviter runs **add member + Welcome** at a time for that group. Used from **`processPendingInvitations`** and discovery re-bootstrap. Guard: **`HeaderAuthGuard`**.
 
 ### 4. Client — same `baseEpoch` on Web and Tauri
 

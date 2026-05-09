@@ -25,7 +25,7 @@ Au lancement Android :
 3. Le service FCM Android écrit aussi le token dans `fcm_token.txt` lors de `onNewToken()`.
 4. Au login chat, le frontend appelle `startPushService()`.
 5. `startPushService()` lit le token via la commande Tauri `get_fcm_token`.
-6. Le frontend envoie ensuite `POST /api/mls-api/push/register` avec `{ token, deviceId, platform }`.
+6. Le frontend envoie ensuite `POST /api/mls/push/register` avec `{ token, deviceId, platform }`.
 
 Le token est enregistré dans la table `push_tokens` du `chat-delivery-service`.
 
@@ -49,7 +49,7 @@ Le service FCM Android s'appuie sur ces fichiers pour récupérer et déchiffrer
 
 ## 2.3 Décision backend : temps réel ou push
 
-Quand `POST /api/mls-api/send` est appelé :
+Quand `POST /api/mls/send` est appelé :
 
 1. Le backend persiste d'abord tous les messages dans `queued_message`.
 2. Pour chaque destinataire device, il teste la présence Redis :
@@ -86,7 +86,7 @@ Le service `CanariFirebaseMessagingService` :
 1. reçoit le payload data-only
 2. lit `push_context.json`
 3. lit `mls.bin`
-4. appelle `GET /api/mls-api/messages/:userId/:deviceId`
+4. appelle `GET /api/mls/messages/:userId/:deviceId`
 5. retrouve le message par `queuedMessageId`
 6. appelle `nativeDecryptMessage(...)` côté Rust/JNI
 7. extrait un texte utilisateur si possible
@@ -157,7 +157,7 @@ Conclusion : iOS ne doit pas être considéré fonctionnel aujourd'hui pour les 
 
 ## 4.1 Le backend cible maintenant le device offline concerné
 
-Dans `POST /api/mls-api/send`, quand un device destinataire est offline, le backend cherche désormais le token avec :
+Dans `POST /api/mls/send`, quand un device destinataire est offline, le backend cherche désormais le token avec :
 
 - `userId = recipientId`
 - `deviceId = queued.deviceId`
@@ -222,7 +222,7 @@ Symptôme :
 Le flux dépend de :
 
 - récupération du token Android
-- appel `POST /api/mls-api/push/register`
+- appel `POST /api/mls/push/register`
 
 Si l'un des deux échoue, la table `push_tokens` reste vide.
 
@@ -267,7 +267,7 @@ Causes fréquentes :
 - `mls.bin` absent
 - PIN obsolète
 - message déjà ACKé ou introuvable dans `queued_message`
-- erreur réseau lors de `GET /api/mls-api/messages/:userId/:deviceId`
+- erreur réseau lors de `GET /api/mls/messages/:userId/:deviceId`
 
 Symptôme :
 
@@ -308,7 +308,7 @@ Améliorations utiles :
 
 ## 6.5 Mieux découpler la push du fetch anonyme de messages
 
-Le service Android récupère actuellement les messages via `GET /api/mls-api/messages/:userId/:deviceId` sans auth explicite.
+Le service Android récupère actuellement les messages via `GET /api/mls/messages/:userId/:deviceId` sans auth explicite.
 
 Deux options plus propres :
 

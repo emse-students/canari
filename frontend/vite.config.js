@@ -93,29 +93,16 @@ export default defineConfig(async () => ({
         }
       : undefined,
     proxy: {
-      // Proxy the delivery-service API so VITE_DELIVERY_URL is not needed in local dev.
-      // Requests to /mls-api/* and /history/* are forwarded to the NestJS service.
-      '/mls-api': {
-        target: 'http://localhost:3010',
-        changeOrigin: true,
-        rewrite: (/** @type {string} */ path) => `/api${path}`,
-        headers: { 'x-user-logged-in': 'true' },
-      },
-      '/history': {
-        target: 'http://localhost:3010',
-        changeOrigin: true,
-        rewrite: (/** @type {string} */ path) => `/api${path}`,
-        headers: { 'x-user-logged-in': 'true' },
-      },
-      '/api/mls-api': {
+      // Proxy chat-delivery MLS API so VITE_DELIVERY_URL is not needed in local dev.
+      '/api/mls/': {
         target: 'http://localhost:3010',
         changeOrigin: true,
         headers: { 'x-user-logged-in': 'true' },
       },
-      '/api/history': {
+      '/api/chat-delivery-health': {
         target: 'http://localhost:3010',
         changeOrigin: true,
-        headers: { 'x-user-logged-in': 'true' },
+        rewrite: () => '/api/health',
       },
       '/api/channels': {
         target: 'http://localhost:3014',

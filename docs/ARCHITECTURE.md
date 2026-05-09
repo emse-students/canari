@@ -37,8 +37,7 @@ Nginx est l'unique entrée HTTP. Il implémente l'authentification via le sous-m
 |---|---|---|---|
 | `/api/ws` | `chat-gateway:3000` | ✅ | WebSocket upgrade, token cookie |
 | `/api/presence` | `chat-gateway:3000` | ✅ | Présence en ligne (Redis) |
-| `/api/mls-api/*` | `chat-delivery-service:3010` | ✅ | API MLS principal (messages, groupes, sync) |
-| `/api/history/*` | `chat-delivery-service:3010` | ✅ | Redis Stream historique |
+| `/api/mls/*` | `chat-delivery-service:3010` | ✅ | MLS (messages, groupes, sync, push, historique Redis sous `/api/mls/history/*`) |
 | `/api/media/*` | `media-service:3011` | ✅ | Blobs chiffrés (MinIO) |
 | `/api/posts/*` | `social-service:3014` | ✅ | Fil d'actualités |
 | `/api/forms/*` | `social-service:3014` | ✅ | Formulaires avec paiements |
@@ -48,7 +47,7 @@ Nginx est l'unique entrée HTTP. Il implémente l'authentification via le sous-m
 | `/api/users/*` | `core-service:3012` | ✅ | Profils utilisateurs, recherche |
 | `/api/payments/*` | `core-service:3012` | ✅ | Stripe (checkout, webhooks) |
 
-> **Note**: La route `/api/groups` a été supprimée. La gestion des groupes est maintenant via `/api/mls-api/*` (chat-delivery-service).
+> **Note**: La route `/api/groups` a été supprimée. La gestion des groupes est maintenant via `/api/mls/*` (chat-delivery-service).
 
 **Headers réinjectés par Nginx** après `auth_request` réussi :
 
@@ -121,7 +120,7 @@ Nginx est l'unique entrée HTTP. Il implémente l'authentification via le sous-m
    WasmMlsClient.send_message(groupId, plaintext)
    → ciphertext MLS (AES-128-GCM, epoch courant)
 
-2. Frontend → HTTP POST /api/mls-api/send
+2. Frontend → HTTP POST /api/mls/send
    { proto: base64(ciphertext), groupId, recipientId, deviceId }
 
 3. chat-delivery-service
@@ -138,19 +137,19 @@ Nginx est l'unique entrée HTTP. Il implémente l'authentification via le sous-m
    processIncomingMessage(groupId, bytes) → plaintext AppMessage → UI
 ```
 
-**Offline** : le client appelle `GET /api/mls-api/messages/:groupId` à la reconnexion et rejoue les messages en file séquentielle.
+**Offline** : le client appelle `GET /api/mls/messages/:userId/:deviceId` à la reconnexion et rejoue les messages en file séquentielle.
 
 ---
 
 ## 7. Flux de création d'un groupe MLS
 
 ```
-1. GET /api/mls-api/{userId}/devices  → liste des KeyPackages du contact
-2. POST /api/mls-api/groups { groupId, createdBy, members[], isGroup }
+1. GET /api/mls/devices/:userId  → liste des devices / KeyPackages du contact
+2. POST /api/mls/groups { groupId, createdBy, members[], isGroup }
 3. mls.createGroup(groupId)           → epoch 0 côté initiateur
 4. mls.addMembersBulk(devices)        → { commit, welcome, ratchetTree }
-5. POST /api/mls-api/welcome          → stockage offline pour chaque device
-6. POST /api/mls-api/send (commit)    → diffusé via Redis aux membres online
+5. POST /api/mls/welcome          → stockage offline pour chaque device
+6. POST /api/mls/send (commit)    → diffusé via Redis aux membres online
 7. Si multi-device (propres appareils): répéter 4-6
 ```
 
@@ -224,7 +223,7 @@ Internet
         └── Cloudflare Tunnel → http://localhost:8080
               └── Nginx:80 (conteneur frontend)
                     ├── /api/ws         → chat-gateway:3000
-                    ├── /api/mls-api/*  → chat-delivery-service:3010
+                    ├── /api/mls/*  → chat-delivery-service:3010
                     ├── /api/media/*    → media-service:3011
                     ├── /api/auth/*     → core-service:3012
                     ├── /api/channels/* → social-service:3014

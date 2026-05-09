@@ -48,7 +48,7 @@
       isLoading = true;
       try {
         const baseUrl = import.meta.env.VITE_DELIVERY_URL?.trim() || window.location.origin;
-        const endpoint = `${baseUrl}/api/mls-api/link-preview?url=${encodeURIComponent(targetHref)}`;
+        const endpoint = `${baseUrl}/api/mls/link-preview?url=${encodeURIComponent(targetHref)}`;
         const res = await fetch(endpoint);
 
         if (!res.ok) return;

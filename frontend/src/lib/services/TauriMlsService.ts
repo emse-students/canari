@@ -112,7 +112,7 @@ export class TauriMlsService implements IMlsService {
   // chaque message (Chantier 3) sans redemander le PIN à l'utilisateur.
   private _pin = '';
   // Dernier ID de stream Redis connu par groupe (format "timestamp-seq").
-  // Utilisé pour GET /api/history/{groupId}?after={id} lors du gap fetching.
+  // Utilisé pour GET /api/mls/history/{groupId}?after={id} lors du gap fetching.
   private _lastHistoryId = new Map<string, string>();
   // Nombre de tentatives de gap recovery par groupe (réinitialisé après succès).
   private _gapAttempts = new Map<string, number>();
@@ -151,7 +151,7 @@ export class TauriMlsService implements IMlsService {
    * unloaded, so ack/signal calls are never dropped.
    */
   private async deliveryPost(path: string, body: Record<string, unknown>): Promise<void> {
-    await fetch(`${this.historyUrl}/api/mls-api/${path}`, {
+    await fetch(`${this.historyUrl}/api/mls/${path}`, {
       method: 'POST',
       headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(body),
@@ -352,7 +352,7 @@ export class TauriMlsService implements IMlsService {
       const ctrl2 = new AbortController();
       const tid2 = setTimeout(() => ctrl2.abort(), FETCH_TIMEOUT);
       const res = await fetch(
-        `${this.historyUrl}/api/mls-api/messages/${this.userId}/${this.deviceId}`,
+        `${this.historyUrl}/api/mls/messages/${this.userId}/${this.deviceId}`,
         { headers: await this.withAuthHeaders(), signal: ctrl2.signal }
       );
       clearTimeout(tid2);
@@ -715,7 +715,7 @@ export class TauriMlsService implements IMlsService {
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
         const after = this._lastHistoryId.get(groupId) ?? null;
-        const url = new URL(`${this.historyUrl}/api/history/${encodeURIComponent(groupId)}`);
+        const url = new URL(`${this.historyUrl}/api/mls/history/${encodeURIComponent(groupId)}`);
         if (after) url.searchParams.set('after', after);
 
         const res = await fetch(url.toString(), {
@@ -866,7 +866,7 @@ export class TauriMlsService implements IMlsService {
     let expectedVersion = 0;
     try {
       const groupRes = await fetch(
-        `${this.historyUrl}/api/mls-api/groups/${conversationId}/bootstrap-info`,
+        `${this.historyUrl}/api/mls/groups/${conversationId}/bootstrap-info`,
         { headers: await this.withAuthHeaders() }
       );
       if (groupRes.ok) {
@@ -974,7 +974,7 @@ export class TauriMlsService implements IMlsService {
     // Do NOT include triggeredBy: user IDs may contain characters (e.g. '+' in
     // email addresses) that fail the server-side sanitizeQueryValue regex, which
     // would return 400 and silently abort the entire re-bootstrap.
-    const res = await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}/reset`, {
+    const res = await fetch(`${this.historyUrl}/api/mls/groups/${groupId}/reset`, {
       method: 'POST',
       headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ reason }),
@@ -1010,7 +1010,7 @@ export class TauriMlsService implements IMlsService {
     }>
   > {
     try {
-      const res = await fetch(`${this.historyUrl}/api/mls-api/devices/${userId}`, {
+      const res = await fetch(`${this.historyUrl}/api/mls/devices/${userId}`, {
         headers: await this.withAuthHeaders(),
       });
       if (!res.ok) return [];
@@ -1038,7 +1038,7 @@ export class TauriMlsService implements IMlsService {
 
   async registerMember(groupId: string, userId: string): Promise<void> {
     try {
-      await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}/members`, {
+      await fetch(`${this.historyUrl}/api/mls/groups/${groupId}/members`, {
         method: 'POST',
         headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ userId }),
@@ -1054,7 +1054,7 @@ export class TauriMlsService implements IMlsService {
       localStorage.getItem(`device-name:${this.userId}:${this.deviceId}`) || undefined;
     const deviceOs = this.detectRuntimeDeviceOs();
     const deviceAppVersion = await this.getRuntimeAppVersion();
-    const response = await fetch(`${this.historyUrl}/api/mls-api/register-device`, {
+    const response = await fetch(`${this.historyUrl}/api/mls/register-device`, {
       method: 'POST',
       headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
@@ -1076,7 +1076,7 @@ export class TauriMlsService implements IMlsService {
     const keyPackages = packages.map((bytes) =>
       btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(''))
     );
-    const response = await fetch(`${this.historyUrl}/api/mls-api/register-device/prekeys`, {
+    const response = await fetch(`${this.historyUrl}/api/mls/register-device/prekeys`, {
       method: 'POST',
       headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
@@ -1101,7 +1101,7 @@ export class TauriMlsService implements IMlsService {
     deviceAppVersion: string | null;
   }> {
     const response = await fetch(
-      `${this.historyUrl}/api/mls-api/devices/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}/metadata`,
+      `${this.historyUrl}/api/mls/devices/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}/metadata`,
       {
         method: 'PATCH',
         headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
@@ -1161,7 +1161,7 @@ export class TauriMlsService implements IMlsService {
           `aucun appareil actif trouvé.`
       );
     }
-    const response = await fetch(`${this.historyUrl}/api/mls-api/welcome`, {
+    const response = await fetch(`${this.historyUrl}/api/mls/welcome`, {
       method: 'POST',
       headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
@@ -1300,7 +1300,7 @@ export class TauriMlsService implements IMlsService {
 
   async createRemoteGroup(name: string, isGroup: boolean = true): Promise<string> {
     try {
-      const res = await fetch(`${this.historyUrl}/api/mls-api/groups`, {
+      const res = await fetch(`${this.historyUrl}/api/mls/groups`, {
         method: 'POST',
         headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
@@ -1336,7 +1336,7 @@ export class TauriMlsService implements IMlsService {
       // If epoch retrieval fails, send 0 (server will validate)
     }
 
-    const validateRes = await fetch(`${this.historyUrl}/api/mls-api/commit`, {
+    const validateRes = await fetch(`${this.historyUrl}/api/mls/commit`, {
       method: 'POST',
       headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ groupId, deviceId: this.deviceId, baseEpoch }),
@@ -1351,7 +1351,7 @@ export class TauriMlsService implements IMlsService {
       );
     }
 
-    const res = await fetch(`${this.historyUrl}/api/mls-api/send`, {
+    const res = await fetch(`${this.historyUrl}/api/mls/send`, {
       method: 'POST',
       headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
@@ -1370,7 +1370,7 @@ export class TauriMlsService implements IMlsService {
 
   async acquireAddLock(groupId: string, ttlMs = 10_000): Promise<boolean> {
     try {
-      const res = await fetch(`${this.historyUrl}/api/mls-api/add-lock`, {
+      const res = await fetch(`${this.historyUrl}/api/mls/add-lock`, {
         method: 'POST',
         headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ groupId, deviceId: this.deviceId, ttlMs }),
@@ -1385,7 +1385,7 @@ export class TauriMlsService implements IMlsService {
 
   async releaseAddLock(groupId: string): Promise<void> {
     try {
-      await fetch(`${this.historyUrl}/api/mls-api/add-lock`, {
+      await fetch(`${this.historyUrl}/api/mls/add-lock`, {
         method: 'DELETE',
         headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ groupId, deviceId: this.deviceId }),
@@ -1411,7 +1411,7 @@ export class TauriMlsService implements IMlsService {
   private async fetchPrekeyCount(): Promise<number> {
     try {
       const res = await fetch(
-        `${this.historyUrl}/api/mls-api/devices/${this.userId}/${this.deviceId}/prekeys/count`,
+        `${this.historyUrl}/api/mls/devices/${this.userId}/${this.deviceId}/prekeys/count`,
         { headers: await this.withAuthHeaders() }
       );
       if (!res.ok) return 0;
@@ -1433,7 +1433,7 @@ export class TauriMlsService implements IMlsService {
     if (this.freshStart) {
       this.freshStart = false;
       await fetch(
-        `${this.historyUrl}/api/mls-api/devices/${encodeURIComponent(this.userId)}/${encodeURIComponent(this.deviceId)}/prekeys`,
+        `${this.historyUrl}/api/mls/devices/${encodeURIComponent(this.userId)}/${encodeURIComponent(this.deviceId)}/prekeys`,
         { method: 'DELETE', headers: await this.withAuthHeaders() }
       ).catch(() => {});
     }
@@ -1521,7 +1521,7 @@ export class TauriMlsService implements IMlsService {
     });
     const encryptedBytes = Uint8Array.from(res);
     const proto = btoa(String.fromCharCode(...encryptedBytes));
-    const httpRes = await fetch(`${this.historyUrl}/api/mls-api/send`, {
+    const httpRes = await fetch(`${this.historyUrl}/api/mls/send`, {
       method: 'POST',
       headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
@@ -1568,7 +1568,7 @@ export class TauriMlsService implements IMlsService {
     afterStreamId?: string
   ): Promise<{ id?: string; sender_id: string; content: string; timestamp: string }[]> {
     try {
-      const url = new URL(`${this.historyUrl}/api/history/${groupId}`);
+      const url = new URL(`${this.historyUrl}/api/mls/history/${groupId}`);
       if (afterStreamId) url.searchParams.set('after', afterStreamId);
       const res = await fetch(url.toString(), {
         headers: await this.withAuthHeaders(),
@@ -1605,7 +1605,7 @@ export class TauriMlsService implements IMlsService {
   }
 
   async renameGroup(groupId: string, name: string): Promise<void> {
-    const res = await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}`, {
+    const res = await fetch(`${this.historyUrl}/api/mls/groups/${groupId}`, {
       method: 'PATCH',
       headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ name }),
@@ -1614,7 +1614,7 @@ export class TauriMlsService implements IMlsService {
   }
 
   async deleteGroupOnServer(groupId: string): Promise<void> {
-    const res = await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}`, {
+    const res = await fetch(`${this.historyUrl}/api/mls/groups/${groupId}`, {
       method: 'DELETE',
       headers: await this.withAuthHeaders(),
     });
@@ -1622,7 +1622,7 @@ export class TauriMlsService implements IMlsService {
   }
 
   async removeMemberFromServer(groupId: string, userId: string): Promise<void> {
-    const res = await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}/members/${userId}`, {
+    const res = await fetch(`${this.historyUrl}/api/mls/groups/${groupId}/members/${userId}`, {
       method: 'DELETE',
       headers: await this.withAuthHeaders(),
     });
@@ -1647,7 +1647,7 @@ export class TauriMlsService implements IMlsService {
 
   async getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]> {
     try {
-      const res = await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}/members`, {
+      const res = await fetch(`${this.historyUrl}/api/mls/groups/${groupId}/members`, {
         headers: await this.withAuthHeaders(),
       });
       if (!res.ok) return [];
@@ -1661,7 +1661,7 @@ export class TauriMlsService implements IMlsService {
     userId: string
   ): Promise<{ groupId: string; name: string; isGroup: boolean }[]> {
     try {
-      const res = await fetch(`${this.historyUrl}/api/mls-api/user-groups/${userId}`, {
+      const res = await fetch(`${this.historyUrl}/api/mls/users/${userId}/groups`, {
         headers: await this.withAuthHeaders(),
       });
       if (!res.ok) return [];
@@ -1679,7 +1679,7 @@ export class TauriMlsService implements IMlsService {
   > {
     try {
       const res = await fetch(
-        `${this.historyUrl}/api/mls-api/pending-invitations/${userId}/${deviceId}`,
+        `${this.historyUrl}/api/mls/invitations/pending/${userId}/${deviceId}`,
         { headers: await this.withAuthHeaders() }
       );
       if (!res.ok) return [];
@@ -1704,7 +1704,7 @@ export class TauriMlsService implements IMlsService {
   > {
     try {
       const res = await fetch(
-        `${this.historyUrl}/api/mls-api/device-memberships/${userId}/${deviceId}`,
+        `${this.historyUrl}/api/mls/device-memberships/${userId}/${deviceId}`,
         { headers: await this.withAuthHeaders() }
       );
       if (!res.ok) return [];
@@ -1722,7 +1722,7 @@ export class TauriMlsService implements IMlsService {
     lastEpochSeen?: number
   ): Promise<void> {
     try {
-      await fetch(`${this.historyUrl}/api/mls-api/invitation-status`, {
+      await fetch(`${this.historyUrl}/api/mls/invitations/status`, {
         method: 'POST',
         headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ deviceId, userId, groupId, status, lastEpochSeen }),
@@ -1733,7 +1733,7 @@ export class TauriMlsService implements IMlsService {
   }
 
   async kickStaleDevice(deviceId: string, userId: string, groupId: string): Promise<void> {
-    const res = await fetch(`${this.historyUrl}/api/mls-api/kick-stale-device`, {
+    const res = await fetch(`${this.historyUrl}/api/mls/kick-stale-device`, {
       method: 'POST',
       headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ deviceId, userId, groupId }),
@@ -1743,7 +1743,7 @@ export class TauriMlsService implements IMlsService {
 
   async resetGroupEpoch(groupId: string): Promise<void> {
     const res = await fetch(
-      `${this.historyUrl}/api/mls-api/groups/${encodeURIComponent(groupId)}/reset-epoch`,
+      `${this.historyUrl}/api/mls/groups/${encodeURIComponent(groupId)}/reset-epoch`,
       {
         method: 'POST',
         headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
@@ -1759,7 +1759,7 @@ export class TauriMlsService implements IMlsService {
   ): Promise<{ status: string; affected: number }> {
     try {
       const res = await fetch(
-        `${this.historyUrl}/api/mls-api/device-memberships/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}/${encodeURIComponent(groupId)}`,
+        `${this.historyUrl}/api/mls/device-memberships/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}/${encodeURIComponent(groupId)}`,
         { method: 'DELETE', headers: await this.withAuthHeaders() }
       );
       if (!res.ok) return { status: 'error', affected: 0 };
@@ -1776,7 +1776,7 @@ export class TauriMlsService implements IMlsService {
   ): Promise<{ status: string; affected: number }> {
     try {
       const res = await fetch(
-        `${this.historyUrl}/api/mls-api/device-memberships/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}`,
+        `${this.historyUrl}/api/mls/device-memberships/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}`,
         { method: 'DELETE', headers: await this.withAuthHeaders() }
       );
       if (!res.ok) return { status: 'error', affected: 0 };
@@ -1798,7 +1798,7 @@ export class TauriMlsService implements IMlsService {
   }> {
     try {
       const res = await fetch(
-        `${this.historyUrl}/api/mls-api/devices/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}`,
+        `${this.historyUrl}/api/mls/devices/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}`,
         { method: 'DELETE', headers: await this.withAuthHeaders() }
       );
       if (!res.ok)

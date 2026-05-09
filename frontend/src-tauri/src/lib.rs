@@ -509,7 +509,7 @@ async fn fetch_and_queue_missing_messages(
     http_client: tauri::State<'_, HttpClient>,
 ) -> Result<String, String> {
     let base = history_base_url.trim_end_matches('/');
-    let url = format!("{}/api/history/{}", base, group_id);
+    let url = format!("{}/api/mls/history/{}", base, group_id);
 
     let mut req = http_client
         .0
@@ -824,7 +824,7 @@ async fn bootstrap_dead_conversation(
     // ── Étape 1 : Acquérir le verrou optimiste ────────────────────────────────
     let base = base_url.trim_end_matches('/');
     let claim_url = format!(
-        "{}/api/mls-api/groups/{}/claim-bootstrap",
+        "{}/api/mls/groups/{}/claim-bootstrap",
         base, conversation_id
     );
     let claim_resp = http_client
@@ -858,7 +858,7 @@ async fn bootstrap_dead_conversation(
 
     // ── Étape 2 : Reset de l'epoch serveur à 0 ───────────────────────────────
     let reset_url = format!(
-        "{}/api/mls-api/groups/{}/reset-epoch",
+        "{}/api/mls/groups/{}/reset-epoch",
         base, conversation_id
     );
     let reset_resp = http_client
@@ -893,7 +893,7 @@ async fn bootstrap_dead_conversation(
     let mut added_device_ids: Vec<String> = Vec::new();
 
     for user_id in &member_user_ids {
-        let devices_url = format!("{}/api/mls-api/devices/{}", base, user_id);
+        let devices_url = format!("{}/api/mls/devices/{}", base, user_id);
         let resp = match http_client
             .0
             .get(&devices_url)

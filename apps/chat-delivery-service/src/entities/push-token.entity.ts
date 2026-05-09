@@ -30,7 +30,7 @@ export class PushToken {
   /**
    * Secret opaque (UUID v4) généré à l'enregistrement et retourné UNE SEULE FOIS
    * au client. Le client Android le stocke chiffré dans le Keystore.
-   * Utilisé pour authentifier GET /mls-api/push/fetch-proto sans JWT.
+   * Utilisé pour authentifier GET /api/mls/push/fetch-proto sans JWT.
    * La valeur en base est le secret brut — la table n'est pas publique et est
    * accessible uniquement par le service. NULL pour les tokens antérieurs.
    */

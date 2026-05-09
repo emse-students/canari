@@ -1228,10 +1228,9 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           } catch {
             // Silent: proceed without auth header if token unavailable
           }
-          const gRes = await fetch(
-            `${historyBaseUrl}/api/mls-api/groups/${groupId || joinedGroupId}`,
-            { headers: authHeader }
-          );
+          const gRes = await fetch(`${historyBaseUrl}/api/mls/groups/${groupId || joinedGroupId}`, {
+            headers: authHeader,
+          });
           if (gRes.ok) {
             const gData = await gRes.json();
             if (gData?.name) groupName = gData.name;

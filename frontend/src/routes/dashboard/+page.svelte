@@ -126,7 +126,7 @@
     isPushTestRunning = true;
     pushTestResult = '';
     try {
-      const response = await apiFetch(`${session.historyBaseUrl}/api/mls-api/push/broadcast-test`, {
+      const response = await apiFetch(`${session.historyBaseUrl}/api/mls/push/broadcast-test`, {
         method: 'POST',
         body: JSON.stringify({
           title: 'Canari - test push global',

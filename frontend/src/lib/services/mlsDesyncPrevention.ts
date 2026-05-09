@@ -1,6 +1,6 @@
 /**
  * Shared client logic that must stay aligned with chat-delivery
- * `POST mls-api/commit` (epoch-gated validation).
+ * `POST /api/mls/commit` (epoch-gated validation).
  *
  * After producing commit bytes, OpenMLS has already advanced the local epoch by
  * one. The server stores `activeEpoch` as the epoch *after* the last accepted

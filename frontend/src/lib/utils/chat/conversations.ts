@@ -266,7 +266,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
               // from being misclassified as direct conversations.
               let isGroupFromApi: boolean | null = null;
               try {
-                const gRes = await apiFetch(`${ctx.historyBaseUrl}/api/mls-api/groups/${meta.id}`);
+                const gRes = await apiFetch(`${ctx.historyBaseUrl}/api/mls/groups/${meta.id}`);
                 if (gRes.ok) {
                   const gData = await gRes.json();
                   if (typeof gData?.isGroup === 'boolean') {
@@ -280,7 +280,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
               // If the backend explicitly says this is a group, skip member-count heuristic.
               if (isGroupFromApi !== true) {
                 const res = await apiFetch(
-                  `${ctx.historyBaseUrl}/api/mls-api/groups/${meta.id}/members`
+                  `${ctx.historyBaseUrl}/api/mls/groups/${meta.id}/members`
                 );
                 if (res.ok) {
                   const contentType = res.headers.get('content-type')?.toLowerCase() ?? '';

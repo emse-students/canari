@@ -631,6 +631,12 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     private readonly dataSource: DataSource,
   ) {}
 
+  /** Liveness for Docker / probes — no authentication. */
+  @Get('health')
+  health(): { status: string } {
+    return { status: 'ok' };
+  }
+
   async onModuleInit() {
     await this.ensureDeviceMetadataColumns();
     await this.ensureRevokedDevicesTable();
@@ -879,7 +885,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  @Post('mls-api/sync/session/start')
+  @Post('mls/sync/session/start')
   async startSyncSession(
     @Body()
     body: {
@@ -928,7 +934,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  @Post('mls-api/sync/session/join')
+  @Post('mls/sync/session/join')
   async joinSyncSession(
     @Body()
     body: {
@@ -984,7 +990,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @UseGuards(HeaderAuthGuard)
-  @Get('mls-api/sync/session/:sessionId')
+  @Get('mls/sync/session/:sessionId')
   async getSyncSessionState(
     @Param('sessionId') sessionIdRaw: string,
     @Headers('x-user-id') userIdRaw: string,
@@ -1010,7 +1016,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  @Post('mls-api/sync/session/manifest')
+  @Post('mls/sync/session/manifest')
   async uploadSyncManifest(
     @Body()
     body: {
@@ -1059,7 +1065,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  @Post('mls-api/sync/session/diff')
+  @Post('mls/sync/session/diff')
   async computeSyncDiff(
     @Body()
     body: {
@@ -1134,7 +1140,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  @Post('mls-api/sync/session/chunks/upload')
+  @Post('mls/sync/session/chunks/upload')
   async uploadSyncChunks(
     @Body()
     body: {
@@ -1181,7 +1187,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @UseGuards(HeaderAuthGuard)
-  @Get('mls-api/sync/session/:sessionId/chunks/pull')
+  @Get('mls/sync/session/:sessionId/chunks/pull')
   async pullSyncChunks(
     @Param('sessionId') sessionIdRaw: string,
     @Headers('x-user-id') userIdRaw: string,
@@ -1239,7 +1245,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    *   { status: 'mismatch' }    – verifier differs; wrong PIN for this user.
    */
   @UseGuards(HeaderAuthGuard)
-  @Post('mls-api/pin-verifier/check')
+  @Post('mls/security/pin-check')
   async checkPinVerifier(
     @Body() body: { userId: string; verifier: string; deviceId?: string },
     @Headers('x-user-id') headerUserId?: string,
@@ -1308,7 +1314,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     return { status: match ? 'ok' : 'mismatch', resetRequired };
   }
 
-  @Get('mls-api/link-preview')
+  @Get('mls/link-preview')
   async getLinkPreview(@Query('url') url: string) {
     if (!url || typeof url !== 'string') {
       throw new BadRequestException('url is required');
@@ -1383,7 +1389,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @UseGuards(HeaderAuthGuard)
-  @Post('mls-api/groups')
+  @Post('mls/groups')
   async createGroup(
     @Body()
     body: {
@@ -1430,7 +1436,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @UseGuards(HeaderAuthGuard)
-  @Get('mls-api/groups/:groupId')
+  @Get('mls/groups/:groupId')
   async getGroup(@Param('groupId') groupId: string) {
     const g = await this.groupRepo.findOne({ where: { id: groupId } });
     this.logger.log(`[GET_GROUP] groupId=${groupId} found=${!!g}`);
@@ -1438,7 +1444,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @UseGuards(HeaderAuthGuard)
-  @Get('mls-api/user-groups/:userId')
+  @Get('mls/users/:userId/groups')
   async getUserGroups(
     @Param('userId') userId: string,
     @Headers('x-user-id') headerUserId?: string,
@@ -1471,7 +1477,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @UseGuards(HeaderAuthGuard)
-  @Post('mls-api/groups/:groupId/members')
+  @Post('mls/groups/:groupId/members')
   async addGroupMember(
     @Param('groupId') groupId: string,
     @Body() body: { userId: string },
@@ -1529,7 +1535,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @UseGuards(HeaderAuthGuard)
-  @Get('mls-api/groups/:groupId/members')
+  @Get('mls/groups/:groupId/members')
   async getGroupMembers(@Param('groupId') groupId: string) {
     const g = await this.groupMemberRepo.find({ where: { groupId } });
     this.logger.log(`[GET_MEMBERS] group=${groupId} count=${g.length}`);
@@ -1537,7 +1543,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @UseGuards(HeaderAuthGuard)
-  @Patch('mls-api/groups/:groupId')
+  @Patch('mls/groups/:groupId')
   async renameGroup(
     @Param('groupId') groupId: string,
     @Body() body: { name: string },
@@ -1557,7 +1563,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @UseGuards(HeaderAuthGuard)
-  @Delete('mls-api/groups/:groupId/members/:userId')
+  @Delete('mls/groups/:groupId/members/:userId')
   async removeGroupMember(
     @Param('groupId') groupId: string,
     @Param('userId') userId: string,
@@ -1591,7 +1597,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @UseGuards(HeaderAuthGuard)
-  @Delete('mls-api/groups/:groupId')
+  @Delete('mls/groups/:groupId')
   async deleteGroup(@Param('groupId') groupId: string) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     await this.groupRepo.delete({ id: safeGroupId });
@@ -1610,7 +1616,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    * Any online device can then process these by committing Add + sending Welcome.
    */
   @UseGuards(HeaderAuthGuard)
-  @Get('mls-api/pending-invitations/:userId/:deviceId')
+  @Get('mls/invitations/pending/:userId/:deviceId')
   async getPendingInvitations(
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
@@ -1664,7 +1670,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    * knows which groups it's pending / welcome_sent / welcome_received / stale for).
    */
   @UseGuards(HeaderAuthGuard)
-  @Get('mls-api/device-memberships/:userId/:deviceId')
+  @Get('mls/device-memberships/:userId/:deviceId')
   async getDeviceMemberships(
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
@@ -1695,7 +1701,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    * not a persisted DeviceGroupMembership state.
    */
   @UseGuards(HeaderAuthGuard)
-  @Post('mls-api/invitation-status')
+  @Post('mls/invitations/status')
   async updateInvitationStatus(
     @Body()
     body: {
@@ -1757,7 +1763,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    * stale user.  All devices of that user are kicked and will be re-invited.
    */
   @UseGuards(HeaderAuthGuard)
-  @Post('mls-api/kick-stale-user')
+  @Post('mls/kick-stale-user')
   async kickStaleUser(@Body() body: { userId: string; groupId: string }) {
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
     const safeGroupId = sanitizeQueryValue(body.groupId, 'groupId');
@@ -1789,7 +1795,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @UseGuards(HeaderAuthGuard)
-  @Post('mls-api/kick-stale-device')
+  @Post('mls/kick-stale-device')
   async kickStaleDevice(
     @Body() body: { deviceId: string; userId: string; groupId: string },
   ) {
@@ -1830,7 +1836,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    * Also deletes ALL memberships for the device if no groupId is provided.
    */
   @UseGuards(HeaderAuthGuard)
-  @Delete('mls-api/device-memberships/:userId/:deviceId/:groupId')
+  @Delete('mls/device-memberships/:userId/:deviceId/:groupId')
   async deleteDeviceMembership(
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
@@ -1862,7 +1868,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    * Delete ALL device-group memberships for a specific device.
    */
   @UseGuards(HeaderAuthGuard)
-  @Delete('mls-api/device-memberships/:userId/:deviceId')
+  @Delete('mls/device-memberships/:userId/:deviceId')
   async deleteAllDeviceMemberships(
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
@@ -1898,7 +1904,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    * Removes: all group memberships, KeyPackages, OneTimeKeyPackages, and push tokens.
    */
   @UseGuards(HeaderAuthGuard)
-  @Delete('mls-api/devices/:userId/:deviceId')
+  @Delete('mls/devices/:userId/:deviceId')
   async deleteDevice(
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
@@ -1968,7 +1974,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @UseGuards(HeaderAuthGuard)
-  @Get('mls-api/devices/:userId/:deviceId/prekeys/count')
+  @Get('mls/devices/:userId/:deviceId/prekeys/count')
   async getPrekeyCount(
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
@@ -1982,7 +1988,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @UseGuards(HeaderAuthGuard)
-  @Delete('mls-api/devices/:userId/:deviceId/prekeys')
+  @Delete('mls/devices/:userId/:deviceId/prekeys')
   async purgeDevicePrekeys(
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
@@ -2000,7 +2006,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @UseGuards(HeaderAuthGuard)
-  @Post('mls-api/register-device/prekeys')
+  @Post('mls/register-device/prekeys')
   async registerDevicePrekeys(
     @Body() body: { userId: string; deviceId: string; keyPackages: unknown },
   ) {
@@ -2032,7 +2038,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @UseGuards(HeaderAuthGuard)
-  @Post('mls-api/register-device')
+  @Post('mls/register-device')
   async registerDevice(
     @Body()
     body: {
@@ -2120,7 +2126,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @UseGuards(HeaderAuthGuard)
-  @Patch('mls-api/devices/:userId/:deviceId/metadata')
+  @Patch('mls/devices/:userId/:deviceId/metadata')
   async updateDeviceMetadata(
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
@@ -2166,7 +2172,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @UseGuards(HeaderAuthGuard)
-  @Get('mls-api/devices/:userId')
+  @Get('mls/devices/:userId')
   async getUserDevices(@Param('userId') userId: string) {
     // Only return devices active in the last 30 days (avoids stale key packages)
     const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
@@ -2218,7 +2224,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @UseGuards(HeaderAuthGuard)
-  @Post('mls-api/add-lock')
+  @Post('mls/add-lock')
   async acquireAddLock(
     @Body()
     body: {
@@ -2243,7 +2249,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @UseGuards(HeaderAuthGuard)
-  @Delete('mls-api/add-lock')
+  @Delete('mls/add-lock')
   async releaseAddLock(@Body() body: { groupId: string; deviceId: string }) {
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
@@ -2269,7 +2275,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    * be rejected because the server still remembers the old epoch.
    */
   @UseGuards(HeaderAuthGuard)
-  @Post('mls-api/groups/:groupId/reset-epoch')
+  @Post('mls/groups/:groupId/reset-epoch')
   async resetGroupEpoch(@Param('groupId') groupId: string) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     const group = await this.groupRepo.findOne({ where: { id: safeGroupId } });
@@ -2298,7 +2304,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    *   le client doit annuler sa création locale et attendre le Welcome du gagnant.
    */
   @UseGuards(HeaderAuthGuard)
-  @Post('mls-api/groups/:groupId/claim-bootstrap')
+  @Post('mls/groups/:groupId/claim-bootstrap')
   async claimBootstrap(
     @Param('groupId') groupId: string,
     @Body() body: { expectedVersion: number },
@@ -2337,7 +2343,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   /** Retourne la bootstrapVersion courante d'un groupe (pour l'optimistic lock). */
   @UseGuards(HeaderAuthGuard)
-  @Get('mls-api/groups/:groupId/bootstrap-info')
+  @Get('mls/groups/:groupId/bootstrap-info')
   async getBootstrapInfo(@Param('groupId') groupId: string) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     const group = await this.groupRepo.findOne({ where: { id: safeGroupId } });
@@ -2375,7 +2381,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    * le modèle fait confiance au serveur pour le routage.
    */
   @UseGuards(HeaderAuthGuard)
-  @Post('mls-api/groups/:groupId/reset')
+  @Post('mls/groups/:groupId/reset')
   async resetGroup(
     @Param('groupId') groupId: string,
     @Body() body: { reason?: string; triggeredBy?: string },
@@ -2563,7 +2569,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    * - 200 { accepted: false, currentEpoch } when baseEpoch doesn't match (stale sender)
    */
   @UseGuards(HeaderAuthGuard)
-  @Post('mls-api/commit')
+  @Post('mls/commit')
   async validateCommit(
     @Body()
     body: {
@@ -2662,7 +2668,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @UseGuards(HeaderAuthGuard)
-  @Post('mls-api/welcome-request')
+  @Post('mls/welcome-request')
   async notifyWelcomeRequest(
     @Body()
     body: {
@@ -2770,7 +2776,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @UseGuards(HeaderAuthGuard)
-  @Post('mls-api/reinvite-request')
+  @Post('mls/reinvite-request')
   async notifyReinviteRequest(
     @Body()
     body: {
@@ -2915,7 +2921,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @UseGuards(HeaderAuthGuard)
-  @Post('mls-api/welcome')
+  @Post('mls/welcome')
   async sendWelcome(
     @Headers('x-user-id') authUserIdRaw: string | undefined,
     @Body()
@@ -3055,7 +3061,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @UseGuards(HeaderAuthGuard)
-  @Post('mls-api/send')
+  @Post('mls/send')
   async sendMessage(
     @Body()
     body: {
@@ -3297,7 +3303,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @UseGuards(HeaderAuthGuard)
-  @Get('history/:groupId')
+  @Get('mls/history/:groupId')
   async getHistory(
     @Param('groupId') groupIdRaw: string,
     @Query('after') after?: string,
@@ -3343,7 +3349,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @UseGuards(HeaderAuthGuard)
-  @Get('mls-api/messages/:userId/:deviceId')
+  @Get('mls/messages/:userId/:deviceId')
   async fetchMessages(
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
@@ -3377,7 +3383,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   // 2. Nouvelle route d'Acquittement (ACK)
   @UseGuards(HeaderAuthGuard)
-  @Post('mls-api/messages/ack')
+  @Post('mls/messages/ack')
   async acknowledgeMessages(
     @Body() body: { userId: string; deviceId: string; messageIds: string[] },
     @Headers('x-user-id') headerUserId?: string,
@@ -3562,8 +3568,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    * Upserts on (userId, deviceId) — one token per device per user.
    */
   @UseGuards(HeaderAuthGuard)
-  @Post('mls-api/push/register')
-  @Post('push/register')
+  @Post('mls/push/register')
   async registerPushToken(
     @Body() body: { token: string; deviceId: string; platform?: string },
     @Headers('x-user-id') userIdRaw: string,
@@ -3580,7 +3585,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
     // Génère un secret opaque long-lived pour ce device.
     // Retourné UNE SEULE FOIS dans la réponse ; le client l'encrypte dans
-    // Android Keystore et l'utilise pour GET /mls-api/push/fetch-proto.
+    // Android Keystore et l'utilise pour GET /mls/push/fetch-proto.
     const pushSecret = crypto.randomUUID().replace(/-/g, '');
 
     // Atomic upsert — avoids a race condition where two concurrent requests
@@ -3603,7 +3608,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    * Retourne le proto MLS chiffré quand il était trop volumineux pour être
    * inclu inline dans le payload FCM (> 3.5 KB).
    */
-  @Get('mls-api/push/fetch-proto')
+  @Get('mls/push/fetch-proto')
   async fetchProtoForPush(
     @Headers('authorization') authHeader: string,
     @Query('messageId') messageIdRaw: string,
@@ -3652,8 +3657,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    * Unregister the push token of a specific device (e.g. on logout).
    */
   @UseGuards(HeaderAuthGuard)
-  @Delete('mls-api/push/unregister/:deviceId')
-  @Delete('push/unregister/:deviceId')
+  @Delete('mls/push/unregister/:deviceId')
   async unregisterPushToken(
     @Param('deviceId') deviceIdRaw: string,
     @Headers('x-user-id') userIdRaw: string,
@@ -3671,8 +3675,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    * a registered push token (online or offline).
    */
   @UseGuards(HeaderAuthGuard)
-  @Post('mls-api/push/broadcast-test')
-  @Post('push/broadcast-test')
+  @Post('mls/push/broadcast-test')
   async broadcastTestPush(
     @Body() body: { title?: string; message?: string },
     @Headers('x-user-id') requesterRaw?: string,

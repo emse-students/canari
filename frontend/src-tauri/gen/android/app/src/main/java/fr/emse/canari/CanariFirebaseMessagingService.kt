@@ -142,7 +142,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
         return try {
             val url = URL(
-                "${ctx.baseUrl}/api/mls-api/push/fetch-proto" +
+                "${ctx.baseUrl}/api/mls/push/fetch-proto" +
                     "?messageId=${java.net.URLEncoder.encode(queuedMessageId, "UTF-8")}" +
                     "&userId=${java.net.URLEncoder.encode(ctx.userId, "UTF-8")}" +
                     "&deviceId=${java.net.URLEncoder.encode(ctx.deviceId, "UTF-8")}"

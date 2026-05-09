@@ -77,7 +77,7 @@ export class WebMlsService implements IMlsService {
    * HTTP/1.1; over HTTPS the browser will also try to use HTTP/2 multiplexing).
    */
   private async deliveryPost(path: string, body: Record<string, unknown>): Promise<void> {
-    await fetch(`${this.historyUrl}/api/mls-api/${path}`, {
+    await fetch(`${this.historyUrl}/api/mls/${path}`, {
       method: 'POST',
       headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(body),
@@ -106,7 +106,7 @@ export class WebMlsService implements IMlsService {
     this.deviceId = 'pending';
 
     // Prefer explicit env vars; fall back to same-origin (works behind a reverse proxy
-    // like Nginx that routes /ws and /api/mls-api/ on the same domain).
+    // like Nginx that routes /ws and /api/mls/ on the same domain).
     // An empty string is treated as "not configured" to match .env.example production convention.
     const envGateway = import.meta.env.VITE_GATEWAY_URL;
     this.baseUrl =
@@ -506,7 +506,7 @@ export class WebMlsService implements IMlsService {
    * group_reset via WebSocket → chaque client oublie l'état MLS local.
    */
   async sendGroupReset(groupId: string, reason = 'bootstrap'): Promise<void> {
-    const res = await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}/reset`, {
+    const res = await fetch(`${this.historyUrl}/api/mls/groups/${groupId}/reset`, {
       method: 'POST',
       headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ reason, triggeredBy: `${this.userId}:${this.deviceId}` }),
@@ -560,7 +560,7 @@ export class WebMlsService implements IMlsService {
       const ctrl2 = new AbortController();
       const tid2 = setTimeout(() => ctrl2.abort(), FETCH_TIMEOUT);
       const res = await fetch(
-        `${this.historyUrl}/api/mls-api/messages/${this.userId}/${this.deviceId}`,
+        `${this.historyUrl}/api/mls/messages/${this.userId}/${this.deviceId}`,
         { headers: await this.withAuthHeaders(), signal: ctrl2.signal }
       );
       clearTimeout(tid2);
@@ -642,7 +642,7 @@ export class WebMlsService implements IMlsService {
     }>
   > {
     try {
-      const res = await fetch(`${this.historyUrl}/api/mls-api/devices/${userId}`, {
+      const res = await fetch(`${this.historyUrl}/api/mls/devices/${userId}`, {
         headers: await this.withAuthHeaders(),
       });
       if (!res.ok) return [];
@@ -670,7 +670,7 @@ export class WebMlsService implements IMlsService {
 
   async registerMember(groupId: string, userId: string): Promise<void> {
     try {
-      await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}/members`, {
+      await fetch(`${this.historyUrl}/api/mls/groups/${groupId}/members`, {
         method: 'POST',
         headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ userId }),
@@ -686,7 +686,7 @@ export class WebMlsService implements IMlsService {
     const storedName =
       localStorage.getItem(`device-name:${this.userId}:${this.deviceId}`) || undefined;
     const deviceOs = this.detectRuntimeDeviceOs();
-    const response = await fetch(`${this.historyUrl}/api/mls-api/register-device`, {
+    const response = await fetch(`${this.historyUrl}/api/mls/register-device`, {
       method: 'POST',
       headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
@@ -708,7 +708,7 @@ export class WebMlsService implements IMlsService {
     const keyPackages = packages.map((bytes) =>
       btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(''))
     );
-    const response = await fetch(`${this.historyUrl}/api/mls-api/register-device/prekeys`, {
+    const response = await fetch(`${this.historyUrl}/api/mls/register-device/prekeys`, {
       method: 'POST',
       headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
@@ -733,7 +733,7 @@ export class WebMlsService implements IMlsService {
     deviceAppVersion: string | null;
   }> {
     const response = await fetch(
-      `${this.historyUrl}/api/mls-api/devices/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}/metadata`,
+      `${this.historyUrl}/api/mls/devices/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}/metadata`,
       {
         method: 'PATCH',
         headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
@@ -779,7 +779,7 @@ export class WebMlsService implements IMlsService {
           `aucun appareil actif trouvé.`
       );
     }
-    const response = await fetch(`${this.historyUrl}/api/mls-api/welcome`, {
+    const response = await fetch(`${this.historyUrl}/api/mls/welcome`, {
       method: 'POST',
       headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
@@ -808,7 +808,7 @@ export class WebMlsService implements IMlsService {
     const currentEpoch = this.getEpoch(groupId);
     const baseEpoch = commitBaseEpochForValidation(currentEpoch);
 
-    const validateRes = await fetch(`${this.historyUrl}/api/mls-api/commit`, {
+    const validateRes = await fetch(`${this.historyUrl}/api/mls/commit`, {
       method: 'POST',
       headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ groupId, deviceId: this.deviceId, baseEpoch }),
@@ -823,7 +823,7 @@ export class WebMlsService implements IMlsService {
       );
     }
 
-    const res = await fetch(`${this.historyUrl}/api/mls-api/send`, {
+    const res = await fetch(`${this.historyUrl}/api/mls/send`, {
       method: 'POST',
       headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
@@ -842,7 +842,7 @@ export class WebMlsService implements IMlsService {
 
   async acquireAddLock(groupId: string, ttlMs = 10_000): Promise<boolean> {
     try {
-      const res = await fetch(`${this.historyUrl}/api/mls-api/add-lock`, {
+      const res = await fetch(`${this.historyUrl}/api/mls/add-lock`, {
         method: 'POST',
         headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ groupId, deviceId: this.deviceId, ttlMs }),
@@ -858,7 +858,7 @@ export class WebMlsService implements IMlsService {
 
   async releaseAddLock(groupId: string): Promise<void> {
     try {
-      await fetch(`${this.historyUrl}/api/mls-api/add-lock`, {
+      await fetch(`${this.historyUrl}/api/mls/add-lock`, {
         method: 'DELETE',
         headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ groupId, deviceId: this.deviceId }),
@@ -940,7 +940,7 @@ export class WebMlsService implements IMlsService {
 
   async createRemoteGroup(name: string, isGroup: boolean = true): Promise<string> {
     try {
-      const res = await fetch(`${this.historyUrl}/api/mls-api/groups`, {
+      const res = await fetch(`${this.historyUrl}/api/mls/groups`, {
         method: 'POST',
         headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
@@ -969,7 +969,7 @@ export class WebMlsService implements IMlsService {
   private async fetchPrekeyCount(): Promise<number> {
     try {
       const res = await fetch(
-        `${this.historyUrl}/api/mls-api/devices/${this.userId}/${this.deviceId}/prekeys/count`,
+        `${this.historyUrl}/api/mls/devices/${this.userId}/${this.deviceId}/prekeys/count`,
         { headers: await this.withAuthHeaders() }
       );
       if (!res.ok) return 0;
@@ -990,7 +990,7 @@ export class WebMlsService implements IMlsService {
     if (this.freshStart) {
       this.freshStart = false;
       await fetch(
-        `${this.historyUrl}/api/mls-api/devices/${encodeURIComponent(this.userId)}/${encodeURIComponent(this.deviceId)}/prekeys`,
+        `${this.historyUrl}/api/mls/devices/${encodeURIComponent(this.userId)}/${encodeURIComponent(this.deviceId)}/prekeys`,
         { method: 'DELETE', headers: await this.withAuthHeaders() }
       ).catch(() => {});
     }
@@ -1069,7 +1069,7 @@ export class WebMlsService implements IMlsService {
   ): Promise<Uint8Array> {
     const encryptedBytes: Uint8Array = this.client.send_message_bytes(groupId, messageBytes);
     const proto = btoa(String.fromCharCode(...encryptedBytes));
-    const res = await fetch(`${this.historyUrl}/api/mls-api/send`, {
+    const res = await fetch(`${this.historyUrl}/api/mls/send`, {
       method: 'POST',
       headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
@@ -1108,7 +1108,7 @@ export class WebMlsService implements IMlsService {
     afterStreamId?: string
   ): Promise<{ id?: string; sender_id: string; content: string; timestamp: string }[]> {
     try {
-      const url = new URL(`${this.historyUrl}/api/history/${groupId}`);
+      const url = new URL(`${this.historyUrl}/api/mls/history/${groupId}`);
       if (afterStreamId) url.searchParams.set('after', afterStreamId);
       const res = await fetch(url.toString(), {
         headers: await this.withAuthHeaders(),
@@ -1156,7 +1156,7 @@ export class WebMlsService implements IMlsService {
   }
 
   async renameGroup(groupId: string, name: string): Promise<void> {
-    const res = await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}`, {
+    const res = await fetch(`${this.historyUrl}/api/mls/groups/${groupId}`, {
       method: 'PATCH',
       headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ name }),
@@ -1165,7 +1165,7 @@ export class WebMlsService implements IMlsService {
   }
 
   async deleteGroupOnServer(groupId: string): Promise<void> {
-    const res = await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}`, {
+    const res = await fetch(`${this.historyUrl}/api/mls/groups/${groupId}`, {
       method: 'DELETE',
       headers: await this.withAuthHeaders(),
     });
@@ -1173,7 +1173,7 @@ export class WebMlsService implements IMlsService {
   }
 
   async removeMemberFromServer(groupId: string, userId: string): Promise<void> {
-    const res = await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}/members/${userId}`, {
+    const res = await fetch(`${this.historyUrl}/api/mls/groups/${groupId}/members/${userId}`, {
       method: 'DELETE',
       headers: await this.withAuthHeaders(),
     });
@@ -1201,7 +1201,7 @@ export class WebMlsService implements IMlsService {
 
   async getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]> {
     try {
-      const res = await fetch(`${this.historyUrl}/api/mls-api/groups/${groupId}/members`, {
+      const res = await fetch(`${this.historyUrl}/api/mls/groups/${groupId}/members`, {
         headers: await this.withAuthHeaders(),
       });
       if (!res.ok) return [];
@@ -1215,7 +1215,7 @@ export class WebMlsService implements IMlsService {
     userId: string
   ): Promise<{ groupId: string; name: string; isGroup: boolean }[]> {
     try {
-      const res = await fetch(`${this.historyUrl}/api/mls-api/user-groups/${userId}`, {
+      const res = await fetch(`${this.historyUrl}/api/mls/users/${userId}/groups`, {
         headers: await this.withAuthHeaders(),
       });
       if (!res.ok) return [];
@@ -1233,7 +1233,7 @@ export class WebMlsService implements IMlsService {
   > {
     try {
       const res = await fetch(
-        `${this.historyUrl}/api/mls-api/pending-invitations/${userId}/${deviceId}`,
+        `${this.historyUrl}/api/mls/invitations/pending/${userId}/${deviceId}`,
         { headers: await this.withAuthHeaders() }
       );
       if (!res.ok) return [];
@@ -1258,7 +1258,7 @@ export class WebMlsService implements IMlsService {
   > {
     try {
       const res = await fetch(
-        `${this.historyUrl}/api/mls-api/device-memberships/${userId}/${deviceId}`,
+        `${this.historyUrl}/api/mls/device-memberships/${userId}/${deviceId}`,
         { headers: await this.withAuthHeaders() }
       );
       if (!res.ok) return [];
@@ -1276,7 +1276,7 @@ export class WebMlsService implements IMlsService {
     lastEpochSeen?: number
   ): Promise<void> {
     try {
-      await fetch(`${this.historyUrl}/api/mls-api/invitation-status`, {
+      await fetch(`${this.historyUrl}/api/mls/invitations/status`, {
         method: 'POST',
         headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ deviceId, userId, groupId, status, lastEpochSeen }),
@@ -1287,7 +1287,7 @@ export class WebMlsService implements IMlsService {
   }
 
   async kickStaleDevice(deviceId: string, userId: string, groupId: string): Promise<void> {
-    const res = await fetch(`${this.historyUrl}/api/mls-api/kick-stale-device`, {
+    const res = await fetch(`${this.historyUrl}/api/mls/kick-stale-device`, {
       method: 'POST',
       headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ deviceId, userId, groupId }),
@@ -1297,7 +1297,7 @@ export class WebMlsService implements IMlsService {
 
   async resetGroupEpoch(groupId: string): Promise<void> {
     const res = await fetch(
-      `${this.historyUrl}/api/mls-api/groups/${encodeURIComponent(groupId)}/reset-epoch`,
+      `${this.historyUrl}/api/mls/groups/${encodeURIComponent(groupId)}/reset-epoch`,
       {
         method: 'POST',
         headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
@@ -1313,7 +1313,7 @@ export class WebMlsService implements IMlsService {
   ): Promise<{ status: string; affected: number }> {
     try {
       const res = await fetch(
-        `${this.historyUrl}/api/mls-api/device-memberships/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}/${encodeURIComponent(groupId)}`,
+        `${this.historyUrl}/api/mls/device-memberships/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}/${encodeURIComponent(groupId)}`,
         { method: 'DELETE', headers: await this.withAuthHeaders() }
       );
       if (!res.ok) {
@@ -1333,7 +1333,7 @@ export class WebMlsService implements IMlsService {
   ): Promise<{ status: string; affected: number }> {
     try {
       const res = await fetch(
-        `${this.historyUrl}/api/mls-api/device-memberships/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}`,
+        `${this.historyUrl}/api/mls/device-memberships/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}`,
         { method: 'DELETE', headers: await this.withAuthHeaders() }
       );
       if (!res.ok) {
@@ -1358,7 +1358,7 @@ export class WebMlsService implements IMlsService {
   }> {
     try {
       const res = await fetch(
-        `${this.historyUrl}/api/mls-api/devices/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}`,
+        `${this.historyUrl}/api/mls/devices/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}`,
         { method: 'DELETE', headers: await this.withAuthHeaders() }
       );
       if (!res.ok) {

@@ -12,7 +12,7 @@ This document describes how the **client** recovers from MLS and delivery-queue 
 
 3. **Epoch alignment** — On **Tauri**, epoch is cached in `_epochByGroupId` and refreshed via `refreshEpochCache()` after each successful queue item (including persisted **`group_reset`** rows), after `processWelcome`, and when sending commits (`sendCommit` also seeds the cache from `obtenir_epoch`). **`getEpoch()`** reads the cache; **`forgetGroup`** clears it. On **Web**, `getEpoch()` reads the WASM client directly—no separate cache.
 
-4. **Stale / kick flows** — Server metadata (`DeviceGroupMembership`: `pending`, `welcome_sent`, `welcome_received`, `stale`) must match MLS reality. After remove commits, the client calls **`POST mls-api/kick-stale-device`** (single device; used by `kickStaleDevice()` in MLS services) or **`POST mls-api/kick-stale-user`** (all devices of a user). **`POST mls-api/groups/:groupId/reset-epoch`** resets server `activeEpoch` during re-bootstrap. These routes use **`HeaderAuthGuard`** like the rest of `/api/mls-api/*`.
+4. **Stale / kick flows** — Server metadata (`DeviceGroupMembership`: `pending`, `welcome_sent`, `welcome_received`, `stale`) must match MLS reality. After remove commits, the client calls **`POST /api/mls/kick-stale-device`** (single device; used by `kickStaleDevice()` in MLS services) or **`POST /api/mls/kick-stale-user`** (all devices of a user). **`POST /api/mls/groups/:groupId/reset-epoch`** resets server `activeEpoch` during re-bootstrap. These routes use **`HeaderAuthGuard`** like the rest of `/api/mls/*`.
 
 5. **Last resort** — Full resync / re-login / clearing local MLS state is outside normal operation; prefer fixing the specific gap (queue item, epoch, membership row) first.
 
@@ -38,5 +38,5 @@ Routes that take a **user id** in the path or body are checked against the **`x-
 
 ## Related sources
 
-- Nginx routing: `infrastructure/local/Dockerfile.frontend` (`/api/mls-api/*` → chat-delivery).
+- Nginx routing: `infrastructure/local/Dockerfile.frontend` (`/api/mls/*` → chat-delivery).
 - Full MLS API surface: `apps/chat-delivery-service/src/app.controller.ts`.
