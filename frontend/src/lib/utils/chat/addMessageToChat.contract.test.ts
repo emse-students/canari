@@ -13,12 +13,13 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import type { AddMessageToChatOptions } from '$lib/types';
 import type { MessageHandlerDeps } from '$lib/utils/chat/connection';
 import type { ConversationContext } from '$lib/composables/useConversations.svelte';
 import type { ChatSessionCallbacks } from '$lib/composables/useChatSession.svelte';
 
 type AddMsgFn = MessageHandlerDeps['addMessageToChat'];
-type AddMsgOpts = NonNullable<Parameters<AddMsgFn>[3]>;
+type AddMsgOpts = AddMessageToChatOptions;
 
 describe('addMessageToChat options contract', () => {
   describe('MessageHandlerDeps (connection.ts)', () => {

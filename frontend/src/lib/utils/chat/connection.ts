@@ -1,34 +1,19 @@
 import type { IMlsService } from '$lib/mlsService';
 import type { IStorage } from '$lib/db';
-import type { ChatMessage, Conversation } from '$lib/types';
+import type {
+  AddMessageToChatOptions,
+  ChatMessage,
+  Conversation,
+  MessageReaction,
+} from '$lib/types';
 import { saveMlsState } from '$lib/utils/hex';
 import type { SvelteMap } from 'svelte/reactivity';
-import type { MessageReaction } from '$lib/types';
-import { decodeAppMessage, encodeAppMessage, mkSystem, MediaKind } from '$lib/proto/codec';
-import { serializeEnvelope, mkTextEnvelope, mkMediaEnvelope } from '$lib/envelope';
+import { decodeAppMessage, encodeAppMessage, mkSystem } from '$lib/proto/codec';
+import { serializeEnvelope, mkTextEnvelope } from '$lib/envelope';
 import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
 import { ChannelService } from '$lib/services/ChannelService';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
-
-function bytesToHex(bytes?: Uint8Array | null): string {
-  if (!bytes || bytes.length === 0) return '';
-  return Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-}
-
-function mediaKindToType(kind?: number | null): 'image' | 'video' | 'audio' | 'file' {
-  switch (kind) {
-    case MediaKind.MEDIA_IMAGE:
-      return 'image';
-    case MediaKind.MEDIA_VIDEO:
-      return 'video';
-    case MediaKind.MEDIA_AUDIO:
-      return 'audio';
-    default:
-      return 'file';
-  }
-}
+import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
 
 export interface MessageHandlerDeps {
   mlsService: IMlsService;
@@ -45,13 +30,7 @@ export interface MessageHandlerDeps {
     senderId: string,
     content: string,
     contactName: string,
-    options?: {
-      replyTo?: ChatMessage['replyTo'];
-      isSystem?: boolean;
-      messageId?: string;
-      timestamp?: Date;
-      status?: ChatMessage['status'];
-    }
+    options?: AddMessageToChatOptions
   ) => Promise<void>;
   addSystemMessage: (content: string, contactName: string) => Promise<void>;
   loadHistoryForConversation: (contactName: string, groupId: string) => Promise<void>;
@@ -426,17 +405,9 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
 
               const msg = decodeAppMessage(bytes);
               appMessageId = msg?.messageId || undefined;
-              if (msg?.text) {
-                content = serializeEnvelope(mkTextEnvelope(msg.text.content ?? ''));
-              } else if (msg?.reply) {
-                const replyTo = msg.reply.replyTo
-                  ? {
-                      id: msg.reply.replyTo.id || '',
-                      senderId: msg.reply.replyTo.senderId || '',
-                      content: msg.reply.replyTo.preview || '',
-                    }
-                  : undefined;
-                content = serializeEnvelope(mkTextEnvelope(msg.reply.content ?? '', replyTo));
+              if (msg) {
+                const envelope = appMsgToEnvelope(msg);
+                if (envelope) content = envelope.content;
               }
             } else if (data.plaintext) {
               content = serializeEnvelope(mkTextEnvelope(data.plaintext));
@@ -623,30 +594,11 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               `[MLS] Type décodé: ${msgType}${msg?.messageId ? ` id=${msg.messageId}` : ''} pour "${convoKey}"`
             );
 
-            if (msg?.text) {
-              await addMessageToChat(
-                senderNorm,
-                serializeEnvelope(mkTextEnvelope(msg.text.content ?? '')),
-                convoKey,
-                { messageId: msg.messageId || undefined }
-              );
-              return true;
-            }
-
-            if (msg?.reply) {
-              const replyTo = msg.reply.replyTo
-                ? {
-                    id: msg.reply.replyTo.id ?? '',
-                    senderId: msg.reply.replyTo.senderId ?? '',
-                    content: msg.reply.replyTo.preview ?? '',
-                  }
-                : undefined;
-              await addMessageToChat(
-                senderNorm,
-                serializeEnvelope(mkTextEnvelope(msg.reply.content ?? '', replyTo)),
-                convoKey,
-                { messageId: msg.messageId || undefined, replyTo }
-              );
+            if (msg?.text || msg?.reply) {
+              const envelope = appMsgToEnvelope(msg);
+              if (envelope) {
+                await addMessageToChat(senderNorm, envelope.content, convoKey, envelope.options);
+              }
               return true;
             }
 
@@ -698,25 +650,10 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             }
 
             if (msg?.media) {
-              await addMessageToChat(
-                senderNorm,
-                serializeEnvelope(
-                  mkMediaEnvelope(
-                    {
-                      type: mediaKindToType(msg.media.kind),
-                      mediaId: msg.media.mediaId ?? '',
-                      key: bytesToHex(msg.media.key),
-                      iv: bytesToHex(msg.media.iv),
-                      mimeType: msg.media.mimeType ?? '',
-                      size: msg.media.size ?? 0,
-                      fileName: msg.media.fileName ?? undefined,
-                    },
-                    msg.media.caption || undefined
-                  )
-                ),
-                convoKey,
-                { messageId: msg.messageId || undefined }
-              );
+              const envelope = appMsgToEnvelope(msg);
+              if (envelope) {
+                await addMessageToChat(senderNorm, envelope.content, convoKey, envelope.options);
+              }
               return true;
             }
 
@@ -1454,27 +1391,16 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               if (decBytes) {
                 try {
                   const appMsg = decodeAppMessage(decBytes);
-                  if (appMsg?.text) {
-                    await addMessageToChat(
-                      msg.sender.toLowerCase(),
-                      serializeEnvelope(mkTextEnvelope(appMsg.text.content ?? '')),
-                      newConvoKey,
-                      { messageId: appMsg.messageId || undefined }
-                    );
-                  } else if (appMsg?.reply) {
-                    const rt = appMsg.reply.replyTo
-                      ? {
-                          id: appMsg.reply.replyTo.id ?? '',
-                          senderId: appMsg.reply.replyTo.senderId ?? '',
-                          content: appMsg.reply.replyTo.preview ?? '',
-                        }
-                      : undefined;
-                    await addMessageToChat(
-                      msg.sender.toLowerCase(),
-                      serializeEnvelope(mkTextEnvelope(appMsg.reply.content ?? '', rt)),
-                      newConvoKey,
-                      { messageId: appMsg.messageId || undefined, replyTo: rt }
-                    );
+                  if (appMsg) {
+                    const envelope = appMsgToEnvelope(appMsg);
+                    if (envelope) {
+                      await addMessageToChat(
+                        msg.sender.toLowerCase(),
+                        envelope.content,
+                        newConvoKey,
+                        envelope.options
+                      );
+                    }
                   }
                 } catch {
                   /* ignore decode errors during replay */

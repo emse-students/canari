@@ -21,7 +21,12 @@ import { insertMessageOrdered } from '$lib/utils/chat/messageOrder';
 import { MediaService } from '$lib/media';
 import { getPreviewText, mkMediaEnvelope, parseEnvelope, serializeEnvelope } from '$lib/envelope';
 import { encodeAppMessage, mkMedia, MediaKind } from '$lib/proto/codec';
-import type { ChatMessage, MessageReaction, Conversation } from '$lib/types';
+import type {
+  AddMessageToChatOptions,
+  ChatMessage,
+  MessageReaction,
+  Conversation,
+} from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
 import type { IStorage, StoredMessage } from '$lib/db';
 import { ChannelService } from '$lib/services/ChannelService';
@@ -106,14 +111,7 @@ export function useMessaging() {
     content: string,
     contactName: string,
     ctx: MessagingContext,
-    options: {
-      replyTo?: { id: string; senderId: string; content: string };
-      isSystem?: boolean;
-      messageId?: string;
-      timestamp?: Date;
-      status?: ChatMessage['status'];
-      skipDbSave?: boolean;
-    } = {}
+    options: AddMessageToChatOptions & { skipDbSave?: boolean } = {}
   ) {
     const normalized = contactName.toLowerCase();
     const convo = ctx.conversations.get(normalized);

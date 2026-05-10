@@ -10,6 +10,7 @@
  */
 
 import type { MediaRef } from '$lib/media';
+import type { MessageReference } from '$lib/types';
 
 // ---------------------------------------------------------------------------
 // Variants
@@ -18,7 +19,7 @@ import type { MediaRef } from '$lib/media';
 export interface TextEnvelope {
   kind: 'text';
   text: string;
-  replyTo?: { id: string; senderId: string; content: string };
+  replyTo?: MessageReference;
 }
 
 export interface MediaEnvelope {
@@ -26,7 +27,7 @@ export interface MediaEnvelope {
   media: MediaRef;
   /** Optional text caption alongside the attachment. */
   caption?: string;
-  replyTo?: { id: string; senderId: string; content: string };
+  replyTo?: MessageReference;
 }
 
 /** System / group-event notification (never user-authored). */
@@ -181,17 +182,14 @@ export function parseEnvelope(content: string): MessageEnvelope {
 // Builders
 // ---------------------------------------------------------------------------
 
-export function mkTextEnvelope(
-  text: string,
-  replyTo?: { id: string; senderId: string; content: string }
-): MessageEnvelope {
+export function mkTextEnvelope(text: string, replyTo?: MessageReference): MessageEnvelope {
   return { kind: 'text', text, replyTo };
 }
 
 export function mkMediaEnvelope(
   media: MediaRef,
   caption?: string,
-  replyTo?: { id: string; senderId: string; content: string }
+  replyTo?: MessageReference
 ): MessageEnvelope {
   return { kind: 'media', media, caption, replyTo };
 }

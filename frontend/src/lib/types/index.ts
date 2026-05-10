@@ -3,6 +3,22 @@ export interface MessageReaction {
   userId: string;
 }
 
+/** Compact reference to a quoted/replied-to message. Used in ChatMessage, envelopes, and addMessageToChat options. */
+export type MessageReference = {
+  id: string;
+  senderId: string;
+  content: string;
+};
+
+/** Options accepted by all addMessageToChat call sites. Centralised here so every interface stays in sync. */
+export interface AddMessageToChatOptions {
+  replyTo?: MessageReference;
+  isSystem?: boolean;
+  messageId?: string;
+  timestamp?: Date;
+  status?: 'sending' | 'sent' | 'error';
+}
+
 export interface ChatMessage {
   id: string;
   senderId: string;
@@ -13,11 +29,7 @@ export interface ChatMessage {
   isSystem?: boolean;
   /** Optimistic send state: undefined = received/confirmed, 'sending' = in-flight, 'error' = failed */
   status?: 'sending' | 'sent' | 'error';
-  replyTo?: {
-    id: string;
-    senderId: string;
-    content: string;
-  };
+  replyTo?: MessageReference;
   reactions?: MessageReaction[];
   readBy?: string[];
   isEdited?: boolean;

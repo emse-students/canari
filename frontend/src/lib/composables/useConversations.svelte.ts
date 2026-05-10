@@ -9,7 +9,7 @@
 import { SvelteDate, SvelteMap, SvelteSet } from 'svelte/reactivity';
 import type { IStorage } from '$lib/db';
 import type { IMlsService } from '$lib/mlsService';
-import type { MessageReaction, Conversation } from '$lib/types';
+import type { AddMessageToChatOptions, MessageReaction, Conversation } from '$lib/types';
 import {
   fetchUniqueGroupMembers,
   removeMemberAndBroadcast,
@@ -44,23 +44,10 @@ export interface ConversationContext {
     senderId: string,
     content: string,
     contactName: string,
-    options?: {
-      replyTo?: { id: string; senderId: string; content: string };
-      isSystem?: boolean;
-      messageId?: string;
-      timestamp?: Date;
-      status?: 'sending' | 'sent' | 'error';
-    }
+    options?: AddMessageToChatOptions
   ) => Promise<void>;
   batchAddMessages?: (
-    messages: Array<{
-      senderId: string;
-      content: string;
-      replyTo?: { id: string; senderId: string; content: string };
-      isSystem?: boolean;
-      messageId?: string;
-      timestamp?: Date;
-    }>,
+    messages: Array<{ senderId: string; content: string } & AddMessageToChatOptions>,
     contactName: string
   ) => Promise<void>;
 }

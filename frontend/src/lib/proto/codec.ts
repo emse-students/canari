@@ -33,6 +33,19 @@ export type ICallMsg = canari.ICallMsg;
 
 export const MediaKind = canari.MediaKind;
 
+export function mediaKindToType(kind?: number | null): 'image' | 'video' | 'audio' | 'file' {
+  switch (kind) {
+    case canari.MediaKind.MEDIA_IMAGE:
+      return 'image';
+    case canari.MediaKind.MEDIA_VIDEO:
+      return 'video';
+    case canari.MediaKind.MEDIA_AUDIO:
+      return 'audio';
+    default:
+      return 'file';
+  }
+}
+
 // ─── Transport layer ──────────────────────────────────────────────────────────
 
 /**

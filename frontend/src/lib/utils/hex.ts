@@ -3,6 +3,11 @@ export function toHex(buffer: Uint8Array): string {
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
 }
+
+/** Null-safe hex conversion — returns '' for null/undefined/empty buffers. */
+export function bytesToHex(bytes?: Uint8Array | null): string {
+  return bytes && bytes.length > 0 ? toHex(bytes) : '';
+}
 export function fromHex(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2);
   for (let i = 0; i < bytes.length; i++) {

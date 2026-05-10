@@ -36,7 +36,7 @@ import { savePin, clearPin, clearPinAndKey } from '$lib/utils/pinVault';
 import { CallService } from '$lib/services/CallService';
 import { startPushService, stopPushService } from '$lib/services/PushNotificationService';
 import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
-import type { Conversation } from '$lib/types';
+import type { AddMessageToChatOptions, Conversation } from '$lib/types';
 
 export interface ChatSessionCallbacks {
   conversations: SvelteMap<string, Conversation>;
@@ -45,13 +45,7 @@ export interface ChatSessionCallbacks {
     senderId: string,
     content: string,
     contactName: string,
-    options?: {
-      replyTo?: { id: string; senderId: string; content: string };
-      isSystem?: boolean;
-      messageId?: string;
-      timestamp?: Date;
-      status?: 'sending' | 'sent' | 'error';
-    }
+    options?: AddMessageToChatOptions
   ) => Promise<void>;
   addSystemMessage: (content: string, contactName: string) => Promise<void>;
   saveConversation: (contactName: string) => Promise<void>;

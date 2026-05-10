@@ -1,17 +1,16 @@
 import { saveMlsState } from '$lib/utils/hex';
 import type { IStorage, StoredMessage } from '$lib/db';
-import type { ChatMessage, Conversation, MessageReaction } from '$lib/types';
+import type {
+  AddMessageToChatOptions,
+  ChatMessage,
+  Conversation,
+  MessageReaction,
+} from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
-import { decodeAppMessage, MediaKind } from '$lib/proto/codec';
-import { serializeEnvelope, mkTextEnvelope, mkMediaEnvelope, parseEnvelope } from '$lib/envelope';
+import { decodeAppMessage } from '$lib/proto/codec';
+import { serializeEnvelope, mkTextEnvelope, parseEnvelope } from '$lib/envelope';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
-
-function bytesToHex(bytes?: Uint8Array | null): string {
-  if (!bytes || bytes.length === 0) return '';
-  return Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-}
+import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
 
 function seenHistoryKey(userId: string, groupId: string): string {
   return `history_seen_cipher:${userId}:${groupId}`;
@@ -50,19 +49,6 @@ function saveSeenCipherHashes(userId: string, groupId: string, hashes: Set<strin
     localStorage.setItem(seenHistoryKey(userId, groupId), JSON.stringify(bounded));
   } catch {
     /* quota exceeded — graceful degradation */
-  }
-}
-
-function mediaKindToType(kind?: number | null): 'image' | 'video' | 'audio' | 'file' {
-  switch (kind) {
-    case MediaKind.MEDIA_IMAGE:
-      return 'image';
-    case MediaKind.MEDIA_VIDEO:
-      return 'video';
-    case MediaKind.MEDIA_AUDIO:
-      return 'audio';
-    default:
-      return 'file';
   }
 }
 
@@ -179,14 +165,8 @@ export async function replayConversationHistory(params: {
     const readReceiptDbUpdates: Array<{ msgId: string; senderNorm: string }> = [];
 
     // Batch-collect decoded messages to flush in one UI update at the end.
-    const pendingMessages: Array<{
-      senderId: string;
-      content: string;
-      replyTo?: { id: string; senderId: string; content: string };
-      isSystem?: boolean;
-      messageId?: string;
-      timestamp?: Date;
-    }> = [];
+    const pendingMessages: Array<{ senderId: string; content: string } & AddMessageToChatOptions> =
+      [];
 
     for (const msg of history) {
       // Update latest stream ID (Redis stream IDs sort lexicographically)
@@ -211,54 +191,12 @@ export async function replayConversationHistory(params: {
 
         const parsed = decodeAppMessage(decryptedBytes);
 
-        if (parsed?.text) {
-          if (parsed.text.content) {
-            pendingMessages.push({
-              senderId: msg.sender_id,
-              content: serializeEnvelope(mkTextEnvelope(parsed.text.content ?? '')),
-              messageId: parsed.messageId || undefined,
-              timestamp: new Date(msg.timestamp),
-            });
-            addedMsg++;
-            mlsUpdated = true;
-            continue;
-          }
-        } else if (parsed?.reply) {
-          const replyTo = parsed.reply.replyTo
-            ? {
-                id: parsed.reply.replyTo.id ?? '',
-                senderId: parsed.reply.replyTo.senderId ?? '',
-                content: parsed.reply.replyTo.preview ?? '',
-              }
-            : undefined;
+        const envelope = parsed ? appMsgToEnvelope(parsed) : null;
+        if (envelope) {
           pendingMessages.push({
             senderId: msg.sender_id,
-            content: serializeEnvelope(mkTextEnvelope(parsed.reply.content ?? '', replyTo)),
-            replyTo,
-            messageId: parsed.messageId || undefined,
-            timestamp: new Date(msg.timestamp),
-          });
-          addedMsg++;
-          mlsUpdated = true;
-          continue;
-        } else if (parsed?.media) {
-          pendingMessages.push({
-            senderId: msg.sender_id,
-            content: serializeEnvelope(
-              mkMediaEnvelope(
-                {
-                  type: mediaKindToType(parsed.media.kind),
-                  mediaId: parsed.media.mediaId ?? '',
-                  key: bytesToHex(parsed.media.key),
-                  iv: bytesToHex(parsed.media.iv),
-                  mimeType: parsed.media.mimeType ?? '',
-                  size: parsed.media.size ?? 0,
-                  fileName: parsed.media.fileName ?? undefined,
-                },
-                parsed.media.caption || undefined
-              )
-            ),
-            messageId: parsed.messageId || undefined,
+            content: envelope.content,
+            ...envelope.options,
             timestamp: new Date(msg.timestamp),
           });
           addedMsg++;
