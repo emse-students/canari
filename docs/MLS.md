@@ -36,6 +36,10 @@ Canari implements end-to-end encryption using **MLS (Messaging Layer Security, R
 | `frontend/src/lib/utils/chat/history.ts` | History replay (Redis Stream fetch + MLS decrypt) |
 | `frontend/src/lib/utils/chat/conversations.ts` | Conversation loading, de-duplication, type detection |
 | `frontend/src/lib/utils/chat/messaging.ts` | `sendChatMessage`, reactions, edits, deletes |
+| `frontend/src/lib/utils/chat/messageUtils.ts` | `appMsgToEnvelope()` — unified AppMessage → MessageEnvelope decoder |
+| `frontend/src/lib/envelope.ts` | `MessageEnvelope` union type (text/media/system) + serialization |
+| `frontend/src/lib/proto/codec.ts` | Protobuf encode/decode + `mediaKindToType` |
+| `frontend/src/lib/types/index.ts` | Central type dictionary: `Conversation`, `ChatMessage`, `MessageReference`, `AddMessageToChatOptions` |
 | `frontend/mls-wasm/` | Rust WASM bindings (OpenMLS) |
 | `frontend/mls-core/` | Shared Rust MLS logic |
 
@@ -308,9 +312,9 @@ If the saved WASM/Rust state embeds a different device ID than what's in localSt
 
 1. Load `lastStreamId` from localStorage (incremental — avoids re-processing consumed ratchet keys)
 2. Fetch Redis Stream from `/api/mls/history/:groupId?after=<streamId>`
-3. For each message: DJB2 hash of `(timestamp, content)` for deduplication
-4. `processIncomingMessage()` → decrypt → dispatch (text, reply, media, reaction, system events)
-5. Irrecoverable errors (`CannotDecryptOwnMessage`, `WrongEpoch`, `SecretReuseError`) → add to seen hashes → skip
+3. For each message: use Redis Stream ID as deduplication fingerprint (falls back to `timestamp:content_prefix` for entries without ID)
+4. `processIncomingMessage()` → decrypt → `appMsgToEnvelope()` → dispatch (text, reply, media, reaction, system events)
+5. Irrecoverable errors (`CannotDecryptOwnMessage`, `WrongEpoch`, `SecretReuseError`) → add to seen fingerprints → skip
 6. Save `lastStreamId` for next fetch
 
 ---
@@ -332,6 +336,9 @@ If the saved WASM/Rust state embeds a different device ID than what's in localSt
 | `851f37a` | `WebMlsService` credential mismatch recovery (mirror of TauriMlsService) |
 | `851f37a` | `WebMlsService` OTKP purge on fresh start + `DELETE /prekeys` backend endpoint |
 | `851f37a` | TypeScript `let`-closure narrowing: `const stN = storage` snapshots |
-| _current_ | `WebMlsService.fetchPendingMessages` routes through `enqueueMessage` (race condition fix) |
-| _current_ | `TauriMlsService` OTKP purge on fresh start (`freshStart` flag + purge in `generateKeyPackage`) |
-| _current_ | `TauriMlsService.getGroupMembers` / `getUserGroups` missing auth headers (401 fix) |
+| `bccd872` | Remote reactions not rendering; delete/edit reactivity (Svelte 5 `conversations.set()`) |
+| `bccd872` | System messages showing raw user IDs — resolved with `getUserDisplayNameSync` |
+| `7abba95` | `addMessageToChat` positional API → options object (`messageId`, `replyTo` were silently discarded) |
+| `df0606a` | Contract tests for `addMessageToChat` options-based API |
+| `2009dd4` | Spring cleaning: centralised `MessageReference` / `AddMessageToChatOptions`, unified `appMsgToEnvelope()` decoder |
+| `2654acb` | Remove legacy fallbacks (base64 proto, old JSON format, plain-text); inline `addSystemMessage` |

@@ -34,7 +34,14 @@ frontend/src/
 │   ├── sync/
 │   │   └── syncEngine.ts       # Synchronisation multi-device
 │   ├── composables/
-│   │   └── useChatSession.svelte.ts  # Logique de session de chat
+│   │   ├── useChatSession.svelte.ts  # Login, reconnect, orchestration session MLS
+│   │   ├── useConversations.svelte.ts # CRUD conversations, sélection, historique
+│   │   └── useMessaging.svelte.ts    # Envoi, réception, réactions, médias
+│   ├── types/
+│   │   └── index.ts            # Dictionnaire central des types (Conversation, ChatMessage, …)
+│   ├── envelope.ts             # Format unifié MessageEnvelope (text/media/system)
+│   ├── proto/
+│   │   └── codec.ts            # Encodage/décodage protobuf AppMessage + appMsgToEnvelope()
 │   └── db.ts                   # Base de données locale (IndexedDB/SQLite Tauri)
 └── routes/                 # Pages SvelteKit
     ├── +layout.svelte      # Layout racine (keyboard detection, bottom nav)
@@ -93,23 +100,46 @@ export async function logout(): Promise<void>
 
 Le token JWT est stocké **en mémoire** uniquement (pas localStorage). Le cookie `canari_ws_token` est synchronisé à chaque set/refresh du token pour permettre l'authentification WebSocket.
 
-### conversations.ts
+### Composables de messagerie (Svelte 5)
 
-État des conversations MLS actives :
+L'état des conversations n'est plus un store Svelte 4. Il vit dans une `SvelteMap<string, Conversation>` locale aux composables, instanciée par `MainChatPage.svelte` et `ChatBackgroundService.svelte`.
 
 ```typescript
-export const conversations: Writable<Map<string, Conversation>>
-export const activeConversationId: Writable<string | null>
-
+// types/index.ts — types centraux
 interface Conversation {
   id: string;           // groupId MLS
-  participants: User[];
-  messages: Message[];
-  isGroup: boolean;
-  unreadCount: number;
-  lastMessage: Message | null;
+  name: string;         // nom affiché
+  contactName: string;  // identifiant de contact (ex : email normalisé)
+  messages: ChatMessage[];
+  isReady: boolean;     // groupe MLS prêt (Welcome reçu)
+  mlsStateHex: string | null;
+  unreadCount?: number;
+  conversationType?: 'direct' | 'group' | 'channel';
+  directPeerId?: string;
+  imageMediaId?: string | null;
+}
+
+interface ChatMessage {
+  id: string;
+  senderId: string;
+  content: string;        // JSON sérialisé d'un MessageEnvelope
+  timestamp: Date;
+  editedAt?: Date;
+  isOwn: boolean;
+  isSystem?: boolean;
+  status?: 'sending' | 'sent' | 'error';
+  replyTo?: MessageReference;
+  reactions?: MessageReaction[];
+  readBy?: string[];
+  isEdited?: boolean;
+  isDeleted?: boolean;
 }
 ```
+
+Les trois composables s'utilisent ensemble :
+- `useConversations` — CRUD conversations, sélection active, scroll, pagination
+- `useMessaging` — envoi/réception de messages, réactions, édition, suppression, médias
+- `useChatSession` — orchestration globale (login, reconnect, WebSocket, sync multi-device)
 
 ---
 

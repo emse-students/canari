@@ -132,17 +132,11 @@ cargo test
 4. **Regenerate protobuf bindings** after changes to `libs/proto/canari.proto` (`npm run proto:gen`)
 5. **No localStorage for tokens** - use memory stores
 
-## Documentation Status
+## Accurate Reference
 
-**Outdated docs requiring updates:**
-- `docs/ARCHITECTURE.md` - Routing table needs correction: remove `/api/groups`, add `/api/presence` and `/api/associations/*`, fix auth flags for media/channels/users
-- `docs/CHAT_GATEWAY.md` - Remove sections about `/api/groups` HTTP routes (never implemented)
-- `docs/MLS.md` - Endpoint table is incomplete; see `apps/chat-delivery-service/src/app.controller.ts` for full list
-
-**Accurate reference:**
-- `infrastructure/local/Dockerfile.frontend` - Nginx routing rules
+- `infrastructure/local/Dockerfile.frontend` - Nginx routing rules (source of truth)
 - `apps/chat-gateway/src/main.rs` - Actual gateway routes (only `/api/ws`, `/api/presence`)
-- `apps/chat-delivery-service/src/app.controller.ts` - Full MLS API surface
+- `apps/chat-delivery-service/src/app.controller.ts` - Full MLS API surface (~40 endpoints)
 
 ## Environment Setup
 
