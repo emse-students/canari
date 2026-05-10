@@ -1318,6 +1318,42 @@ fn store_push_secret(secret: String, app: tauri::AppHandle) -> Result<(), String
     Ok(())
 }
 
+/// Stores a boolean flag in {app_data_dir}/native_flags.json.
+/// Used to persist UI flags (e.g. biometric enrollment) outside the WebView
+/// storage layer, which MIUI and other aggressive OEMs may clear between sessions.
+#[tauri::command]
+fn set_native_flag(key: String, value: bool, app: tauri::AppHandle) -> Result<(), String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
+    let path = data_dir.join("native_flags.json");
+    let mut flags: serde_json::Map<String, serde_json::Value> = if path.exists() {
+        let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+        serde_json::from_slice(&bytes).unwrap_or_default()
+    } else {
+        serde_json::Map::new()
+    };
+    flags.insert(key, serde_json::Value::Bool(value));
+    std::fs::write(&path, serde_json::Value::Object(flags).to_string())
+        .map_err(|e| e.to_string())
+}
+
+/// Reads all boolean flags from {app_data_dir}/native_flags.json.
+/// Returns an empty object if the file does not exist yet.
+#[tauri::command]
+fn get_native_flags(app: tauri::AppHandle) -> serde_json::Value {
+    let Ok(data_dir) = app.path().app_data_dir() else {
+        return serde_json::Value::Object(serde_json::Map::new());
+    };
+    let path = data_dir.join("native_flags.json");
+    if !path.exists() {
+        return serde_json::Value::Object(serde_json::Map::new());
+    }
+    let Ok(bytes) = std::fs::read(&path) else {
+        return serde_json::Value::Object(serde_json::Map::new());
+    };
+    serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Object(serde_json::Map::new()))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // On Android: installe un hook de panic pour loguer le message AVANT le SIGABRT.
@@ -1624,7 +1660,9 @@ pub fn run() {
             process_gap_messages,
             fetch_and_queue_missing_messages,
             process_pending_mls_messages,
-            bootstrap_dead_conversation
+            bootstrap_dead_conversation,
+            set_native_flag,
+            get_native_flags
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

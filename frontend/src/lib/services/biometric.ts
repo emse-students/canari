@@ -5,12 +5,14 @@ import {
 } from '@impierce/tauri-plugin-keystore';
 
 import { BiometryType, checkStatus, type Status } from '@tauri-apps/plugin-biometric';
+import { invoke, isTauri } from '@tauri-apps/api/core';
 
 // Service/user are parsed but ignored by the plugin internally (uses a hardcoded
 // Android Keystore alias); values are kept here for forward compatibility.
 const KEYSTORE_SERVICE = 'fr.emse.canari';
 const KEYSTORE_USER = 'canari_biometric_user';
 const CONFIG_FLAG_KEY = 'canari_biometric_configured';
+const NATIVE_FLAG_KEY = 'biometricConfigured';
 
 export class BiometricService {
   /**
@@ -28,6 +30,9 @@ export class BiometricService {
       // Si aucune empreinte n'est configurée sur le téléphone, ceci va throw
       await keystoreStore(secret);
       localStorage.setItem(CONFIG_FLAG_KEY, 'true');
+      if (isTauri()) {
+        await invoke('set_native_flag', { key: NATIVE_FLAG_KEY, value: true }).catch(() => {});
+      }
     } catch (e) {
       const errorMsg = String(e);
       if (errorMsg.includes('At least one biometric must be enrolled')) {
@@ -58,7 +63,19 @@ export class BiometricService {
   }
 
   static async isConfigured(): Promise<boolean> {
-    return localStorage.getItem(CONFIG_FLAG_KEY) === 'true';
+    if (localStorage.getItem(CONFIG_FLAG_KEY) === 'true') return true;
+    if (isTauri()) {
+      try {
+        const flags = await invoke<Record<string, boolean>>('get_native_flags');
+        if (flags[NATIVE_FLAG_KEY]) {
+          localStorage.setItem(CONFIG_FLAG_KEY, 'true');
+          return true;
+        }
+      } catch {
+        /* Ignore — native storage unavailable */
+      }
+    }
+    return false;
   }
 
   static async isAvailable(): Promise<boolean> {
@@ -78,5 +95,8 @@ export class BiometricService {
       // Key may already be absent; proceed with cleanup.
     }
     localStorage.removeItem(CONFIG_FLAG_KEY);
+    if (isTauri()) {
+      await invoke('set_native_flag', { key: NATIVE_FLAG_KEY, value: false }).catch(() => {});
+    }
   }
 }
