@@ -13,7 +13,7 @@
   import { APP_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
 
   // NOUVEAUX IMPORTS POUR LE PUSH :
-  import { getStatusLog, globalSession } from '$lib/stores/globalChatSingleton.svelte';
+  import { getStatusLog, globalSession, globalConvs } from '$lib/stores/globalChatSingleton.svelte';
   import { startPushService } from '$lib/services/PushNotificationService';
 
   let { children } = $props();
@@ -22,6 +22,18 @@
   const activePlaceId = $derived(resolveActivePlaceId(pathname));
 
   const isLoginPage = $derived(pathname === '/login');
+
+  // Hide BottomNav and remove its padding from the composer when a conversation
+  // is open on mobile (only relevant on the chat / communities routes).
+  const isMobileConvoOpen = $derived(
+    (pathname === '/chat' || pathname === '/communities') &&
+      globalConvs.mobileView === 'chat'
+  );
+
+  $effect(() => {
+    document.documentElement.classList.toggle('mobile-convo-open', isMobileConvoOpen);
+    return () => document.documentElement.classList.remove('mobile-convo-open');
+  });
 
   // ── Logs panel (global — fonctionne sur toutes les routes) ──────────────────
   let showLogs = $state(false);
@@ -152,7 +164,7 @@
       </div>
     </main>
 
-    {#if !isKeyboardOpen && !isLoginPage}
+    {#if !isKeyboardOpen && !isLoginPage && !isMobileConvoOpen}
       <BottomNav />
     {/if}
   </div>

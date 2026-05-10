@@ -280,6 +280,12 @@ h6,
   padding-bottom: 0 !important;
 }
 
+/* When a conversation is open on mobile the BottomNav is unmounted — drop its
+   reserved height so the composer sits flush with the safe area. */
+.mobile-convo-open .chat-composer-footer {
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+}
+
 /* Chat layout fills the full viewport — neutralise the BottomNav dead-zone
    created by .page-scroll-wrap's pb-16 (only scrollable pages need that space). */
 .page-scroll-wrap:has(.app-layout) {
