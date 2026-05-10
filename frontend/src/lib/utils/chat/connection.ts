@@ -8,6 +8,7 @@ import { decodeAppMessage, encodeAppMessage, mkSystem, MediaKind } from '$lib/pr
 import { serializeEnvelope, mkTextEnvelope, mkMediaEnvelope } from '$lib/envelope';
 import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
 import { ChannelService } from '$lib/services/ChannelService';
+import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 
 function bytesToHex(bytes?: Uint8Array | null): string {
   if (!bytes || bytes.length === 0) return '';
@@ -804,36 +805,38 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               if (event === 'groupRenamed' && data.newName) {
                 conversations.set(convoKey, { ...convo, name: data.newName });
                 if (storage) await saveConversation(convoKey);
+                const senderName = getUserDisplayNameSync(senderNorm, senderNorm);
                 await addSystemMessage(
-                  `${senderNorm} a renommé le groupe en "${data.newName}"`,
+                  `${senderName} a renommé le groupe en "${data.newName}"`,
                   convoKey
                 );
-                log(`📝 Groupe renommé en "${data.newName}" par ${senderNorm}`);
+                log(`📝 Groupe renommé en "${data.newName}" par ${senderName}`);
                 return true;
               }
               if (event === 'memberRemoved' && data.targetUser) {
-                await addSystemMessage(
-                  `${senderNorm} a retiré ${data.targetUser} du groupe`,
-                  convoKey
-                );
+                const senderName = getUserDisplayNameSync(senderNorm, senderNorm);
+                const targetName = getUserDisplayNameSync(data.targetUser, data.targetUser);
+                await addSystemMessage(`${senderName} a retiré ${targetName} du groupe`, convoKey);
                 return true;
               }
               if (event === 'memberAdded') {
+                const senderName = getUserDisplayNameSync(senderNorm, senderNorm);
                 const added =
                   data.newUsers && Array.isArray(data.newUsers)
-                    ? data.newUsers.join(', ')
-                    : data.newUser;
+                    ? data.newUsers.map((u: string) => getUserDisplayNameSync(u, u)).join(', ')
+                    : getUserDisplayNameSync(data.newUser, data.newUser);
 
                 if (added) {
-                  await addSystemMessage(`${senderNorm} a ajouté ${added} au groupe`, convoKey);
+                  await addSystemMessage(`${senderName} a ajouté ${added} au groupe`, convoKey);
                 }
                 return true;
               }
               if (event === 'groupDeleted') {
-                await addSystemMessage(`${senderNorm} a supprimé le groupe`, convoKey);
+                const senderName = getUserDisplayNameSync(senderNorm, senderNorm);
+                await addSystemMessage(`${senderName} a supprimé le groupe`, convoKey);
                 conversations.set(convoKey, { ...convo, isReady: false });
                 if (storage) await saveConversation(convoKey);
-                log(`[INFO] Groupe supprime par ${senderNorm} (archive localement)`);
+                log(`[INFO] Groupe supprime par ${senderName} (archive localement)`);
                 return true;
               }
               if (event === 'read_receipt') {
@@ -892,24 +895,32 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               if (event === 'delete_message') {
                 const c = conversations.get(convoKey);
                 if (c && data.messageId) {
-                  const targetMsg = c.messages.find((m) => m.id === data.messageId);
-                  if (targetMsg && targetMsg.senderId === senderNorm) {
-                    targetMsg.isDeleted = true;
-                    targetMsg.content = 'Ce message a été supprimé.';
+                  const idx = c.messages.findIndex((m) => m.id === data.messageId);
+                  if (idx !== -1 && c.messages[idx].senderId === senderNorm) {
+                    const orig = c.messages[idx];
+                    const deletedMsg = {
+                      ...orig,
+                      isDeleted: true,
+                      content: 'Ce message a été supprimé.',
+                    };
+                    conversations.set(convoKey, {
+                      ...c,
+                      messages: c.messages.map((m, i) => (i === idx ? deletedMsg : m)),
+                    });
                     if (storage) {
                       try {
                         await storage.saveMessage(
                           {
-                            id: targetMsg.id,
+                            id: deletedMsg.id,
                             conversationId: convoKey,
-                            senderId: targetMsg.senderId,
-                            content: targetMsg.content,
+                            senderId: deletedMsg.senderId,
+                            content: deletedMsg.content,
                             timestamp:
-                              targetMsg.timestamp instanceof Date
-                                ? targetMsg.timestamp.getTime()
-                                : new Date(targetMsg.timestamp as any).getTime(),
-                            readBy: targetMsg.readBy,
-                            reactions: messageReactions.get(targetMsg.id),
+                              deletedMsg.timestamp instanceof Date
+                                ? deletedMsg.timestamp.getTime()
+                                : new Date(deletedMsg.timestamp as any).getTime(),
+                            readBy: deletedMsg.readBy,
+                            reactions: messageReactions.get(deletedMsg.id),
                             isDeleted: true,
                           },
                           pin
@@ -925,27 +936,36 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               if (event === 'edit_message' && data.messageId && data.newContent) {
                 const c = conversations.get(convoKey);
                 if (c) {
-                  const targetMsg = c.messages.find((m) => m.id === data.messageId);
-                  if (targetMsg && targetMsg.senderId === senderNorm) {
-                    targetMsg.isEdited = true;
-                    targetMsg.editedAt =
+                  const idx = c.messages.findIndex((m) => m.id === data.messageId);
+                  if (idx !== -1 && c.messages[idx].senderId === senderNorm) {
+                    const orig = c.messages[idx];
+                    const editedAt =
                       typeof data.editedAt === 'number' ? new Date(data.editedAt) : new Date();
-                    targetMsg.content = data.newContent;
-                    targetMsg.readBy = [];
+                    const editedMsg = {
+                      ...orig,
+                      isEdited: true,
+                      editedAt,
+                      content: data.newContent,
+                      readBy: [] as string[],
+                    };
+                    conversations.set(convoKey, {
+                      ...c,
+                      messages: c.messages.map((m, i) => (i === idx ? editedMsg : m)),
+                    });
                     if (storage) {
                       try {
                         await storage.saveMessage(
                           {
-                            id: targetMsg.id,
+                            id: editedMsg.id,
                             conversationId: convoKey,
-                            senderId: targetMsg.senderId,
+                            senderId: editedMsg.senderId,
                             content: data.newContent,
                             timestamp:
-                              targetMsg.timestamp instanceof Date
-                                ? targetMsg.timestamp.getTime()
-                                : new Date(targetMsg.timestamp as any).getTime(),
+                              editedMsg.timestamp instanceof Date
+                                ? editedMsg.timestamp.getTime()
+                                : new Date(editedMsg.timestamp as any).getTime(),
                             readBy: [],
-                            reactions: messageReactions.get(targetMsg.id),
+                            reactions: messageReactions.get(editedMsg.id),
                             isEdited: true,
                           },
                           pin

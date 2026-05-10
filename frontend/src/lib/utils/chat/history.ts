@@ -4,6 +4,7 @@ import type { ChatMessage, Conversation, MessageReaction } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
 import { decodeAppMessage, MediaKind } from '$lib/proto/codec';
 import { serializeEnvelope, mkTextEnvelope, mkMediaEnvelope, parseEnvelope } from '$lib/envelope';
+import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 
 function bytesToHex(bytes?: Uint8Array | null): string {
   if (!bytes || bytes.length === 0) return '';
@@ -286,17 +287,22 @@ export async function replayConversationHistory(params: {
               if (convo && convo.name !== data.newName) {
                 setConversation(contactName, { ...convo, name: data.newName });
               }
-              systemText = `${senderNorm} a renommé le groupe en "${data.newName}"`;
+              const senderName = getUserDisplayNameSync(senderNorm, senderNorm);
+              systemText = `${senderName} a renommé le groupe en "${data.newName}"`;
             } else if (parsed.system.event === 'memberRemoved' && data.targetUser) {
-              systemText = `${senderNorm} a retiré ${data.targetUser} du groupe`;
+              const senderName = getUserDisplayNameSync(senderNorm, senderNorm);
+              const targetName = getUserDisplayNameSync(data.targetUser, data.targetUser);
+              systemText = `${senderName} a retiré ${targetName} du groupe`;
             } else if (parsed.system.event === 'memberAdded') {
+              const senderName = getUserDisplayNameSync(senderNorm, senderNorm);
               const added =
                 data.newUsers && Array.isArray(data.newUsers)
-                  ? data.newUsers.join(', ')
-                  : data.newUser;
-              if (added) systemText = `${senderNorm} a ajouté ${added} au groupe`;
+                  ? data.newUsers.map((u: string) => getUserDisplayNameSync(u, u)).join(', ')
+                  : getUserDisplayNameSync(data.newUser, data.newUser);
+              if (added) systemText = `${senderName} a ajouté ${added} au groupe`;
             } else if (parsed.system.event === 'groupDeleted') {
-              systemText = `${senderNorm} a supprimé le groupe`;
+              const senderName = getUserDisplayNameSync(senderNorm, senderNorm);
+              systemText = `${senderName} a supprimé le groupe`;
             } else if (parsed.system.event === 'read_receipt') {
               const msgIds: string[] = data.messageIds ?? [];
               const convo = getConversation(contactName);

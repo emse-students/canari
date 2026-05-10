@@ -451,7 +451,7 @@
         groupPosition
       )} transition-shadow duration-200
       {isOwn
-        ? 'bg-gradient-to-br from-amber-400 to-amber-500 text-[#151B2C] shadow-md shadow-amber-500/20 hover:shadow-lg hover:shadow-amber-500/30'
+        ? 'bg-gradient-to-br from-amber-400 to-amber-500 text-cn-dark shadow-md shadow-amber-500/20 hover:shadow-lg hover:shadow-amber-500/30'
         : 'bg-white/70 dark:bg-black/40 backdrop-blur-xl border border-black/5 dark:border-white/10 text-text-main shadow-sm hover:shadow-md'}
       {isHighlighted
         ? 'ring-2 ring-amber-500/80 ring-offset-2 ring-offset-transparent animate-pulse'

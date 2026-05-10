@@ -52,7 +52,7 @@
       <div class="relative w-56 h-56">
         <button
           type="button"
-          class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-16 h-16 rounded-full bg-white/90 dark:bg-[#1c2538]/95 border border-black/10 dark:border-white/10 shadow-xl inline-flex items-center justify-center text-text-main"
+          class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-16 h-16 rounded-full bg-white/90 dark:bg-[var(--cn-surface)]/95 border border-black/10 dark:border-white/10 shadow-xl inline-flex items-center justify-center text-text-main"
           onclick={onClose}
           aria-label="Fermer"
         >
@@ -65,7 +65,7 @@
               onReply?.();
               onClose?.();
             }}
-            class="absolute left-1/2 top-1 -translate-x-1/2 w-14 h-14 rounded-full bg-white/90 dark:bg-[#1c2538]/95 border border-black/10 dark:border-white/10 shadow-lg inline-flex items-center justify-center text-text-main active:scale-95"
+            class="absolute left-1/2 top-1 -translate-x-1/2 w-14 h-14 rounded-full bg-white/90 dark:bg-[var(--cn-surface)]/95 border border-black/10 dark:border-white/10 shadow-lg inline-flex items-center justify-center text-text-main active:scale-95"
             aria-label="Répondre"
             title="Répondre"
           >
@@ -79,7 +79,7 @@
               onReact?.();
               onClose?.();
             }}
-            class="absolute right-2 top-1/2 -translate-y-1/2 w-14 h-14 rounded-full bg-white/90 dark:bg-[#1c2538]/95 border border-black/10 dark:border-white/10 shadow-lg inline-flex items-center justify-center text-amber-500 active:scale-95"
+            class="absolute right-2 top-1/2 -translate-y-1/2 w-14 h-14 rounded-full bg-white/90 dark:bg-[var(--cn-surface)]/95 border border-black/10 dark:border-white/10 shadow-lg inline-flex items-center justify-center text-amber-500 active:scale-95"
             aria-label="Réagir"
             title="Réagir"
           >
@@ -93,7 +93,7 @@
               onEdit?.();
               onClose?.();
             }}
-            class="absolute left-2 top-1/2 -translate-y-1/2 w-14 h-14 rounded-full bg-white/90 dark:bg-[#1c2538]/95 border border-black/10 dark:border-white/10 shadow-lg inline-flex items-center justify-center text-blue-500 active:scale-95"
+            class="absolute left-2 top-1/2 -translate-y-1/2 w-14 h-14 rounded-full bg-white/90 dark:bg-[var(--cn-surface)]/95 border border-black/10 dark:border-white/10 shadow-lg inline-flex items-center justify-center text-blue-500 active:scale-95"
             aria-label="Modifier"
             title="Modifier"
           >
