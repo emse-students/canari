@@ -32,7 +32,6 @@ export interface MessageHandlerDeps {
     contactName: string,
     options?: AddMessageToChatOptions
   ) => Promise<void>;
-  addSystemMessage: (content: string, contactName: string) => Promise<void>;
   loadHistoryForConversation: (contactName: string, groupId: string) => Promise<void>;
   onChannelMemberJoined?: (event: {
     channelId: string;
@@ -216,7 +215,6 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
     setSelectedContact,
     saveConversation,
     addMessageToChat,
-    addSystemMessage,
     loadHistoryForConversation,
     onChannelMemberJoined,
     onChannelMemberKicked,
@@ -389,7 +387,6 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               let bytes: Uint8Array;
 
               if (data.nonce && data.keyVersion !== undefined) {
-                // Genuine AES-GCM encryption with rotated keys
                 bytes = await channelKeyManager.decryptMessage(
                   data.channelId,
                   data.ciphertext,
@@ -397,10 +394,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                   data.keyVersion
                 );
               } else {
-                // Fallback to legacy mock base64 for old messages
-                const binStr = atob(data.ciphertext);
-                bytes = new Uint8Array(binStr.length);
-                for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
+                return true;
               }
 
               const msg = decodeAppMessage(bytes);
@@ -715,9 +709,11 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                     .catch(() => {});
 
                   const displayName = data.channelName || channelId;
-                  await addSystemMessage(
+                  await addMessageToChat(
+                    'system',
                     `Vous avez ete invite a rejoindre #${displayName}. Les cles de chiffrement ont ete recues en prive.`,
-                    convoKey
+                    convoKey,
+                    { isSystem: true }
                   );
                   log(
                     `[CHANNEL-KEY] ${keysToImport.length} cle(s) recue(s) via MLS pour #${displayName} (jusqu'a v${keyVersion}).`
@@ -735,9 +731,11 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                 conversations.set(convoKey, { ...convo, name: data.newName });
                 if (storage) await saveConversation(convoKey);
                 const senderName = getUserDisplayNameSync(senderNorm, senderNorm);
-                await addSystemMessage(
+                await addMessageToChat(
+                  'system',
                   `${senderName} a renommé le groupe en "${data.newName}"`,
-                  convoKey
+                  convoKey,
+                  { isSystem: true }
                 );
                 log(`📝 Groupe renommé en "${data.newName}" par ${senderName}`);
                 return true;
@@ -745,7 +743,12 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               if (event === 'memberRemoved' && data.targetUser) {
                 const senderName = getUserDisplayNameSync(senderNorm, senderNorm);
                 const targetName = getUserDisplayNameSync(data.targetUser, data.targetUser);
-                await addSystemMessage(`${senderName} a retiré ${targetName} du groupe`, convoKey);
+                await addMessageToChat(
+                  'system',
+                  `${senderName} a retiré ${targetName} du groupe`,
+                  convoKey,
+                  { isSystem: true }
+                );
                 return true;
               }
               if (event === 'memberAdded') {
@@ -756,13 +759,20 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                     : getUserDisplayNameSync(data.newUser, data.newUser);
 
                 if (added) {
-                  await addSystemMessage(`${senderName} a ajouté ${added} au groupe`, convoKey);
+                  await addMessageToChat(
+                    'system',
+                    `${senderName} a ajouté ${added} au groupe`,
+                    convoKey,
+                    { isSystem: true }
+                  );
                 }
                 return true;
               }
               if (event === 'groupDeleted') {
                 const senderName = getUserDisplayNameSync(senderNorm, senderNorm);
-                await addSystemMessage(`${senderName} a supprimé le groupe`, convoKey);
+                await addMessageToChat('system', `${senderName} a supprimé le groupe`, convoKey, {
+                  isSystem: true,
+                });
                 conversations.set(convoKey, { ...convo, isReady: false });
                 if (storage) await saveConversation(convoKey);
                 log(`[INFO] Groupe supprime par ${senderName} (archive localement)`);
@@ -1016,15 +1026,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             if (msg !== null) {
               log(`[MLS] Unknown AppMessage type for "${convoKey}" — not rendered`);
               console.warn(`[MLS] Unknown AppMessage type — skipping render for group ${convoKey}`);
-              return true;
             }
-            // Fallback: treat raw bytes as legacy plain text (pre-proto messages only).
-            const legacyText = new TextDecoder().decode(decryptedBytes);
-            await addMessageToChat(
-              senderNorm,
-              serializeEnvelope(mkTextEnvelope(legacyText)),
-              convoKey
-            );
           } else if (!isCommit && !epochRecoveryGroups.has(convoKey)) {
             // WASM logged a known-harmless duplicate error (SecretReuseError / out of bounds)
             // synchronously before returning null — ACK silently, do not count toward recovery.

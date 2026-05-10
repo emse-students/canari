@@ -152,8 +152,6 @@
           msgCtx(),
           options
         ),
-      addSystemMessage: (content: string, contactName: string) =>
-        messaging.addSystemMessage(content, contactName, msgCtx()),
       saveConversation: (name: string) => convs.saveConversation(name, convCtx()),
       selectConversation: convs.selectConversation,
       onChannelMemberJoined: (event: any) => {

@@ -128,8 +128,6 @@
           msgCtx(),
           options
         ),
-      addSystemMessage: (content: string, contactName: string) =>
-        globalMessaging.addSystemMessage(content, contactName, msgCtx()),
       saveConversation: (name: string) => globalConvs.saveConversation(name, convCtx()),
       selectConversation: globalConvs.selectConversation,
       onChannelMemberJoined: (event: any) => {

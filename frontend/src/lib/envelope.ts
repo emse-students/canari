@@ -60,11 +60,7 @@ export function getPreviewText(env: MessageEnvelope): string {
   }
 }
 
-/**
- * Parse a stored content string back into a MessageEnvelope.
- * Falls back to a plain TextEnvelope for legacy messages that were stored as
- * raw strings before the envelope format was introduced.
- */
+/** Parse a stored content string back into a MessageEnvelope. */
 const envelopeCache = new Map<string, MessageEnvelope>();
 
 export function parseEnvelope(content: string): MessageEnvelope {
@@ -72,32 +68,6 @@ export function parseEnvelope(content: string): MessageEnvelope {
   if (cached) return cached;
 
   let result: MessageEnvelope;
-
-  // Fallback for leaked base64 protobuf payloads
-  if (content.startsWith('Cg')) {
-    try {
-      // Decode base64
-      const binStr =
-        typeof window !== 'undefined'
-          ? atob(content)
-          : Buffer.from(content, 'base64').toString('binary');
-      const bytes = new Uint8Array(binStr.length);
-      for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
-
-      // Dynamic import or use of codec to avoid circular dependencies
-      // We will parse the protobuf manually since it's simple or just return a fallback.
-      // A typical AppMessage text payload has: 0x0A (10), length, 0x0A (10), length, then text characters
-      if (bytes.length >= 4 && bytes[0] === 10 && bytes[2] === 10) {
-        const textLen = bytes[3];
-        if (textLen > 0 && 4 + textLen <= bytes.length) {
-          const textContent = new TextDecoder().decode(bytes.slice(4, 4 + textLen));
-          return { kind: 'text', text: textContent };
-        }
-      }
-    } catch (err) {
-      void err;
-    }
-  }
 
   if (content.startsWith('{')) {
     try {

@@ -193,10 +193,6 @@ export function useMessaging() {
     });
   }
 
-  async function addSystemMessage(content: string, contactName: string, ctx: MessagingContext) {
-    await addMessageToChat('system', content, contactName, ctx, { isSystem: true });
-  }
-
   async function batchAddMessages(
     messages: Array<{ senderId: string; content: string } & AddMessageToChatOptions>,
     contactName: string,
@@ -616,7 +612,6 @@ export function useMessaging() {
     },
 
     addMessageToChat,
-    addSystemMessage,
     batchAddMessages,
     handleSendChat,
     handleFilesSelected,

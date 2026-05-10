@@ -8,7 +8,7 @@ import type {
 } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
 import { decodeAppMessage } from '$lib/proto/codec';
-import { serializeEnvelope, mkTextEnvelope, parseEnvelope } from '$lib/envelope';
+import { serializeEnvelope, mkTextEnvelope } from '$lib/envelope';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
 
@@ -54,36 +54,12 @@ function saveSeenCipherHashes(userId: string, groupId: string, hashes: Set<strin
 
 export function mapStoredMessagesToChatMessages(storedMessages: StoredMessage[], userId: string) {
   return storedMessages.map((m) => {
-    // Content is a serialized MessageEnvelope (new) or legacy JSON/plain-text.
-    // parseEnvelope handles all three cases transparently.
-    let content = m.content;
-    let replyTo: ChatMessage['replyTo'] = undefined;
-
-    try {
-      const parsed = JSON.parse(m.content);
-      // Legacy format: { content: string, replyTo?: ... }
-      if (parsed.content && !parsed.kind) {
-        if (typeof parsed.content === 'string') {
-          // If nested content is already an envelope string, keep its semantic kind.
-          const nestedEnvelope = parseEnvelope(parsed.content);
-          content = serializeEnvelope(nestedEnvelope);
-        } else {
-          content = serializeEnvelope(mkTextEnvelope(String(parsed.content ?? ''), parsed.replyTo));
-        }
-        replyTo = parsed.replyTo;
-      }
-      // New envelope format — content stays as-is, replyTo is inside the envelope.
-    } catch {
-      // Legacy plain text — leave content as-is; parseEnvelope will wrap it.
-    }
-
     return {
       id: m.id,
       senderId: m.senderId,
-      content,
+      content: m.content,
       timestamp: new Date(m.timestamp),
       isOwn: m.senderId.toLowerCase() === userId.toLowerCase(),
-      replyTo,
       readBy: m.readBy,
       reactions: m.reactions,
       ...(m.isDeleted ? { isDeleted: true } : {}),
@@ -321,17 +297,6 @@ export async function replayConversationHistory(params: {
             });
             addedMsg++;
           }
-          mlsUpdated = true;
-          continue;
-        } else {
-          // Legacy plain text or unknown format
-          const legacyText = new TextDecoder().decode(decryptedBytes);
-          pendingMessages.push({
-            senderId: msg.sender_id,
-            content: serializeEnvelope(mkTextEnvelope(legacyText)),
-            timestamp: new Date(msg.timestamp),
-          });
-          addedMsg++;
           mlsUpdated = true;
           continue;
         }

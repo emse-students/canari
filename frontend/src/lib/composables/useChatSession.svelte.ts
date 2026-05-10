@@ -47,7 +47,6 @@ export interface ChatSessionCallbacks {
     contactName: string,
     options?: AddMessageToChatOptions
   ) => Promise<void>;
-  addSystemMessage: (content: string, contactName: string) => Promise<void>;
   saveConversation: (contactName: string) => Promise<void>;
   selectConversation: (name: string) => void;
   onChannelMemberJoined: (event: any) => void;
@@ -347,7 +346,6 @@ export function useChatSession() {
         setSelectedContact: cb.setSelectedContact,
         saveConversation: cb.saveConversation,
         addMessageToChat: cb.addMessageToChat,
-        addSystemMessage: cb.addSystemMessage,
         loadHistoryForConversation: cb.onLoadHistoryForConversation,
         onChannelMemberJoined: cb.onChannelMemberJoined,
         onChannelMemberKicked: cb.onChannelMemberKicked,
