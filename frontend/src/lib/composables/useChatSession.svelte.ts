@@ -196,6 +196,28 @@ export function useChatSession() {
         return;
       }
 
+      // Load MLS state from disk in parallel with the pin-check network call —
+      // loadMlsState only needs userId and is pure I/O.
+      const { loadMlsState } = await import('$lib/utils/hex');
+      const _isTauri = !!(window as any).__TAURI_INTERNALS__;
+      const mlsStatePromise = (async (): Promise<
+        { bytes: Uint8Array; source: string } | undefined
+      > => {
+        const loaded = await loadMlsState(userId);
+        if (loaded) return { bytes: loaded, source: 'indexeddb' };
+        if (_isTauri) {
+          try {
+            const { invoke } = await import('@tauri-apps/api/core');
+            const fallback = await invoke<number[] | null>('load_mls_state');
+            if (fallback && fallback.length > 0)
+              return { bytes: new Uint8Array(fallback), source: 'native' };
+          } catch {
+            // Non-bloquant
+          }
+        }
+        return undefined;
+      })();
+
       const verifier = await computePinVerifier(userId, pin);
       const deviceId = mlsService.getDeviceId();
       const verifierPayload = JSON.stringify({ userId, verifier, deviceId });
@@ -232,37 +254,70 @@ export function useChatSession() {
       }
       if (verifierData.status === 'registered') cb.log('Premier appareil : PIN enregistre.');
 
-      cb.log('Initialisation MLS...');
-      const { loadMlsState } = await import('$lib/utils/hex');
-      const _isTauri = !!(window as any).__TAURI_INTERNALS__;
-      let stateBytes: Uint8Array | undefined;
-
-      const loaded = await loadMlsState(userId);
-      const hadLocalState = Boolean(loaded);
-      if (loaded) {
-        stateBytes = loaded;
-        cb.log('Etat MLS charge depuis IndexedDB.');
-      } else if (_isTauri) {
-        // Fallback mobile : localStorage peut être vidé par le WebView (mémoire, app kill).
-        // mls.bin est écrit dans le répertoire natif de l'app — plus fiable.
-        try {
-          const { invoke } = await import('@tauri-apps/api/core');
-          const fallback = await invoke<number[] | null>('load_mls_state');
-          if (fallback && fallback.length > 0) {
-            stateBytes = new Uint8Array(fallback);
-            cb.log('Etat MLS restaure depuis la sauvegarde native (mls.bin).');
-          }
-        } catch {
-          // Non-bloquant : le manager sera créé à vide et re-bootstrappé
-        }
+      // Collect the MLS state that was loading in the background.
+      const mlsStateResult = await mlsStatePromise;
+      const hadLocalState = Boolean(mlsStateResult);
+      if (mlsStateResult) {
+        cb.log(
+          mlsStateResult.source === 'native'
+            ? 'Etat MLS restaure depuis la sauvegarde native (mls.bin).'
+            : 'Etat MLS charge depuis IndexedDB.'
+        );
       }
 
-      await mlsService.init(userId, pin, stateBytes);
+      cb.log('Initialisation MLS...');
+      // Run pin-check, MLS init, and DB open concurrently.
+      // mlsService.init() validates the PIN independently via Argon2 decryption —
+      // the pin-check network call adds cross-device mismatch signaling and revocation.
+      // Both run in parallel to hide the network RTT inside the Argon2/deserialization time.
+      const pinCheckFetch = async () => {
+        let res = await fetch(`${historyBaseUrl}/api/mls/security/pin-check`, {
+          method: 'POST',
+          headers: verifierHeaders,
+          body: verifierPayload,
+        });
+        if (res.status === 404 || res.status === 405) {
+          res = await fetch(`${historyBaseUrl}/api/mls/security/pin-check`, {
+            method: 'POST',
+            headers: verifierHeaders,
+            body: verifierPayload,
+          });
+        }
+        if (!res.ok) throw new Error('Impossible de verifier le PIN (serveur inaccessible).');
+        return res.json() as Promise<{ status: string; resetRequired?: boolean }>;
+      };
+
+      const [pinCheckSettled, mlsInitSettled, storageSettled] = await Promise.allSettled([
+        pinCheckFetch(),
+        mlsService.init(userId, pin, mlsStateResult?.bytes),
+        getStorage(userId),
+      ]);
+
+      // Report errors in priority order: pin-check gives the friendliest message.
+      if (pinCheckSettled.status === 'fulfilled' && pinCheckSettled.value.status === 'mismatch') {
+        throw new Error(
+          'PIN incorrect : ce PIN ne correspond pas a celui enregistre pour cet utilisateur. Tous vos appareils doivent utiliser le meme PIN.'
+        );
+      }
+      if (mlsInitSettled.status === 'rejected') throw mlsInitSettled.reason;
+      if (pinCheckSettled.status === 'rejected') throw pinCheckSettled.reason;
+      if (storageSettled.status === 'rejected') throw storageSettled.reason;
+
+      const pinCheckData = pinCheckSettled.value;
+      if (pinCheckData.resetRequired === true) {
+        mls = null; // Force fresh MlsService on next login after wipe
+        await resetDeviceAsFresh(userId, cb);
+        pin = '';
+        throw new Error(
+          'Cet appareil a ete revoque. L etat local a ete reinitialise: reconnectez-vous avec votre PIN pour l enregistrer comme nouvel appareil.'
+        );
+      }
+      if (pinCheckData.status === 'registered') cb.log('Premier appareil : PIN enregistre.');
+
+      storage = storageSettled.value;
       myDeviceId = mlsService.getDeviceId();
       cb.log(`Identite MLS initialisee (device: ${myDeviceId})`);
       console.log(`[INIT] MLS initialized for userId=${userId} device=${myDeviceId}`);
-
-      storage = await getStorage(userId);
       cb.log('Base de donnees locale initialisee.');
 
       authToken = await getToken();
@@ -512,7 +567,7 @@ export function useChatSession() {
       }
 
       const isTauri = !!(window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
-      if (isTauri && !(await BiometricService.isConfigured())) {
+      if (isTauri && !(await BiometricService.isConfigured()) && !isBiometricPromptDismissed()) {
         showBiometricEnrollPrompt = true;
       }
     } catch (_e: unknown) {
@@ -561,6 +616,25 @@ export function useChatSession() {
     }
   }
 
+  const BIOMETRIC_DISMISSED_KEY = 'canari_biometric_prompt_dismissed';
+
+  function isBiometricPromptDismissed(): boolean {
+    if (localStorage.getItem(BIOMETRIC_DISMISSED_KEY) === 'true') return true;
+    return false;
+  }
+
+  async function dismissBiometricPrompt(): Promise<void> {
+    showBiometricEnrollPrompt = false;
+    localStorage.setItem(BIOMETRIC_DISMISSED_KEY, 'true');
+    const isTauri = !!(window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    if (isTauri) {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('set_native_flag', { key: 'biometricPromptDismissed', value: true }).catch(
+        () => {}
+      );
+    }
+  }
+
   async function enrollBiometric() {
     appendLog('[BIOMETRIE] Inscription biométrique en cours...');
     try {
@@ -569,6 +643,7 @@ export function useChatSession() {
       // so the app cannot reopen without biometric authentication.
       clearPinAndKey();
       showBiometricEnrollPrompt = false;
+      localStorage.removeItem(BIOMETRIC_DISMISSED_KEY);
       appendLog('[BIOMETRIE] Inscription OK — PIN effacé de la session (keystore matériel)');
     } catch (e) {
       appendLog(`[BIOMETRIE] Echec inscription: ${e instanceof Error ? e.message : String(e)}`);
@@ -872,6 +947,7 @@ export function useChatSession() {
     login,
     biometricLogin,
     enrollBiometric,
+    dismissBiometricPrompt,
     logout,
     scheduleReconnect,
     attemptReconnect,

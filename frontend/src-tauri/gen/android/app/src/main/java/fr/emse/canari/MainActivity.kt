@@ -1,5 +1,6 @@
 package fr.emse.canari
 
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.webkit.CookieManager
@@ -24,6 +25,9 @@ class MainActivity : TauriActivity() {
     override fun onWebViewCreate(webView: WebView) {
         super.onWebViewCreate(webView)
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
+        // Transparent background lets the Activity windowBackground show through while
+        // SvelteKit hydrates, eliminating the ~1s black flash on startup.
+        webView.setBackgroundColor(Color.TRANSPARENT)
     }
 
     override fun onPause() {

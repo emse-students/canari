@@ -491,7 +491,7 @@
     <!-- Le conteneur des boutons est maintenant compact et aligné à droite sur mobile -->
     <div class="flex items-center gap-2 shrink-0 self-end sm:self-auto mt-1 sm:mt-0">
       <button
-        onclick={() => (globalSession.showBiometricEnrollPrompt = false)}
+        onclick={() => globalSession.dismissBiometricPrompt()}
         class="px-3 py-2 text-xs font-semibold text-text-muted hover:text-text-main rounded-xl hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
       >
         Plus tard
