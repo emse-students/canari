@@ -45,10 +45,13 @@ interface MessageHandlerDeps {
     senderId: string,
     content: string,
     contactName: string,
-    replyTo?: ChatMessage['replyTo'],
-    isSystem?: boolean,
-    messageId?: string,
-    timestamp?: Date
+    options?: {
+      replyTo?: ChatMessage['replyTo'];
+      isSystem?: boolean;
+      messageId?: string;
+      timestamp?: Date;
+      status?: ChatMessage['status'];
+    }
   ) => Promise<void>;
   addSystemMessage: (content: string, contactName: string) => Promise<void>;
   loadHistoryForConversation: (contactName: string, groupId: string) => Promise<void>;
@@ -630,9 +633,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                 senderNorm,
                 serializeEnvelope(mkTextEnvelope(msg.text.content ?? '')),
                 convoKey,
-                undefined,
-                false,
-                msg.messageId || undefined
+                { messageId: msg.messageId || undefined }
               );
               return true;
             }
@@ -649,9 +650,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                 senderNorm,
                 serializeEnvelope(mkTextEnvelope(msg.reply.content ?? '', replyTo)),
                 convoKey,
-                undefined,
-                false,
-                msg.messageId || undefined
+                { messageId: msg.messageId || undefined, replyTo }
               );
               return true;
             }
@@ -721,9 +720,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                   )
                 ),
                 convoKey,
-                undefined,
-                false,
-                msg.messageId || undefined
+                { messageId: msg.messageId || undefined }
               );
               return true;
             }
@@ -1071,10 +1068,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                       String(m.senderId).toLowerCase(),
                       String(m.content),
                       convoKey,
-                      undefined,
-                      false,
-                      String(m.id),
-                      new Date(m.timestamp)
+                      { messageId: String(m.id), timestamp: new Date(m.timestamp) }
                     );
                   }
                 }
@@ -1470,9 +1464,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                       msg.sender.toLowerCase(),
                       serializeEnvelope(mkTextEnvelope(appMsg.text.content ?? '')),
                       newConvoKey,
-                      undefined,
-                      false,
-                      appMsg.messageId || undefined
+                      { messageId: appMsg.messageId || undefined }
                     );
                   } else if (appMsg?.reply) {
                     const rt = appMsg.reply.replyTo
@@ -1486,9 +1478,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                       msg.sender.toLowerCase(),
                       serializeEnvelope(mkTextEnvelope(appMsg.reply.content ?? '', rt)),
                       newConvoKey,
-                      undefined,
-                      false,
-                      appMsg.messageId || undefined
+                      { messageId: appMsg.messageId || undefined, replyTo: rt }
                     );
                   }
                 } catch {

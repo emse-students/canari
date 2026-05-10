@@ -446,7 +446,7 @@ export function useConversations() {
         'Vous avez ete retire de ce groupe. Vous ne pouvez plus envoyer ni recevoir de nouveaux messages.';
       console.warn(`[VERIFY] User no longer member of ${convo.id} — showing removal notice`);
       if (!convo.messages.some((m) => m.isSystem && m.content === notice)) {
-        await ctx.addMessageToChat('system', notice, contactName, undefined, true);
+        await ctx.addMessageToChat('system', notice, contactName, { isSystem: true });
       }
       if (selectedContact === contactName) sendError = notice;
       return false;
