@@ -666,26 +666,34 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               filtered.push({ emoji, userId: senderNorm });
               messageReactions.set(msgId, filtered);
 
-              // Also persist the reaction into the message's DB row
+              // Also update the message object in conversations so the {#each} re-renders.
+              // messageReactions.set() alone does not trigger Svelte's {#each} to re-evaluate
+              // its {#const} bindings — only a conversations.set() does (via visibleMessageGroups).
               const convo = conversations.get(convoKey);
-              if (storage && convo) {
-                const target = convo.messages.find((m) => m.id === msgId);
-                if (target) {
-                  try {
-                    await storage.saveMessage(
-                      {
-                        id: target.id,
-                        conversationId: convoKey,
-                        senderId: target.senderId,
-                        content: target.content,
-                        timestamp: target.timestamp.getTime(),
-                        readBy: target.readBy,
-                        reactions: filtered,
-                      },
-                      pin
-                    );
-                  } catch {
-                    // Non-blocking
+              if (convo) {
+                const msgIdx = convo.messages.findIndex((m) => m.id === msgId);
+                if (msgIdx !== -1) {
+                  const nextMsgs = [...convo.messages];
+                  nextMsgs[msgIdx] = { ...nextMsgs[msgIdx], reactions: filtered };
+                  conversations.set(convoKey, { ...convo, messages: nextMsgs });
+                  if (storage) {
+                    const target = nextMsgs[msgIdx];
+                    try {
+                      await storage.saveMessage(
+                        {
+                          id: target.id,
+                          conversationId: convoKey,
+                          senderId: target.senderId,
+                          content: target.content,
+                          timestamp: target.timestamp.getTime(),
+                          readBy: target.readBy,
+                          reactions: filtered,
+                        },
+                        pin
+                      );
+                    } catch {
+                      // Non-blocking
+                    }
                   }
                 }
               }
@@ -958,26 +966,31 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                 );
                 messageReactions.set(data.messageId, filtered);
 
-                // Persister la suppression en DB
                 const c = conversations.get(convoKey);
-                if (storage && c) {
-                  const target = c.messages.find((m) => m.id === data.messageId);
-                  if (target) {
-                    try {
-                      await storage.saveMessage(
-                        {
-                          id: target.id,
-                          conversationId: convoKey,
-                          senderId: target.senderId,
-                          content: target.content,
-                          timestamp: target.timestamp.getTime(),
-                          readBy: target.readBy,
-                          reactions: filtered,
-                        },
-                        pin
-                      );
-                    } catch {
-                      // Non-blocking
+                if (c) {
+                  const msgIdx = c.messages.findIndex((m) => m.id === data.messageId);
+                  if (msgIdx !== -1) {
+                    const nextMsgs = [...c.messages];
+                    nextMsgs[msgIdx] = { ...nextMsgs[msgIdx], reactions: filtered };
+                    conversations.set(convoKey, { ...c, messages: nextMsgs });
+                    if (storage) {
+                      const target = nextMsgs[msgIdx];
+                      try {
+                        await storage.saveMessage(
+                          {
+                            id: target.id,
+                            conversationId: convoKey,
+                            senderId: target.senderId,
+                            content: target.content,
+                            timestamp: target.timestamp.getTime(),
+                            readBy: target.readBy,
+                            reactions: filtered,
+                          },
+                          pin
+                        );
+                      } catch {
+                        // Non-blocking
+                      }
                     }
                   }
                 }
