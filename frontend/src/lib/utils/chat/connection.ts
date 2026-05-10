@@ -30,7 +30,7 @@ function mediaKindToType(kind?: number | null): 'image' | 'video' | 'audio' | 'f
   }
 }
 
-interface MessageHandlerDeps {
+export interface MessageHandlerDeps {
   mlsService: IMlsService;
   storage: IStorage | null;
   userId: string;
