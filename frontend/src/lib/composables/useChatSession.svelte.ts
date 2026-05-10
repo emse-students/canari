@@ -45,10 +45,13 @@ export interface ChatSessionCallbacks {
     senderId: string,
     content: string,
     contactName: string,
-    replyTo?: { id: string; senderId: string; content: string },
-    isSystem?: boolean,
-    messageId?: string,
-    timestamp?: Date
+    options?: {
+      replyTo?: { id: string; senderId: string; content: string };
+      isSystem?: boolean;
+      messageId?: string;
+      timestamp?: Date;
+      status?: 'sending' | 'sent' | 'error';
+    }
   ) => Promise<void>;
   addSystemMessage: (content: string, contactName: string) => Promise<void>;
   saveConversation: (contactName: string) => Promise<void>;

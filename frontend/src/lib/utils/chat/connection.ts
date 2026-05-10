@@ -445,15 +445,10 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             console.error('Failed to parse channel message:', e);
           }
 
-          addMessageToChat(
-            sender,
-            content,
-            convoKey,
-            undefined,
-            false,
-            appMessageId || data.messageId || data.id,
-            new Date(data.createdAt)
-          ).catch((e) => console.error(e));
+          addMessageToChat(sender, content, convoKey, {
+            messageId: appMessageId || data.messageId || data.id,
+            timestamp: new Date(data.createdAt),
+          }).catch((e) => console.error(e));
         } else {
           // We might want to auto-create the conversation if not found, but we skip for now
           // or add a system message log

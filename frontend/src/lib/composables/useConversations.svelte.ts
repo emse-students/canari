@@ -44,10 +44,13 @@ export interface ConversationContext {
     senderId: string,
     content: string,
     contactName: string,
-    replyTo?: { id: string; senderId: string; content: string },
-    isSystem?: boolean,
-    messageId?: string,
-    timestamp?: Date
+    options?: {
+      replyTo?: { id: string; senderId: string; content: string };
+      isSystem?: boolean;
+      messageId?: string;
+      timestamp?: Date;
+      status?: 'sending' | 'sent' | 'error';
+    }
   ) => Promise<void>;
   batchAddMessages?: (
     messages: Array<{
@@ -240,16 +243,11 @@ export function useConversations() {
         // cannot be decrypted with the locally available channel keys.
         if (!shouldAppendMessage) continue;
 
-        await ctx.addMessageToChat(
-          msg.senderId || 'unknown',
-          content,
-          channelConversationId,
-          undefined,
-          false,
-          msg.id,
+        await ctx.addMessageToChat(msg.senderId || 'unknown', content, channelConversationId, {
+          messageId: msg.id,
           // eslint-disable-next-line svelte/prefer-svelte-reactivity -- plain timestamp conversion
-          msg.createdAt ? new Date(msg.createdAt) : undefined
-        );
+          timestamp: msg.createdAt ? new Date(msg.createdAt) : undefined,
+        });
       }
     } catch (e) {
       ctx.log(`[CHANNEL] Échec chargement historique: ${e instanceof Error ? e.message : e}`);
@@ -527,8 +525,7 @@ export function useConversations() {
         'system',
         `${ctx.userId} a renomme le groupe en "${name}"`,
         selectedContact,
-        undefined,
-        true
+        { isSystem: true }
       );
       ctx.log(`Groupe renomme en "${name}"`);
     } catch (e) {
@@ -630,8 +627,7 @@ export function useConversations() {
         'system',
         `${ctx.userId} a retire ${memberId} du groupe`,
         selectedContact,
-        undefined,
-        true
+        { isSystem: true }
       );
       await loadGroupMembers(convo.id, ctx);
       ctx.log(`${memberId} retire du groupe.`);
