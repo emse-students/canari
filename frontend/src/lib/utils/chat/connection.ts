@@ -104,6 +104,9 @@ export function getIsTabLeader(): boolean {
 const LEADER_KEY = 'canari_tab_leader';
 const HEARTBEAT_KEY = 'canari_tab_leader_heartbeat';
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+// Set synchronously by the wasm_bindings_log interceptor before processIncomingMessage returns.
+// Used to detect harmless duplicate-delivery errors (SecretReuseError) that return null.
+let _lastWasmLogWasDuplicate = false;
 
 /**
  * Async leader election using localStorage heartbeat.
@@ -244,6 +247,18 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
 
   const { getSelectedContact } = deps;
 
+  // Intercept WASM log to detect SecretReuseError before processIncomingMessage returns null.
+  // WASM executes synchronously, so the log fires before the null reaches JS.
+  if (typeof window !== 'undefined') {
+    const origWasmLog = (window as any).wasm_bindings_log as
+      | ((level: string, msg: string) => void)
+      | undefined;
+    (window as any).wasm_bindings_log = (level: string, msg: string) => {
+      _lastWasmLogWasDuplicate = msg.includes('SecretReuseError') || msg.includes('out of bounds');
+      origWasmLog?.(level, msg);
+    };
+  }
+
   // Compteur d'échecs MLS par conversation — détection des groupes fantômes
   const groupMlsFailures = new Map<string, number>();
   const PHANTOM_THRESHOLD = 3;
@@ -252,7 +267,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   // Si cela se répète, l'état local est probablement divergent même sans exception
   // (ex: SenderDataDecryption traité côté Rust comme message non-applicable).
   const groupNullAppFailures = new Map<string, number>();
-  const NULL_APP_THRESHOLD = 1;
+  const NULL_APP_THRESHOLD = 3;
 
   // Groups for which an epoch recovery has already been triggered
   // (avoids spamming reinvite_request on a burst of future-epoch messages).
@@ -827,6 +842,9 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                     return { ...m, readBy: [...readBy, senderNorm] };
                   });
                   if (updated) {
+                    log(
+                      `[READ] Receipt from ${senderNorm} → ${msgIds.length} message(s) marqués lus`
+                    );
                     conversations.set(convoKey, { ...c, messages: updatedMessages });
                     if (storage) {
                       for (const msgId of msgIds) {
@@ -1049,6 +1067,13 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               convoKey
             );
           } else if (!isCommit && !epochRecoveryGroups.has(convoKey)) {
+            // WASM logged a known-harmless duplicate error (SecretReuseError / out of bounds)
+            // synchronously before returning null — ACK silently, do not count toward recovery.
+            if (_lastWasmLogWasDuplicate) {
+              _lastWasmLogWasDuplicate = false;
+              return true;
+            }
+            _lastWasmLogWasDuplicate = false;
             // Repeated null on non-commit traffic is a strong signal of local MLS
             // divergence (message is routed but cannot be decrypted into app payload).
             const nullCount = (groupNullAppFailures.get(convoKey) ?? 0) + 1;
@@ -1088,7 +1113,9 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           // après reconnexion. La clé symétrique est consommée, aucune récupération possible.
           if (
             errMsg.includes('TooDistantInThePast') ||
-            errMsg.includes('CiphertextGenerationOutOfBounds')
+            errMsg.includes('CiphertextGenerationOutOfBounds') ||
+            errMsg.includes('SecretReuseError') ||
+            errMsg.includes('out of bounds')
           ) {
             return true; // ACK silencieux — irrecuperable
           }
