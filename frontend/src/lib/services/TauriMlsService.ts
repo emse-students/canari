@@ -604,8 +604,12 @@ export class TauriMlsService implements IMlsService {
           }
         }
 
-        // Prévenir Svelte qu'un groupe a été rejoint
-        this.welcomeProcessedCallback?.(groupId);
+        // Notifier uniquement après un Welcome : les messages réguliers sont déjà
+        // insérés en temps réel par connection.ts ; un refresh réseau ici serait
+        // superflu et provoquerait un rechargement visuel de la liste.
+        if (msg.isWelcome) {
+          this.welcomeProcessedCallback?.(groupId);
+        }
 
         // Chantier 3 : persister l'état MLS après chaque message traité avec succès.
         // Garantit que le Secret Tree avancé est sauvegardé avant d'ACK le serveur.

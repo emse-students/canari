@@ -171,6 +171,11 @@ export async function replayConversationHistory(params: {
     // the main message batch write (reactions reference messages from previous
     // sessions that are already in DB).
     const reactionUpdates = new Map<string, MessageReaction[]>(); // msgId → final state
+    // Read receipts from history update in-memory state but NOT the DB; the batch
+    // save below writes regular messages without readBy (full replace via IndexedDB
+    // put), which would overwrite any readBy already saved for those messages.
+    // We collect the receipts here and re-apply them to DB after the batch save.
+    const readReceiptDbUpdates: Array<{ msgId: string; senderNorm: string }> = [];
 
     // Batch-collect decoded messages to flush in one UI update at the end.
     const pendingMessages: Array<{
@@ -308,6 +313,7 @@ export async function replayConversationHistory(params: {
                       updated = true;
                     }
                   }
+                  readReceiptDbUpdates.push({ msgId, senderNorm });
                 }
                 if (updated) {
                   setConversation(contactName, { ...convo, messages: newMsgs });
@@ -434,6 +440,31 @@ export async function replayConversationHistory(params: {
         ...(pm.isSystem ? { readBy: [] } : {}),
       }));
       await storage.saveMessages(toStore, pin);
+    }
+
+    // Re-apply readBy updates AFTER the batch save, since the batch save wrote
+    // regular messages without readBy (IndexedDB put = full replace). Without
+    // this pass, read receipts processed from history are lost when the DB is
+    // reloaded in useConversations.loadHistoryForConversation.
+    if (storage && readReceiptDbUpdates.length > 0) {
+      try {
+        const allMessages = await storage.getMessages(id, pin);
+        const toUpdate: StoredMessage[] = [];
+        for (const { msgId, senderNorm } of readReceiptDbUpdates) {
+          const m = allMessages.find((x) => x.id === msgId);
+          if (m) {
+            const readBy = m.readBy ?? [];
+            if (!readBy.includes(senderNorm)) {
+              toUpdate.push({ ...m, readBy: [...readBy, senderNorm] });
+            }
+          }
+        }
+        if (toUpdate.length > 0) {
+          await storage.saveMessages(toUpdate, pin);
+        }
+      } catch {
+        // Non-blocking
+      }
     }
 
     // Persist reaction mutations to DB. Reactions reference messages from previous
