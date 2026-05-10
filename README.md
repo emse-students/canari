@@ -85,7 +85,7 @@ cd frontend && bun run dev
 # → http://localhost:1420
 ```
 
-> **Windows** : utiliser `scripts/windows/setup_environment.ps1` puis `scripts/windows/start_all.ps1`.
+> **Windows** : exécuter `scripts/windows/setup_environment.ps1` pour installer les prérequis, puis utiliser les mêmes commandes `make`.
 
 ### URLs locales
 

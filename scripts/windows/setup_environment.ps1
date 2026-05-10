@@ -46,51 +46,43 @@ catch {
     # On ne peut pas continuer pour les trucs Rust sans Rust
 }
 
-# 3. Installation des dependances Node.js
-Write-Host "`n📦 Installation des dependances Node.js..." -ForegroundColor Cyan
-
-# 3.1 Shared TS Lib
-Write-Host "   👉 libs/shared-ts"
-Set-Location "libs/shared-ts"
-npm install
-npm run build
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "      ✅ Build reussi." -ForegroundColor Green
+# 3. Verification de Bun
+try {
+    bun --version | Out-Null
+    Write-Host "✅ Bun est installe." -ForegroundColor Green
 }
-else {
-    Write-Host "      ❌ Echec du build." -ForegroundColor Red
+catch {
+    Write-Host "❌ Bun n'est pas trouve." -ForegroundColor Red
+    Write-Host "   Installation de Bun..." -ForegroundColor Yellow
+    winget install Oven-sh.Bun
+    Write-Host "⚠️ Redemarrez votre terminal apres l'installation de Bun." -ForegroundColor Magenta
 }
-Set-Location ../../
 
-# 3.2 Chat Delivery Service
-Write-Host "   👉 apps/chat-delivery-service"
-Set-Location "apps/chat-delivery-service"
-npm install
-Set-Location ../../
+# 4. Installation des dependances Node.js (services backend)
+Write-Host "`n📦 Installation des dependances backend..." -ForegroundColor Cyan
 
-# 3.3 Auth Service
-Write-Host "   👉 apps/auth-service"
-Set-Location "apps/auth-service"
-npm install
-Set-Location ../../
+$services = @(
+    "apps/chat-delivery-service",
+    "apps/core-service",
+    "apps/media-service",
+    "apps/social-service"
+)
 
-# 3.4 User Service
-Write-Host "   👉 apps/user-service"
-Set-Location "apps/user-service"
-npm install
-Set-Location ../../
+$root = (Get-Location).Path
+foreach ($svc in $services) {
+    Write-Host "   👉 $svc"
+    Set-Location (Join-Path $root $svc)
+    npm install
+    Set-Location $root
+}
 
-# 3.5 Media Service
-Write-Host "   👉 apps/media-service"
-Set-Location "apps/media-service"
-npm install
-Set-Location ../../
-
-# 3.6 Frontend
+# 5. Installation des dependances frontend (Bun)
+Write-Host "`n📦 Installation des dependances frontend..." -ForegroundColor Cyan
 Write-Host "   👉 frontend"
-Set-Location "frontend"
-npm install
-Set-Location ../
+Set-Location (Join-Path $root "frontend")
+bun install
+Set-Location $root
 
-Write-Host "`n✅ Installation des dependances terminee." -ForegroundColor Green
-Write-Host "👉 Veuillez lire DEVELOPMENT.md pour la suite." -ForegroundColor Cyan
+Write-Host "`n✅ Installation terminee." -ForegroundColor Green
+Write-Host "👉 Lancez les services avec : make run-services" -ForegroundColor Cyan
+Write-Host "👉 Puis le frontend avec   : cd frontend && bun run dev" -ForegroundColor Cyan
