@@ -198,14 +198,7 @@ export function useMessaging() {
   }
 
   async function batchAddMessages(
-    messages: Array<{
-      senderId: string;
-      content: string;
-      replyTo?: { id: string; senderId: string; content: string };
-      isSystem?: boolean;
-      messageId?: string;
-      timestamp?: Date;
-    }>,
+    messages: Array<{ senderId: string; content: string } & AddMessageToChatOptions>,
     contactName: string,
     ctx: MessagingContext
   ) {

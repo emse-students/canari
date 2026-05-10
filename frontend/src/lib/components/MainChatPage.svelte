@@ -98,14 +98,7 @@
           options
         ),
       batchAddMessages: (
-        msgs: Array<{
-          senderId: string;
-          content: string;
-          replyTo?: { id: string; senderId: string; content: string };
-          isSystem?: boolean;
-          messageId?: string;
-          timestamp?: Date;
-        }>,
+        msgs: Parameters<typeof messaging.batchAddMessages>[0],
         contactName: string
       ) => messaging.batchAddMessages(msgs, contactName, msgCtx()),
     };

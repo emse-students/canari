@@ -103,9 +103,7 @@ export function parseEnvelope(content: string): MessageEnvelope {
     try {
       const obj = JSON.parse(content) as Record<string, unknown>;
 
-      const safeReplyTo = (
-        v: unknown
-      ): { id: string; senderId: string; content: string } | undefined => {
+      const safeReplyTo = (v: unknown): MessageReference | undefined => {
         if (v && typeof v === 'object') {
           const r = v as Record<string, unknown>;
           if (
