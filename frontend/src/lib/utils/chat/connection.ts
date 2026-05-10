@@ -835,7 +835,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                 const c = conversations.get(convoKey);
                 if (c && data.messageId) {
                   const idx = c.messages.findIndex((m) => m.id === data.messageId);
-                  if (idx !== -1 && c.messages[idx].senderId === senderNorm) {
+                  if (idx !== -1) {
                     const orig = c.messages[idx];
                     const deletedMsg = {
                       ...orig,
@@ -876,7 +876,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                 const c = conversations.get(convoKey);
                 if (c) {
                   const idx = c.messages.findIndex((m) => m.id === data.messageId);
-                  if (idx !== -1 && c.messages[idx].senderId === senderNorm) {
+                  if (idx !== -1) {
                     const orig = c.messages[idx];
                     const editedAt =
                       typeof data.editedAt === 'number' ? new Date(data.editedAt) : new Date();
