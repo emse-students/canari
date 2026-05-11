@@ -324,3 +324,9 @@ export class EditCommentDto {
   @IsNotEmpty()
   text: string;
 }
+
+export class UpdatePostDto {
+  @IsString()
+  @IsNotEmpty()
+  markdown: string;
+}

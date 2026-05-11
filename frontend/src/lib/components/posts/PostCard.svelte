@@ -8,6 +8,9 @@
     likeComment as likeCommentApi,
     editComment as editCommentApi,
     deleteComment as deleteCommentApi,
+    updatePost as updatePostApi,
+    deletePost as deletePostApi,
+    getPost,
     type PostEntity,
     type PostComment,
   } from '$lib/posts/api';
@@ -21,7 +24,7 @@
   import PostEventButtons from './PostEventButtons.svelte';
   import PostForms from './PostForms.svelte';
   import PostComments from './PostComments.svelte';
-  import { CircleAlert, CircleCheck } from 'lucide-svelte';
+  import { CircleAlert, CircleCheck, Pencil, Trash2 } from 'lucide-svelte';
   import { slide, fade } from 'svelte/transition';
   import { untrack } from 'svelte';
 
@@ -31,6 +34,7 @@
     authToken?: string;
     currentUserEmail?: string;
     onRefresh?: () => void;
+    onDelete?: () => void;
   }
 
   const REACTIONS = [
@@ -44,7 +48,7 @@
     { type: 'Marteau', emoji: '🔨', icon: 'hammer' },
   ];
 
-  let { post: postProp, currentUserId, authToken = '', currentUserEmail, onRefresh }: Props = $props();
+  let { post: postProp, currentUserId, authToken = '', currentUserEmail, onRefresh, onDelete }: Props = $props();
 
   // Local mutable copy — updated directly after interactions to avoid a full list reload.
   // Re-syncs from postProp whenever the parent explicitly refreshes.
@@ -52,6 +56,8 @@
 
   let actionMessage = $state('');
   let errorMessage = $state('');
+  let editingPost = $state(false);
+  let editMarkdown = $state('');
   let selectedOptions = $state<string[]>([]);
   // Synchronise selectedOptions depuis les données serveur (postProp est réactif, localPost ne l'est pas).
   $effect(() => {
@@ -66,6 +72,10 @@
   let showComments = $state(false);
   let submittingComment = $state(false);
   let showReactionPicker = $state(false);
+
+  const isOwnPost = $derived(
+    !localPost.association && localPost.authorId === currentUserId
+  );
 
   let userReaction = $derived((localPost.reactions ?? {})[currentUserId] ?? null);
   let reactions = $derived<Record<string, number>>((localPost.reactions ?? {}) as any);
@@ -204,17 +214,59 @@
 
   async function handleReaction(reactionType: string) {
     if (!currentUserId.trim()) return;
+
+    // Optimistic update — apply immediately, roll back on error
+    const prevReactions = { ...(localPost.reactions ?? {}) };
+    const wasReacted = prevReactions[currentUserId] === reactionType;
+    const newReactions = { ...prevReactions };
+    if (wasReacted) delete newReactions[currentUserId];
+    else newReactions[currentUserId] = reactionType;
+    localPost = { ...localPost, reactions: newReactions };
+    showReactionPicker = false;
+
     try {
-      let result;
-      if (userReaction === reactionType) {
-        result = await removeReaction(localPost.id);
-      } else {
-        result = await addReaction(localPost.id, reactionType);
-      }
+      const result = wasReacted
+        ? await removeReaction(localPost.id)
+        : await addReaction(localPost.id, reactionType);
       localPost = { ...localPost, reactions: result.reactions };
-      showReactionPicker = false;
     } catch (err) {
+      localPost = { ...localPost, reactions: prevReactions };
       errorMessage = err instanceof Error ? err.message : 'Erreur lors de la réaction';
+    }
+  }
+
+  function startEditPost() {
+    editMarkdown = localPost.markdown ?? '';
+    editingPost = true;
+  }
+
+  async function submitEditPost() {
+    const text = editMarkdown.trim();
+    if (!text) return;
+    try {
+      const updated = await updatePostApi(localPost.id, text);
+      localPost = { ...localPost, ...updated };
+      editingPost = false;
+    } catch (err) {
+      errorMessage = err instanceof Error ? err.message : 'Impossible de modifier le post';
+    }
+  }
+
+  async function handleDeletePost() {
+    try {
+      await deletePostApi(localPost.id);
+      onDelete?.();
+    } catch (err) {
+      errorMessage = err instanceof Error ? err.message : 'Impossible de supprimer le post';
+    }
+  }
+
+  async function loadAllComments() {
+    try {
+      const full = await getPost(localPost.id);
+      localPost = { ...localPost, comments: full.comments };
+    } catch {
+      // silent
     }
   }
 
@@ -309,8 +361,53 @@
 <Card
   class="mb-6 overflow-hidden !p-0 transition-all duration-300 hover:shadow-xl hover:-translate-y-0.5 border border-black/5 dark:border-white/10 bg-white/70 dark:bg-[#151B2C]/70 backdrop-blur-xl"
 >
-  <PostHeader post={localPost} />
-  <PostContent post={localPost} {authToken} />
+  <div class="relative">
+    <PostHeader post={localPost} />
+    {#if isOwnPost}
+      <div class="absolute top-3 right-3 flex items-center gap-1">
+        <button
+          type="button"
+          onclick={startEditPost}
+          class="p-1.5 rounded-lg text-text-muted hover:text-amber-500 hover:bg-amber-500/10 transition-colors outline-none"
+          aria-label="Modifier le post"
+        >
+          <Pencil size={14} strokeWidth={2.5} />
+        </button>
+        <button
+          type="button"
+          onclick={handleDeletePost}
+          class="p-1.5 rounded-lg text-text-muted hover:text-red-500 hover:bg-red-500/10 transition-colors outline-none"
+          aria-label="Supprimer le post"
+        >
+          <Trash2 size={14} strokeWidth={2.5} />
+        </button>
+      </div>
+    {/if}
+  </div>
+
+  {#if editingPost}
+    <div class="px-5 pb-4 flex flex-col gap-2">
+      <textarea
+        bind:value={editMarkdown}
+        rows={4}
+        class="w-full bg-black/5 dark:bg-white/5 rounded-xl px-3 py-2.5 text-[0.9rem] text-text-main border border-black/10 dark:border-white/10 focus:ring-2 focus:ring-amber-500/50 outline-none resize-none"
+      ></textarea>
+      <div class="flex gap-2 justify-end">
+        <button
+          type="button"
+          onclick={() => (editingPost = false)}
+          class="px-3 py-1.5 text-xs font-bold text-text-muted hover:text-text-main rounded-lg transition-colors"
+        >Annuler</button>
+        <button
+          type="button"
+          onclick={submitEditPost}
+          class="px-4 py-1.5 text-xs font-extrabold bg-amber-500 text-[#151B2C] rounded-lg hover:bg-amber-400 transition-colors"
+        >Enregistrer</button>
+      </div>
+    </div>
+  {:else}
+    <PostContent post={localPost} {authToken} />
+  {/if}
 
   <PostActions
     {userReaction}
@@ -323,6 +420,7 @@
 
   <ReactionsDisplay
     {reactionCounts}
+    reactions={localPost.reactions ?? {}}
     {userReaction}
     reactionList={REACTIONS}
     onReactionClick={handleReaction}
@@ -359,6 +457,8 @@
     onLikeComment={handleLikeComment}
     onEditComment={handleEditComment}
     onDeleteComment={handleDeleteComment}
+    onLoadAllComments={loadAllComments}
+    totalCommentCount={(localPost.comments ?? []).length}
   />
 
   <!-- Notifications intégrées à la carte -->

@@ -2,6 +2,7 @@
   import { ChevronDown, ChevronUp, Send, X, CornerDownRight, Pencil, Trash2, ArrowUpDown } from 'lucide-svelte';
   import type { PostComment } from '$lib/posts/api';
   import Avatar from '$lib/components/shared/Avatar.svelte';
+  import { apiFetch } from '$lib/utils/apiFetch';
 
   type SortMode = 'recent' | 'oldest' | 'liked';
 
@@ -12,12 +13,14 @@
     commentText: string;
     submittingComment: boolean;
     currentUserId: string;
+    totalCommentCount?: number;
     onToggleComments: () => void;
     onCommentTextChange: (text: string) => Promise<void>;
     onAddComment: (parentId?: string) => Promise<void>;
     onLikeComment: (commentId: string) => void;
     onEditComment: (commentId: string, text: string) => Promise<void>;
     onDeleteComment: (commentId: string) => Promise<void>;
+    onLoadAllComments?: () => Promise<void>;
     onKeyDown?: (e: KeyboardEvent) => void;
   }
 
@@ -28,14 +31,87 @@
     commentText,
     submittingComment,
     currentUserId,
+    totalCommentCount,
     onToggleComments,
     onCommentTextChange,
     onAddComment,
     onLikeComment,
     onEditComment,
     onDeleteComment,
+    onLoadAllComments,
     onKeyDown,
   }: Props = $props();
+
+  function coreUrl(): string {
+    const url = import.meta.env.VITE_CORE_URL as string | undefined;
+    if (url?.trim()) return url.trim();
+    return typeof window !== 'undefined' ? window.location.origin : '';
+  }
+
+  type MentionUser = { id: string; displayName: string | null };
+
+  let mentionQuery = $state('');
+  let mentionSuggestions = $state<MentionUser[]>([]);
+  let mentionOpen = $state(false);
+  let mentionStart = $state(-1);
+  let mentionSelectedIdx = $state(-1);
+  let mentionDebounce: ReturnType<typeof setTimeout> | null = null;
+
+  function handleCommentInput(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const val = input.value;
+    const cursor = input.selectionStart ?? val.length;
+
+    void onCommentTextChange(val);
+
+    const textBeforeCursor = val.slice(0, cursor);
+    const mentionMatch = textBeforeCursor.match(/@(\w*)$/);
+    if (mentionMatch && mentionMatch[1].length > 0) {
+      mentionStart = cursor - mentionMatch[0].length;
+      const q = mentionMatch[1];
+      mentionQuery = q;
+      if (mentionDebounce) clearTimeout(mentionDebounce);
+      mentionDebounce = setTimeout(() => void searchMentions(q), 250);
+    } else {
+      mentionOpen = false;
+      mentionSuggestions = [];
+      mentionQuery = '';
+    }
+  }
+
+  async function searchMentions(query: string) {
+    try {
+      const res = await apiFetch(`${coreUrl()}/api/users/search?q=${encodeURIComponent(query)}`);
+      if (res.ok) {
+        const data: MentionUser[] = await res.json();
+        mentionSuggestions = data.slice(0, 6);
+        mentionOpen = mentionSuggestions.length > 0;
+        mentionSelectedIdx = -1;
+      }
+    } catch {
+      mentionSuggestions = [];
+      mentionOpen = false;
+    }
+  }
+
+  function selectMention(user: MentionUser) {
+    const displayName = user.displayName || user.id;
+    const before = commentText.slice(0, mentionStart);
+    const after = commentText.slice(mentionStart + 1 + mentionQuery.length);
+    void onCommentTextChange(`${before}@${displayName} ${after}`);
+    mentionOpen = false;
+    mentionSuggestions = [];
+    mentionQuery = '';
+    mentionStart = -1;
+  }
+
+  let loadingAll = $state(false);
+
+  async function handleLoadAll() {
+    loadingAll = true;
+    await onLoadAllComments?.();
+    loadingAll = false;
+  }
 
   let replyingToId = $state<string | null>(null);
   let replyingToName = $state<string>('');
@@ -80,6 +156,12 @@
   }
 
   function handleInternalKeyDown(e: KeyboardEvent) {
+    if (mentionOpen && mentionSuggestions.length > 0) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); mentionSelectedIdx = Math.min(mentionSelectedIdx + 1, mentionSuggestions.length - 1); return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); mentionSelectedIdx = Math.max(mentionSelectedIdx - 1, -1); return; }
+      if (e.key === 'Enter') { e.preventDefault(); if (mentionSelectedIdx >= 0) selectMention(mentionSuggestions[mentionSelectedIdx]); return; }
+      if (e.key === 'Escape') { mentionOpen = false; mentionSuggestions = []; return; }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmitComment();
@@ -304,6 +386,18 @@
       {/each}
     </div>
 
+    <!-- Charger tous les commentaires (si backend en retourne plus) -->
+    {#if onLoadAllComments && totalCommentCount !== undefined && totalCommentCount >= 20 && showComments}
+      <button
+        type="button"
+        onclick={handleLoadAll}
+        disabled={loadingAll}
+        class="w-full text-[0.75rem] font-bold text-text-muted hover:text-text-main py-1.5 rounded-lg transition-colors disabled:opacity-50 mb-2"
+      >
+        {loadingAll ? 'Chargement…' : 'Charger tous les commentaires'}
+      </button>
+    {/if}
+
     <!-- Zone de saisie -->
     <div class="pt-3 flex flex-col gap-2">
       {#if replyingToId}
@@ -316,41 +410,40 @@
           </button>
         </div>
       {/if}
-
-      <div class="flex items-center gap-2.5">
-        <div class="shrink-0"><Avatar userId={currentUserId} size="sm" /></div>
-        <div class="flex-1 flex items-center bg-black/5 dark:bg-white/5 rounded-[1.25rem] px-3.5 py-1.5 border border-black/5 dark:border-white/10 focus-within:ring-2 focus-within:ring-amber-500/50 focus-within:bg-white dark:focus-within:bg-black/40 transition-all shadow-inner">
-          <input
-            type="text"
-            value={commentText}
-            oninput={(e) => onCommentTextChange(e.currentTarget.value)}
-            placeholder={replyingToId ? 'Écrivez votre réponse...' : 'Ajouter un commentaire...'}
-            class="flex-1 bg-transparent text-[0.9rem] font-medium text-text-main placeholder:text-text-muted/70 outline-none py-1"
-            onkeydown={handleInternalKeyDown}
-          />
-          <button
-            type="button"
-            onclick={handleSubmitComment}
-            disabled={!commentText.trim() || submittingComment}
-            class="shrink-0 p-1.5 ml-1 rounded-full text-amber-500 hover:bg-amber-500/10 hover:text-amber-600 disabled:opacity-40 disabled:hover:bg-transparent transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95"
-            aria-label="Envoyer le commentaire"
-          >
-            <Send size={18} strokeWidth={2.5} class="ml-0.5 mt-0.5" />
-          </button>
-        </div>
-      </div>
+      {@render commentInputRow(replyingToId ? 'Écrivez votre réponse...' : 'Ajouter un commentaire...')}
     </div>
   </div>
 {:else}
   <div class="border-t border-black/5 dark:border-white/10 px-4 sm:px-5 py-4 bg-white/30 dark:bg-black/10">
+    {@render commentInputRow('Soyez le premier à commenter...')}
+  </div>
+{/if}
+
+{#snippet commentInputRow(placeholder: string)}
+  <div class="relative">
+    {#if mentionOpen && mentionSuggestions.length > 0}
+      <ul class="absolute bottom-full mb-1 left-10 right-0 z-50 bg-white/95 dark:bg-gray-900/95 border border-black/10 dark:border-white/10 rounded-xl shadow-xl max-h-48 overflow-auto backdrop-blur-sm">
+        {#each mentionSuggestions as user, i (user.id)}
+          <li>
+            <button
+              type="button"
+              class="w-full px-4 py-2 text-left text-sm transition-colors first:rounded-t-xl last:rounded-b-xl {i === mentionSelectedIdx ? 'bg-amber-100/60 dark:bg-amber-900/30' : 'hover:bg-amber-50 dark:hover:bg-amber-900/20'}"
+              onmousedown={() => selectMention(user)}
+            >
+              <span class="font-bold text-amber-600 dark:text-amber-400 mr-0.5">@</span><span class="font-medium text-text-main">{user.displayName || user.id}</span>
+            </button>
+          </li>
+        {/each}
+      </ul>
+    {/if}
     <div class="flex items-center gap-2.5">
       <div class="shrink-0"><Avatar userId={currentUserId} size="sm" /></div>
       <div class="flex-1 flex items-center bg-black/5 dark:bg-white/5 rounded-[1.25rem] px-3.5 py-1.5 border border-black/5 dark:border-white/10 focus-within:ring-2 focus-within:ring-amber-500/50 focus-within:bg-white dark:focus-within:bg-black/40 transition-all shadow-inner">
         <input
           type="text"
           value={commentText}
-          oninput={(e) => onCommentTextChange(e.currentTarget.value)}
-          placeholder="Soyez le premier à commenter..."
+          oninput={handleCommentInput}
+          {placeholder}
           class="flex-1 bg-transparent text-[0.9rem] font-medium text-text-main placeholder:text-text-muted/70 outline-none py-1"
           onkeydown={handleInternalKeyDown}
         />
@@ -366,4 +459,4 @@
       </div>
     </div>
   </div>
-{/if}
+{/snippet}

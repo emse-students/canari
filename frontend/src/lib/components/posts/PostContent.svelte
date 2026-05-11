@@ -3,6 +3,7 @@
   import type { PostEntity } from '$lib/posts/api';
   import SvelteMarkdown from '@humanspeak/svelte-markdown';
   import LinkPreviewCard from '../messages/LinkPreviewCard.svelte';
+  import { ChevronLeft, ChevronRight, X } from 'lucide-svelte';
 
   interface Props {
     post: PostEntity;
@@ -12,8 +13,34 @@
   let { post, authToken = '' }: Props = $props();
 
   const MAX_CHARS = 400;
-
   let expanded = $state(false);
+
+  // Gallery lightbox
+  let lightboxIndex = $state<number | null>(null);
+
+  function openLightbox(i: number) {
+    lightboxIndex = i;
+  }
+
+  function closeLightbox() {
+    lightboxIndex = null;
+  }
+
+  function prevImage() {
+    if (lightboxIndex === null || !post.images) return;
+    lightboxIndex = (lightboxIndex - 1 + post.images.length) % post.images.length;
+  }
+
+  function nextImage() {
+    if (lightboxIndex === null || !post.images) return;
+    lightboxIndex = (lightboxIndex + 1) % post.images.length;
+  }
+
+  function onLightboxKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape') closeLightbox();
+    if (e.key === 'ArrowLeft') prevImage();
+    if (e.key === 'ArrowRight') nextImage();
+  }
 
   function extractFirstUrl(text: string): string | null {
     const match = text.match(/https?:\/\/[^\s)>\]"]+/i);
@@ -25,6 +52,7 @@
     isTruncatable && !expanded ? post.markdown!.slice(0, MAX_CHARS) + '…' : (post.markdown ?? '')
   );
   const firstLink = $derived(post.markdown ? extractFirstUrl(post.markdown) : null);
+  const multipleImages = $derived((post.images?.length ?? 0) > 1);
 </script>
 
 {#if post.markdown}
@@ -52,17 +80,82 @@
 {#if post.images && post.images.length > 0 && authToken}
   <div class="w-full mt-1">
     {#if post.images.length === 1}
-      <div
-        class="relative w-full max-h-[75vh] bg-black/5 dark:bg-white/5 flex items-center justify-center overflow-hidden"
-      >
+      <div class="relative w-full max-h-[75vh] bg-black/5 dark:bg-white/5 flex items-center justify-center overflow-hidden">
+        <!-- Single image: PostImage handles its own lightbox -->
         <PostImage media={post.images[0]} {authToken} />
       </div>
     {:else}
+      <!-- Multi-image gallery: centralized lightbox with navigation -->
       <div class="grid grid-cols-2 gap-0.5 sm:gap-1 bg-white/20 dark:bg-black/20">
-        {#each post.images as img (img.mediaId)}
+        {#each post.images as img, i (img.mediaId)}
           <div class="relative aspect-square w-full overflow-hidden bg-black/5 dark:bg-white/5">
-            <PostImage media={img} {authToken} />
+            <PostImage media={img} {authToken} onOpen={() => openLightbox(i)} />
           </div>
+        {/each}
+      </div>
+    {/if}
+  </div>
+{/if}
+
+<!-- Gallery lightbox with navigation -->
+{#if lightboxIndex !== null && post.images && post.images[lightboxIndex]}
+  <div
+    role="dialog"
+    aria-modal="true"
+    aria-label="Galerie d'images"
+    tabindex="-1"
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/90"
+    onclick={closeLightbox}
+    onkeydown={onLightboxKeydown}
+  >
+    <!-- Close -->
+    <button
+      type="button"
+      class="absolute top-4 right-4 text-white/80 hover:text-white text-3xl leading-none z-10"
+      onclick={closeLightbox}
+      aria-label="Fermer"
+    >✕</button>
+
+    <!-- Prev -->
+    {#if post.images.length > 1}
+      <button
+        type="button"
+        class="absolute left-3 top-1/2 -translate-y-1/2 z-10 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
+        onclick={(e) => { e.stopPropagation(); prevImage(); }}
+        aria-label="Image précédente"
+      >
+        <ChevronLeft size={28} strokeWidth={2.5} />
+      </button>
+    {/if}
+
+    <!-- Image -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="max-w-full max-h-full flex items-center justify-center" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+      <PostImage media={post.images[lightboxIndex]} {authToken} galleryMode />
+    </div>
+
+    <!-- Next -->
+    {#if post.images.length > 1}
+      <button
+        type="button"
+        class="absolute right-3 top-1/2 -translate-y-1/2 z-10 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
+        onclick={(e) => { e.stopPropagation(); nextImage(); }}
+        aria-label="Image suivante"
+      >
+        <ChevronRight size={28} strokeWidth={2.5} />
+      </button>
+    {/if}
+
+    <!-- Dots -->
+    {#if post.images.length > 1}
+      <div class="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1.5">
+        {#each post.images as _, i (i)}
+          <button
+            type="button"
+            onclick={(e) => { e.stopPropagation(); lightboxIndex = i; }}
+            class="w-2 h-2 rounded-full transition-all {i === lightboxIndex ? 'bg-white' : 'bg-white/40'}"
+            aria-label="Image {i + 1}"
+          ></button>
         {/each}
       </div>
     {/if}

@@ -166,6 +166,21 @@ function buildListPostsSearchParams(options: ListPostsOptions): string {
   return s ? `?${s}` : '';
 }
 
+export async function getPost(postId: string): Promise<PostEntity> {
+  return request<PostEntity>(`/api/posts/${postId}`);
+}
+
+export async function updatePost(postId: string, markdown: string): Promise<PostEntity> {
+  return request<PostEntity>(`/api/posts/${postId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ markdown }),
+  });
+}
+
+export async function deletePost(postId: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/api/posts/${postId}`, { method: 'DELETE' });
+}
+
 /** @param limitOrOptions Pass a number for backward compatibility (`limit` only) or query options. */
 export async function listPosts(
   limitOrOptions: number | ListPostsOptions = 30

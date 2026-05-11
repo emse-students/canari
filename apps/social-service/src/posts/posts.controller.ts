@@ -24,6 +24,7 @@ import {
   AddCommentDto,
   AddReactionDto,
   EditCommentDto,
+  UpdatePostDto,
 } from './dto/post.dto';
 
 @Controller('posts')
@@ -68,6 +69,31 @@ export class PostsController {
     }
 
     return this.service.createPost({ ...body, authorId: xUserId });
+  }
+
+  @Get(':postId')
+  getPost(@Param('postId') postId: string) {
+    return this.service.getById(postId);
+  }
+
+  @UseGuards(NginxAuthGuard)
+  @Patch(':postId')
+  updatePost(
+    @Headers('x-user-id') xUserId: string,
+    @Param('postId') postId: string,
+    @Body() body: UpdatePostDto
+  ) {
+    return this.service.updatePost(postId, xUserId, body.markdown);
+  }
+
+  @UseGuards(NginxAuthGuard)
+  @Delete(':postId')
+  deletePost(
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') xGlobalAdmin: string | undefined,
+    @Param('postId') postId: string
+  ) {
+    return this.service.deletePost(postId, xUserId, xGlobalAdmin === 'true');
   }
 
   @Get()

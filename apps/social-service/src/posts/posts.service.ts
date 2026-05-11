@@ -306,7 +306,26 @@ export class PostsService {
   }
 
   async getById(id: string) {
-    return this.postRepo.findOne({ where: { id } });
+    const post = await this.postRepo.findOne({ where: { id } });
+    if (!post) throw new NotFoundException('Post not found');
+    return this.toPublicPostFromEntity(post);
+  }
+
+  async updatePost(postId: string, userId: string, markdown: string) {
+    const post = await this.postRepo.findOne({ where: { id: postId } });
+    if (!post) throw new NotFoundException('Post not found');
+    if (post.authorId !== userId) throw new UnauthorizedException('Not your post');
+    post.markdown = markdown;
+    const saved = await this.postRepo.save(post);
+    return this.toPublicPostFromEntity(saved);
+  }
+
+  async deletePost(postId: string, userId: string, isAdmin: boolean) {
+    const post = await this.postRepo.findOne({ where: { id: postId } });
+    if (!post) throw new NotFoundException('Post not found');
+    if (!isAdmin && post.authorId !== userId) throw new UnauthorizedException('Not your post');
+    await this.postRepo.remove(post);
+    return { ok: true };
   }
 
   async setLinks(id: string, data: any) {

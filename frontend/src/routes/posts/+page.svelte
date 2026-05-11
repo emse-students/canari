@@ -13,6 +13,9 @@
   import { currentUserId } from '$lib/stores/user';
   import { RefreshCw, PenSquare, Inbox } from 'lucide-svelte';
 
+  const LAST_VISIT_KEY = 'posts_last_visit';
+  const PAGE_SIZE = 20;
+
   let {
     data,
   }: {
@@ -28,18 +31,25 @@
 
   let postsOverride = $state<PostEntity[] | null>(null);
   let loading = $state(false);
+  let loadingMore = $state(false);
+  let hasMore = $state(true);
   let errorMessage = $state('');
+  let lastVisitTs = $state(0);
 
   let showCreateModal = $state(false);
 
   let customPromo = $state('');
   let customFormation = $state('');
 
+  // Sentinel element for IntersectionObserver
+  let sentinel = $state<HTMLElement | null>(null);
+
   const activeFeed = $derived((page.url.searchParams.get('feed') || 'all') as PostFeed);
 
   $effect(() => {
     void page.url.search;
     postsOverride = null;
+    hasMore = true;
   });
 
   $effect(() => {
@@ -49,7 +59,7 @@
     customFormation = fp.formation ?? '';
   });
 
-  function buildListOptionsFromPage() {
+  function buildListOptions(offset = 0) {
     const u = page.url.searchParams;
     const feed = (u.get('feed') || 'all') as PostFeed;
     const promoStr = u.get('promo');
@@ -57,7 +67,8 @@
       promoStr !== null && promoStr !== '' ? parseInt(promoStr, 10) : undefined;
     const formation = u.get('formation')?.trim() || undefined;
     return {
-      limit: 20,
+      limit: PAGE_SIZE,
+      offset,
       feed,
       promo: promo !== undefined && Number.isFinite(promo) ? promo : undefined,
       formation,
@@ -88,12 +99,28 @@
   async function refreshPosts() {
     loading = true;
     errorMessage = '';
+    hasMore = true;
     try {
-      postsOverride = await listPosts(buildListOptionsFromPage());
+      postsOverride = await listPosts(buildListOptions(0));
+      hasMore = (postsOverride?.length ?? 0) >= PAGE_SIZE;
     } catch (err) {
       errorMessage = err instanceof Error ? err.message : 'Impossible de charger les posts';
     } finally {
       loading = false;
+    }
+  }
+
+  async function loadMorePosts(currentPosts: PostEntity[]) {
+    if (loadingMore || !hasMore) return;
+    loadingMore = true;
+    try {
+      const more = await listPosts(buildListOptions(currentPosts.length));
+      if (more.length === 0 || more.length < PAGE_SIZE) hasMore = false;
+      postsOverride = [...currentPosts, ...more];
+    } catch {
+      // silent — user can scroll back up and retry
+    } finally {
+      loadingMore = false;
     }
   }
 
@@ -102,16 +129,40 @@
     void refreshPosts();
   }
 
+  function isNew(post: PostEntity): boolean {
+    if (!lastVisitTs) return false;
+    return new Date(post.createdAt).getTime() > lastVisitTs;
+  }
+
+  // Set up IntersectionObserver on sentinel
+  $effect(() => {
+    if (!sentinel) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          const current = postsOverride;
+          if (current) void loadMorePosts(current);
+        }
+      },
+      { rootMargin: '200px' }
+    );
+    obs.observe(sentinel);
+    return () => obs.disconnect();
+  });
+
   onMount(() => {
     const savedUser = currentUserId();
     if (savedUser) {
       userId = savedUser;
       getToken()
-        .then((t) => {
-          authToken = t;
-        })
+        .then((t) => { authToken = t; })
         .catch((e) => console.error('[Posts] Failed to get token', e));
     }
+
+    // Record last visit timestamp for "Nouveau" badge
+    const stored = localStorage.getItem(LAST_VISIT_KEY);
+    lastVisitTs = stored ? parseInt(stored, 10) : 0;
+    localStorage.setItem(LAST_VISIT_KEY, String(Date.now()));
   });
 </script>
 
@@ -145,8 +196,7 @@
         <button
           type="button"
           onclick={() => navigateFeed('all')}
-          class="rounded-full px-3.5 py-1.5 text-sm font-medium border transition-colors {activeFeed ===
-          'all'
+          class="rounded-full px-3.5 py-1.5 text-sm font-medium border transition-colors {activeFeed === 'all'
             ? 'bg-amber-500/15 border-amber-500/40 text-text-main'
             : 'border-cn-border text-text-muted hover:text-text-main'}"
         >
@@ -155,8 +205,7 @@
         <button
           type="button"
           onclick={() => navigateFeed('followed')}
-          class="rounded-full px-3.5 py-1.5 text-sm font-medium border transition-colors {activeFeed ===
-          'followed'
+          class="rounded-full px-3.5 py-1.5 text-sm font-medium border transition-colors {activeFeed === 'followed'
             ? 'bg-amber-500/15 border-amber-500/40 text-text-main'
             : 'border-cn-border text-text-muted hover:text-text-main'}"
         >
@@ -165,8 +214,7 @@
         <button
           type="button"
           onclick={() => navigateFeed('custom')}
-          class="rounded-full px-3.5 py-1.5 text-sm font-medium border transition-colors {activeFeed ===
-          'custom'
+          class="rounded-full px-3.5 py-1.5 text-sm font-medium border transition-colors {activeFeed === 'custom'
             ? 'bg-amber-500/15 border-amber-500/40 text-text-main'
             : 'border-cn-border text-text-muted hover:text-text-main'}"
         >
@@ -175,38 +223,19 @@
       </div>
 
       {#if activeFeed === 'custom'}
-        <div
-          class="mb-5 rounded-2xl border border-cn-border bg-[var(--cn-surface)]/40 p-4 space-y-3"
-        >
+        <div class="mb-5 rounded-2xl border border-cn-border bg-[var(--cn-surface)]/40 p-4 space-y-3">
           <p class="text-xs text-text-muted">
-            Filtre les posts personnels par promotion ou formation (les posts des associations sont
-            exclus).
+            Filtre les posts personnels par promotion ou formation (les posts des associations sont exclus).
           </p>
           <div class="flex flex-col sm:flex-row gap-3 sm:items-end">
-            <Input
-              label="Promotion (année)"
-              type="number"
-              placeholder="ex. 2026"
-              class="flex-1"
-              bind:value={customPromo}
-            />
-            <Input
-              label="Formation"
-              placeholder="ex. Ingénieur"
-              class="flex-1"
-              bind:value={customFormation}
-            />
+            <Input label="Promotion (année)" type="number" placeholder="ex. 2026" class="flex-1" bind:value={customPromo} />
+            <Input label="Formation" placeholder="ex. Ingénieur" class="flex-1" bind:value={customFormation} />
             <Button type="button" onclick={applyCustomFeed} class="!shrink-0">Appliquer</Button>
           </div>
         </div>
       {/if}
 
-      <Modal
-        open={showCreateModal}
-        title="Nouveau post"
-        maxWidth="max-w-xl"
-        onClose={() => (showCreateModal = false)}
-      >
+      <Modal open={showCreateModal} title="Nouveau post" maxWidth="max-w-xl" onClose={() => (showCreateModal = false)}>
         <div class="p-1">
           <CreatePostForm {onPostCreated} />
         </div>
@@ -214,22 +243,16 @@
 
       <section>
         {#if errorMessage}
-          <div
-            class="p-4 mb-6 rounded-2xl bg-red-err/10 text-red-err border border-red-err/20 flex items-center gap-3 text-sm"
-          >
+          <div class="p-4 mb-6 rounded-2xl bg-red-err/10 text-red-err border border-red-err/20 flex items-center gap-3 text-sm">
             <span>{errorMessage}</span>
-            <button class="ml-auto font-bold underline text-xs" onclick={refreshPosts}
-              >Réessayer</button
-            >
+            <button class="ml-auto font-bold underline text-xs" onclick={refreshPosts}>Réessayer</button>
           </div>
         {/if}
 
         <div class="space-y-5">
           {#snippet skeletonCards()}
             {#each { length: 4 } as _, i (i)}
-              <div
-                class="rounded-3xl border border-cn-border bg-[var(--cn-surface)]/60 p-5 space-y-3 animate-pulse"
-              >
+              <div class="rounded-3xl border border-cn-border bg-[var(--cn-surface)]/60 p-5 space-y-3 animate-pulse">
                 <div class="flex items-center gap-3">
                   <div class="w-9 h-9 rounded-full bg-cn-border/60 shrink-0"></div>
                   <div class="space-y-1.5 flex-1">
@@ -253,19 +276,13 @@
             {#if loading}
               {@render skeletonCards()}
             {:else if resolvedPosts.length === 0}
-              <div
-                class="text-center py-16 px-6 bg-[var(--cn-surface)]/50 backdrop-blur-xl rounded-3xl border border-dashed border-cn-border"
-              >
+              <div class="text-center py-16 px-6 bg-[var(--cn-surface)]/50 backdrop-blur-xl rounded-3xl border border-dashed border-cn-border">
                 <Inbox size={48} class="mx-auto mb-3 text-text-muted opacity-40" />
                 <h3 class="text-lg font-bold text-text-main mb-1">Aucun post</h3>
                 {#if activeFeed === 'followed'}
                   <p class="text-text-muted text-sm">
                     Suivez des associations pour voir leurs publications ici, ou passez sur
-                    <button
-                      type="button"
-                      class="underline font-medium"
-                      onclick={() => navigateFeed('all')}>Tout</button
-                    >.
+                    <button type="button" class="underline font-medium" onclick={() => navigateFeed('all')}>Tout</button>.
                   </p>
                 {:else if activeFeed === 'custom'}
                   <p class="text-text-muted text-sm">Aucun post personnel ne correspond à ces filtres.</p>
@@ -275,24 +292,43 @@
               </div>
             {:else}
               {#each resolvedPosts as post (post.id)}
-                <PostCard
-                  {post}
-                  currentUserId={userId}
-                  currentUserEmail={email}
-                  {authToken}
-                  onRefresh={refreshPosts}
-                />
+                <div class="relative">
+                  {#if isNew(post)}
+                    <span class="absolute -top-2 left-4 z-10 text-[0.6rem] font-extrabold uppercase tracking-widest bg-amber-500 text-[#151B2C] px-2 py-0.5 rounded-full shadow-md shadow-amber-500/30">
+                      Nouveau
+                    </span>
+                  {/if}
+                  <PostCard
+                    {post}
+                    currentUserId={userId}
+                    currentUserEmail={email}
+                    {authToken}
+                    onRefresh={refreshPosts}
+                    onDelete={() => {
+                      postsOverride = resolvedPosts.filter((p) => p.id !== post.id);
+                    }}
+                  />
+                </div>
               {/each}
+
+              <!-- Sentinel pour l'infinite scroll -->
+              <div bind:this={sentinel} class="h-4"></div>
+
+              {#if loadingMore}
+                <div class="flex justify-center py-4">
+                  <RefreshCw size={20} class="animate-spin text-text-muted opacity-50" />
+                </div>
+              {:else if !hasMore && resolvedPosts.length >= PAGE_SIZE}
+                <p class="text-center text-[0.75rem] text-text-muted opacity-50 py-4">
+                  Vous avez tout vu !
+                </p>
+              {/if}
             {/if}
           {:catch _err}
-            <div
-              class="text-center py-16 px-6 bg-[var(--cn-surface)]/50 backdrop-blur-xl rounded-3xl border border-dashed border-cn-border"
-            >
+            <div class="text-center py-16 px-6 bg-[var(--cn-surface)]/50 backdrop-blur-xl rounded-3xl border border-dashed border-cn-border">
               <Inbox size={48} class="mx-auto mb-3 text-text-muted opacity-40" />
               <h3 class="text-lg font-bold text-text-main mb-1">Impossible de charger les posts</h3>
-              <button class="text-text-muted text-sm underline mt-1" onclick={refreshPosts}
-                >Réessayer</button
-              >
+              <button class="text-text-muted text-sm underline mt-1" onclick={refreshPosts}>Réessayer</button>
             </div>
           {/await}
         </div>

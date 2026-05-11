@@ -13,15 +13,18 @@
       fileName?: string;
     };
     authToken: string;
+    /** When set, clicking the image calls this instead of opening its own lightbox. */
+    onOpen?: () => void;
+    /** When true, renders the image filling its container (used inside gallery lightbox). */
+    galleryMode?: boolean;
   }
 
-  let { media, authToken }: Props = $props();
+  let { media, authToken, onOpen, galleryMode = false }: Props = $props();
 
   let blobUrl = $state<string | null>(null);
   let loading = $state(true);
   let loadError = $state('');
 
-  // Svelte 5 : Gestion réactive du téléchargement et du nettoyage mémoire
   $effect(() => {
     if (!authToken) {
       loading = false;
@@ -63,27 +66,26 @@
         }
       })
       .finally(() => {
-        if (!destroyed) {
-          loading = false;
-        }
+        if (!destroyed) loading = false;
       });
 
-    // Fonction de nettoyage exécutée à la destruction du composant ou au changement de props
     return () => {
       destroyed = true;
-      if (currentUrl) {
-        URL.revokeObjectURL(currentUrl);
-      }
+      if (currentUrl) URL.revokeObjectURL(currentUrl);
     };
   });
 
   let lightboxOpen = $state(false);
 
-  function openBlob(e: MouseEvent) {
+  function handleClick(e: MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
     if (!blobUrl) return;
-    lightboxOpen = true;
+    if (onOpen) {
+      onOpen();
+    } else {
+      lightboxOpen = true;
+    }
   }
 
   function closeLightbox(e: MouseEvent | KeyboardEvent) {
@@ -92,58 +94,76 @@
   }
 </script>
 
-{#if loading}
-  <div
-    class="absolute inset-0 flex items-center justify-center bg-black/5 dark:bg-white/5 animate-pulse"
-  >
-    <ImageIcon size={32} class="opacity-20 text-text-muted" strokeWidth={1.5} />
-  </div>
-{:else if loadError}
-  <div
-    class="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center bg-red-500/5 dark:bg-red-500/10 border border-dashed border-red-500/20"
-  >
-    <CircleAlert size={24} class="text-red-500 opacity-70" strokeWidth={2} />
-    <span class="text-xs font-semibold text-red-600 dark:text-red-400">{loadError}</span>
-  </div>
-{:else if blobUrl}
-  <button
-    type="button"
-    onclick={openBlob}
-    class="block w-full h-full outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50 focus-visible:z-10 group/img cursor-zoom-in"
-    aria-label="Agrandir l'image"
-  >
+{#if galleryMode}
+  <!-- Used inside parent gallery lightbox — just render the image -->
+  {#if loading}
+    <div class="flex items-center justify-center w-full h-64">
+      <ImageIcon size={32} class="opacity-20 text-white animate-pulse" strokeWidth={1.5} />
+    </div>
+  {:else if loadError}
+    <div class="flex flex-col items-center justify-center gap-2 p-4 text-center text-white/60">
+      <CircleAlert size={24} strokeWidth={2} />
+      <span class="text-xs">{loadError}</span>
+    </div>
+  {:else if blobUrl}
     <img
       src={blobUrl}
       alt={media.fileName ?? 'Image de la publication'}
-      class="w-full h-full object-cover transition-transform duration-700 group-hover/img:scale-105"
-      loading="lazy"
+      class="max-w-[90vw] max-h-[85vh] object-contain select-none"
     />
-  </button>
-{/if}
-
-{#if lightboxOpen && blobUrl}
-  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-  <div
-    role="dialog"
-    aria-modal="true"
-    aria-label="Image agrandie"
-    tabindex="-1"
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/90"
-    onclick={closeLightbox}
-    onkeydown={closeLightbox}
-  >
-    <img
-      src={blobUrl}
-      alt={media.fileName ?? 'Image agrandie'}
-      class="max-w-full max-h-full object-contain select-none"
-      onclick={(e) => e.stopPropagation()}
-      onkeydown={(e) => e.stopPropagation()}
-    />
+  {/if}
+{:else}
+  <!-- Standalone image with its own lightbox (single-image or thumbnail) -->
+  {#if loading}
+    <div class="absolute inset-0 flex items-center justify-center bg-black/5 dark:bg-white/5 animate-pulse">
+      <ImageIcon size={32} class="opacity-20 text-text-muted" strokeWidth={1.5} />
+    </div>
+  {:else if loadError}
+    <div class="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center bg-red-500/5 dark:bg-red-500/10 border border-dashed border-red-500/20">
+      <CircleAlert size={24} class="text-red-500 opacity-70" strokeWidth={2} />
+      <span class="text-xs font-semibold text-red-600 dark:text-red-400">{loadError}</span>
+    </div>
+  {:else if blobUrl}
     <button
       type="button"
-      class="absolute top-4 right-4 text-white/80 hover:text-white text-3xl leading-none"
-      onclick={closeLightbox}
-      aria-label="Fermer">✕</button
+      onclick={handleClick}
+      class="block w-full h-full outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50 focus-visible:z-10 group/img cursor-zoom-in"
+      aria-label="Agrandir l'image"
     >
-  </div>
+      <img
+        src={blobUrl}
+        alt={media.fileName ?? 'Image de la publication'}
+        class="w-full h-full object-cover transition-transform duration-700 group-hover/img:scale-105"
+        loading="lazy"
+      />
+    </button>
+  {/if}
+
+  <!-- Single-image lightbox (only when no onOpen callback) -->
+  {#if lightboxOpen && blobUrl}
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Image agrandie"
+      tabindex="-1"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/90"
+      onclick={closeLightbox}
+      onkeydown={closeLightbox}
+    >
+      <img
+        src={blobUrl}
+        alt={media.fileName ?? 'Image agrandie'}
+        class="max-w-[90vw] max-h-[85vh] object-contain select-none"
+        onclick={(e) => e.stopPropagation()}
+        onkeydown={(e) => e.stopPropagation()}
+      />
+      <button
+        type="button"
+        class="absolute top-4 right-4 text-white/80 hover:text-white text-3xl leading-none"
+        onclick={closeLightbox}
+        aria-label="Fermer"
+      >✕</button>
+    </div>
+  {/if}
 {/if}
