@@ -320,3 +320,22 @@ export async function reportPost(
     body: JSON.stringify({ reason }),
   });
 }
+
+export interface PostNotification {
+  id: string;
+  type: string;
+  postId: string;
+  actorId: string;
+  actorName: string;
+  text: string;
+  read: boolean;
+  createdAt: string;
+}
+
+export async function getPostNotifications(limit = 30): Promise<PostNotification[]> {
+  return request<PostNotification[]>(`/api/posts/notifications?limit=${limit}`);
+}
+
+export async function markPostNotificationsRead(): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>('/api/posts/notifications/read-all', { method: 'POST' });
+}

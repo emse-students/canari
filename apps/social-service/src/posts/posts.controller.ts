@@ -81,6 +81,21 @@ export class PostsController {
     return this.service.searchPosts(q ?? '', Number(limit ?? 20), Number(offset ?? 0));
   }
 
+  @UseGuards(NginxAuthGuard)
+  @Get('notifications')
+  getNotifications(
+    @Headers('x-user-id') xUserId: string,
+    @Query('limit') limit?: string
+  ) {
+    return this.service.getNotifications(xUserId, Number(limit ?? 30));
+  }
+
+  @UseGuards(NginxAuthGuard)
+  @HttpPost('notifications/read-all')
+  markAllRead(@Headers('x-user-id') xUserId: string) {
+    return this.service.markAllNotificationsRead(xUserId);
+  }
+
   @Get(':postId')
   getPost(@Param('postId') postId: string) {
     return this.service.getById(postId);

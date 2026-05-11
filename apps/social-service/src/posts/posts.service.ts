@@ -6,6 +6,7 @@ import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { lastValueFrom } from 'rxjs';
 import { Post } from './entities/post.entity';
+import { PostNotification } from './entities/post-notification.entity';
 import { RedisService } from '../common/redis/redis.service';
 import { FollowsService } from '../follows/follows.service';
 import * as cheerio from 'cheerio';
@@ -44,12 +45,47 @@ export class PostsService {
 
   constructor(
     @InjectRepository(Post) private readonly postRepo: Repository<Post>,
+    @InjectRepository(PostNotification) private readonly notifRepo: Repository<PostNotification>,
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
     private readonly redis: RedisService,
     private readonly followsService: FollowsService
   ) {
     this.userServiceUrl = configService.get<string>('USER_SERVICE_URL', 'http://core-service:3012');
+  }
+
+  private async resolveActorName(actorId: string): Promise<string> {
+    try {
+      const rows: any[] = await this.postRepo.manager.query(
+        `SELECT "displayName", "firstName", "lastName" FROM users WHERE id = $1`,
+        [actorId]
+      );
+      if (rows[0]) {
+        const u = rows[0];
+        return u.displayName || [u.firstName, u.lastName].filter(Boolean).join(' ') || actorId;
+      }
+    } catch { /* non-fatal */ }
+    return actorId;
+  }
+
+  private async createNotification(data: { recipientId: string; type: string; postId: string; actorId: string; text: string }) {
+    if (data.recipientId === data.actorId) return;
+    const actorName = await this.resolveActorName(data.actorId);
+    const notif = this.notifRepo.create({ ...data, actorName });
+    await this.notifRepo.save(notif);
+  }
+
+  async getNotifications(userId: string, limit = 30) {
+    return this.notifRepo.find({
+      where: { recipientId: userId },
+      order: { createdAt: 'DESC' },
+      take: limit,
+    });
+  }
+
+  async markAllNotificationsRead(userId: string) {
+    await this.notifRepo.update({ recipientId: userId }, { read: true });
+    return { ok: true };
   }
 
   private listPostsCacheKey(
@@ -732,6 +768,37 @@ export class PostsService {
     };
     post.comments = [...(post.comments ?? []), comment];
     await this.postRepo.save(post);
+
+    // Fire-and-forget notifications
+    void (async () => {
+      try {
+        const preview = data.text.length > 60 ? data.text.slice(0, 57) + '…' : data.text;
+        // Notify post author
+        if (post.authorId && !post.associationId) {
+          await this.createNotification({
+            recipientId: post.authorId,
+            type: 'comment',
+            postId,
+            actorId: data.userId,
+            text: preview,
+          });
+        }
+        // Notify parent comment author if this is a reply
+        if (data.parentId) {
+          const parent = (post.comments as any[]).find((c: any) => c.id === data.parentId);
+          if (parent?.userId) {
+            await this.createNotification({
+              recipientId: parent.userId,
+              type: 'reply',
+              postId,
+              actorId: data.userId,
+              text: preview,
+            });
+          }
+        }
+      } catch { /* non-fatal */ }
+    })();
+
     return { ok: true, comment };
   }
 

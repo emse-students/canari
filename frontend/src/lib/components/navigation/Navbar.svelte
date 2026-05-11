@@ -3,6 +3,7 @@
   import CanariBrand from './CanariBrand.svelte';
   import SessionActionButtons from './SessionActionButtons.svelte';
   import Avatar from '../shared/Avatar.svelte';
+  import PostNotificationBell from './PostNotificationBell.svelte';
   import { goto } from '$app/navigation';
   import { clearAuth } from '$lib/stores/auth';
   import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
@@ -29,6 +30,9 @@
     <!-- Right: Status + Theme + actions -->
     <div class="flex items-center gap-2 flex-shrink-0 ml-auto">
       <StatusPill isConnected={globalSession.isWsConnected} />
+      {#if globalSession.isLoggedIn}
+        <PostNotificationBell />
+      {/if}
       <SessionActionButtons onToggleLogs={handleToggleLogs} onLogout={handleLogout} />
       {#if globalSession.isLoggedIn && globalSession.userId}
         <button

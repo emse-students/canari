@@ -1,0 +1,32 @@
+import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, Index } from 'typeorm';
+
+@Entity('post_notifications')
+export class PostNotification {
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
+
+  @Column()
+  @Index()
+  recipientId: string;
+
+  @Column()
+  type: string; // 'comment' | 'reply'
+
+  @Column()
+  postId: string;
+
+  @Column()
+  actorId: string;
+
+  @Column({ nullable: true })
+  actorName: string;
+
+  @Column()
+  text: string;
+
+  @Column({ default: false })
+  read: boolean;
+
+  @CreateDateColumn()
+  createdAt: Date;
+}
