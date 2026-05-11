@@ -88,6 +88,20 @@ export class PostsService {
     return { ok: true };
   }
 
+  async getMyScheduledPosts(userId: string) {
+    const rows: any[] = await this.postRepo.manager.query(
+      `SELECT id, markdown, "scheduledAt", "createdAt"
+       FROM posts
+       WHERE "authorId" = $1
+         AND "scheduledAt" IS NOT NULL
+         AND "scheduledAt" > NOW()
+       ORDER BY "scheduledAt" ASC
+       LIMIT 20`,
+      [userId]
+    );
+    return rows;
+  }
+
   private listPostsCacheKey(
     feed: string,
     viewerUserId: string | undefined,
@@ -189,7 +203,7 @@ export class PostsService {
     const selectBody = `posts.id,
          posts."authorId", posts.markdown, posts."createdAt", posts."updatedAt",
          posts.mentions, posts.links, posts."attachedFormId", posts."associationId", posts."paymentAssociationId",
-         posts.images, posts.polls, posts."eventButtons", posts.forms, posts.reactions, posts.pinned,
+         posts.images, posts.polls, posts."eventButtons", posts.forms, posts.reactions, posts.pinned, posts."scheduledAt",
          (jsonb_array_length(COALESCE(posts.comments, '[]'::jsonb))::integer) AS "commentCount",
          (
            SELECT COALESCE(jsonb_agg(elem ORDER BY ord), '[]'::jsonb)
@@ -206,7 +220,8 @@ export class PostsService {
       `SELECT ${selectBody}
        FROM posts
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
-       WHERE posts.markdown ILIKE $3 OR assoc.name ILIKE $3
+       WHERE (posts.markdown ILIKE $3 OR assoc.name ILIKE $3)
+         AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
        ORDER BY posts.pinned DESC, posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,
       [limit, offset, `%${term}%`]
@@ -281,7 +296,7 @@ export class PostsService {
     const selectBody = `posts.id,
          posts."authorId", posts.markdown, posts."createdAt", posts."updatedAt",
          posts.mentions, posts.links, posts."attachedFormId", posts."associationId", posts."paymentAssociationId",
-         posts.images, posts.polls, posts."eventButtons", posts.forms, posts.reactions, posts.pinned,
+         posts.images, posts.polls, posts."eventButtons", posts.forms, posts.reactions, posts.pinned, posts."scheduledAt",
          (jsonb_array_length(COALESCE(posts.comments, '[]'::jsonb))::integer) AS "commentCount",
          (
            SELECT COALESCE(jsonb_agg(elem ORDER BY ord), '[]'::jsonb)
@@ -303,6 +318,7 @@ export class PostsService {
         `SELECT ${selectBody}
        FROM posts
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
+       WHERE (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
        ORDER BY posts.pinned DESC, posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,
         [limit, offset]
@@ -314,6 +330,7 @@ export class PostsService {
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
        WHERE posts."associationId" IS NOT NULL
          AND posts."associationId" = ANY($3::uuid[])
+         AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
        ORDER BY posts.pinned DESC, posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,
         [limit, offset, followedAssocIds]
@@ -327,6 +344,7 @@ export class PostsService {
        WHERE posts."associationId" IS NULL
          AND ($3::integer IS NULL OR u.promo = $3::integer)
          AND ($4::text IS NULL OR u.formation ILIKE ('%' || $4::text || '%'))
+         AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
        ORDER BY posts.pinned DESC, posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,
         [limit, offset, promoParam, formationParam]

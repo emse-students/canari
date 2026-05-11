@@ -59,6 +59,9 @@ export class Post {
   @Column({ type: 'boolean', default: false })
   pinned: boolean;
 
+  @Column({ type: 'timestamptz', nullable: true, default: null })
+  scheduledAt: Date | null;
+
   @CreateDateColumn()
   @Index()
   createdAt: Date;

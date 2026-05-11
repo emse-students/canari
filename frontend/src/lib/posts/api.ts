@@ -99,6 +99,7 @@ export interface PostEntity {
   reactions?: Record<string, string>; // userId -> reactionType
   comments?: PostComment[];
   pinned?: boolean;
+  scheduledAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -113,8 +114,20 @@ export interface ListPostsOptions {
   formation?: string;
 }
 
+export interface ScheduledPost {
+  id: string;
+  markdown: string;
+  scheduledAt: string;
+  createdAt: string;
+}
+
+export async function getMyScheduledPosts(): Promise<ScheduledPost[]> {
+  return request<ScheduledPost[]>('/api/posts/my-scheduled');
+}
+
 export interface CreatePostPayload {
   markdown: string;
+  scheduledAt?: string;
   images?: PostImageRef[];
   polls?: Array<{
     question: string;

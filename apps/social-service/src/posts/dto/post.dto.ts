@@ -233,6 +233,10 @@ export class CreatePostDto {
   @IsString()
   @IsOptional()
   paymentAssociationId?: string;
+
+  @IsDateString()
+  @IsOptional()
+  scheduledAt?: string;
 }
 
 export class ListPostsQueryDto {

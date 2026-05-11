@@ -96,6 +96,12 @@ export class PostsController {
     return this.service.markAllNotificationsRead(xUserId);
   }
 
+  @UseGuards(NginxAuthGuard)
+  @Get('my-scheduled')
+  getMyScheduledPosts(@Headers('x-user-id') xUserId: string) {
+    return this.service.getMyScheduledPosts(xUserId);
+  }
+
   @Get(':postId')
   getPost(@Param('postId') postId: string) {
     return this.service.getById(postId);

@@ -4,6 +4,7 @@
     ChartColumn,
     CalendarCheck,
     ClipboardList,
+    Clock,
     X,
     CircleAlert,
     Building2,
@@ -79,6 +80,8 @@
         )
   );
   let payableAssociations = $derived(postAsAssociations.filter((a) => a.stripeOnboardingComplete));
+
+  let scheduledAt = $state('');
 
   let publishing = $state(false);
   let errorMessage = $state('');
@@ -187,7 +190,11 @@
         });
       }
 
-      const payload: CreatePostPayload = { markdown, images };
+      const payload: CreatePostPayload = {
+        markdown,
+        images,
+        ...(scheduledAt ? { scheduledAt: new Date(scheduledAt).toISOString() } : {}),
+      };
 
       if (includePoll) {
         const options = pollOptionsRaw
@@ -247,6 +254,7 @@
       pollOptionsRaw = 'Oui\nNon';
       includeEventButton = false;
       includeForm = false;
+      scheduledAt = '';
 
       onPostCreated();
     } catch (err) {
@@ -656,6 +664,36 @@
             <span class="hidden text-xs font-semibold sm:inline">Formulaire</span>
           </button>
         {/if}
+
+        <div class="flex items-center gap-1.5">
+          <button
+            type="button"
+            title={scheduledAt ? 'Modifier la programmation' : 'Programmer la publication'}
+            class="flex items-center gap-2 rounded-xl px-2.5 py-2 text-text-muted transition-all outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow active:scale-[0.98] sm:px-3 {scheduledAt
+              ? 'bg-cn-yellow/20 font-semibold text-cn-dark dark:text-cn-yellow'
+              : 'hover:bg-cn-border/40 hover:text-text-main'}"
+          >
+            <Clock size={20} strokeWidth={scheduledAt ? 2.5 : 2} />
+            <span class="hidden text-xs font-semibold sm:inline">Programmer</span>
+          </button>
+          <input
+            type="datetime-local"
+            bind:value={scheduledAt}
+            min={new Date(Date.now() + 60000).toISOString().slice(0, 16)}
+            class="rounded-xl border border-cn-border/60 bg-cn-surface/70 px-2 py-1.5 text-xs font-medium text-text-main outline-none focus:border-cn-yellow focus:ring-1 focus:ring-cn-yellow/30 {scheduledAt ? 'w-44' : 'w-32'}"
+          />
+          {#if scheduledAt}
+            <button
+              type="button"
+              onclick={() => (scheduledAt = '')}
+              class="rounded-full p-1 text-text-muted hover:text-red-500 transition-colors"
+              title="Annuler la programmation"
+              aria-label="Annuler"
+            >
+              <X size={14} />
+            </button>
+          {/if}
+        </div>
       </div>
 
       <Button
@@ -665,7 +703,11 @@
         loading={publishing}
         onclick={publishPost}
       >
-        {publishing ? 'Publication…' : 'Publier'}
+        {#if publishing}
+          {scheduledAt ? 'Programmation…' : 'Publication…'}
+        {:else}
+          {scheduledAt ? 'Programmer' : 'Publier'}
+        {/if}
       </Button>
     </div>
   </div>

@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
-  import { listPosts, searchPosts, type PostEntity, type PostFeed } from '$lib/posts/api';
+  import { listPosts, searchPosts, getMyScheduledPosts, deletePost, type PostEntity, type PostFeed, type ScheduledPost } from '$lib/posts/api';
   import CreatePostForm from '$lib/components/posts/CreatePostForm.svelte';
   import PostCard from '$lib/components/posts/PostCard.svelte';
   import ConversationsMiniPanel from '$lib/components/posts/ConversationsMiniPanel.svelte';
@@ -11,7 +11,7 @@
   import Input from '$lib/components/ui/Input.svelte';
   import { getToken } from '$lib/stores/auth';
   import { currentUserId } from '$lib/stores/user';
-  import { RefreshCw, PenSquare, Inbox, Search, X } from 'lucide-svelte';
+  import { RefreshCw, PenSquare, Inbox, Search, X, Clock, Trash2 } from 'lucide-svelte';
 
   const LAST_VISIT_KEY = 'posts_last_visit';
   const PAGE_SIZE = 20;
@@ -42,6 +42,22 @@
   let searchResults = $state<PostEntity[] | null>(null);
   let searching = $state(false);
   let searchDebounce: ReturnType<typeof setTimeout> | null = null;
+
+  let scheduledPosts = $state<ScheduledPost[]>([]);
+
+  async function loadScheduled() {
+    if (!currentUserId()) return;
+    try {
+      scheduledPosts = await getMyScheduledPosts();
+    } catch { /* silent */ }
+  }
+
+  async function deleteScheduled(id: string) {
+    try {
+      await deletePost(id);
+      scheduledPosts = scheduledPosts.filter((p) => p.id !== id);
+    } catch { /* silent */ }
+  }
 
   function onSearchInput(e: Event) {
     const q = (e.target as HTMLInputElement).value;
@@ -152,6 +168,7 @@
   function onPostCreated() {
     showCreateModal = false;
     void refreshPosts();
+    void loadScheduled();
   }
 
   function isNew(post: PostEntity): boolean {
@@ -182,6 +199,7 @@
       getToken()
         .then((t) => { authToken = t; })
         .catch((e) => console.error('[Posts] Failed to get token', e));
+      void loadScheduled();
     }
 
     // Record last visit timestamp for "Nouveau" badge
@@ -274,6 +292,38 @@
             <Input label="Formation" placeholder="ex. Ingénieur" class="flex-1" bind:value={customFormation} />
             <Button type="button" onclick={applyCustomFeed} class="!shrink-0">Appliquer</Button>
           </div>
+        </div>
+      {/if}
+
+      {#if scheduledPosts.length > 0}
+        <div class="mb-5 rounded-2xl border border-cn-border bg-[var(--cn-surface)]/40 overflow-hidden">
+          <div class="flex items-center gap-2 px-4 py-2.5 border-b border-cn-border bg-amber-500/5">
+            <Clock size={14} class="text-amber-500 shrink-0" />
+            <span class="text-xs font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">
+              Publications programmées ({scheduledPosts.length})
+            </span>
+          </div>
+          <ul class="divide-y divide-cn-border">
+            {#each scheduledPosts as sp (sp.id)}
+              <li class="flex items-center gap-3 px-4 py-3">
+                <div class="min-w-0 flex-1">
+                  <p class="text-sm text-text-main truncate">{sp.markdown.slice(0, 80)}{sp.markdown.length > 80 ? '…' : ''}</p>
+                  <p class="text-xs text-text-muted mt-0.5">
+                    Publié le {new Date(sp.scheduledAt).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onclick={() => deleteScheduled(sp.id)}
+                  class="shrink-0 p-1.5 rounded-lg text-text-muted hover:text-red-500 hover:bg-red-500/10 transition-colors"
+                  title="Supprimer"
+                  aria-label="Supprimer"
+                >
+                  <Trash2 size={15} />
+                </button>
+              </li>
+            {/each}
+          </ul>
         </div>
       {/if}
 
