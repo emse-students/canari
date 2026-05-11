@@ -71,6 +71,15 @@ export class PostsController {
     return this.service.createPost({ ...body, authorId: xUserId });
   }
 
+  @Get('search')
+  searchPosts(
+    @Query('q') q: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string
+  ) {
+    return this.service.searchPosts(q ?? '', Number(limit ?? 20), Number(offset ?? 0));
+  }
+
   @Get(':postId')
   getPost(@Param('postId') postId: string) {
     return this.service.getById(postId);

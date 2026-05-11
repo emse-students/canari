@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
-  import { listPosts, type PostEntity, type PostFeed } from '$lib/posts/api';
+  import { listPosts, searchPosts, type PostEntity, type PostFeed } from '$lib/posts/api';
   import CreatePostForm from '$lib/components/posts/CreatePostForm.svelte';
   import PostCard from '$lib/components/posts/PostCard.svelte';
   import ConversationsMiniPanel from '$lib/components/posts/ConversationsMiniPanel.svelte';
@@ -11,7 +11,7 @@
   import Input from '$lib/components/ui/Input.svelte';
   import { getToken } from '$lib/stores/auth';
   import { currentUserId } from '$lib/stores/user';
-  import { RefreshCw, PenSquare, Inbox } from 'lucide-svelte';
+  import { RefreshCw, PenSquare, Inbox, Search, X } from 'lucide-svelte';
 
   const LAST_VISIT_KEY = 'posts_last_visit';
   const PAGE_SIZE = 20;
@@ -37,6 +37,31 @@
   let lastVisitTs = $state(0);
 
   let showCreateModal = $state(false);
+
+  let searchQuery = $state('');
+  let searchResults = $state<PostEntity[] | null>(null);
+  let searching = $state(false);
+  let searchDebounce: ReturnType<typeof setTimeout> | null = null;
+
+  function onSearchInput(e: Event) {
+    const q = (e.target as HTMLInputElement).value;
+    searchQuery = q;
+    if (searchDebounce) clearTimeout(searchDebounce);
+    if (!q.trim()) { searchResults = null; return; }
+    searchDebounce = setTimeout(async () => {
+      searching = true;
+      try {
+        searchResults = await searchPosts(q.trim(), { limit: 20 });
+      } finally {
+        searching = false;
+      }
+    }, 400);
+  }
+
+  function clearSearch() {
+    searchQuery = '';
+    searchResults = null;
+  }
 
   let customPromo = $state('');
   let customFormation = $state('');
@@ -191,8 +216,25 @@
         </div>
       </header>
 
+      <!-- Barre de recherche -->
+      <div class="mb-5 relative">
+        <Search size={16} class="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+        <input
+          type="search"
+          value={searchQuery}
+          oninput={onSearchInput}
+          placeholder="Rechercher dans les posts…"
+          class="w-full rounded-2xl border border-cn-border bg-[var(--cn-surface)]/60 py-2.5 pl-10 pr-10 text-sm font-medium text-text-main placeholder:text-text-muted/70 outline-none focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/20 transition-all"
+        />
+        {#if searchQuery}
+          <button type="button" onclick={clearSearch} class="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-main transition-colors" aria-label="Effacer">
+            <X size={16} />
+          </button>
+        {/if}
+      </div>
+
       <!-- Feed mode -->
-      <div class="mb-5 flex flex-wrap gap-2">
+      <div class="mb-5 flex flex-wrap gap-2" class:hidden={!!searchQuery}>
         <button
           type="button"
           onclick={() => navigateFeed('all')}
@@ -222,7 +264,7 @@
         </button>
       </div>
 
-      {#if activeFeed === 'custom'}
+      {#if activeFeed === 'custom' && !searchQuery}
         <div class="mb-5 rounded-2xl border border-cn-border bg-[var(--cn-surface)]/40 p-4 space-y-3">
           <p class="text-xs text-text-muted">
             Filtre les posts personnels par promotion ou formation (les posts des associations sont exclus).
@@ -241,7 +283,45 @@
         </div>
       </Modal>
 
+      {#snippet skeletonCards()}
+        {#each { length: 4 } as _, i (i)}
+          <div class="rounded-3xl border border-cn-border bg-[var(--cn-surface)]/60 p-5 space-y-3 animate-pulse">
+            <div class="flex items-center gap-3">
+              <div class="w-9 h-9 rounded-full bg-cn-border/60 shrink-0"></div>
+              <div class="space-y-1.5 flex-1">
+                <div class="h-3 w-28 rounded-full bg-cn-border/60"></div>
+                <div class="h-2.5 w-20 rounded-full bg-cn-border/40"></div>
+              </div>
+            </div>
+            <div class="space-y-2">
+              <div class="h-3 rounded-full bg-cn-border/60" style="width: {85 - i * 5}%"></div>
+              <div class="h-3 rounded-full bg-cn-border/50" style="width: {70 - i * 3}%"></div>
+              <div class="h-3 w-1/2 rounded-full bg-cn-border/40"></div>
+            </div>
+          </div>
+        {/each}
+      {/snippet}
+
       <section>
+        {#if searchQuery}
+          <!-- Search results -->
+          {#if searching}
+            {@render skeletonCards()}
+          {:else if searchResults !== null}
+            {#if searchResults.length === 0}
+              <div class="text-center py-12 text-text-muted text-sm">
+                Aucun résultat pour « {searchQuery} »
+              </div>
+            {:else}
+              <div class="space-y-5">
+                {#each searchResults as post (post.id)}
+                  <PostCard {post} currentUserId={userId} currentUserEmail={email} {authToken} onRefresh={refreshPosts} onDelete={() => { searchResults = (searchResults ?? []).filter(p => p.id !== post.id); }} />
+                {/each}
+              </div>
+            {/if}
+          {/if}
+        {:else}
+
         {#if errorMessage}
           <div class="p-4 mb-6 rounded-2xl bg-red-err/10 text-red-err border border-red-err/20 flex items-center gap-3 text-sm">
             <span>{errorMessage}</span>
@@ -250,25 +330,6 @@
         {/if}
 
         <div class="space-y-5">
-          {#snippet skeletonCards()}
-            {#each { length: 4 } as _, i (i)}
-              <div class="rounded-3xl border border-cn-border bg-[var(--cn-surface)]/60 p-5 space-y-3 animate-pulse">
-                <div class="flex items-center gap-3">
-                  <div class="w-9 h-9 rounded-full bg-cn-border/60 shrink-0"></div>
-                  <div class="space-y-1.5 flex-1">
-                    <div class="h-3 w-28 rounded-full bg-cn-border/60"></div>
-                    <div class="h-2.5 w-20 rounded-full bg-cn-border/40"></div>
-                  </div>
-                </div>
-                <div class="space-y-2">
-                  <div class="h-3 rounded-full bg-cn-border/60" style="width: {85 - i * 5}%"></div>
-                  <div class="h-3 rounded-full bg-cn-border/50" style="width: {70 - i * 3}%"></div>
-                  <div class="h-3 w-1/2 rounded-full bg-cn-border/40"></div>
-                </div>
-              </div>
-            {/each}
-          {/snippet}
-
           {#await data.posts}
             {@render skeletonCards()}
           {:then initialPosts}
@@ -332,6 +393,7 @@
             </div>
           {/await}
         </div>
+        {/if}
       </section>
     </div>
   </div>

@@ -147,6 +147,70 @@ export class PostsService {
     return this.toPublicPostFromEntity(entity);
   }
 
+  async searchPosts(q: string, limit = 20, offset = 0): Promise<any[]> {
+    const term = q.trim();
+    if (!term) return [];
+    const selectBody = `posts.id,
+         posts."authorId", posts.markdown, posts."createdAt", posts."updatedAt",
+         posts.mentions, posts.links, posts."attachedFormId", posts."associationId", posts."paymentAssociationId",
+         posts.images, posts.polls, posts."eventButtons", posts.forms, posts.reactions,
+         (jsonb_array_length(COALESCE(posts.comments, '[]'::jsonb))::integer) AS "commentCount",
+         (
+           SELECT COALESCE(jsonb_agg(elem ORDER BY ord), '[]'::jsonb)
+           FROM (
+             SELECT elem, ord
+             FROM jsonb_array_elements(COALESCE(posts.comments, '[]'::jsonb))
+               WITH ORDINALITY AS t(elem, ord)
+             ORDER BY ord DESC LIMIT 20
+           ) sub
+         ) AS comments,
+         assoc.id AS "assocJoinId", assoc.name AS "assocName", assoc.slug AS "assocSlug", assoc."logoUrl" AS "assocLogoUrl"`;
+
+    const rawPosts: any[] = await this.postRepo.manager.query(
+      `SELECT ${selectBody}
+       FROM posts
+       LEFT JOIN associations assoc ON assoc.id = posts."associationId"
+       WHERE posts.markdown ILIKE $3 OR assoc.name ILIKE $3
+       ORDER BY posts."createdAt" DESC
+       LIMIT $1 OFFSET $2`,
+      [limit, offset, `%${term}%`]
+    );
+
+    for (const post of rawPosts) {
+      if (typeof post.mentions === 'string') {
+        post.mentions = post.mentions ? post.mentions.split(',').filter(Boolean) : [];
+      } else {
+        post.mentions = post.mentions ?? [];
+      }
+      post.commentCount = Number(post.commentCount) || 0;
+    }
+
+    const authorIds = [...new Set(
+      rawPosts.filter((p: any) => !p.associationId && p.authorId).map((p: any) => p.authorId),
+    )] as string[];
+
+    let nameMap: Record<string, { displayName: string | null; firstName: string | null; lastName: string | null }> = {};
+    if (authorIds.length > 0) {
+      const rows: { id: string; displayName: string | null; firstName: string | null; lastName: string | null }[] =
+        await this.postRepo.manager.query(
+          `SELECT id, "displayName", "firstName", "lastName" FROM users WHERE id = ANY($1)`,
+          [authorIds]
+        );
+      nameMap = Object.fromEntries(rows.map((r) => [r.id, { displayName: r.displayName, firstName: r.firstName, lastName: r.lastName }]));
+    }
+
+    const result = rawPosts.map((p: any) => {
+      let row = p;
+      if (!p.associationId && p.authorId) {
+        const info = nameMap[p.authorId] ?? { displayName: null, firstName: null, lastName: null };
+        row = { ...p, authorDisplayName: info.displayName, authorFirstName: info.firstName, authorLastName: info.lastName };
+      }
+      return this.shapeListRow(row);
+    });
+
+    return this.stripBigIntForJson(result);
+  }
+
   async listPosts(params: {
     limit: number;
     offset: number;

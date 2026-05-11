@@ -166,6 +166,16 @@ function buildListPostsSearchParams(options: ListPostsOptions): string {
   return s ? `?${s}` : '';
 }
 
+export async function searchPosts(
+  q: string,
+  opts: { limit?: number; offset?: number } = {}
+): Promise<PostEntity[]> {
+  const p = new URLSearchParams({ q });
+  if (opts.limit != null) p.set('limit', String(opts.limit));
+  if (opts.offset != null) p.set('offset', String(opts.offset));
+  return request<PostEntity[]>(`/api/posts/search?${p}`);
+}
+
 export async function getPost(postId: string): Promise<PostEntity> {
   return request<PostEntity>(`/api/posts/${postId}`);
 }
