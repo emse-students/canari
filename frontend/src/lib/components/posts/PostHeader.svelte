@@ -47,6 +47,16 @@
     return new Date(dateStr).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
   }
 
+  function exactDate(dateStr: string): string {
+    return new Date(dateStr).toLocaleString('fr-FR', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  }
+
   const associationHref = $derived(
     post.association ? `/associations/${encodeURIComponent(post.association.slug)}` : ''
   );
@@ -103,7 +113,7 @@
     </div>
     <div class="text-[0.75rem] font-medium text-text-muted flex items-center gap-1.5 mt-0.5 opacity-80">
       <Clock size={12} strokeWidth={2.5} />
-      {timeAgo(post.createdAt)}
+      <span title={exactDate(post.createdAt)}>{timeAgo(post.createdAt)}</span>
     </div>
   </div>
 </div>

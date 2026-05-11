@@ -261,3 +261,18 @@ export async function likeComment(
 ): Promise<{ ok: boolean; comment: PostComment }> {
   return request(`/api/posts/${postId}/comments/${commentId}/like`, { method: 'POST' });
 }
+
+export async function editComment(
+  postId: string,
+  commentId: string,
+  text: string
+): Promise<{ ok: boolean; comment: PostComment }> {
+  return request(`/api/posts/${postId}/comments/${commentId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ text }),
+  });
+}
+
+export async function deleteComment(postId: string, commentId: string): Promise<{ ok: boolean }> {
+  return request(`/api/posts/${postId}/comments/${commentId}`, { method: 'DELETE' });
+}

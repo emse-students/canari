@@ -318,3 +318,9 @@ export class AddReactionDto {
   @IsNotEmpty()
   reactionType: string; // J'aime, J'adore, Triste, Joyeux, Enervé, Canari, Marteau
 }
+
+export class EditCommentDto {
+  @IsString()
+  @IsNotEmpty()
+  text: string;
+}

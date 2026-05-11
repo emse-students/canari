@@ -1,5 +1,5 @@
 /* eslint-disable */
-import { BadRequestException, Injectable, NotFoundException, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, UnauthorizedException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
@@ -189,7 +189,7 @@ export class PostsService {
              SELECT elem, ord
              FROM jsonb_array_elements(COALESCE(posts.comments, '[]'::jsonb))
                WITH ORDINALITY AS t(elem, ord)
-             ORDER BY ord DESC LIMIT 3
+             ORDER BY ord DESC LIMIT 20
            ) sub
          ) AS comments,
          assoc.id AS "assocJoinId", assoc.name AS "assocName", assoc.slug AS "assocSlug", assoc."logoUrl" AS "assocLogoUrl"`;
@@ -430,16 +430,21 @@ export class PostsService {
     let updated = false;
     for (const p of post.polls || []) {
       if (p.id === pollId) {
+        const selectedIds: string[] = data.optionIds ?? (data.optionId ? [data.optionId] : []);
+        // Clear previous votes from this user across all options
         for (const opt of p.options) {
           opt.votes = (opt.votes || []).filter((v: string) => v !== data.userId);
         }
-        const targetOpt = p.options.find(
-          (o: any) => data.optionIds?.includes(o.id) || o.id === data.optionId
-        );
-        if (targetOpt) {
-          targetOpt.votes.push(data.userId);
-          updated = true;
+        // Add vote for each selected option
+        for (const opt of p.options) {
+          if (selectedIds.includes(opt.id)) {
+            opt.votes.push(data.userId);
+            updated = true;
+          }
         }
+        // Track which options this user voted for (used by frontend to restore state on reload)
+        if (!p.votesByUser) p.votesByUser = {};
+        p.votesByUser[data.userId] = selectedIds;
       }
     }
 
@@ -641,5 +646,31 @@ export class PostsService {
     post.comments = comments;
     await this.postRepo.save(post);
     return { ok: true, comment };
+  }
+
+  async editComment(postId: string, commentId: string, userId: string, text: string) {
+    const post = await this.postRepo.findOne({ where: { id: postId } });
+    if (!post) throw new NotFoundException('Post not found');
+    const comments: any[] = post.comments ?? [];
+    const comment = comments.find((c: any) => c.id === commentId);
+    if (!comment) throw new NotFoundException('Comment not found');
+    if (comment.userId !== userId) throw new UnauthorizedException('Not your comment');
+    comment.text = text;
+    post.comments = comments;
+    await this.postRepo.save(post);
+    return { ok: true, comment };
+  }
+
+  async deleteComment(postId: string, commentId: string, userId: string) {
+    const post = await this.postRepo.findOne({ where: { id: postId } });
+    if (!post) throw new NotFoundException('Post not found');
+    const comments: any[] = post.comments ?? [];
+    const comment = comments.find((c: any) => c.id === commentId);
+    if (!comment) throw new NotFoundException('Comment not found');
+    if (comment.userId !== userId) throw new UnauthorizedException('Not your comment');
+    // Remove comment and any replies to it
+    post.comments = comments.filter((c: any) => c.id !== commentId && c.parentId !== commentId);
+    await this.postRepo.save(post);
+    return { ok: true };
   }
 }

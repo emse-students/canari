@@ -6,6 +6,8 @@
     removeReaction,
     addComment,
     likeComment as likeCommentApi,
+    editComment as editCommentApi,
+    deleteComment as deleteCommentApi,
     type PostEntity,
     type PostComment,
   } from '$lib/posts/api';
@@ -34,6 +36,7 @@
   const REACTIONS = [
     { type: "J'aime", emoji: '❤️', icon: 'heart' },
     { type: "J'adore", emoji: '😍', icon: 'love' },
+    { type: 'Rire', emoji: '😂', icon: 'laugh' },
     { type: 'Triste', emoji: '😢', icon: 'sad' },
     { type: 'Joyeux', emoji: '😊', icon: 'smile' },
     { type: 'Énervé', emoji: '😠', icon: 'angry' },
@@ -50,9 +53,9 @@
   let actionMessage = $state('');
   let errorMessage = $state('');
   let selectedOptions = $state<string[]>([]);
-  // Synchronise selectedOptions avec les votes serveur à chaque rafraîchissement du post.
+  // Synchronise selectedOptions depuis les données serveur (postProp est réactif, localPost ne l'est pas).
   $effect(() => {
-    const serverVotes = (localPost.polls ?? []).flatMap(
+    const serverVotes = (postProp.polls ?? []).flatMap(
       (p) => p.votesByUser?.[currentUserId] ?? []
     );
     if (serverVotes.length > 0) {
@@ -242,6 +245,32 @@
     }
   }
 
+  async function handleEditComment(commentId: string, text: string) {
+    try {
+      const result = await editCommentApi(localPost.id, commentId, text);
+      localPost = {
+        ...localPost,
+        comments: (localPost.comments ?? []).map((c) => (c.id === commentId ? result.comment : c)),
+      };
+    } catch (err) {
+      errorMessage = err instanceof Error ? err.message : 'Impossible de modifier le commentaire';
+    }
+  }
+
+  async function handleDeleteComment(commentId: string) {
+    try {
+      await deleteCommentApi(localPost.id, commentId);
+      localPost = {
+        ...localPost,
+        comments: (localPost.comments ?? []).filter(
+          (c) => c.id !== commentId && c.parentId !== commentId
+        ),
+      };
+    } catch (err) {
+      errorMessage = err instanceof Error ? err.message : 'Impossible de supprimer le commentaire';
+    }
+  }
+
   async function registerForEvent(buttonId: string) {
     if (!currentUserId.trim()) {
       errorMessage = 'Identifiez-vous avant de vous inscrire.';
@@ -328,6 +357,8 @@
     }}
     onAddComment={handleAddComment}
     onLikeComment={handleLikeComment}
+    onEditComment={handleEditComment}
+    onDeleteComment={handleDeleteComment}
   />
 
   <!-- Notifications intégrées à la carte -->

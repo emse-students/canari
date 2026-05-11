@@ -73,6 +73,21 @@
       showVoterTooltip(optionId, votes, anchor);
     }
   }
+
+  function pollCountdown(endsAt: string): string {
+    const diff = new Date(endsAt).getTime() - Date.now();
+    if (diff <= 0) return 'Terminé';
+    const days = Math.floor(diff / 86400000);
+    if (days > 0) return `${days} j restant${days > 1 ? 's' : ''}`;
+    const hours = Math.floor(diff / 3600000);
+    if (hours > 0) return `${hours} h restante${hours > 1 ? 's' : ''}`;
+    const mins = Math.floor(diff / 60000);
+    return `${mins} min restante${mins > 1 ? 's' : ''}`;
+  }
+
+  function hasVoted(poll: Poll): boolean {
+    return poll.options.some((opt) => selectedOptions.includes(opt.id));
+  }
 </script>
 
 {#if polls && polls.length > 0}
@@ -90,16 +105,28 @@
           >
             <ChartBar size={18} strokeWidth={2.5} />
           </div>
-          <h4 class="font-extrabold text-[1.05rem] text-text-main leading-snug">
-            {poll.question}
-            {#if poll.multipleChoice}
-              <span
-                class="block text-[0.65rem] font-bold text-text-muted uppercase tracking-wider mt-1.5 opacity-80"
-              >
-                Choix multiples autorisés
-              </span>
-            {/if}
-          </h4>
+          <div class="flex-1 min-w-0">
+            <h4 class="font-extrabold text-[1.05rem] text-text-main leading-snug">
+              {poll.question}
+            </h4>
+            <div class="flex flex-wrap items-center gap-2 mt-1.5">
+              {#if poll.multipleChoice}
+                <span class="text-[0.65rem] font-bold text-text-muted uppercase tracking-wider opacity-80">
+                  Choix multiples autorisés
+                </span>
+              {/if}
+              {#if poll.endsAt}
+                <span class="text-[0.65rem] font-bold text-amber-600 dark:text-amber-400 opacity-90">
+                  ⏱ {pollCountdown(poll.endsAt)}
+                </span>
+              {/if}
+              {#if hasVoted(poll)}
+                <span class="inline-flex items-center gap-1 text-[0.65rem] font-bold text-emerald-600 dark:text-emerald-400">
+                  ✓ Vous avez voté
+                </span>
+              {/if}
+            </div>
+          </div>
         </div>
 
         <!-- Options du sondage -->
@@ -207,14 +234,18 @@
           <span class="text-xs font-semibold text-text-muted">
             {totalVotes} vote{totalVotes > 1 ? 's' : ''} au total
           </span>
-          <button
-            type="button"
-            class="px-5 py-2.5 rounded-xl bg-amber-500 text-[#151B2C] font-extrabold text-sm transition-all shadow-md shadow-amber-500/20 hover:bg-amber-400 hover:shadow-lg hover:shadow-amber-500/30 active:scale-95 active:shadow-md disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-md disabled:active:scale-100 disabled:shadow-none outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50"
-            disabled={selectedOptions.length === 0}
-            onclick={() => onSubmitVote(poll.id)}
-          >
-            Voter
-          </button>
+          {#if !poll.endsAt || new Date(poll.endsAt).getTime() > Date.now()}
+            <button
+              type="button"
+              class="px-5 py-2.5 rounded-xl bg-amber-500 text-[#151B2C] font-extrabold text-sm transition-all shadow-md shadow-amber-500/20 hover:bg-amber-400 hover:shadow-lg hover:shadow-amber-500/30 active:scale-95 active:shadow-md disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-md disabled:active:scale-100 disabled:shadow-none outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50"
+              disabled={selectedOptions.length === 0}
+              onclick={() => onSubmitVote(poll.id)}
+            >
+              {hasVoted(poll) ? 'Modifier mon vote' : 'Voter'}
+            </button>
+          {:else}
+            <span class="text-xs font-bold text-text-muted opacity-60">Sondage terminé</span>
+          {/if}
         </div>
       </div>
     {/each}

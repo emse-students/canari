@@ -83,13 +83,7 @@
     e.preventDefault();
     e.stopPropagation();
     if (!blobUrl) return;
-
-    if ((window as any).__TAURI_INTERNALS__) {
-      // Tauri: no popup windows — show in-page lightbox instead.
-      lightboxOpen = true;
-    } else {
-      window.open(blobUrl, '_blank', 'noopener,noreferrer');
-    }
+    lightboxOpen = true;
   }
 
   function closeLightbox(e: MouseEvent | KeyboardEvent) {

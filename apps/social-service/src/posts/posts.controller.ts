@@ -6,6 +6,7 @@ import {
   Get,
   Headers,
   Param,
+  Patch,
   Post as HttpPost,
   Query,
   UnauthorizedException,
@@ -22,6 +23,7 @@ import {
   SubmitFormDto,
   AddCommentDto,
   AddReactionDto,
+  EditCommentDto,
 } from './dto/post.dto';
 
 @Controller('posts')
@@ -151,5 +153,26 @@ export class PostsController {
     @Param('commentId') commentId: string
   ) {
     return this.service.likeComment(postId, commentId, xUserId);
+  }
+
+  @UseGuards(NginxAuthGuard)
+  @Patch(':postId/comments/:commentId')
+  editComment(
+    @Headers('x-user-id') xUserId: string,
+    @Param('postId') postId: string,
+    @Param('commentId') commentId: string,
+    @Body() body: EditCommentDto
+  ) {
+    return this.service.editComment(postId, commentId, xUserId, body.text);
+  }
+
+  @UseGuards(NginxAuthGuard)
+  @Delete(':postId/comments/:commentId')
+  deleteComment(
+    @Headers('x-user-id') xUserId: string,
+    @Param('postId') postId: string,
+    @Param('commentId') commentId: string
+  ) {
+    return this.service.deleteComment(postId, commentId, xUserId);
   }
 }

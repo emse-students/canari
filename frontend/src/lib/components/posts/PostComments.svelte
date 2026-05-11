@@ -1,7 +1,9 @@
 <script lang="ts">
-  import { ChevronDown, ChevronUp, Send, X, CornerDownRight } from 'lucide-svelte';
+  import { ChevronDown, ChevronUp, Send, X, CornerDownRight, Pencil, Trash2, ArrowUpDown } from 'lucide-svelte';
   import type { PostComment } from '$lib/posts/api';
   import Avatar from '$lib/components/shared/Avatar.svelte';
+
+  type SortMode = 'recent' | 'oldest' | 'liked';
 
   interface Props {
     comments: PostComment[];
@@ -12,9 +14,11 @@
     currentUserId: string;
     onToggleComments: () => void;
     onCommentTextChange: (text: string) => Promise<void>;
-    onAddComment: (parentId?: string) => Promise<void>; // Modifié pour accepter un parentId
+    onAddComment: (parentId?: string) => Promise<void>;
     onLikeComment: (commentId: string) => void;
-    onKeyDown?: (e: KeyboardEvent) => void; // Optionnel car désormais géré en grande partie en interne
+    onEditComment: (commentId: string, text: string) => Promise<void>;
+    onDeleteComment: (commentId: string) => Promise<void>;
+    onKeyDown?: (e: KeyboardEvent) => void;
   }
 
   let {
@@ -28,21 +32,45 @@
     onCommentTextChange,
     onAddComment,
     onLikeComment,
+    onEditComment,
+    onDeleteComment,
     onKeyDown,
   }: Props = $props();
 
-  // --- Gestion des Réponses (Replies) ---
   let replyingToId = $state<string | null>(null);
   let replyingToName = $state<string>('');
+  let editingCommentId = $state<string | null>(null);
+  let editingText = $state('');
+  let sortMode = $state<SortMode>('recent');
+
+  const PREVIEW_COUNT = 5;
 
   function initiateReply(comment: PostComment) {
     replyingToId = comment.id;
     replyingToName = getCommentAuthorName(comment);
+    editingCommentId = null;
   }
 
   function cancelReply() {
     replyingToId = null;
     replyingToName = '';
+  }
+
+  function initiateEdit(comment: PostComment) {
+    editingCommentId = comment.id;
+    editingText = comment.text;
+    replyingToId = null;
+  }
+
+  function cancelEdit() {
+    editingCommentId = null;
+    editingText = '';
+  }
+
+  async function submitEdit() {
+    if (!editingText.trim() || !editingCommentId) return;
+    await onEditComment(editingCommentId, editingText.trim());
+    cancelEdit();
   }
 
   async function handleSubmitComment() {
@@ -56,29 +84,25 @@
       e.preventDefault();
       handleSubmitComment();
     }
-    if (e.key === 'Escape' && replyingToId) {
-      cancelReply();
-    }
+    if (e.key === 'Escape' && replyingToId) cancelReply();
     if (onKeyDown) onKeyDown(e);
   }
-  // --------------------------------------
+
+  function handleEditKeyDown(e: KeyboardEvent) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      submitEdit();
+    }
+    if (e.key === 'Escape') cancelEdit();
+  }
 
   function getCommentAuthorName(comment: PostComment): string {
     const first = comment.firstName?.trim();
     const last = comment.lastName?.trim();
-
-    if (first && last) {
-      return `${first} ${last}`;
-    }
-    if (first) {
-      return first;
-    }
-    if (last) {
-      return last;
-    }
-    if (comment.displayName?.trim()) {
-      return comment.displayName.trim();
-    }
+    if (first && last) return `${first} ${last}`;
+    if (first) return first;
+    if (last) return last;
+    if (comment.displayName?.trim()) return comment.displayName.trim();
     return comment.userId;
   }
 
@@ -86,7 +110,7 @@
     const now = Date.now();
     const then = new Date(dateStr).getTime();
     const diffSec = Math.floor((now - then) / 1000);
-    if (diffSec < 60) return 'À l\u2019instant';
+    if (diffSec < 60) return 'À l’instant';
     const diffMin = Math.floor(diffSec / 60);
     if (diffMin < 60) return `${diffMin} min`;
     const diffH = Math.floor(diffMin / 60);
@@ -95,12 +119,32 @@
     if (diffD < 7) return `${diffD} j`;
     return new Date(dateStr).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
   }
+
+  function exactDate(dateStr: string): string {
+    return new Date(dateStr).toLocaleString('fr-FR', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  }
+
+  const sortedTopLevel = $derived.by(() => {
+    const list = [...topLevelComments];
+    if (sortMode === 'oldest') return list.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    if (sortMode === 'liked') return list.sort((a, b) => (b.likes?.length ?? 0) - (a.likes?.length ?? 0));
+    // recent = newest first
+    return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  });
+
+  const visibleComments = $derived(showComments ? sortedTopLevel : sortedTopLevel.slice(0, PREVIEW_COUNT));
 </script>
 
-<!-- SNIPPET SVELTE 5 : Modèle de rendu d'un commentaire (réutilisable pour les réponses) -->
 {#snippet commentNode(comment: PostComment, isReply: boolean)}
+  {@const isOwn = comment.userId === currentUserId}
+  {@const isEditing = editingCommentId === comment.id}
   <div class="flex items-start gap-2.5 {isReply ? 'mt-2.5' : 'mt-4'}">
-    <!-- Avatar cliquable -->
     <a
       href="/profile/{encodeURIComponent(comment.userId)}"
       class="shrink-0 mt-0.5 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 rounded-full"
@@ -109,33 +153,55 @@
     </a>
 
     <div class="flex-1 min-w-0">
-      <!-- Bulle du commentaire -->
-      <div
-        class="bg-black/5 dark:bg-white/5 rounded-2xl rounded-tl-sm px-3.5 py-2.5 w-fit max-w-full border border-black/5 dark:border-white/5 shadow-sm"
-      >
-        <a
-          href="/profile/{encodeURIComponent(comment.userId)}"
-          class="font-bold text-[0.8rem] text-text-main hover:text-amber-500 transition-colors block mb-0.5 outline-none focus-visible:underline"
-        >
-          {getCommentAuthorName(comment)}
-        </a>
-        <span class="text-[0.9rem] text-text-main leading-snug break-words">
-          {comment.text}
-        </span>
-      </div>
+      {#if isEditing}
+        <!-- Mode édition inline -->
+        <div class="flex items-center gap-2 bg-black/5 dark:bg-white/5 rounded-2xl rounded-tl-sm px-3.5 py-2.5 border border-amber-500/40">
+          <input
+            type="text"
+            bind:value={editingText}
+            onkeydown={handleEditKeyDown}
+            class="flex-1 bg-transparent text-[0.9rem] font-medium text-text-main outline-none"
+            autofocus
+          />
+          <button type="button" onclick={submitEdit} class="text-amber-500 hover:text-amber-400 shrink-0 outline-none" aria-label="Valider">
+            <Send size={15} strokeWidth={2.5} />
+          </button>
+          <button type="button" onclick={cancelEdit} class="text-text-muted hover:text-text-main shrink-0 outline-none" aria-label="Annuler">
+            <X size={15} strokeWidth={2.5} />
+          </button>
+        </div>
+      {:else}
+        <div class="bg-black/5 dark:bg-white/5 rounded-2xl rounded-tl-sm px-3.5 py-2.5 w-fit max-w-full border border-black/5 dark:border-white/5 shadow-sm">
+          <a
+            href="/profile/{encodeURIComponent(comment.userId)}"
+            class="font-bold text-[0.8rem] text-text-main hover:text-amber-500 transition-colors block mb-0.5 outline-none focus-visible:underline"
+          >
+            {getCommentAuthorName(comment)}
+          </a>
+          {#if isReply}
+            <!-- Badge "En réponse à" sur les replies rendus -->
+            {@const parentComment = comments.find((c) => c.id === comment.parentId)}
+            {#if parentComment}
+              <span class="flex items-center gap-1 text-[0.65rem] font-semibold text-text-muted mb-1 opacity-75">
+                <CornerDownRight size={11} />
+                {getCommentAuthorName(parentComment)}
+              </span>
+            {/if}
+          {/if}
+          <span class="text-[0.9rem] text-text-main leading-snug break-words">{comment.text}</span>
+        </div>
+      {/if}
 
-      <!-- Actions sous le commentaire (J'aime, Répondre, Date) -->
       <div class="flex items-center gap-3.5 px-2 mt-1">
-        <span class="text-[0.65rem] font-bold text-text-muted opacity-80"
-          >{timeAgo(comment.createdAt)}</span
-        >
+        <span
+          class="text-[0.65rem] font-bold text-text-muted opacity-80"
+          title={exactDate(comment.createdAt)}
+        >{timeAgo(comment.createdAt)}</span>
 
         <button
           type="button"
           onclick={() => onLikeComment(comment.id)}
-          class="text-[0.7rem] font-extrabold transition-colors outline-none focus-visible:underline {comment.likes?.includes(
-            currentUserId
-          )
+          class="text-[0.7rem] font-extrabold transition-colors outline-none focus-visible:underline {comment.likes?.includes(currentUserId)
             ? 'text-red-500'
             : 'text-text-muted hover:text-text-main'}"
         >
@@ -151,15 +217,31 @@
             Répondre
           </button>
         {/if}
+
+        {#if isOwn && !isEditing}
+          <button
+            type="button"
+            onclick={() => initiateEdit(comment)}
+            class="text-[0.7rem] font-extrabold text-text-muted hover:text-amber-500 transition-colors outline-none"
+            aria-label="Modifier"
+          >
+            <Pencil size={12} strokeWidth={2.5} />
+          </button>
+          <button
+            type="button"
+            onclick={() => onDeleteComment(comment.id)}
+            class="text-[0.7rem] font-extrabold text-text-muted hover:text-red-500 transition-colors outline-none"
+            aria-label="Supprimer"
+          >
+            <Trash2 size={12} strokeWidth={2.5} />
+          </button>
+        {/if}
       </div>
 
-      <!-- Affichage des réponses imbriquées -->
       {#if !isReply}
         {@const replies = comments.filter((c) => c.parentId === comment.id)}
         {#if replies.length > 0}
-          <div
-            class="pl-3 sm:pl-4 ml-2 sm:ml-3.5 mt-1 border-l-2 border-black/5 dark:border-white/10"
-          >
+          <div class="pl-3 sm:pl-4 ml-2 sm:ml-3.5 mt-1 border-l-2 border-black/5 dark:border-white/10">
             {#each replies as reply (reply.id)}
               {@render commentNode(reply, true)}
             {/each}
@@ -170,69 +252,74 @@
   </div>
 {/snippet}
 
-<!-- ================= CONTENU PRINCIPAL ================= -->
 {#if comments.length > 0 || showComments}
-  <div
-    class="border-t border-black/5 dark:border-white/10 px-4 sm:px-5 py-4 bg-white/30 dark:bg-black/10"
-  >
-    <!-- Boutons Afficher/Masquer -->
-    {#if topLevelComments.length > 2 && !showComments}
-      <button
-        type="button"
-        onclick={onToggleComments}
-        class="text-[0.75rem] font-bold text-text-muted hover:text-text-main mb-2 flex items-center gap-1.5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500 rounded-lg px-2 py-1"
-      >
-        <ChevronDown size={16} strokeWidth={2.5} />
-        Afficher les {topLevelComments.length} commentaires
-      </button>
-    {/if}
+  <div class="border-t border-black/5 dark:border-white/10 px-4 sm:px-5 py-4 bg-white/30 dark:bg-black/10">
+    <!-- Contrôles : afficher/masquer + tri -->
+    <div class="flex items-center justify-between mb-2 gap-2">
+      <div>
+        {#if topLevelComments.length > PREVIEW_COUNT && !showComments}
+          <button
+            type="button"
+            onclick={onToggleComments}
+            class="text-[0.75rem] font-bold text-text-muted hover:text-text-main flex items-center gap-1.5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500 rounded-lg px-2 py-1"
+          >
+            <ChevronDown size={16} strokeWidth={2.5} />
+            Afficher les {topLevelComments.length} commentaires
+          </button>
+        {:else if showComments}
+          <button
+            type="button"
+            onclick={onToggleComments}
+            class="text-[0.75rem] font-bold text-text-muted hover:text-text-main flex items-center gap-1.5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500 rounded-lg px-2 py-1"
+          >
+            <ChevronUp size={16} strokeWidth={2.5} />
+            Masquer
+          </button>
+        {/if}
+      </div>
 
-    {#if showComments}
-      <button
-        type="button"
-        onclick={onToggleComments}
-        class="text-[0.75rem] font-bold text-text-muted hover:text-text-main mb-2 flex items-center gap-1.5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500 rounded-lg px-2 py-1"
-      >
-        <ChevronUp size={16} strokeWidth={2.5} />
-        Masquer les commentaires
-      </button>
-    {/if}
+      <!-- Tri -->
+      {#if topLevelComments.length > 1}
+        <div class="flex items-center gap-1">
+          <ArrowUpDown size={12} class="text-text-muted opacity-60" />
+          {#each ([['recent', 'Récents'], ['oldest', 'Anciens'], ['liked', 'Aimés']] as const) as [mode, label] (mode)}
+            <button
+              type="button"
+              onclick={() => (sortMode = mode)}
+              class="text-[0.65rem] font-bold px-2 py-0.5 rounded-full transition-colors {sortMode === mode
+                ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                : 'text-text-muted hover:text-text-main'}"
+            >
+              {label}
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
 
     <!-- Liste des commentaires -->
     <div class="space-y-1 mb-4">
-      {#each showComments ? topLevelComments : topLevelComments.slice(-2) as comment (comment.id)}
+      {#each visibleComments as comment (comment.id)}
         {@render commentNode(comment, false)}
       {/each}
     </div>
 
-    <!-- Zone de Saisie du Commentaire / Réponse -->
+    <!-- Zone de saisie -->
     <div class="pt-3 flex flex-col gap-2">
-      <!-- Indicateur de réponse (Badge) -->
       {#if replyingToId}
         <div
           class="flex items-center justify-between px-3 py-1.5 bg-amber-500/10 border border-amber-500/20 rounded-xl text-amber-700 dark:text-amber-400 text-[0.7rem] font-bold ml-10 animate-in fade-in slide-in-from-bottom-1"
         >
-          <span class="flex items-center gap-1.5"
-            ><CornerDownRight size={14} /> En réponse à {replyingToName}</span
-          >
-          <button
-            onclick={cancelReply}
-            class="hover:bg-amber-500/20 rounded-full p-1 transition-colors outline-none"
-            aria-label="Annuler la réponse"
-          >
+          <span class="flex items-center gap-1.5"><CornerDownRight size={14} /> En réponse à {replyingToName}</span>
+          <button onclick={cancelReply} class="hover:bg-amber-500/20 rounded-full p-1 transition-colors outline-none" aria-label="Annuler la réponse">
             <X size={14} strokeWidth={2.5} />
           </button>
         </div>
       {/if}
 
-      <!-- Champ de texte -->
       <div class="flex items-center gap-2.5">
-        <div class="shrink-0">
-          <Avatar userId={currentUserId} size="sm" />
-        </div>
-        <div
-          class="flex-1 flex items-center bg-black/5 dark:bg-white/5 rounded-[1.25rem] px-3.5 py-1.5 border border-black/5 dark:border-white/10 focus-within:ring-2 focus-within:ring-amber-500/50 focus-within:bg-white dark:focus-within:bg-black/40 transition-all shadow-inner"
-        >
+        <div class="shrink-0"><Avatar userId={currentUserId} size="sm" /></div>
+        <div class="flex-1 flex items-center bg-black/5 dark:bg-white/5 rounded-[1.25rem] px-3.5 py-1.5 border border-black/5 dark:border-white/10 focus-within:ring-2 focus-within:ring-amber-500/50 focus-within:bg-white dark:focus-within:bg-black/40 transition-all shadow-inner">
           <input
             type="text"
             value={commentText}
@@ -255,17 +342,10 @@
     </div>
   </div>
 {:else}
-  <!-- État vide : Seulement la zone de saisie -->
-  <div
-    class="border-t border-black/5 dark:border-white/10 px-4 sm:px-5 py-4 bg-white/30 dark:bg-black/10"
-  >
+  <div class="border-t border-black/5 dark:border-white/10 px-4 sm:px-5 py-4 bg-white/30 dark:bg-black/10">
     <div class="flex items-center gap-2.5">
-      <div class="shrink-0">
-        <Avatar userId={currentUserId} size="sm" />
-      </div>
-      <div
-        class="flex-1 flex items-center bg-black/5 dark:bg-white/5 rounded-[1.25rem] px-3.5 py-1.5 border border-black/5 dark:border-white/10 focus-within:ring-2 focus-within:ring-amber-500/50 focus-within:bg-white dark:focus-within:bg-black/40 transition-all shadow-inner"
-      >
+      <div class="shrink-0"><Avatar userId={currentUserId} size="sm" /></div>
+      <div class="flex-1 flex items-center bg-black/5 dark:bg-white/5 rounded-[1.25rem] px-3.5 py-1.5 border border-black/5 dark:border-white/10 focus-within:ring-2 focus-within:ring-amber-500/50 focus-within:bg-white dark:focus-within:bg-black/40 transition-all shadow-inner">
         <input
           type="text"
           value={commentText}

@@ -44,13 +44,16 @@ export interface UpdateAssociationPayload {
   logoUrl?: string;
 }
 
-/** Resolve association logo URL for `<img src>` (handles relative `/api/...` paths). */
+/** Resolve association logo URL for `<img src>` (handles relative `/api/...` paths).
+ *  On Tauri/mobile, window.location.origin is `tauri://localhost` — use VITE_MEDIA_URL instead. */
 export function associationLogoSrc(logoUrl: string | null | undefined): string | null {
   if (!logoUrl?.trim()) return null;
   const u = logoUrl.trim();
   if (u.startsWith('/')) {
-    if (typeof window !== 'undefined') return `${window.location.origin}${u}`;
-    return u;
+    const mediaBase =
+      (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_MEDIA_URL?.trim()) ||
+      (typeof window !== 'undefined' ? window.location.origin : '');
+    return `${mediaBase}${u}`;
   }
   return u;
 }
