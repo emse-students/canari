@@ -13,6 +13,7 @@
 import { saveUserLocally, clearUserLocally, currentUserId } from '$lib/stores/user';
 import { setGlobalAdmin } from '$lib/stores/userState.svelte';
 import { isTauri } from '@tauri-apps/api/core';
+import { coreUrl } from '$lib/utils/apiUrl';
 
 const OIDC_STATE_KEY = 'canari_oidc_state';
 const OIDC_RETURN_KEY = 'canari_oidc_return';
@@ -52,12 +53,6 @@ function isEnvFlagEnabled(value: string | boolean | undefined): boolean {
     default:
       return false;
   }
-}
-
-function coreUrl(): string {
-  const url = import.meta.env.VITE_CORE_URL as string | undefined;
-  if (url?.trim()) return url.trim();
-  return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3012';
 }
 
 function authentikUrl(): string {

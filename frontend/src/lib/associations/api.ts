@@ -1,5 +1,6 @@
 import { apiFetch } from '$lib/utils/apiFetch';
 import { getToken } from '$lib/stores/auth';
+import { coreUrl, socialUrl } from '$lib/utils/apiUrl';
 
 export interface AssociationMember {
   id: string;
@@ -56,21 +57,6 @@ export function associationLogoSrc(logoUrl: string | null | undefined): string |
     return `${mediaBase}${u}`;
   }
   return u;
-}
-
-function socialUrl(): string {
-  const env = typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_SOCIAL_URL;
-  if (typeof env === 'string' && env.trim()) return env.trim().replace(/\/$/, '');
-  return '';
-}
-
-function coreUrl(): string {
-  const url =
-    typeof import.meta !== 'undefined'
-      ? ((import.meta as any).env?.VITE_CORE_URL as string | undefined)
-      : undefined;
-  if (url?.trim()) return url.trim();
-  return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3012';
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {

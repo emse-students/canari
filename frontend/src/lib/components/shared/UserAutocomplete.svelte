@@ -1,5 +1,6 @@
 <script lang="ts">
   import { apiFetch } from '$lib/utils/apiFetch';
+  import { coreUrl } from '$lib/utils/apiUrl';
 
   interface User {
     id: string;
@@ -23,12 +24,6 @@
     inputId = 'user-autocomplete',
     onSubmit,
   }: Props = $props();
-
-  function coreUrl(): string {
-    const url = import.meta.env.VITE_CORE_URL as string | undefined;
-    if (url?.trim()) return url.trim();
-    return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3012';
-  }
 
   let suggestions = $state<User[]>([]);
   let isLoading = $state(false);

@@ -1,4 +1,5 @@
 import { apiFetch } from '$lib/utils/apiFetch';
+import { socialUrl } from '$lib/utils/apiUrl';
 import type { MediaRef } from '$lib/media';
 
 export type PostImageRef = Omit<MediaRef, 'type'> & { caption?: string };
@@ -150,17 +151,8 @@ export interface CreatePostPayload {
   paymentAssociationId?: string;
 }
 
-function getPostsBaseUrl(): string {
-  const env = typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_SOCIAL_URL;
-  if (typeof env === 'string' && env.trim()) {
-    return env.trim().replace(/\/$/, '');
-  }
-  return '';
-}
-
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const baseUrl = getPostsBaseUrl();
-  const res = await apiFetch(`${baseUrl}${path}`, init as any);
+  const res = await apiFetch(`${socialUrl()}${path}`, init as any);
 
   if (!res.ok) {
     const details = await res.text();

@@ -4,6 +4,7 @@
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import { getInitials } from '$lib/utils/avatar';
   import { Clock } from 'lucide-svelte';
+  import { timeAgo, exactDate } from '$lib/utils/time';
 
   interface Props {
     post: PostEntity;
@@ -12,49 +13,14 @@
   let { post }: Props = $props();
 
   function getPostAuthorName(): string {
-    if (post.association) {
-      return post.association.name;
-    }
+    if (post.association) return post.association.name;
     const first = post.authorFirstName?.trim();
     const last = post.authorLastName?.trim();
-
-    if (first && last) {
-      return `${first} ${last}`;
-    }
-    if (first) {
-      return first;
-    }
-    if (last) {
-      return last;
-    }
-    if (post.authorDisplayName?.trim()) {
-      return post.authorDisplayName.trim();
-    }
+    if (first && last) return `${first} ${last}`;
+    if (first) return first;
+    if (last) return last;
+    if (post.authorDisplayName?.trim()) return post.authorDisplayName.trim();
     return post.authorId ?? '';
-  }
-
-  function timeAgo(dateStr: string): string {
-    const now = Date.now();
-    const then = new Date(dateStr).getTime();
-    const diffSec = Math.floor((now - then) / 1000);
-    if (diffSec < 60) return 'À l\u2019instant';
-    const diffMin = Math.floor(diffSec / 60);
-    if (diffMin < 60) return `Il y a ${diffMin} min`;
-    const diffH = Math.floor(diffMin / 60);
-    if (diffH < 24) return `Il y a ${diffH} h`;
-    const diffD = Math.floor(diffH / 24);
-    if (diffD < 7) return `Il y a ${diffD} j`;
-    return new Date(dateStr).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
-  }
-
-  function exactDate(dateStr: string): string {
-    return new Date(dateStr).toLocaleString('fr-FR', {
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
   }
 
   const associationHref = $derived(

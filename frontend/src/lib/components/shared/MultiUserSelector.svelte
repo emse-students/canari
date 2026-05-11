@@ -2,6 +2,7 @@
   import { X, Plus } from 'lucide-svelte';
   import UserName from './UserName.svelte';
   import { apiFetch } from '$lib/utils/apiFetch';
+  import { coreUrl } from '$lib/utils/apiUrl';
 
   interface User {
     id: string;
@@ -22,12 +23,6 @@
   let showDropdown = $state(false);
   let selectedIndex = $state(-1);
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-
-  function coreUrl(): string {
-    const url = import.meta.env.VITE_CORE_URL as string | undefined;
-    if (url?.trim()) return url.trim();
-    return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3012';
-  }
 
   async function searchUsers(query: string) {
     if (!query || query.length < 2) {

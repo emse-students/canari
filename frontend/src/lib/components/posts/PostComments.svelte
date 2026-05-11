@@ -3,6 +3,8 @@
   import type { PostComment } from '$lib/posts/api';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import { apiFetch } from '$lib/utils/apiFetch';
+  import { coreUrl } from '$lib/utils/apiUrl';
+  import { timeAgo, exactDate } from '$lib/utils/time';
 
   type SortMode = 'recent' | 'oldest' | 'liked';
 
@@ -41,12 +43,6 @@
     onLoadAllComments,
     onKeyDown,
   }: Props = $props();
-
-  function coreUrl(): string {
-    const url = import.meta.env.VITE_CORE_URL as string | undefined;
-    if (url?.trim()) return url.trim();
-    return typeof window !== 'undefined' ? window.location.origin : '';
-  }
 
   type MentionUser = { id: string; displayName: string | null };
 
@@ -186,30 +182,6 @@
     if (last) return last;
     if (comment.displayName?.trim()) return comment.displayName.trim();
     return comment.userId;
-  }
-
-  function timeAgo(dateStr: string): string {
-    const now = Date.now();
-    const then = new Date(dateStr).getTime();
-    const diffSec = Math.floor((now - then) / 1000);
-    if (diffSec < 60) return 'À l’instant';
-    const diffMin = Math.floor(diffSec / 60);
-    if (diffMin < 60) return `${diffMin} min`;
-    const diffH = Math.floor(diffMin / 60);
-    if (diffH < 24) return `${diffH} h`;
-    const diffD = Math.floor(diffH / 24);
-    if (diffD < 7) return `${diffD} j`;
-    return new Date(dateStr).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
-  }
-
-  function exactDate(dateStr: string): string {
-    return new Date(dateStr).toLocaleString('fr-FR', {
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
   }
 
   const sortedTopLevel = $derived.by(() => {

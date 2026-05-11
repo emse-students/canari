@@ -1,5 +1,6 @@
 import { apiFetch } from '$lib/utils/apiFetch';
 import { setCurrentUserId, setGlobalAdmin } from '$lib/stores/userState.svelte';
+import { coreUrl } from '$lib/utils/apiUrl';
 
 export { currentUserId, globalAdminState as isGlobalAdmin } from '$lib/stores/userState.svelte';
 
@@ -57,15 +58,6 @@ export function clearUserLocally(): void {
   localStorage.removeItem(USER_GLOBAL_ADMIN_KEY);
   setGlobalAdmin(false);
   setCurrentUserId(null);
-}
-
-function coreUrl(): string {
-  const url =
-    typeof import.meta !== 'undefined'
-      ? ((import.meta as any).env?.VITE_CORE_URL as string | undefined)
-      : undefined;
-  if (url?.trim()) return url.trim();
-  return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3012';
 }
 
 export async function fetchMyProfile(): Promise<UserProfile> {
