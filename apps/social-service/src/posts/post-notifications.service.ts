@@ -1,0 +1,54 @@
+import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { PostNotification } from './entities/post-notification.entity';
+import { Post } from './entities/post.entity';
+
+@Injectable()
+export class PostNotificationsService {
+  constructor(
+    @InjectRepository(PostNotification) private readonly notifRepo: Repository<PostNotification>,
+    @InjectRepository(Post) private readonly postRepo: Repository<Post>
+  ) {}
+
+  /** Looks up a user's display name from the shared users table. */
+  async resolveActorName(actorId: string): Promise<string> {
+    try {
+      const rows: any[] = await this.postRepo.manager.query(
+        `SELECT "displayName", "firstName", "lastName" FROM users WHERE id = $1`,
+        [actorId]
+      );
+      if (rows[0]) {
+        const u = rows[0];
+        return u.displayName || [u.firstName, u.lastName].filter(Boolean).join(' ') || actorId;
+      }
+    } catch { /* non-fatal */ }
+    return actorId;
+  }
+
+  /** Creates a notification unless actor and recipient are the same person. */
+  async createNotification(data: {
+    recipientId: string;
+    type: string;
+    postId: string;
+    actorId: string;
+    text: string;
+  }) {
+    if (data.recipientId === data.actorId) return;
+    const actorName = await this.resolveActorName(data.actorId);
+    await this.notifRepo.save(this.notifRepo.create({ ...data, actorName }));
+  }
+
+  async getNotifications(userId: string, limit = 30) {
+    return this.notifRepo.find({
+      where: { recipientId: userId },
+      order: { createdAt: 'DESC' },
+      take: limit,
+    });
+  }
+
+  async markAllRead(userId: string) {
+    await this.notifRepo.update({ recipientId: userId }, { read: true });
+    return { ok: true };
+  }
+}

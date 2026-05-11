@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument */
 import {
   BadRequestException,
   Injectable,
@@ -220,7 +221,7 @@ export class PostInteractionsService {
     return { registered: true, requiresPayment: false };
   }
 
-  async submitForm(postId: string, _formId: string, _data: any) {
+  async submitForm(postId: string) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException();
     return { ok: true, requiresPayment: false, message: 'Formulaire envoyé.' };

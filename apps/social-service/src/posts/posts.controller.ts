@@ -22,7 +22,6 @@ import {
   ListPostsQueryDto,
   RegisterEventDto,
   VotePollDto,
-  SubmitFormDto,
   AddCommentDto,
   AddReactionDto,
   EditCommentDto,
@@ -160,12 +159,8 @@ export class PostsController {
 
   @UseGuards(NginxAuthGuard)
   @HttpPost(':postId/forms/:formId/submit')
-  submitForm(
-    @Param('postId') postId: string,
-    @Param('formId') formId: string,
-    @Body() body: SubmitFormDto
-  ) {
-    return this.interactions.submitForm(postId, formId, body);
+  submitForm(@Param('postId') postId: string) {
+    return this.interactions.submitForm(postId);
   }
 
   @UseGuards(NginxAuthGuard)
