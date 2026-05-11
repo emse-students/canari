@@ -301,3 +301,13 @@ export async function editComment(
 export async function deleteComment(postId: string, commentId: string): Promise<{ ok: boolean }> {
   return request(`/api/posts/${postId}/comments/${commentId}`, { method: 'DELETE' });
 }
+
+export async function reportPost(
+  postId: string,
+  reason: string
+): Promise<{ ok: boolean; alreadyReported?: boolean }> {
+  return request(`/api/posts/${postId}/report`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}

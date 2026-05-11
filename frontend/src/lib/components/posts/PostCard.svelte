@@ -11,6 +11,7 @@
     updatePost as updatePostApi,
     deletePost as deletePostApi,
     getPost,
+    reportPost as reportPostApi,
     type PostEntity,
     type PostComment,
   } from '$lib/posts/api';
@@ -24,7 +25,7 @@
   import PostEventButtons from './PostEventButtons.svelte';
   import PostForms from './PostForms.svelte';
   import PostComments from './PostComments.svelte';
-  import { CircleAlert, CircleCheck, Pencil, Trash2 } from 'lucide-svelte';
+  import { CircleAlert, CircleCheck, Pencil, Trash2, Flag } from 'lucide-svelte';
   import { slide, fade } from 'svelte/transition';
   import { untrack } from 'svelte';
 
@@ -323,6 +324,26 @@
     }
   }
 
+  const REPORT_REASONS = ['Contenu inapproprié', 'Spam', 'Harcèlement', 'Désinformation', 'Autre'];
+  let reportOpen = $state(false);
+  let reportReason = $state('');
+  let reportSubmitting = $state(false);
+
+  async function submitReport() {
+    if (!reportReason) return;
+    reportSubmitting = true;
+    try {
+      const res = await reportPostApi(localPost.id, reportReason);
+      actionMessage = res.alreadyReported ? 'Vous avez déjà signalé ce post.' : 'Signalement envoyé. Merci !';
+      reportOpen = false;
+      reportReason = '';
+    } catch (err) {
+      errorMessage = err instanceof Error ? err.message : 'Impossible de signaler';
+    } finally {
+      reportSubmitting = false;
+    }
+  }
+
   async function registerForEvent(buttonId: string) {
     if (!currentUserId.trim()) {
       errorMessage = 'Identifiez-vous avant de vous inscrire.';
@@ -359,7 +380,7 @@
 </script>
 
 <Card
-  class="mb-6 overflow-hidden !p-0 transition-all duration-300 hover:shadow-xl hover:-translate-y-0.5 border border-black/5 dark:border-white/10 bg-white/70 dark:bg-[#151B2C]/70 backdrop-blur-xl"
+  class="group/card mb-6 overflow-hidden !p-0 transition-all duration-300 hover:shadow-xl hover:-translate-y-0.5 border border-black/5 dark:border-white/10 bg-white/70 dark:bg-[#151B2C]/70 backdrop-blur-xl"
 >
   <div class="relative">
     <PostHeader post={localPost} />
@@ -381,6 +402,35 @@
         >
           <Trash2 size={14} strokeWidth={2.5} />
         </button>
+      </div>
+    {:else if currentUserId}
+      <div class="absolute top-3 right-3">
+        {#if reportOpen}
+          <div class="flex flex-col gap-2 bg-white dark:bg-[#1a2236] border border-cn-border rounded-xl p-3 shadow-lg w-52 z-20" transition:slide={{ duration: 150 }}>
+            <p class="text-[0.65rem] font-bold text-text-muted uppercase tracking-wide">Signaler ce post</p>
+            <div class="flex flex-col gap-1">
+              {#each REPORT_REASONS as r (r)}
+                <label class="flex items-center gap-2 text-sm cursor-pointer hover:text-text-main transition-colors">
+                  <input type="radio" bind:group={reportReason} value={r} class="accent-amber-500 shrink-0" />
+                  <span class="text-[0.82rem]">{r}</span>
+                </label>
+              {/each}
+            </div>
+            <div class="flex gap-2 mt-1">
+              <button type="button" onclick={() => { reportOpen = false; reportReason = ''; }} class="flex-1 text-xs font-bold text-text-muted hover:text-text-main rounded-lg py-1.5 transition-colors">Annuler</button>
+              <button type="button" onclick={submitReport} disabled={!reportReason || reportSubmitting} class="flex-1 text-xs font-bold bg-red-500 text-white rounded-lg py-1.5 disabled:opacity-40 transition-colors hover:bg-red-400">Signaler</button>
+            </div>
+          </div>
+        {:else}
+          <button
+            type="button"
+            onclick={() => { reportOpen = true; }}
+            class="p-1.5 rounded-lg text-text-muted hover:text-red-500 hover:bg-red-500/10 transition-colors outline-none opacity-0 group-hover/card:opacity-100"
+            aria-label="Signaler ce post"
+          >
+            <Flag size={14} strokeWidth={2.5} />
+          </button>
+        {/if}
       </div>
     {/if}
   </div>

@@ -369,6 +369,18 @@ export class PostsService {
     return Promise.all(rows.map((p) => this.toPublicPostFromEntity(p)));
   }
 
+  async reportPost(postId: string, userId: string, reason: string) {
+    const post = await this.postRepo.findOne({ where: { id: postId } });
+    if (!post) throw new NotFoundException('Post not found');
+    const reports = Array.isArray(post.reports) ? post.reports : [];
+    if (reports.some((r: any) => r.userId === userId)) {
+      return { ok: true, alreadyReported: true };
+    }
+    post.reports = [...reports, { userId, reason, createdAt: new Date().toISOString() }];
+    await this.postRepo.save(post);
+    return { ok: true };
+  }
+
   async getById(id: string) {
     const post = await this.postRepo.findOne({ where: { id } });
     if (!post) throw new NotFoundException('Post not found');

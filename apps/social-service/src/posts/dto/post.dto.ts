@@ -330,3 +330,9 @@ export class UpdatePostDto {
   @IsNotEmpty()
   markdown: string;
 }
+
+export class ReportPostDto {
+  @IsString()
+  @IsNotEmpty()
+  reason: string;
+}

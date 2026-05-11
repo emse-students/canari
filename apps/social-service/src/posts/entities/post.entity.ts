@@ -53,6 +53,9 @@ export class Post {
   @Column('jsonb', { default: [] })
   comments: any[];
 
+  @Column('jsonb', { default: [] })
+  reports: any[];
+
   @CreateDateColumn()
   @Index()
   createdAt: Date;

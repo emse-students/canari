@@ -25,6 +25,7 @@ import {
   AddReactionDto,
   EditCommentDto,
   UpdatePostDto,
+  ReportPostDto,
 } from './dto/post.dto';
 
 @Controller('posts')
@@ -199,6 +200,16 @@ export class PostsController {
     @Body() body: EditCommentDto
   ) {
     return this.service.editComment(postId, commentId, xUserId, body.text);
+  }
+
+  @UseGuards(NginxAuthGuard)
+  @HttpPost(':postId/report')
+  reportPost(
+    @Headers('x-user-id') xUserId: string,
+    @Param('postId') postId: string,
+    @Body() body: ReportPostDto
+  ) {
+    return this.service.reportPost(postId, xUserId, body.reason);
   }
 
   @UseGuards(NginxAuthGuard)
