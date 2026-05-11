@@ -1,7 +1,7 @@
 import { apiFetch } from '$lib/utils/apiFetch';
 import type { MediaRef } from '$lib/media';
 
-export type PostImageRef = Omit<MediaRef, 'type'>;
+export type PostImageRef = Omit<MediaRef, 'type'> & { caption?: string };
 
 export interface PollOption {
   id: string;

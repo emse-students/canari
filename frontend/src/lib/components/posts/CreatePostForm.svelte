@@ -43,6 +43,7 @@
   let markdown = $state('');
   let selectedFiles = $state<File[]>([]);
   let filePreviews = $state<string[]>([]);
+  let imageCaptions = $state<string[]>([]);
 
   let includePoll = $state(false);
   let pollQuestion = $state('');
@@ -144,12 +145,14 @@
     filePreviews.forEach((url) => URL.revokeObjectURL(url));
     selectedFiles = files;
     filePreviews = files.map((f) => URL.createObjectURL(f));
+    imageCaptions = files.map(() => '');
   }
 
   function removeFile(i: number) {
     URL.revokeObjectURL(filePreviews[i]);
     selectedFiles = selectedFiles.filter((_, idx) => idx !== i);
     filePreviews = filePreviews.filter((_, idx) => idx !== i);
+    imageCaptions = imageCaptions.filter((_, idx) => idx !== i);
   }
 
   async function publishPost() {
@@ -170,8 +173,9 @@
       }
 
       const images = [];
-      for (const file of selectedFiles) {
-        const ref = await mediaService.encryptAndUpload(file, authToken);
+      for (let i = 0; i < selectedFiles.length; i++) {
+        const ref = await mediaService.encryptAndUpload(selectedFiles[i], authToken);
+        const caption = imageCaptions[i]?.trim();
         images.push({
           mediaId: ref.mediaId,
           key: ref.key,
@@ -179,6 +183,7 @@
           mimeType: ref.mimeType,
           size: ref.size,
           fileName: ref.fileName,
+          ...(caption ? { caption } : {}),
         });
       }
 
@@ -236,6 +241,7 @@
       selectedFiles = [];
       filePreviews.forEach((url) => URL.revokeObjectURL(url));
       filePreviews = [];
+      imageCaptions = [];
       includePoll = false;
       pollQuestion = '';
       pollOptionsRaw = 'Oui\nNon';
@@ -361,24 +367,26 @@
           role="list"
         >
           {#each filePreviews as src, i (src)}
-            <div
-              class="relative aspect-square w-[88px] shrink-0 snap-start overflow-hidden rounded-xl border border-cn-border/50 shadow-sm sm:w-[100px]"
-              role="listitem"
-            >
-              <img
-                {src}
-                alt=""
-                class="h-full w-full object-cover"
+            <div class="flex shrink-0 snap-start flex-col gap-1.5 w-[88px] sm:w-[100px]" role="listitem">
+              <div class="relative aspect-square w-full overflow-hidden rounded-xl border border-cn-border/50 shadow-sm">
+                <img {src} alt="" class="h-full w-full object-cover" />
+                <button
+                  type="button"
+                  onclick={() => removeFile(i)}
+                  class="absolute right-1 top-1 rounded-full bg-black/65 p-1.5 text-white shadow backdrop-blur-sm transition hover:bg-red-500 focus-visible:outline focus-visible:ring-2 focus-visible:ring-red-400"
+                  aria-label="Retirer cette image"
+                  title="Retirer"
+                >
+                  <X size={14} strokeWidth={2.5} />
+                </button>
+              </div>
+              <input
+                type="text"
+                bind:value={imageCaptions[i]}
+                placeholder="Légende…"
+                maxlength="120"
+                class="w-full rounded-lg border border-cn-border/40 bg-cn-surface/70 px-2 py-1 text-[0.65rem] font-medium text-text-main placeholder:text-text-muted/60 outline-none focus:border-cn-yellow focus:ring-1 focus:ring-cn-yellow/30"
               />
-              <button
-                type="button"
-                onclick={() => removeFile(i)}
-                class="absolute right-1 top-1 rounded-full bg-black/65 p-1.5 text-white shadow backdrop-blur-sm transition hover:bg-red-500 focus-visible:outline focus-visible:ring-2 focus-visible:ring-red-400"
-                aria-label="Retirer cette image"
-                title="Retirer"
-              >
-                <X size={14} strokeWidth={2.5} />
-              </button>
             </div>
           {/each}
         </div>

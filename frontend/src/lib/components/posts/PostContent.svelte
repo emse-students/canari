@@ -80,9 +80,14 @@
 {#if post.images && post.images.length > 0 && authToken}
   <div class="w-full mt-1">
     {#if post.images.length === 1}
-      <div class="relative w-full max-h-[75vh] bg-black/5 dark:bg-white/5 flex items-center justify-center overflow-hidden">
-        <!-- Single image: PostImage handles its own lightbox -->
-        <PostImage media={post.images[0]} {authToken} />
+      <div>
+        <div class="relative w-full max-h-[75vh] bg-black/5 dark:bg-white/5 flex items-center justify-center overflow-hidden">
+          <!-- Single image: PostImage handles its own lightbox -->
+          <PostImage media={post.images[0]} {authToken} />
+        </div>
+        {#if post.images[0].caption}
+          <p class="px-4 pt-2 pb-1 text-xs text-text-muted italic">{post.images[0].caption}</p>
+        {/if}
       </div>
     {:else}
       <!-- Multi-image gallery: centralized lightbox with navigation -->
@@ -90,6 +95,9 @@
         {#each post.images as img, i (img.mediaId)}
           <div class="relative aspect-square w-full overflow-hidden bg-black/5 dark:bg-white/5">
             <PostImage media={img} {authToken} onOpen={() => openLightbox(i)} />
+            {#if img.caption}
+              <p class="absolute bottom-0 left-0 right-0 bg-black/50 px-2 py-1 text-[0.65rem] text-white/90 truncate pointer-events-none">{img.caption}</p>
+            {/if}
           </div>
         {/each}
       </div>
