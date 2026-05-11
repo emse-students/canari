@@ -56,6 +56,9 @@ export class Post {
   @Column('jsonb', { default: [] })
   reports: any[];
 
+  @Column({ type: 'boolean', default: false })
+  pinned: boolean;
+
   @CreateDateColumn()
   @Index()
   createdAt: Date;

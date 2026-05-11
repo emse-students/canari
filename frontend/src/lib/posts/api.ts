@@ -98,6 +98,7 @@ export interface PostEntity {
   association?: PostAssociationAuthor;
   reactions?: Record<string, string>; // userId -> reactionType
   comments?: PostComment[];
+  pinned?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -300,6 +301,14 @@ export async function editComment(
 
 export async function deleteComment(postId: string, commentId: string): Promise<{ ok: boolean }> {
   return request(`/api/posts/${postId}/comments/${commentId}`, { method: 'DELETE' });
+}
+
+export async function pinPost(postId: string): Promise<{ ok: boolean; pinned: boolean }> {
+  return request(`/api/posts/${postId}/pin`, { method: 'PATCH' });
+}
+
+export async function unpinPost(postId: string): Promise<{ ok: boolean; pinned: boolean }> {
+  return request(`/api/posts/${postId}/unpin`, { method: 'PATCH' });
 }
 
 export async function reportPost(

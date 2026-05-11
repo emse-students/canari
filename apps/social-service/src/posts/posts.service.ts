@@ -153,7 +153,7 @@ export class PostsService {
     const selectBody = `posts.id,
          posts."authorId", posts.markdown, posts."createdAt", posts."updatedAt",
          posts.mentions, posts.links, posts."attachedFormId", posts."associationId", posts."paymentAssociationId",
-         posts.images, posts.polls, posts."eventButtons", posts.forms, posts.reactions,
+         posts.images, posts.polls, posts."eventButtons", posts.forms, posts.reactions, posts.pinned,
          (jsonb_array_length(COALESCE(posts.comments, '[]'::jsonb))::integer) AS "commentCount",
          (
            SELECT COALESCE(jsonb_agg(elem ORDER BY ord), '[]'::jsonb)
@@ -171,7 +171,7 @@ export class PostsService {
        FROM posts
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
        WHERE posts.markdown ILIKE $3 OR assoc.name ILIKE $3
-       ORDER BY posts."createdAt" DESC
+       ORDER BY posts.pinned DESC, posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,
       [limit, offset, `%${term}%`]
     );
@@ -245,7 +245,7 @@ export class PostsService {
     const selectBody = `posts.id,
          posts."authorId", posts.markdown, posts."createdAt", posts."updatedAt",
          posts.mentions, posts.links, posts."attachedFormId", posts."associationId", posts."paymentAssociationId",
-         posts.images, posts.polls, posts."eventButtons", posts.forms, posts.reactions,
+         posts.images, posts.polls, posts."eventButtons", posts.forms, posts.reactions, posts.pinned,
          (jsonb_array_length(COALESCE(posts.comments, '[]'::jsonb))::integer) AS "commentCount",
          (
            SELECT COALESCE(jsonb_agg(elem ORDER BY ord), '[]'::jsonb)
@@ -267,7 +267,7 @@ export class PostsService {
         `SELECT ${selectBody}
        FROM posts
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
-       ORDER BY posts."createdAt" DESC
+       ORDER BY posts.pinned DESC, posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,
         [limit, offset]
       );
@@ -278,7 +278,7 @@ export class PostsService {
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
        WHERE posts."associationId" IS NOT NULL
          AND posts."associationId" = ANY($3::uuid[])
-       ORDER BY posts."createdAt" DESC
+       ORDER BY posts.pinned DESC, posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,
         [limit, offset, followedAssocIds]
       );
@@ -291,7 +291,7 @@ export class PostsService {
        WHERE posts."associationId" IS NULL
          AND ($3::integer IS NULL OR u.promo = $3::integer)
          AND ($4::text IS NULL OR u.formation ILIKE ('%' || $4::text || '%'))
-       ORDER BY posts."createdAt" DESC
+       ORDER BY posts.pinned DESC, posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,
         [limit, offset, promoParam, formationParam]
       );
@@ -367,6 +367,15 @@ export class PostsService {
       .take(Number(limit))
       .getMany();
     return Promise.all(rows.map((p) => this.toPublicPostFromEntity(p)));
+  }
+
+  async setPinned(postId: string, pinned: boolean) {
+    const post = await this.postRepo.findOne({ where: { id: postId } });
+    if (!post) throw new NotFoundException('Post not found');
+    post.pinned = pinned;
+    await this.postRepo.save(post);
+    await this.invalidateListCache();
+    return { ok: true, pinned };
   }
 
   async reportPost(postId: string, userId: string, reason: string) {

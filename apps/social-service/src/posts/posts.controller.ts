@@ -203,6 +203,26 @@ export class PostsController {
   }
 
   @UseGuards(NginxAuthGuard)
+  @Patch(':postId/pin')
+  pinPost(
+    @Headers('x-global-admin') xGlobalAdmin: string | undefined,
+    @Param('postId') postId: string
+  ) {
+    if (xGlobalAdmin !== 'true') throw new UnauthorizedException('Global admin required');
+    return this.service.setPinned(postId, true);
+  }
+
+  @UseGuards(NginxAuthGuard)
+  @Patch(':postId/unpin')
+  unpinPost(
+    @Headers('x-global-admin') xGlobalAdmin: string | undefined,
+    @Param('postId') postId: string
+  ) {
+    if (xGlobalAdmin !== 'true') throw new UnauthorizedException('Global admin required');
+    return this.service.setPinned(postId, false);
+  }
+
+  @UseGuards(NginxAuthGuard)
   @HttpPost(':postId/report')
   reportPost(
     @Headers('x-user-id') xUserId: string,

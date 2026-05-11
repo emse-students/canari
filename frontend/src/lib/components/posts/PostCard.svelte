@@ -11,6 +11,8 @@
     updatePost as updatePostApi,
     deletePost as deletePostApi,
     getPost,
+    pinPost as pinPostApi,
+    unpinPost as unpinPostApi,
     reportPost as reportPostApi,
     type PostEntity,
     type PostComment,
@@ -25,7 +27,8 @@
   import PostEventButtons from './PostEventButtons.svelte';
   import PostForms from './PostForms.svelte';
   import PostComments from './PostComments.svelte';
-  import { CircleAlert, CircleCheck, Pencil, Trash2, Flag } from 'lucide-svelte';
+  import { CircleAlert, CircleCheck, Pencil, Trash2, Flag, Pin, PinOff } from 'lucide-svelte';
+  import { isGlobalAdmin } from '$lib/stores/user';
   import { slide, fade } from 'svelte/transition';
   import { untrack } from 'svelte';
 
@@ -324,6 +327,17 @@
     }
   }
 
+  async function togglePin() {
+    try {
+      const fn = localPost.pinned ? unpinPostApi : pinPostApi;
+      const res = await fn(localPost.id);
+      localPost = { ...localPost, pinned: res.pinned };
+      actionMessage = res.pinned ? 'Post épinglé !' : 'Post désépinglé.';
+    } catch (err) {
+      errorMessage = err instanceof Error ? err.message : "Impossible de modifier l'épingle";
+    }
+  }
+
   const REPORT_REASONS = ['Contenu inapproprié', 'Spam', 'Harcèlement', 'Désinformation', 'Autre'];
   let reportOpen = $state(false);
   let reportReason = $state('');
@@ -384,24 +398,46 @@
 >
   <div class="relative">
     <PostHeader post={localPost} />
-    {#if isOwnPost}
+    {#if localPost.pinned}
+      <span class="absolute top-3 left-3 flex items-center gap-1 text-[0.6rem] font-extrabold uppercase tracking-widest text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full">
+        <Pin size={10} strokeWidth={3} /> Épinglé
+      </span>
+    {/if}
+    {#if isOwnPost || isGlobalAdmin()}
       <div class="absolute top-3 right-3 flex items-center gap-1">
-        <button
-          type="button"
-          onclick={startEditPost}
-          class="p-1.5 rounded-lg text-text-muted hover:text-amber-500 hover:bg-amber-500/10 transition-colors outline-none"
-          aria-label="Modifier le post"
-        >
-          <Pencil size={14} strokeWidth={2.5} />
-        </button>
-        <button
-          type="button"
-          onclick={handleDeletePost}
-          class="p-1.5 rounded-lg text-text-muted hover:text-red-500 hover:bg-red-500/10 transition-colors outline-none"
-          aria-label="Supprimer le post"
-        >
-          <Trash2 size={14} strokeWidth={2.5} />
-        </button>
+        {#if isGlobalAdmin()}
+          <button
+            type="button"
+            onclick={togglePin}
+            class="p-1.5 rounded-lg text-text-muted hover:text-amber-500 hover:bg-amber-500/10 transition-colors outline-none"
+            aria-label={localPost.pinned ? 'Désépingler' : 'Épingler'}
+            title={localPost.pinned ? 'Désépingler' : 'Épingler'}
+          >
+            {#if localPost.pinned}
+              <PinOff size={14} strokeWidth={2.5} />
+            {:else}
+              <Pin size={14} strokeWidth={2.5} />
+            {/if}
+          </button>
+        {/if}
+        {#if isOwnPost}
+          <button
+            type="button"
+            onclick={startEditPost}
+            class="p-1.5 rounded-lg text-text-muted hover:text-amber-500 hover:bg-amber-500/10 transition-colors outline-none"
+            aria-label="Modifier le post"
+          >
+            <Pencil size={14} strokeWidth={2.5} />
+          </button>
+          <button
+            type="button"
+            onclick={handleDeletePost}
+            class="p-1.5 rounded-lg text-text-muted hover:text-red-500 hover:bg-red-500/10 transition-colors outline-none"
+            aria-label="Supprimer le post"
+          >
+            <Trash2 size={14} strokeWidth={2.5} />
+          </button>
+        {/if}
       </div>
     {:else if currentUserId}
       <div class="absolute top-3 right-3">
