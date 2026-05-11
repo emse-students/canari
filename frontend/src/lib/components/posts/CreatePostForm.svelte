@@ -83,6 +83,25 @@
   let errorMessage = $state('');
   let authToken = $state('');
 
+  const DRAFT_KEY = 'canari_post_draft';
+  let draftRestored = $state(false);
+  let draftSaved = $state(false);
+  let draftSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  $effect(() => {
+    const text = markdown;
+    if (draftSaveTimer) clearTimeout(draftSaveTimer);
+    draftSaveTimer = setTimeout(() => {
+      if (text.trim()) {
+        localStorage.setItem(DRAFT_KEY, text);
+        draftSaved = true;
+        setTimeout(() => { draftSaved = false; }, 1800);
+      } else {
+        localStorage.removeItem(DRAFT_KEY);
+      }
+    }, 800);
+  });
+
   const mediaService = new MediaService();
 
   // Auto-clear de l'erreur après 5 secondes
@@ -96,6 +115,12 @@
   });
 
   onMount(async () => {
+    const saved = localStorage.getItem(DRAFT_KEY);
+    if (saved) {
+      markdown = saved;
+      draftRestored = true;
+    }
+
     try {
       authToken = await getToken();
     } catch {
@@ -205,6 +230,8 @@
       await createPost(payload);
 
       // Reset
+      localStorage.removeItem(DRAFT_KEY);
+      draftRestored = false;
       markdown = '';
       selectedFiles = [];
       filePreviews.forEach((url) => URL.revokeObjectURL(url));
@@ -308,9 +335,18 @@
     {/if}
 
     <!-- Zone de saisie -->
+    {#if draftRestored}
+      <div class="mb-3 flex items-center justify-between rounded-xl bg-amber-500/10 border border-amber-500/20 px-3 py-2 text-[0.72rem] font-bold text-amber-700 dark:text-amber-400" transition:slide={{ duration: 200 }}>
+        <span>Brouillon restauré</span>
+        <button type="button" onclick={() => { markdown = ''; localStorage.removeItem(DRAFT_KEY); draftRestored = false; }} class="hover:underline opacity-70 hover:opacity-100 transition-opacity">Effacer</button>
+      </div>
+    {/if}
     <div
-      class="rounded-2xl border border-cn-border/50 bg-cn-surface/60 p-1 shadow-inner dark:border-cn-border/50 dark:bg-cn-dark/40"
+      class="relative rounded-2xl border border-cn-border/50 bg-cn-surface/60 p-1 shadow-inner dark:border-cn-border/50 dark:bg-cn-dark/40"
     >
+      {#if draftSaved}
+        <span class="absolute top-2 right-3 text-[0.6rem] font-bold text-text-muted opacity-60 pointer-events-none" transition:fade={{ duration: 200 }}>Brouillon sauvegardé</span>
+      {/if}
       <textarea
         bind:value={markdown}
         placeholder="Votre texte (markdown supporté)…"
