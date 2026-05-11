@@ -14,6 +14,8 @@ import {
 } from '@nestjs/common';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { PostsService } from './posts.service';
+import { PostInteractionsService } from './post-interactions.service';
+import { PostNotificationsService } from './post-notifications.service';
 import { AssociationsService } from '../associations/associations.service';
 import {
   CreatePostDto,
@@ -32,44 +34,32 @@ import {
 export class PostsController {
   constructor(
     private readonly service: PostsService,
+    private readonly interactions: PostInteractionsService,
+    private readonly notifications: PostNotificationsService,
     private readonly associationsService: AssociationsService
   ) {}
 
   @Get('health')
   health() {
-    return {
-      service: 'post-service',
-      status: 'ok',
-      timestamp: new Date().toISOString(),
-    };
+    return { service: 'post-service', status: 'ok', timestamp: new Date().toISOString() };
   }
 
   @UseGuards(NginxAuthGuard)
-  @HttpPost()
-  async createPost(
-    @Headers('x-user-id') xUserId: string,
-    @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Body() body: CreatePostDto
-  ) {
-    // Validate association authorship (association admin, or global admin)
-    if (body.associationId) {
-      const canPost = await this.associationsService.canPostAs(xUserId, body.associationId, {
-        isGlobalAdmin: xGlobalAdmin === 'true',
-      });
-      if (!canPost) {
-        throw new BadRequestException('You need admin or owner role to post as this association');
-      }
-    }
+  @Get('notifications')
+  getNotifications(@Headers('x-user-id') xUserId: string, @Query('limit') limit?: string) {
+    return this.notifications.getNotifications(xUserId, Number(limit ?? 30));
+  }
 
-    // Validate payment association has completed Stripe onboarding
-    if (body.paymentAssociationId) {
-      const asso = await this.associationsService.findById(body.paymentAssociationId);
-      if (!asso.stripeOnboardingComplete) {
-        throw new BadRequestException('This association has not completed Stripe onboarding');
-      }
-    }
+  @UseGuards(NginxAuthGuard)
+  @HttpPost('notifications/read-all')
+  markAllRead(@Headers('x-user-id') xUserId: string) {
+    return this.notifications.markAllRead(xUserId);
+  }
 
-    return this.service.createPost({ ...body, authorId: xUserId });
+  @UseGuards(NginxAuthGuard)
+  @Get('my-scheduled')
+  getMyScheduledPosts(@Headers('x-user-id') xUserId: string) {
+    return this.service.getMyScheduledPosts(xUserId);
   }
 
   @Get('search')
@@ -81,25 +71,44 @@ export class PostsController {
     return this.service.searchPosts(q ?? '', Number(limit ?? 20), Number(offset ?? 0));
   }
 
+  @Get()
+  listPosts(@Query() query: ListPostsQueryDto, @Headers('x-user-id') xUserId?: string) {
+    const feed = query.feed ?? 'all';
+    if (feed === 'followed' && !xUserId) {
+      throw new UnauthorizedException('Authentication required for followed feed');
+    }
+    return this.service.listPosts({
+      limit: query.limit ?? 30,
+      offset: query.offset ?? 0,
+      feed,
+      viewerUserId: xUserId,
+      promo: query.promo,
+      formation: query.formation?.trim() || undefined,
+    });
+  }
+
   @UseGuards(NginxAuthGuard)
-  @Get('notifications')
-  getNotifications(
+  @HttpPost()
+  async createPost(
     @Headers('x-user-id') xUserId: string,
-    @Query('limit') limit?: string
+    @Headers('x-global-admin') xGlobalAdmin: string | undefined,
+    @Body() body: CreatePostDto
   ) {
-    return this.service.getNotifications(xUserId, Number(limit ?? 30));
-  }
-
-  @UseGuards(NginxAuthGuard)
-  @HttpPost('notifications/read-all')
-  markAllRead(@Headers('x-user-id') xUserId: string) {
-    return this.service.markAllNotificationsRead(xUserId);
-  }
-
-  @UseGuards(NginxAuthGuard)
-  @Get('my-scheduled')
-  getMyScheduledPosts(@Headers('x-user-id') xUserId: string) {
-    return this.service.getMyScheduledPosts(xUserId);
+    if (body.associationId) {
+      const canPost = await this.associationsService.canPostAs(xUserId, body.associationId, {
+        isGlobalAdmin: xGlobalAdmin === 'true',
+      });
+      if (!canPost) {
+        throw new BadRequestException('You need admin or owner role to post as this association');
+      }
+    }
+    if (body.paymentAssociationId) {
+      const asso = await this.associationsService.findById(body.paymentAssociationId);
+      if (!asso.stripeOnboardingComplete) {
+        throw new BadRequestException('This association has not completed Stripe onboarding');
+      }
+    }
+    return this.service.createPost({ ...body, authorId: xUserId });
   }
 
   @Get(':postId')
@@ -127,22 +136,6 @@ export class PostsController {
     return this.service.deletePost(postId, xUserId, xGlobalAdmin === 'true');
   }
 
-  @Get()
-  listPosts(@Query() query: ListPostsQueryDto, @Headers('x-user-id') xUserId?: string) {
-    const feed = query.feed ?? 'all';
-    if (feed === 'followed' && !xUserId) {
-      throw new UnauthorizedException('Authentication required for followed feed');
-    }
-    return this.service.listPosts({
-      limit: query.limit ?? 30,
-      offset: query.offset ?? 0,
-      feed,
-      viewerUserId: xUserId,
-      promo: query.promo,
-      formation: query.formation?.trim() || undefined,
-    });
-  }
-
   @UseGuards(NginxAuthGuard)
   @HttpPost(':postId/polls/:pollId/vote')
   votePoll(
@@ -151,7 +144,7 @@ export class PostsController {
     @Param('pollId') pollId: string,
     @Body() body: VotePollDto
   ) {
-    return this.service.votePoll(postId, pollId, { ...body, userId: xUserId });
+    return this.interactions.votePoll(postId, pollId, { ...body, userId: xUserId });
   }
 
   @UseGuards(NginxAuthGuard)
@@ -162,18 +155,17 @@ export class PostsController {
     @Param('buttonId') buttonId: string,
     @Body() body: RegisterEventDto
   ) {
-    return this.service.registerEvent(postId, buttonId, { ...body, userId: xUserId });
+    return this.interactions.registerEvent(postId, buttonId, { ...body, userId: xUserId });
   }
 
   @UseGuards(NginxAuthGuard)
   @HttpPost(':postId/forms/:formId/submit')
   submitForm(
-    @Headers('x-user-id') xUserId: string,
     @Param('postId') postId: string,
     @Param('formId') formId: string,
     @Body() body: SubmitFormDto
   ) {
-    return this.service.submitForm(postId, formId, { ...body, userId: xUserId });
+    return this.interactions.submitForm(postId, formId, body);
   }
 
   @UseGuards(NginxAuthGuard)
@@ -183,13 +175,13 @@ export class PostsController {
     @Param('postId') postId: string,
     @Body() body: AddReactionDto
   ) {
-    return this.service.addReaction(postId, xUserId, body.reactionType);
+    return this.interactions.addReaction(postId, xUserId, body.reactionType);
   }
 
   @UseGuards(NginxAuthGuard)
   @Delete(':postId/reactions')
   removeReaction(@Headers('x-user-id') xUserId: string, @Param('postId') postId: string) {
-    return this.service.removeReaction(postId, xUserId);
+    return this.interactions.removeReaction(postId, xUserId);
   }
 
   @UseGuards(NginxAuthGuard)
@@ -199,7 +191,7 @@ export class PostsController {
     @Param('postId') postId: string,
     @Body() body: AddCommentDto
   ) {
-    return this.service.addComment(postId, { ...body, userId: xUserId });
+    return this.interactions.addComment(postId, { ...body, userId: xUserId });
   }
 
   @UseGuards(NginxAuthGuard)
@@ -209,7 +201,7 @@ export class PostsController {
     @Param('postId') postId: string,
     @Param('commentId') commentId: string
   ) {
-    return this.service.likeComment(postId, commentId, xUserId);
+    return this.interactions.likeComment(postId, commentId, xUserId);
   }
 
   @UseGuards(NginxAuthGuard)
@@ -220,7 +212,17 @@ export class PostsController {
     @Param('commentId') commentId: string,
     @Body() body: EditCommentDto
   ) {
-    return this.service.editComment(postId, commentId, xUserId, body.text);
+    return this.interactions.editComment(postId, commentId, xUserId, body.text);
+  }
+
+  @UseGuards(NginxAuthGuard)
+  @Delete(':postId/comments/:commentId')
+  deleteComment(
+    @Headers('x-user-id') xUserId: string,
+    @Param('postId') postId: string,
+    @Param('commentId') commentId: string
+  ) {
+    return this.interactions.deleteComment(postId, commentId, xUserId);
   }
 
   @UseGuards(NginxAuthGuard)
@@ -251,15 +253,5 @@ export class PostsController {
     @Body() body: ReportPostDto
   ) {
     return this.service.reportPost(postId, xUserId, body.reason);
-  }
-
-  @UseGuards(NginxAuthGuard)
-  @Delete(':postId/comments/:commentId')
-  deleteComment(
-    @Headers('x-user-id') xUserId: string,
-    @Param('postId') postId: string,
-    @Param('commentId') commentId: string
-  ) {
-    return this.service.deleteComment(postId, commentId, xUserId);
   }
 }

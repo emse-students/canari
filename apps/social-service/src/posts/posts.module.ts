@@ -1,11 +1,13 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { HttpModule } from '@nestjs/axios';
 import { PostsController } from './posts.controller';
 import { PostsService } from './posts.service';
+import { PostInteractionsService } from './post-interactions.service';
+import { PostNotificationsService } from './post-notifications.service';
 import { Post } from './entities/post.entity';
 import { PostNotification } from './entities/post-notification.entity';
-import { HttpModule } from '@nestjs/axios';
 import { AssociationsModule } from '../associations/associations.module';
 import { FollowsModule } from '../follows/follows.module';
 
@@ -18,6 +20,6 @@ import { FollowsModule } from '../follows/follows.module';
     FollowsModule,
   ],
   controllers: [PostsController],
-  providers: [PostsService],
+  providers: [PostsService, PostInteractionsService, PostNotificationsService],
 })
 export class PostsModule {}

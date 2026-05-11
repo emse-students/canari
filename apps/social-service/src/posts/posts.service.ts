@@ -1,106 +1,24 @@
-/* eslint-disable */
-import { BadRequestException, Injectable, NotFoundException, UnauthorizedException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { HttpService } from '@nestjs/axios';
-import { ConfigService } from '@nestjs/config';
-import { lastValueFrom } from 'rxjs';
 import { Post } from './entities/post.entity';
-import { PostNotification } from './entities/post-notification.entity';
 import { RedisService } from '../common/redis/redis.service';
 import { FollowsService } from '../follows/follows.service';
-import * as cheerio from 'cheerio';
-import { URL } from 'url';
 
 @Injectable()
 export class PostsService {
-  private readonly logger = new Logger(PostsService.name);
-  private readonly userServiceUrl: string;
-
   private static readonly LIST_CACHE_TTL = 30; // seconds
 
-  /** PostgreSQL BIGINT / node-pg bigint fields break JSON.stringify (Nest response + Redis). */
+  /** PostgreSQL BIGINT fields break JSON.stringify — convert to Number. */
   private stripBigIntForJson<T>(value: T): T {
     return JSON.parse(JSON.stringify(value, (_key, v) => (typeof v === 'bigint' ? Number(v) : v))) as T;
   }
 
-  /** Copy reactions into a null-prototype object (avoid prototype pollution from JSON-shaped keys). */
-  private sanitizeReactions(raw: Record<string, string> | null | undefined): Record<string, string> {
-    const out = Object.create(null) as Record<string, string>;
-    if (!raw || typeof raw !== 'object') return out;
-    for (const key of Object.keys(raw)) {
-      if (
-        key === '__proto__' ||
-        key === 'constructor' ||
-        key === 'prototype' ||
-        key === '__defineGetter__' ||
-        key === '__defineSetter__'
-      ) {
-        continue;
-      }
-      out[key] = raw[key];
-    }
-    return out;
-  }
-
   constructor(
     @InjectRepository(Post) private readonly postRepo: Repository<Post>,
-    @InjectRepository(PostNotification) private readonly notifRepo: Repository<PostNotification>,
-    private readonly httpService: HttpService,
-    private readonly configService: ConfigService,
     private readonly redis: RedisService,
     private readonly followsService: FollowsService
-  ) {
-    this.userServiceUrl = configService.get<string>('USER_SERVICE_URL', 'http://core-service:3012');
-  }
-
-  private async resolveActorName(actorId: string): Promise<string> {
-    try {
-      const rows: any[] = await this.postRepo.manager.query(
-        `SELECT "displayName", "firstName", "lastName" FROM users WHERE id = $1`,
-        [actorId]
-      );
-      if (rows[0]) {
-        const u = rows[0];
-        return u.displayName || [u.firstName, u.lastName].filter(Boolean).join(' ') || actorId;
-      }
-    } catch { /* non-fatal */ }
-    return actorId;
-  }
-
-  private async createNotification(data: { recipientId: string; type: string; postId: string; actorId: string; text: string }) {
-    if (data.recipientId === data.actorId) return;
-    const actorName = await this.resolveActorName(data.actorId);
-    const notif = this.notifRepo.create({ ...data, actorName });
-    await this.notifRepo.save(notif);
-  }
-
-  async getNotifications(userId: string, limit = 30) {
-    return this.notifRepo.find({
-      where: { recipientId: userId },
-      order: { createdAt: 'DESC' },
-      take: limit,
-    });
-  }
-
-  async markAllNotificationsRead(userId: string) {
-    await this.notifRepo.update({ recipientId: userId }, { read: true });
-    return { ok: true };
-  }
-
-  async getMyScheduledPosts(userId: string) {
-    const rows: any[] = await this.postRepo.manager.query(
-      `SELECT id, markdown, "scheduledAt", "createdAt"
-       FROM posts
-       WHERE "authorId" = $1
-         AND "scheduledAt" IS NOT NULL
-         AND "scheduledAt" > NOW()
-       ORDER BY "scheduledAt" ASC
-       LIMIT 20`,
-      [userId]
-    );
-    return rows;
-  }
+  ) {}
 
   private listPostsCacheKey(
     feed: string,
@@ -371,8 +289,7 @@ export class PostsService {
       ),
     ] as string[];
 
-    let nameMap: Record<string, { displayName: string | null; firstName: string | null; lastName: string | null }> =
-      {};
+    let nameMap: Record<string, { displayName: string | null; firstName: string | null; lastName: string | null }> = {};
     if (authorIds.length > 0) {
       const rows: { id: string; displayName: string | null; firstName: string | null; lastName: string | null }[] =
         await this.postRepo.manager.query(
@@ -387,11 +304,7 @@ export class PostsService {
     const result = rawPosts.map((p: any) => {
       let row = p;
       if (!p.associationId && p.authorId) {
-        const authorInfo = nameMap[p.authorId] ?? {
-          displayName: null,
-          firstName: null,
-          lastName: null,
-        };
+        const authorInfo = nameMap[p.authorId] ?? { displayName: null, firstName: null, lastName: null };
         row = {
           ...p,
           authorDisplayName: authorInfo.displayName,
@@ -413,35 +326,18 @@ export class PostsService {
     return safe;
   }
 
-  async listMentions(userId: string, limit = 20) {
-    const rows = await this.postRepo
-      .createQueryBuilder('post')
-      .where('post.mentions LIKE :userId', { userId: `%${userId}%` })
-      .orderBy('post.createdAt', 'DESC')
-      .take(Number(limit))
-      .getMany();
-    return Promise.all(rows.map((p) => this.toPublicPostFromEntity(p)));
-  }
-
-  async setPinned(postId: string, pinned: boolean) {
-    const post = await this.postRepo.findOne({ where: { id: postId } });
-    if (!post) throw new NotFoundException('Post not found');
-    post.pinned = pinned;
-    await this.postRepo.save(post);
-    await this.invalidateListCache();
-    return { ok: true, pinned };
-  }
-
-  async reportPost(postId: string, userId: string, reason: string) {
-    const post = await this.postRepo.findOne({ where: { id: postId } });
-    if (!post) throw new NotFoundException('Post not found');
-    const reports = Array.isArray(post.reports) ? post.reports : [];
-    if (reports.some((r: any) => r.userId === userId)) {
-      return { ok: true, alreadyReported: true };
-    }
-    post.reports = [...reports, { userId, reason, createdAt: new Date().toISOString() }];
-    await this.postRepo.save(post);
-    return { ok: true };
+  async getMyScheduledPosts(userId: string) {
+    const rows: any[] = await this.postRepo.manager.query(
+      `SELECT id, markdown, "scheduledAt", "createdAt"
+       FROM posts
+       WHERE "authorId" = $1
+         AND "scheduledAt" IS NOT NULL
+         AND "scheduledAt" > NOW()
+       ORDER BY "scheduledAt" ASC
+       LIMIT 20`,
+      [userId]
+    );
+    return rows;
   }
 
   async getById(id: string) {
@@ -467,398 +363,23 @@ export class PostsService {
     return { ok: true };
   }
 
-  async setLinks(id: string, data: any) {
-    const post = await this.postRepo.findOne({ where: { id } });
-    if (!post) throw new NotFoundException();
-    post.links = [...(post.links || []), ...data.links];
-    return this.postRepo.save(post);
-  }
-
-  async setImages(id: string, data: any) {
-    const post = await this.postRepo.findOne({ where: { id } });
-    if (!post) throw new NotFoundException();
-    const images = (data.images || []).map((img: any) => ({
-      ...img,
-      mediaId: img.mediaId || crypto.randomUUID(),
-    }));
-    post.images = [...(post.images || []), ...images];
-    return this.postRepo.save(post);
-  }
-
-  async setForm(id: string, formId: string) {
-    const post = await this.postRepo.findOne({ where: { id } });
-    if (!post) throw new NotFoundException();
-    post.attachedFormId = formId;
-    return this.postRepo.save(post);
-  }
-
-  async parsePostLinks(id: string) {
-    const post = await this.postRepo.findOne({ where: { id } });
-    if (!post) throw new NotFoundException();
-
-    const urlRegex = /(https?:\/\/[^\s]+)/g;
-    const urls = post.markdown?.match(urlRegex) || [];
-    if (!urls.length) return post;
-
-    const newLinks: any[] = [];
-    for (const url of urls) {
-      if (post.links?.some((l: any) => l.url === url)) continue;
-      try {
-        const meta = await this.fetchUrlMeta(url);
-        if (meta) {
-          newLinks.push({
-            id: crypto.randomUUID(),
-            url,
-            title: meta.title || url,
-            description: meta.description,
-            imageUrl: meta.image,
-          });
-        }
-      } catch (err) {
-        this.logger.error(`Failed to parse URL: ${url}`, err);
-      }
-    }
-
-    if (newLinks.length > 0) {
-      post.links = [...(post.links || []), ...newLinks];
-      return this.postRepo.save(post);
-    }
-
-    return post;
-  }
-
-  private async fetchUrlMeta(url: string) {
-    try {
-      const resp = await lastValueFrom(
-        this.httpService.get(url, {
-          timeout: 3000,
-          headers: { 'User-Agent': 'Mozilla/5.0 (Bot)' },
-        })
-      );
-      if (!resp.data) return null;
-
-      const $ = cheerio.load(resp.data);
-      const title = $('head title').text() || $('meta[property="og:title"]').attr('content');
-      const description =
-        $('meta[name="description"]').attr('content') ||
-        $('meta[property="og:description"]').attr('content');
-      const image = $('meta[property="og:image"]').attr('content');
-
-      return { title, description, image };
-    } catch {
-      return null;
-    }
-  }
-
-  async notifyMentions(id: string) {
-    const post = await this.postRepo.findOne({ where: { id } });
-    if (!post || !post.mentions?.length) return post;
-
-    this.logger.log(`Notifying mentions for post ${id}: ${post.mentions.join(',')}`);
-    return post;
-  }
-
-  async addPoll(id: string, question: string, options: string[]) {
-    const post = await this.postRepo.findOne({ where: { id } });
-    if (!post) throw new NotFoundException();
-
-    const { randomUUID } = await import('crypto');
-    const poll = {
-      id: randomUUID(),
-      question,
-      options: options.map((opt) => ({
-        id: randomUUID(),
-        text: opt,
-        votes: [],
-      })),
-    };
-
-    post.polls = [...(post.polls || []), poll];
-    return this.postRepo.save(post);
-  }
-
-  async votePoll(postId: string, pollId: string, data: any) {
-    const post = await this.postRepo
-      .createQueryBuilder('post')
-      .where('post.id = :postId', { postId })
-      .getOne();
-
-    if (!post) throw new NotFoundException('Poll not found');
-
-    let updated = false;
-    for (const p of post.polls || []) {
-      if (p.id === pollId) {
-        const selectedIds: string[] = data.optionIds ?? (data.optionId ? [data.optionId] : []);
-        // Clear previous votes from this user across all options
-        for (const opt of p.options) {
-          opt.votes = (opt.votes || []).filter((v: string) => v !== data.userId);
-        }
-        // Add vote for each selected option
-        for (const opt of p.options) {
-          if (selectedIds.includes(opt.id)) {
-            opt.votes.push(data.userId);
-            updated = true;
-          }
-        }
-        // Track which options this user voted for (used by frontend to restore state on reload)
-        if (!p.votesByUser) p.votesByUser = {};
-        p.votesByUser[data.userId] = selectedIds;
-      }
-    }
-
-    if (updated) {
-      const saved = await this.postRepo.save(post);
-      const entity = Array.isArray(saved) ? saved[0] : saved;
-      return this.toPublicPostFromEntity(entity);
-    }
-    return this.toPublicPostFromEntity(post);
-  }
-
-  async addEventButton(id: string, text: string, eventPayload: any) {
-    const post = await this.postRepo.findOne({ where: { id } });
-    if (!post) throw new NotFoundException();
-
-    const { randomUUID } = await import('crypto');
-    const btn = {
-      id: randomUUID(),
-      text,
-      eventPayload,
-      clickCount: 0,
-      registrants: [],
-    };
-
-    post.eventButtons = [...(post.eventButtons || []), btn];
-    return this.postRepo.save(post);
-  }
-
-  async registerEvent(postId: string, buttonId: string, data: any) {
+  async setPinned(postId: string, pinned: boolean) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
-
-    const buttons: any[] = post.eventButtons || [];
-    const btnIndex = buttons.findIndex((b: any) => b.id === buttonId);
-    if (btnIndex === -1) throw new NotFoundException('Event button not found');
-
-    const btn = { ...buttons[btnIndex] };
-    if (!Array.isArray(btn.registrants)) btn.registrants = [];
-
-    if (btn.capacity && btn.registrants.length >= btn.capacity) {
-      throw new BadRequestException('Event is full');
-    }
-
-    if (btn.registrants.includes(data.userId)) {
-      return { alreadyRegistered: true, requiresPayment: false };
-    }
-
-    if (btn.requiresPayment && btn.amountCents > 0) {
-      const paymentBase =
-        this.configService.get<string>('PAYMENT_SERVICE_URL') || 'http://core-service:3012';
-      const frontendUrl = this.configService.get<string>('FRONTEND_URL') || 'http://localhost';
-      try {
-        const res = await lastValueFrom(
-          this.httpService.post(
-            `${paymentBase.replace(/\/$/, '')}/api/payments/create-checkout-session`,
-            {
-              lineItems: [
-                {
-                  price_data: {
-                    currency: (btn.currency || 'eur').toLowerCase(),
-                    product_data: { name: btn.label },
-                    unit_amount: btn.amountCents,
-                  },
-                  quantity: 1,
-                },
-              ],
-              successUrl: `${frontendUrl}/posts?registered=${buttonId}`,
-              cancelUrl: `${frontendUrl}/posts`,
-              metadata: { postId, buttonId, userId: data.userId },
-            }
-          )
-        );
-        const checkoutUrl = (res.data as any)?.url;
-        if (checkoutUrl) {
-          return { requiresPayment: true, checkoutUrl };
-        }
-      } catch (err: any) {
-        this.logger.error('Payment service error', err?.response?.data || err.message);
-      }
-      return { requiresPayment: true, message: 'Payment service unavailable' };
-    }
-
-    btn.registrants = [...btn.registrants, data.userId];
-    const updated = [...buttons];
-    updated[btnIndex] = btn;
-    post.eventButtons = updated;
+    post.pinned = pinned;
     await this.postRepo.save(post);
-
-    return { registered: true, requiresPayment: false };
-  }
-
-  async submitForm(postId: string, _formId: string, _data: any) {
-    const post = await this.postRepo.findOne({ where: { id: postId } });
-    if (!post) throw new NotFoundException();
-
-    // Check user service (Phase 3.7)
-    try {
-      const userRes = await lastValueFrom(
-        this.httpService.get(`${this.userServiceUrl}/users/${_data.userId}`)
-      );
-      this.logger.log(`Successfully communicated with user-service for user ${_data.userId}`);
-    } catch (err: any) {
-      this.logger.error(
-        `Failed inter-service communication with user-service for ${_data.userId}: ${err.message}`
-      );
-    }
-
-    return { success: true };
-  }
-
-  async delete(id: string) {
-    await this.postRepo.delete(id);
     await this.invalidateListCache();
-    return { success: true };
+    return { ok: true, pinned };
   }
 
-  async addReaction(postId: string, userId: string, reactionType: string) {
+  async reportPost(postId: string, userId: string, reason: string) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
-    // Guard against remote property injection: reject keys that could pollute Object.prototype.
-    if (userId === '__proto__' || userId === 'constructor' || userId === 'prototype') {
-      throw new BadRequestException('Invalid userId');
+    const reports = Array.isArray(post.reports) ? post.reports : [];
+    if (reports.some((r: any) => r.userId === userId)) {
+      return { ok: true, alreadyReported: true };
     }
-    const reactions = this.sanitizeReactions(post.reactions);
-    reactions[userId] = reactionType;
-    post.reactions = reactions;
-    await this.postRepo.save(post);
-    return { ok: true, reactions: post.reactions };
-  }
-
-  async removeReaction(postId: string, userId: string) {
-    const post = await this.postRepo.findOne({ where: { id: postId } });
-    if (!post) throw new NotFoundException('Post not found');
-    // Guard against remote property injection: reject keys that could pollute Object.prototype.
-    if (userId === '__proto__' || userId === 'constructor' || userId === 'prototype') {
-      throw new BadRequestException('Invalid userId');
-    }
-    const reactions = this.sanitizeReactions(post.reactions);
-    delete reactions[userId];
-    post.reactions = reactions;
-    await this.postRepo.save(post);
-    return { ok: true, reactions: post.reactions };
-  }
-
-  async addComment(postId: string, data: { userId: string; text: string; parentId?: string }) {
-    const post = await this.postRepo.findOne({ where: { id: postId } });
-    if (!post) throw new NotFoundException('Post not found');
-
-    // Resolve display name, firstName, lastName
-    let displayName: string | null = null;
-    let firstName: string | null = null;
-    let lastName: string | null = null;
-    try {
-      const rows: {
-        displayName: string | null;
-        firstName: string | null;
-        lastName: string | null;
-      }[] = await this.postRepo.manager.query(
-        `SELECT "displayName", "firstName", "lastName" FROM users WHERE id = $1 LIMIT 1`,
-        [data.userId]
-      );
-      if (rows[0]) {
-        displayName = rows[0].displayName ?? null;
-        firstName = rows[0].firstName ?? null;
-        lastName = rows[0].lastName ?? null;
-      }
-    } catch {
-      // ignore
-    }
-
-    const comment = {
-      id: crypto.randomUUID(),
-      userId: data.userId,
-      displayName,
-      firstName,
-      lastName,
-      text: data.text,
-      parentId: data.parentId ?? null,
-      likes: [] as string[],
-      createdAt: new Date().toISOString(),
-    };
-    post.comments = [...(post.comments ?? []), comment];
-    await this.postRepo.save(post);
-
-    // Fire-and-forget notifications
-    void (async () => {
-      try {
-        const preview = data.text.length > 60 ? data.text.slice(0, 57) + '…' : data.text;
-        // Notify post author
-        if (post.authorId && !post.associationId) {
-          await this.createNotification({
-            recipientId: post.authorId,
-            type: 'comment',
-            postId,
-            actorId: data.userId,
-            text: preview,
-          });
-        }
-        // Notify parent comment author if this is a reply
-        if (data.parentId) {
-          const parent = (post.comments as any[]).find((c: any) => c.id === data.parentId);
-          if (parent?.userId) {
-            await this.createNotification({
-              recipientId: parent.userId,
-              type: 'reply',
-              postId,
-              actorId: data.userId,
-              text: preview,
-            });
-          }
-        }
-      } catch { /* non-fatal */ }
-    })();
-
-    return { ok: true, comment };
-  }
-
-  async likeComment(postId: string, commentId: string, userId: string) {
-    const post = await this.postRepo.findOne({ where: { id: postId } });
-    if (!post) throw new NotFoundException('Post not found');
-    const comments: any[] = post.comments ?? [];
-    const comment = comments.find((c: any) => c.id === commentId);
-    if (!comment) throw new NotFoundException('Comment not found');
-    const likes: string[] = comment.likes ?? [];
-    if (likes.includes(userId)) {
-      comment.likes = likes.filter((id: string) => id !== userId);
-    } else {
-      comment.likes = [...likes, userId];
-    }
-    post.comments = comments;
-    await this.postRepo.save(post);
-    return { ok: true, comment };
-  }
-
-  async editComment(postId: string, commentId: string, userId: string, text: string) {
-    const post = await this.postRepo.findOne({ where: { id: postId } });
-    if (!post) throw new NotFoundException('Post not found');
-    const comments: any[] = post.comments ?? [];
-    const comment = comments.find((c: any) => c.id === commentId);
-    if (!comment) throw new NotFoundException('Comment not found');
-    if (comment.userId !== userId) throw new UnauthorizedException('Not your comment');
-    comment.text = text;
-    post.comments = comments;
-    await this.postRepo.save(post);
-    return { ok: true, comment };
-  }
-
-  async deleteComment(postId: string, commentId: string, userId: string) {
-    const post = await this.postRepo.findOne({ where: { id: postId } });
-    if (!post) throw new NotFoundException('Post not found');
-    const comments: any[] = post.comments ?? [];
-    const comment = comments.find((c: any) => c.id === commentId);
-    if (!comment) throw new NotFoundException('Comment not found');
-    if (comment.userId !== userId) throw new UnauthorizedException('Not your comment');
-    // Remove comment and any replies to it
-    post.comments = comments.filter((c: any) => c.id !== commentId && c.parentId !== commentId);
+    post.reports = [...reports, { userId, reason, createdAt: new Date().toISOString() }];
     await this.postRepo.save(post);
     return { ok: true };
   }
