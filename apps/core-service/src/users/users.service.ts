@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { User } from './entities/user.entity';
 import { CreateUserDto, UpdateUserDto, PublicUserDto } from './dto/user.dto';
 
+/** Service managing user persistence and OIDC upsert logic. */
 @Injectable()
 export class UsersService {
   constructor(
@@ -11,11 +12,13 @@ export class UsersService {
     private readonly userRepository: Repository<User>,
   ) {}
 
+  /** Persists a new user entity and returns it. */
   async create(createUserDto: CreateUserDto): Promise<User> {
     const user = this.userRepository.create(createUserDto);
     return await this.userRepository.save(user);
   }
 
+  /** Finds a user by ID, throwing NotFoundException if not found. */
   async findOne(id: string): Promise<User> {
     const user = await this.userRepository.findOne({ where: { id } });
     if (!user) {
@@ -24,12 +27,14 @@ export class UsersService {
     return user;
   }
 
+  /** Merges the provided fields onto the user and persists the result. */
   async update(id: string, updateUserDto: UpdateUserDto): Promise<User> {
     const user = await this.findOne(id);
     this.userRepository.merge(user, updateUserDto);
     return await this.userRepository.save(user);
   }
 
+  /** Maps a User entity to a PublicUserDto, stripping internal fields. */
   toPublicDto(user: User): PublicUserDto {
     return {
       id: user.id,

@@ -26,6 +26,7 @@ interface RequestWithUser {
   user?: JwtUser;
 }
 
+/** Controller handling user profile CRUD, search, and avatar proxy. */
 @Controller('users')
 export class UsersController {
   constructor(
@@ -59,11 +60,13 @@ export class UsersController {
     res.send(avatarBuffer);
   }
 
+  /** Creates a new user from the provided DTO. */
   @Post()
   create(@Body() createUserDto: CreateUserDto) {
     return this.usersService.create(createUserDto);
   }
 
+  /** Returns the public profile of the requested user, resolving "me" to the caller. */
   @UseGuards(NginxAuthGuard)
   @Get(':id')
   async findOne(
@@ -77,6 +80,7 @@ export class UsersController {
     return this.usersService.toPublicDto(user);
   }
 
+  /** Updates the authenticated user's profile and returns the updated public DTO. */
   @UseGuards(NginxAuthGuard)
   @Patch('me')
   async updateMe(

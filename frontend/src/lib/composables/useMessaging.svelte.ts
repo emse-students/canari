@@ -57,6 +57,7 @@ export interface MessagingContext {
   sendSystemNotification: (title: string, body: string) => Promise<void>;
 }
 
+/** Creates and returns the reactive messaging store covering send, receive, reactions, edit, delete, replies, and media uploads. */
 export function useMessaging() {
   const messageReactions = new SvelteMap<string, MessageReaction[]>();
   let replyingTo = $state<ChatMessage | null>(null);
@@ -612,27 +613,41 @@ export function useMessaging() {
   // ── Exposed API ───────────────────────────────────────────────────────────
 
   return {
+    /** Reactive map of emoji reactions keyed by message ID. */
     messageReactions,
 
+    /** Message the user is currently replying to (null when no reply is pending). */
     get replyingTo() {
       return replyingTo;
     },
+    /** Files staged for sending in the next handleSendChat call. */
     get pendingMediaFiles() {
       return pendingMediaFiles;
     },
+    /** True while a media file is being encrypted and uploaded. */
     get isUploadingMedia() {
       return isUploadingMedia;
     },
 
+    /** Appends a single message to a conversation's reactive state and persists it to DB. */
     addMessageToChat,
+    /** Appends multiple messages in one reactive update and one batch DB write. */
     batchAddMessages,
+    /** Main send handler: uploads pending media then sends a text message. */
     handleSendChat,
+    /** Validates and enqueues files (with image compression) for the next send. */
     handleFilesSelected,
+    /** Removes a staged file from the pending media queue by index. */
     removePendingMediaFile,
+    /** Toggles an emoji reaction on a message (add if absent, remove if present). */
     handleAddReaction,
+    /** Sends a delete_message MLS event and marks the message as deleted locally. */
     handleDeleteMessage,
+    /** Sends an edit_message MLS event and updates the message content locally. */
     handleEditMessage,
+    /** Sets the message to reply to (shown as a quote in the next send). */
     handleReply,
+    /** Clears the pending reply state. */
     cancelReply,
   };
 }

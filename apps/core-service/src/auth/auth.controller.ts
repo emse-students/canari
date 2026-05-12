@@ -38,6 +38,7 @@ function isEnvFlagEnabled(value: string | undefined): boolean {
   }
 }
 
+/** Controller handling OIDC login, token refresh, logout, and nginx JWT verification. */
 @Controller('auth')
 export class AuthController {
   private readonly jwtSecret: string;
@@ -114,6 +115,7 @@ export class AuthController {
   // ─── TEMPORARY: bypass Authentik ────────────────────────────────────────────
   // Creates a dev user and returns tokens without touching Authentik.
   // TODO: remove this endpoint once Authentik is fully configured.
+  /** Issues a dev JWT pair for a local user without going through Authentik (disabled in production). */
   @Post('dev-login')
   @HttpCode(200)
   async devLogin(
@@ -191,6 +193,7 @@ export class AuthController {
       },
     };
   }
+  /** Exchanges an Authentik authorization code for internal JWT tokens and upserts the local user. */
   @Post('oidc/callback')
   @HttpCode(200)
   async oidcCallback(
@@ -320,6 +323,7 @@ export class AuthController {
   }
 
   // ─── Token refresh ─────────────────────────────────────────────────────────
+  /** Rotates the refresh cookie and returns a new short-lived access token. */
   @Post('refresh')
   @HttpCode(200)
   async refreshToken(
@@ -371,6 +375,7 @@ export class AuthController {
   }
 
   // ─── Logout ────────────────────────────────────────────────────────────────
+  /** Clears the refresh cookie and invalidates the session. */
   @Post('logout')
   @HttpCode(200)
   logout(
@@ -382,11 +387,13 @@ export class AuthController {
   }
 
   // ─── Verify (used by nginx auth_request) ──────────────────────────────────
+  /** Verifies the Bearer token and injects X-User-Id / X-Logged-In headers for nginx auth_request (GET). */
   @Get('verify')
   verifyStart(@Req() req: Request, @Res() res: Response) {
     this.check(req, res);
   }
 
+  /** Verifies the Bearer token and injects X-User-Id / X-Logged-In headers for nginx auth_request (HEAD). */
   @Head('verify')
   verify(@Req() req: Request, @Res() res: Response) {
     this.check(req, res);

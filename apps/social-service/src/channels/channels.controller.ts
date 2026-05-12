@@ -30,10 +30,12 @@ import {
   type UpdateChannelImageDto,
 } from './dto/channel.dto';
 
+/** Manages workspace and channel resources including membership, keys, and messages. */
 @Controller('channels')
 export class ChannelsController {
   constructor(private readonly service: ChannelService) {}
 
+  /** Returns the health status of the channel service. */
   @Get('health')
   health() {
     return {
@@ -43,42 +45,49 @@ export class ChannelsController {
     };
   }
 
+  /** Creates a new workspace owned by the calling user. */
   @UseGuards(NginxAuthGuard)
   @Post('workspaces')
   createWorkspace(@Headers('x-user-id') xUserId: string, @Body() body: CreateWorkspaceDto) {
     return this.service.createWorkspace({ ...body, createdBy: xUserId.trim().toLowerCase() });
   }
 
+  /** Returns a workspace looked up by its URL slug. */
   @UseGuards(NginxAuthGuard)
   @Get('workspaces/by-slug/:slug')
   getWorkspaceBySlug(@Param('slug') slug: string) {
     return this.service.getWorkspaceBySlug(slug);
   }
 
+  /** Returns all workspaces the calling user belongs to. */
   @UseGuards(NginxAuthGuard)
   @Get('workspaces/user/me')
   listWorkspaces(@Headers('x-user-id') xUserId: string) {
     return this.service.listWorkspacesForUser(xUserId.trim().toLowerCase());
   }
 
+  /** Creates a new role in a workspace on behalf of the calling user. */
   @UseGuards(NginxAuthGuard)
   @Post('roles')
   createRole(@Headers('x-user-id') xUserId: string, @Body() body: CreateRoleDto) {
     return this.service.createRole({ ...body, actorUserId: xUserId.trim().toLowerCase() });
   }
 
+  /** Creates a new channel inside a workspace. */
   @UseGuards(NginxAuthGuard)
   @Post()
   createChannel(@Headers('x-user-id') xUserId: string, @Body() body: CreateChannelDto) {
     return this.service.createChannel({ ...body, actorUserId: xUserId.trim().toLowerCase() });
   }
 
+  /** Returns all channels in a workspace that the calling user has access to. */
   @UseGuards(NginxAuthGuard)
   @Get('workspace/:workspaceId/user/me')
   listChannels(@Headers('x-user-id') xUserId: string, @Param('workspaceId') workspaceId: string) {
     return this.service.listChannelsForUser(workspaceId, xUserId.trim().toLowerCase());
   }
 
+  /** Returns the current encryption key bootstrap data for the calling user in a channel. */
   @UseGuards(NginxAuthGuard)
   @Get(':channelId/key')
   getChannelKeyBootstrap(
@@ -88,6 +97,7 @@ export class ChannelsController {
     return this.service.getChannelKeyBootstrapForUser(channelId, xUserId.trim().toLowerCase());
   }
 
+  /** Returns historical encryption keys for a channel to allow decryption of past messages. */
   @UseGuards(NginxAuthGuard)
   @Get(':channelId/keys/history')
   getChannelHistoryKeys(
@@ -97,6 +107,7 @@ export class ChannelsController {
     return this.service.getChannelHistoryKeysForUser(channelId, xUserId.trim().toLowerCase());
   }
 
+  /** Adds the calling user as a member of the specified channel. */
   @UseGuards(NginxAuthGuard)
   @Post(':channelId/members/join')
   join(
@@ -108,6 +119,7 @@ export class ChannelsController {
     return this.service.joinChannel(channelId, { ...body, userId, actorUserId: userId });
   }
 
+  /** Invites a target user to a channel on behalf of the calling user. */
   @UseGuards(NginxAuthGuard)
   @Post(':channelId/members/invite')
   invite(
@@ -123,6 +135,7 @@ export class ChannelsController {
     });
   }
 
+  /** Removes the calling user from the specified channel. */
   @UseGuards(NginxAuthGuard)
   @Post(':channelId/members/leave')
   leave(
@@ -136,6 +149,7 @@ export class ChannelsController {
     });
   }
 
+  /** Kicks a member from a channel; requires sufficient role on the calling user. */
   @UseGuards(NginxAuthGuard)
   @Post(':channelId/members/kick')
   kick(
@@ -149,6 +163,7 @@ export class ChannelsController {
     });
   }
 
+  /** Updates the role of a channel member. */
   @UseGuards(NginxAuthGuard)
   @Post(':channelId/members/role')
   updateMemberRole(
@@ -162,18 +177,21 @@ export class ChannelsController {
     });
   }
 
+  /** Returns all members of a channel visible to the calling user. */
   @UseGuards(NginxAuthGuard)
   @Get(':channelId/members')
   listChannelMembers(@Headers('x-user-id') xUserId: string, @Param('channelId') channelId: string) {
     return this.service.listChannelMembers(channelId, xUserId.trim().toLowerCase());
   }
 
+  /** Rotates the encryption key for a channel, generating a new key version. */
   @UseGuards(NginxAuthGuard)
   @Post(':channelId/key/rotate')
   rotateChannelKey(@Headers('x-user-id') xUserId: string, @Param('channelId') channelId: string) {
     return this.service.rotateChannelKey(channelId, xUserId.trim().toLowerCase());
   }
 
+  /** Marks a key distribution as sent by the calling user. */
   @UseGuards(NginxAuthGuard)
   @Post(':channelId/key-distributions/:distributionId/sent')
   markKeyDistributionSent(
@@ -188,6 +206,7 @@ export class ChannelsController {
     );
   }
 
+  /** Marks a key distribution as received and records the accepted key version. */
   @UseGuards(NginxAuthGuard)
   @Post(':channelId/key-distributions/:distributionId/received')
   markKeyDistributionReceived(
@@ -204,12 +223,14 @@ export class ChannelsController {
     );
   }
 
+  /** Removes the calling user from a workspace. */
   @UseGuards(NginxAuthGuard)
   @Post('workspaces/:workspaceId/leave')
   leaveWorkspace(@Headers('x-user-id') xUserId: string, @Param('workspaceId') workspaceId: string) {
     return this.service.leaveWorkspace(workspaceId, xUserId.trim().toLowerCase());
   }
 
+  /** Updates the cover image of a workspace. */
   @UseGuards(NginxAuthGuard)
   @Patch('workspaces/:workspaceId/image')
   async updateWorkspaceImage(
@@ -224,6 +245,7 @@ export class ChannelsController {
     );
   }
 
+  /** Acknowledges receipt and processing of a key distribution for a channel. */
   @UseGuards(NginxAuthGuard)
   @Post(':channelId/key-distributions/:distributionId/ack')
   ackKeyDistribution(
@@ -240,6 +262,7 @@ export class ChannelsController {
     );
   }
 
+  /** Updates the cover image of a channel. */
   @UseGuards(NginxAuthGuard)
   @Patch(':channelId/image')
   async updateChannelImage(
@@ -254,6 +277,7 @@ export class ChannelsController {
     );
   }
 
+  /** Renames a channel. */
   @UseGuards(NginxAuthGuard)
   @Patch(':channelId')
   renameChannel(
@@ -264,12 +288,14 @@ export class ChannelsController {
     return this.service.renameChannel(channelId, xUserId.trim().toLowerCase(), body.name);
   }
 
+  /** Archives (soft-deletes) the specified channel. */
   @UseGuards(NginxAuthGuard)
   @Delete(':channelId')
   archiveChannel(@Headers('x-user-id') xUserId: string, @Param('channelId') channelId: string) {
     return this.service.archiveChannel(channelId, xUserId.trim().toLowerCase());
   }
 
+  /** Sends an encrypted message to a channel. */
   @UseGuards(NginxAuthGuard)
   @Post(':channelId/messages')
   async sendMessage(
@@ -291,6 +317,7 @@ export class ChannelsController {
     }
   }
 
+  /** Returns recent messages for a channel accessible to the calling user. */
   @UseGuards(NginxAuthGuard)
   @Get(':channelId/messages')
   listMessages(

@@ -74,6 +74,7 @@ export interface ChatSessionCallbacks {
   onLoadHistoryForConversation: (contactName: string, groupId: string) => Promise<void>;
 }
 
+/** Creates and returns the reactive chat session store covering login, MLS init, WebSocket, biometrics, device sync, backup, and dev tools. */
 export function useChatSession() {
   // ── Identity ──────────────────────────────────────────────────────────────
   let userId = $state('');
@@ -860,55 +861,67 @@ export function useChatSession() {
 
   return {
     // identity (read/write so parent can bind)
+    /** Authenticated user ID (lowercase). */
     get userId() {
       return userId;
     },
     set userId(v: string) {
       userId = v;
     },
+    /** Encryption PIN used to protect local MLS state. */
     get pin() {
       return pin;
     },
     set pin(v: string) {
       pin = v;
     },
+    /** Current JWT access token (in-memory only). */
     get authToken() {
       return authToken;
     },
     set authToken(v: string) {
       authToken = v;
     },
+    /** MLS device ID assigned to this browser/app instance. */
     get myDeviceId() {
       return myDeviceId;
     },
+    /** Last login error message to display to the user. */
     get loginError() {
       return loginError;
     },
+    /** Base URL of the chat-delivery service used for history and pin-check calls. */
     get historyBaseUrl() {
       return historyBaseUrl;
     },
 
     // status
+    /** True once the full login flow has completed successfully. */
     get isLoggedIn() {
       return isLoggedIn;
     },
+    /** True while the WebSocket connection to the gateway is open. */
     get isWsConnected() {
       return isWsConnected;
     },
+    /** True when the biometric enrolment banner should be shown (Tauri only). */
     get showBiometricEnrollPrompt() {
       return showBiometricEnrollPrompt;
     },
     set showBiometricEnrollPrompt(v: boolean) {
       showBiometricEnrollPrompt = v;
     },
+    /** Active IndexedDB storage instance (null before login). */
     get storage() {
       return storage;
     },
 
     // services
+    /** WebRTC call service instance (null before initServices). */
     get callService() {
       return callService;
     },
+    /** Current call state (e.g. 'idle', 'ringing', 'connected'). */
     get callState() {
       return callState;
     },
@@ -920,45 +933,66 @@ export function useChatSession() {
     },
 
     // backup status
+    /** True while a backup export is in progress. */
     get isExporting() {
       return isExporting;
     },
+    /** True while a backup import is in progress. */
     get isImporting() {
       return isImporting;
     },
 
     // dev tools state
+    /** Last generated MLS KeyPackage as a hex string (dev panel). */
     get lastKeyPackage() {
       return lastKeyPackage;
     },
+    /** Hex string pasted into the dev panel for incoming MLS bytes. */
     get incomingBytesHex() {
       return incomingBytesHex;
     },
     set incomingBytesHex(v: string) {
       incomingBytesHex = v;
     },
+    /** Last produced MLS Commit bytes as hex (dev panel). */
     get lastCommit() {
       return lastCommit;
     },
+    /** Last produced MLS Welcome bytes as hex (dev panel). */
     get lastWelcome() {
       return lastWelcome;
     },
 
     // actions
+    /** Initialises the MLS service and CallService; must be called from onMount. */
     initServices,
+    /** Returns the current MLS service instance, creating it lazily if needed. */
     ensureMls,
+    /** Runs the full login flow (PIN verify, MLS init, DB open, WS connect). */
     login,
+    /** Retrieves the PIN from the biometric keystore and delegates to login(). */
     biometricLogin,
+    /** Saves the PIN to the hardware keystore and clears it from memory. */
     enrollBiometric,
+    /** Persists the "dismissed" flag and hides the biometric enrolment banner. */
     dismissBiometricPrompt,
+    /** Clears session state and redirects to /login. */
     logout,
+    /** Schedules an exponential-backoff WebSocket reconnect attempt. */
     scheduleReconnect,
+    /** Performs one WebSocket reconnect attempt and re-runs device sync. */
     attemptReconnect,
+    /** Processes pending MLS invitations from other devices of the current user. */
     processDeviceInvitationsLocally,
+    /** Exports an encrypted backup of all conversations (triggers browser download). */
     handleExport,
+    /** Imports a previously exported backup file and reloads conversations. */
     handleImport,
+    /** Dev-tool: generates a new MLS KeyPackage for this device. */
     devGenerateKeyPackage,
+    /** Dev-tool: adds a member (KeyPackage hex) to an MLS group. */
     devAddMember,
+    /** Dev-tool: processes a Welcome message (hex) so this device joins the group. */
     devProcessWelcome,
   };
 }

@@ -53,6 +53,7 @@ export interface ConversationContext {
   ) => Promise<void>;
 }
 
+/** Creates and returns the reactive conversation store with all selection, history, group, and storage operations. */
 export function useConversations() {
   const conversations = new SvelteMap<string, Conversation>();
 
@@ -642,102 +643,132 @@ export function useConversations() {
   // ── Exposed API ───────────────────────────────────────────────────────────
 
   return {
-    // The reactive map — passed by reference so all consumers share the same instance
+    /** Reactive SvelteMap of all conversations keyed by conversation name. */
     conversations,
 
     // UI state
+    /** Currently selected conversation name (null when no conversation is open). */
     get selectedContact() {
       return selectedContact;
     },
     set selectedContact(v: string | null) {
       selectedContact = v;
     },
+    /** Returns 'chat' when a conversation is selected, 'list' otherwise (mobile layout helper). */
     get mobileView() {
       return selectedContact ? 'chat' : 'list';
     },
+    /** Whether the conversation list drawer is open (mobile). */
     get isConversationDrawerOpen() {
       return isConversationDrawerOpen;
     },
     set isConversationDrawerOpen(v: boolean) {
       isConversationDrawerOpen = v;
     },
+    /** Whether the channel members side drawer is open. */
     get isChannelMembersDrawerOpen() {
       return isChannelMembersDrawerOpen;
     },
     set isChannelMembersDrawerOpen(v: boolean) {
       isChannelMembersDrawerOpen = v;
     },
+    /** Whether the channel settings modal is open. */
     get isChannelSettingsModalOpen() {
       return isChannelSettingsModalOpen;
     },
     set isChannelSettingsModalOpen(v: boolean) {
       isChannelSettingsModalOpen = v;
     },
+    /** Whether to show the multi-device sync guide prompt. */
     get showSyncGuidePrompt() {
       return showSyncGuidePrompt;
     },
     set showSyncGuidePrompt(v: boolean) {
       showSyncGuidePrompt = v;
     },
+    /** Deduplicated list of userIds currently in the selected group. */
     get groupMembers() {
       return groupMembers;
     },
     set groupMembers(v: string[]) {
       groupMembers = v;
     },
+    /** True while history is being fetched and decrypted for the selected conversation. */
     get isLoadingHistory() {
       return isLoadingHistory;
     },
+    /** Last send or membership error message to display to the user. */
     get sendError() {
       return sendError;
     },
     set sendError(v: string) {
       sendError = v;
     },
+    /** Controlled value of the "new direct conversation" input field. */
     get newContactInput() {
       return newContactInput;
     },
     set newContactInput(v: string) {
       newContactInput = v;
     },
+    /** Controlled value of the "new group" input field. */
     get newGroupInput() {
       return newGroupInput;
     },
     set newGroupInput(v: string) {
       newGroupInput = v;
     },
+    /** Controlled value of the "new channel" input field. */
     get newChannelInput() {
       return newChannelInput;
     },
     set newChannelInput(v: string) {
       newChannelInput = v;
     },
+    /** Reference to the chat scroll container used for auto-scroll. */
     get chatContainer() {
       return chatContainer;
     },
     set chatContainer(v: HTMLElement | undefined) {
       chatContainer = v;
     },
+    /** Derived conversation object for the currently selected contact (null if none). */
     get currentConvo() {
       return currentConvo;
     },
 
     // actions
+    /** Persists the given conversation's metadata to IndexedDB. */
     saveConversation,
+    /** Fetches and decrypts network history for a conversation, then reloads from DB. */
     loadHistoryForConversation,
+    /** Reads saved conversations from IndexedDB and populates the reactive map. */
     loadAndRestoreConversations,
+    /** Prepends an older page of messages from IndexedDB to the conversation. */
     loadOlderMessages,
+    /** Selects a conversation without a ctx (clears unread badge). */
     selectConversation,
+    /** Selects a conversation with a ctx (also verifies membership). */
     selectConversationWithCtx,
+    /** Deselects the active conversation and closes the drawer. */
     goBackToMenu,
+    /** Fetches and stores the deduplicated member list for an MLS group. */
     loadGroupMembers,
+    /** Checks and caches whether the current user is still in the given conversation. */
     verifyCurrentUserMembership,
+    /** Creates a new named MLS group and selects it. */
     createNewGroup,
+    /** Invites one or more users to the currently selected group. */
     inviteMembersToCurrentGroup,
+    /** Opens or creates a direct 1-to-1 conversation with the given user. */
     startNewConversation,
+    /** Renames the currently selected group and broadcasts the change. */
     handleRenameGroup,
+    /** Deletes the currently selected group and clears the UI. */
     handleDeleteGroup,
+    /** Leaves the currently selected group and clears the UI. */
     handleLeaveGroup,
+    /** Removes a member from the currently selected group. */
     handleRemoveMember,
   };
 }

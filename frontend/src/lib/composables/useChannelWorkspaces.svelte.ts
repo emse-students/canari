@@ -54,7 +54,7 @@ export interface ChannelWorkspaceContext {
   log: (msg: string) => void;
 }
 
-/** Composable that manages the channel/workspace sidebar state and all related API operations (create, rename, delete, invite, leave, image update). */
+/** Creates and returns the reactive channel/workspace store: sidebar state, API operations (create, rename, delete, invite, leave, image update), and real-time event handlers. */
 export function useChannelWorkspaces() {
   let channelWorkspaces = $state<ChannelSidebarWorkspace[]>([]);
   let selectedChannelConversationId = $state('');
@@ -627,33 +627,51 @@ export function useChannelWorkspaces() {
   }
 
   return {
+    /** Reactive array of workspace entries shown in the sidebar. */
     get channelWorkspaces() {
       return channelWorkspaces;
     },
     set channelWorkspaces(v) {
       channelWorkspaces = v;
     },
+    /** Conversation ID of the channel currently highlighted in the sidebar. */
     get selectedChannelConversationId() {
       return selectedChannelConversationId;
     },
     set selectedChannelConversationId(v) {
       selectedChannelConversationId = v;
     },
+    /** Inserts or updates a workspace sidebar entry from a backend DTO. */
     upsertWorkspaceFromDto,
+    /** Appends a channel to the sidebar entry for the given workspace slug, ignoring duplicates. */
     addChannelToWorkspace,
+    /** Removes the given channel conversation ID from every workspace in the sidebar. */
     removeChannelFromWorkspaces,
+    /** Returns or creates a sidebar workspace entry for an incoming real-time channel event. */
     ensureWorkspaceForChannelEvent,
+    /** Fetches all workspaces and channels from the backend and prunes stale local entries. */
     loadChannelWorkspacesFromBackend,
+    /** Creates a new community (workspace) and logs the outcome. */
     createNewCommunity,
+    /** Creates a new public channel in the given workspace and selects it. */
     createNewChannel,
+    /** Invites a user to a channel and delivers the HKDF key via an MLS direct message. */
     inviteMemberToChannel,
+    /** Updates the role of an existing channel member. */
     updateChannelMemberRole,
+    /** Removes the current user from a channel and cleans up local state. */
     leaveCurrentChannel,
+    /** Removes the current user from a workspace and purges all its channels locally. */
     leaveCurrentWorkspace,
+    /** Renames a channel on the server and updates the sidebar and conversation entry. */
     renameCurrentChannel,
+    /** Permanently deletes a channel and removes it from conversations and the sidebar. */
     deleteCurrentChannel,
+    /** Saves a new cover image for a channel and updates the conversation optimistically. */
     updateCurrentChannelImage,
+    /** Saves a new cover image for a workspace and updates the sidebar entry optimistically. */
     updateCurrentWorkspaceImage,
+    /** Applies an incoming real-time workspace-updated event (cover image change). */
     handleWorkspaceUpdated,
   };
 }

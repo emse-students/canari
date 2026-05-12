@@ -26,6 +26,7 @@ import axios from 'axios';
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** Controller handling Stripe Connect onboarding, checkout sessions, and saved payment methods. */
 @Controller('payments')
 export class PaymentController {
   private readonly logger = new Logger(PaymentController.name);
@@ -76,6 +77,7 @@ export class PaymentController {
     }
   }
 
+  /** Starts or resumes a Stripe Connect onboarding flow for an association and returns the onboarding URL. */
   @Post('onboarding')
   @HttpCode(200)
   async createOnboarding(
@@ -133,6 +135,7 @@ export class PaymentController {
     return result;
   }
 
+  /** Creates a Stripe Checkout session for the given line items and returns the session URL. */
   @Post('create-checkout-session')
   @HttpCode(200)
   async createCheckout(
@@ -168,6 +171,7 @@ export class PaymentController {
     return { ok: true, url: session.url, id: session.id };
   }
 
+  /** Verifies a completed Stripe Checkout session and marks the linked form submission as paid. */
   @Post('verify-session')
   @HttpCode(200)
   async verifySession(@Body() body: { sessionId: string }) {
@@ -213,6 +217,7 @@ export class PaymentController {
     return { ok: true, submissionId, formId };
   }
 
+  /** Cancels an unpaid Stripe Checkout session and marks the linked submission as cancelled. */
   @Post('cancel-session')
   @HttpCode(200)
   async cancelSession(@Body() body: { sessionId: string }) {
@@ -257,6 +262,7 @@ export class PaymentController {
 
   // ── Payment Methods (user) ────────────────────────────────────────────────
 
+  /** Creates a Stripe Setup Checkout session so the authenticated user can save a card for future charges. */
   @UseGuards(NginxAuthGuard)
   @Post('setup-payment-method')
   @HttpCode(200)
@@ -288,6 +294,7 @@ export class PaymentController {
     return { ok: true, url: result.url };
   }
 
+  /** Returns all saved card payment methods for the authenticated user. */
   @UseGuards(NginxAuthGuard)
   @Get('payment-methods')
   async listPaymentMethods(@Headers('x-user-id') userId: string) {
@@ -301,6 +308,7 @@ export class PaymentController {
     return this.paymentService.listPaymentMethods(user.stripeCustomerId);
   }
 
+  /** Detaches a saved payment method from the authenticated user's Stripe customer. */
   @UseGuards(NginxAuthGuard)
   @Delete('payment-methods/:id')
   async deletePaymentMethod(
@@ -368,6 +376,7 @@ export class PaymentController {
     return { customerId };
   }
 
+  /** Charges a saved payment method for a form submission, marking it as paid on success. */
   @UseGuards(NginxAuthGuard)
   @Post('charge-saved-method')
   @HttpCode(200)

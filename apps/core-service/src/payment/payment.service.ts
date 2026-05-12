@@ -8,6 +8,7 @@ export interface ChargeResult {
   error?: string;
 }
 
+/** Service wrapping Stripe SDK calls for Connect onboarding, checkout, and payment method management. */
 @Injectable()
 export class PaymentService {
   private readonly stripe: Stripe | null;
@@ -21,10 +22,12 @@ export class PaymentService {
     this.logger.log(`Stripe configured: ${key ? 'yes' : 'no'}`);
   }
 
+  /** Returns true when a Stripe secret key is present and the client is initialized. */
   isConfigured(): boolean {
     return !!this.stripe;
   }
 
+  /** Creates or resumes a Stripe Connect account onboarding link for the given association. */
   async createConnectOnboarding(params: {
     associationId: string;
     refreshUrl: string;
@@ -53,6 +56,7 @@ export class PaymentService {
     return { url: accountLink.url, accountId };
   }
 
+  /** Creates a Stripe Checkout session in payment mode with optional Connect destination charge. */
   async createCheckoutSession(params: {
     lineItems: Stripe.Checkout.SessionCreateParams.LineItem[];
     successUrl: string;
@@ -98,6 +102,7 @@ export class PaymentService {
     return session;
   }
 
+  /** Retrieves the charges-enabled status for a Stripe Connect account. */
   async getAccountStatus(
     accountId: string,
   ): Promise<{ chargesEnabled: boolean }> {
@@ -108,6 +113,7 @@ export class PaymentService {
 
   // ── Customer & Payment Methods ────────────────────────────────────────────
 
+  /** Returns the existing Stripe customer ID or creates a new customer and returns its ID. */
   async getOrCreateCustomer(
     existingCustomerId: string | null | undefined,
     meta: { userId: string; displayName?: string | null },
@@ -131,6 +137,7 @@ export class PaymentService {
     return customer.id;
   }
 
+  /** Creates a Stripe Checkout session in setup mode so a customer can save a card for future use. */
   async createSetupCheckoutSession(params: {
     customerId: string;
     successUrl: string;
@@ -149,6 +156,7 @@ export class PaymentService {
     return { url: session.url!, sessionId: session.id };
   }
 
+  /** Lists all saved card payment methods attached to the given Stripe customer. */
   async listPaymentMethods(customerId: string): Promise<
     {
       id: string;
@@ -174,11 +182,13 @@ export class PaymentService {
     }));
   }
 
+  /** Detaches a payment method from its Stripe customer so it can no longer be charged. */
   async detachPaymentMethod(paymentMethodId: string): Promise<void> {
     if (!this.stripe) throw new BadRequestException('Stripe not configured');
     await this.stripe.paymentMethods.detach(paymentMethodId);
   }
 
+  /** Charges a saved payment method off-session and returns the payment result or required-action details. */
   async chargeWithSavedMethod(params: {
     customerId: string;
     paymentMethodId: string;
@@ -244,6 +254,7 @@ export class PaymentService {
     }
   }
 
+  /** Retrieves a Stripe Checkout session by ID. */
   async retrieveSession(sessionId: string): Promise<Stripe.Checkout.Session> {
     if (!this.stripe) throw new BadRequestException('Stripe not configured');
     return this.stripe.checkout.sessions.retrieve(sessionId);

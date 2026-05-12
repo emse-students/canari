@@ -1,15 +1,22 @@
 export interface IMlsService {
+  /** Initialises the MLS identity for the given user, decrypting stored state with the PIN. */
   init(userId: string, pin: string, state?: Uint8Array): Promise<void>;
+  /** Creates a new local MLS group with the given ID. */
   createGroup(groupId: string): Promise<void>;
   /** Wipes any orphan OpenMLS state for groupId then creates a fresh group. */
   forceCreateGroup(groupId: string): Promise<void>;
+  /** Creates a new named group on the delivery server and returns its assigned group ID. */
   createRemoteGroup(name: string, isGroup?: boolean): Promise<string>;
+  /** Serialises and AES-GCM encrypts the current MLS state to a byte array using the PIN. */
   saveState(pin: string): Promise<Uint8Array>;
+  /** Generates a fresh MLS KeyPackage for this device, signed with the PIN-encrypted identity key. */
   generateKeyPackage(pin: string): Promise<Uint8Array>;
+  /** Adds one device to a group via an MLS Add commit, returning the Commit and optional Welcome. */
   addMember(
     groupId: string,
     keyPackageBytes: Uint8Array
   ): Promise<{ commit: Uint8Array; welcome?: Uint8Array; ratchetTree?: Uint8Array }>;
+  /** Adds multiple devices to a group in a single MLS commit, returning the Commit and Welcome. */
   addMembersBulk(
     groupId: string,
     devices: Array<{ keyPackage: Uint8Array; deviceId: string }>
@@ -19,9 +26,13 @@ export interface IMlsService {
     addedDeviceIds: string[];
     ratchetTree?: Uint8Array;
   }>;
+  /** Processes an incoming MLS Welcome message and returns the resulting group ID. */
   processWelcome(welcomeBytes: Uint8Array, ratchetTreeBytes?: Uint8Array): Promise<string>;
+  /** Encrypts an application message for the group and delivers it via the delivery service. */
   sendMessage(groupId: string, messageBytes: Uint8Array, messageId?: string): Promise<Uint8Array>;
+  /** Decrypts and processes an incoming MLS message for the group, returning the plaintext or null. */
   processIncomingMessage(groupId: string, messageBytes: Uint8Array): Promise<Uint8Array | null>;
+  /** Exports a derived secret from a group's epoch key material using the given label and context. */
   exportSecret(
     groupId: string,
     label: string,
@@ -30,7 +41,9 @@ export interface IMlsService {
   ): Promise<Uint8Array>;
 
   // Networking
+  /** Opens a WebSocket connection to the chat gateway using the given JWT access token. */
   connect(token: string): Promise<void>;
+  /** Fetches all registered devices (with KeyPackages) for the given user from the delivery service. */
   fetchUserDevices(userId: string): Promise<
     Array<{
       keyPackage: Uint8Array;
@@ -40,9 +53,11 @@ export interface IMlsService {
       deviceAppVersion?: string;
     }>
   >;
+  /** Uploads a single KeyPackage to the server so other devices can invite this one. */
   publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void>;
   /** Bulk-upload multiple one-time prekeys to the server pool. */
   publishKeyPackages(packages: Uint8Array[]): Promise<void>;
+  /** Delivers a Welcome message to the target user/device via the delivery service. */
   sendWelcome(
     welcomeBytes: Uint8Array,
     targetUserId: string,
@@ -50,7 +65,7 @@ export interface IMlsService {
     targetDeviceId?: string,
     ratchetTreeBytes?: Uint8Array
   ): Promise<void>;
-  /** Returns the current MLS epoch for a group (needed for epoch-gating). */
+  /** Returns the current MLS epoch number for a group (needed for epoch-gating). */
   getEpoch(groupId: string): number;
   /**
    * Broadcast a structural commit to all group members.
@@ -58,34 +73,43 @@ export interface IMlsService {
    * (typically the inviter and the newly-welcomed invitee).
    */
   sendCommit(commitBytes: Uint8Array, groupId: string, excludeDeviceIds?: string[]): Promise<void>;
+  /** Registers a user as a member of a group on the delivery service (server-side membership tracking). */
   registerMember(groupId: string, userId: string): Promise<void>;
   /** Acquiert un verrou distribué Redis pour éviter les commits MLS concurrents sur le même groupe.
    *  Retourne true si le verrou a été acquis, false si un autre appareil le détient déjà. */
   acquireAddLock(groupId: string, ttlMs?: number): Promise<boolean>;
   /** Libère le verrou acquis via acquireAddLock. */
   releaseAddLock(groupId: string): Promise<void>;
+  /** Fetches the Redis Stream history for a group, optionally starting after a given stream entry ID. */
   fetchHistory(
     groupId: string,
     afterStreamId?: string
   ): Promise<{ id?: string; sender_id: string; content: string; timestamp: string }[]>;
+  /** Returns the unique device ID assigned to this MLS instance. */
   getDeviceId(): string;
   /** Fetches messages queued on the delivery service that were not yet delivered
    * (e.g. during a disconnect). Should be called after every connect/reconnect. */
   fetchPendingMessages(): Promise<void>;
 
   // Group management
+  /** Returns the list of group IDs for which this device holds local MLS state. */
   getLocalGroups(): string[];
   /** Oublie l'état MLS local d'un groupe pour forcer une re-synchronisation via Welcome.
    *  `minEpoch` : l'époch minimale que le nouveau Welcome doit atteindre (0 = pas de restriction). */
   forgetGroup(groupId: string, minEpoch?: number): void;
+  /** Updates the display name of a group on the delivery service. */
   renameGroup(groupId: string, name: string): Promise<void>;
+  /** Deletes a group and all its messages from the delivery service. */
   deleteGroupOnServer(groupId: string): Promise<void>;
+  /** Removes a user from the server-side membership list of a group (no MLS commit). */
   removeMemberFromServer(groupId: string, userId: string): Promise<void>;
   /** Performs a real MLS remove commit for all devices of the given user(s) and broadcasts it. */
   removeMember(groupId: string, userIds: string[]): Promise<void>;
   /** Performs a real MLS remove commit for specific devices by identity ("userId:deviceId") and broadcasts it. */
   removeMemberDevice(groupId: string, deviceIdentities: string[]): Promise<void>;
+  /** Returns the list of (userId, deviceId) pairs currently in a group according to the delivery service. */
   getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]>;
+  /** Returns all groups the given user belongs to according to the delivery service. */
   getUserGroups(userId: string): Promise<{ groupId: string; name: string; isGroup: boolean }[]>;
 
   // DeviceGroupMembership tracking
@@ -165,7 +189,9 @@ export interface IMlsService {
   }>;
 
   // Callbacks
+  /** Optional hook called when the gateway delivers a channel-level event (member join/kick, rename, delete). */
   onChannelEvent?: (event: { type: string; data: any }) => void;
+  /** Registers a callback invoked for every incoming MLS message received over the WebSocket. */
   onMessage(
     callback: (
       senderId: string,
@@ -176,11 +202,15 @@ export interface IMlsService {
       isCommit?: boolean
     ) => Promise<boolean>
   ): void;
+  /** Registers a callback invoked when the WebSocket connection is lost. */
   onDisconnect(callback: () => void): void;
+  /** Registers a callback invoked after a Welcome message has been successfully processed. */
   onWelcomeProcessed(callback: (groupId?: string) => void): void;
 
   // Device sync notification
+  /** Broadcasts a reinvite_request control frame so group members know this device needs re-inviting. */
   sendReinviteRequest(groupId: string): Promise<void>;
+  /** Registers a callback invoked when another device sends a reinvite_request for a group this device manages. */
   onReinviteRequest(callback: (senderDeviceId: string, groupId: string) => void): void;
 
   /**

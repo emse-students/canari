@@ -30,6 +30,7 @@ import {
 
 const LOGO_UPLOAD_MB = 2;
 
+/** Manages association resources including membership, logo, Stripe onboarding, and follow relationships. */
 @Controller('associations')
 export class AssociationsController {
   constructor(
@@ -39,39 +40,46 @@ export class AssociationsController {
 
   // ── Public ────────────────────────────────────────────────────────────────
 
+  /** Returns all associations. */
   @Get()
   list() {
     return this.service.list();
   }
 
+  /** Returns an association looked up by its URL slug. */
   @Get('slug/:slug')
   findBySlug(@Param('slug') slug: string) {
     return this.service.findBySlug(slug);
   }
 
+  /** Returns all associations the calling user is a member of. */
   @UseGuards(NginxAuthGuard)
   @Get('me/list')
   myAssociations(@Headers('x-user-id') userId: string) {
     return this.service.listByUser(userId);
   }
 
+  /** Returns all associations the calling user is following. */
   @UseGuards(NginxAuthGuard)
   @Get('me/following')
   myFollowedAssociations(@Headers('x-user-id') userId: string) {
     return this.followsService.listFollowedAssociations(userId);
   }
 
+  /** Returns all members of the specified association. */
   @Get(':id/members')
   listMembers(@Param('id') id: string) {
     return this.service.listMembers(id);
   }
 
+  /** Returns whether the calling user is following the specified association. */
   @UseGuards(NginxAuthGuard)
   @Get(':id/follow-status')
   followStatus(@Headers('x-user-id') userId: string, @Param('id') id: string) {
     return this.followsService.isFollowing(userId, id).then((following) => ({ following }));
   }
 
+  /** Returns whether the calling user has admin permission to manage the association. */
   @UseGuards(NginxAuthGuard)
   @Get(':id/manage-permission')
   async managePermission(
@@ -83,6 +91,7 @@ export class AssociationsController {
     return { ok };
   }
 
+  /** Returns a single association by its ID. */
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.service.findById(id);
@@ -90,12 +99,14 @@ export class AssociationsController {
 
   // ── Authenticated ─────────────────────────────────────────────────────────
 
+  /** Subscribes the calling user to follow the specified association. */
   @UseGuards(NginxAuthGuard)
   @Post(':id/follow')
   followAssociation(@Headers('x-user-id') userId: string, @Param('id') id: string) {
     return this.followsService.followAssociation(userId, id);
   }
 
+  /** Unsubscribes the calling user from following the specified association. */
   @UseGuards(NginxAuthGuard)
   @Delete(':id/follow')
   unfollowAssociation(@Headers('x-user-id') userId: string, @Param('id') id: string) {
@@ -104,12 +115,14 @@ export class AssociationsController {
 
   // ── Global Admin only ─────────────────────────────────────────────────────
 
+  /** Creates a new association; requires global admin privileges. */
   @UseGuards(NginxAuthGuard, GlobalAdminGuard)
   @Post()
   create(@Headers('x-user-id') userId: string, @Body() dto: CreateAssociationDto) {
     return this.service.create(dto, userId);
   }
 
+  /** Deletes an association; requires global admin privileges. */
   @UseGuards(NginxAuthGuard, GlobalAdminGuard)
   @Delete(':id')
   remove(@Param('id') id: string) {
@@ -118,6 +131,7 @@ export class AssociationsController {
 
   // ── Global Admin OR Association Admin ─────────────────────────────────────
 
+  /** Updates association details; requires association admin or global admin. */
   @SetMetadata(MIN_ROLE_KEY, AssociationPermission.Admin)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Patch(':id')
@@ -125,6 +139,7 @@ export class AssociationsController {
     return this.service.update(id, dto);
   }
 
+  /** Uploads and sets a new logo for the association. */
   @SetMetadata(MIN_ROLE_KEY, AssociationPermission.Admin)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @UseInterceptors(
@@ -150,6 +165,7 @@ export class AssociationsController {
     );
   }
 
+  /** Removes the stored logo from an association. */
   @SetMetadata(MIN_ROLE_KEY, AssociationPermission.Admin)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Delete(':id/logo')
@@ -160,6 +176,7 @@ export class AssociationsController {
     return this.service.clearStoredLogo(id, authorization);
   }
 
+  /** Adds a user as a member of the association with the specified role. */
   @SetMetadata(MIN_ROLE_KEY, AssociationPermission.Admin)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Post(':id/members')
@@ -167,6 +184,7 @@ export class AssociationsController {
     return this.service.addMember(id, dto.userId, dto.role, dto.permission);
   }
 
+  /** Updates the role or permission of an existing association member. */
   @SetMetadata(MIN_ROLE_KEY, AssociationPermission.Admin)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Patch(':id/members/:userId')
@@ -178,6 +196,7 @@ export class AssociationsController {
     return this.service.updateMemberRole(id, targetUserId, dto.role, dto.permission);
   }
 
+  /** Removes a member from the association. */
   @SetMetadata(MIN_ROLE_KEY, AssociationPermission.Admin)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Delete(':id/members/:userId')
@@ -187,11 +206,13 @@ export class AssociationsController {
 
   // ── Internal (called by core-service, bypass nginx auth in Docker network) ─
 
+  /** Sets the Stripe account ID for an association; called internally by core-service. */
   @Post(':id/stripe-account')
   setStripeAccount(@Param('id') id: string, @Body() body: { stripeAccountId: string }) {
     return this.service.setStripeAccountId(id, body.stripeAccountId);
   }
 
+  /** Marks Stripe onboarding as complete for an association; called internally by core-service. */
   @Post(':id/stripe-complete')
   markStripeComplete(@Param('id') id: string) {
     return this.service.markStripeOnboardingComplete(id);
