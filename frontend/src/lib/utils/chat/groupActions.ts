@@ -2,6 +2,7 @@ import { saveMlsState } from '$lib/utils/hex';
 import type { IMlsService } from '$lib/mlsService';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
 
+/** Returns the deduplicated list of userId strings that are members of a group (a user can have multiple devices). */
 export async function fetchUniqueGroupMembers(mlsService: IMlsService, groupId: string) {
   const members = await mlsService.getGroupMembers(groupId);
   return [...new Set(members.map((m) => m.userId))];
@@ -47,6 +48,7 @@ export async function deleteGroupAndBroadcast(params: {
   }
 }
 
+/** Renames the group on the server, then broadcasts a "groupRenamed" system message to all members so their UIs update. */
 export async function renameGroupAndBroadcast(params: {
   mlsService: IMlsService;
   groupId: string;
@@ -70,6 +72,7 @@ export async function renameGroupAndBroadcast(params: {
   saveMlsState(userId, stBytes);
 }
 
+/** Removes a member from the MLS group, broadcasts a "memberRemoved" system message, then persists the updated MLS state. */
 export async function removeMemberAndBroadcast(params: {
   mlsService: IMlsService;
   groupId: string;

@@ -530,6 +530,7 @@ export async function startNewConversation(
   }
 }
 
+/** Repairs a broken direct conversation by recreating its MLS group and re-inviting both parties. Returns true on success, false if the contact has no reachable devices. */
 export async function repairDirectConversation(
   conversationKey: string,
   deps: GroupCreationDeps

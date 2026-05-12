@@ -192,6 +192,7 @@ export async function removeReaction(
     console.warn('Failed to send remove_reaction:', e);
   }
 }
+/** Sends an "edit_message" system message so all peers update the message content in their local history. */
 export async function editMessage(
   messageId: string,
   newContent: string,
@@ -212,6 +213,7 @@ export async function editMessage(
   }
 }
 
+/** Sends a "delete_message" system message so all peers remove the message from their local history. */
 export async function deleteMessage(messageId: string, deps: MessageActionDeps): Promise<void> {
   const { mlsService, userId, pin, conversation } = deps;
   if (!conversation.isReady) return;
@@ -225,6 +227,7 @@ export async function deleteMessage(messageId: string, deps: MessageActionDeps):
   }
 }
 
+/** Sends a "read_receipt" system message so peers can update delivered/read status for the given messageIds. Returns false if the group is not ready or the list is empty. */
 export async function sendReadReceipt(
   messageIds: string[],
   deps: MessageActionDeps

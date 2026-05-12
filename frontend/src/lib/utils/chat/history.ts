@@ -52,6 +52,7 @@ function saveSeenCipherHashes(userId: string, groupId: string, hashes: Set<strin
   }
 }
 
+/** Converts raw StoredMessage rows (from IndexedDB) to ChatMessage objects, flagging each as isOwn based on senderId. */
 export function mapStoredMessagesToChatMessages(storedMessages: StoredMessage[], userId: string) {
   return storedMessages.map((m) => {
     return {
@@ -68,6 +69,7 @@ export function mapStoredMessagesToChatMessages(storedMessages: StoredMessage[],
   });
 }
 
+/** Replays stored ciphertext messages for a conversation by decrypting them via the MLS service and writing the results to local DB and the reactive conversation state. */
 export async function replayConversationHistory(params: {
   mlsService: IMlsService;
   id: string;
