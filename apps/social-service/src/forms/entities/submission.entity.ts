@@ -7,6 +7,7 @@ import {
   Index,
 } from 'typeorm';
 
+/** TypeORM entity representing a user's submission to a form, including payment status. */
 @Entity('submissions')
 @Index(['formId', 'userId'])
 export class Submission {

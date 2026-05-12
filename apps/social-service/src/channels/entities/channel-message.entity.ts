@@ -7,6 +7,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 
+/** TypeORM entity storing an encrypted message posted in a channel. */
 @Entity('channel_messages')
 @Index(['channelId'])
 export class ChannelMessage {

@@ -7,6 +7,7 @@ import {
   Unique,
 } from 'typeorm';
 
+/** TypeORM entity recording that a user follows an association. */
 @Entity('association_follows')
 @Unique(['followerUserId', 'associationId'])
 export class AssociationFollow {

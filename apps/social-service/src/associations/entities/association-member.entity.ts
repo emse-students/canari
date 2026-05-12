@@ -5,6 +5,7 @@ export enum AssociationPermission {
   Admin,
 }
 
+/** TypeORM entity representing a user's membership in an association. */
 @Entity('association_members')
 @Unique(['associationId', 'userId'])
 export class AssociationMember {

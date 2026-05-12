@@ -8,6 +8,7 @@ import { AppService } from './app.service';
 import { User } from './users/entities/user.entity';
 import { PaymentModule } from './payment/payment.module';
 
+/** Root NestJS module — wires up TypeORM, config, auth, users, and payments. */
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),

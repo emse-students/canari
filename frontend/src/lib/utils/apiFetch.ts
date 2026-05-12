@@ -8,11 +8,13 @@
 
 import { getToken, refresh } from '$lib/stores/auth';
 
+/** Options for `apiFetch` — extends `RequestInit` with a typed `headers` override. */
 export interface ApiFetchOptions extends RequestInit {
   /** Extra headers merged in (in addition to Content-Type and Authorization). */
   headers?: Record<string, string>;
 }
 
+/** Authenticated fetch wrapper: injects the Bearer token, retries once on 401, and throws on a second 401. */
 export async function apiFetch(url: string, init: ApiFetchOptions = {}): Promise<Response> {
   const method = (init.method ?? 'GET').toUpperCase();
   const logUrl = url.replace(/^https?:\/\/[^/]+/, '').split('?')[0];

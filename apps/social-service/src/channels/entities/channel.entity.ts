@@ -7,6 +7,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 
+/** TypeORM entity representing a channel within a workspace. */
 @Entity('channels')
 @Index(['workspaceId', 'name'], { unique: true })
 export class Channel {

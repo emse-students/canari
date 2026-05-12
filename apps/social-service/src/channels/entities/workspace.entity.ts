@@ -1,5 +1,6 @@
 import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn } from 'typeorm';
 
+/** TypeORM entity representing a channel workspace (tenant grouping channels and members). */
 @Entity('channel_workspaces')
 export class Workspace {
   @PrimaryGeneratedColumn('uuid')

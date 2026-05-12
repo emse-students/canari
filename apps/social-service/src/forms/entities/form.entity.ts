@@ -7,6 +7,7 @@ import {
   Index,
 } from 'typeorm';
 
+/** TypeORM entity representing a dynamic form, optionally linked to an association and Stripe payment. */
 @Entity('forms')
 export class Form {
   @PrimaryGeneratedColumn('uuid')

@@ -1,3 +1,4 @@
+/** Exhaustive map of all channel permission string literals. */
 export const CHANNEL_PERMISSIONS = {
   CHANNEL_READ: 'channel.read',
   CHANNEL_WRITE: 'channel.write',
@@ -7,8 +8,10 @@ export const CHANNEL_PERMISSIONS = {
   ROLE_MANAGE: 'role.manage',
 } as const;
 
+/** Union type of all valid channel permission strings. */
 export type ChannelPermission = (typeof CHANNEL_PERMISSIONS)[keyof typeof CHANNEL_PERMISSIONS];
 
+/** Full permission set granted to channel/workspace owners. */
 export const DEFAULT_OWNER_PERMISSIONS: ChannelPermission[] = [
   CHANNEL_PERMISSIONS.CHANNEL_READ,
   CHANNEL_PERMISSIONS.CHANNEL_WRITE,
@@ -18,6 +21,7 @@ export const DEFAULT_OWNER_PERMISSIONS: ChannelPermission[] = [
   CHANNEL_PERMISSIONS.ROLE_MANAGE,
 ];
 
+/** Permission set granted to channel admins (same as owner by default). */
 export const DEFAULT_ADMIN_PERMISSIONS: ChannelPermission[] = [
   CHANNEL_PERMISSIONS.CHANNEL_READ,
   CHANNEL_PERMISSIONS.CHANNEL_WRITE,
@@ -27,6 +31,7 @@ export const DEFAULT_ADMIN_PERMISSIONS: ChannelPermission[] = [
   CHANNEL_PERMISSIONS.ROLE_MANAGE,
 ];
 
+/** Permission set granted to moderators — excludes role management. */
 export const DEFAULT_MODERATOR_PERMISSIONS: ChannelPermission[] = [
   CHANNEL_PERMISSIONS.CHANNEL_READ,
   CHANNEL_PERMISSIONS.CHANNEL_WRITE,

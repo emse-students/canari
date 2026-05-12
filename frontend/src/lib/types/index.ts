@@ -1,3 +1,4 @@
+/** A single emoji reaction and the user who placed it on a message. */
 export interface MessageReaction {
   emoji: string;
   userId: string;

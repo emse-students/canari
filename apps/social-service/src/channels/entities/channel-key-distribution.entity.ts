@@ -14,6 +14,7 @@ export type ChannelKeyDistributionStatus =
   | 'key_acked'
   | 'failed';
 
+/** TypeORM entity tracking the delivery status of an HKDF channel key to a specific member. */
 @Entity('channel_key_distributions')
 @Index(['channelId', 'targetUserId', 'keyVersion'])
 export class ChannelKeyDistribution {

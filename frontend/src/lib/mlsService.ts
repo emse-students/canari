@@ -9,4 +9,5 @@ import { WebMlsService } from './services/WebMlsService';
 // is statically imported here.
 const _isTauri = typeof window !== 'undefined' && !!(window as any).__TAURI_INTERNALS__;
 
+/** Platform-selected MLS service constructor: resolves to `TauriMlsService` inside Tauri builds and `WebMlsService` in the browser/PWA. */
 export const MlsService: new () => IMlsService = _isTauri ? TauriMlsService : WebMlsService;

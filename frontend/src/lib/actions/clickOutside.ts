@@ -1,3 +1,4 @@
+/** Svelte action that fires a callback whenever a click event occurs outside the attached element. */
 export function clickOutside(
   node: HTMLElement,
   params: (() => void) | { enabled: boolean; callback: () => void }

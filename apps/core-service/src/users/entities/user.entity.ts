@@ -1,5 +1,6 @@
 import { Entity, Column, PrimaryColumn } from 'typeorm';
 
+/** TypeORM entity representing a Canari user, keyed by their OIDC subject. */
 @Entity('users')
 export class User {
   /** OIDC `sub` — not necessarily a UUID string. */

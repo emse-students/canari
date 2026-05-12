@@ -1,5 +1,6 @@
 import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, Index } from 'typeorm';
 
+/** TypeORM entity representing a named role within a workspace, holding an ordered permission set. */
 @Entity('channel_roles')
 @Index(['workspaceId', 'name'], { unique: true })
 export class ChannelRole {

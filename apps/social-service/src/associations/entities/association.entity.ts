@@ -7,6 +7,7 @@ import {
   Index,
 } from 'typeorm';
 
+/** TypeORM entity representing a student association with optional Stripe Connect integration. */
 @Entity('associations')
 export class Association {
   @PrimaryGeneratedColumn('uuid')

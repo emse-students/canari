@@ -7,6 +7,7 @@ import {
   Index,
 } from 'typeorm';
 
+/** TypeORM entity representing a Canari post with optional polls, reactions, comments, and media. */
 @Entity('posts')
 export class Post {
   @PrimaryGeneratedColumn('uuid')

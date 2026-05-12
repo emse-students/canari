@@ -4,6 +4,7 @@ function isPlainObject(value: any): value is Record<string, any> {
   return Object.prototype.toString.call(value) === '[object Object]';
 }
 
+/** Recursively strips keys starting with `$` or containing `.` to prevent MongoDB operator injection. */
 export function sanitizeMongoObject<T>(input: T): T {
   if (input == null) return input;
   if (Array.isArray(input))
@@ -27,6 +28,7 @@ export function sanitizeMongoObject<T>(input: T): T {
   return out as unknown as T;
 }
 
+/** NestJS pipe that sanitizes incoming request bodies against MongoDB operator injection. */
 @Injectable()
 export class SanitizeMongoPipe implements PipeTransform {
   transform(value: unknown) {

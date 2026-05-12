@@ -8,6 +8,7 @@ import { AssociationsModule } from './associations/associations.module';
 import { FollowsModule } from './follows/follows.module';
 import { RedisModule } from './common/redis';
 
+/** Root NestJS module — wires up TypeORM, config, Redis, and all social feature modules. */
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),

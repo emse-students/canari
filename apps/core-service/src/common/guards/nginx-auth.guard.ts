@@ -6,8 +6,10 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 
+/** Guard that verifies the request was forwarded by nginx with a valid X-User-Id header. */
 @Injectable()
 export class NginxAuthGuard implements CanActivate {
+  /** Returns true when X-User-Id is present; throws UnauthorizedException otherwise. */
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest<Request>();
     const userId = (request.headers['x-user-id'] as string | undefined)
