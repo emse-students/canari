@@ -30,10 +30,11 @@ const INITIAL_MESSAGES_PAGE = 60;
 /** Messages loaded per scroll-up DB page request. */
 const OLDER_MESSAGES_PAGE = 50;
 
+/** Runtime dependencies injected into all conversation and group operations. */
 export interface ConversationContext {
-  /** The live storage instance (null until logged in) */
+  /** The live storage instance (null until logged in). */
   storage: IStorage | null;
-  /** The live MLS service */
+  /** Returns (or lazily creates) the active MLS service. */
   ensureMls: () => IMlsService;
   userId: string;
   pin: string;
@@ -81,6 +82,7 @@ export function useConversations() {
 
   // ── Storage helpers ───────────────────────────────────────────────────────
 
+  /** Persists a conversation's metadata (name, isReady, updatedAt) to IndexedDB. For direct conversations the name is stored as "userId::peerId". */
   async function saveConversation(id: string, ctx: ConversationContext) {
     if (!ctx.storage) return;
     const convo = conversations.get(id);
@@ -97,6 +99,7 @@ export function useConversations() {
     });
   }
 
+  /** Fetches and decrypts conversation history from the network, then reloads the latest page from IndexedDB. For channel conversations delegates to loadChannelHistory instead of MLS replay. */
   async function loadHistoryForConversation(
     contactName: string,
     id: string,
@@ -145,6 +148,7 @@ export function useConversations() {
     }
   }
 
+  /** Loads channel message history from the social-service REST API, decrypts each message with the stored HKDF epoch key, and appends new messages to the conversation (skipping already-loaded IDs). */
   async function loadChannelHistory(channelConversationId: string, ctx: ConversationContext) {
     const { channelService } = await import('$lib/services/ChannelService');
     const { channelKeyManager } = await import('$lib/crypto/ChannelKeyVault');
@@ -241,6 +245,7 @@ export function useConversations() {
     }
   }
 
+  /** Reads all saved conversations from IndexedDB, verifies MLS state consistency, and populates the conversations map. */
   async function loadAndRestoreConversations(ctx: ConversationContext) {
     if (!ctx.storage) return;
     await loadExistingConversations({
@@ -311,6 +316,7 @@ export function useConversations() {
 
   // ── Selection + navigation ────────────────────────────────────────────────
 
+  /** Selects a conversation (sets selectedContact, clears unread badge and send error). Use this version when no ctx is available (e.g. from channel event handlers). */
   function selectConversation(name: string) {
     selectedContact = name;
     isConversationDrawerOpen = false;
@@ -335,6 +341,7 @@ export function useConversations() {
     }
   }
 
+  /** Deselects the active conversation and closes the drawer (mobile back-button action). */
   function goBackToMenu() {
     selectedContact = null;
     isConversationDrawerOpen = false;
@@ -342,6 +349,7 @@ export function useConversations() {
 
   // ── Group members ─────────────────────────────────────────────────────────
 
+  /** Fetches the deduplicated list of member userIds for an MLS group and stores them in groupMembers. No-op for channel conversations. */
   async function loadGroupMembers(id: string, ctx: ConversationContext | null) {
     if (!ctx) return;
     if (id.startsWith('channel_')) {
@@ -356,6 +364,7 @@ export function useConversations() {
     }
   }
 
+  /** Checks whether the current user is still a member of the given conversation. Caches the result for 30 s. Attempts server re-registration and direct-conversation repair before surfacing a removal notice. */
   async function verifyCurrentUserMembership(
     contactName: string,
     ctx: ConversationContext
@@ -442,6 +451,7 @@ export function useConversations() {
 
   // ── Group operations ──────────────────────────────────────────────────────
 
+  /** Creates a new named MLS group, persists it, and selects it in the UI. */
   async function createNewGroup(nameRaw: string, ctx: ConversationContext) {
     await createGroup(nameRaw, {
       mlsService: ctx.ensureMls(),
@@ -456,6 +466,7 @@ export function useConversations() {
     });
   }
 
+  /** Invites one or more users (by ID) to the currently selected group, then refreshes the member list. No-op for DMs or channels. */
   async function inviteMembersToCurrentGroup(memberIds: string[], ctx: ConversationContext) {
     if (!selectedContact) return;
     const convo = conversations.get(selectedContact);
@@ -479,6 +490,7 @@ export function useConversations() {
     await loadGroupMembers(convo.id, ctx);
   }
 
+  /** Opens or creates a direct 1-to-1 conversation with the given user. */
   async function startNewConversation(contactNameRaw: string, ctx: ConversationContext) {
     await startConversation(contactNameRaw, {
       mlsService: ctx.ensureMls(),
@@ -493,6 +505,7 @@ export function useConversations() {
     });
   }
 
+  /** Renames the currently selected group on the server, broadcasts the change via MLS, and appends a system message. No-op for DMs and channels. */
   async function handleRenameGroup(name: string, ctx: ConversationContext) {
     if (!selectedContact) return;
     const convo = conversations.get(selectedContact);
@@ -520,6 +533,7 @@ export function useConversations() {
     }
   }
 
+  /** Broadcasts a "groupDeleted" message, deletes the group on the server, wipes local MLS state, removes the conversation from IndexedDB, and resets the UI. */
   async function handleDeleteGroup(ctx: ConversationContext) {
     if (!selectedContact) return;
     const convo = conversations.get(selectedContact);
@@ -560,6 +574,7 @@ export function useConversations() {
     groupMembers = [];
   }
 
+  /** Sends a "memberLeft" broadcast, de-registers from the server, forgets local MLS state, deletes the DB entry, and clears the selection. */
   async function handleLeaveGroup(ctx: ConversationContext) {
     if (!selectedContact) return;
     const convo = conversations.get(selectedContact);
@@ -596,6 +611,7 @@ export function useConversations() {
     groupMembers = [];
   }
 
+  /** Removes a member from the currently selected group via an MLS commit, broadcasts the removal, and refreshes the member list. */
   async function handleRemoveMember(memberId: string, ctx: ConversationContext) {
     if (!selectedContact) return;
     const convo = conversations.get(selectedContact);
