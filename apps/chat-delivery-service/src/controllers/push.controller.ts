@@ -1,0 +1,247 @@
+import {
+  Controller,
+  Get,
+  Post,
+  Delete,
+  Body,
+  Param,
+  Query,
+  BadRequestException,
+  ForbiddenException,
+  UseGuards,
+  Headers,
+  Logger,
+} from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import * as crypto from 'crypto';
+import * as admin from 'firebase-admin';
+import { PushToken } from '../entities/push-token.entity';
+import { QueuedMessage } from '../entities/queued-message.entity';
+import { HeaderAuthGuard } from '../guards/header-auth.guard';
+import {
+  sanitizeQueryValue,
+  sanitizeOptionalQueryValue,
+} from '../utils/sanitize';
+
+/** Push notification token management and Firebase Cloud Messaging dispatch. */
+@Controller()
+export class PushController {
+  private readonly logger = new Logger(PushController.name);
+
+  constructor(
+    @InjectRepository(PushToken)
+    private pushTokenRepo: Repository<PushToken>,
+    @InjectRepository(QueuedMessage)
+    private queuedMessageRepo: Repository<QueuedMessage>,
+  ) {}
+
+  private isTerminalPushTokenError(error: unknown): boolean {
+    const rawCode =
+      typeof error === 'object' && error && 'code' in error
+        ? (error as { code?: unknown }).code
+        : undefined;
+    const code = typeof rawCode === 'string' ? rawCode : '';
+
+    return (
+      code === 'messaging/invalid-registration-token' ||
+      code === 'messaging/registration-token-not-registered'
+    );
+  }
+
+  /**
+   * Register or refresh a push token for a device.
+   * Upserts on (userId, deviceId) — one token per device per user.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Post('mls/push/register')
+  async registerPushToken(
+    @Body() body: { token: string; deviceId: string; platform?: string },
+    @Headers('x-user-id') userIdRaw: string,
+  ) {
+    const userId = sanitizeQueryValue(userIdRaw, 'userId');
+    const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
+
+    if (typeof body.token !== 'string' || !body.token.trim()) {
+      throw new BadRequestException('token is required');
+    }
+    const token = body.token.trim().slice(0, 500);
+    const platform: 'android' | 'ios' =
+      body.platform === 'ios' ? 'ios' : 'android';
+
+    // Génère un secret opaque long-lived pour ce device.
+    // Retourné UNE SEULE FOIS dans la réponse ; le client l'encrypte dans
+    // Android Keystore et l'utilise pour GET /mls/push/fetch-proto.
+    const pushSecret = crypto.randomUUID().replace(/-/g, '');
+
+    // Atomic upsert — avoids a race condition where two concurrent requests
+    // (e.g. app restart) both find no row then both try to INSERT, with the
+    // second hitting the unique(userId, deviceId) constraint.
+    await this.pushTokenRepo.upsert(
+      { userId, deviceId, token, platform, pushSecret },
+      { conflictPaths: ['userId', 'deviceId'] },
+    );
+    this.logger.log(
+      `[PUSH_REGISTER] user=${userId} device=${deviceId} platform=${platform}`,
+    );
+    // pushSecret retourné UNE SEULE FOIS — le client doit le persister.
+    return { status: 'registered', pushSecret };
+  }
+
+  /**
+   * Endpoint pour le service FCM Android en arrière-plan (app tuée).
+   * Auth : Authorization: PushSecret {secret} — pas de JWT (token expiré).
+   * Retourne le proto MLS chiffré quand il était trop volumineux pour être
+   * inclu inline dans le payload FCM (> 3.5 KB).
+   */
+  @Get('mls/push/fetch-proto')
+  async fetchProtoForPush(
+    @Headers('authorization') authHeader: string,
+    @Query('messageId') messageIdRaw: string,
+    @Query('userId') userIdRaw: string,
+    @Query('deviceId') deviceIdRaw: string,
+  ) {
+    // ── Auth : PushSecret ─────────────────────────────────────────────────
+    const secret = authHeader?.startsWith('PushSecret ')
+      ? authHeader.slice('PushSecret '.length).trim()
+      : null;
+    if (!secret) {
+      throw new ForbiddenException('PushSecret header required');
+    }
+
+    const userId = sanitizeQueryValue(userIdRaw ?? '', 'userId');
+    const deviceId = sanitizeQueryValue(deviceIdRaw ?? '', 'deviceId');
+    const messageId = sanitizeQueryValue(messageIdRaw ?? '', 'messageId');
+
+    // Lookup en temps constant — on ne révèle pas si l'entrée existe.
+    const pt = await this.pushTokenRepo.findOne({
+      where: { userId, deviceId },
+    });
+    if (
+      !pt?.pushSecret ||
+      !crypto.timingSafeEqual(
+        Buffer.from(pt.pushSecret),
+        Buffer.from(
+          secret.slice(0, pt.pushSecret.length).padEnd(pt.pushSecret.length),
+        ),
+      )
+    ) {
+      throw new ForbiddenException('Invalid push secret');
+    }
+
+    const queued = await this.queuedMessageRepo.findOne({
+      where: { id: messageId, recipientId: userId, deviceId },
+    });
+    if (!queued) {
+      // Message déjà ACKé ou inexistant — retourner vide (pas d'erreur pour éviter retry loops)
+      return { proto: '' };
+    }
+    return { proto: queued.proto ?? queued.content ?? '' };
+  }
+
+  /**
+   * Unregister the push token of a specific device (e.g. on logout).
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Delete('mls/push/unregister/:deviceId')
+  async unregisterPushToken(
+    @Param('deviceId') deviceIdRaw: string,
+    @Headers('x-user-id') userIdRaw: string,
+  ) {
+    const userId = sanitizeQueryValue(userIdRaw, 'userId');
+    const deviceId = sanitizeQueryValue(deviceIdRaw, 'deviceId');
+
+    await this.pushTokenRepo.delete({ userId, deviceId });
+    this.logger.log(`[PUSH_UNREGISTER] user=${userId} device=${deviceId}`);
+    return { status: 'unregistered' };
+  }
+
+  /**
+   * Diagnostic route: sends a push notification test to every device that has
+   * a registered push token (online or offline).
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Post('mls/push/broadcast-test')
+  async broadcastTestPush(
+    @Body() body: { title?: string; message?: string },
+    @Headers('x-user-id') requesterRaw?: string,
+  ) {
+    if (admin.apps.length === 0) {
+      throw new BadRequestException(
+        'Firebase Admin SDK is not initialized (push disabled)',
+      );
+    }
+
+    const requester = sanitizeOptionalQueryValue(requesterRaw, 'x-user-id');
+    const traceId = `push-test-${crypto.randomUUID().slice(0, 8)}`;
+    const title = (body?.title || 'Canari - test push').trim().slice(0, 80);
+    const message = (body?.message || 'Notification de diagnostic')
+      .trim()
+      .slice(0, 180);
+
+    this.logger.log(
+      `[PUSH_TEST][${traceId}] START requester=${requester ?? 'unknown'} title=${title}`,
+    );
+
+    const targets = await this.pushTokenRepo.find();
+    let withToken = 0;
+    let sent = 0;
+    let failed = 0;
+
+    for (const pushToken of targets) {
+      withToken++;
+      try {
+        await admin.messaging().send({
+          token: pushToken.token,
+          notification: {
+            title,
+            body: message,
+          },
+          data: {
+            type: 'push_test',
+            title,
+            message,
+            sentAt: Date.now().toString(),
+          },
+          android: {
+            priority: 'high',
+            notification: {
+              channelId: 'canari_messages',
+            },
+          },
+          apns: {
+            payload: { aps: { sound: 'default' } },
+          },
+        });
+        sent++;
+        this.logger.log(
+          `[PUSH_TEST][${traceId}] SENT user=${pushToken.userId} device=${pushToken.deviceId}`,
+        );
+      } catch (e) {
+        failed++;
+        if (this.isTerminalPushTokenError(e)) {
+          await this.pushTokenRepo.delete({ id: pushToken.id });
+          this.logger.warn(
+            `[PUSH_TEST][${traceId}] DELETED invalid token user=${pushToken.userId} device=${pushToken.deviceId}`,
+          );
+        }
+        this.logger.warn(
+          `[PUSH_TEST][${traceId}] FAILED user=${pushToken.userId} device=${pushToken.deviceId} err=${e}`,
+        );
+      }
+    }
+
+    this.logger.log(
+      `[PUSH_TEST][${traceId}] DONE targeted=${targets.length} sent=${sent} failed=${failed}`,
+    );
+
+    return {
+      status: 'done',
+      traceId,
+      targetedDevices: targets.length,
+      withToken,
+      sent,
+      failed,
+    };
+  }
+}
