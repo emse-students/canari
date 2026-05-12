@@ -40,38 +40,63 @@
   }
 
   interface Props {
+    /** Controls whether the sidebar shows chat conversations or community channels. */
     viewMode?: 'chat' | 'communities';
+    /** Map of all loaded conversations keyed by conversation ID. */
     conversations: SvelteMap<string, Conversation>;
+    /** List of channel workspaces available in communities view. */
     channelWorkspaces?: ChannelWorkspace[];
+    /** ID/name of the currently selected conversation. */
     selectedContact: string | null;
+    /** Current value of the new-contact input (controlled). */
     newContactInput: string;
+    /** Current value of the new-group name input (controlled). */
     newGroupInput: string;
+    /** Current value of the new-channel name input (controlled). */
     newChannelInput?: string;
+    /** Callback fired when the contact input value changes. */
     onContactInputChange: (value: string) => void;
+    /** Callback fired when the group name input value changes. */
     onGroupInputChange: (value: string) => void;
+    /** Callback fired when the channel name input value changes. */
     onChannelInputChange?: (value: string) => void;
+    /** Callback to start a direct conversation with the given contact ID. */
     onAddContact: (contactId?: string) => void;
+    /** Callback to create a new group conversation with the given name. */
     onCreateGroup: (groupName?: string) => void;
+    /** Callback to create a new channel inside the specified workspace. */
     onCreateChannel?: (workspaceId: string, channelName: string) => void;
+    /** Callback to create a new community workspace. */
     onCreateWorkspace?: (workspaceName?: string) => void;
+    /** Callback to invite a member to a channel with a given role. */
     onInviteChannelMember?: (
       channelId: string,
       memberId: string,
       roleName: 'member' | 'moderator' | 'admin'
     ) => void;
+    /** Callback to update an existing channel member's role. */
     onUpdateChannelMemberRole?: (
       channelId: string,
       memberId: string,
       roleName: 'member' | 'moderator' | 'admin'
     ) => void;
+    /** Callback to update the avatar image of a workspace. */
     onUpdateWorkspaceImage?: (workspaceDbId: string, mediaId: string) => void;
+    /** Callback fired when the user leaves a workspace. */
     onLeaveWorkspace?: (workspaceDbId: string) => void;
+    /** Callback fired when the user selects a direct or group conversation. */
     onSelectConversation: (name: string) => void;
+    /** Callback fired when the user selects a channel conversation. */
     onSelectChannelConversation?: (channelId: string) => void;
+    /** ID of the currently active channel. */
     selectedChannelId?: string;
+    /** When true, the sidebar is hidden on mobile (shown only on desktop). */
     isHidden?: boolean;
+    /** When true, the sidebar renders as a slide-over drawer on mobile. */
     drawerMode?: boolean;
+    /** Callback to close the drawer when in drawer mode. */
     onCloseDrawer?: () => void;
+    /** ID of the currently authenticated user. */
     currentUserId?: string;
   }
 

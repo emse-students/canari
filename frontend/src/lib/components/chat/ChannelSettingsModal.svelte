@@ -30,24 +30,35 @@
   }
 
   interface Props {
+    /** Whether the modal is visible. */
     open: boolean;
+    /** ID of the channel being configured. */
     selectedChannelId: string;
+    /** List of workspaces and their channels, used to resolve the channel name. */
     channelWorkspaces: ChannelSidebarWorkspace[];
+    /** Optional media ID for the channel's current avatar image. */
     imageMediaId?: string | null;
+    /** Callback to invite a user to the channel with a given role. */
     onInviteMember: (
       channelId: string,
       memberId: string,
       role: 'member' | 'moderator' | 'admin'
     ) => void;
+    /** Callback to update the role of an existing channel member. */
     onUpdateMemberRole: (
       channelId: string,
       memberId: string,
       role: 'member' | 'moderator' | 'admin'
     ) => void;
+    /** Callback to rename the channel. */
     onRenameChannel?: (channelId: string, newName: string) => void;
+    /** Callback to permanently delete the channel. */
     onDeleteChannel?: (channelId: string) => void;
+    /** Callback fired when the current user leaves the channel. */
     onLeaveChannel?: (channelId: string) => void;
+    /** Callback to update the channel's avatar image. */
     onUpdateChannelImage?: (channelId: string, mediaId: string) => void;
+    /** Callback to close the modal. */
     onClose: () => void;
   }
 

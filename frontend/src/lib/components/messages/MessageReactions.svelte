@@ -16,7 +16,8 @@
     groupedReactions: Record<string, string[]>;
     /** When true, aligns the reaction row to the right (own messages). */
     isOwn?: boolean;
-    currentUserId?: string; // Ajouté pour savoir quelles réactions mettre en surbrillance
+    /** ID of the current user, used to highlight their own reactions. */
+    currentUserId?: string;
     /** Called when the user clicks a reaction badge to toggle their own reaction. */
     onReact?: (emoji: string) => void;
   }

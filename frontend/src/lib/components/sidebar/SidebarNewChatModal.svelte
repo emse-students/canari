@@ -3,16 +3,27 @@
   import UserAutocomplete from '../shared/UserAutocomplete.svelte';
 
   interface Props {
+    /** Whether the modal is visible. */
     open: boolean;
+    /** Which tab is currently active inside the modal. */
     activeTab: 'contact' | 'group';
+    /** Current value of the contact identifier input. */
     contactId: string;
+    /** Current value of the group name input. */
     groupName: string;
+    /** ID of the currently logged-in user, used to prevent self-conversation. */
     currentUserId?: string;
+    /** Callback to close the modal. */
     onClose: () => void;
+    /** Callback fired when the user switches between contact and group tabs. */
     onTabChange: (tab: 'contact' | 'group') => void;
+    /** Callback fired when the contact identifier input changes. */
     onContactIdChange: (value: string) => void;
+    /** Callback fired when the group name input changes. */
     onGroupNameChange: (value: string) => void;
+    /** Callback to start a direct conversation with the entered contact. */
     onSubmitContact: () => void;
+    /** Callback to create a new group conversation. */
     onSubmitGroup: () => void;
   }
 

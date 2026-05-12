@@ -12,41 +12,75 @@
   import type { ChatMessage, MessageReaction, Conversation } from '$lib/types';
 
   interface Props {
+    /** The active conversation to display, or null when nothing is selected. */
     conversation: Conversation | null;
+    /** Current value of the composer text area (controlled). */
     messageText: string;
+    /** Whether the active conversation is a community channel. */
     isChannel?: boolean;
+    /** Callback fired on each keystroke in the composer. */
     onMessageChange: (value: string) => void;
+    /** Callback to submit the composed message. */
     onSend: () => void;
+    /** Callback to invite one or more members by user ID. */
     onInviteMembers: (ids: string[]) => void;
+    /** Callback to navigate back to the conversation list on mobile. */
     onBack?: () => void;
+    /** Callback to open the full conversations drawer. */
     onOpenConversations?: () => void;
+    /** Callback to open the channel settings modal. */
     onOpenSettings?: () => void;
+    /** When true, the area is hidden on mobile (shown only on desktop). */
     isHidden?: boolean;
     // Group management
+    /** List of member user IDs in the current group conversation. */
     groupMembers?: string[];
+    /** Error message to display when the last send operation failed. */
     sendError?: string;
+    /** Callback to rename the group conversation. */
     onGroupRename?: (name: string) => void;
+    /** Callback to delete the group conversation. */
     onGroupDelete?: () => void;
+    /** Callback fired when the current user leaves the group. */
     onGroupLeave?: () => void;
+    /** Callback to remove a specific member from the group. */
     onGroupRemoveMember?: (userId: string) => void;
     // Reactions & replies
+    /** Map of emoji reactions keyed by message ID. */
     messageReactions?: Record<string, MessageReaction[]> | Map<string, MessageReaction[]>;
+    /** Message currently being replied to, shown as a preview in the composer. */
     replyingTo?: ChatMessage | null;
+    /** Callback fired when the user chooses to reply to a message. */
     onReply?: (message: ChatMessage) => void;
+    /** Callback to scroll/jump to a specific message by ID. */
     onNavigateToMessage?: (messageId: string) => void;
+    /** Callback fired when the user adds an emoji reaction to a message. */
     onReact?: (messageId: string, emoji: string) => void;
+    /** Callback to delete a message by ID. */
     onDelete?: (messageId: string) => void;
+    /** Callback to edit a message by ID with new text. */
     onEdit?: (messageId: string, text: string) => void;
+    /** Callback to cancel the current reply. */
     onCancelReply?: () => void;
+    /** JWT auth token forwarded to message bubbles for media decryption. */
     authToken?: string;
+    /** Callback fired when the user selects or drops files to attach. */
     onFilesSelected?: (files: File[]) => void;
+    /** Files staged for sending but not yet uploaded. */
     pendingFiles?: File[];
+    /** Callback to remove a staged file by its index. */
     onRemovePendingFile?: (index: number) => void;
+    /** Whether a file upload is currently in progress. */
     isUploading?: boolean;
+    /** Callback to initiate a call with the current contact. */
     onStartCall?: () => void;
+    /** Optional media ID for the group or channel avatar image. */
     imageMediaId?: string | null;
+    /** Callback to open the channel members sidebar. */
     onOpenMembers?: () => void;
+    /** ID of the currently authenticated user. */
     currentUserId?: string;
+    /** Whether the conversation history is being loaded (shows a skeleton). */
     isLoadingHistory?: boolean;
     /** Called when in-memory groups are exhausted; should load older messages from DB. Returns true if more may be available. */
     onLoadOlderMessages?: () => Promise<boolean>;

@@ -22,12 +22,19 @@
   }
 
   interface Props {
+    /** Whether the modal is visible. */
     open: boolean;
+    /** List of all available community workspaces. */
     workspaces: ChannelWorkspace[];
+    /** ID of the workspace currently being administered. */
     selectedWorkspaceId: string;
+    /** Callback to close the modal. */
     onClose: () => void;
+    /** Callback to update the avatar image of the selected workspace. */
     onUpdateWorkspaceImage?: (workspaceDbId: string, mediaId: string) => void;
+    /** Callback fired when the current user leaves the selected workspace. */
     onLeaveWorkspace?: (workspaceDbId: string) => void;
+    /** Callback to send a community membership invitation with the given role. */
     onInviteCommunityMember?: (
       memberId: string,
       roleName: 'member' | 'moderator' | 'admin'

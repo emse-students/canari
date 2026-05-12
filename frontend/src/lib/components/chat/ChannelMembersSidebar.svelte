@@ -6,9 +6,13 @@
   import { channelService, type ChannelMemberDto } from '$lib/services/ChannelService';
 
   interface Props {
+    /** ID of the channel whose members are displayed. */
     selectedChannelId: string;
+    /** ID of the currently authenticated user, used to highlight the current user. */
     currentUserId?: string;
+    /** Layout mode: desktop shows the sidebar inline, mobile shows it full-screen. */
     mode?: 'desktop' | 'mobile';
+    /** Callback to close the sidebar (used in mobile mode). */
     onClose?: () => void;
   }
 

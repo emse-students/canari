@@ -7,7 +7,9 @@
     callService,
     remoteName = 'Utilisateur',
   }: {
+    /** The active CallService instance managing the WebRTC call. */
     callService: CallService;
+    /** Display name of the remote participant shown while waiting for video. */
     remoteName?: string;
   } = $props();
 

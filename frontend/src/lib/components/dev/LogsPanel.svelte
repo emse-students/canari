@@ -4,7 +4,9 @@
   import { tick } from 'svelte';
 
   interface Props {
+    /** Array of log entries to display in the terminal panel. */
     logs: string[];
+    /** Callback to close and unmount the panel. */
     onClose: () => void;
   }
 

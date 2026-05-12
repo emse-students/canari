@@ -5,9 +5,13 @@
   import { portal } from '$lib/actions/portal';
 
   interface Props {
+    /** Polls attached to the post, or undefined when the post has none. */
     polls: Poll[] | undefined;
+    /** Option IDs the current user has selected across all polls. */
     selectedOptions: string[];
+    /** Called when the user clicks a poll option to toggle its selection. */
     onToggleOption: (pollId: string, optionId: string, multipleChoice: boolean) => void;
+    /** Called when the user clicks the "Voter" button to submit their selection. */
     onSubmitVote: (pollId: string) => void;
   }
 

@@ -21,7 +21,7 @@
   import ChatArea from './chat/ChatArea.svelte';
 
   interface Props {
-    /** Controls whether the sidebar shows chat conversations or community channels. */
+    /** Controls whether the sidebar shows private chat conversations or community channels. */
     routeMode?: 'chat' | 'communities';
   }
 

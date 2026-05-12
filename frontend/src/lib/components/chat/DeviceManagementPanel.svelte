@@ -34,10 +34,15 @@
   }
 
   interface Props {
+    /** Whether the modal is visible. */
     open: boolean;
+    /** ID of the user whose devices are being managed. */
     userId: string;
+    /** Device ID of the current device, used to highlight and protect it from deletion. */
     myDeviceId: string;
+    /** MLS service instance used to fetch and manage device data. */
     mlsService: IMlsService;
+    /** Callback to close the modal. */
     onClose: () => void;
   }
 

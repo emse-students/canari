@@ -3,12 +3,19 @@
   import { LoaderCircle, Fingerprint } from 'lucide-svelte';
 
   interface Props {
+    /** Whether the modal is visible. */
     open: boolean;
+    /** Called with the entered PIN when the user submits the form. */
     onSubmit: (pin: string) => void;
+    /** Called when the user dismisses the modal without submitting. */
     onClose?: () => void;
+    /** Called when the user taps the biometric authentication button. */
     onBiometricRequest?: () => void;
+    /** Whether to render the biometric authentication button. */
     showBiometricButton?: boolean;
+    /** Error message set by the parent (e.g. wrong PIN); displayed below the input. */
     externalError?: string;
+    /** Whether a login attempt is in progress; disables inputs and shows a spinner. */
     isLoading?: boolean;
   }
 

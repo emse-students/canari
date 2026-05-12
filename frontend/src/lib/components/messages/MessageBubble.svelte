@@ -29,34 +29,59 @@
   }
 
   interface Props {
+    /** Unique identifier of the message, used as the DOM anchor for scroll navigation. */
     messageId: string;
+    /** User ID of the message author, used to resolve display names and profile links. */
     senderId: string;
+    /** Raw encrypted/serialised envelope content of the message. */
     content: string;
+    /** Send time of the message. */
     timestamp: Date;
+    /** Last edit time, shown in the info tooltip when isEdited is true. */
     editedAt?: Date;
+    /** When true, renders the amber bubble variant and enables edit/delete controls. */
     isOwn: boolean;
+    /** When true, renders the message as a system notification pill instead of a bubble. */
     isSystem?: boolean;
+    /** The message this bubble is replying to, shown as a quote above the content. */
     replyTo?: {
       id: string;
       senderId: string;
       content: string;
     };
+    /** Emoji reactions attached to this message. */
     reactions?: MessageReaction[];
+    /** User IDs who have read the message, shown in the info tooltip. */
     readBy?: string[];
+    /** When true, shows the delivery status indicator (sent/read) below the bubble. */
     isLastOwn?: boolean;
+    /** When true, shows an "(modifié)" label. */
     isEdited?: boolean;
+    /** When true, renders the content as struck-through italic and hides action buttons. */
     isDeleted?: boolean;
+    /** Controls which corners of the bubble are rounded based on adjacent messages. */
     groupPosition?: 'single' | 'start' | 'middle' | 'end';
+    /** Called when the user triggers the reply action. */
     onReply?: (messageId: string) => void;
+    /** Called when the user clicks a quoted reply to scroll to the original message. */
     onNavigateToMessage?: (messageId: string) => void;
+    /** Called when the user selects an emoji reaction. */
     onReact?: (messageId: string, emoji: string) => void;
+    /** Called when the user confirms message deletion. */
     onDelete?: (messageId: string) => void;
+    /** Called when the user confirms an inline edit. */
     onEdit?: (messageId: string, newText: string) => void;
+    /** ID of the authenticated user, used to highlight own reactions and gate edit/delete. */
     currentUserId?: string;
+    /** Bearer token forwarded to MediaService for downloading and decrypting attachments. */
     authToken?: string;
+    /** When true, applies the rise-in entrance animation to the bubble. */
     shouldAnimate?: boolean;
+    /** When true, pulses a ring around the bubble to highlight it as the search result. */
     isHighlighted?: boolean;
+    /** Active search term for in-message text highlighting. */
     searchTerm?: string;
+    /** Delivery status of an outbound message; controls the status indicator icon. */
     status?: 'sending' | 'sent' | 'error';
   }
 

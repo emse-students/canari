@@ -2,13 +2,21 @@
   import { fade, slide } from 'svelte/transition';
 
   interface Props {
+    /** Whether an OIDC or dev login request is in progress. */
     isLoggingIn: boolean;
+    /** Error message to display below the login button; empty string hides it. */
     loginError: string;
+    /** Whether biometric authentication is available on the current device. */
     biometricAvailable: boolean;
+    /** When true, renders the dev-login panel (only in non-production builds). */
     isDev?: boolean;
+    /** Bindable dev user ID typed in the dev-login input. */
     devId?: string;
+    /** Called when the user clicks the main OIDC login button. */
     onLogin: () => void;
+    /** Called when the user submits the dev-login form; only provided in dev mode. */
     onDevLogin?: () => void;
+    /** Called when the user clicks the device-reset link. */
     onReset: () => void;
   }
 

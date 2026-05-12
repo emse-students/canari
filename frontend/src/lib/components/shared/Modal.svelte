@@ -5,11 +5,17 @@
   import { portal } from '$lib/actions/portal';
 
   interface Props {
+    /** Whether the modal is visible. */
     open?: boolean;
+    /** Title shown in the modal header; omitting it hides the header row. */
     title?: string;
+    /** Tailwind max-width class applied to the dialog panel. */
     maxWidth?: string;
+    /** Called when the user dismisses the modal (backdrop click, Escape, or close button). */
     onClose: () => void;
+    /** Main body content of the modal. */
     children?: Snippet;
+    /** Optional footer content rendered below the body. */
     footer?: Snippet;
   }
 

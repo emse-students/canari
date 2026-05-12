@@ -7,8 +7,11 @@
     onRemove,
     showPriceModifier = false,
   } = $props<{
+    /** The form item being configured. Bindable — parent owns the state. */
     item: any;
+    /** Called when the user clicks the delete (trash) button to remove this item. */
     onRemove: () => void;
+    /** When true, shows a price modifier input next to each choice option. */
     showPriceModifier?: boolean;
   }>();
 

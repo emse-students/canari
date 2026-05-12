@@ -4,6 +4,7 @@
   import { Image as ImageIcon, CircleAlert } from 'lucide-svelte';
 
   interface Props {
+    /** Encrypted media descriptor containing the download reference and decryption keys. */
     media: {
       mediaId: string;
       key: string;
@@ -12,6 +13,7 @@
       size: number;
       fileName?: string;
     };
+    /** Bearer token used to authenticate the media download request. */
     authToken: string;
     /** When set, clicking the image calls this instead of opening its own lightbox. */
     onOpen?: () => void;

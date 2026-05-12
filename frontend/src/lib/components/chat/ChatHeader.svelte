@@ -26,25 +26,44 @@
   import { fade, fly } from 'svelte/transition';
 
   interface Props {
+    /** Raw contact/user ID used for presence lookup and avatar resolution. */
     contactName: string;
+    /** Human-readable name displayed in the header. */
     displayName: string;
+    /** Whether the MLS session is fully established. */
     isReady: boolean;
+    /** Whether the conversation is a group (vs. a direct message). */
     isGroupConversation?: boolean;
+    /** Whether the conversation is a community channel. */
     isChannel?: boolean;
+    /** Optional media ID for the group or channel avatar image. */
     imageMediaId?: string | null;
+    /** Callback to invite one or more members by user ID. */
     onInviteMembers?: (ids: string[]) => void;
+    /** Callback to navigate back to the conversation list on mobile. */
     onBack?: () => void;
+    /** Callback to open the settings modal (for channels). */
     onOpenSettings?: () => void;
     // Group management
+    /** List of member user IDs in the current group conversation. */
     groupMembers?: string[];
+    /** ID of the currently authenticated user. */
     currentUserId?: string;
+    /** Callback to rename the group. */
     onGroupRename?: (name: string) => void;
+    /** Callback to delete the group conversation. */
     onGroupDelete?: () => void;
+    /** Callback fired when the current user leaves the group. */
     onGroupLeave?: () => void;
+    /** Callback to remove a specific member from the group. */
     onGroupRemoveMember?: (userId: string) => void;
+    /** Callback to initiate a call with the current contact or group. */
     onStartCall?: () => void;
+    /** Callback to toggle the in-conversation search bar. */
     onToggleSearch?: () => void;
+    /** Whether the search bar is currently active. */
     searchActive?: boolean;
+    /** Callback to open the channel members sidebar. */
     onOpenMembers?: () => void;
   }
 

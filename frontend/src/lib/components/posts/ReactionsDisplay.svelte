@@ -3,10 +3,15 @@
   import { portal } from '$lib/actions/portal';
 
   interface Props {
+    /** Aggregated count of each reaction type across all users. */
     reactionCounts: Record<string, number>;
-    reactions: Record<string, string>; // userId → reactionType
+    /** Map of userId to their chosen reaction type, used to resolve voter names. */
+    reactions: Record<string, string>;
+    /** The reaction type the current user has applied, or null if none. */
     userReaction: string | null;
+    /** Full catalogue of available reaction types with their display emoji and icon name. */
     reactionList: Array<{ type: string; emoji: string; icon: string }>;
+    /** Called when the user double-clicks a reaction badge to toggle their own reaction. */
     onReactionClick: (reactionType: string) => void;
   }
 

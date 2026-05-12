@@ -7,14 +7,23 @@
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
 
   interface Props {
+    /** Raw contact/user ID used for presence lookup and direct-message routing. */
     contactName: string;
+    /** Human-readable display name shown in the tile. */
     displayName: string;
+    /** Type of conversation, determines avatar and presence display logic. */
     conversationType?: 'direct' | 'group' | 'channel';
+    /** Serialised envelope of the last message, used to render the preview text. */
     lastMessage?: string;
+    /** Whether the MLS session for this conversation is fully established. */
     isReady: boolean;
+    /** Whether this tile is the currently active conversation. */
     isSelected: boolean;
+    /** Number of unread messages to display as a badge. */
     unreadCount?: number;
+    /** Optional media ID for the group or channel avatar image. */
     imageMediaId?: string | null;
+    /** Callback fired when the user clicks the tile. */
     onClick: () => void;
   }
 

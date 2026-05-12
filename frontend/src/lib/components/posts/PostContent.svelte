@@ -6,7 +6,9 @@
   import { ChevronLeft, ChevronRight, X } from 'lucide-svelte';
 
   interface Props {
+    /** The post whose markdown content and images are rendered. */
     post: PostEntity;
+    /** Bearer token forwarded to PostImage for downloading and decrypting images. */
     authToken?: string;
   }
 

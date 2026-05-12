@@ -6,16 +6,27 @@
   import { fade, fly } from 'svelte/transition';
 
   interface Props {
+    /** Whether the sync session modal is visible. */
     isOpen: boolean;
+    /** Whether the local device is the QR source (offer) or the scanner (join). */
     mode: 'offer' | 'join';
+    /** Raw text payload encoded in the QR code, used as a copy-fallback. */
     qrPayload: string;
+    /** Data URL of the generated QR code image. */
     qrDataUrl: string;
+    /** Current value of the manual join payload input. */
     joinPayload: string;
+    /** Status message displayed below the QR or scanner area. */
     statusText: string;
+    /** Whether a sync operation is currently in progress. */
     isBusy: boolean;
+    /** Callback fired when the join payload input changes. */
     onJoinPayloadChange: (value: string) => void;
+    /** Callback to confirm and start the join operation with the current payload. */
     onConfirmJoin: () => void;
+    /** Callback to copy the QR payload text to the clipboard. */
     onCopyPayload: () => void;
+    /** Callback to close the modal and clean up camera resources. */
     onClose: () => void;
   }
 

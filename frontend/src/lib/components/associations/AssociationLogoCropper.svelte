@@ -4,7 +4,9 @@
    * Square logo export for associations: center crop with zoom, or letterbox on white.
    */
   interface Props {
+    /** Called with the exported 512×512 JPEG blob when the user confirms the crop. */
     onExport: (blob: Blob) => void;
+    /** Called when the user clicks "Annuler". Omit to hide the cancel button. */
     onCancel?: () => void;
   }
 

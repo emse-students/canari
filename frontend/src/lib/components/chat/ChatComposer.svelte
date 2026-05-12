@@ -13,15 +13,25 @@
   }
 
   interface Props {
+    /** Current value of the message text area (controlled). */
     messageText: string;
+    /** Callback fired on each keystroke in the text area. */
     onMessageChange: (value: string) => void;
+    /** Callback to submit the composed message. */
     onSend: () => void;
+    /** Optional callback reporting text-area focus state changes. */
     onFocusChange?: (focused: boolean) => void;
+    /** Message being replied to, shown as a preview above the input. */
     replyingTo?: ReplyTo | null;
+    /** Callback to cancel the current reply. */
     onCancelReply?: () => void;
+    /** Callback fired when the user selects or drops files to attach. */
     onFilesSelected?: (files: File[]) => void;
+    /** Files staged for sending but not yet uploaded. */
     pendingFiles?: File[];
+    /** Callback to remove a staged file by its index. */
     onRemovePendingFile?: (index: number) => void;
+    /** Whether an upload is currently in progress (disables the send button). */
     isUploading?: boolean;
   }
 

@@ -3,9 +3,13 @@
   import type { EventButton } from '$lib/posts/api';
 
   interface Props {
+    /** Event registration buttons attached to the post, or undefined when the post has none. */
     eventButtons: EventButton[] | undefined;
+    /** ID of the authenticated user, used to determine registration status per button. */
     currentUserId: string;
+    /** Submission state for buttons that have an associated form, keyed by button ID. */
     btnFormInfos: Record<string, { formId: string; title: string; submitted: boolean }>;
+    /** Called when the user clicks a direct-registration button. Receives the button ID. */
     onRegisterEvent: (buttonId: string) => void;
   }
 

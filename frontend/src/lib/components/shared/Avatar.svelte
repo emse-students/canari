@@ -3,10 +3,15 @@
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
 
   interface Props {
+    /** ID of the user whose avatar should be displayed. */
     userId: string;
+    /** Avatar size preset. */
     size?: 'sm' | 'md' | 'lg';
+    /** When true, the avatar stretches to fill its container instead of using a preset size. */
     fill?: boolean;
+    /** Border-radius style of the avatar. */
     shape?: 'soft' | 'circle';
+    /** Text used for initials when the display name cannot be resolved. */
     fallbackLabel?: string;
   }
 

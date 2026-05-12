@@ -2,6 +2,7 @@
   import { CheckCircle2, ClipboardList, ArrowRight, ExternalLink } from 'lucide-svelte';
 
   interface Props {
+    /** Forms attached to the post, each with its submission status for the current user. */
     formInfos: Array<{ id: string; title: string; submitted: boolean }>;
   }
 

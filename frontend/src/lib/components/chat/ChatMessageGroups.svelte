@@ -14,19 +14,33 @@
   }
 
   interface Props {
+    /** Slice of message groups currently rendered in the DOM. */
     visibleMessageGroups: MessageGroup[];
+    /** Number of groups hidden above the render window (older messages). */
     hiddenGroupCount: number;
+    /** Callback to expand the render window upwards or load older messages from DB. */
     loadOlderGroups: () => void;
+    /** Whether the local DB may have messages older than those currently in memory. */
     hasMoreInDb?: boolean;
+    /** Active search term used to highlight matching text in messages. */
     searchQuery?: string;
+    /** Map of emoji reactions keyed by message ID. */
     messageReactions?: Record<string, MessageReaction[]> | Map<string, MessageReaction[]>;
+    /** Callback fired when the user chooses to reply to a message. */
     onReply?: (message: ChatMessage) => void;
+    /** Callback to scroll/jump to a specific message by ID. */
     onNavigateToMessage?: (messageId: string) => void;
+    /** Callback fired when the user adds an emoji reaction to a message. */
     onReact?: (messageId: string, emoji: string) => void;
+    /** Callback to delete a message by ID. */
     onDelete?: (messageId: string) => void;
+    /** Callback to edit a message by ID with new text. */
     onEdit?: (messageId: string, text: string) => void;
+    /** Timestamp (ms) when the current conversation was opened; messages newer than this animate in. */
     switchTime: number;
+    /** ID of the currently authenticated user, used to determine message ownership. */
     currentUserId?: string;
+    /** JWT auth token forwarded to message bubbles for media decryption. */
     authToken: string;
   }
 

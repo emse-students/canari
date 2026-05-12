@@ -8,11 +8,17 @@
   }
 
   interface Props {
+    /** Currently selected user ID (empty string when nothing is selected). */
     value: string;
+    /** Called with the resolved user ID whenever the selection changes. */
     onValueChange: (value: string) => void;
+    /** Optional callback fired when a suggestion is chosen from the dropdown. */
     onSelect?: (user: User) => void;
+    /** Placeholder text shown in the text input. */
     placeholder?: string;
+    /** HTML id attribute for the underlying input element. */
     inputId?: string;
+    /** Called when the user presses Enter with a valid selection. */
     onSubmit?: () => void;
   }
 

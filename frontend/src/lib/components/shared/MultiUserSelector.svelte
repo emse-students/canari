@@ -10,8 +10,11 @@
   }
 
   interface Props {
+    /** Array of currently selected user IDs. */
     users: string[];
+    /** Called with the updated list whenever a user is added or removed. */
     onUsersChange: (users: string[]) => void;
+    /** Placeholder text shown in the search input. */
     placeholder?: string;
   }
 

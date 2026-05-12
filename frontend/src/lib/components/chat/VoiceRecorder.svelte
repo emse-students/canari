@@ -3,7 +3,9 @@
   import { onDestroy } from 'svelte';
 
   interface Props {
+    /** Callback fired with the recorded audio blob when the user stops recording. */
     onRecordingComplete: (audioBlob: Blob) => void;
+    /** Optional callback invoked when the user cancels the recording. */
     onCancel?: () => void;
   }
 
