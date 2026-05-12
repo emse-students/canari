@@ -32,8 +32,11 @@ import type { IStorage, StoredMessage } from '$lib/db';
 import { ChannelService } from '$lib/services/ChannelService';
 import { sendEncryptedChannelMessage } from '$lib/utils/chat/channelCrypto';
 
+/** Runtime dependencies injected into all messaging operations. */
 export interface MessagingContext {
+  /** Returns (or lazily creates) the active MLS service. */
   ensureMls: () => IMlsService;
+  /** Reactive map of all open conversations (DMs + channels). */
   conversations: SvelteMap<string, Conversation>;
   userId: string;
   pin: string;
@@ -66,6 +69,7 @@ export function useMessaging() {
 
   // ── Incoming message ──────────────────────────────────────────────────────
 
+  /** Updates the status (e.g. 'sending' → 'sent' / 'error') of a single message in the reactive map and persists the change to IndexedDB. */
   function patchMessage(
     messageId: string,
     contactName: string,
@@ -105,7 +109,7 @@ export function useMessaging() {
     }
   }
 
-  // --- NOUVELLE SIGNATURE AVEC UN OBJET D'OPTIONS ---
+  /** Appends a new message to a conversation's reactive state, increments the unread counter if the conversation is not focused, plays the appropriate tone, optionally triggers a system notification, and persists the message to IndexedDB. Silently drops duplicates by message ID. */
   async function addMessageToChat(
     senderId: string,
     content: string,
@@ -193,6 +197,7 @@ export function useMessaging() {
     });
   }
 
+  /** Appends multiple messages in a single reactive update and one batch IndexedDB write. Used by history replay to avoid O(n) individual updates that would cause UI jank. */
   async function batchAddMessages(
     messages: Array<{ senderId: string; content: string } & AddMessageToChatOptions>,
     contactName: string,
@@ -270,6 +275,7 @@ export function useMessaging() {
 
   // ── Send ──────────────────────────────────────────────────────────────────
 
+  /** Main send handler: verifies MLS membership, uploads any pending media files (with client-side AES-GCM encryption), then sends a text message. Handles channel (REST) and DM/group (MLS) paths. */
   async function handleSendChat(ctx: MessagingContext, messageText: string) {
     const text = messageText.trim();
     const filesToSend = [...pendingMediaFiles];
@@ -435,6 +441,7 @@ export function useMessaging() {
 
   // ── File handling ─────────────────────────────────────────────────────────
 
+  /** Validates and enqueues files for sending. Images are auto-compressed with canvas API before queuing. Files exceeding the configured size limit are rejected with an error message. */
   async function handleFilesSelected(files: File[], ctx: MessagingContext) {
     const readyFiles: File[] = [];
     for (const file of files) {
@@ -465,12 +472,14 @@ export function useMessaging() {
     if (readyFiles.length > 0) pendingMediaFiles = [...pendingMediaFiles, ...readyFiles];
   }
 
+  /** Removes a staged (not yet sent) file from the pending media queue by its index. */
   function removePendingMediaFile(index: number) {
     pendingMediaFiles = pendingMediaFiles.filter((_, i) => i !== index);
   }
 
   // ── Reactions / edit / delete ─────────────────────────────────────────────
 
+  /** Toggles an emoji reaction on a message: adds it if absent, removes it if the user already used that emoji. Updates state optimistically in memory and DB before sending the MLS message. */
   async function handleAddReaction(messageId: string, emoji: string, ctx: MessagingContext) {
     if (!ctx.selectedContact) return;
     const conversationKey = ctx.selectedContact.toLowerCase();
@@ -534,6 +543,7 @@ export function useMessaging() {
     }
   }
 
+  /** Sends a "delete_message" MLS system message and marks the message as deleted in the local conversation state. Only the original sender can delete their own message. */
   async function handleDeleteMessage(messageId: string, ctx: MessagingContext) {
     if (!ctx.selectedContact) return;
     const convo = ctx.conversations.get(ctx.selectedContact);
@@ -557,6 +567,7 @@ export function useMessaging() {
     }
   }
 
+  /** Sends an "edit_message" MLS system message and updates the message content and editedAt in the local conversation state. Only the original sender can edit their own message. */
   async function handleEditMessage(messageId: string, text: string, ctx: MessagingContext) {
     if (!ctx.selectedContact) return;
     const convo = ctx.conversations.get(ctx.selectedContact);
@@ -588,10 +599,12 @@ export function useMessaging() {
 
   // ── Reply ─────────────────────────────────────────────────────────────────
 
+  /** Sets the message the user is replying to, which will be embedded as a quote preview in the next send. */
   function handleReply(message: ChatMessage) {
     replyingTo = message;
   }
 
+  /** Clears the pending reply state (user dismissed the reply banner). */
   function cancelReply() {
     replyingTo = null;
   }
