@@ -38,8 +38,11 @@ import { startPushService, stopPushService } from '$lib/services/PushNotificatio
 import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 import type { AddMessageToChatOptions, Conversation } from '$lib/types';
 
+/** Callbacks that useChatSession needs from the parent composable (useConversations + UI glue). Passed to login(), logout(), reconnect helpers, etc. */
 export interface ChatSessionCallbacks {
+  /** Reactive map of all open conversations, keyed by conversation ID. */
   conversations: SvelteMap<string, Conversation>;
+  /** Restores conversations from IndexedDB and re-checks MLS state consistency. */
   loadAndRestoreConversations: () => Promise<void>;
   addMessageToChat: (
     senderId: string,
@@ -116,6 +119,7 @@ export function useChatSession() {
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
+  /** Returns the current MLS service instance, creating it lazily if needed. Throws outside the browser context. */
   function ensureMls(): IMlsService {
     if (!mls) {
       if (typeof window === 'undefined') throw new Error('MLS unavailable outside browser context');
@@ -124,6 +128,7 @@ export function useChatSession() {
     return mls;
   }
 
+  /** Wipes all local MLS state, device ID, and stored DB for the given user — called when the server signals that this device has been revoked. */
   async function resetDeviceAsFresh(userIdToReset: string, cb: ChatSessionCallbacks) {
     // Purge all local state tied to this logical device so next init creates
     // a brand new MLS device identity.
@@ -163,6 +168,7 @@ export function useChatSession() {
 
   // ── Login ─────────────────────────────────────────────────────────────────
 
+  /** Full login flow: verifies the PIN against the server, initialises MLS, opens IndexedDB, restores conversations, connects the WebSocket, and schedules device-sync. On failure redirects to /login (or calls cb.onLoginFailed if provided). */
   async function login(cb: ChatSessionCallbacks) {
     if (!userId.trim() || !pin.trim()) {
       loginError = 'Veuillez remplir tous les champs.';
@@ -588,6 +594,7 @@ export function useChatSession() {
     }
   }
 
+  /** Reads the PIN from the hardware biometric keystore and delegates to login(). Displays a user-friendly error if biometric authentication fails. */
   async function biometricLogin(cb: ChatSessionCallbacks) {
     loginError = '';
     cb.log('[BIOMETRIE] Tentative de connexion biométrique...');
@@ -618,11 +625,13 @@ export function useChatSession() {
 
   const BIOMETRIC_DISMISSED_KEY = 'canari_biometric_prompt_dismissed';
 
+  /** Returns true if the user has permanently dismissed the biometric enrolment prompt (localStorage flag). */
   function isBiometricPromptDismissed(): boolean {
     if (localStorage.getItem(BIOMETRIC_DISMISSED_KEY) === 'true') return true;
     return false;
   }
 
+  /** Hides the biometric enrolment banner and persists a "dismissed" flag both in localStorage and in the Tauri native store (if running on Tauri). */
   async function dismissBiometricPrompt(): Promise<void> {
     showBiometricEnrollPrompt = false;
     localStorage.setItem(BIOMETRIC_DISMISSED_KEY, 'true');
@@ -635,6 +644,7 @@ export function useChatSession() {
     }
   }
 
+  /** Stores the current PIN in the hardware biometric keystore, then clears the in-memory PIN so future logins require biometric authentication. */
   async function enrollBiometric() {
     appendLog('[BIOMETRIE] Inscription biométrique en cours...');
     try {
@@ -651,6 +661,7 @@ export function useChatSession() {
     }
   }
 
+  /** Clears all session state (conversations, tokens, push registration), deregisters the device push token, and redirects to /login. */
   function logout(cb: ChatSessionCallbacks) {
     cb.log(`[LOGOUT] Déconnexion de userId=${userId?.slice(0, 8) ?? 'inconnu'}...`);
     const tokenForPushCleanup = authToken;
@@ -682,6 +693,7 @@ export function useChatSession() {
 
   // ── Reconnection ──────────────────────────────────────────────────────────
 
+  /** Schedules an exponential-backoff WebSocket reconnect attempt (delays: 1s, 2s, 4s … 30s max). No-op when already logged out or a timer is already pending. */
   function scheduleReconnect(cb: ChatSessionCallbacks) {
     if (!isLoggedIn) return;
     isWsConnected = false;
@@ -694,6 +706,7 @@ export function useChatSession() {
     reconnectTimer = setTimeout(() => attemptReconnect(cb), delay);
   }
 
+  /** Performs one WebSocket reconnect attempt, re-fetches pending MLS messages, and re-runs device sync. Falls back to scheduleReconnect on failure. */
   async function attemptReconnect(cb: ChatSessionCallbacks) {
     reconnectTimer = null;
     if (!isLoggedIn || isReconnecting) return;
@@ -745,6 +758,7 @@ export function useChatSession() {
 
   // ── Device sync ───────────────────────────────────────────────────────────
 
+  /** Processes any pending MLS invitations from our own other devices (multi-device sync). Re-entrant safe: concurrent calls are dropped if a sync is already running. */
   async function processDeviceInvitationsLocally(cb: ChatSessionCallbacks) {
     if (isSyncing) return;
     isSyncing = true;
@@ -763,6 +777,7 @@ export function useChatSession() {
 
   // ── Backup ────────────────────────────────────────────────────────────────
 
+  /** Exports an encrypted backup of all conversations and MLS state for the current user (triggers browser download). */
   async function handleExport(log: (msg: string) => void) {
     if (!storage) return;
     isExporting = true;
@@ -775,6 +790,7 @@ export function useChatSession() {
     }
   }
 
+  /** Imports a previously exported backup file, decrypts it with the current PIN, replaces IndexedDB, and reloads conversations. */
   async function handleImport(
     file: File,
     log: (msg: string) => void,
@@ -803,6 +819,7 @@ export function useChatSession() {
 
   // ── Dev tools ─────────────────────────────────────────────────────────────
 
+  /** Dev-tool: generates a new MLS KeyPackage for this device and stores it in lastKeyPackage (hex). */
   async function devGenerateKeyPackage(log: (msg: string) => void) {
     try {
       lastKeyPackage = await generateDevKeyPackage({ mlsService: ensureMls(), pin });
@@ -811,6 +828,7 @@ export function useChatSession() {
     }
   }
 
+  /** Dev-tool: adds a member (KeyPackage from incomingBytesHex) to an MLS group and stores the resulting Commit/Welcome hex for inspection. */
   async function devAddMember(groupId: string, log: (msg: string) => void) {
     if (!incomingBytesHex) return;
     try {
@@ -827,6 +845,7 @@ export function useChatSession() {
     }
   }
 
+  /** Dev-tool: processes a Welcome message (hex in incomingBytesHex) so this device joins the corresponding MLS group. */
   async function devProcessWelcome(log: (msg: string) => void) {
     if (!incomingBytesHex) return;
     try {
