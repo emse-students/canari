@@ -18,6 +18,7 @@ export function useNotifications() {
 
   // ---------- Audio ----------
 
+  /** Plays a two-note descending chime (rate-limited to one every 600 ms) when an incoming message arrives. */
   function playNotificationTone() {
     if (typeof window === 'undefined') return;
     const now = Date.now();
@@ -46,6 +47,7 @@ export function useNotifications() {
     }
   }
 
+  /** Plays a short ascending chirp when the user sends a message (rate-limited to one every 200 ms). */
   function playSendTone() {
     if (typeof window === 'undefined') return;
     const now = Date.now();
@@ -74,10 +76,12 @@ export function useNotifications() {
     }
   }
 
+  /** Alias for playNotificationTone — used when a message is received from another user. */
   function playReceiveTone() {
     playNotificationTone();
   }
 
+  /** Plays a subtle descending tick when messages are marked as read (rate-limited to one every 250 ms). */
   function playReadTone() {
     if (typeof window === 'undefined') return;
     const now = Date.now();
@@ -108,6 +112,7 @@ export function useNotifications() {
 
   // ---------- System (OS-level) notifications ----------
 
+  /** Registers a one-shot user-gesture listener (pointerdown / keydown / touchstart) to request Notification permission the next time the user interacts with the page. */
   function installBrowserPermissionRetry() {
     if (typeof window === 'undefined' || !('Notification' in window)) return;
     if (browserPermissionRetryAbort || Notification.permission !== 'default') return;
@@ -136,6 +141,7 @@ export function useNotifications() {
     }
   }
 
+  /** Requests OS-level notification permission. On Tauri skips Linux desktop (WebKitGTK dbus deadlock); on web uses the Notification API and falls back to installBrowserPermissionRetry if the prompt is dismissed. */
   async function requestSystemNotificationPermission() {
     if (typeof window === 'undefined') return;
 
@@ -184,6 +190,7 @@ export function useNotifications() {
     }
   }
 
+  /** Shows an OS-level notification (via Tauri plugin or Web Notification API) rate-limited to one every 800 ms. Clicking the notification focuses the app window. */
   async function sendSystemNotification(title: string, body: string) {
     if (typeof window === 'undefined') return;
     const now = Date.now();
@@ -236,6 +243,7 @@ export function useNotifications() {
 
   // ---------- Channel membership banner ----------
 
+  /** Displays a banner notice at the top of the chat (e.g. "You joined #general"). Clears automatically after 5 s. */
   function showChannelMembershipNotice(message: string, actionChannelId?: string) {
     channelMembershipNotice = message;
     channelMembershipActionChannelId = actionChannelId ?? null;
@@ -248,6 +256,7 @@ export function useNotifications() {
     }, 5000);
   }
 
+  /** Called when the user clicks the "Go to channel" action on the membership banner. Selects the channel and clears the notice. */
   function openJoinedChannelFromNotice(
     selectConversation: (id: string) => void,
     setSelectedChannelId: (id: string) => void
@@ -263,6 +272,7 @@ export function useNotifications() {
     }
   }
 
+  /** Clears the action channel pointer (e.g. when the user was already kicked from the channel before clicking). */
   function clearActionChannel(channelId: string) {
     if (channelMembershipActionChannelId === channelId) {
       channelMembershipActionChannelId = null;
