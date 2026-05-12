@@ -13,14 +13,23 @@ import {
 import { createSyncQrDataUrl } from '$lib/sync/qr';
 import type { IStorage } from '$lib/db';
 
+/** Dependencies injected into QR sync operations from the parent composable. */
 export interface SyncSessionContext {
+  /** Base URL of the chat-delivery service (for sync session API calls). */
   historyBaseUrl: string;
+  /** Authenticated user's ID. */
   userId: string;
+  /** This device's MLS device ID. */
   myDeviceId: string;
+  /** User PIN used to encrypt/decrypt the backup payload. */
   pin: string;
+  /** Local IndexedDB storage (null until logged in). */
   storage: IStorage | null;
+  /** Debug log sink. */
   log: (msg: string) => void;
+  /** Reloads conversations from DB after sync completes. */
   loadExistingConversations: () => Promise<void>;
+  /** Re-runs pending MLS invitations after sync completes. */
   processDeviceInvitationsLocally: () => Promise<void>;
 }
 
@@ -33,6 +42,7 @@ export function useSyncSession() {
   let syncStatusText = $state('');
   let isSyncSessionBusy = $state(false);
 
+  /** Executes one bidirectional sync exchange (upload local messages, download peer messages) then reloads conversations and re-processes invitations. */
   async function runSyncRound(sessionId: string, peerDeviceId: string, ctx: SyncSessionContext) {
     if (!ctx.storage) throw new Error('Stockage local indisponible');
 
@@ -54,6 +64,7 @@ export function useSyncSession() {
     );
   }
 
+  /** Creates a new QR sync session (offer side): generates an ephemeral key pair, registers with the server, renders a QR code, then polls until the other device joins and runs the sync round. Times out after 3 minutes. */
   async function handleStartSyncSession(ctx: SyncSessionContext) {
     try {
       isSyncSessionBusy = true;
@@ -97,6 +108,7 @@ export function useSyncSession() {
     }
   }
 
+  /** Switches the sync modal to "join" mode and resets all sync state, ready for the user to paste a QR payload. */
   function openJoinSyncModal() {
     syncMode = 'join';
     syncJoinPayload = '';
@@ -106,6 +118,7 @@ export function useSyncSession() {
     isSyncSessionOpen = true;
   }
 
+  /** Joins an existing QR sync session (answer side): parses the QR payload, registers this device as the answerer, then runs the bidirectional sync round. */
   async function handleConfirmJoinSync(ctx: SyncSessionContext) {
     try {
       isSyncSessionBusy = true;
@@ -137,6 +150,7 @@ export function useSyncSession() {
     }
   }
 
+  /** Copies the QR payload text to the clipboard. Falls back to the Web Share API when the Clipboard API is unavailable (e.g. non-secure contexts). */
   async function copySyncPayload() {
     if (!syncQrPayloadText) return;
     const payload = syncQrPayloadText;
@@ -183,6 +197,7 @@ export function useSyncSession() {
     syncStatusText = 'Impossible de copier automatiquement. Copiez le texte manuellement.';
   }
 
+  /** Closes the sync modal. No-op while a sync operation is in progress. */
   function closeModal() {
     if (!isSyncSessionBusy) isSyncSessionOpen = false;
   }
