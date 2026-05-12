@@ -55,12 +55,14 @@ export interface MediaRef {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** Encode a byte array to a lowercase hexadecimal string (e.g. key or IV for wire format). */
 function hexEncode(buf: Uint8Array): string {
   return Array.from(buf)
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
 }
 
+/** Decode a lowercase hexadecimal string back to a byte array (inverse of hexEncode). */
 function hexDecode(hex: string): Uint8Array<ArrayBuffer> {
   return new Uint8Array((hex.match(/.{1,2}/g) ?? []).map((b) => parseInt(b, 16)));
 }
@@ -189,6 +191,7 @@ export function parseMediaMessage(content: string): MediaRef | null {
 // Core crypto (SubtleCrypto – available in all modern browsers and Tauri)
 // ---------------------------------------------------------------------------
 
+/** Generate a fresh 256-bit AES-GCM Content Encryption Key and return it as both a CryptoKey and a hex string. */
 async function generateCek(): Promise<{ cryptoKey: CryptoKey; keyHex: string }> {
   const cryptoKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, [
     'encrypt',
@@ -198,6 +201,7 @@ async function generateCek(): Promise<{ cryptoKey: CryptoKey; keyHex: string }> 
   return { cryptoKey, keyHex: hexEncode(new Uint8Array(raw)) };
 }
 
+/** Re-import a hex-encoded CEK as a non-extractable CryptoKey configured for AES-256-GCM decryption. */
 async function importCek(keyHex: string): Promise<CryptoKey> {
   return crypto.subtle.importKey(
     'raw',
@@ -208,6 +212,7 @@ async function importCek(keyHex: string): Promise<CryptoKey> {
   );
 }
 
+/** Generate a fresh 12-byte random initialization vector (nonce) for AES-256-GCM. */
 function generateIv(): { iv: Uint8Array<ArrayBuffer>; ivHex: string } {
   const iv = new Uint8Array(12);
   crypto.getRandomValues(iv);
@@ -218,9 +223,18 @@ function generateIv(): { iv: Uint8Array<ArrayBuffer>; ivHex: string } {
 // MediaService
 // ---------------------------------------------------------------------------
 
+/**
+ * Client-side media operations: encrypt-then-upload and download-then-decrypt.
+ * The decryption key (CEK) is never transmitted to or stored on the server — it is embedded inside
+ * the MLS-encrypted application message so only group members can decrypt the attachment.
+ */
 export class MediaService {
   private readonly baseUrl: string;
 
+  /**
+   * @param baseUrl Optional override for the media service base URL.
+   *   Defaults to the `VITE_MEDIA_URL` env var, then `window.location.origin`.
+   */
   constructor(baseUrl?: string) {
     const env = typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_MEDIA_URL;
     const fallback =

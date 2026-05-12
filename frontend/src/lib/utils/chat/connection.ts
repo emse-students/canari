@@ -10,7 +10,12 @@ import { ChannelService } from '$lib/services/ChannelService';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
 
-/** Dependencies injected into setupMessageHandler. All callbacks are optional to allow partial implementations in tests. */
+/**
+ * Dependencies injected into setupMessageHandler.
+ * All event callbacks are optional so partial implementations can be used in unit tests.
+ * The required fields (mlsService, storage, userId, etc.) provide access to the MLS WASM layer,
+ * the local DB, and reactive Svelte stores.
+ */
 export interface MessageHandlerDeps {
   mlsService: IMlsService;
   storage: IStorage | null;
@@ -196,9 +201,17 @@ function startHeartbeat(): void {
 }
 
 /**
- * Configure le callback pour traiter les messages entrants MLS.
- * Gère les messages de contrôle (renommage, ajout/retrait membre, suppression groupe),
- * les réactions, les réponses et les messages texte standard.
+ * Register the MLS message callback that decrypts and dispatches all incoming WebSocket traffic.
+ *
+ * Handles five categories of incoming messages:
+ *  - Welcome messages (new group joins / re-bootstraps)
+ *  - Regular application messages (text, media, replies)
+ *  - Reactions and reaction removals
+ *  - System/control events (rename, add/remove member, delete, read receipts, edit, sync)
+ *  - Channel events (member joined/kicked, key rotation, new channel messages)
+ *
+ * Also implements self-healing: phantom-group detection, epoch-mismatch recovery, and
+ * pre-Welcome message buffering so commits that arrive before their Welcome are not lost.
  */
 export function setupMessageHandler(deps: MessageHandlerDeps): void {
   const {
@@ -1453,7 +1466,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   );
 }
 
-/** Dependencies injected into initializeConnection. Only the tab leader calls this. */
+/** Dependencies injected into initializeConnection; only the tab-leader tab calls this function. */
 interface ConnectionDeps {
   mlsService: IMlsService;
   userId: string;
@@ -1466,8 +1479,15 @@ interface ConnectionDeps {
 }
 
 /**
- * Initialise la connexion WebSocket et génère un KeyPackage.
- * Gère la reconnexion automatique en cas de déconnexion.
+ * Open the WebSocket connection, publish a fresh MLS KeyPackage, and reconcile membership state.
+ *
+ * Steps performed on every (re-)connect:
+ *  1. Guard: only runs on the tab-leader (multi-tab coordination).
+ *  2. Connect to the chat gateway and start listening for pending messages.
+ *  3. Generate and publish a new KeyPackage so other devices can invite this one.
+ *  4. Iterate server-side memberships: send welcome_request for pending groups,
+ *     reinvite_request for stale leaves, and detect groups missing from local MLS state.
+ *  5. Process pending device invitations (add new devices to existing groups).
  */
 export async function initializeConnection(deps: ConnectionDeps): Promise<void> {
   const {

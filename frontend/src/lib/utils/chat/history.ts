@@ -12,18 +12,22 @@ import { serializeEnvelope, mkTextEnvelope } from '$lib/envelope';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
 
+/** Return the localStorage key used to persist the set of already-processed ciphertext fingerprints for a group. */
 function seenHistoryKey(userId: string, groupId: string): string {
   return `history_seen_cipher:${userId}:${groupId}`;
 }
 
+/** Return the localStorage key used to persist the last-processed Redis stream ID for incremental history fetching. */
 function lastStreamIdKey(userId: string, groupId: string): string {
   return `history_last_stream_id:${userId}:${groupId}`;
 }
 
+/** Read the last-processed Redis stream ID from localStorage; returns undefined if not set. */
 function loadLastStreamId(userId: string, groupId: string): string | undefined {
   return localStorage.getItem(lastStreamIdKey(userId, groupId)) ?? undefined;
 }
 
+/** Persist the latest processed Redis stream ID so the next history fetch is incremental. */
 function saveLastStreamId(userId: string, groupId: string, streamId: string): void {
   try {
     localStorage.setItem(lastStreamIdKey(userId, groupId), streamId);
@@ -32,6 +36,7 @@ function saveLastStreamId(userId: string, groupId: string, streamId: string): vo
   }
 }
 
+/** Load the set of already-seen ciphertext fingerprints from localStorage (used to skip duplicate history entries). */
 function loadSeenCipherHashes(userId: string, groupId: string): Set<string> {
   try {
     return new Set(JSON.parse(localStorage.getItem(seenHistoryKey(userId, groupId)) ?? '[]'));
@@ -40,6 +45,7 @@ function loadSeenCipherHashes(userId: string, groupId: string): Set<string> {
   }
 }
 
+/** Persist the seen-ciphertext fingerprint set to localStorage, capped at 5 000 entries to bound storage growth. */
 function saveSeenCipherHashes(userId: string, groupId: string, hashes: Set<string>): void {
   // Keep the cache bounded to avoid unbounded localStorage growth.
   const MAX_HASHES = 5000;

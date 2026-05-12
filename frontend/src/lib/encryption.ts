@@ -15,6 +15,11 @@ const PBKDF2_ITERATIONS = 100_000;
 // derived exactly once per session instead of once per message.
 const derivedKeyCache = new Map<string, Promise<CryptoKey>>();
 
+/**
+ * Derive a 256-bit AES-GCM CryptoKey from a PIN using PBKDF2-HMAC-SHA-256 (100 000 iterations).
+ * Results are cached in memory by "pin:base64(salt)" so that the expensive derivation is only
+ * performed once per unique (pin, salt) pair for the lifetime of the page.
+ */
 async function deriveKey(pin: string, salt: Uint8Array): Promise<CryptoKey> {
   const saltB64 = btoa(Array.from(salt, (b) => String.fromCharCode(b)).join(''));
   const cacheKey = `${pin}:${saltB64}`;
@@ -65,6 +70,12 @@ export async function encryptData(
   return { salt, iv, cipherText: new Uint8Array(cipherBuf) };
 }
 
+/**
+ * Decrypt a ciphertext blob produced by encryptData.
+ * Derives the AES-256-GCM key from `pin` and `salt` (cache hit for stable-salt callers),
+ * then decrypts and JSON-parses the plaintext.
+ * Throws with "Decryption failed. Wrong PIN?" if the tag does not verify (wrong PIN or corruption).
+ */
 export async function decryptData(
   cipherText: Uint8Array,
   iv: Uint8Array,

@@ -1,5 +1,13 @@
 import * as crypto from 'crypto';
 
+/**
+ * Derive a 32-byte AES-256 channel key using HKDF-SHA-256.
+ *
+ * The salt is SHA-256("workspaceId:channelId:version") so each epoch / channel combination
+ * produces a unique key even when the same `secret` is shared across the workspace.
+ * The info string "canari-channel-e2ee-v1" domain-separates these keys from any other
+ * HKDF derivations that might use the same input keying material.
+ */
 function deriveChannelKey(
   secret: string,
   workspaceId: string,
@@ -20,6 +28,13 @@ function deriveChannelKey(
   return Buffer.from(raw);
 }
 
+/**
+ * Encrypt a plaintext string with AES-256-GCM using a key derived from `secret`, `workspaceId`, `channelId`, and `keyVersion`.
+ *
+ * A 12-byte random nonce is generated per call.  The 16-byte GCM authentication tag is appended
+ * to the ciphertext before base64 encoding.  Both the `ciphertext` and `nonce` must be stored and
+ * sent together so the receiver can decrypt with decryptSoft.
+ */
 export function encryptSoft(params: {
   secret: string;
   workspaceId: string;
@@ -41,6 +56,13 @@ export function encryptSoft(params: {
   };
 }
 
+/**
+ * Decrypt a ciphertext produced by encryptSoft.
+ *
+ * The base64-encoded `ciphertext` is expected to end with a 16-byte GCM authentication tag
+ * (appended by encryptSoft).  The tag is split off before the AES-256-GCM decipher is created.
+ * Throws if the tag does not verify (tampered data or wrong key).
+ */
 export function decryptSoft(params: {
   secret: string;
   workspaceId: string;

@@ -5,7 +5,10 @@ import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
 import { downloadDir } from '@tauri-apps/api/path';
 
-/** Extracts the other user's ID from a DM group name formatted as "userA::userB". Returns null for group chats. */
+/**
+ * Extracts the other user's ID from a DM group name formatted as "userA::userB".
+ * Returns null when the name does not match the pattern (i.e. for named group chats).
+ */
 function parseDirectPeerFromName(rawName: string, userId: string): string | null {
   const parts = rawName
     .split('::')

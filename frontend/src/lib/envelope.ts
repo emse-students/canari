@@ -42,6 +42,7 @@ export type MessageEnvelope = TextEnvelope | MediaEnvelope | SystemEnvelope;
 // Serialization helpers
 // ---------------------------------------------------------------------------
 
+/** Serialize a MessageEnvelope to a JSON string suitable for storage in StoredMessage.content. */
 export function serializeEnvelope(env: MessageEnvelope): string {
   return JSON.stringify(env);
 }
@@ -63,6 +64,13 @@ export function getPreviewText(env: MessageEnvelope): string {
 /** Parse a stored content string back into a MessageEnvelope. */
 const envelopeCache = new Map<string, MessageEnvelope>();
 
+/**
+ * Parse a stored content string back into a typed MessageEnvelope.
+ * Strings starting with `{` are treated as JSON and validated against each known variant.
+ * Any string that is not valid JSON, or valid JSON that does not match a known envelope shape,
+ * is returned as a `TextEnvelope` for backward compatibility with legacy plain-text messages.
+ * Results are memoized in a bounded 2 000-entry LRU-style cache to avoid repeated parsing.
+ */
 export function parseEnvelope(content: string): MessageEnvelope {
   const cached = envelopeCache.get(content);
   if (cached) return cached;
@@ -150,10 +158,12 @@ export function parseEnvelope(content: string): MessageEnvelope {
 // Builders
 // ---------------------------------------------------------------------------
 
+/** Build a text message envelope, optionally quoting another message as a reply. */
 export function mkTextEnvelope(text: string, replyTo?: MessageReference): MessageEnvelope {
   return { kind: 'text', text, replyTo };
 }
 
+/** Build a media message envelope wrapping an encrypted attachment reference and an optional caption. */
 export function mkMediaEnvelope(
   media: MediaRef,
   caption?: string,
@@ -162,6 +172,7 @@ export function mkMediaEnvelope(
   return { kind: 'media', media, caption, replyTo };
 }
 
+/** Build a system / group-event envelope (e.g. "Alice renamed the group"). These are never user-authored. */
 export function mkSystemEnvelope(text: string): MessageEnvelope {
   return { kind: 'system', text };
 }

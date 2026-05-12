@@ -29,46 +29,85 @@ function getOrCreateEncryptionSalt(storageId: string): Uint8Array {
 // Types
 // ---------------------------------------------------------------------------
 
+/** Lightweight metadata row for a conversation stored in the local DB (no message payload). */
 export interface ConversationMeta {
   /** Primary key — equals the MLS groupId UUID (e.g. "g-abc123", "channel_xyz", "dm_uuid"). */
   id: string;
+  /** Human-readable name shown in the conversation list. */
   name: string;
+  /** True once the MLS Welcome has been processed and the group is ready to send/receive. */
   isReady: boolean;
+  /** Unix milliseconds — used for ordering conversations by recency. */
   updatedAt: number;
 }
 
+/** A decrypted message as stored in and read from the local database. */
 export interface StoredMessage {
+  /** Stable message UUID shared across all devices in the group. */
   id: string;
+  /** Foreign key matching ConversationMeta.id (= MLS groupId). */
   conversationId: string;
+  /** Lowercase user ID of the author. */
   senderId: string;
+  /** Serialized MessageEnvelope (JSON string produced by serializeEnvelope). */
   content: string;
+  /** Creation time as Unix milliseconds. */
   timestamp: number;
+  /** User IDs that have acknowledged reading this message. */
   readBy?: string[];
   reactions?: Array<{ emoji: string; userId: string }>;
+  /** Set to true when the message has been deleted (content replaced server-side). */
   isDeleted?: boolean;
+  /** Set to true when the message body has been edited by the sender. */
   isEdited?: boolean;
 }
 
+/**
+ * Raw encrypted message row as persisted on disk (IndexedDB or SQLite).
+ * The content field of StoredMessage is never stored in plaintext — only this encrypted form exists on disk.
+ */
 export interface EncryptedMessageRow {
+  /** Same UUID as StoredMessage.id. */
   id: string;
+  /** Foreign key matching ConversationMeta.id. */
   conversationId: string;
+  /** Creation time as Unix milliseconds (stored in plaintext for pagination / GC). */
   timestamp: number;
+  /** 12-byte AES-GCM initialization vector, unique per encrypted blob. */
   iv: Uint8Array;
+  /** 16-byte PBKDF2 salt used to derive the AES-256 key from the user's PIN. */
   salt: Uint8Array;
+  /** AES-256-GCM ciphertext of the JSON-serialized message payload (includes 16-byte auth tag). */
   cipherText: Uint8Array;
 }
 
+/**
+ * Storage backend abstraction for Canari's local message store.
+ *
+ * Two implementations exist: IndexedDbStorage (browser / PWA) and SqliteStorage (Tauri desktop/mobile).
+ * Conversation metadata is stored as plaintext; message content is encrypted with the user's PIN before
+ * being written to disk (PBKDF2-HMAC-SHA-256 key derivation + AES-256-GCM encryption).
+ */
 export interface IStorage {
+  /** Open the underlying database and run any pending schema migrations. Must be called once before any other method. */
   init(): Promise<void>;
 
   // Conversations (stored as plaintext metadata)
+
+  /** Upsert a conversation metadata row (create or overwrite). */
   saveConversation(conv: ConversationMeta): Promise<void>;
+  /** Return all stored conversation metadata rows, ordered by recency. */
   getConversations(): Promise<ConversationMeta[]>;
+  /** Delete the conversation row and cascade-delete all of its messages. */
   deleteConversation(id: string): Promise<void>;
 
   // Messages (content encrypted with user PIN)
+
+  /** Encrypt and persist a single message to the local store. */
   saveMessage(msg: StoredMessage, pin: string): Promise<void>;
+  /** Encrypt and persist a batch of messages in a single atomic write. */
   saveMessages(msgs: StoredMessage[], pin: string): Promise<void>;
+  /** Decrypt and return all messages for a conversation, sorted oldest-first. */
   getMessages(conversationId: string, pin: string): Promise<StoredMessage[]>;
   /** Return the most recent `limit` messages, optionally those strictly before `beforeTimestamp`. */
   getMessagesPage(
@@ -79,10 +118,14 @@ export interface IStorage {
   ): Promise<StoredMessage[]>;
 
   // Garbage collection – delete messages older than the given threshold.
+
+  /** Delete messages older than `maxAgeMs` milliseconds and return the count of deleted rows. */
   deleteOldMessages(maxAgeMs: number): Promise<number>;
 
   // Backup helpers – expose raw encrypted rows so backups don't require
   // re-encryption and can be imported to a new device with the same PIN.
+
+  /** Return all encrypted message rows as-is (no decryption) for use in backup export. */
   getAllEncryptedRows(): Promise<EncryptedMessageRow[]>;
 
   /**
@@ -99,6 +142,7 @@ export interface IStorage {
    */
   importEncryptedRow(row: EncryptedMessageRow): Promise<void>;
 
+  /** Wipe all conversations and messages from the local store (used in tests / account reset). */
   clear(): Promise<void>;
 }
 
@@ -106,14 +150,21 @@ export interface IStorage {
 // IndexedDB implementation (Web / PWA)
 // ---------------------------------------------------------------------------
 
+/**
+ * IStorage implementation backed by the browser's IndexedDB API.
+ * Used in the web / PWA build; falls back from SqliteStorage when Tauri is not available.
+ * Database name is scoped per user: `CanariDB_<userId>`.
+ */
 export class IndexedDbStorage implements IStorage {
   private readonly dbName: string;
   private db: IDBDatabase | null = null;
 
+  /** Create a storage instance for the given user. Call init() before using. */
   constructor(userId: string) {
     this.dbName = `CanariDB_${userId}`;
   }
 
+  /** Open (or upgrade) the IndexedDB database and apply schema migrations up to version 4. */
   async init(): Promise<void> {
     return new Promise((resolve, reject) => {
       // Version 3: conversation.id is now the MLS groupId UUID (was human-readable contactName).
@@ -208,6 +259,7 @@ export class IndexedDbStorage implements IStorage {
     });
   }
 
+  /** Throw if init() has not been called yet; otherwise return the open database handle. */
   private ensureDb(): IDBDatabase {
     if (!this.db) throw new Error('DB not initialized – call init() first');
     return this.db;
@@ -215,6 +267,7 @@ export class IndexedDbStorage implements IStorage {
 
   // -- Conversations -------------------------------------------------------
 
+  /** Upsert a conversation metadata row (uses IndexedDB put, which overwrites existing keys). */
   async saveConversation(conv: ConversationMeta): Promise<void> {
     const db = this.ensureDb();
     return new Promise((resolve, reject) => {
@@ -225,6 +278,7 @@ export class IndexedDbStorage implements IStorage {
     });
   }
 
+  /** Return all stored conversation metadata rows (unordered — callers should sort). */
   async getConversations(): Promise<ConversationMeta[]> {
     const db = this.ensureDb();
     return new Promise((resolve, reject) => {
@@ -235,6 +289,7 @@ export class IndexedDbStorage implements IStorage {
     });
   }
 
+  /** Delete the conversation row and cascade-delete all associated messages via the byConversation index. */
   async deleteConversation(id: string): Promise<void> {
     const db = this.ensureDb();
     return new Promise((resolve, reject) => {
@@ -257,10 +312,17 @@ export class IndexedDbStorage implements IStorage {
 
   // -- Messages ------------------------------------------------------------
 
+  /** Encrypt and persist a single message; delegates to saveMessages. */
   async saveMessage(msg: StoredMessage, pin: string): Promise<void> {
     return this.saveMessages([msg], pin);
   }
 
+  /**
+   * Encrypt and persist a batch of messages in a single IndexedDB transaction.
+   * Each message's senderId, content, reactions, and flags are JSON-serialized and
+   * encrypted with AES-256-GCM before being written; the stable per-user salt is
+   * reused so the PBKDF2 key is derived only once for the whole batch.
+   */
   async saveMessages(msgs: StoredMessage[], pin: string): Promise<void> {
     const db = this.ensureDb();
     const stableSalt = getOrCreateEncryptionSalt(this.dbName);
@@ -297,6 +359,7 @@ export class IndexedDbStorage implements IStorage {
     });
   }
 
+  /** Decrypt and return all messages for `conversationId`, sorted oldest-first. Rows that fail decryption (wrong PIN or corruption) are silently skipped. */
   async getMessages(conversationId: string, pin: string): Promise<StoredMessage[]> {
     const db = this.ensureDb();
     const rows: any[] = await new Promise((resolve, reject) => {
@@ -331,6 +394,12 @@ export class IndexedDbStorage implements IStorage {
     return results.sort((a, b) => a.timestamp - b.timestamp);
   }
 
+  /**
+   * Decrypt and return a paginated slice of messages for `conversationId`.
+   * Rows are sorted descending by timestamp, the most recent `limit` rows are taken,
+   * then re-sorted ascending before being returned so callers always get chronological order.
+   * Pass `beforeTimestamp` (Unix ms) to implement "load older messages" infinite scroll.
+   */
   async getMessagesPage(
     conversationId: string,
     pin: string,
@@ -383,6 +452,7 @@ export class IndexedDbStorage implements IStorage {
 
   // -- Backup helpers ------------------------------------------------------
 
+  /** Return all raw encrypted message rows for backup export (no decryption performed). */
   async getAllEncryptedRows(): Promise<EncryptedMessageRow[]> {
     const db = this.ensureDb();
     return new Promise((resolve, reject) => {
@@ -433,6 +503,7 @@ export class IndexedDbStorage implements IStorage {
 
   // -- Garbage Collection --------------------------------------------------
 
+  /** Scan all messages and delete any whose timestamp is older than `maxAgeMs` milliseconds; returns the number of deleted rows. */
   async deleteOldMessages(maxAgeMs: number): Promise<number> {
     const db = this.ensureDb();
     const cutoff = Date.now() - maxAgeMs;
@@ -458,6 +529,7 @@ export class IndexedDbStorage implements IStorage {
 
   // -- Misc ----------------------------------------------------------------
 
+  /** Erase all rows from both the conversations and messages stores in a single transaction. */
   async clear(): Promise<void> {
     const db = this.ensureDb();
     return new Promise((resolve, reject) => {
@@ -482,12 +554,14 @@ export class IndexedDbStorage implements IStorage {
 // Storing binary as base64 (TEXT storage class) ensures reliable persistence.
 // ---------------------------------------------------------------------------
 
+/** Encode a binary buffer as a base64 string for safe storage in SQLite TEXT columns. */
 function uint8ToBase64(arr: Uint8Array): string {
   let binary = '';
   for (let i = 0; i < arr.length; i++) binary += String.fromCharCode(arr[i]);
   return btoa(binary);
 }
 
+/** Decode a base64 string (or legacy number array) back to a Uint8Array; returns an empty array on failure. */
 function base64ToUint8(val: unknown): Uint8Array {
   if (val == null) return new Uint8Array(0);
   // New format: base64-encoded string
@@ -503,14 +577,23 @@ function base64ToUint8(val: unknown): Uint8Array {
   return new Uint8Array(0);
 }
 
+/**
+ * IStorage implementation backed by the Tauri SQL plugin (SQLite).
+ * Used on Tauri desktop and mobile builds.  Binary fields (iv, salt, cipherText) are stored
+ * as base64-encoded TEXT columns rather than BLOBs to work around a Tauri SQL serialisation
+ * bug where BLOB values are read back as JSON arrays after an app restart.
+ * Database file path: `<app-data-dir>/canari_<userId>.db`.
+ */
 export class SqliteStorage implements IStorage {
   private db: any = null;
   private readonly dbPath: string;
 
+  /** Create a storage instance for the given user. Call init() before using. */
   constructor(userId: string) {
     this.dbPath = `sqlite:canari_${userId}.db`;
   }
 
+  /** Open (or create) the SQLite database, enable WAL mode, create tables, and run migrations up to version 3. */
   async init(): Promise<void> {
     const Database = (await import('@tauri-apps/plugin-sql')).default;
     this.db = await Database.load(this.dbPath);
@@ -575,6 +658,7 @@ export class SqliteStorage implements IStorage {
 
   // -- Conversations -------------------------------------------------------
 
+  /** Upsert a conversation metadata row (INSERT OR REPLACE). */
   async saveConversation(conv: ConversationMeta): Promise<void> {
     await this.db.execute(
       'INSERT OR REPLACE INTO conversations (id, name, is_ready, updated_at) VALUES ($1, $2, $3, $4)',
@@ -582,6 +666,7 @@ export class SqliteStorage implements IStorage {
     );
   }
 
+  /** Return all stored conversation metadata rows ordered most-recently-updated first. */
   async getConversations(): Promise<ConversationMeta[]> {
     const rows: any[] = await this.db.select(
       'SELECT * FROM conversations ORDER BY updated_at DESC'
@@ -594,6 +679,7 @@ export class SqliteStorage implements IStorage {
     }));
   }
 
+  /** Delete the conversation row and all of its messages (messages first to respect the foreign key). */
   async deleteConversation(id: string): Promise<void> {
     await this.db.execute('DELETE FROM messages WHERE conversation_id = $1', [id]);
     await this.db.execute('DELETE FROM conversations WHERE id = $1', [id]);
@@ -601,10 +687,16 @@ export class SqliteStorage implements IStorage {
 
   // -- Messages ------------------------------------------------------------
 
+  /** Encrypt and persist a single message; delegates to saveMessages. */
   async saveMessage(msg: StoredMessage, pin: string): Promise<void> {
     return this.saveMessages([msg], pin);
   }
 
+  /**
+   * Encrypt and persist a batch of messages wrapped in a single SQLite transaction.
+   * Binary iv/salt/cipherText are stored as base64 TEXT to avoid a Tauri SQL plugin
+   * serialisation bug where BLOB bindings are read back as JSON arrays on restart.
+   */
   async saveMessages(msgs: StoredMessage[], pin: string): Promise<void> {
     const stableSalt = getOrCreateEncryptionSalt(this.dbPath);
     const encryptedMessages = await Promise.all(
@@ -647,6 +739,7 @@ export class SqliteStorage implements IStorage {
     }
   }
 
+  /** Decrypt and return all messages for `conversationId` sorted oldest-first; silently skips rows that fail decryption. */
   async getMessages(conversationId: string, pin: string): Promise<StoredMessage[]> {
     const rows: any[] = await this.db.select(
       'SELECT * FROM messages WHERE conversation_id = $1 ORDER BY timestamp ASC',
@@ -677,6 +770,12 @@ export class SqliteStorage implements IStorage {
     return results;
   }
 
+  /**
+   * Decrypt and return a paginated slice of messages using a server-side LIMIT clause.
+   * Rows are fetched in descending timestamp order (most recent first) then re-sorted
+   * ascending before return so callers always receive chronological order.
+   * Pass `beforeTimestamp` (Unix ms) to implement "load older messages" infinite scroll.
+   */
   async getMessagesPage(
     conversationId: string,
     pin: string,
@@ -723,6 +822,7 @@ export class SqliteStorage implements IStorage {
 
   // -- Backup helpers ------------------------------------------------------
 
+  /** Return all raw encrypted rows for backup export, decoding base64 columns back to Uint8Array. */
   async getAllEncryptedRows(): Promise<EncryptedMessageRow[]> {
     const rows: any[] = await this.db.select('SELECT * FROM messages');
     return rows.map((row) => ({
@@ -761,6 +861,7 @@ export class SqliteStorage implements IStorage {
 
   // -- Garbage Collection --------------------------------------------------
 
+  /** Delete messages older than `maxAgeMs` milliseconds using a single DELETE statement; returns the number of affected rows. */
   async deleteOldMessages(maxAgeMs: number): Promise<number> {
     const result = await this.db.execute('DELETE FROM messages WHERE timestamp < $1', [
       Date.now() - maxAgeMs,
@@ -770,6 +871,7 @@ export class SqliteStorage implements IStorage {
 
   // -- Misc ----------------------------------------------------------------
 
+  /** Delete all rows from both tables (used for account reset or testing). */
   async clear(): Promise<void> {
     await this.db.execute('DELETE FROM messages');
     await this.db.execute('DELETE FROM conversations');
@@ -780,6 +882,11 @@ export class SqliteStorage implements IStorage {
 // Factory
 // ---------------------------------------------------------------------------
 
+/**
+ * Instantiate the correct storage backend for the current runtime.
+ * Returns SqliteStorage when running inside Tauri (detected via `__TAURI_INTERNALS__`),
+ * falling back to IndexedDbStorage for regular browser / PWA environments.
+ */
 export async function getStorage(userId: string): Promise<IStorage> {
   if ((window as any).__TAURI_INTERNALS__) {
     try {
