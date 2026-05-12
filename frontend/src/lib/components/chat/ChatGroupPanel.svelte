@@ -72,7 +72,7 @@
   let confirmLeave = $state(false);
   let showInviteModal = $state(false);
   let newMembers = $state<string[]>([]);
-  let renameInput = $state(effectiveDisplayName);
+  let renameInput = $state('');
 
   // Reset internal state each time the panel is opened.
   $effect(() => {

@@ -44,6 +44,8 @@
     searchActive?: boolean;
     /** Callback to open the channel members sidebar. */
     onOpenMembers?: () => void;
+    /** Callback to initiate a voice/video call with the contact. */
+    onStartCall?: () => void;
   }
 
   let {
@@ -65,6 +67,7 @@
     onToggleSearch,
     searchActive = false,
     onOpenMembers,
+    onStartCall,
   }: Props = $props();
 
   let showPanel = $state(false);
