@@ -8,8 +8,6 @@ import {
   shouldAckAfterSuccess,
   shouldAckAfterTauriGenericException,
   shouldAckGroupResetControl,
-  isUnrecoverableError,
-  isGapQueuedError,
 } from './mlsQueueAckPolicy';
 import { logMlsMetric } from './mlsRecoveryMetrics';
 import { commitBaseEpochForValidation } from './mlsDesyncPrevention';
@@ -72,12 +70,6 @@ export class TauriMlsService implements IMlsService {
     | ((requesterUserId: string, requesterDeviceId: string, groupId: string) => void)
     | null = null;
   private welcomeProcessedCallback: ((groupId?: string) => void) | null = null;
-  // Callback déclenché quand le serveur signale qu'un groupe est mort.
-  // Même pattern que welcome_request/reinvite_request : signal hors-bande MLS.
-  private groupResetCallback: ((groupId: string, reason: string) => void) | null = null;
-  // Voir onSyncNeeded — passe aussi le numéro de tentative pour l'escalade reinvite.
-  private syncNeededCallback: ((groupId: string, attempt: number) => void) | null = null;
-  private unrecoverableCallback: ((groupId: string) => void) | null = null;
   private baseUrl: string;
   private historyUrl: string;
   private userId: string = 'unknown';
@@ -108,15 +100,9 @@ export class TauriMlsService implements IMlsService {
   // messageCallback concurrently (both await Rust invoke calls asynchronously).
   private callbackLock: Promise<void> = Promise.resolve();
 
-  // ── Resynchronisation du Sender Ratchet ───────────────────────��─────────
   // PIN conservé en mémoire après init() pour chiffrer l'état MLS après
-  // chaque message (Chantier 3) sans redemander le PIN à l'utilisateur.
+  // chaque message sans redemander le PIN à l'utilisateur.
   private _pin = '';
-  // Dernier ID de stream Redis connu par groupe (format "timestamp-seq").
-  // Utilisé pour GET /api/mls/history/{groupId}?after={id} lors du gap fetching.
-  private _lastHistoryId = new Map<string, string>();
-  // Nombre de tentatives de gap recovery par groupe (réinitialisé après succès).
-  private _gapAttempts = new Map<string, number>();
 
   constructor() {
     // Device ID is initialized per-user in init() — see WebMlsService for rationale.
@@ -284,13 +270,6 @@ export class TauriMlsService implements IMlsService {
               `[WS RCV] welcome_request from ${requesterUserId}:${requesterDeviceId} for group ${groupId}`
             );
             this.welcomeRequestCallback?.(requesterUserId, requesterDeviceId, groupId);
-            return;
-          }
-          if (msgType === 'group_reset') {
-            const groupId = (parsed.groupId as string) || '';
-            const reason = (parsed.reason as string) || 'unknown';
-            console.log(`[WS RCV] group_reset for group ${groupId} reason=${reason}`);
-            this.groupResetCallback?.(groupId, reason);
             return;
           }
           if (msgType === 'epoch_rejected') {
@@ -475,8 +454,7 @@ export class TauriMlsService implements IMlsService {
     const groupId = msg.groupId;
 
     // Niveau 0 — signal de contrôle persisté (type: 'group_reset')
-    // Ces messages ne passent pas par messageCallback ; ils déclenchent
-    // directement groupResetCallback (forgetGroup côté WASM).
+    // Ces messages ne passent pas par messageCallback.
     if (msg.type === 'group_reset') {
       console.log(`[QUEUE] Control: group_reset pour groupe ${groupId ?? 'inconnu'}`);
       this.controlQueue.push(msg);
@@ -508,8 +486,8 @@ export class TauriMlsService implements IMlsService {
    * Draine la file de priorité dans l'ordre strict :
    *   controlQueue (group_reset…) → welcomeQueue (Welcome MLS) → messageQueue
    *
-   * Les messages de contrôle (group_reset) déclenchent groupResetCallback()
-   * directement, sans passer par messageCallback (pas de bytes MLS).
+   * Les messages de contrôle (group_reset) sont traités directement,
+   * sans passer par messageCallback (pas de bytes MLS).
    * Après un Welcome, les messages bufférisés pour ce groupe sont réinjectés
    * en tête de messageQueue.
    *
@@ -549,7 +527,6 @@ export class TauriMlsService implements IMlsService {
         if (msg.type === 'group_reset') {
           console.log(`[QUEUE] group_reset (persisté) pour groupe ${groupId ?? 'inconnu'}`);
           if (groupId) {
-            this.groupResetCallback?.(groupId, 'reset');
             // Annuler la bufférisation en cours pour ce groupe (état perdu).
             this.pendingWelcomeGroups.delete(groupId);
           }
@@ -633,32 +610,7 @@ export class TauriMlsService implements IMlsService {
         const errStr = String(e);
         console.error(`[QUEUE] Erreur traitement message:`, errStr);
 
-        // État MLS irrécupérable : 3 échecs consécutifs de gap recovery → re-bootstrap.
-        if (groupId && isUnrecoverableError(errStr)) {
-          logMlsMetric({
-            kind: 'queue_skip_ack',
-            platform: 'tauri',
-            reason: 'tauri_unrecoverable',
-          });
-          console.warn(
-            `[MLS][FATAL] État irrécupérable pour groupe=${groupId} — tentative de bootstrap...`
-          );
-          this.unrecoverableCallback?.(groupId);
-          // Ne pas ACK : sera re-traité après le bootstrap.
-        } else if (groupId && !msg.isWelcome && isGapQueuedError(errStr)) {
-          logMlsMetric({ kind: 'queue_skip_ack', platform: 'tauri', reason: 'tauri_gap' });
-          // Chantier 2 : le Rust a détecté un gap du Sender Ratchet.
-          // recevoir_message_bytes a déjà persisté le message dans SQLite (Rust/sqlx)
-          // et retourné "GAP_QUEUED:<groupId>". On déclenche juste le fetch d'historique.
-          const attempt = (this._gapAttempts.get(groupId) ?? 0) + 1;
-          this._gapAttempts.set(groupId, attempt);
-          console.warn(
-            `[MLS][GAP] Gap confirmé par Rust pour groupe=${groupId} (tentative ${attempt}) — fetch history`
-          );
-          // Attendre la fin du recovery avant de reprendre la queue (ordre strict).
-          // Ne pas ACK : le message reste en file serveur jusqu'au retraitement réussi.
-          await this.fetchMissingMessages(groupId);
-        } else if (msg.isWelcome) {
+        if (msg.isWelcome) {
           logMlsMetric({
             kind: 'queue_skip_ack',
             platform: 'tauri',
@@ -700,262 +652,8 @@ export class TauriMlsService implements IMlsService {
     console.log(`[QUEUE] Terminé (${total} messages traités)`);
   }
 
-  // ── Chantier 2 : fetch de l'historique pour combler un gap ───────────────
-
-  /**
-   * Fetch server history to fill a detected gap, then replay pending messages
-   * through OpenMLS in strict chronological order.
-   *
-   * Retry policy: up to 3 attempts with exponential backoff (1 s, 2 s) on
-   * network failure so a momentary disconnect doesn't leave the gap open.
-   *
-   * After replay, re-polls the delivery queue so the unACK'd message that
-   * triggered the gap is retried now that the ratchet is caught up.
-   *
-   * If the server had nothing to provide (history empty or expired), fires
-   * syncNeededCallback so connection.ts can ask peers to relay their cache.
-   */
-  async fetchMissingMessages(groupId: string): Promise<void> {
-    const MAX_RETRIES = 3;
-    let lastId = '';
-    let pendingMessages: Uint8Array[] = [];
-
-    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-      try {
-        const after = this._lastHistoryId.get(groupId) ?? null;
-        const url = new URL(`${this.historyUrl}/api/mls/history/${encodeURIComponent(groupId)}`);
-        if (after) url.searchParams.set('after', after);
-
-        const res = await fetch(url.toString(), {
-          method: 'GET',
-          headers: await this.withAuthHeaders(),
-        });
-
-        if (!res.ok) {
-          throw new Error(`History fetch failed: ${res.status}`);
-        }
-
-        const entries = (await res.json()) as Array<{
-          id?: string;
-          proto?: string;
-        }>;
-
-        const messageEntries: Array<{ id: string; ciphertext: Uint8Array }> = [];
-        for (const entry of entries) {
-          const streamId = entry.id?.trim() ?? '';
-          if (!entry.proto) {
-            continue;
-          }
-
-          try {
-            const ciphertext = Uint8Array.from(atob(entry.proto), (c) => c.charCodeAt(0));
-            if (ciphertext.length > 0) {
-              messageEntries.push({
-                id: streamId || `${messageEntries.length}`,
-                ciphertext,
-              });
-              if (streamId) {
-                lastId = streamId;
-              }
-            }
-          } catch (err) {
-            console.warn(`[MLS][GAP] history entry decode failed for group=${groupId}:`, err);
-          }
-        }
-
-        messageEntries.sort((a, b) =>
-          a.id.localeCompare(b.id, undefined, { numeric: true, sensitivity: 'base' })
-        );
-        pendingMessages = messageEntries.map((entry) => entry.ciphertext);
-
-        break; // success — exit retry loop
-      } catch (e) {
-        if (attempt < MAX_RETRIES - 1) {
-          const delayMs = Math.pow(2, attempt) * 1000; // 1 s, 2 s
-          console.warn(
-            `[MLS][GAP] history fetch failed (tentative ${attempt + 1}/${MAX_RETRIES}), retry dans ${delayMs}ms:`,
-            e
-          );
-          await new Promise((r) => setTimeout(r, delayMs));
-        } else {
-          console.error(`[MLS][GAP] history fetch échoué après ${MAX_RETRIES} tentatives:`, e);
-        }
-      }
-    }
-
-    if (lastId) this._lastHistoryId.set(groupId, lastId);
-
-    if (pendingMessages.length > 0) {
-      try {
-        const processed = await invoke<number>('process_gap_messages', {
-          groupId,
-          messages: pendingMessages.map((ciphertext) => Array.from(ciphertext)),
-          pin: this._pin,
-        });
-        console.log(
-          `[MLS][GAP] processed ${processed}/${pendingMessages.length} history messages for group=${groupId}`
-        );
-      } catch (e) {
-        console.error(`[MLS][GAP] process_gap_messages failed for group=${groupId}:`, e);
-      }
-    } else {
-      console.log(`[MLS][GAP] aucune entrée d'historique à traiter pour group=${groupId}`);
-    }
-
-    const processed = await this.processPendingMessages(groupId);
-
-    await this.fetchPendingMessages();
-
-    if (processed === 0) {
-      const attempt = this._gapAttempts.get(groupId) ?? 1;
-      console.warn(
-        `[MLS][GAP] Historique serveur vide pour groupe=${groupId} (tentative ${attempt})`
-      );
-      this.syncNeededCallback?.(groupId, attempt);
-    } else {
-      this._gapAttempts.delete(groupId);
-    }
-  }
-
-  // ── Retraitement séquentiel via commande Rust ─────────────────────────────
-
-  /**
-   * Processes pending SQLite messages through OpenMLS in strict chronological
-   * order. Returns the number of messages successfully processed so callers can
-   * detect whether the server history was empty.
-   */
-  async processPendingMessages(groupId: string): Promise<number> {
-    if (!this._pin) return 0;
-    const processed = await invoke<number>('process_pending_mls_messages', {
-      groupId,
-      pin: this._pin,
-    }).catch((e) => {
-      console.error(`[MLS][PENDING] process_pending_mls_messages failed:`, e);
-      return 0;
-    });
-    console.log(`[MLS][PENDING] ${processed} message(s) traité(s) pour groupe=${groupId}`);
-    return processed;
-  }
-
-  onSyncNeeded(callback: (groupId: string, attempt: number) => void): void {
-    this.syncNeededCallback = callback;
-  }
-
-  onUnrecoverable(callback: (groupId: string) => void): void {
-    this.unrecoverableCallback = callback;
-  }
-
   onWelcomeProcessed(callback: (groupId?: string) => void): void {
     this.welcomeProcessedCallback = callback;
-  }
-
-  /**
-   * Fail-safe universel.
-   *
-   * Délègue la création MLS à la commande Rust `bootstrap_dead_conversation`
-   * (verrou optimiste + force_create_group + add_members_bulk + sauvegarde MLS),
-   * puis orchestre côté TS : enregistrement des membres, envoi des Welcomes,
-   * envoi du commit, marquage de la conversation comme prête.
-   *
-   * Retourne :
-   *   'bootstrapped' — ce device a recréé le groupe avec succès.
-   *   'conflict'     — un autre device a gagné la course ; attendre le Welcome.
-   *   'no_members'   — aucun device tiers n'a de KeyPackage disponible.
-   */
-  async bootstrapDeadConversation(
-    conversationId: string,
-    memberUserIds: string[],
-    pin: string
-  ): Promise<'bootstrapped' | 'conflict' | 'no_members'> {
-    const token = await getToken();
-    if (!token) throw new Error('bootstrap: pas de token auth');
-
-    // 1. Récupère la bootstrapVersion courante pour l'optimistic lock.
-    let expectedVersion = 0;
-    try {
-      const groupRes = await fetch(
-        `${this.historyUrl}/api/mls/groups/${conversationId}/bootstrap-info`,
-        { headers: await this.withAuthHeaders() }
-      );
-      if (groupRes.ok) {
-        const info = await groupRes.json();
-        expectedVersion = info.bootstrapVersion ?? 0;
-      }
-    } catch {
-      // Si la route n'existe pas encore, on part de 0.
-    }
-
-    // 2. Commande Rust : verrou optimiste + création locale + ajout des membres.
-    type BootstrapResult =
-      | {
-          status: 'success';
-          commit: number[];
-          welcome?: number[];
-          added_device_ids: string[];
-          ratchet_tree?: number[];
-          new_bootstrap_version: number;
-        }
-      | { status: 'conflict' }
-      | { status: 'no_members' };
-
-    const result = await invoke<BootstrapResult>('bootstrap_dead_conversation', {
-      conversationId,
-      memberUserIds,
-      expectedBootstrapVersion: expectedVersion,
-      authToken: token,
-      baseUrl: this.historyUrl,
-      pin,
-    });
-
-    if (result.status === 'conflict') return 'conflict';
-    if (result.status === 'no_members') return 'no_members';
-
-    const { commit, welcome, added_device_ids, ratchet_tree } = result;
-    const commitBytes = new Uint8Array(commit);
-    const welcomeBytes = welcome ? new Uint8Array(welcome) : undefined;
-    const ratchetBytes = ratchet_tree ? new Uint8Array(ratchet_tree) : undefined;
-
-    // 3. Enregistrer le device bootstrapper côté serveur.
-    await this.registerMember(conversationId, this.userId).catch(() => {});
-    // The bootstrapping device is already in the MLS tree — mark it as
-    // welcome_received immediately so the routing set includes it and it
-    // can receive messages from newly-joined members (e.g. after reinstall
-    // where registerMember would otherwise leave the row at 'pending').
-    await this.updateInvitationStatus(
-      this.deviceId,
-      this.userId,
-      conversationId,
-      'welcome_received'
-    ).catch(() => {});
-
-    // 4. Envoyer le Welcome à chaque device invité.
-    if (welcomeBytes) {
-      for (const did of added_device_ids) {
-        // Retrouve l'userId à partir des devices qu'on vient de récupérer.
-        for (const uid of memberUserIds) {
-          const devices = await this.fetchUserDevices(uid).catch(() => []);
-          if (devices.some((d) => d.deviceId === did)) {
-            try {
-              await this.sendWelcome(welcomeBytes, uid, conversationId, did, ratchetBytes);
-              await this.registerMember(conversationId, uid);
-            } catch (e) {
-              console.warn(`[BOOTSTRAP] Welcome échoué ${uid}:${did}`, e);
-            }
-            break;
-          }
-        }
-      }
-    }
-
-    // 5. Broadcaster le commit (epoch 0 → 1).
-    if (commitBytes.length > 0) {
-      await this.sendCommit(commitBytes, conversationId);
-    }
-
-    console.log(
-      `[BOOTSTRAP] Groupe ${conversationId} re-bootstrappé (${added_device_ids.length} devices).`
-    );
-    return 'bootstrapped';
   }
 
   onDisconnect(callback: () => void) {
@@ -988,25 +686,6 @@ export class TauriMlsService implements IMlsService {
     callback: (requesterUserId: string, requesterDeviceId: string, groupId: string) => void
   ): void {
     this.welcomeRequestCallback = callback;
-  }
-
-  /** Tauri-native `invoke` wrapper — POSTs a group_reset to the delivery service, which resets all memberships and broadcasts the signal via WebSocket. */
-  async sendGroupReset(groupId: string, reason = 'bootstrap'): Promise<void> {
-    // Do NOT include triggeredBy: user IDs may contain characters (e.g. '+' in
-    // email addresses) that fail the server-side sanitizeQueryValue regex, which
-    // would return 400 and silently abort the entire re-bootstrap.
-    const res = await fetch(`${this.historyUrl}/api/mls/groups/${groupId}/reset`, {
-      method: 'POST',
-      headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ reason }),
-    });
-    if (!res.ok) {
-      throw new Error(`group_reset failed: ${res.status}`);
-    }
-  }
-
-  onGroupReset(callback: (groupId: string, reason: string) => void): void {
-    this.groupResetCallback = callback;
   }
 
   /** Sends a disconnect control frame over the native WebSocket so the gateway removes the presence key immediately. */
@@ -1800,18 +1479,6 @@ export class TauriMlsService implements IMlsService {
       body: JSON.stringify({ deviceId, userId, groupId }),
     });
     if (!res.ok) throw new Error(`kickStaleDevice failed: ${res.status}`);
-  }
-
-  /** Tauri-native `invoke` wrapper — POSTs to reset the server-side activeEpoch of a group to 0 during re-bootstrap. */
-  async resetGroupEpoch(groupId: string): Promise<void> {
-    const res = await fetch(
-      `${this.historyUrl}/api/mls/groups/${encodeURIComponent(groupId)}/reset-epoch`,
-      {
-        method: 'POST',
-        headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-      }
-    );
-    if (!res.ok) throw new Error(`resetGroupEpoch failed: ${res.status}`);
   }
 
   /** Tauri-native `invoke` wrapper — DELETEs a single device-group membership record from the delivery service. */

@@ -4,8 +4,6 @@ import {
   shouldAckAfterWebException,
   shouldAckAfterTauriGenericException,
   shouldAckGroupResetControl,
-  isUnrecoverableError,
-  isGapQueuedError,
 } from './mlsQueueAckPolicy';
 
 describe('mlsQueueAckPolicy', () => {
@@ -80,10 +78,5 @@ describe('mlsQueueAckPolicy', () => {
   it('shouldAckGroupResetControl', () => {
     expect(shouldAckGroupResetControl({ hasQueuedId: true })).toBe(true);
     expect(shouldAckGroupResetControl({ hasQueuedId: false })).toBe(false);
-  });
-
-  it('error classifiers', () => {
-    expect(isUnrecoverableError('UNRECOVERABLE:foo')).toBe(true);
-    expect(isGapQueuedError('GAP_QUEUED:group-1')).toBe(true);
   });
 });

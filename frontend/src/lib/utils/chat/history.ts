@@ -130,7 +130,6 @@ export async function replayConversationHistory(params: {
 
     let addedMsg = 0;
     let mlsUpdated = false;
-    let gapDetected = false;
 
     // Collect reaction mutations so we can persist them to DB in one pass after
     // the main message batch write (reactions reference messages from previous
@@ -304,18 +303,6 @@ export async function replayConversationHistory(params: {
         }
       } catch (err) {
         const errStr = String(err);
-        if (errStr.includes('GAP_QUEUED:')) {
-          // The ratchet is behind. Trigger async recovery and abort this history
-          // batch — it will be replayed on the next loadHistory call after the
-          // ratchet has caught up via fetchMissingMessages.
-          // gapDetected=true prevents finally from marking this message as seen
-          // and prevents latestStreamId from being persisted, so the next call
-          // re-fetches from before the GAP and retries this message.
-          console.warn(`[HISTORY] GAP détecté sur groupe=${id} — déclenchement recovery`);
-          gapDetected = true;
-          void mlsService.fetchMissingMessages(id);
-          break;
-        }
         if (
           errStr.includes('CannotDecryptOwnMessage') ||
           errStr.includes('WrongEpoch') ||
@@ -329,10 +316,8 @@ export async function replayConversationHistory(params: {
         }
         console.warn(`History msg error: ${err}`);
       } finally {
-        if (!gapDetected) {
-          seenCipherHashes.add(cipherFingerprint);
-          seenUpdated = true;
-        }
+        seenCipherHashes.add(cipherFingerprint);
+        seenUpdated = true;
       }
     }
 
@@ -398,8 +383,7 @@ export async function replayConversationHistory(params: {
     }
 
     // Persist the last processed Redis stream ID so the next sync is incremental.
-    // Skip if a GAP was detected — the cursor must not advance past the unprocessed message.
-    if (latestStreamId && !gapDetected) {
+    if (latestStreamId) {
       saveLastStreamId(userId, id, latestStreamId);
     }
 

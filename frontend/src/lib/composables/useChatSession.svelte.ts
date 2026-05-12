@@ -496,22 +496,6 @@ export function useChatSession() {
         }
       );
 
-      // ── group_reset handler ──────────────────────────────────────────────
-      // Quand le serveur diffuse un group_reset (déclenché par un device qui
-      // re-bootstrap le groupe), chaque client doit :
-      //   1. Oublier son état MLS local pour ce groupe
-      //   2. Marquer la conversation comme non prête
-      // La ré-invitation se fait automatiquement : le device qui a lancé le
-      // reset va créer le groupe MLS et envoyer des Welcome à tous les devices.
-      mlsService.onGroupReset((groupId: string, reason: string) => {
-        cb.log(`[SYNC] group_reset reçu pour ${groupId} (raison: ${reason})`);
-        mlsService.forgetGroup(groupId);
-        const convo = cb.conversations.get(groupId);
-        if (convo) {
-          cb.conversations.set(groupId, { ...convo, isReady: false });
-        }
-      });
-
       // Multi-tab leadership: only the leader tab opens the WebSocket.
       await initTabLeadershipAsync(cb.log);
 

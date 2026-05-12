@@ -39,10 +39,6 @@ export class WebMlsService implements IMlsService {
   private welcomeRequestCallback:
     | ((requesterUserId: string, requesterDeviceId: string, groupId: string) => void)
     | null = null;
-  // Callback déclenché quand le serveur signale qu'un groupe est mort et doit
-  // être recréé. Le client fait forgetGroup() + isReady=false puis, à la
-  // reconnexion, envoie un welcome_request pour être ré-invité.
-  private groupResetCallback: ((groupId: string, reason: string) => void) | null = null;
   private welcomeProcessedCallback: ((groupId?: string) => void) | null = null;
   private baseUrl: string; // Chat Gateway URL
   private historyUrl: string; // Chat Delivery Service URL
@@ -252,17 +248,6 @@ export class WebMlsService implements IMlsService {
               `[WS RCV] welcome_request from ${requesterUserId}:${requesterDeviceId} for group ${groupId}`
             );
             this.welcomeRequestCallback?.(requesterUserId, requesterDeviceId, groupId);
-            return;
-          }
-          // ── group_reset : signal hors-bande MLS ──────────────────────────
-          // Le serveur a décidé que la session MLS de ce groupe est morte.
-          // Chaque client doit oublier son état local et attendre d'être
-          // ré-invité via welcome_request à la prochaine connexion.
-          if (msg.type === 'group_reset') {
-            const groupId = (msg.groupId as string) || '';
-            const reason = (msg.reason as string) || 'unknown';
-            console.log(`[WS RCV] group_reset for group ${groupId} reason=${reason}`);
-            this.groupResetCallback?.(groupId, reason);
             return;
           }
           if (msg.type === 'epoch_rejected') {
@@ -505,45 +490,9 @@ export class WebMlsService implements IMlsService {
     this.welcomeRequestCallback = callback;
   }
 
-  /**
-   * Demande au serveur de déclencher un group_reset.
-   * Le serveur va : reset toutes les memberships → reset epoch → broadcast
-   * group_reset via WebSocket → chaque client oublie l'état MLS local.
-   */
-  async sendGroupReset(groupId: string, reason = 'bootstrap'): Promise<void> {
-    const res = await fetch(`${this.historyUrl}/api/mls/groups/${groupId}/reset`, {
-      method: 'POST',
-      headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ reason, triggeredBy: `${this.userId}:${this.deviceId}` }),
-    });
-    if (!res.ok) {
-      throw new Error(`group_reset failed: ${res.status}`);
-    }
-  }
-
-  onGroupReset(callback: (groupId: string, reason: string) => void): void {
-    this.groupResetCallback = callback;
-  }
-
   onWelcomeProcessed(callback: (groupId?: string) => void): void {
     this.welcomeProcessedCallback = callback;
   }
-
-  // WebMlsService runs in the browser (WASM) and has direct access to the
-  // server history via fetchHistory(). Gap recovery is handled inline by
-  // processQueue / processIncomingMessage. These two methods are no-ops here.
-  /** No-op in the browser WASM impl — gap recovery is handled inline by processQueue via fetchHistory. */
-  async fetchMissingMessages(_groupId: string): Promise<void> {}
-  onSyncNeeded(_callback: (groupId: string, attempt: number) => void): void {}
-  /** No-op stub — bootstrapDeadConversation is only implemented in TauriMlsService; returns 'no_members' unconditionally. */
-  async bootstrapDeadConversation(
-    _conversationId: string,
-    _memberUserIds: string[],
-    _pin: string
-  ): Promise<'bootstrapped' | 'conflict' | 'no_members'> {
-    return 'no_members';
-  }
-  onUnrecoverable(_callback: (groupId: string) => void): void {}
 
   /** Sends a disconnect control frame over the browser WebSocket so the gateway removes the presence key immediately. */
   sendDisconnect(): void {
@@ -1347,18 +1296,6 @@ export class WebMlsService implements IMlsService {
       body: JSON.stringify({ deviceId, userId, groupId }),
     });
     if (!res.ok) throw new Error(`kickStaleDevice failed: ${res.status}`);
-  }
-
-  /** WASM client wrapper — POSTs to reset the server-side activeEpoch of a group to 0 during re-bootstrap. */
-  async resetGroupEpoch(groupId: string): Promise<void> {
-    const res = await fetch(
-      `${this.historyUrl}/api/mls/groups/${encodeURIComponent(groupId)}/reset-epoch`,
-      {
-        method: 'POST',
-        headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-      }
-    );
-    if (!res.ok) throw new Error(`resetGroupEpoch failed: ${res.status}`);
   }
 
   /** WASM client wrapper — DELETEs a single device-group membership record from the delivery service. */

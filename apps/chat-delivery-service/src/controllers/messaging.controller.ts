@@ -509,11 +509,9 @@ export class MessagingController {
         throw new BadRequestException(`Group ${groupId} not found`);
       }
 
-      // When activeEpoch is 0 the server has no prior tracking for this group
-      // (e.g. all previous commit validations failed with HTTP 400 due to the
-      // old userId:deviceId length bug).  Treat this as "uninitialized" and
-      // fast-forward to baseEpoch + 1 so the client state and server state
-      // converge without requiring a full re-bootstrap.
+      // When activeEpoch is 0 the server has no prior tracking for this group.
+      // Treat this as "uninitialized" and fast-forward to baseEpoch + 1 so
+      // that client and server epoch state converge on the first accepted commit.
       if (baseEpoch !== group.activeEpoch && group.activeEpoch !== 0) {
         this.logger.warn(
           `[COMMIT][${traceId}] REJECT epoch_mismatch group=${groupId} baseEpoch=${baseEpoch} activeEpoch=${group.activeEpoch}`,

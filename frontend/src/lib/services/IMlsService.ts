@@ -72,20 +72,6 @@ export interface IMlsService {
   /** Fetches messages queued on the delivery service that were not yet delivered
    * (e.g. during a disconnect). Should be called after every connect/reconnect. */
   fetchPendingMessages(): Promise<void>;
-  /**
-   * Fetches missing messages from server history and processes them through OpenMLS
-   * to catch up the ratchet after a gap. Retries on network failure, then re-polls
-   * the delivery queue so the unACK'd triggering message is retried.
-   * If the server has no history, fires the onSyncNeeded callback for device-to-device relay.
-   */
-  fetchMissingMessages(groupId: string): Promise<void>;
-  /**
-   * Register a callback invoked when server history is empty during gap recovery.
-   * `attempt` is the number of consecutive failed recovery attempts for this group.
-   * - attempt === 1 → try peer relay (sync_request)
-   * - attempt >= 2 → server + peers both failed; escalate to forgetGroup + reinvite
-   */
-  onSyncNeeded(callback: (groupId: string, attempt: number) => void): void;
 
   // Group management
   getLocalGroups(): string[];
@@ -141,9 +127,6 @@ export interface IMlsService {
 
   /** Reset a specific device in a group to pending (after MLS remove commit for that device). */
   kickStaleDevice(deviceId: string, userId: string, groupId: string): Promise<void>;
-
-  /** Reset the server-side activeEpoch of a group to 0 (used during re-bootstrap). */
-  resetGroupEpoch(groupId: string): Promise<void>;
 
   /** Delete a specific device-group membership */
   deleteDeviceMembership(
@@ -215,41 +198,10 @@ export interface IMlsService {
   ): void;
 
   /**
-   * Demande au serveur de reset un groupe entier (hors-bande MLS).
-   * Le serveur passe toutes les memberships à pending, reset l'epoch,
-   * et diffuse un signal `group_reset` WebSocket à tous les appareils en ligne.
-   */
-  sendGroupReset(groupId: string, reason?: string): Promise<void>;
-
-  /**
-   * Callback invoqué quand le serveur diffuse un `group_reset`.
-   * Le client doit : forgetGroup() + isReady=false + attendre un welcome_request.
-   */
-  onGroupReset(callback: (groupId: string, reason: string) => void): void;
-
-  /**
    * Send a `disconnect` control frame over the WebSocket so the gateway
    * removes the presence key immediately (instead of waiting for TTL / heartbeat
    * miss). Call this in `beforeunload` or when the app is intentionally closed.
    * No-op if the socket is not open.
    */
   sendDisconnect(): void;
-
-  /**
-   * Fail-safe universel : recrée le groupe MLS depuis zéro quand l'état local
-   * est irrécupérable. Gère le verrou optimiste (retourne 'conflict' si un autre
-   * device a déjà bootstrappé) et orchestre les Welcome + commit après création.
-   */
-  bootstrapDeadConversation(
-    conversationId: string,
-    memberUserIds: string[],
-    pin: string
-  ): Promise<'bootstrapped' | 'conflict' | 'no_members'>;
-
-  /**
-   * Enregistre un callback invoqué quand l'état MLS d'un groupe est détecté
-   * comme irrécupérable (UNRECOVERABLE sentinel). Le callback reçoit le groupId
-   * pour que l'appelant puisse fournir les données nécessaires au re-bootstrap.
-   */
-  onUnrecoverable(callback: (groupId: string) => void): void;
 }

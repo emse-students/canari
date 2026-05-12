@@ -8,7 +8,7 @@
  * Intentional platform difference on **processing exceptions**:
  * - **Web**: only ACK **commits** on exception (app messages stay queued for retry).
  * - **Tauri**: ACK non-welcome messages on generic exception to avoid infinite loops
- *   (matches existing processQueue behavior); Welcome / GAP / UNRECOVERABLE never ACK.
+ *   (matches existing processQueue behavior); Welcome errors never ACK.
  */
 
 export type QueueMsgFlags = {
@@ -17,8 +17,6 @@ export type QueueMsgFlags = {
   /** Present for messages originating from the persisted delivery queue */
   hasQueuedId: boolean;
 };
-
-export type QueuePlatform = 'web' | 'tauri';
 
 /** After a successful `messageCallback` — ack only if callback did not request retry. */
 export function shouldAckAfterSuccess(
@@ -41,17 +39,9 @@ export function shouldAckAfterWebException(flags: QueueMsgFlags): boolean {
 }
 
 /**
- * Tauri: exception in processQueue — narrow branches handled first by caller
- * (UNRECOVERABLE, GAP_QUEUED, Welcome). Remaining errors ack if queued id exists.
+ * Tauri: exception in processQueue — Welcome errors handled first by caller.
+ * Remaining errors ack if queued id exists.
  */
 export function shouldAckAfterTauriGenericException(flags: QueueMsgFlags): boolean {
   return flags.hasQueuedId;
-}
-
-export function isUnrecoverableError(errStr: string): boolean {
-  return errStr.includes('UNRECOVERABLE:');
-}
-
-export function isGapQueuedError(errStr: string): boolean {
-  return errStr.includes('GAP_QUEUED:');
 }

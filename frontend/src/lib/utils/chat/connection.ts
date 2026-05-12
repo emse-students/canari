@@ -1,11 +1,6 @@
 import type { IMlsService } from '$lib/mlsService';
 import type { IStorage } from '$lib/db';
-import type {
-  AddMessageToChatOptions,
-  ChatMessage,
-  Conversation,
-  MessageReaction,
-} from '$lib/types';
+import type { AddMessageToChatOptions, Conversation, MessageReaction } from '$lib/types';
 import { saveMlsState } from '$lib/utils/hex';
 import type { SvelteMap } from 'svelte/reactivity';
 import { decodeAppMessage, encodeAppMessage, mkSystem } from '$lib/proto/codec';
@@ -1061,13 +1056,6 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           return true;
         } catch (_e) {
           const errMsg = String(_e);
-          // Re-throw GAP errors so TauriMlsService.processQueue can trigger the catch-up mechanism.
-          // The catch block there (TauriMlsService.ts) detects GAP_QUEUED:, skips the ACK, and
-          // calls fetchMissingMessages. If we swallow it here and return false, processQueue
-          // still ACKs the message (line 548) and the gap is never recovered.
-          if (errMsg.includes('GAP_QUEUED:')) {
-            throw _e;
-          }
           if (errMsg.includes('CannotDecryptOwnMessage')) {
             return true; // ACK it so it isn't resent
           }
@@ -1463,82 +1451,6 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       }
     }
   );
-
-  // Fail-safe universel : déclenché après 3 échecs consécutifs de gap recovery.
-  // Recréé le groupe MLS depuis zéro avec un verrou optimiste anti-concurrence.
-  mlsService.onUnrecoverable((groupId) => {
-    const convo = conversations.get(groupId);
-    if (!convo) return;
-    log(`[BOOTSTRAP] État irrécupérable sur groupe=${groupId} — re-bootstrap en cours...`);
-    console.warn(`[BOOTSTRAP] Unrecoverable state on group=${groupId} — re-bootstrapping`);
-    void (async () => {
-      try {
-        const members = await mlsService.getGroupMembers(groupId);
-        const memberUserIds = [...new Set(members.map((m) => m.userId))];
-        const outcome = await mlsService.bootstrapDeadConversation(groupId, memberUserIds, pin);
-        if (outcome === 'bootstrapped') {
-          conversations.set(groupId, { ...conversations.get(groupId)!, isReady: true });
-          if (storage) saveConversation(groupId).catch(() => {});
-          log(`[BOOTSTRAP] Groupe ${groupId} re-bootstrappé avec succès.`);
-          console.log(`[BOOTSTRAP] Group ${groupId} re-bootstrapped successfully`);
-        } else if (outcome === 'conflict') {
-          log(`[BOOTSTRAP] Race condition sur groupe=${groupId} — attente du Welcome du gagnant.`);
-        } else {
-          log(`[BOOTSTRAP] Aucun membre disponible pour groupe=${groupId}.`);
-        }
-      } catch (e) {
-        log(
-          `[BOOTSTRAP] Échec re-bootstrap groupe=${groupId}: ${e instanceof Error ? e.message : String(e)}`
-        );
-        console.error(
-          `[BOOTSTRAP] Re-bootstrap failed for group=${groupId}:`,
-          e instanceof Error ? e.message : e
-        );
-      }
-    })();
-  });
-
-  // When server history is empty during gap recovery:
-  //   attempt=1 → ask online peers to relay their cached messages (sync_request)
-  //   attempt≥2 → server + peers both failed; escalate to forgetGroup + sendReinviteRequest
-  mlsService.onSyncNeeded((groupId, attempt) => {
-    const convo = conversations.get(groupId);
-    if (!convo?.isReady) return;
-
-    if (attempt >= 2) {
-      log(
-        `[SYNC] Gap irrécupérable sur groupe=${groupId} après ${attempt} tentatives — oubli MLS + reinvite_request`
-      );
-      console.warn(
-        `[SYNC] Unrecoverable gap on group=${groupId} after ${attempt} attempts — forget + reinvite`
-      );
-      mlsService.forgetGroup(groupId);
-      conversations.set(groupId, { ...convo, isReady: false });
-      if (storage) saveConversation(groupId).catch(() => {});
-      mlsService.sendReinviteRequest(groupId).catch((e) => {
-        log(`[SYNC] sendReinviteRequest échoué pour groupe=${groupId}: ${e}`);
-      });
-      return;
-    }
-
-    // First attempt: try peer relay before giving up.
-    const lastTs =
-      convo.messages.length > 0
-        ? Math.max(...convo.messages.map((m: ChatMessage) => m.timestamp.getTime()))
-        : 0;
-    log(
-      `[SYNC] Relai peer-to-peer pour groupe=${groupId} (lastTs=${lastTs}, tentative ${attempt})`
-    );
-    const payload = encodeAppMessage(
-      mkSystem(
-        'sync_request',
-        JSON.stringify({ requesterDeviceId: mlsService.getDeviceId(), lastTimestamp: lastTs })
-      )
-    );
-    mlsService.sendMessage(groupId, payload).catch((e) => {
-      log(`[SYNC] Impossible d'envoyer sync_request pour groupe=${groupId}: ${e}`);
-    });
-  });
 }
 
 /** Dependencies injected into initializeConnection. Only the tab leader calls this. */
