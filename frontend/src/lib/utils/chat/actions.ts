@@ -5,6 +5,7 @@ import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
 import { downloadDir } from '@tauri-apps/api/path';
 
+/** Extracts the other user's ID from a DM group name formatted as "userA::userB". Returns null for group chats. */
 function parseDirectPeerFromName(rawName: string, userId: string): string | null {
   const parts = rawName
     .split('::')
@@ -623,6 +624,7 @@ export async function discoverMissingGroups(params: {
   }
 }
 
+/** Exports the user's full backup (conversations + messages + MLS state) as a `.canari` file. In Tauri opens a folder picker; in the browser triggers an anchor download. */
 export async function exportUserBackup(params: {
   storage: IStorage;
   userId: string;
@@ -670,6 +672,7 @@ export async function exportUserBackup(params: {
   }
 }
 
+/** Imports a `.canari` backup file: decrypts conversations/messages, restores the MLS state if this is the same device, then reloads the conversation list. */
 export async function importUserBackup(params: {
   file: File;
   pin: string;
@@ -715,12 +718,14 @@ export async function importUserBackup(params: {
   );
 }
 
+/** Dev helper: generates a new MLS KeyPackage for this device and returns it as a hex string. */
 export async function generateDevKeyPackage(params: { mlsService: IMlsService; pin: string }) {
   const { mlsService, pin } = params;
   const bytes = await mlsService.generateKeyPackage(pin);
   return toHex(bytes);
 }
 
+/** Dev helper: adds a member to a group using a hex-encoded KeyPackage, returning the commit and welcome as hex strings. */
 export async function addDevMember(params: {
   mlsService: IMlsService;
   groupId: string;
@@ -734,6 +739,7 @@ export async function addDevMember(params: {
   };
 }
 
+/** Dev helper: processes an MLS Welcome message from a hex-encoded byte string. */
 export async function processDevWelcome(params: {
   mlsService: IMlsService;
   incomingBytesHex: string;

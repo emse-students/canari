@@ -15,6 +15,7 @@ import { ChannelService } from '$lib/services/ChannelService';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
 
+/** Dependencies injected into setupMessageHandler. All callbacks are optional to allow partial implementations in tests. */
 export interface MessageHandlerDeps {
   mlsService: IMlsService;
   storage: IStorage | null;
@@ -183,6 +184,7 @@ export async function initTabLeadershipAsync(log: (msg: string) => void): Promis
   return isTabLeader;
 }
 
+/** Writes a fresh timestamp to localStorage every 2 s so other tabs can detect a stale leader. */
 function startHeartbeat(): void {
   if (heartbeatInterval) clearInterval(heartbeatInterval);
   heartbeatInterval = setInterval(() => {
@@ -1539,6 +1541,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   });
 }
 
+/** Dependencies injected into initializeConnection. Only the tab leader calls this. */
 interface ConnectionDeps {
   mlsService: IMlsService;
   userId: string;
