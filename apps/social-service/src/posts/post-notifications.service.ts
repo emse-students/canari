@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { PostNotification } from './entities/post-notification.entity';
 import { Post } from './entities/post.entity';
 
+/** Manages in-app notifications triggered by comments and replies on posts. */
 @Injectable()
 export class PostNotificationsService {
   constructor(
@@ -39,6 +40,7 @@ export class PostNotificationsService {
     await this.notifRepo.save(this.notifRepo.create({ ...data, actorName }));
   }
 
+  /** Returns the most recent notifications for a user, newest first. */
   async getNotifications(userId: string, limit = 30) {
     return this.notifRepo.find({
       where: { recipientId: userId },
@@ -47,6 +49,7 @@ export class PostNotificationsService {
     });
   }
 
+  /** Marks every notification for a user as read (called when the bell dropdown is opened). */
   async markAllRead(userId: string) {
     await this.notifRepo.update({ recipientId: userId }, { read: true });
     return { ok: true };

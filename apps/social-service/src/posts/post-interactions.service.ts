@@ -23,6 +23,10 @@ export class PostInteractionsService {
     private readonly configService: ConfigService
   ) {}
 
+  /**
+   * Copies a reactions map into a null-prototype object to prevent prototype-pollution
+   * attacks where a user ID like "__proto__" could shadow Object properties.
+   */
   private sanitizeReactions(raw: Record<string, string> | null | undefined): Record<string, string> {
     const out = Object.create(null) as Record<string, string>;
     if (!raw || typeof raw !== 'object') return out;
@@ -33,6 +37,7 @@ export class PostInteractionsService {
     return out;
   }
 
+  /** Sets or replaces the reaction emoji for a user on a post (one reaction per user). */
   async addReaction(postId: string, userId: string, reactionType: string) {
     if (['__proto__', 'constructor', 'prototype'].includes(userId)) {
       throw new BadRequestException('Invalid userId');
@@ -46,6 +51,7 @@ export class PostInteractionsService {
     return { ok: true, reactions: post.reactions };
   }
 
+  /** Removes the user's reaction from a post. */
   async removeReaction(postId: string, userId: string) {
     if (['__proto__', 'constructor', 'prototype'].includes(userId)) {
       throw new BadRequestException('Invalid userId');
@@ -59,6 +65,11 @@ export class PostInteractionsService {
     return { ok: true, reactions: post.reactions };
   }
 
+  /**
+   * Appends a comment to a post. Enriches it with the author's display name from the
+   * users table (non-fatal if unavailable). Fires notifications fire-and-forget style:
+   * the post author gets a "comment" notification; the parent comment author gets a "reply".
+   */
   async addComment(postId: string, data: { userId: string; text: string; parentId?: string }) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
@@ -113,6 +124,7 @@ export class PostInteractionsService {
     return { ok: true, comment };
   }
 
+  /** Toggles a like on a comment — adds the userId if not present, removes it if already liked. */
   async likeComment(postId: string, commentId: string, userId: string) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
@@ -128,6 +140,7 @@ export class PostInteractionsService {
     return { ok: true, comment };
   }
 
+  /** Updates the text of a comment. Only the original author may edit their own comment. */
   async editComment(postId: string, commentId: string, userId: string, text: string) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
@@ -141,6 +154,7 @@ export class PostInteractionsService {
     return { ok: true, comment };
   }
 
+  /** Removes a comment and all of its replies. Only the original author may delete. */
   async deleteComment(postId: string, commentId: string, userId: string) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
@@ -153,6 +167,11 @@ export class PostInteractionsService {
     return { ok: true };
   }
 
+  /**
+   * Records a poll vote. Clears the user's previous votes across all options first,
+   * then adds their new selection. Supports multiple-choice polls via optionIds array.
+   * Also persists votesByUser so the frontend can restore the selection on reload.
+   */
   async votePoll(postId: string, pollId: string, data: { userId: string; optionIds: string[] }) {
     const post = await this.postRepo.createQueryBuilder('post')
       .where('post.id = :postId', { postId })
@@ -182,6 +201,11 @@ export class PostInteractionsService {
     return post;
   }
 
+  /**
+   * Registers a user for an event button on a post. Enforces capacity limits.
+   * If the button requires payment, creates a Stripe checkout session and returns
+   * a redirect URL instead of completing registration directly.
+   */
   async registerEvent(postId: string, buttonId: string, data: { userId: string; email?: string }) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
@@ -221,6 +245,7 @@ export class PostInteractionsService {
     return { registered: true, requiresPayment: false };
   }
 
+  /** Stub endpoint for form submissions — full implementation is handled by the forms service. */
   async submitForm(postId: string) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException();

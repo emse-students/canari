@@ -5,13 +5,14 @@
   import { listPosts, searchPosts, getMyScheduledPosts, deletePost, type PostEntity, type PostFeed, type ScheduledPost } from '$lib/posts/api';
   import CreatePostForm from '$lib/components/posts/CreatePostForm.svelte';
   import PostCard from '$lib/components/posts/PostCard.svelte';
+  import ScheduledPostsPanel from '$lib/components/posts/ScheduledPostsPanel.svelte';
   import ConversationsMiniPanel from '$lib/components/posts/ConversationsMiniPanel.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import { getToken } from '$lib/stores/auth';
   import { currentUserId } from '$lib/stores/user';
-  import { RefreshCw, PenSquare, Inbox, Search, X, Clock, Trash2 } from 'lucide-svelte';
+  import { RefreshCw, PenSquare, Inbox, Search, X } from 'lucide-svelte';
 
   const LAST_VISIT_KEY = 'posts_last_visit';
   const PAGE_SIZE = 20;
@@ -296,35 +297,7 @@
       {/if}
 
       {#if scheduledPosts.length > 0}
-        <div class="mb-5 rounded-2xl border border-cn-border bg-[var(--cn-surface)]/40 overflow-hidden">
-          <div class="flex items-center gap-2 px-4 py-2.5 border-b border-cn-border bg-amber-500/5">
-            <Clock size={14} class="text-amber-500 shrink-0" />
-            <span class="text-xs font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">
-              Publications programmées ({scheduledPosts.length})
-            </span>
-          </div>
-          <ul class="divide-y divide-cn-border">
-            {#each scheduledPosts as sp (sp.id)}
-              <li class="flex items-center gap-3 px-4 py-3">
-                <div class="min-w-0 flex-1">
-                  <p class="text-sm text-text-main truncate">{sp.markdown.slice(0, 80)}{sp.markdown.length > 80 ? '…' : ''}</p>
-                  <p class="text-xs text-text-muted mt-0.5">
-                    Publié le {new Date(sp.scheduledAt).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onclick={() => deleteScheduled(sp.id)}
-                  class="shrink-0 p-1.5 rounded-lg text-text-muted hover:text-red-500 hover:bg-red-500/10 transition-colors"
-                  title="Supprimer"
-                  aria-label="Supprimer"
-                >
-                  <Trash2 size={15} />
-                </button>
-              </li>
-            {/each}
-          </ul>
-        </div>
+        <ScheduledPostsPanel posts={scheduledPosts} onDelete={deleteScheduled} />
       {/if}
 
       <Modal open={showCreateModal} title="Nouveau post" maxWidth="max-w-xl" onClose={() => (showCreateModal = false)}>

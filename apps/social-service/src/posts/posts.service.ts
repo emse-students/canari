@@ -6,6 +6,7 @@ import { Post } from './entities/post.entity';
 import { RedisService } from '../common/redis/redis.service';
 import { FollowsService } from '../follows/follows.service';
 
+/** Core post service: creation, listing (with Redis cache), search, scheduling, and moderation. */
 @Injectable()
 export class PostsService {
   private static readonly LIST_CACHE_TTL = 30; // seconds
@@ -32,6 +33,7 @@ export class PostsService {
     return `posts:list:v2:${feed}:${viewerUserId ?? 'anon'}:${promo ?? '-'}:${formation ?? '-'}:${limit}:${offset}`;
   }
 
+  /** Deletes the most-common list cache keys so the next request gets fresh data. */
   private async invalidateListCache() {
     await this.redis.del(
       this.listPostsCacheKey('all', undefined, undefined, undefined, 20, 0),
@@ -88,6 +90,10 @@ export class PostsService {
     return raw;
   }
 
+  /**
+   * Creates a new post. Normalises polls and event buttons (assigns UUIDs, default values),
+   * saves to DB, invalidates the Redis list cache, and returns the public-shaped entity.
+   */
   async createPost(data: any) {
     if (Array.isArray(data.eventButtons)) {
       data.eventButtons = data.eventButtons.map((btn: any) => ({
@@ -116,6 +122,7 @@ export class PostsService {
     return this.toPublicPostFromEntity(entity);
   }
 
+  /** Full-text search across post markdown and association names. Excludes future-scheduled posts. */
   async searchPosts(q: string, limit = 20, offset = 0): Promise<any[]> {
     const term = q.trim();
     if (!term) return [];
@@ -181,6 +188,13 @@ export class PostsService {
     return this.stripBigIntForJson(result);
   }
 
+  /**
+   * Returns paginated posts for one of three feeds:
+   * - "all": every post, pinned first
+   * - "followed": posts from associations the viewer follows
+   * - "custom": personal posts filtered by promo year and/or formation
+   * Results are cached in Redis for 30 s. Future-scheduled posts are always excluded.
+   */
   async listPosts(params: {
     limit: number;
     offset: number;
@@ -327,6 +341,7 @@ export class PostsService {
     return safe;
   }
 
+  /** Returns the author's own future-scheduled posts (max 20), ordered by scheduled date. */
   async getMyScheduledPosts(userId: string) {
     const rows: any[] = await this.postRepo.manager.query(
       `SELECT id, markdown, "scheduledAt", "createdAt"
@@ -341,12 +356,14 @@ export class PostsService {
     return rows;
   }
 
+  /** Loads a single post by ID and returns the public-shaped version (association identity applied). */
   async getById(id: string) {
     const post = await this.postRepo.findOne({ where: { id } });
     if (!post) throw new NotFoundException('Post not found');
     return this.toPublicPostFromEntity(post);
   }
 
+  /** Updates a post's markdown content. Only the original author may edit. */
   async updatePost(postId: string, userId: string, markdown: string) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
@@ -356,6 +373,7 @@ export class PostsService {
     return this.toPublicPostFromEntity(saved);
   }
 
+  /** Permanently deletes a post. Authors can delete their own; global admins can delete any. */
   async deletePost(postId: string, userId: string, isAdmin: boolean) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
@@ -364,6 +382,7 @@ export class PostsService {
     return { ok: true };
   }
 
+  /** Pins or unpins a post (global admin only). Pinned posts always sort first in feeds. */
   async setPinned(postId: string, pinned: boolean) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
@@ -373,6 +392,7 @@ export class PostsService {
     return { ok: true, pinned };
   }
 
+  /** Records a user's report on a post. Silently ignores duplicate reports from the same user. */
   async reportPost(postId: string, userId: string, reason: string) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
