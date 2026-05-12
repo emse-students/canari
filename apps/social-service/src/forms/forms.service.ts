@@ -10,10 +10,12 @@ import axios from 'axios';
 import * as ExcelJS from 'exceljs';
 import { AssociationsService } from '../associations/associations.service';
 
+/** Generates a short random ID with the given prefix, e.g. "item_a3b9x1". */
 function makeId(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+/** Dynamic form engine: creation, submission (with optional Stripe checkout), exports, and submission lifecycle. */
 @Injectable()
 export class FormsService {
   private readonly logger = new Logger(FormsService.name);
@@ -25,6 +27,7 @@ export class FormsService {
     private readonly associationsService: AssociationsService
   ) {}
 
+  /** Creates a form and assigns stable IDs to all items and options that lack them. */
   async create(input: CreateFormDto) {
     const form = this.formRepo.create({
       ...input,
@@ -40,15 +43,18 @@ export class FormsService {
     return this.formRepo.save(form);
   }
 
+  /** Lists all forms, optionally filtered by ownerId, newest first. */
   async list(ownerId?: string) {
     const where = ownerId ? { ownerId } : {};
     return this.formRepo.find({ where, order: { createdAt: 'DESC' } });
   }
 
+  /** Returns a single form by ID, or null if not found. */
   async get(id: string) {
     return this.formRepo.findOne({ where: { id } });
   }
 
+  /** Returns the most recent completed (paid or free) submission for a given user on a form. */
   async getSubmission(formId: string, userId: string) {
     return this.submissionRepo.findOne({
       where: [
@@ -59,6 +65,7 @@ export class FormsService {
     });
   }
 
+  /** Returns true if the user already has a completed (paid or free) submission for this form. */
   async hasSubmission(formId: string, userId: string): Promise<boolean> {
     const count = await this.submissionRepo.count({
       where: [
@@ -69,6 +76,7 @@ export class FormsService {
     return count > 0;
   }
 
+  /** Validates answers, calculates the total price (base + option modifiers), enforces capacity limits, creates a Submission, and — if totalCents > 0 — returns a Stripe Checkout URL. */
   async submit(id: string, input: SubmitFormDto) {
     const form = await this.formRepo.findOne({ where: { id } });
     if (!form) throw new NotFoundException('Form not found');
@@ -219,6 +227,7 @@ export class FormsService {
     return { message: 'Form submitted successfully', submissionId: savedSubmission.id };
   }
 
+  /** Loads a submission by ID with its payment status and the associated Stripe account ID (if any). */
   async getSubmissionById(submissionId: string) {
     const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
     if (!submission) throw new NotFoundException('Submission not found');
@@ -236,6 +245,7 @@ export class FormsService {
     };
   }
 
+  /** Marks a submission as paid (called from the Stripe webhook handler). Optionally stores the Stripe session ID. */
   async markPaid(submissionId: string, sessionId?: string) {
     const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
     if (!submission) throw new NotFoundException('Submission not found');
@@ -245,6 +255,7 @@ export class FormsService {
     return { ok: true };
   }
 
+  /** Marks a pending submission as cancelled (called when the user abandons checkout). Never touches paid submissions. */
   async cancelSubmission(submissionId: string) {
     const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
     if (!submission) throw new NotFoundException('Submission not found');
@@ -255,12 +266,14 @@ export class FormsService {
     return { ok: true };
   }
 
+  /** Returns false for empty arrays, empty objects, null, undefined, and empty strings — used to validate required fields. */
   private hasValue(val: any): boolean {
     if (Array.isArray(val)) return val.length > 0;
     if (val && typeof val === 'object') return Object.keys(val).length > 0;
     return !!val;
   }
 
+  /** Adds price modifiers for each selected option to the running total and pushes matching Stripe line-item entries. */
   private calculateModifiers(
     item: any,
     answer: any,
@@ -293,10 +306,12 @@ export class FormsService {
     return currentTotal;
   }
 
+  /** Returns all submissions for a form in descending creation order. */
   async getSubmissions(formId: string) {
     return this.submissionRepo.find({ where: { formId }, order: { createdAt: 'DESC' } });
   }
 
+  /** Generates an Excel workbook (.xlsx) with one row per submission and one column per form item. */
   async exportSubmissions(formId: string): Promise<Buffer> {
     const form = await this.formRepo.findOne({ where: { id: formId } });
     if (!form) throw new NotFoundException('Form not found');
@@ -345,6 +360,7 @@ export class FormsService {
     return workbook.xlsx.writeBuffer() as unknown as Promise<Buffer>;
   }
 
+  /** Converts a raw answer value to a human-readable string for the Excel export, resolving option IDs to their labels. */
   private formatAnswer(ans: any, item: any): string {
     if (!ans) return '';
     if (Array.isArray(ans)) {

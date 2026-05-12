@@ -34,10 +34,12 @@ import {
   type ChannelKeyDistributionPayloadDto,
 } from './dto/channel.dto';
 
+/** Manages workspaces, channels, roles, members, key distribution, and encrypted messages. */
 @Injectable()
 export class ChannelService {
   private readonly logger = new Logger(ChannelService.name);
 
+  /** Normalises a French or English role label to one of three canonical values: admin, moderator, or member. */
   private normalizeRoleLabelToCanonical(name?: string | null): 'admin' | 'moderator' | 'member' {
     const normalized = String(name || '')
       .trim()
@@ -58,6 +60,7 @@ export class ChannelService {
     return 'member';
   }
 
+  /** Maps any role name input to the canonical display name stored in the workspace roles table. */
   private mapRoleInputToWorkspaceRoleName(name?: string | null): string {
     const normalized = String(name || '')
       .trim()
@@ -79,6 +82,7 @@ export class ChannelService {
     return name?.trim() || 'Membre';
   }
 
+  /** Returns true if the member holds at least one of the roles listed in a private channel's allowedRoles. Always true for public channels. */
   private canAccessChannel(channel: Channel, member: ChannelMember): boolean {
     if (!channel.isPrivate) return true;
     const roleIds = member.roleIds || [];
@@ -105,6 +109,7 @@ export class ChannelService {
     return Buffer.from(raw);
   }
 
+  /** Builds the bootstrap payload (channelId, keyVersion, base64 epoch key) sent to a client on join or key refresh. */
   private buildChannelBootstrap(
     channel: Pick<Channel, 'id' | 'keyVersion' | 'masterSecret'>
   ): ChannelBootstrapDto {
@@ -137,6 +142,7 @@ export class ChannelService {
 
   // ================= WORKSPACES =================
 
+  /** Creates a workspace with default Administrateur/Modérateur/Membre roles, adds the creator as admin, and creates a public #general channel. */
   async createWorkspace(input: CreateWorkspaceDto) {
     const ws = this.workspaceRepo.create({
       name: input.name,
@@ -197,6 +203,7 @@ export class ChannelService {
     return savedWs;
   }
 
+  /** Loads a workspace by its URL slug together with its channels, members, and roles. */
   async getWorkspaceBySlug(slug: string) {
     const ws = await this.workspaceRepo.findOne({ where: { slug } });
     if (!ws) throw new NotFoundException('Workspace not found');
@@ -208,6 +215,7 @@ export class ChannelService {
     return { workspace: ws, channels, members, roles };
   }
 
+  /** Returns all workspaces the user belongs to (derived from their ChannelMember records). */
   async listWorkspacesForUser(userId: string) {
     const roles = await this.memberRepo.find({ where: { userId } });
     if (roles.length === 0) return [];
@@ -223,6 +231,7 @@ export class ChannelService {
 
   // ================= ROLES =================
 
+  /** Creates a new workspace role. Only members with MANAGE_WORKSPACE or MANAGE_ROLES permission may call this. */
   async createRole(input: CreateRoleDto & { actorUserId: string }) {
     // Only workspace admins (MANAGE_WORKSPACE or MANAGE_ROLES) may create roles.
     const actorMember = await this.memberRepo.findOne({
@@ -249,6 +258,7 @@ export class ChannelService {
 
   // ================= CHANNELS =================
 
+  /** Creates a channel inside a workspace. Private channels restrict access to Admin and Moderator roles by default. */
   async createChannel(input: CreateChannelDto) {
     // Check actor has permission to manage channels in this workspace
     const actorMember = await this.memberRepo.findOne({
@@ -301,6 +311,7 @@ export class ChannelService {
     };
   }
 
+  /** Updates the channel's cover image and broadcasts a channel.updated event to all workspace members. */
   async updateChannelImage(channelId: string, actorUserId: string, mediaId: string) {
     if (!/^[a-zA-Z0-9_-]{1,128}$/.test(mediaId)) {
       throw new ForbiddenException('Invalid mediaId format');
@@ -337,6 +348,7 @@ export class ChannelService {
     return { success: true, channelId, imageMediaId: mediaId };
   }
 
+  /** Updates the workspace's cover image and broadcasts a workspace.updated event to all members. */
   async updateWorkspaceImage(workspaceId: string, actorUserId: string, mediaId: string) {
     if (!/^[a-zA-Z0-9_-]{1,128}$/.test(mediaId)) {
       throw new ForbiddenException('Invalid mediaId format');
@@ -370,6 +382,7 @@ export class ChannelService {
     return { success: true, workspaceId, imageMediaId: mediaId };
   }
 
+  /** Removes the user from the workspace and broadcasts a member-kicked event so other clients clean up their UI. */
   async leaveWorkspace(workspaceId: string, userId: string) {
     const workspace = await this.workspaceRepo.findOne({ where: { id: workspaceId } });
     if (!workspace) throw new NotFoundException('Workspace not found');
@@ -389,6 +402,7 @@ export class ChannelService {
     return { success: true };
   }
 
+  /** Renames a channel (lowercased) and broadcasts a channel.updated event so connected clients update their sidebar. */
   async renameChannel(channelId: string, actorUserId: string, newName: string) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
@@ -421,6 +435,7 @@ export class ChannelService {
     return { success: true, channelId, name: channel.name };
   }
 
+  /** Marks a channel as archived (hidden from listings) and broadcasts a channel.deleted event to workspace members. */
   async archiveChannel(channelId: string, actorUserId: string) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
@@ -521,6 +536,7 @@ export class ChannelService {
     );
   }
 
+  /** Constructs the ChannelKeyDistributionPayloadDto sent to the invited user so they can decrypt historical messages. */
   private toDistributionPayload(
     distribution: ChannelKeyDistribution,
     channel: Channel,
@@ -541,6 +557,7 @@ export class ChannelService {
     };
   }
 
+  /** Advances a key-distribution record through its lifecycle (pending → sent → received → acked). Enforces valid state transitions. */
   private async updateDistributionStatus(
     distributionId: string,
     status: ChannelKeyDistributionStatus,
@@ -581,6 +598,7 @@ export class ChannelService {
     return distribution;
   }
 
+  /** Lists all non-archived channels the user can access in a workspace, including the current epoch key bootstrap for each. */
   async listChannelsForUser(workspaceId: string, userId: string) {
     const member = await this.memberRepo.findOne({ where: { workspaceId, userId } });
     if (!member) throw new ForbiddenException('Not a member of this workspace');
@@ -599,6 +617,7 @@ export class ChannelService {
       }));
   }
 
+  /** Returns the current epoch key bootstrap for a single channel, used when reconnecting after a missed key rotation. */
   async getChannelKeyBootstrapForUser(channelId: string, userId: string) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
@@ -614,6 +633,7 @@ export class ChannelService {
     return this.buildChannelBootstrap(channel);
   }
 
+  /** Returns all epoch keys (versions 1…N) for a channel, allowing a new member to decrypt historical messages. */
   async getChannelHistoryKeysForUser(
     channelId: string,
     userId: string
@@ -650,6 +670,7 @@ export class ChannelService {
     };
   }
 
+  /** Adds a user to a workspace channel. Creates the workspace membership with the default Member role if this is their first channel in the workspace. */
   async joinChannel(channelId: string, input: ChannelJoinDto) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
@@ -695,6 +716,7 @@ export class ChannelService {
     return { success: true };
   }
 
+  /** Invites a user to a channel. Rotates the channel key if it's a new member, then returns a full key-distribution payload so the invitee can decrypt all past messages. */
   async inviteToChannel(channelId: string, input: ChannelInviteDto) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
@@ -811,6 +833,7 @@ export class ChannelService {
     };
   }
 
+  /** Removes a user from a channel (or strips their private-channel roles) and rotates the key so the departing user's copy is invalidated. */
   async leaveChannel(channelId: string, input: ChannelLeaveDto) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
@@ -850,6 +873,7 @@ export class ChannelService {
     return { success: true };
   }
 
+  /** Called by the inviter once they have transmitted the encrypted key to the target device. Advances status → key_sent. */
   async markKeyDistributionSent(channelId: string, distributionId: string, actorUserId: string) {
     const distribution = await this.keyDistributionRepo.findOne({ where: { id: distributionId } });
     if (!distribution || distribution.channelId !== channelId) {
@@ -862,6 +886,7 @@ export class ChannelService {
     return { success: true, distributionId, status: 'key_sent' };
   }
 
+  /** Called by the target user once they have received (but not yet decrypted) the key package. Advances status → key_received. */
   async markKeyDistributionReceived(
     channelId: string,
     distributionId: string,
@@ -886,6 +911,7 @@ export class ChannelService {
     return { success: true, distributionId, status: 'key_received' };
   }
 
+  /** Called by the target user once they have successfully decrypted and stored the key. Advances status → key_acked. */
   async ackKeyDistribution(
     channelId: string,
     distributionId: string,
@@ -910,6 +936,7 @@ export class ChannelService {
     return { success: true, distributionId, status: 'key_acked' };
   }
 
+  /** Removes a member from the workspace, broadcasts a kicked event, then rotates the channel key so the removed user can no longer decrypt new messages. */
   async kickMember(channelId: string, input: ChannelKickDto) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
@@ -971,6 +998,7 @@ export class ChannelService {
     return { success: true };
   }
 
+  /** Adds a new role to a workspace member's roleIds (does not remove existing roles). Requires MANAGE_WORKSPACE or MANAGE_ROLES permission. */
   async updateMemberRole(channelId: string, input: ChannelUpdateRoleDto) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
@@ -1012,6 +1040,7 @@ export class ChannelService {
 
   // ================= CHANNEL MEMBERS =================
 
+  /** Returns all members of the workspace that owns the channel, each with their highest-priority role normalized to admin/moderator/member. */
   async listChannelMembers(channelId: string, actorUserId: string) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
@@ -1039,6 +1068,7 @@ export class ChannelService {
 
   // ================= MESSAGES =================
 
+  /** Persists a client-encrypted message after validating keyVersion against the current channel epoch, then publishes the ciphertext to all workspace members via Redis. */
   async sendMessage(channelId: string, input: SendChannelMessageDto) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
@@ -1094,6 +1124,7 @@ export class ChannelService {
     return savedMsg;
   }
 
+  /** Returns up to 200 messages from a channel in reverse chronological order (newest first). Access-controlled by canAccessChannel. */
   async listMessages(channelId: string, userId: string, limit = 50) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');

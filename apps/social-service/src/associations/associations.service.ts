@@ -13,6 +13,7 @@ import { RedisService } from '../common/redis/redis.service';
 const LOGO_MAX_BYTES = 2 * 1024 * 1024;
 const ALLOWED_LOGO_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
+/** CRUD, logo management, membership, and Stripe helpers for student associations. */
 @Injectable()
 export class AssociationsService {
   private readonly logger = new Logger(AssociationsService.name);
@@ -29,6 +30,7 @@ export class AssociationsService {
     private readonly httpService: HttpService
   ) {}
 
+  /** Deletes all `posts:list:v2:*` Redis keys so the next request rebuilds the feed with updated association data. */
   private async invalidatePostListCaches(): Promise<void> {
     try {
       await this.redis.deleteByPattern('posts:list:v2:*');
@@ -39,6 +41,7 @@ export class AssociationsService {
 
   // ── CRUD ──────────────────────────────────────────────────────────────────
 
+  /** Creates a new association. Throws if the slug is already taken. */
   async create(dto: CreateAssociationDto, userId: string) {
     const existing = await this.assoRepo.findOne({
       where: { slug: dto.slug },
@@ -53,6 +56,7 @@ export class AssociationsService {
     return saved;
   }
 
+  /** Returns all associations alphabetically with a memberCount field attached to each. */
   async list() {
     const associations = await this.assoRepo.find({
       order: { name: 'ASC' },
@@ -79,6 +83,7 @@ export class AssociationsService {
     }));
   }
 
+  /** Loads one association by its UUID and appends a memberCount. Throws NotFoundException if absent. */
   async findById(id: string) {
     const asso = await this.assoRepo.findOne({ where: { id } });
     if (!asso) throw new NotFoundException('Association not found');
@@ -88,6 +93,7 @@ export class AssociationsService {
     return { ...asso, memberCount };
   }
 
+  /** Loads one association by its URL slug and appends a memberCount. */
   async findBySlug(slug: string) {
     const asso = await this.assoRepo.findOne({ where: { slug } });
     if (!asso) throw new NotFoundException('Association not found');
@@ -97,6 +103,7 @@ export class AssociationsService {
     return { ...asso, memberCount };
   }
 
+  /** Partially updates an association (blank bioMarkdown is normalised to null) and invalidates post-list caches. */
   async update(id: string, dto: UpdateAssociationDto) {
     await this.findById(id);
     const patch = { ...dto } as Partial<Association>;
@@ -108,6 +115,7 @@ export class AssociationsService {
     return this.findById(id);
   }
 
+  /** Permanently deletes an association and all its member records, then invalidates post-list caches. */
   async remove(id: string) {
     await this.memberRepo.delete({ associationId: id });
     await this.assoRepo.delete(id);
@@ -115,6 +123,7 @@ export class AssociationsService {
     return { ok: true };
   }
 
+  /** Validates that the Authorization header is a Bearer token and returns it verbatim for forwarding. */
   private requireBearer(authorization: string | undefined): string {
     const h = authorization?.trim();
     if (!h?.startsWith('Bearer ')) {
@@ -123,6 +132,7 @@ export class AssociationsService {
     return h;
   }
 
+  /** POSTs a logo file to the media-service public upload endpoint and returns the assigned mediaId. */
   private async uploadLogoToMedia(
     file: { buffer: Buffer; mimetype: string },
     authorization: string
@@ -161,6 +171,7 @@ export class AssociationsService {
     }
   }
 
+  /** Tries to delete a media object; silently ignores errors (the object may already be gone). */
   private async deleteMediaBestEffort(mediaId: string, authorization: string): Promise<void> {
     try {
       await firstValueFrom(
@@ -173,6 +184,7 @@ export class AssociationsService {
     }
   }
 
+  /** Validates the uploaded file (size ≤ 2 MB, JPEG/PNG/WebP), uploads it to the media-service, then updates logoMediaId/logoUrl and deletes the previous logo if one existed. */
   async setLogoFromUpload(
     associationId: string,
     file: { buffer: Buffer; mimetype: string; size: number },
@@ -211,6 +223,7 @@ export class AssociationsService {
     return this.findById(associationId);
   }
 
+  /** Removes the association's stored logo: clears the DB columns and attempts to delete the old media object. */
   async clearStoredLogo(
     associationId: string,
     authorization: string | undefined
@@ -238,6 +251,7 @@ export class AssociationsService {
 
   // ── Members ───────────────────────────────────────────────────────────────
 
+  /** Lists all members of an association with their user displayName joined from the users table. */
   async listMembers(associationId: string) {
     return this.memberRepo
       .createQueryBuilder('m')
@@ -260,6 +274,7 @@ export class AssociationsService {
       );
   }
 
+  /** Adds a user to an association with the given role and permission level. Throws if they are already a member. */
   async addMember(
     associationId: string,
     userId: string,
@@ -285,6 +300,7 @@ export class AssociationsService {
     return this.memberRepo.save(membership);
   }
 
+  /** Updates a member's role label and/or permission level. Blocks demotion of the last admin. */
   async updateMemberRole(
     associationId: string,
     targetUserId: string,
@@ -309,6 +325,7 @@ export class AssociationsService {
     return this.memberRepo.save(membership);
   }
 
+  /** Removes a member from the association. Blocks removal of the last admin. */
   async removeMember(associationId: string, targetUserId: string) {
     const membership = await this.memberRepo.findOne({
       where: { associationId, userId: targetUserId },
@@ -324,6 +341,7 @@ export class AssociationsService {
     return { ok: true };
   }
 
+  /** Counts members whose permission is ≥ Admin. Used by the last-admin guard. */
   private async adminMemberCount(associationId: string): Promise<number> {
     return this.memberRepo.count({
       where: { associationId, permission: AssociationPermission.Admin },
@@ -346,6 +364,7 @@ export class AssociationsService {
     }
   }
 
+  /** Returns all associations a user belongs to, with their role/permission attached to each item. */
   async listByUser(userId: string) {
     const memberships = await this.memberRepo.find({
       where: { userId },
@@ -370,6 +389,7 @@ export class AssociationsService {
 
   // ── Stripe helpers ────────────────────────────────────────────────────────
 
+  /** Stores the Stripe connected-account ID for an association and invalidates post-list caches. */
   async setStripeAccountId(id: string, stripeAccountId: string) {
     const asso = await this.findById(id);
     await this.assoRepo.update(id, { stripeAccountId });
@@ -377,11 +397,13 @@ export class AssociationsService {
     return { ...asso, stripeAccountId };
   }
 
+  /** Flips stripeOnboardingComplete to true after the Stripe Connect onboarding webhook confirms the account is ready. */
   async markStripeOnboardingComplete(id: string) {
     await this.assoRepo.update(id, { stripeOnboardingComplete: true });
     await this.invalidatePostListCaches();
   }
 
+  /** Returns the Stripe connected-account ID for an association, or null if none is set. */
   async getStripeAccountId(id: string): Promise<string | null> {
     const asso = await this.assoRepo.findOne({ where: { id } });
     return asso?.stripeAccountId ?? null;
@@ -389,6 +411,7 @@ export class AssociationsService {
 
   // ── Post authorship check ─────────────────────────────────────────────────
 
+  /** Returns true if the user has Admin-level permission in the association (or is a global admin). Used before creating a post on behalf of an association. */
   async canPostAs(
     userId: string,
     associationId: string,
