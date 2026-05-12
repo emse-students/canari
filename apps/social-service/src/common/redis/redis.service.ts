@@ -28,14 +28,12 @@ export class RedisService implements OnModuleDestroy {
     });
   }
 
+  /** Gracefully closes the Redis connection when the NestJS module is destroyed. */
   async onModuleDestroy() {
     await this.client.quit();
   }
 
-  /**
-   * Publish an event to a Redis channel.
-   * The chat-gateway listens on 'chat:channel_events' for real-time delivery.
-   */
+  /** Publishes a JSON message to a Redis Pub/Sub channel. Logs errors but does not throw. */
   async publish(channel: string, message: Record<string, unknown>): Promise<void> {
     try {
       await this.client.publish(channel, JSON.stringify(message));
@@ -47,21 +45,17 @@ export class RedisService implements OnModuleDestroy {
     }
   }
 
-  /**
-   * Publish a channel event to the chat gateway.
-   * Events are delivered to connected WebSocket clients that match the userIds.
-   * @param eventType The event type (e.g., 'channel.member.joined')
-   * @param data Event-specific data
-   * @param userIds List of user IDs to notify (the gateway filters connections by this)
-   */
+  /** Returns the string value stored at key, or null if the key does not exist. */
   async get(key: string): Promise<string | null> {
     return this.client.get(key);
   }
 
+  /** Stores a string value with an expiry (TTL in seconds). */
   async setex(key: string, ttlSeconds: number, value: string): Promise<void> {
     await this.client.setex(key, ttlSeconds, value);
   }
 
+  /** Deletes one or more keys. No-op if the keys array is empty. */
   async del(...keys: string[]): Promise<void> {
     if (keys.length) await this.client.del(...keys);
   }
@@ -80,6 +74,7 @@ export class RedisService implements OnModuleDestroy {
     return deleted;
   }
 
+  /** Wraps publish for channel events: emits to `chat:channel_events` with the target userIds so the gateway delivers only to matching WebSocket connections. */
   async publishChannelEvent(
     eventType: string,
     data: Record<string, unknown>,
