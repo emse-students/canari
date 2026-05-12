@@ -32,6 +32,7 @@ const RedisProvider: Provider = {
   },
 };
 
+/** Root NestJS module: wires PostgreSQL via TypeORM, Redis, and all MLS controllers. */
 @Module({
   imports: [
     TypeOrmModule.forRoot({
