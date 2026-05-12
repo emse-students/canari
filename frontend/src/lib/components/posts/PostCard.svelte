@@ -27,9 +27,10 @@
   import PostEventButtons from './PostEventButtons.svelte';
   import PostForms from './PostForms.svelte';
   import PostComments from './PostComments.svelte';
-  import { CircleAlert, CircleCheck, Pencil, Trash2, Flag, Pin, PinOff } from 'lucide-svelte';
+  import PostOverlayControls from './PostOverlayControls.svelte';
+  import PostFeedback from './PostFeedback.svelte';
+  import { Pin } from 'lucide-svelte';
   import { isGlobalAdmin } from '$lib/stores/user';
-  import { slide, fade } from 'svelte/transition';
   import { untrack } from 'svelte';
 
   /**
@@ -428,72 +429,22 @@
         <Pin size={10} strokeWidth={3} /> Épinglé
       </span>
     {/if}
-    {#if isOwnPost || isGlobalAdmin()}
-      <div class="absolute top-3 right-3 flex items-center gap-1">
-        {#if isGlobalAdmin()}
-          <button
-            type="button"
-            onclick={togglePin}
-            class="p-1.5 rounded-lg text-text-muted hover:text-amber-500 hover:bg-amber-500/10 transition-colors outline-none"
-            aria-label={localPost.pinned ? 'Désépingler' : 'Épingler'}
-            title={localPost.pinned ? 'Désépingler' : 'Épingler'}
-          >
-            {#if localPost.pinned}
-              <PinOff size={14} strokeWidth={2.5} />
-            {:else}
-              <Pin size={14} strokeWidth={2.5} />
-            {/if}
-          </button>
-        {/if}
-        {#if isOwnPost}
-          <button
-            type="button"
-            onclick={startEditPost}
-            class="p-1.5 rounded-lg text-text-muted hover:text-amber-500 hover:bg-amber-500/10 transition-colors outline-none"
-            aria-label="Modifier le post"
-          >
-            <Pencil size={14} strokeWidth={2.5} />
-          </button>
-          <button
-            type="button"
-            onclick={handleDeletePost}
-            class="p-1.5 rounded-lg text-text-muted hover:text-red-500 hover:bg-red-500/10 transition-colors outline-none"
-            aria-label="Supprimer le post"
-          >
-            <Trash2 size={14} strokeWidth={2.5} />
-          </button>
-        {/if}
-      </div>
-    {:else if currentUserId}
-      <div class="absolute top-3 right-3">
-        {#if reportOpen}
-          <div class="flex flex-col gap-2 bg-white dark:bg-[#1a2236] border border-cn-border rounded-xl p-3 shadow-lg w-52 z-20" transition:slide={{ duration: 150 }}>
-            <p class="text-[0.65rem] font-bold text-text-muted uppercase tracking-wide">Signaler ce post</p>
-            <div class="flex flex-col gap-1">
-              {#each REPORT_REASONS as r (r)}
-                <label class="flex items-center gap-2 text-sm cursor-pointer hover:text-text-main transition-colors">
-                  <input type="radio" bind:group={reportReason} value={r} class="accent-amber-500 shrink-0" />
-                  <span class="text-[0.82rem]">{r}</span>
-                </label>
-              {/each}
-            </div>
-            <div class="flex gap-2 mt-1">
-              <button type="button" onclick={() => { reportOpen = false; reportReason = ''; }} class="flex-1 text-xs font-bold text-text-muted hover:text-text-main rounded-lg py-1.5 transition-colors">Annuler</button>
-              <button type="button" onclick={submitReport} disabled={!reportReason || reportSubmitting} class="flex-1 text-xs font-bold bg-red-500 text-white rounded-lg py-1.5 disabled:opacity-40 transition-colors hover:bg-red-400">Signaler</button>
-            </div>
-          </div>
-        {:else}
-          <button
-            type="button"
-            onclick={() => { reportOpen = true; }}
-            class="p-1.5 rounded-lg text-text-muted hover:text-red-500 hover:bg-red-500/10 transition-colors outline-none opacity-0 group-hover/card:opacity-100"
-            aria-label="Signaler ce post"
-          >
-            <Flag size={14} strokeWidth={2.5} />
-          </button>
-        {/if}
-      </div>
-    {/if}
+    <PostOverlayControls
+      pinned={localPost.pinned ?? false}
+      {isOwnPost}
+      isGlobalAdmin={isGlobalAdmin()}
+      isLoggedIn={!!currentUserId}
+      {reportOpen}
+      {reportReason}
+      {reportSubmitting}
+      reportReasons={REPORT_REASONS}
+      onTogglePin={togglePin}
+      onStartEdit={startEditPost}
+      onDelete={handleDeletePost}
+      onToggleReport={(open) => { reportOpen = open; if (!open) reportReason = ''; }}
+      onReportReasonChange={(r) => { reportReason = r; }}
+      onSubmitReport={submitReport}
+    />
   </div>
 
   {#if editingPost}
@@ -573,31 +524,5 @@
   />
 
   <!-- Notifications intégrées à la carte -->
-  {#if errorMessage || actionMessage}
-    <div class="px-5 pb-5 pt-2">
-      {#if errorMessage}
-        <div
-          transition:slide={{ duration: 200 }}
-          class="flex items-start gap-3 p-3.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 shadow-inner"
-        >
-          <div transition:fade={{ duration: 150 }} class="flex items-center gap-3">
-            <CircleAlert size={18} class="shrink-0 mt-0.5" />
-            <span class="text-sm font-bold leading-snug">{errorMessage}</span>
-          </div>
-        </div>
-      {/if}
-
-      {#if actionMessage}
-        <div
-          transition:slide={{ duration: 200 }}
-          class="flex items-start gap-3 p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400 shadow-inner mt-2"
-        >
-          <div transition:fade={{ duration: 150 }} class="flex items-center gap-3">
-            <CircleCheck size={18} class="shrink-0 mt-0.5" />
-            <span class="text-sm font-bold leading-snug">{actionMessage}</span>
-          </div>
-        </div>
-      {/if}
-    </div>
-  {/if}
+  <PostFeedback {errorMessage} {actionMessage} />
 </Card>

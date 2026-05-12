@@ -17,7 +17,8 @@ use crate::state::AppState;
 
 // ── Connection context (one per WebSocket session) ────────────────────────
 
-#[allow(dead_code)]
+/// Bundles the per-session references needed by dispatch handlers so they
+/// can be passed as a single argument rather than a long parameter list.
 pub struct WsConn<'a> {
     pub state: &'a Arc<AppState>,
     pub user_id: &'a str,
@@ -28,13 +29,17 @@ pub struct WsConn<'a> {
 
 // ── Parsed incoming frame ─────────────────────────────────────────────────
 
+/// Minimal parsed representation of an inbound WebSocket JSON frame.
 pub struct WsFrame {
+    /// The `type` field from the JSON object (e.g. `"welcome_request"`).
     pub msg_type: String,
+    /// The `groupId` field, or an empty string when absent.
     pub group_id: String,
 }
 
 impl WsFrame {
     /// Parse a raw JSON value into a `WsFrame`.
+    /// Always returns `Some`; the option wrapper exists for future validation.
     pub fn parse(json: &serde_json::Value) -> Option<Self> {
         let msg_type = json
             .get("type")
@@ -54,9 +59,11 @@ impl WsFrame {
 
 // ── Handler: "disconnect" ─────────────────────────────────────────────────
 
-/// Called when the client explicitly signals it is going offline.
-/// Returns `true` to instruct the recv loop to break immediately.
-#[allow(dead_code)]
+/// Handle an explicit client disconnect frame.
+///
+/// Immediately removes the `user:online:{userId}:{deviceId}` Redis presence key
+/// so peers see the user as offline without waiting for the TTL to expire.
+/// The caller should break out of the recv loop after this returns.
 pub async fn handle_disconnect(
     state: &std::sync::Arc<crate::state::AppState>,
     user_id: &str,
@@ -93,7 +100,11 @@ pub async fn handle_disconnect(
 
 // ── Handler: "welcome_request" ────────────────────────────────────────────
 
-#[allow(dead_code)]
+/// Handle a `welcome_request` frame from a client that wants to join a group.
+///
+/// Builds a notification JSON object and forwards it to exactly one online
+/// group peer that is not the sender.  If no peer is reachable, sends
+/// `no_peer_online` back to the requester.
 pub async fn handle_welcome_request(conn: &WsConn<'_>, frame: &WsFrame) {
     tracing::info!(
         "Processing welcome_request from {}:{} for group {}",
@@ -116,7 +127,11 @@ pub async fn handle_welcome_request(conn: &WsConn<'_>, frame: &WsFrame) {
 
 // ── Handler: "reinvite_request" ───────────────────────────────────────────
 
-#[allow(dead_code)]
+/// Handle a `reinvite_request` frame from a client that needs to be re-added to a group.
+///
+/// Builds a notification JSON object and forwards it to exactly one online
+/// group peer that is not the sender.  If no peer is reachable, sends
+/// `no_peer_online` back to the requester.
 pub async fn handle_reinvite_request(conn: &WsConn<'_>, frame: &WsFrame) {
     tracing::info!(
         "Processing reinvite_request from {}:{} for group {}",
@@ -139,9 +154,11 @@ pub async fn handle_reinvite_request(conn: &WsConn<'_>, frame: &WsFrame) {
 
 // ── Shared helper ─────────────────────────────────────────────────────────
 
-/// Forward a notification to exactly one online group member that is not the
-/// sender. Sends `no_peer_online` back to the sender if no peer is reachable.
-#[allow(dead_code)]
+/// Forward a notification to exactly one online group member that is not the sender.
+///
+/// Looks up the group member list in Redis (`group:members:{group_id}`), then
+/// iterates the in-memory `connected_users` map to find the first online peer.
+/// Sends `no_peer_online` back to the original sender if no peer is reachable.
 async fn forward_to_one_peer(
     conn: &WsConn<'_>,
     group_id: &str,

@@ -4,7 +4,7 @@ use axum::{
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
     http::{HeaderMap, StatusCode},
-    response::{IntoResponse, Json, Response},
+    response::{IntoResponse, Response},
 };
 use futures::{sink::SinkExt, stream::StreamExt};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
@@ -21,6 +21,10 @@ use crate::ws_dispatch::{
     WsConn, WsFrame, handle_disconnect, handle_reinvite_request, handle_welcome_request,
 };
 
+// ── Cookie helper ─────────────────────────────────────────────────────────
+
+/// Extract the value of a named cookie from the `Cookie` HTTP header.
+/// Returns `None` if the header is absent or the named cookie is not present.
 fn extract_cookie_value(headers: &HeaderMap, key: &str) -> Option<String> {
     let cookie_header = headers.get("cookie")?.to_str().ok()?;
     for part in cookie_header.split(';') {
@@ -36,9 +40,16 @@ fn extract_cookie_value(headers: &HeaderMap, key: &str) -> Option<String> {
 
 // ── ConnectionGuard — cleanup on drop ────────────────────────────────────
 
+/// RAII guard that cleans up a WebSocket connection's in-memory entry and
+/// Redis presence key when the connection task exits (for any reason).
+///
+/// Using `Drop` instead of explicit cleanup ensures presence is removed even
+/// when the task is cancelled or panics.
 struct ConnectionGuard {
     state: Arc<AppState>,
+    /// The `"userId:deviceId"` key used in `connected_users`.
     conn_key: String,
+    /// The Redis key `user:online:{userId}:{deviceId}` to delete on disconnect.
     redis_key: String,
     /// Unique ID assigned to this connection, used for O(1) removal from the map.
     conn_id: u64,
@@ -129,6 +140,11 @@ impl Drop for ConnectionGuard {
 
 // ── Public WS upgrade handler ─────────────────────────────────────────────
 
+/// Axum handler for `GET /api/ws`.
+///
+/// Validates the JWT from the `canari_ws_token` cookie or the `token` query
+/// parameter, then upgrades the HTTP connection to a WebSocket and hands off
+/// to `handle_socket`.  Returns `401 Unauthorized` if no valid token is found.
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     Query(params): Query<AuthParams>,
@@ -156,6 +172,15 @@ pub async fn ws_handler(
 
 // ── Socket lifecycle ──────────────────────────────────────────────────────
 
+/// Drive a single authenticated WebSocket connection.
+///
+/// Responsibilities:
+/// - Registers the outbound sender in `AppState::connected_users`.
+/// - Sets (and periodically refreshes) the `user:online:{userId}:{deviceId}` Redis key.
+/// - Drains any legacy `pending_welcomes` queued in Redis and flushes them to the client.
+/// - Spawns two concurrent tasks: a **send task** (outbound frames + ping heartbeat) and
+///   a **recv task** (inbound frame dispatch).
+/// - Uses `ConnectionGuard` to ensure cleanup happens even on task cancellation.
 #[allow(clippy::collapsible_if)]
 async fn handle_socket(
     socket: WebSocket,
@@ -199,13 +224,9 @@ async fn handle_socket(
         conn_id,
     };
 
-    // Shared flag: set to true when a Pong frame is received.
-    // The send task checks it at each ping interval; if false (no pong since last ping)
-    // it treats the connection as dead and breaks, triggering ConnectionGuard::drop().
-    // true = we sent a Ping and are still waiting for the Pong.
-    // Starts false (no ping sent yet). Set to true when a Ping is sent, back
-    // to false when the Pong arrives. If still true at the next Ping tick the
-    // client has missed an entire interval → considered dead.
+    // Shared flag: set to true when a Ping is sent and back to false when the
+    // corresponding Pong is received.  If still true at the next Ping tick the
+    // client has missed an entire interval and is considered dead.
     let awaiting_pong = Arc::new(AtomicBool::new(false));
 
     // Establish ONE shared Redis connection for this socket's lifetime.
@@ -477,12 +498,13 @@ async fn handle_socket(
 }
 
 // ── Presence refresh helper ───────────────────────────────────────────────
-//
-// Refreshes the TTL on the presence key.  Uses the socket-local connection
-// (`con_opt`) to avoid opening a new TCP connection per frame.  If the
-// connection is missing or has gone stale, it attempts a single reconnect and
-// stores the new connection back into `con_opt` for future calls.
 
+/// Refresh the `user:online:{userId}:{deviceId}` Redis TTL to 20 seconds.
+///
+/// Uses the socket-local multiplexed connection to avoid opening a new TCP
+/// connection per frame.  If the connection is missing or has gone stale, it
+/// attempts a single reconnect and stores the new connection back into
+/// `con_opt` for future calls.
 async fn refresh_presence(
     con_opt: &mut Option<redis::aio::MultiplexedConnection>,
     state: &Arc<AppState>,
@@ -536,6 +558,11 @@ async fn refresh_presence(
 
 // ── Routing diagnostics ───────────────────────────────────────────────────
 
+/// Log the online/offline status of every group member for a received frame.
+///
+/// Queries Redis for the `group:members:{groupId}` set and cross-references
+/// with the in-memory `connected_users` map.  Emits a single structured log
+/// line useful for debugging routing issues.  No-ops when `frame.group_id` is empty.
 async fn log_routing_diagnostics(
     state: &Arc<AppState>,
     user_id: &str,
@@ -588,161 +615,4 @@ async fn log_routing_diagnostics(
             member_status.join(", ")
         }
     );
-}
-
-// ── Presence endpoint ─────────────────────────────────────────────────────
-
-#[derive(serde::Deserialize)]
-pub struct PresenceQuery {
-    pub users: String,
-}
-
-pub async fn get_presence(
-    Query(query): Query<PresenceQuery>,
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
-    use std::collections::HashMap;
-    let mut presence = HashMap::new();
-    let users_list: Vec<&str> = query.users.split(',').collect();
-
-    if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await {
-        for user in users_list {
-            if user.trim().is_empty() {
-                continue;
-            }
-            let pattern = format!("user:online:{}:*", user);
-            // Use SCAN with COUNT hint instead of KEYS to avoid blocking Redis.
-            let mut cursor: u64 = 0;
-            let mut found = false;
-            loop {
-                match redis::cmd("SCAN")
-                    .arg(cursor)
-                    .arg("MATCH")
-                    .arg(&pattern)
-                    .arg("COUNT")
-                    .arg(100u64)
-                    .query_async::<(u64, Vec<String>)>(&mut con)
-                    .await
-                {
-                    Ok((next_cursor, keys)) => {
-                        if !keys.is_empty() {
-                            found = true;
-                            break;
-                        }
-                        cursor = next_cursor;
-                        if cursor == 0 {
-                            break; // full scan complete, nothing found
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("[presence] SCAN failed for {}: {}", user, e);
-                        break;
-                    }
-                }
-            }
-            presence.insert(user.to_string(), found);
-        }
-    }
-
-    (StatusCode::OK, Json(presence)).into_response()
-}
-
-// ── Admin: all connected devices ──────────────────────────────────────────
-
-pub async fn get_admin_presence(
-    headers: HeaderMap,
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
-    let is_admin = headers
-        .get("x-global-admin")
-        .and_then(|v| v.to_str().ok())
-        .map(|v| v == "true")
-        .unwrap_or(false);
-
-    if !is_admin {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({"error": "Forbidden"})),
-        )
-            .into_response();
-    }
-
-    // In-memory WS connections: conn_key -> tab count
-    let ws_map: std::collections::HashMap<String, usize> = {
-        let map = state.connected_users.lock().unwrap();
-        map.iter().map(|(k, v)| (k.clone(), v.len())).collect()
-    };
-
-    // Redis: scan all user:online:* keys with their TTL
-    // NOTE: KEYS blocks Redis — acceptable for a low-traffic admin endpoint.
-    let mut redis_entries: Vec<(String, String, i64)> = Vec::new();
-    if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await
-        && let Ok(keys) = redis::cmd("KEYS")
-            .arg("user:online:*")
-            .query_async::<Vec<String>>(&mut con)
-            .await
-    {
-        for key in &keys {
-            // format: user:online:{userId}:{deviceId}
-            // splitn(4) so deviceIds containing ":" are preserved
-            let parts: Vec<&str> = key.splitn(4, ':').collect();
-            if parts.len() == 4 {
-                let ttl: i64 = redis::cmd("TTL")
-                    .arg(key)
-                    .query_async(&mut con)
-                    .await
-                    .unwrap_or(-1);
-                redis_entries.push((parts[2].to_string(), parts[3].to_string(), ttl));
-            }
-        }
-    }
-
-    // Merge WS + Redis into one unified list
-    let mut all_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for k in ws_map.keys() {
-        all_keys.insert(k.clone());
-    }
-    for (user_id, device_id, _) in &redis_entries {
-        all_keys.insert(format!("{}:{}", user_id, device_id));
-    }
-
-    let mut devices: Vec<serde_json::Value> = all_keys
-        .iter()
-        .filter_map(|conn_key| {
-            let (user_id, device_id) = conn_key.split_once(':')?;
-            let ws_tabs = ws_map.get(conn_key).copied().unwrap_or(0);
-            let redis_entry = redis_entries
-                .iter()
-                .find(|(u, d, _)| u == user_id && d == device_id);
-            let (redis_online, redis_ttl) = match redis_entry {
-                Some((_, _, ttl)) => (true, *ttl),
-                None => (false, -1i64),
-            };
-            Some(serde_json::json!({
-                "userId": user_id,
-                "deviceId": device_id,
-                "wsConnected": ws_tabs > 0,
-                "wsTabs": ws_tabs,
-                "redisOnline": redis_online,
-                "redisTtl": redis_ttl,
-            }))
-        })
-        .collect();
-
-    devices.sort_by(|a, b| {
-        let ua = a["userId"].as_str().unwrap_or("");
-        let ub = b["userId"].as_str().unwrap_or("");
-        ua.cmp(ub).then_with(|| {
-            let da = a["deviceId"].as_str().unwrap_or("");
-            let db = b["deviceId"].as_str().unwrap_or("");
-            da.cmp(db)
-        })
-    });
-
-    let total = devices.len();
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({ "devices": devices, "total": total })),
-    )
-        .into_response()
 }

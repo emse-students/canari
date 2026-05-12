@@ -1,5 +1,6 @@
 mod handlers;
 mod models;
+mod presence;
 mod state;
 mod ws_dispatch;
 
@@ -15,20 +16,24 @@ use std::{net::SocketAddr, sync::Arc};
 use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::handlers::{get_admin_presence, get_presence, ws_handler};
+use crate::handlers::ws_handler;
+use crate::presence::{get_admin_presence, get_presence};
 use crate::state::AppState;
 
-/// Decode a standard base64 string to a UTF-8 string, returning None on any error.
+/// Decode a standard base64 string to a UTF-8 string, returning `None` on any error.
 fn base64_decode_to_string(input: &str) -> Option<String> {
     let bytes = BASE64.decode(input).ok()?;
     String::from_utf8(bytes).ok()
 }
 
+/// Liveness probe endpoint — returns `200 OK` with body `"OK"`.
 async fn health_check() -> impl IntoResponse {
     (StatusCode::OK, "OK")
 }
 
-#[tokio::main] // use tokio to run the async main function
+/// Entry point: initialise tracing, connect to Redis, spawn background tasks,
+/// configure CORS, build the Axum router, and start listening on port 3000.
+#[tokio::main]
 async fn main() {
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(
@@ -75,7 +80,9 @@ async fn main() {
 
     let app_state = Arc::new(AppState::new(redis_client.clone(), jwt_secret));
 
-    // Spawn Redis Subscriber Task (Direct Routing) — avec retry en cas d'échec
+    // ── Redis pub/sub subscriber ──────────────────────────────────────────
+    // Subscribes to two channels and routes frames to connected WebSocket clients.
+    // Reconnects automatically with a 5-second back-off if the connection drops.
     {
         let redis_client = redis_client.clone();
         let connected_users = app_state.connected_users.clone();
@@ -113,7 +120,7 @@ async fn main() {
                     }
                 }
 
-                // Listen for direct messages from Backend or other Gateways
+                // Listen for direct messages from backend services or other gateway instances.
                 let mut stream = pubsub.on_message();
                 while let Some(msg) = stream.next().await {
                     let channel_name = msg.get_channel_name();
@@ -162,6 +169,8 @@ async fn main() {
                                         .and_then(|v| v.as_bool())
                                         .unwrap_or(false);
                                 let json_frame = if is_control {
+                                    // Control frames carry a base64-encoded JSON notification
+                                    // in `proto`; decode it so the client receives plain JSON.
                                     let proto_b64 = match json.get("proto").and_then(|v| v.as_str())
                                     {
                                         Some(v) => v,
@@ -227,7 +236,7 @@ async fn main() {
 
                                 tracing::info!("Looking for connected user: {}", key);
 
-                                // Send to ALL active connections for this key (multi-tab support)
+                                // Send to ALL active connections for this key (multi-tab support).
                                 let senders = {
                                     let map = connected_users.lock().unwrap();
                                     map.get(&key).cloned()
@@ -337,7 +346,7 @@ async fn main() {
                                 })
                                 .to_string();
 
-                                // Find all map keys that start with the user ID
+                                // Find all map keys that start with the user ID.
                                 let senders_to_notify: Vec<(String, _)> = {
                                     let map = connected_users.lock().unwrap();
                                     let mut temp = Vec::new();
@@ -390,14 +399,14 @@ async fn main() {
                         tracing::warn!("[PubSub] Non-string payload on {}, dropping", channel_name);
                     }
                 }
-                // Stream ended (Redis déconnecté), on réessaie
+                // Stream ended (Redis disconnected) — retry with back-off.
                 tracing::warn!("Stream Redis pub/sub terminé, reconnexion dans 5s...");
                 tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
             }
         });
     }
 
-    // Spawn Kafka Consumer Task (Post Broadcast)
+    // ── Kafka consumer: broadcast `post.created` events to all clients ────
     {
         let kafka_brokers =
             std::env::var("KAFKA_BROKERS").unwrap_or_else(|_| "localhost:9092".to_string());
@@ -443,7 +452,7 @@ async fn main() {
 
                         tracing::info!("Received post.created broadcast: {}", payload);
 
-                        // Broadcast to ALL users
+                        // Broadcast a `post_created` frame to every connected client.
                         let frame = serde_json::json!({
                             "type": "post_created",
                             "data": serde_json::from_str::<serde_json::Value>(payload).unwrap_or(serde_json::json!(null))
@@ -492,6 +501,7 @@ async fn main() {
         });
     }
 
+    // ── CORS configuration ────────────────────────────────────────────────
     let allow_origin = std::env::var("ALLOW_ORIGIN").unwrap_or_else(|_| "*".to_string());
     tracing::info!("CORS ALLOW_ORIGIN: {}", allow_origin);
     let cors = if allow_origin == "*" {
