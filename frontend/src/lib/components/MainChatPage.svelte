@@ -13,29 +13,28 @@
     appendLog,
   } from '$lib/stores/globalChatSingleton.svelte';
   import Modal from './shared/Modal.svelte';
-
   import Sidebar from './sidebar/Sidebar.svelte';
   import ChannelMembersSidebar from './chat/ChannelMembersSidebar.svelte';
   import ChannelSettingsModal from './chat/ChannelSettingsModal.svelte';
   import SyncSessionModal from './chat/SyncSessionModal.svelte';
+  import SyncGuideModal from './chat/SyncGuideModal.svelte';
   import ChatArea from './chat/ChatArea.svelte';
 
   interface Props {
+    /** Controls whether the sidebar shows chat conversations or community channels. */
     routeMode?: 'chat' | 'communities';
   }
 
   let { routeMode = 'chat' }: Props = $props();
 
-  // ─── Sync session (local — ne concerne que la page /chat) ─────────────────
+  // ─── Sync session (local — scoped to /chat, not the global background service) ──
   const sync = useSyncSession();
-
-  // ─── Dev / log state ──────────────────────────────────────────────────────
 
   let messageText = $state('');
   let isWindowFocused = $state(true);
   let isTabVisible = $state(true);
 
-  // Log local (écrit aussi dans le buffer global pour le LogsPanel)
+  /** Appends a debug message to the global log buffer and scrolls the log panel. */
   function log(msg: string) {
     appendLog(msg);
     tick().then(() => {
@@ -44,7 +43,7 @@
     });
   }
 
-  /** Context object for channel workspace operations. */
+  /** Builds the context object passed to channel workspace composable operations. */
   function channelsCtx() {
     return {
       conversations: convs.conversations,
@@ -60,7 +59,7 @@
     };
   }
 
-  /** Context object for sync session operations. */
+  /** Builds the context object passed to QR sync session operations. */
   function syncCtx() {
     return {
       historyBaseUrl: session.historyBaseUrl,
@@ -74,7 +73,7 @@
     };
   }
 
-  /** Context for conversation composable operations. */
+  /** Builds the context object passed to conversation composable operations. */
   function convCtx() {
     return {
       storage: session.storage,
@@ -84,19 +83,8 @@
       historyBaseUrl: session.historyBaseUrl,
       messageReactions: messaging.messageReactions,
       log,
-      addMessageToChat: (
-        sid: string,
-        content: string,
-        contactName: string,
-        options?: any
-      ) =>
-        messaging.addMessageToChat(
-          sid,
-          content,
-          contactName,
-          msgCtx(),
-          options
-        ),
+      addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
+        messaging.addMessageToChat(sid, content, contactName, msgCtx(), options),
       batchAddMessages: (
         msgs: Parameters<typeof messaging.batchAddMessages>[0],
         contactName: string
@@ -104,7 +92,7 @@
     };
   }
 
-  /** Context for messaging composable operations. */
+  /** Builds the context object passed to messaging composable operations. */
   function msgCtx() {
     return {
       ensureMls: session.ensureMls,
@@ -112,14 +100,10 @@
       userId: session.userId,
       pin: session.pin,
       authToken: session.authToken,
-      setAuthToken: (v: string) => {
-        session.authToken = v;
-      },
+      setAuthToken: (v: string) => { session.authToken = v; },
       selectedContact: convs.selectedContact,
       getSendError: () => convs.sendError,
-      setSendError: (v: string) => {
-        convs.sendError = v;
-      },
+      setSendError: (v: string) => { convs.sendError = v; },
       getChatContainer: () => convs.chatContainer,
       storage: session.storage,
       log,
@@ -134,24 +118,13 @@
     };
   }
 
-  /** Callbacks object for session composable operations. */
+  /** Builds the callbacks object passed to session composable operations (WebSocket event handlers). */
   function sessionCb() {
     return {
       conversations: convs.conversations,
       loadAndRestoreConversations: () => convs.loadAndRestoreConversations(convCtx()),
-      addMessageToChat: (
-        sid: string,
-        content: string,
-        contactName: string,
-        options?: any
-      ) =>
-        messaging.addMessageToChat(
-          sid,
-          content,
-          contactName,
-          msgCtx(),
-          options
-        ),
+      addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
+        messaging.addMessageToChat(sid, content, contactName, msgCtx(), options),
       saveConversation: (name: string) => convs.saveConversation(name, convCtx()),
       selectConversation: convs.selectConversation,
       onChannelMemberJoined: (event: any) => {
@@ -233,37 +206,86 @@
         convs.conversations.delete(channelConversationId);
         void session.storage?.deleteConversation(channelConversationId).catch(() => {});
         channels.removeChannelFromWorkspaces(channelConversationId);
-        if (convs.selectedContact === channelConversationId) {
-          convs.selectedContact = null;
-        }
+        if (convs.selectedContact === channelConversationId) convs.selectedContact = null;
         if (channels.selectedChannelConversationId === channelConversationId) {
           channels.selectedChannelConversationId = '';
         }
       },
-      onSendError: (msg: string) => {
-        convs.sendError = msg;
-      },
+      onSendError: (msg: string) => { convs.sendError = msg; },
       onWorkspaceUpdated: (event: { workspaceId: string; imageMediaId?: string }) => {
         channels.handleWorkspaceUpdated(event);
       },
-      onShowSyncGuidePrompt: () => {
-        convs.showSyncGuidePrompt = true;
-      },
-      onReadReceiptReceived: () => {
-        notifs.playReadTone();
-      },
+      onShowSyncGuidePrompt: () => { convs.showSyncGuidePrompt = true; },
+      onReadReceiptReceived: () => { notifs.playReadTone(); },
       log,
       messageReactions: messaging.messageReactions,
       getSelectedContact: () => convs.selectedContact,
-      setSelectedContact: (v: string | null) => {
-        convs.selectedContact = v;
-      },
+      setSelectedContact: (v: string | null) => { convs.selectedContact = v; },
       onLoadHistoryForConversation: (contactName: string, groupId: string) =>
         convs.loadHistoryForConversation(contactName, groupId, convCtx()),
     };
   }
 
-  // ─── Load group members when selected conversation changes ───────────────
+  /**
+   * Returns the set of props shared by both the desktop sidebar and the mobile drawer sidebar.
+   * Extracted here to avoid duplicating 20+ prop bindings in the template.
+   */
+  function makeSidebarCommonProps() {
+    return {
+      viewMode: (routeMode === 'communities' ? 'communities' : 'chat') as 'chat' | 'communities',
+      conversations: convs.conversations,
+      selectedContact: convs.selectedContact,
+      newContactInput: convs.newContactInput,
+      newGroupInput: convs.newGroupInput,
+      newChannelInput: convs.newChannelInput,
+      channelWorkspaces: channels.channelWorkspaces,
+      selectedChannelId: channels.selectedChannelConversationId,
+      currentUserId: session.userId,
+      onContactInputChange: (v: string) => { convs.newContactInput = v; },
+      onGroupInputChange: (v: string) => { convs.newGroupInput = v; },
+      onChannelInputChange: (v: string) => { convs.newChannelInput = v; },
+      onAddContact: (value?: string) => {
+        const c = (value ?? convs.newContactInput).trim();
+        if (c) { void convs.startNewConversation(c, convCtx()); convs.newContactInput = ''; }
+      },
+      onCreateGroup: (value?: string) => {
+        const g = (value ?? convs.newGroupInput).trim();
+        if (g) { void convs.createNewGroup(g, convCtx()); convs.newGroupInput = ''; }
+      },
+      onCreateChannel: (workspaceId: string, value?: string) => {
+        const ch = (value ?? convs.newChannelInput).trim();
+        if (!ch) return;
+        const ws = channels.channelWorkspaces.find((w) => w.id === workspaceId);
+        if (ws?.workspaceDbId) channels.createNewChannel(ws.workspaceDbId, ch, channelsCtx());
+        convs.newChannelInput = '';
+      },
+      onCreateWorkspace: (value?: string) => {
+        const wn = (value ?? '').trim();
+        if (wn) channels.createNewCommunity(wn, channelsCtx());
+      },
+      onInviteChannelMember: (channelId: string, memberId: string, roleName: 'member' | 'moderator' | 'admin') =>
+        channels.inviteMemberToChannel(channelId, memberId, roleName, channelsCtx()),
+      onUpdateChannelMemberRole: (channelId: string, memberId: string, roleName: 'member' | 'moderator' | 'admin') =>
+        channels.updateChannelMemberRole(channelId, memberId, roleName, channelsCtx()),
+      onUpdateWorkspaceImage: (workspaceDbId: string, mediaId: string) =>
+        void channels.updateCurrentWorkspaceImage(workspaceDbId, mediaId, channelsCtx()),
+      onLeaveWorkspace: (workspaceDbId: string) => {
+        void channels.leaveCurrentWorkspace(workspaceDbId, channelsCtx());
+        if (convs.selectedContact?.startsWith('channel_')) {
+          const ws = channels.channelWorkspaces.find((w) => w.workspaceDbId === workspaceDbId);
+          if (ws?.channels.some((c) => c.id === convs.selectedContact)) convs.selectedContact = null;
+        }
+      },
+      onSelectConversation: convs.selectConversation,
+      onSelectChannelConversation: (channelId: string) => {
+        channels.selectedChannelConversationId = channelId;
+        convs.selectConversation(channelId);
+        void convs.loadHistoryForConversation(channelId, channelId, convCtx());
+      },
+    };
+  }
+
+  // ─── Load group members when selected conversation changes ────────────────
   $effect(() => {
     const contact = convs.selectedContact;
     if (!contact || !session.isLoggedIn) return;
@@ -291,6 +313,7 @@
     const ids = unread.map((m) => m.id);
     const currentContact = convs.selectedContact;
 
+    // Optimistically mark as read in-memory without waiting for the network ACK.
     untrack(() => {
       setTimeout(() => {
         const fresh = convs.conversations.get(currentContact);
@@ -333,26 +356,16 @@
     }
   });
 
-  // ─── Mount ────────────────────────────────────────────────────────────────
-  // La session est déjà gérée par ChatBackgroundService (monté dans le layout).
-  // Ici, on gère uniquement les événements propres à la vue /chat.
-
+  // ─── Mount: event listeners (window focus, visibility, debug shortcut) ────
   onMount(() => {
     isWindowFocused = document.hasFocus();
     isTabVisible = document.visibilityState === 'visible';
 
-    const handleVisibilityChange = () => {
-      isTabVisible = document.visibilityState === 'visible';
-      // La reconnexion est gérée de façon globale par ChatBackgroundService.
-    };
-    const handleWindowFocus = () => {
-      isWindowFocused = true;
-    };
-    const handleWindowBlur = () => {
-      isWindowFocused = false;
-    };
+    const handleVisibilityChange = () => { isTabVisible = document.visibilityState === 'visible'; };
+    const handleWindowFocus = () => { isWindowFocused = true; };
+    const handleWindowBlur = () => { isWindowFocused = false; };
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ctrl+Shift+S: Force sync reset (clear device cache and reload)
+      // Ctrl+Shift+S: force sync reset (clears device cache and reloads)
       if (e.ctrlKey && e.shiftKey && e.key === 'S') {
         e.preventDefault();
         if (session.isLoggedIn && session.userId) {
@@ -362,6 +375,7 @@
         }
       }
     };
+
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('focus', handleWindowFocus);
     window.addEventListener('blur', handleWindowBlur);
@@ -374,23 +388,19 @@
     };
   });
 
-  // ─── Post-login : sélection de conversation en attente ───────────────────
+  // ─── Apply pending conversation selection (from cross-page navigation) ────
   $effect(() => {
     if (!session.isLoggedIn) return;
     untrack(() => {
-      // Apply any pending conversation selection (from ConversationsMiniPanel cross-navigation)
       const pending = sessionStorage.getItem('canari_pending_contact');
       if (pending) {
         sessionStorage.removeItem('canari_pending_contact');
-        // Delay to let conversations load first
-        setTimeout(() => {
-          convs.selectConversation(pending);
-        }, 600);
+        setTimeout(() => { convs.selectConversation(pending); }, 600);
       }
     });
   });
 
-  // Clear selected conversation state when switching between pages.
+  // ─── Reset selection when switching between /chat and /communities ─────────
   $effect(() => {
     const _ = routeMode;
     untrack(() => {
@@ -399,26 +409,25 @@
     });
   });
 
-  // ─── Forwarding helpers (thin wrappers so the template stays clean) ───────
+  // ─── Thin forwarding helpers (keep template free of logic) ────────────────
 
+  /** Sends the current messageText via MLS then clears the input. */
   function handleSendChat() {
-    // Expose messageText to msgCtx via a closure trick:
     void messaging.handleSendChat(msgCtx(), messageText);
     messageText = '';
   }
 
+  /** Forwards selected files to the messaging composable for upload. */
   function handleFilesSelected(files: File[]) {
     void messaging.handleFilesSelected(files, msgCtx());
   }
 
+  /** Closes the sync guide prompt and opens the QR join modal. */
   function openQrGuideSync() {
     convs.showSyncGuidePrompt = false;
     sync.openJoinSyncModal();
   }
-  // ─── END ──────────────────────────────────────────────────────────────────
 </script>
-
-<!-- ==================== UI ==================== -->
 
 {#if !session.isLoggedIn}
   <div class="min-h-screen flex items-center justify-center text-sm text-text-muted">
@@ -426,74 +435,11 @@
   </div>
 {:else}
   <div class="app-layout" in:fade>
-    {#if notifs.channelMembershipNotice}
-      <!-- La notice est aussi affichée dans ChatBackgroundService ; ce bloc est
-           conservé pour la compatibilité visuelle quand on est déjà sur /chat. -->
-    {/if}
-
     <main class="main-content">
+      <!-- Desktop sidebar (always mounted, hidden on mobile when chat is open) -->
       <Sidebar
-        viewMode={routeMode === 'communities' ? 'communities' : 'chat'}
-        conversations={convs.conversations}
-        selectedContact={convs.selectedContact}
-        newContactInput={convs.newContactInput}
-        newGroupInput={convs.newGroupInput}
-        newChannelInput={convs.newChannelInput}
-        channelWorkspaces={channels.channelWorkspaces}
-        selectedChannelId={channels.selectedChannelConversationId}
-        onContactInputChange={(v) => (convs.newContactInput = v)}
-        onGroupInputChange={(v) => (convs.newGroupInput = v)}
-        onChannelInputChange={(v) => (convs.newChannelInput = v)}
-        onAddContact={(value?: string) => {
-          const c = (value ?? convs.newContactInput).trim();
-          if (c) {
-            void convs.startNewConversation(c, convCtx());
-            convs.newContactInput = '';
-          }
-        }}
-        onCreateGroup={(value?: string) => {
-          const g = (value ?? convs.newGroupInput).trim();
-          if (g) {
-            void convs.createNewGroup(g, convCtx());
-            convs.newGroupInput = '';
-          }
-        }}
-        onCreateChannel={(workspaceId: string, value?: string) => {
-          const ch = (value ?? convs.newChannelInput).trim();
-          if (!ch) return;
-          const ws = channels.channelWorkspaces.find((w) => w.id === workspaceId);
-          if (ws?.workspaceDbId) {
-            channels.createNewChannel(ws.workspaceDbId, ch, channelsCtx());
-          }
-          convs.newChannelInput = '';
-        }}
-        onCreateWorkspace={(value?: string) => {
-          const wn = (value ?? '').trim();
-          if (wn) channels.createNewCommunity(wn, channelsCtx());
-        }}
-        onInviteChannelMember={(channelId, memberId, roleName) =>
-          channels.inviteMemberToChannel(channelId, memberId, roleName, channelsCtx())}
-        onUpdateChannelMemberRole={(channelId, memberId, roleName) =>
-          channels.updateChannelMemberRole(channelId, memberId, roleName, channelsCtx())}
-        onUpdateWorkspaceImage={(workspaceDbId, mediaId) =>
-          void channels.updateCurrentWorkspaceImage(workspaceDbId, mediaId, channelsCtx())}
-        onLeaveWorkspace={(workspaceDbId) => {
-          void channels.leaveCurrentWorkspace(workspaceDbId, channelsCtx());
-          if (convs.selectedContact?.startsWith('channel_')) {
-            const ws = channels.channelWorkspaces.find((w) => w.workspaceDbId === workspaceDbId);
-            if (ws?.channels.some((c) => c.id === convs.selectedContact)) {
-              convs.selectedContact = null;
-            }
-          }
-        }}
-        onSelectConversation={convs.selectConversation}
-        onSelectChannelConversation={(channelId) => {
-          channels.selectedChannelConversationId = channelId;
-          convs.selectConversation(channelId);
-          void convs.loadHistoryForConversation(channelId, channelId, convCtx());
-        }}
+        {...makeSidebarCommonProps()}
         isHidden={convs.mobileView === 'chat'}
-        currentUserId={session.userId}
       />
 
       <ChatArea
@@ -506,9 +452,7 @@
         onSend={handleSendChat}
         onInviteMembers={(ids) => void convs.inviteMembersToCurrentGroup(ids, convCtx())}
         onBack={convs.goBackToMenu}
-        onOpenConversations={() => {
-          convs.isConversationDrawerOpen = true;
-        }}
+        onOpenConversations={() => { convs.isConversationDrawerOpen = true; }}
         onOpenSettings={convs.selectedContact?.startsWith('channel_')
           ? () => (convs.isChannelSettingsModalOpen = true)
           : undefined}
@@ -545,9 +489,7 @@
               session.callService.startCall(convo.id).catch((e: unknown) => {
                 const msg = e instanceof Error ? e.message : String(e);
                 if (msg.includes('Groupe introuvable') || msg.includes('Group not found')) {
-                  alert(
-                    'Ce groupe est desynchronise. Veuillez supprimer cette conversation et en recreer une nouvelle.'
-                  );
+                  alert('Ce groupe est desynchronise. Veuillez supprimer cette conversation et en recreer une nouvelle.');
                 } else {
                   alert(`Erreur appel: ${msg}`);
                 }
@@ -573,9 +515,7 @@
             type="button"
             class="fixed inset-0 z-40 bg-black/30 xl:hidden"
             aria-label="Fermer le panneau membres"
-            onclick={() => {
-              convs.isChannelMembersDrawerOpen = false;
-            }}
+            onclick={() => { convs.isChannelMembersDrawerOpen = false; }}
           ></button>
           <div
             class="fixed right-0 top-0 bottom-0 z-50 w-[90vw] max-w-sm border-l border-cn-border bg-[color-mix(in_srgb,var(--cn-surface)_90%,white)] shadow-2xl xl:hidden"
@@ -583,82 +523,20 @@
             <ChannelMembersSidebar
               mode="mobile"
               currentUserId={session.userId}
-              onClose={() => {
-                convs.isChannelMembersDrawerOpen = false;
-              }}
+              onClose={() => { convs.isChannelMembersDrawerOpen = false; }}
               selectedChannelId={channels.selectedChannelConversationId}
             />
           </div>
         {/if}
       {/if}
 
+      <!-- Mobile drawer sidebar (mounted only when the drawer is open) -->
       {#if convs.isConversationDrawerOpen}
         <Sidebar
-          viewMode={routeMode === 'communities' ? 'communities' : 'chat'}
-          conversations={convs.conversations}
-          selectedContact={convs.selectedContact}
-          newContactInput={convs.newContactInput}
-          newGroupInput={convs.newGroupInput}
-          newChannelInput={convs.newChannelInput}
-          channelWorkspaces={channels.channelWorkspaces}
-          selectedChannelId={channels.selectedChannelConversationId}
-          onContactInputChange={(v) => (convs.newContactInput = v)}
-          onGroupInputChange={(v) => (convs.newGroupInput = v)}
-          onChannelInputChange={(v) => (convs.newChannelInput = v)}
-          onAddContact={(value?: string) => {
-            const c = (value ?? convs.newContactInput).trim();
-            if (c) {
-              void convs.startNewConversation(c, convCtx());
-              convs.newContactInput = '';
-            }
-          }}
-          onCreateGroup={(value?: string) => {
-            const g = (value ?? convs.newGroupInput).trim();
-            if (g) {
-              void convs.createNewGroup(g, convCtx());
-              convs.newGroupInput = '';
-            }
-          }}
-          onCreateChannel={(workspaceId: string, value?: string) => {
-            const ch = (value ?? convs.newChannelInput).trim();
-            if (!ch) return;
-            const ws = channels.channelWorkspaces.find((w) => w.id === workspaceId);
-            if (ws?.workspaceDbId) {
-              channels.createNewChannel(ws.workspaceDbId, ch, channelsCtx());
-            }
-            convs.newChannelInput = '';
-          }}
-          onCreateWorkspace={(value?: string) => {
-            const wn = (value ?? '').trim();
-            if (wn) channels.createNewCommunity(wn, channelsCtx());
-          }}
-          onInviteChannelMember={(channelId, memberId, roleName) =>
-            channels.inviteMemberToChannel(channelId, memberId, roleName, channelsCtx())}
-          onUpdateChannelMemberRole={(channelId, memberId, roleName) =>
-            channels.updateChannelMemberRole(channelId, memberId, roleName, channelsCtx())}
-          onUpdateWorkspaceImage={(workspaceDbId, mediaId) =>
-            void channels.updateCurrentWorkspaceImage(workspaceDbId, mediaId, channelsCtx())}
-          onLeaveWorkspace={(workspaceDbId) => {
-            void channels.leaveCurrentWorkspace(workspaceDbId, channelsCtx());
-            if (convs.selectedContact?.startsWith('channel_')) {
-              const ws = channels.channelWorkspaces.find((w) => w.workspaceDbId === workspaceDbId);
-              if (ws?.channels.some((c) => c.id === convs.selectedContact)) {
-                convs.selectedContact = null;
-              }
-            }
-          }}
-          onSelectConversation={convs.selectConversation}
-          onSelectChannelConversation={(channelId) => {
-            channels.selectedChannelConversationId = channelId;
-            convs.selectConversation(channelId);
-            void convs.loadHistoryForConversation(channelId, channelId, convCtx());
-          }}
+          {...makeSidebarCommonProps()}
           isHidden={false}
           drawerMode={true}
-          onCloseDrawer={() => {
-            convs.isConversationDrawerOpen = false;
-          }}
-          currentUserId={session.userId}
+          onCloseDrawer={() => { convs.isConversationDrawerOpen = false; }}
         />
       {/if}
 
@@ -668,31 +546,21 @@
         selectedChannelId={channels.selectedChannelConversationId}
         channelWorkspaces={channels.channelWorkspaces}
         imageMediaId={convs.currentConvo?.imageMediaId ?? null}
-        onInviteMember={(
-          channelId: string,
-          memberId: string,
-          roleName: 'member' | 'moderator' | 'admin'
-        ) => channels.inviteMemberToChannel(channelId, memberId, roleName, channelsCtx())}
-        onUpdateMemberRole={(
-          channelId: string,
-          memberId: string,
-          roleName: 'member' | 'moderator' | 'admin'
-        ) => channels.updateChannelMemberRole(channelId, memberId, roleName, channelsCtx())}
-        onRenameChannel={(channelId: string, newName: string) =>
+        onInviteMember={(channelId, memberId, roleName) =>
+          channels.inviteMemberToChannel(channelId, memberId, roleName, channelsCtx())}
+        onUpdateMemberRole={(channelId, memberId, roleName) =>
+          channels.updateChannelMemberRole(channelId, memberId, roleName, channelsCtx())}
+        onRenameChannel={(channelId, newName) =>
           channels.renameCurrentChannel(channelId, newName, channelsCtx())}
-        onUpdateChannelImage={(channelId: string, mediaId: string) =>
+        onUpdateChannelImage={(channelId, mediaId) =>
           void channels.updateCurrentChannelImage(channelId, mediaId, channelsCtx())}
-        onDeleteChannel={(channelId: string) => {
+        onDeleteChannel={(channelId) => {
           void channels.deleteCurrentChannel(channelId, channelsCtx());
-          if (convs.selectedContact === channelId) {
-            convs.selectedContact = null;
-          }
+          if (convs.selectedContact === channelId) convs.selectedContact = null;
         }}
-        onLeaveChannel={(channelId: string) => {
+        onLeaveChannel={(channelId) => {
           void channels.leaveCurrentChannel(channelId, channelsCtx());
-          if (convs.selectedContact === channelId) {
-            convs.selectedContact = null;
-          }
+          if (convs.selectedContact === channelId) convs.selectedContact = null;
         }}
       />
 
@@ -704,35 +572,17 @@
         joinPayload={sync.syncJoinPayload}
         statusText={sync.syncStatusText}
         isBusy={sync.isSyncSessionBusy}
-        onJoinPayloadChange={(value: string) => (sync.syncJoinPayload = value)}
+        onJoinPayloadChange={(value) => (sync.syncJoinPayload = value)}
         onConfirmJoin={() => sync.handleConfirmJoinSync(syncCtx())}
         onCopyPayload={sync.copySyncPayload}
         onClose={sync.closeModal}
       />
 
-      <Modal
+      <SyncGuideModal
         open={convs.showSyncGuidePrompt}
         onClose={() => (convs.showSyncGuidePrompt = false)}
-        title="Nouveau appareil detecte"
-      >
-        <div class="space-y-3 text-sm text-text-main">
-          <p>
-            Pour recuperer vos conversations, lancez une synchronisation QR avec un appareil deja
-            connecte.
-          </p>
-          <ol class="list-decimal list-inside space-y-1 text-text-muted">
-            <li>Sur l'appareil principal: ouvrez la synchronisation QR.</li>
-            <li>Affichez le QR de transfert.</li>
-            <li>Sur ce nouvel appareil: scannez le QR ou collez le payload.</li>
-          </ol>
-          <button
-            onclick={openQrGuideSync}
-            class="w-full mt-2 px-3 py-2 rounded-xl bg-cn-dark text-white font-medium hover:bg-gray-800 transition-colors"
-          >
-            Ouvrir la synchronisation QR
-          </button>
-        </div>
-      </Modal>
+        onOpenQrSync={openQrGuideSync}
+      />
     </main>
   </div>
 {/if}
