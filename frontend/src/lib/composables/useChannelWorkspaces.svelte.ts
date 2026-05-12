@@ -6,39 +6,62 @@ import type { Conversation } from '$lib/types';
 import { encodeAppMessage, mkSystem, mkText } from '$lib/proto/codec';
 import { hydrateChannelBootstrap } from '$lib/utils/chat/channelCrypto';
 
+/** One channel entry shown in the sidebar under its workspace. */
 export interface ChannelSidebarItem {
+  /** Conversation ID, prefixed with "channel_". */
   id: string;
+  /** Display name of the channel (e.g. "général"). */
   name: string;
+  /** Number of messages not yet read by the current user. */
   unreadCount?: number;
+  /** True for private channels that require an explicit invitation. */
   isPrivate?: boolean;
 }
 
+/** One workspace (community) shown in the sidebar, containing its channels. */
 export interface ChannelSidebarWorkspace {
+  /** URL slug used as the local identifier (e.g. "emse-mine"). */
   id: string;
+  /** Human-readable display name. */
   name: string;
+  /** MongoDB _id from the backend — may be absent until the first API sync. */
   workspaceDbId?: string;
+  /** Seed for the avatar image fallback (usually the workspace name). */
   avatarUserId: string;
+  /** media-service ID of the workspace cover image, if set. */
   imageMediaId?: string | null;
+  /** Ordered list of channels belonging to this workspace. */
   channels: ChannelSidebarItem[];
 }
 
+/** Runtime dependencies injected by the parent composable into workspace/channel operations. */
 export interface ChannelWorkspaceContext {
+  /** Reactive map of all open conversations (DMs + channels), keyed by conversation ID. */
   conversations: SvelteMap<string, Conversation>;
+  /** Persists a conversation to IndexedDB. */
   saveConversation: (id: string) => Promise<void>;
+  /** Removes a conversation from IndexedDB (optional — skipped during boot). */
   deleteConversation?: (id: string) => Promise<void>;
+  /** Selects a conversation in the UI. */
   selectConversation: (id: string) => void;
+  /** Returns (or lazily initialises) the MLS service instance — required for key distribution. */
   ensureMls?: () => IMlsService | Promise<IMlsService>;
+  /** Opens (or creates) a direct MLS conversation with the given user. */
   startDirectConversation?: (targetUserId: string) => Promise<void>;
+  /** Returns the conversation ID currently visible in the chat panel. */
   getSelectedConversationId?: () => string | null;
+  /** Appends a message to the debug log panel. */
   log: (msg: string) => void;
 }
 
+/** Composable that manages the channel/workspace sidebar state and all related API operations (create, rename, delete, invite, leave, image update). */
 export function useChannelWorkspaces() {
   let channelWorkspaces = $state<ChannelSidebarWorkspace[]>([]);
   let selectedChannelConversationId = $state('');
 
   const service = new ChannelService();
 
+  /** Maps a raw API error to a user-friendly French error message for the given action label. */
   function toUiActionError(action: string, error: unknown): string {
     const raw = error instanceof Error ? error.message : String(error);
     const lower = raw.toLowerCase();
@@ -58,6 +81,7 @@ export function useChannelWorkspaces() {
 
   // ---------- Workspace helpers ----------
 
+  /** Converts a workspace display name into a URL-safe slug (lowercase, ASCII, hyphens, max 48 chars). */
   function slugifyWorkspace(name: string): string {
     return name
       .toLowerCase()
@@ -68,6 +92,7 @@ export function useChannelWorkspaces() {
       .slice(0, 48);
   }
 
+  /** Inserts a new workspace sidebar entry or updates the matching one if it already exists. Returns the sidebar entry. */
   function upsertWorkspaceFromDto(workspace: WorkspaceDto): ChannelSidebarWorkspace {
     const workspaceId = workspace.id ?? workspace._id;
     const workspaceSlug =
@@ -97,6 +122,7 @@ export function useChannelWorkspaces() {
     return created;
   }
 
+  /** Appends a channel to the sidebar entry for the given workspace slug, silently ignoring duplicates. */
   function addChannelToWorkspace(workspaceSlug: string, channel: ChannelSidebarItem) {
     const idx = channelWorkspaces.findIndex((item) => item.id === workspaceSlug);
     if (idx === -1) return;
@@ -110,6 +136,7 @@ export function useChannelWorkspaces() {
     ];
   }
 
+  /** Removes the given channel conversation ID from every workspace in the sidebar. */
   function removeChannelFromWorkspaces(channelConversationId: string) {
     channelWorkspaces = channelWorkspaces.map((workspace) => ({
       ...workspace,
@@ -117,6 +144,7 @@ export function useChannelWorkspaces() {
     }));
   }
 
+  /** Returns the sidebar workspace matching the event's workspaceId/workspaceSlug, creating a placeholder entry if none exists yet. Used when a real-time channel event arrives before the full workspace list has been fetched. */
   function ensureWorkspaceForChannelEvent(event: {
     workspaceId?: string;
     workspaceSlug?: string;
@@ -158,6 +186,7 @@ export function useChannelWorkspaces() {
 
   // ---------- API operations ----------
 
+  /** Fetches all workspaces and their channels from the backend, hydrates channel encryption keys, and prunes stale local channel entries. */
   async function loadChannelWorkspacesFromBackend(ctx: ChannelWorkspaceContext) {
     try {
       const backendWorkspaces = await service.listUserWorkspaces();
@@ -222,6 +251,7 @@ export function useChannelWorkspaces() {
     }
   }
 
+  /** Creates a new workspace with the given name, loads its default channels, then auto-selects the first channel. */
   async function ensureWorkspaceByName(
     nameRaw: string,
     ctx: ChannelWorkspaceContext
@@ -280,6 +310,7 @@ export function useChannelWorkspaces() {
     return freshWorkspace ?? sidebarWorkspace;
   }
 
+  /** Public action: creates a new community (workspace) and logs the outcome. Errors are caught and surfaced via ctx.log. */
   async function createNewCommunity(nameRaw: string, ctx: ChannelWorkspaceContext) {
     const normalized = nameRaw.trim();
     if (!normalized) return;
@@ -291,6 +322,7 @@ export function useChannelWorkspaces() {
     }
   }
 
+  /** Creates a public channel in the given workspace, hydrates its encryption key, adds it to the sidebar, and selects it. */
   async function createNewChannel(
     workspaceId: string,
     nameRaw: string,
@@ -355,6 +387,7 @@ export function useChannelWorkspaces() {
     }
   }
 
+  /** Invites a user to a channel with the given role, then delivers the HKDF key distribution payload via an MLS direct message so the invitee can decrypt future channel messages. */
   async function inviteMemberToChannel(
     channelConversationId: string,
     memberIdRaw: string,
@@ -428,6 +461,7 @@ export function useChannelWorkspaces() {
     }
   }
 
+  /** Updates the role of an existing channel member (member / moderator / admin). */
   async function updateChannelMemberRole(
     channelConversationId: string,
     memberIdRaw: string,
@@ -455,6 +489,7 @@ export function useChannelWorkspaces() {
     }
   }
 
+  /** Removes the current user from a channel, deletes the local conversation entry, and cleans up the sidebar. */
   async function leaveCurrentChannel(channelConversationId: string, ctx: ChannelWorkspaceContext) {
     if (!channelConversationId) return;
     try {
@@ -471,6 +506,7 @@ export function useChannelWorkspaces() {
     }
   }
 
+  /** Removes the current user from a workspace, purges all of its channels from conversations and the sidebar, then deselects if the active channel was in that workspace. */
   async function leaveCurrentWorkspace(workspaceDbId: string, ctx: ChannelWorkspaceContext) {
     if (!workspaceDbId) return;
     try {
@@ -496,6 +532,7 @@ export function useChannelWorkspaces() {
     }
   }
 
+  /** Renames a channel on the server and updates both the sidebar label and the conversation entry optimistically. */
   async function renameCurrentChannel(
     channelConversationId: string,
     newName: string,
@@ -523,6 +560,7 @@ export function useChannelWorkspaces() {
     }
   }
 
+  /** Permanently deletes a channel and removes it from conversations, the DB, and the sidebar. */
   async function deleteCurrentChannel(channelConversationId: string, ctx: ChannelWorkspaceContext) {
     if (!channelConversationId) return;
     try {
@@ -539,6 +577,7 @@ export function useChannelWorkspaces() {
     }
   }
 
+  /** Saves a new cover image for a channel (by media-service ID) and optimistically updates the conversation entry. */
   async function updateCurrentChannelImage(
     channelConversationId: string,
     mediaId: string,
@@ -559,6 +598,7 @@ export function useChannelWorkspaces() {
     }
   }
 
+  /** Saves a new cover image for a workspace and optimistically updates the local sidebar entry. */
   async function updateCurrentWorkspaceImage(
     workspaceDbId: string,
     mediaId: string,
@@ -577,6 +617,7 @@ export function useChannelWorkspaces() {
     }
   }
 
+  /** Applies an incoming real-time workspace-updated event (currently: cover image change). */
   function handleWorkspaceUpdated(event: { workspaceId: string; imageMediaId?: string }) {
     channelWorkspaces = channelWorkspaces.map((ws) =>
       ws.workspaceDbId === event.workspaceId
