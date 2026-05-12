@@ -894,6 +894,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @Post('mls/sync/session/start')
+  /** Creates a new QR sync session (offer side) and returns the session ID. */
   async startSyncSession(
     @Body()
     body: {
@@ -943,6 +944,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @Post('mls/sync/session/join')
+  /** Joins an existing QR sync session (answer side) and stores the answer key. */
   async joinSyncSession(
     @Body()
     body: {
@@ -999,6 +1001,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   @UseGuards(HeaderAuthGuard)
   @Get('mls/sync/session/:sessionId')
+  /** Polls the current state of a sync session (offer/answer keys, manifest, etc.). */
   async getSyncSessionState(
     @Param('sessionId') sessionIdRaw: string,
     @Headers('x-user-id') userIdRaw: string,
@@ -1025,6 +1028,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @Post('mls/sync/session/manifest')
+  /** Uploads the local message ID manifest for a sync round so the peer can compute the diff. */
   async uploadSyncManifest(
     @Body()
     body: {
@@ -1074,6 +1078,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @Post('mls/sync/session/diff')
+  /** Computes and returns the set of message IDs the calling peer is missing compared to the stored manifest. */
   async computeSyncDiff(
     @Body()
     body: {
@@ -1149,6 +1154,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @Post('mls/sync/session/chunks/upload')
+  /** Uploads a batch of encrypted message chunks to the sync session for the peer to pull. */
   async uploadSyncChunks(
     @Body()
     body: {
@@ -1196,6 +1202,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   @UseGuards(HeaderAuthGuard)
   @Get('mls/sync/session/:sessionId/chunks/pull')
+  /** Downloads encrypted message chunks the peer uploaded for this device during sync. */
   async pullSyncChunks(
     @Param('sessionId') sessionIdRaw: string,
     @Headers('x-user-id') userIdRaw: string,
@@ -1323,6 +1330,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   @Get('mls/link-preview')
+  /** Fetches a safe external URL preview (SSRF-protected: private IPs and localhost are rejected). */
   async getLinkPreview(@Query('url') url: string) {
     if (!url || typeof url !== 'string') {
       throw new BadRequestException('url is required');
@@ -1398,6 +1406,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   @UseGuards(HeaderAuthGuard)
   @Post('mls/groups')
+  /** Creates a new MLS group record on the server. */
   async createGroup(
     @Body()
     body: {
@@ -1445,6 +1454,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   @UseGuards(HeaderAuthGuard)
   @Get('mls/groups/:groupId')
+  /** Retrieves metadata for a single group by its ID. */
   async getGroup(@Param('groupId') groupId: string) {
     const g = await this.groupRepo.findOne({ where: { id: groupId } });
     this.logger.log(`[GET_GROUP] groupId=${groupId} found=${!!g}`);
@@ -1453,6 +1463,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   @UseGuards(HeaderAuthGuard)
   @Get('mls/users/:userId/groups')
+  /** Lists all groups a user belongs to. */
   async getUserGroups(
     @Param('userId') userId: string,
     @Headers('x-user-id') headerUserId?: string,
@@ -1486,6 +1497,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   @UseGuards(HeaderAuthGuard)
   @Post('mls/groups/:groupId/members')
+  /** Adds a member to a group and registers their device-group membership as pending. */
   async addGroupMember(
     @Param('groupId') groupId: string,
     @Body() body: { userId: string },
@@ -1544,6 +1556,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   @UseGuards(HeaderAuthGuard)
   @Get('mls/groups/:groupId/members')
+  /** Lists all members of a group. */
   async getGroupMembers(@Param('groupId') groupId: string) {
     const g = await this.groupMemberRepo.find({ where: { groupId } });
     this.logger.log(`[GET_MEMBERS] group=${groupId} count=${g.length}`);
@@ -1552,6 +1565,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   @UseGuards(HeaderAuthGuard)
   @Patch('mls/groups/:groupId')
+  /** Renames a group. */
   async renameGroup(
     @Param('groupId') groupId: string,
     @Body() body: { name: string },
@@ -1572,6 +1586,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   @UseGuards(HeaderAuthGuard)
   @Delete('mls/groups/:groupId/members/:userId')
+  /** Removes a user from a group server-side (deletes their GroupMember record). */
   async removeGroupMember(
     @Param('groupId') groupId: string,
     @Param('userId') userId: string,
@@ -1606,6 +1621,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   @UseGuards(HeaderAuthGuard)
   @Delete('mls/groups/:groupId')
+  /** Deletes a group and all its server-side data (members, device memberships, queued messages). */
   async deleteGroup(@Param('groupId') groupId: string) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     await this.groupRepo.delete({ id: safeGroupId });
@@ -1804,6 +1820,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   @UseGuards(HeaderAuthGuard)
   @Post('mls/kick-stale-device')
+  /** Resets a single stale device membership in a group back to pending so the device can be re-invited. */
   async kickStaleDevice(
     @Body() body: { deviceId: string; userId: string; groupId: string },
   ) {
@@ -1983,6 +2000,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   @UseGuards(HeaderAuthGuard)
   @Get('mls/devices/:userId/:deviceId/prekeys/count')
+  /** Returns the count of available one-time prekeys for a device. */
   async getPrekeyCount(
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
@@ -1997,6 +2015,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   @UseGuards(HeaderAuthGuard)
   @Delete('mls/devices/:userId/:deviceId/prekeys')
+  /** Purges all one-time prekeys for a device (used when resetting a device's key material). */
   async purgeDevicePrekeys(
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
@@ -2015,6 +2034,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   @UseGuards(HeaderAuthGuard)
   @Post('mls/register-device/prekeys')
+  /** Bulk-uploads one-time prekeys for the current device. */
   async registerDevicePrekeys(
     @Body() body: { userId: string; deviceId: string; keyPackages: unknown },
   ) {
@@ -2047,6 +2067,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   @UseGuards(HeaderAuthGuard)
   @Post('mls/register-device')
+  /** Registers a new device (KeyPackage + deviceId) on the server. */
   async registerDevice(
     @Body()
     body: {
@@ -2135,6 +2156,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   @UseGuards(HeaderAuthGuard)
   @Patch('mls/devices/:userId/:deviceId/metadata')
+  /** Updates device display metadata (name, OS, app version). */
   async updateDeviceMetadata(
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
@@ -2181,6 +2203,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   @UseGuards(HeaderAuthGuard)
   @Get('mls/devices/:userId')
+  /** Lists all registered devices for a user, including their key packages (last 30 days). */
   async getUserDevices(@Param('userId') userId: string) {
     // Only return devices active in the last 30 days (avoids stale key packages)
     const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
@@ -2233,6 +2256,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   @UseGuards(HeaderAuthGuard)
   @Post('mls/add-lock')
+  /** Acquires a distributed Redis lock for a group to prevent concurrent MLS commits. */
   async acquireAddLock(
     @Body()
     body: {
@@ -2258,6 +2282,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   @UseGuards(HeaderAuthGuard)
   @Delete('mls/add-lock')
+  /** Releases a previously acquired add-lock for a group. */
   async releaseAddLock(@Body() body: { groupId: string; deviceId: string }) {
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
@@ -2677,6 +2702,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   @UseGuards(HeaderAuthGuard)
   @Post('mls/welcome-request')
+  /** Broadcasts a welcome_request signal to ask online group members to re-invite this device. */
   async notifyWelcomeRequest(
     @Body()
     body: {
@@ -2785,6 +2811,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   @UseGuards(HeaderAuthGuard)
   @Post('mls/reinvite-request')
+  /** Broadcasts a reinvite_request signal to ask own devices to re-process pending invitations. */
   async notifyReinviteRequest(
     @Body()
     body: {
@@ -2930,6 +2957,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   @UseGuards(HeaderAuthGuard)
   @Post('mls/welcome')
+  /** Delivers an MLS Welcome message and optional ratchet tree to target device(s). */
   async sendWelcome(
     @Headers('x-user-id') authUserIdRaw: string | undefined,
     @Body()
@@ -3070,6 +3098,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   @UseGuards(HeaderAuthGuard)
   @Post('mls/send')
+  /** Encrypts and enqueues an MLS application message for delivery to all group members. */
   async sendMessage(
     @Body()
     body: {
@@ -3312,6 +3341,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   @UseGuards(HeaderAuthGuard)
   @Get('mls/history/:groupId')
+  /** Returns the Redis stream history for a group (incremental; supports afterStreamId cursor). */
   async getHistory(
     @Param('groupId') groupIdRaw: string,
     @Query('after') after?: string,
@@ -3358,6 +3388,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   @UseGuards(HeaderAuthGuard)
   @Get('mls/messages/:userId/:deviceId')
+  /** Fetches queued (undelivered) messages for a device from the DB queue. */
   async fetchMessages(
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
@@ -3392,6 +3423,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   // 2. Nouvelle route d'Acquittement (ACK)
   @UseGuards(HeaderAuthGuard)
   @Post('mls/messages/ack')
+  /** Acknowledges (deletes) processed messages from the delivery queue by message ID. */
   async acknowledgeMessages(
     @Body() body: { userId: string; deviceId: string; messageIds: string[] },
     @Headers('x-user-id') headerUserId?: string,
