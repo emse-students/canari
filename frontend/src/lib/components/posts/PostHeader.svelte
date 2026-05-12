@@ -6,12 +6,15 @@
   import { Clock } from 'lucide-svelte';
   import { timeAgo, exactDate } from '$lib/utils/time';
 
+  /** Props for the PostHeader component. */
   interface Props {
+    /** The post whose author/association and creation time are displayed. */
     post: PostEntity;
   }
 
   let { post }: Props = $props();
 
+  /** Returns the display name for the post author: association name for association posts, "firstName lastName" / displayName / userId for personal posts. */
   function getPostAuthorName(): string {
     if (post.association) return post.association.name;
     const first = post.authorFirstName?.trim();

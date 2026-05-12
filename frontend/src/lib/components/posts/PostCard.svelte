@@ -32,12 +32,23 @@
   import { slide, fade } from 'svelte/transition';
   import { untrack } from 'svelte';
 
+  /**
+   * Props for the PostCard component.
+   * The card is self-contained: it manages its own local copy of the post
+   * and updates it optimistically after each user interaction.
+   */
   interface Props {
+    /** The post data to render. The card keeps a local copy and does NOT auto-sync on prop changes. */
     post: PostEntity;
+    /** ID of the authenticated user, used to gate edit/delete/reaction controls. */
     currentUserId: string;
+    /** Bearer token forwarded to media URLs that require auth. */
     authToken?: string;
+    /** User's email, pre-filled in event registration payloads. */
     currentUserEmail?: string;
+    /** Called after a full list refresh is needed (e.g. after delete from the parent). */
     onRefresh?: () => void;
+    /** Called immediately after the post has been deleted so the parent can remove the card. */
     onDelete?: () => void;
   }
 
@@ -171,6 +182,7 @@
     }
   });
 
+  /** Toggles a poll option selection. Replaces the selection for single-choice polls; adds/removes for multiple-choice. */
   function toggleOption(pollId: string, optionId: string, multipleChoice: boolean) {
     if (!multipleChoice) {
       selectedOptions = [optionId];
@@ -183,6 +195,7 @@
     }
   }
 
+  /** Submits the current selectedOptions to the API and updates the local poll vote counts on success. */
   async function submitVote(pollId: string) {
     if (!currentUserId.trim()) {
       errorMessage = 'Identifiez-vous avant de voter.';
@@ -216,6 +229,7 @@
     }
   }
 
+  /** Toggles a reaction on the post with an optimistic update. Rolls back the local state if the API call fails. */
   async function handleReaction(reactionType: string) {
     if (!currentUserId.trim()) return;
 
@@ -239,11 +253,13 @@
     }
   }
 
+  /** Enters inline edit mode, pre-populating the textarea with the current markdown. */
   function startEditPost() {
     editMarkdown = localPost.markdown ?? '';
     editingPost = true;
   }
 
+  /** Sends the edited markdown to the API and merges the returned post into localPost on success. */
   async function submitEditPost() {
     const text = editMarkdown.trim();
     if (!text) return;
@@ -256,6 +272,7 @@
     }
   }
 
+  /** Deletes the post via the API and calls onDelete so the parent can remove the card from the list. */
   async function handleDeletePost() {
     try {
       await deletePostApi(localPost.id);
@@ -265,6 +282,7 @@
     }
   }
 
+  /** Fetches the full post (with all comments) to replace the truncated comment list returned by the feed endpoint. */
   async function loadAllComments() {
     try {
       const full = await getPost(localPost.id);
@@ -274,6 +292,7 @@
     }
   }
 
+  /** Posts a new comment (or reply if parentId is given) and appends it to the local comments array. */
   async function handleAddComment(parentId?: string) {
     const text = commentText.trim();
     if (!text || !currentUserId.trim()) return;
@@ -289,6 +308,7 @@
     }
   }
 
+  /** Toggles a like on a comment and updates the local comment in-place. Fails silently to avoid disrupting UX. */
   async function handleLikeComment(commentId: string) {
     try {
       const result = await likeCommentApi(localPost.id, commentId);
@@ -301,6 +321,7 @@
     }
   }
 
+  /** Sends the updated comment text to the API and replaces the matching comment in the local list. */
   async function handleEditComment(commentId: string, text: string) {
     try {
       const result = await editCommentApi(localPost.id, commentId, text);
@@ -313,6 +334,7 @@
     }
   }
 
+  /** Deletes a comment and all its replies from both the API and the local comments array. */
   async function handleDeleteComment(commentId: string) {
     try {
       await deleteCommentApi(localPost.id, commentId);
@@ -327,6 +349,7 @@
     }
   }
 
+  /** Pins or unpins the post (admin only) and updates the local pinned flag on success. */
   async function togglePin() {
     try {
       const fn = localPost.pinned ? unpinPostApi : pinPostApi;
@@ -343,6 +366,7 @@
   let reportReason = $state('');
   let reportSubmitting = $state(false);
 
+  /** Submits the selected report reason to the API and shows a confirmation message. */
   async function submitReport() {
     if (!reportReason) return;
     reportSubmitting = true;
@@ -358,6 +382,7 @@
     }
   }
 
+  /** Registers the current user for an event button. Redirects to Stripe Checkout if payment is required. */
   async function registerForEvent(buttonId: string) {
     if (!currentUserId.trim()) {
       errorMessage = 'Identifiez-vous avant de vous inscrire.';

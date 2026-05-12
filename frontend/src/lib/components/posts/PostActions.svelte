@@ -1,12 +1,19 @@
 <script lang="ts">
   import { MessageCircle, Smile } from 'lucide-svelte';
 
+  /** Props for the PostActions bar (reaction picker + comment button). */
   interface Props {
+    /** The emoji type the current user has reacted with, or null if no reaction. */
     userReaction: string | null;
+    /** Whether the emoji reaction picker popover is currently open. */
     showReactionPicker: boolean;
+    /** Full list of available reaction types with emoji and icon name. */
     reactionList: Array<{ type: string; emoji: string; icon: string }>;
+    /** Called when the user clicks the reaction button to open or close the picker. */
     onToggleReactionPicker: () => void;
+    /** Called when the user selects an emoji from the picker. */
     onReactionSelect: (reactionType: string) => void;
+    /** Called when the user clicks the Comment button to toggle the comment section. */
     onCommentClick: () => void;
   }
 

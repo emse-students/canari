@@ -8,21 +8,37 @@
 
   type SortMode = 'recent' | 'oldest' | 'liked';
 
+  /** Props for the PostComments section of a post card. */
   interface Props {
+    /** All comments on the post (including replies). */
     comments: PostComment[];
+    /** Top-level comments only (parentId is null). Pre-computed by the parent to avoid redundant filtering. */
     topLevelComments: PostComment[];
+    /** Whether the full comment list is expanded (false = show preview only). */
     showComments: boolean;
+    /** Current value of the comment input box, controlled by the parent. */
     commentText: string;
+    /** True while a new comment is being submitted to prevent double-posting. */
     submittingComment: boolean;
+    /** Authenticated user's ID, used to gate edit/delete controls. */
     currentUserId: string;
+    /** Total comment count from the server (may be higher than comments.length if the list was truncated). */
     totalCommentCount?: number;
+    /** Called when the user clicks "Afficher" / "Masquer" to toggle comment visibility. */
     onToggleComments: () => void;
+    /** Called on each keystroke to sync the comment input value to the parent's state. */
     onCommentTextChange: (text: string) => Promise<void>;
+    /** Called when the user submits a comment (or reply if parentId is provided). */
     onAddComment: (parentId?: string) => Promise<void>;
+    /** Called when the user toggles a like on a comment. */
     onLikeComment: (commentId: string) => void;
+    /** Called when the user saves an inline edit. */
     onEditComment: (commentId: string, text: string) => Promise<void>;
+    /** Called when the user deletes a comment. */
     onDeleteComment: (commentId: string) => Promise<void>;
+    /** If provided, a "Load all comments" button is shown when totalCommentCount >= 20. */
     onLoadAllComments?: () => Promise<void>;
+    /** Optional external keydown handler forwarded after internal shortcuts are processed. */
     onKeyDown?: (e: KeyboardEvent) => void;
   }
 
@@ -53,6 +69,7 @@
   let mentionSelectedIdx = $state(-1);
   let mentionDebounce: ReturnType<typeof setTimeout> | null = null;
 
+  /** Syncs the input value to the parent and triggers @mention autocomplete after a 250 ms debounce. */
   function handleCommentInput(e: Event) {
     const input = e.target as HTMLInputElement;
     const val = input.value;
@@ -75,6 +92,7 @@
     }
   }
 
+  /** Queries the users search API and populates the mention suggestion dropdown. */
   async function searchMentions(query: string) {
     try {
       const res = await apiFetch(`${coreUrl()}/api/users/search?q=${encodeURIComponent(query)}`);
@@ -90,6 +108,7 @@
     }
   }
 
+  /** Replaces the @query in the input with the selected user's display name and closes the dropdown. */
   function selectMention(user: MentionUser) {
     const displayName = user.displayName || user.id;
     const before = commentText.slice(0, mentionStart);
@@ -103,6 +122,7 @@
 
   let loadingAll = $state(false);
 
+  /** Calls onLoadAllComments with a loading spinner, then clears the spinner. */
   async function handleLoadAll() {
     loadingAll = true;
     await onLoadAllComments?.();
@@ -117,40 +137,47 @@
 
   const PREVIEW_COUNT = 5;
 
+  /** Enters reply mode, targeting the given comment, and cancels any active edit. */
   function initiateReply(comment: PostComment) {
     replyingToId = comment.id;
     replyingToName = getCommentAuthorName(comment);
     editingCommentId = null;
   }
 
+  /** Exits reply mode and clears the reply target name. */
   function cancelReply() {
     replyingToId = null;
     replyingToName = '';
   }
 
+  /** Enters inline edit mode for the given comment, pre-populating the edit input, and cancels any active reply. */
   function initiateEdit(comment: PostComment) {
     editingCommentId = comment.id;
     editingText = comment.text;
     replyingToId = null;
   }
 
+  /** Exits inline edit mode and clears the edit buffer. */
   function cancelEdit() {
     editingCommentId = null;
     editingText = '';
   }
 
+  /** Calls onEditComment with the trimmed edit text, then exits edit mode. */
   async function submitEdit() {
     if (!editingText.trim() || !editingCommentId) return;
     await onEditComment(editingCommentId, editingText.trim());
     cancelEdit();
   }
 
+  /** Submits the comment text as a new comment or reply, then cancels reply mode. */
   async function handleSubmitComment() {
     if (!commentText.trim() || submittingComment) return;
     await onAddComment(replyingToId ?? undefined);
     cancelReply();
   }
 
+  /** Handles keyboard shortcuts on the comment input: Arrow keys navigate the mention dropdown, Enter submits, Escape cancels reply mode. */
   function handleInternalKeyDown(e: KeyboardEvent) {
     if (mentionOpen && mentionSuggestions.length > 0) {
       if (e.key === 'ArrowDown') { e.preventDefault(); mentionSelectedIdx = Math.min(mentionSelectedIdx + 1, mentionSuggestions.length - 1); return; }
@@ -166,6 +193,7 @@
     if (onKeyDown) onKeyDown(e);
   }
 
+  /** Handles keyboard shortcuts on the inline comment edit input: Enter saves, Escape cancels. */
   function handleEditKeyDown(e: KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -174,6 +202,7 @@
     if (e.key === 'Escape') cancelEdit();
   }
 
+  /** Returns the best available display name for a comment author: "firstName lastName" → displayName → userId as fallback. */
   function getCommentAuthorName(comment: PostComment): string {
     const first = comment.firstName?.trim();
     const last = comment.lastName?.trim();
