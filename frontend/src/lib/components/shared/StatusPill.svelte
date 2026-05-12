@@ -1,5 +1,6 @@
 <script lang="ts">
   interface Props {
+    /** Whether the WebSocket connection is currently active. */
     isConnected: boolean;
   }
 

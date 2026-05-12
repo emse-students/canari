@@ -18,11 +18,17 @@
   }
 
   interface Props {
+    /** List of workspaces (with channels) matching the current search filter. */
     filteredChannelWorkspaces: ChannelWorkspace[];
+    /** IDs of workspaces whose channel list is currently expanded. */
     expandedWorkspaceIds: string[];
+    /** ID of the currently selected channel. */
     selectedChannelId: string;
+    /** Callback to expand or collapse a workspace section. */
     onToggleWorkspace: (workspaceId: string) => void;
+    /** Callback to open the new channel modal. */
     onOpenNewGroup: () => void;
+    /** Callback fired when the user selects a channel. */
     onSelectChannel: (channelId: string) => void;
   }
 

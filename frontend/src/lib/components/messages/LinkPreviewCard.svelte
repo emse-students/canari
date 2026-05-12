@@ -2,6 +2,7 @@
   import { ExternalLink } from 'lucide-svelte';
 
   interface Props {
+    /** The URL whose Open Graph / meta preview should be fetched and displayed. */
     url: string;
   }
 

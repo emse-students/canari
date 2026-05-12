@@ -12,9 +12,12 @@
   }
 
   interface Props {
+    /** Emoji-keyed map of user IDs who have reacted with each emoji. */
     groupedReactions: Record<string, string[]>;
+    /** When true, aligns the reaction row to the right (own messages). */
     isOwn?: boolean;
     currentUserId?: string; // Ajouté pour savoir quelles réactions mettre en surbrillance
+    /** Called when the user clicks a reaction badge to toggle their own reaction. */
     onReact?: (emoji: string) => void;
   }
 

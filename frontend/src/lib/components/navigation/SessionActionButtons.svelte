@@ -2,7 +2,9 @@
   import { Terminal, LogOut } from 'lucide-svelte';
 
   interface Props {
+    /** Callback to toggle the logs panel visibility. */
     onToggleLogs: () => void;
+    /** Callback to log out the current user. */
     onLogout: () => void;
   }
 

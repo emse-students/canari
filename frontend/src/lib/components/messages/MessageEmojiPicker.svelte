@@ -5,8 +5,11 @@
   import 'emoji-picker-element';
 
   interface Props {
+    /** Whether the emoji picker panel is visible. */
     visible: boolean;
+    /** When true, anchors the picker to the right side (own messages). */
     isOwn: boolean;
+    /** Called when the user picks an emoji. */
     onEmojiSelect?: (emoji: string) => void;
   }
 

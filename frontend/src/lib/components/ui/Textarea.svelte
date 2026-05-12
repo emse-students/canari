@@ -1,13 +1,22 @@
 <script lang="ts">
   interface Props {
+    /** HTML id attribute; auto-generated if omitted. */
     id?: string;
+    /** Bindable current value of the textarea. */
     value?: string;
+    /** Placeholder text shown when the textarea is empty. */
     placeholder?: string;
+    /** Label text rendered above the textarea. */
     label?: string;
+    /** Whether the textarea is disabled. */
     disabled?: boolean;
+    /** Whether the textarea is required; appends a red asterisk to the label. */
     required?: boolean;
+    /** Number of visible text rows. */
     rows?: number;
+    /** Additional CSS classes forwarded to the wrapper div. */
     class?: string;
+    /** Called on every input event. */
     oninput?: (e: Event & { currentTarget: HTMLTextAreaElement }) => void;
     [key: string]: any;
   }

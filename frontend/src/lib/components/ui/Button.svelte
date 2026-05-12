@@ -1,11 +1,18 @@
 <script lang="ts">
   interface Props {
+    /** HTML button type attribute. */
     type?: 'button' | 'submit' | 'reset';
+    /** Whether the button is disabled. */
     disabled?: boolean;
+    /** Shows a spinner and disables the button while true. */
     loading?: boolean;
+    /** Additional CSS classes forwarded to the button element. */
     class?: string;
+    /** Click event handler. */
     onclick?: (e: MouseEvent) => void;
+    /** Slot content rendered inside the button. */
     children?: import('svelte').Snippet;
+    /** Visual style variant. */
     variant?: 'primary' | 'secondary' | 'outline' | 'ghost';
     [key: string]: any;
   }

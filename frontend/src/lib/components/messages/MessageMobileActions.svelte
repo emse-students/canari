@@ -3,18 +3,31 @@
   import { fly, fade } from 'svelte/transition';
 
   interface Props {
+    /** Whether the radial action menu overlay is visible. */
     visible: boolean;
+    /** When true, the message belongs to the current user (gates edit/delete). */
     isOwn?: boolean;
+    /** When true, hides reply and edit actions (message has been deleted). */
     isDeleted?: boolean;
+    /** When true, hides the edit action (media messages cannot be edited). */
     hasMedia?: boolean;
+    /** When false, hides the reply button. */
     canReply?: boolean;
+    /** When false, hides the react button. */
     canReact?: boolean;
+    /** When false, hides the edit button. */
     canEdit?: boolean;
+    /** When false, hides the delete button. */
     canDelete?: boolean;
+    /** Called when the user taps the reply button. */
     onReply?: () => void;
+    /** Called when the user taps the react (emoji) button. */
     onReact?: () => void;
+    /** Called when the user taps the edit button. */
     onEdit?: () => void;
+    /** Called when the user taps the delete button. */
     onDelete?: () => void;
+    /** Called when the backdrop or center button is tapped to close the menu. */
     onClose?: () => void;
   }
 

@@ -2,12 +2,19 @@
   import { Plus, X, Search, Shield } from 'lucide-svelte';
 
   interface Props {
+    /** Which sidebar tab is currently active. */
     activeSidebarTab: 'discussions' | 'channels';
+    /** Current search filter string. */
     searchQuery: string;
+    /** Whether the sidebar is rendered inside a slide-over drawer. */
     drawerMode?: boolean;
+    /** Callback to close the drawer when in drawer mode. */
     onCloseDrawer?: () => void;
+    /** Callback fired when the search input changes. */
     onSearchQueryChange: (value: string) => void;
+    /** Callback to open the new chat / new channel modal. */
     onOpenNewChat: () => void;
+    /** Callback to open the community admin modal (channels tab only). */
     onOpenCommunityAdmin?: () => void;
   }
 

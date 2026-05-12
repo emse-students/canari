@@ -2,7 +2,9 @@
   import { Pause, Play, Download } from 'lucide-svelte';
 
   interface Props {
+    /** Audio source URL (object URL or remote URL) to load and play. */
     src: string;
+    /** Called when the user clicks the download button. Omit to hide the button. */
     onDownload?: () => void;
   }
 

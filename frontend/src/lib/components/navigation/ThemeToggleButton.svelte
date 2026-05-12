@@ -2,7 +2,9 @@
   import { Moon, Sun } from 'lucide-svelte';
 
   interface Props {
+    /** Whether dark mode is currently active. */
     isDarkMode: boolean;
+    /** Callback to toggle between light and dark mode. */
     onToggle: () => void;
   }
 

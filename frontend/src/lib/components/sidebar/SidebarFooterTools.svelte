@@ -2,14 +2,23 @@
   import { Download, Upload, ScanLine, Smartphone, Monitor } from 'lucide-svelte';
 
   interface Props {
+    /** Callback fired with the selected backup file to import. */
     onImport: (file: File) => void;
+    /** Callback to trigger conversation export. */
     onExport: () => void;
+    /** Callback to start a QR sync session as source. */
     onStartSync: () => void;
+    /** Callback to join an existing QR sync session. */
     onJoinSync: () => void;
+    /** Callback to open the device management panel. */
     onOpenDevicePanel: () => void;
+    /** Whether an export operation is in progress. */
     isExporting?: boolean;
+    /** Whether an import operation is in progress. */
     isImporting?: boolean;
+    /** Whether a sync operation is in progress. */
     isSyncing?: boolean;
+    /** Number of pending device invitations to display as badge. */
     pendingInvitationCount?: number;
   }
 

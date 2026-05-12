@@ -3,10 +3,15 @@
   import { tick } from 'svelte';
 
   interface Props {
+    /** Whether the modal is visible. */
     open: boolean;
+    /** Current value of the channel name input. */
     channelName: string;
+    /** Callback to close the modal. */
     onClose: () => void;
+    /** Callback fired when the channel name input changes. */
     onChannelNameChange: (value: string) => void;
+    /** Callback to submit the new channel creation form. */
     onSubmitChannel: () => void;
   }
 

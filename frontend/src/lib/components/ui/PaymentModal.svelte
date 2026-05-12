@@ -4,8 +4,11 @@
   import type { PaymentMethod } from '$lib/stores/user';
 
   interface Props {
+    /** List of saved payment methods to display. */
     paymentMethods: PaymentMethod[];
+    /** Amount to charge, expressed in the smallest currency unit (e.g. cents). */
     totalCents: number;
+    /** ISO 4217 currency code (lowercase). */
     currency?: string;
     /** Called when user picks a saved method. Returns true on success. */
     onPayWithSaved: (
@@ -15,6 +18,7 @@
     onPayWithNew: () => void;
     /** Called when inline 3DS authentication succeeds. */
     onSuccess: () => void;
+    /** Called when the modal is dismissed. */
     onClose: () => void;
   }
 

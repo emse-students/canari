@@ -1,6 +1,8 @@
 <script lang="ts">
   interface Props {
+    /** When true, hides the text on small screens. */
     compact?: boolean;
+    /** Optional tagline displayed below the brand name. */
     subtitle?: string;
   }
 

@@ -1,7 +1,10 @@
 <script lang="ts">
   interface Props {
+    /** Additional CSS classes forwarded to the card wrapper. */
     class?: string;
+    /** Slot content rendered inside the card body. */
     children?: import('svelte').Snippet;
+    /** Optional heading displayed at the top of the card. */
     title?: string;
   }
 

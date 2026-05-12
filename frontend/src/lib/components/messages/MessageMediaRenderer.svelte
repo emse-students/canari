@@ -11,13 +11,21 @@
   import type { MediaRef } from '$lib/media';
 
   interface Props {
+    /** Parsed media descriptor from the message envelope, or null for text-only messages. */
     mediaRef: MediaRef | null;
+    /** Decrypted object URL for the media blob, or null while loading. */
     blobUrl: string | null;
+    /** True when the media failed to download or decrypt. */
     loadError: boolean;
+    /** True when the media was removed by the 30-day retention policy. */
     mediaPurgedByRetention: boolean;
+    /** Caption text shown below the media (or the full text for text-only messages). */
     textContent: string;
+    /** When true, adjusts colours for the amber bubble used on own messages. */
     isOwn?: boolean;
+    /** Pre-split text+link segments used to render the caption with clickable links. */
     textSegments?: Array<{ type: 'text' | 'link'; value: string }>;
+    /** Called when the user clicks a link inside the caption. */
     onNavigateLink?: (e: MouseEvent) => void;
   }
 

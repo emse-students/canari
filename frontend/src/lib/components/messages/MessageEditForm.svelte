@@ -1,9 +1,14 @@
 <script lang="ts">
   interface Props {
+    /** Whether the edit form is currently shown. */
     editing: boolean;
+    /** Current value of the edit textarea. */
     editText: string;
+    /** Called on every keystroke with the updated textarea value. */
     onEditChange?: (text: string) => void;
+    /** Called when the user clicks "Enregistrer" or presses Ctrl+Enter. */
     onConfirm?: () => void;
+    /** Called when the user clicks "Annuler" or presses Escape. */
     onCancel?: () => void;
   }
 

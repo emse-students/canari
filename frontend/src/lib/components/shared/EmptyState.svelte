@@ -2,9 +2,13 @@
   import type { ComponentType } from 'svelte';
 
   interface Props {
+    /** Lucide (or compatible) icon component rendered above the title. */
     icon: ComponentType;
+    /** Pixel size passed to the icon component. */
     iconSize?: number;
+    /** Bold heading displayed below the icon. */
     title: string;
+    /** Descriptive paragraph shown below the title. */
     description: string;
   }
 

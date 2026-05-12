@@ -11,8 +11,11 @@
     name?: string;
     /** Visual variant controls the fallback icon and color scheme. */
     variant?: 'group' | 'channel' | 'community';
+    /** Avatar size preset. */
     size?: 'sm' | 'md' | 'lg';
+    /** When true, the avatar stretches to fill its container instead of using a preset size. */
     fill?: boolean;
+    /** Border-radius style of the avatar. */
     shape?: 'soft' | 'circle';
   }
 

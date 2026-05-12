@@ -1,14 +1,24 @@
 <script lang="ts">
   interface Props {
+    /** HTML id attribute; auto-generated if omitted. */
     id?: string;
+    /** Input type (e.g. "text", "email", "password"). */
     type?: string;
+    /** Bindable current value of the input. */
     value?: string | number;
+    /** Placeholder text shown when the input is empty. */
     placeholder?: string;
+    /** Label text rendered above the input. */
     label?: string;
+    /** Whether the input is disabled. */
     disabled?: boolean;
+    /** Whether the input is required; appends a red asterisk to the label. */
     required?: boolean;
+    /** Additional CSS classes forwarded to the wrapper div. */
     class?: string;
+    /** Called on every input event. */
     oninput?: (e: Event & { currentTarget: HTMLInputElement }) => void;
+    /** Called on every keydown event. */
     onkeydown?: (e: KeyboardEvent) => void;
     [key: string]: any;
   }

@@ -3,10 +3,15 @@
   import { tick } from 'svelte';
 
   interface Props {
+    /** Whether the modal is visible. */
     open: boolean;
+    /** Current value of the community name input. */
     communityName: string;
+    /** Callback to close the modal. */
     onClose: () => void;
+    /** Callback fired when the community name input changes. */
     onNameChange: (value: string) => void;
+    /** Callback to submit the new community creation form. */
     onSubmit: () => void;
   }
 

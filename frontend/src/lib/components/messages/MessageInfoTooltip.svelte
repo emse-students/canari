@@ -6,11 +6,17 @@
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
 
   interface Props {
+    /** Whether the tooltip is currently visible. */
     visible: boolean;
+    /** Send time of the message. */
     timestamp: Date;
+    /** Last edit time, shown only when isEdited is true. */
     editedAt?: Date;
+    /** List of user IDs who have read the message. */
     readBy?: string[];
+    /** When true, positions the tooltip on the right side (own messages). */
     isOwn?: boolean;
+    /** When true, shows an edit row with the editedAt time. */
     isEdited?: boolean;
   }
 
