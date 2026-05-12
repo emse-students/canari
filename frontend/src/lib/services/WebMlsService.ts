@@ -1212,7 +1212,15 @@ export class WebMlsService implements IMlsService {
   /** WASM client wrapper — fetches all groups the given user belongs to from the delivery service. */
   async getUserGroups(
     userId: string
-  ): Promise<{ groupId: string; name: string; isGroup: boolean }[]> {
+  ): Promise<
+    {
+      groupId: string;
+      name: string;
+      isGroup: boolean;
+      successorId?: string | null;
+      deletedAt?: string | null;
+    }[]
+  > {
     try {
       const res = await fetch(`${this.historyUrl}/api/mls/users/${userId}/groups`, {
         headers: await this.withAuthHeaders(),
@@ -1221,6 +1229,50 @@ export class WebMlsService implements IMlsService {
       return await res.json();
     } catch {
       return [];
+    }
+  }
+
+  /** WASM client wrapper — fetches full metadata for a single group including successorId and deletedAt. */
+  async getGroupMeta(groupId: string): Promise<{
+    groupId: string;
+    name?: string;
+    isGroup: boolean;
+    activeEpoch: number;
+    successorId?: string | null;
+    deletedAt?: string | null;
+  } | null> {
+    try {
+      const res = await fetch(`${this.historyUrl}/api/mls/groups/${groupId}`, {
+        headers: await this.withAuthHeaders(),
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  }
+
+  /** WASM client wrapper — atomically claims a successor for a dead group (first-writer-wins).
+   *  Returns claimed=false with the real successorId if another device already claimed it. */
+  async claimGroupSuccessor(
+    deadGroupId: string,
+    successorId: string
+  ): Promise<{ claimed: boolean; successorId: string | null }> {
+    try {
+      const res = await fetch(`${this.historyUrl}/api/mls/groups/${deadGroupId}/successor`, {
+        method: 'POST',
+        headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ successorId }),
+      });
+      if (res.status === 409) {
+        const body = await res.json();
+        return { claimed: false, successorId: body.successorId ?? null };
+      }
+      if (!res.ok) throw new Error(`claimGroupSuccessor HTTP ${res.status}`);
+      const body = await res.json();
+      return { claimed: true, successorId: body.successorId };
+    } catch {
+      return { claimed: false, successorId: null };
     }
   }
 

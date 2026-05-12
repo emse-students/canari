@@ -25,6 +25,7 @@ import {
   processDevWelcome,
   processPendingInvitations,
 } from '$lib/utils/chat/actions';
+import { checkGroupSuccessors } from '$lib/utils/chat/recovery';
 import {
   setupMessageHandler,
   initializeConnection,
@@ -100,6 +101,7 @@ export function useChatSession() {
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let isReconnecting = false;
   let isSyncing = false;
+  let healthCheckInterval: ReturnType<typeof setInterval> | null = null;
 
   // ── Backup ────────────────────────────────────────────────────────────────
   let isExporting = $state(false);
@@ -407,6 +409,7 @@ export function useChatSession() {
         getSelectedContact: cb.getSelectedContact,
         setSelectedContact: cb.setSelectedContact,
         saveConversation: cb.saveConversation,
+        deleteConversation: storage ? (id) => storage!.deleteConversation(id) : undefined,
         addMessageToChat: cb.addMessageToChat,
         loadHistoryForConversation: cb.onLoadHistoryForConversation,
         onChannelMemberJoined: cb.onChannelMemberJoined,
@@ -557,6 +560,37 @@ export function useChatSession() {
         }, delay);
       }
 
+      // Health check: migrate any group whose successor was claimed by another device.
+      // Run once on connect, then every 5 minutes (leader tab only).
+      const st2 = storage;
+      const recoveryDeps = {
+        mlsService,
+        storage: st2,
+        userId,
+        pin,
+        conversations: cb.conversations,
+        getSelectedContact: cb.getSelectedContact,
+        setSelectedContact: cb.setSelectedContact,
+        saveConversation: cb.saveConversation,
+        deleteConversation: st2 ? (id: string) => st2.deleteConversation(id) : undefined,
+        log: cb.log,
+      };
+      checkGroupSuccessors(recoveryDeps).catch((e) =>
+        cb.log(
+          `[HEALTH] Erreur health check initial: ${e instanceof Error ? e.message : String(e)}`
+        )
+      );
+      if (healthCheckInterval !== null) clearInterval(healthCheckInterval);
+      healthCheckInterval = setInterval(
+        () => {
+          if (!getIsTabLeader()) return;
+          checkGroupSuccessors(recoveryDeps).catch((e) =>
+            cb.log(`[HEALTH] Erreur health check: ${e instanceof Error ? e.message : String(e)}`)
+          );
+        },
+        5 * 60 * 1_000
+      );
+
       const isTauri = !!(window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
       if (isTauri && !(await BiometricService.isConfigured()) && !isBiometricPromptDismissed()) {
         showBiometricEnrollPrompt = true;
@@ -660,6 +694,10 @@ export function useChatSession() {
     if (reconnectTimer !== null) {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
+    }
+    if (healthCheckInterval !== null) {
+      clearInterval(healthCheckInterval);
+      healthCheckInterval = null;
     }
     reconnectAttempts = 0;
     isLoggedIn = false;

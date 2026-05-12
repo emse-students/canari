@@ -41,6 +41,16 @@ export class Group {
   @Column({ type: 'jsonb', nullable: true })
   latestKeyRotationPayload: any;
 
+  /** UUID of the replacement group; null means this group is still active.
+   *  Set atomically (first writer wins) when a device detects an irrecoverable MLS failure. */
+  @Column({ type: 'uuid', nullable: true, default: null })
+  successorId?: string | null;
+
+  /** Soft-delete timestamp. Null = active. Set on explicit deletion or when a successor is claimed.
+   *  The row is intentionally kept as a tombstone so devices can detect the transition. */
+  @Column({ type: 'timestamp', nullable: true, default: null })
+  deletedAt?: Date | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

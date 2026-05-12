@@ -73,6 +73,8 @@ export class MembersController {
       groupId: g.id,
       name: g.name,
       isGroup: g.isGroup,
+      successorId: g.successorId ?? null,
+      deletedAt: g.deletedAt ?? null,
     }));
   }
 

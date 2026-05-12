@@ -8,6 +8,7 @@ import {
   Param,
   Inject,
   BadRequestException,
+  ConflictException,
   UseGuards,
   Logger,
 } from '@nestjs/common';
@@ -123,15 +124,59 @@ export class GroupsController {
 
   @UseGuards(HeaderAuthGuard)
   @Delete('mls/groups/:groupId')
-  /** Deletes a group and all its server-side data (members, device memberships, queued messages). */
+  /** Soft-deletes a group (sets deletedAt) and hard-deletes all operational data.
+   *  The group row is kept as a tombstone so devices can detect the deletion. */
   async deleteGroup(@Param('groupId') groupId: string) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
-    await this.groupRepo.delete({ id: safeGroupId });
+    // Soft-delete: keep the row as a tombstone for recovery routing
+    await this.groupRepo.update({ id: safeGroupId }, { deletedAt: new Date() });
+    // Hard-delete operational data — no longer needed once the group is gone
     await this.groupMemberRepo.delete({ groupId: safeGroupId });
     await this.deviceGroupRepo.delete({ groupId: safeGroupId });
     await this.queuedMessageRepo.delete({ groupId: safeGroupId });
     await this.redis.del(`group:members:${safeGroupId}`);
-    this.logger.log(`[DELETE_GROUP] group=${safeGroupId}`);
+    this.logger.log(`[DELETE_GROUP] group=${safeGroupId} (soft-deleted)`);
     return { status: 'deleted' };
+  }
+
+  @UseGuards(HeaderAuthGuard)
+  @Post('mls/groups/:groupId/successor')
+  /** Atomically claims a successor for a dead group (first writer wins).
+   *  Returns 200 with claimed=true if this device won the race,
+   *  or 409 with claimed=false and the real successorId if another device already claimed it. */
+  async claimSuccessor(
+    @Param('groupId') groupId: string,
+    @Body() body: { successorId: string },
+  ) {
+    const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
+    if (!body.successorId || typeof body.successorId !== 'string') {
+      throw new BadRequestException('successorId is required');
+    }
+    // Atomic CAS: only update if no successor has been claimed yet
+    const result = await this.groupRepo
+      .createQueryBuilder()
+      .update(Group)
+      .set({ successorId: body.successorId, deletedAt: () => 'NOW()' })
+      .where('id = :id AND "successorId" IS NULL', { id: safeGroupId })
+      .execute();
+
+    if (result.affected === 0) {
+      // Another device won — return the real winner's successorId
+      const existing = await this.groupRepo.findOne({
+        where: { id: safeGroupId },
+      });
+      this.logger.log(
+        `[CLAIM_SUCCESSOR] group=${safeGroupId} LOST — real successor=${existing?.successorId}`,
+      );
+      throw new ConflictException({
+        claimed: false,
+        successorId: existing?.successorId ?? null,
+      });
+    }
+
+    this.logger.log(
+      `[CLAIM_SUCCESSOR] group=${safeGroupId} WON — successor=${body.successorId}`,
+    );
+    return { claimed: true, successorId: body.successorId };
   }
 }

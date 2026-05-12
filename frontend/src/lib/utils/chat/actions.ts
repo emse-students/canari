@@ -279,7 +279,13 @@ export async function discoverMissingGroups(params: {
 
   // ── Phase 1: Create placeholders for server groups not present locally ────
 
-  let serverGroups: { groupId: string; name: string; isGroup: boolean }[] = [];
+  let serverGroups: {
+    groupId: string;
+    name: string;
+    isGroup: boolean;
+    successorId?: string | null;
+    deletedAt?: string | null;
+  }[] = [];
   let serverFetchSucceeded = false;
   try {
     serverGroups = await mlsService.getUserGroups(userId);
@@ -291,6 +297,11 @@ export async function discoverMissingGroups(params: {
   // Some backends can transiently return duplicates; keep first occurrence by groupId.
   const uniqueServerGroups = Array.from(new Map(serverGroups.map((g) => [g.groupId, g])).values());
 
+  // Active groups only: exclude soft-deleted (replaced by a successor).
+  // Soft-deleted groups still exist on the server for recovery routing but should not
+  // be created as local placeholders — checkGroupSuccessors handles the migration.
+  const activeServerGroups = uniqueServerGroups.filter((g) => !g.deletedAt);
+
   // ── Orphan cleanup: delete local groups absent from server ────────────────
   // Only when the server fetch succeeded (avoid deleting on transient network errors).
   // Skip channel conversations (keyed as `channel_*`) — they use a separate system.
@@ -298,9 +309,30 @@ export async function discoverMissingGroups(params: {
   // to guard against slow server responses during group creation.
   const ORPHAN_GRACE_MS = 60_000;
   if (serverFetchSucceeded) {
+    // Use the full set (including deleted groups) so soft-deleted entries don't trigger
+    // the orphan grace-period logic — checkGroupSuccessors handles their cleanup.
     const serverGroupIds = new Set(uniqueServerGroups.map((g) => g.groupId));
     for (const [key, convo] of conversations.entries()) {
       if (key.startsWith('channel_')) continue;
+
+      // Belt-and-suspenders: if this group was already migrated (successor exists locally),
+      // clean up the stale entry here rather than waiting for checkGroupSuccessors.
+      const serverEntry = uniqueServerGroups.find((g) => g.groupId === convo.id);
+      if (serverEntry?.successorId && conversations.has(serverEntry.successorId)) {
+        log(
+          `[DISCOVERY] Groupe "${convo.name || convo.id}" déjà migré vers ${serverEntry.successorId} — nettoyage`
+        );
+        localStorage.removeItem(`discovery_absent:${convo.id}`);
+        try {
+          mlsService.forgetGroup(convo.id, 0);
+        } catch {
+          /* non-blocking */
+        }
+        conversations.delete(key);
+        if (deleteConversation) await deleteConversation(key).catch(() => {});
+        continue;
+      }
+
       if (!serverGroupIds.has(convo.id)) {
         const absentKey = `discovery_absent:${convo.id}`;
         const absentSince = parseInt(localStorage.getItem(absentKey) ?? '0', 10);
@@ -340,8 +372,9 @@ export async function discoverMissingGroups(params: {
 
   // Include both ready and placeholder conversations to avoid recreating
   // the same pending entry on each login.
+  // Only create placeholders for active groups — soft-deleted ones are handled by checkGroupSuccessors.
   const localGroupIds = new Set([...conversations.values()].map((c) => c.id));
-  const missing = uniqueServerGroups.filter((g) => !localGroupIds.has(g.groupId));
+  const missing = activeServerGroups.filter((g) => !localGroupIds.has(g.groupId));
 
   if (missing.length > 0) {
     log(

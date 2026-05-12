@@ -109,8 +109,32 @@ export interface IMlsService {
   removeMemberDevice(groupId: string, deviceIdentities: string[]): Promise<void>;
   /** Returns the list of (userId, deviceId) pairs currently in a group according to the delivery service. */
   getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]>;
-  /** Returns all groups the given user belongs to according to the delivery service. */
-  getUserGroups(userId: string): Promise<{ groupId: string; name: string; isGroup: boolean }[]>;
+  /** Returns all groups the given user belongs to according to the delivery service.
+   *  Each entry includes successorId and deletedAt for recovery routing. */
+  getUserGroups(userId: string): Promise<
+    {
+      groupId: string;
+      name: string;
+      isGroup: boolean;
+      successorId?: string | null;
+      deletedAt?: string | null;
+    }[]
+  >;
+  /** Fetches full metadata for a single group, including successorId and deletedAt. Returns null if not found. */
+  getGroupMeta(groupId: string): Promise<{
+    groupId: string;
+    name?: string;
+    isGroup: boolean;
+    activeEpoch: number;
+    successorId?: string | null;
+    deletedAt?: string | null;
+  } | null>;
+  /** Atomically claims a successor for a dead group (first-writer-wins CAS).
+   *  Returns claimed=true if this device won, or claimed=false with the real successorId if it lost. */
+  claimGroupSuccessor(
+    deadGroupId: string,
+    successorId: string
+  ): Promise<{ claimed: boolean; successorId: string | null }>;
 
   // DeviceGroupMembership tracking
   /** Get all pending device-group invitations in groups where this device is a full member */

@@ -9,6 +9,7 @@ import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
 import { ChannelService } from '$lib/services/ChannelService';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
+import { recoverDeadGroup } from '$lib/utils/chat/recovery';
 
 /**
  * Dependencies injected into setupMessageHandler.
@@ -27,6 +28,8 @@ export interface MessageHandlerDeps {
   getSelectedContact: () => string | null;
   setSelectedContact: (value: string | null) => void;
   saveConversation: (contactName: string) => Promise<void>;
+  /** Delete a conversation from the local DB. Used by recoverDeadGroup when migrating away from a dead group. */
+  deleteConversation?: (key: string) => Promise<void>;
   addMessageToChat: (
     senderId: string,
     content: string,
@@ -224,6 +227,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
     messageReactions,
     setSelectedContact,
     saveConversation,
+    deleteConversation,
     addMessageToChat,
     loadHistoryForConversation,
     onChannelMemberJoined,
@@ -1175,21 +1179,24 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             );
             if (failures >= PHANTOM_THRESHOLD) {
               log(
-                `🧹 Suppression locale du groupe fantôme "${convoKey}" après ${failures} échecs consécutifs`
+                `[RECOVER] Groupe fantôme "${convoKey}" après ${failures} échecs — lancement récupération`
               );
-              console.error(
-                `[MLS] Phantom group "${convoKey}" deleted after ${failures} consecutive failures`
-              );
-              if (storage) {
-                await storage
-                  .deleteConversation(convoKey)
-                  .catch((e) => log(`Erreur suppression DB "${convoKey}": ${e}`));
-              }
-              conversations.delete(convoKey);
               groupMlsFailures.delete(convoKey);
               groupNullAppFailures.delete(convoKey);
-              if (getSelectedContact() === convoKey) {
-                setSelectedContact(null);
+              const convoForRecovery = conversations.get(convoKey);
+              if (convoForRecovery) {
+                recoverDeadGroup(convoForRecovery.id, {
+                  mlsService,
+                  storage,
+                  userId,
+                  pin,
+                  conversations,
+                  getSelectedContact,
+                  setSelectedContact,
+                  saveConversation,
+                  deleteConversation,
+                  log,
+                }).catch((e) => log(`[RECOVER] ${String(e)}`));
               }
             }
           }
