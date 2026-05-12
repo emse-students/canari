@@ -5,6 +5,10 @@ import { encodeAppMessage, mkText, mkReply, mkReaction, mkSystem } from '$lib/pr
 import { serializeEnvelope, mkTextEnvelope, parseEnvelope } from '$lib/envelope';
 import { sendEncryptedChannelMessage } from '$lib/utils/chat/channelCrypto';
 
+/**
+ * Dependencies required by message-sending helpers.
+ * Passed as a single object to avoid long argument lists and make unit testing easier.
+ */
 interface SendMessageDeps {
   mlsService: IMlsService;
   userId: string;
@@ -32,8 +36,15 @@ interface SendMessageDeps {
 }
 
 /**
- * Envoie un message texte dans une conversation.
- * Supporte les réponses à un message précédent.
+ * Sends a text message in a conversation, optionally as a reply to a previous message.
+ *
+ * For direct/group MLS conversations the message is encrypted by the WASM MLS service
+ * and displayed optimistically (status `'sending'`) before the network call confirms it.
+ * For channel conversations (`contactName` starts with `'channel_'`) the message is
+ * encrypted via `sendEncryptedChannelMessage` and the local copy is never persisted to DB.
+ *
+ * Returns `{ success: false }` silently when the text is empty or the conversation
+ * is not yet ready, and `{ success: false, error }` with a user-facing message on failure.
  */
 export async function sendChatMessage(
   text: string,
@@ -140,6 +151,7 @@ export async function sendChatMessage(
   }
 }
 
+/** Minimal dependencies shared by reaction, edit, delete, and read-receipt helpers. */
 interface MessageActionDeps {
   mlsService: IMlsService;
   userId: string;
@@ -148,7 +160,8 @@ interface MessageActionDeps {
 }
 
 /**
- * Ajoute une réaction emoji à un message.
+ * Sends an emoji reaction to a message via the MLS group, then persists the updated MLS state.
+ * Silently ignored if the conversation is not ready.
  */
 export async function addReaction(
   messageId: string,
@@ -170,7 +183,8 @@ export async function addReaction(
 }
 
 /**
- * Retire une réaction emoji d'un message (envoi d'un event système).
+ * Removes an emoji reaction from a message by broadcasting a `remove_reaction`
+ * system event through MLS so all peers update their local reaction state.
  */
 export async function removeReaction(
   messageId: string,

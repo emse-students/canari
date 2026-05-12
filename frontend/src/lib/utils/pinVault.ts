@@ -41,6 +41,11 @@ async function getOrCreateWrapKey(): Promise<CryptoKey> {
   return key;
 }
 
+/**
+ * Encrypts `pin` with AES-GCM (256-bit session-scoped key) and stores the result
+ * in `sessionStorage` so it is available for the duration of the browser session
+ * without ever being written to persistent storage in plaintext.
+ */
 export async function savePin(pin: string): Promise<void> {
   const key = await getOrCreateWrapKey();
   const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -52,6 +57,11 @@ export async function savePin(pin: string): Promise<void> {
   sessionStorage.setItem(VAULT_BLOB_KEY, `${ivB64}:${cipherB64}`);
 }
 
+/**
+ * Decrypts and returns the PIN previously saved with `savePin`, or `null` if
+ * nothing is stored or decryption fails (e.g. the wrap key was rotated or the
+ * blob was tampered with). On failure the stored blob is cleared automatically.
+ */
 export async function loadPin(): Promise<string | null> {
   const blob = sessionStorage.getItem(VAULT_BLOB_KEY);
   if (!blob) return null;
@@ -75,6 +85,7 @@ export async function loadPin(): Promise<string | null> {
   }
 }
 
+/** Removes the encrypted PIN blob from `sessionStorage`, but keeps the wrap key intact. */
 export function clearPin(): void {
   sessionStorage.removeItem(VAULT_BLOB_KEY);
 }

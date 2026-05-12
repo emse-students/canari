@@ -26,6 +26,10 @@ let _pendingRefresh: Promise<string> | null = null;
 const alog = (msg: string) => console.log('[A] ' + msg);
 const awarn = (msg: string) => console.warn('[A] ' + msg);
 
+/**
+ * Writes the access token into the `canari_ws_token` JS-readable cookie used by
+ * WebSocket and sync API requests. Adds the `Secure` flag when served over HTTPS.
+ */
 function setWsSessionCookie(token: string): void {
   if (typeof document === 'undefined') return;
   const secure = window.location.protocol === 'https:' ? '; Secure' : '';
@@ -33,6 +37,7 @@ function setWsSessionCookie(token: string): void {
   alog('ws+');
 }
 
+/** Removes the `canari_ws_token` cookie by setting `Max-Age=0`. */
 function clearWsSessionCookie(): void {
   if (typeof document === 'undefined') return;
   const secure = window.location.protocol === 'https:' ? '; Secure' : '';
@@ -40,6 +45,7 @@ function clearWsSessionCookie(): void {
   alog('ws-');
 }
 
+/** Returns `true` for truthy string values (`"1"`, `"true"`, `"yes"`, `"on"`) or a `true` boolean. */
 function isEnvFlagEnabled(value: string | boolean | undefined): boolean {
   if (typeof value === 'boolean') return value;
   if (typeof value !== 'string') return false;
@@ -74,6 +80,7 @@ function oidcRedirectUri(): string {
   return `${window.location.origin}/auth/callback`;
 }
 
+/** Returns `true` when the `VITE_ENABLE_DEV_ROUTES` environment variable is set to a truthy value. */
 export function devRoutesEnabled(): boolean {
   return isEnvFlagEnabled(import.meta.env.VITE_ENABLE_DEV_ROUTES as string | undefined);
 }
@@ -336,6 +343,11 @@ export function setToken(token: string): void {
   setWsSessionCookie(token);
 }
 
+/**
+ * Logs the user out: clears the in-memory token and WebSocket cookie,
+ * calls the backend logout endpoint to revoke the HttpOnly refresh cookie,
+ * and erases all locally persisted user data.
+ */
 export async function clearAuth(): Promise<void> {
   alog('clear');
   _accessToken = null;

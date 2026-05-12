@@ -1,3 +1,4 @@
+/** Converts a Uint8Array to a lowercase hex string (e.g. `Uint8Array([0xde,0xad])` → `"dead"`). */
 export function toHex(buffer: Uint8Array): string {
   return Array.from(buffer)
     .map((b) => b.toString(16).padStart(2, '0'))
@@ -8,6 +9,7 @@ export function toHex(buffer: Uint8Array): string {
 export function bytesToHex(bytes?: Uint8Array | null): string {
   return bytes && bytes.length > 0 ? toHex(bytes) : '';
 }
+/** Parses a lowercase or uppercase hex string into a Uint8Array. */
 export function fromHex(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2);
   for (let i = 0; i < bytes.length; i++) {
@@ -150,7 +152,7 @@ export async function removeMlsState(userId: string): Promise<void> {
   });
 }
 
-/** Returns the MLS state as hex for backup file format (backward-compatible). */
+/** Loads the MLS state and returns it as a hex string for use in backup/export files. Returns `undefined` if no state is stored. */
 export async function exportMlsStateAsHex(userId: string): Promise<string | undefined> {
   const bytes = await loadMlsState(userId);
   return bytes ? toHex(bytes) : undefined;

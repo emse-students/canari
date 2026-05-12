@@ -5,18 +5,26 @@ import { saveMlsState } from '$lib/utils/hex';
 import type { SvelteMap } from 'svelte/reactivity';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
 
+/** Dependencies injected into all group-creation and conversation-management helpers. */
 interface GroupCreationDeps {
   mlsService: IMlsService;
   storage: IStorage | null;
   userId: string;
   pin: string;
   historyBaseUrl: string;
+  /** Reactive map of all loaded conversations, keyed by MLS group ID. */
   conversations: SvelteMap<string, Conversation>;
+  /** Callback to select a conversation in the UI. */
   selectConversation: (name: string) => void;
+  /** Callback to persist a conversation to the local DB. */
   saveConversation: (contactName: string) => Promise<void>;
   log: (msg: string) => void;
 }
 
+/**
+ * Maps raw error messages from the MLS/network layer to user-friendly French strings
+ * suitable for display in the UI. Falls back to the raw message for unrecognised errors.
+ */
 function toUiDiscussionError(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
   const lower = raw.toLowerCase();
@@ -37,6 +45,11 @@ function toUiDiscussionError(error: unknown): string {
   return raw;
 }
 
+/**
+ * Fetches the list of registered devices for a user, retrying up to `attempts` times
+ * before giving up. Returns an empty array if no devices are found after all retries.
+ * Used before creating a group to confirm the peer is reachable.
+ */
 async function fetchDevicesWithRetry(
   mlsService: IMlsService,
   userId: string,
@@ -64,8 +77,12 @@ async function fetchDevicesWithRetry(
 }
 
 /**
- * Crée un nouveau groupe MLS multi-utilisateurs.
- * Ajoute automatiquement les autres appareils de l'utilisateur courant au groupe.
+ * Creates a new named MLS multi-user group on the server, initialises the local
+ * MLS state, and automatically adds all other devices belonging to the current user
+ * in a single bulk commit to avoid epoch fragmentation.
+ *
+ * On failure the partially-created group is cleaned up server-side and the
+ * conversation is removed from the reactive map.
  */
 export async function createNewGroup(name: string, deps: GroupCreationDeps): Promise<void> {
   const { mlsService, userId, pin, conversations, selectConversation, saveConversation, log } =
@@ -176,7 +193,14 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
   }
 }
 
-// Helper function to process generic bulk addition logic
+/**
+ * Core helper that collects all devices for the given user IDs, adds them to
+ * the MLS group in a single bulk commit, delivers Welcome messages per-device,
+ * and broadcasts a `memberAdded` system event to all existing members.
+ *
+ * Users whose devices cannot be fetched are skipped with a warning rather than
+ * aborting the entire operation.
+ */
 async function processBulkAddition(
   memberIds: string[],
   conversation: Conversation,
@@ -317,7 +341,8 @@ async function processBulkAddition(
 }
 
 /**
- * Invite un ou plusieurs membres dans le groupe actuellement sélectionné.
+ * Adds one or more users to an existing MLS group by their Canari user IDs.
+ * All devices belonging to each user are added in a single bulk MLS commit.
  */
 export async function inviteMembersToGroup(
   memberIds: string[],
@@ -328,8 +353,8 @@ export async function inviteMembersToGroup(
 }
 
 /**
- * Invite un nouveau membre dans le groupe actuellement sélectionné.
- * Ajoute tous les appareils du membre cible et diffuse une notification.
+ * Convenience wrapper around `inviteMembersToGroup` for adding a single user.
+ * Adds all devices of the target user and broadcasts a `memberAdded` notification.
  */
 export async function inviteMemberToGroup(
   memberId: string,
@@ -340,8 +365,15 @@ export async function inviteMemberToGroup(
 }
 
 /**
- * Démarre une nouvelle conversation 1-to-1 avec un contact.
- * Crée un groupe à deux utilisateurs et invite le contact cible.
+ * Starts a new 1-to-1 encrypted direct conversation with `contactName`.
+ *
+ * Before creating anything the function checks whether a conversation already
+ * exists locally or on the server (handles the case where another device already
+ * created it). The contact's devices are also fetched upfront — if none are found
+ * the function aborts without creating an orphaned group.
+ *
+ * All of the contact's devices plus the current user's other devices are added
+ * in a single bulk MLS commit to keep epoch numbers contiguous.
  */
 export async function startNewConversation(
   contactName: string,

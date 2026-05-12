@@ -6,6 +6,15 @@ import {
   Logger,
 } from '@nestjs/common';
 
+/**
+ * NestJS guard that enforces authentication by inspecting the `x-user-logged-in`
+ * HTTP header. This header is injected by Nginx after it validates the request
+ * against the core-service auth endpoint (`/internal/auth/verify`). If the header
+ * is `"true"` the request is allowed through; otherwise a 401 is thrown.
+ *
+ * This guard must never be used on routes that are intentionally public — those
+ * should be excluded from Nginx's `auth_request` directive instead.
+ */
 @Injectable()
 export class HeaderAuthGuard implements CanActivate {
   private readonly logger = new Logger(HeaderAuthGuard.name);

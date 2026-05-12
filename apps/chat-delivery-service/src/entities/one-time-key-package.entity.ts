@@ -19,13 +19,16 @@ export class OneTimeKeyPackage {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
+  /** Owner of the device this one-time key package belongs to. */
   @Index()
   @Column({ type: 'varchar', length: 255 })
   userId: string;
 
+  /** Opaque client-generated device identifier. */
   @Column()
   deviceId: string;
 
+  /** Base64-encoded serialised MLS KeyPackage, consumed once when a peer adds this device to a group. */
   @Column({ type: 'text' })
   keyPackage: string; // Base64 encoded MLS KeyPackage
 

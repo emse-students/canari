@@ -12,10 +12,12 @@ const initial =
 
 let _userId = $state<string | null>(initial);
 
+/** Returns the currently authenticated user's ID, or `null` if not logged in. */
 export function currentUserId(): string | null {
   return _userId;
 }
 
+/** Updates the reactive user ID state (called by `saveUserLocally` and `clearUserLocally`). */
 export function setCurrentUserId(id: string | null): void {
   _userId = id;
 }
@@ -27,10 +29,12 @@ const initialAdmin =
 
 let _isAdmin = $state<boolean>(initialAdmin);
 
+/** Returns `true` when the current user holds the global admin role. */
 export function globalAdminState(): boolean {
   return _isAdmin;
 }
 
+/** Updates the reactive global-admin flag (called after login and token refresh). */
 export function setGlobalAdmin(value: boolean): void {
   _isAdmin = value;
 }

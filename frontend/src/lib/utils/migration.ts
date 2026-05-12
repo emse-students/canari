@@ -1,4 +1,14 @@
 import type { IStorage } from '../db';
+
+/**
+ * One-time migration that copies conversation and message data stored in the old
+ * localStorage format (`canari_conv_{userId}_{contactName}`) into the encrypted
+ * IndexedDB storage layer.
+ *
+ * After a successful migration each key is removed from localStorage so the migration
+ * runs only once per user per browser. If no matching keys are found the function
+ * returns immediately without performing any work.
+ */
 export async function migrateFromLocalStorage(
   userId: string,
   pin: string,

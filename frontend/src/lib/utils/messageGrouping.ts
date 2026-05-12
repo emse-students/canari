@@ -2,6 +2,12 @@ import { format, isToday, isYesterday } from 'date-fns';
 import { fr } from 'date-fns/locale';
 import type { ChatMessage } from '$lib/types';
 
+/**
+ * A discriminated union representing one visual row in the message list.
+ * - `date_separator`: a full-width label showing the day (e.g. "Aujourd'hui", "Hier", "lundi 5 mai 2025").
+ * - `time_separator`: a subtle timestamp shown when there is a 15+ minute gap between messages.
+ * - `message`: an actual chat message.
+ */
 export type MessageGroup =
   | { type: 'date_separator'; date: string }
   | { type: 'time_separator'; time: string }

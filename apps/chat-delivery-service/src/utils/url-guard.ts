@@ -2,6 +2,11 @@ import { BadRequestException } from '@nestjs/common';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 
+/**
+ * Returns true if `ip` is a loopback, link-local, or RFC-1918 private address
+ * (IPv4 or IPv6). Used to block server-side requests from being redirected to
+ * internal infrastructure (SSRF prevention).
+ */
 export function isPrivateIpAddress(ip: string): boolean {
   if (ip.includes(':')) {
     const normalized = ip.toLowerCase();
@@ -27,6 +32,12 @@ export function isPrivateIpAddress(ip: string): boolean {
   );
 }
 
+/**
+ * Parses `rawUrl` and performs SSRF-prevention checks before allowing the server
+ * to fetch it. Specifically it rejects: non-http(s) schemes, embedded credentials,
+ * localhost hostnames, and any hostname that DNS-resolves to a private/loopback IP.
+ * Throws `BadRequestException` on any violation; returns the parsed `URL` on success.
+ */
 export async function assertSafeExternalUrl(rawUrl: string): Promise<URL> {
   let parsed: URL;
 
@@ -67,6 +78,11 @@ export async function assertSafeExternalUrl(rawUrl: string): Promise<URL> {
   return parsed;
 }
 
+/**
+ * Decodes a safe subset of HTML entities (`&amp;`, `&quot;`, `&apos;`, `&#39;`, `&#x27;`)
+ * found in link-preview metadata fields. Intentionally excludes `&lt;` and `&gt;` to
+ * prevent double-unescape attacks (CWE-116) where `&amp;lt;` would otherwise become `<`.
+ */
 export function decodeHtmlEntity(value: unknown): string {
   const normalized = typeof value === 'string' ? value : '';
   // Plain-text link preview fields: decode a small set once. Omit &lt; / &gt; so one pass cannot
@@ -92,6 +108,7 @@ export function decodeHtmlEntity(value: unknown): string {
   );
 }
 
+/** Parses all `<meta>` tags from an HTML string and returns their attributes as key/value maps. */
 export function extractMetaTags(html: string): Array<Record<string, string>> {
   const tags: string[] = html.match(/<meta\b[^>]*>/gi) ?? [];
   return tags.map((tag) => {
@@ -108,6 +125,7 @@ export function extractMetaTags(html: string): Array<Record<string, string>> {
   });
 }
 
+/** Finds the `content` attribute of the first `<meta>` tag whose `property` or `name` matches `key` (case-insensitive). */
 export function extractMetaContent(html: string, key: string): string | null {
   const normalizedKey = key.toLowerCase();
   for (const attrs of extractMetaTags(html)) {
@@ -119,11 +137,17 @@ export function extractMetaContent(html: string, key: string): string | null {
   return null;
 }
 
+/** Extracts and trims the text content of the first `<title>` element, or returns `null` if absent. */
 export function extractTitle(html: string): string | null {
   const match = html.match(/<title[^>]*>([^<]+)<\/title>/i);
   return match ? decodeHtmlEntity(match[1].trim()) : null;
 }
 
+/**
+ * Extracts Open Graph / standard meta tags from `html` and returns a normalised
+ * link-preview payload (url, title, description, image, siteName), each field
+ * truncated to a safe display length.
+ */
 export function buildLinkPreviewPayload(html: string, targetUrl: URL) {
   const title =
     extractMetaContent(html, 'og:title') ||
@@ -155,6 +179,7 @@ export function buildLinkPreviewPayload(html: string, targetUrl: URL) {
   };
 }
 
+/** Returns true when `hostname` is one of the known YouTube domains (`youtube.com`, `youtu.be`, etc.). */
 export function isYouTubeHost(hostname: string): boolean {
   const h = hostname.toLowerCase();
   return (
@@ -165,6 +190,11 @@ export function isYouTubeHost(hostname: string): boolean {
   );
 }
 
+/**
+ * Fetches a link-preview payload for a YouTube URL via the YouTube oEmbed API.
+ * Returns `null` if `targetUrl` is not a YouTube URL or the API call fails.
+ * The returned object has the same shape as `buildLinkPreviewPayload`.
+ */
 export async function fetchYouTubeOEmbed(targetUrl: URL): Promise<{
   url: string;
   title: string;

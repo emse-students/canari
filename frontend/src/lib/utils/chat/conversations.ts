@@ -16,10 +16,15 @@ const INITIAL_MESSAGES_PAGE = 60;
 
 // ---------- Archive persistence ----------
 
+/** Returns the localStorage key used to store the set of archived conversation IDs for a user. */
 export function archiveStorageKey(uid: string): string {
   return `canari_archived_conversations_${uid.toLowerCase()}`;
 }
 
+/**
+ * Reads the persisted set of archived conversation IDs for a user from localStorage.
+ * Returns an empty array if nothing is stored or the stored value is not a valid array.
+ */
 export function loadPersistedArchivedIds(uid: string): string[] {
   try {
     const raw = localStorage.getItem(archiveStorageKey(uid));
@@ -32,12 +37,25 @@ export function loadPersistedArchivedIds(uid: string): string[] {
   }
 }
 
+/** Saves the current set of archived conversation IDs for a user to localStorage. */
 export function persistArchivedConversations(uid: string, ids: string[]) {
   localStorage.setItem(archiveStorageKey(uid), JSON.stringify([...new Set(ids)]));
 }
 
 // ---------- Direct-conversation identity ----------
 
+/**
+ * Infers whether a conversation is a 1-to-1 direct conversation or a group by
+ * inspecting the conversation name and optional ID.
+ *
+ * Supported naming patterns:
+ * - `"alice::bob"` — canonical direct conversation format.
+ * - `"alice & bob"` — legacy two-participant format.
+ * - `metaId` starts with `"dm_"` — explicit DM marker.
+ *
+ * Returns the conversation type, the contact name to display, and the peer's user ID
+ * (`directPeerId`) for direct conversations.
+ */
 export function deriveConversationIdentity(
   metaName: string,
   userId: string,
@@ -101,6 +119,17 @@ export function deriveConversationIdentity(
 
 // ---------- De-duplication ----------
 
+/**
+ * Detects duplicate direct conversations for the same peer (can happen when
+ * two devices each start the conversation independently) and merges them into
+ * a single canonical entry.
+ *
+ * The most-recently-updated conversation is kept; the other is deleted locally and
+ * on the server. After merging, all direct conversation names are normalised to the
+ * `"userId::peer"` canonical format for consistent future detection.
+ *
+ * Returns the deduplicated, normalised list of `ConversationMeta` objects.
+ */
 export async function mergeDirectConversationDuplicates(
   convMetas: ConversationMeta[],
   userId: string,
@@ -194,19 +223,37 @@ export async function mergeDirectConversationDuplicates(
 
 // ---------- Full conversation load ----------
 
+/** All dependencies required by `loadExistingConversations`. */
 export interface LoadConversationsContext {
   userId: string;
   pin: string;
   storage: IStorage;
   mlsService: IMlsService;
+  /** Reactive map populated by this function — cleared and rebuilt on each call. */
   conversations: SvelteMap<string, Conversation>;
+  /** Shared reactions map, updated while loading messages. */
   messageReactions: SvelteMap<string, any>;
   archivedConversationIds: string[];
   historyBaseUrl: string;
   log: (msg: string) => void;
+  /** Called when the archived-ID set is pruned to remove stale entries. */
   onArchivedIdsChange: (ids: string[]) => void;
 }
 
+/**
+ * Full startup loader that bootstraps all conversations from local storage.
+ *
+ * Phase 1: For each conversation in the DB, a lightweight stub (no messages) is
+ * immediately inserted into the reactive map so the sidebar is populated at once.
+ *
+ * Phase 2 (serialised): For each conversation, stored messages are decrypted and
+ * loaded, then remote history is replayed via the MLS service. Serialised execution
+ * is required because the WASM MLS client is not concurrency-safe.
+ *
+ * The function also runs a one-time localStorage migration, deduplicates direct
+ * conversations, prunes stale archived IDs, and resolves ambiguous conversation types
+ * via the members API.
+ */
 export async function loadExistingConversations(ctx: LoadConversationsContext) {
   await migrateFromLocalStorage(ctx.userId, ctx.pin, ctx.storage, ctx.log);
 

@@ -1,8 +1,13 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import * as crypto from 'crypto';
 
+/** Allowlist regex for generic query/path values: alphanumerics plus `_`, `.`, `:`, `@`, `-`, up to 128 chars. */
 export const SAFE_QUERY_VALUE_REGEX = /^[a-zA-Z0-9_.:@-]{1,128}$/;
 
+/**
+ * Validates that `value` is a non-empty string matching the safe query allowlist.
+ * Throws `BadRequestException` with a descriptive message referencing `fieldName` on failure.
+ */
 export function sanitizeQueryValue(value: unknown, fieldName: string): string {
   if (typeof value !== 'string') {
     throw new BadRequestException(`${fieldName} must be a string`);
@@ -20,6 +25,10 @@ export function sanitizeQueryValue(value: unknown, fieldName: string): string {
   return trimmed;
 }
 
+/**
+ * Like `sanitizeQueryValue` but treats `undefined`, `null`, and `""` as absent
+ * and returns `undefined` instead of throwing, leaving the field truly optional.
+ */
 export function sanitizeOptionalQueryValue(
   value: unknown,
   fieldName: string,
@@ -31,6 +40,7 @@ export function sanitizeOptionalQueryValue(
   return sanitizeQueryValue(value, fieldName);
 }
 
+/** Validates that `value` is a non-empty array of non-empty strings; throws `BadRequestException` otherwise. */
 export function sanitizeStringIdList(value: unknown): string[] {
   if (!Array.isArray(value)) {
     throw new BadRequestException('messageIds must be an array');
@@ -70,6 +80,7 @@ export function assertCallerOwnsUserId(
   }
 }
 
+/** Validates that `value` is a non-empty string of at most 256 characters suitable for display. */
 export function sanitizeDisplayText(value: unknown, fieldName: string): string {
   if (typeof value !== 'string') {
     throw new BadRequestException(`${fieldName} must be a string`);
@@ -84,12 +95,14 @@ export function sanitizeDisplayText(value: unknown, fieldName: string): string {
   return text;
 }
 
+/** Returns a sanitized device display name truncated to 80 characters, or `undefined` if absent. */
 export function sanitizeOptionalDeviceName(value: unknown): string | undefined {
   if (value === undefined || value === null) return undefined;
   const name = sanitizeDisplayText(value, 'deviceName');
   return name.slice(0, 80);
 }
 
+/** Returns a lowercased OS identifier matching `[a-z0-9_.-]{1,32}`, or `undefined` if absent. */
 export function sanitizeOptionalDeviceOs(value: unknown): string | undefined {
   if (value === undefined || value === null || value === '') return undefined;
   if (typeof value !== 'string') {
@@ -103,6 +116,7 @@ export function sanitizeOptionalDeviceOs(value: unknown): string | undefined {
   return os;
 }
 
+/** Returns a version string matching `[0-9A-Za-z._+-]{1,32}` (e.g. "1.4.2"), or `undefined` if absent. */
 export function sanitizeOptionalDeviceAppVersion(
   value: unknown,
 ): string | undefined {
@@ -120,6 +134,7 @@ export function sanitizeOptionalDeviceAppVersion(
   return version;
 }
 
+/** Validates that `value` is an array of integers in `[0, 255]` (i.e. a byte array). */
 export function sanitizeByteArray(value: unknown, fieldName: string): number[] {
   if (!Array.isArray(value)) {
     throw new BadRequestException(`${fieldName} must be an array`);
@@ -135,6 +150,7 @@ export function sanitizeByteArray(value: unknown, fieldName: string): number[] {
   return bytes;
 }
 
+/** Parses `value` as a positive integer, returning `fallback` if it is not a finite positive number. */
 export function parsePositiveInt(value: unknown, fallback: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
   const n = Math.floor(value);
@@ -142,6 +158,7 @@ export function parsePositiveInt(value: unknown, fallback: number): number {
   return n;
 }
 
+/** Validates and deduplicates an array of message ID strings, each passing the safe query allowlist. */
 export function sanitizeMessageIdList(messageIds: unknown): string[] {
   if (!Array.isArray(messageIds)) {
     throw new BadRequestException('messageIds must be an array of strings');
@@ -151,6 +168,7 @@ export function sanitizeMessageIdList(messageIds: unknown): string[] {
   return [...new Set(ids)];
 }
 
+/** Returns the SHA-256 hex digest of `token`, used to store join tokens without exposing the raw value. */
 export function hashJoinToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
