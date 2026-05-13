@@ -543,13 +543,32 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               }
               if (event === 'memberRemoved' && data.targetUser) {
                 const senderName = getUserDisplayNameSync(senderNorm, senderNorm);
-                const targetName = getUserDisplayNameSync(data.targetUser, data.targetUser);
-                await addMessageToChat(
-                  'system',
-                  `${senderName} a retiré ${targetName} du groupe`,
-                  convoKey,
-                  { isSystem: true }
-                );
+                if (data.targetUser.toLowerCase() === userId.toLowerCase()) {
+                  // Current user was kicked — purge the conversation immediately
+                  try {
+                    mlsService.forgetGroup(convo.id);
+                  } catch {
+                    /* non-blocking */
+                  }
+                  try {
+                    const stBytes = await mlsService.saveState(pin);
+                    await saveMlsState(userId, stBytes);
+                  } catch {
+                    /* non-blocking */
+                  }
+                  if (deleteConversation) await deleteConversation(convoKey);
+                  conversations.delete(convoKey);
+                  if (getSelectedContact() === convoKey) setSelectedContact(null);
+                  log(`[INFO] Expulsé du groupe "${convoKey}" par ${senderName}`);
+                } else {
+                  const targetName = getUserDisplayNameSync(data.targetUser, data.targetUser);
+                  await addMessageToChat(
+                    'system',
+                    `${senderName} a retiré ${targetName} du groupe`,
+                    convoKey,
+                    { isSystem: true }
+                  );
+                }
                 return true;
               }
               if (event === 'memberAdded') {
@@ -571,12 +590,21 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               }
               if (event === 'groupDeleted') {
                 const senderName = getUserDisplayNameSync(senderNorm, senderNorm);
-                await addMessageToChat('system', `${senderName} a supprimé le groupe`, convoKey, {
-                  isSystem: true,
-                });
-                conversations.set(convoKey, { ...convo, isReady: false });
-                if (storage) await saveConversation(convoKey);
-                log(`[INFO] Groupe supprime par ${senderName} (archive localement)`);
+                try {
+                  mlsService.forgetGroup(convo.id);
+                } catch {
+                  /* non-blocking */
+                }
+                try {
+                  const stBytes = await mlsService.saveState(pin);
+                  await saveMlsState(userId, stBytes);
+                } catch {
+                  /* non-blocking */
+                }
+                if (deleteConversation) await deleteConversation(convoKey);
+                conversations.delete(convoKey);
+                if (getSelectedContact() === convoKey) setSelectedContact(null);
+                log(`[INFO] Groupe supprime par ${senderName}`);
                 return true;
               }
               if (event === 'read_receipt') {
