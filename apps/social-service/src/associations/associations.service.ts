@@ -405,7 +405,8 @@ export class AssociationsService {
   // ── Calendar events ───────────────────────────────────────────────────────
 
   private serializeCalendarEvent(e: AssociationCalendarEvent) {
-    const startsAt = e.startsAt instanceof Date ? e.startsAt : new Date(e.startsAt as unknown as string);
+    const startsAt =
+      e.startsAt instanceof Date ? e.startsAt : new Date(e.startsAt as unknown as string);
     const endsRaw = e.endsAt;
     const endsAt =
       endsRaw === null || endsRaw === undefined
@@ -448,14 +449,12 @@ export class AssociationsService {
       posts: posts.map((p) => ({
         id: p.id,
         preview: (p.markdown ?? '').replace(/\s+/g, ' ').slice(0, 140),
-        createdAt:
-          p.createdAt instanceof Date ? p.createdAt.toISOString() : String(p.createdAt),
+        createdAt: p.createdAt instanceof Date ? p.createdAt.toISOString() : String(p.createdAt),
       })),
       forms: forms.map((f) => ({
         id: f.id,
         title: f.title,
-        updatedAt:
-          f.updatedAt instanceof Date ? f.updatedAt.toISOString() : String(f.updatedAt),
+        updatedAt: f.updatedAt instanceof Date ? f.updatedAt.toISOString() : String(f.updatedAt),
       })),
     };
   }
@@ -493,9 +492,11 @@ export class AssociationsService {
   }
 
   /** Ensures at most one calendar row references a given post or form. */
-  private async detachCalendarLinksExcept(
-    opts: { postId?: string | null; formId?: string | null; exceptEventId: string }
-  ) {
+  private async detachCalendarLinksExcept(opts: {
+    postId?: string | null;
+    formId?: string | null;
+    exceptEventId: string;
+  }) {
     const { postId, formId, exceptEventId } = opts;
     if (postId) {
       await this.calendarRepo.update(
@@ -601,8 +602,8 @@ export class AssociationsService {
       } as AssociationCalendarEvent);
       return {
         ...base,
-        associationName: String(r.associationName ?? ''),
-        associationSlug: String(r.associationSlug ?? ''),
+        associationName: (r.associationName as string | null) ?? '',
+        associationSlug: (r.associationSlug as string | null) ?? '',
       };
     });
   }
@@ -677,11 +678,7 @@ export class AssociationsService {
       }
     }
     const starts = ev.startsAt instanceof Date ? ev.startsAt : new Date(ev.startsAt);
-    const ends = ev.endsAt
-      ? ev.endsAt instanceof Date
-        ? ev.endsAt
-        : new Date(ev.endsAt)
-      : null;
+    const ends = ev.endsAt ? (ev.endsAt instanceof Date ? ev.endsAt : new Date(ev.endsAt)) : null;
     if (ends && ends < starts) {
       throw new BadRequestException('endsAt must be after startsAt');
     }
