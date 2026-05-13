@@ -52,7 +52,7 @@ const RedisProvider: Provider = {
         PushToken,
         RevokedDevice,
       ],
-      synchronize: process.env.NODE_ENV !== 'production',
+      synchronize: true, // TODO : switch to dev only once stable
     }),
     TypeOrmModule.forFeature([
       QueuedMessage,

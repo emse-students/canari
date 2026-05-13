@@ -23,8 +23,7 @@ import { RedisModule } from './common/redis';
         database: process.env.DB_DATABASE || 'canari_social',
         url: process.env.DATABASE_URL,
         autoLoadEntities: true,
-        // Temporary: auto-align schema from entities (replace with migrations before relying on prod safety).
-        synchronize: true,
+        synchronize: true, // TODO : switch to dev only once stable
       }),
     }),
     ChannelsModule,
