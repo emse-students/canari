@@ -6,14 +6,14 @@ mod ws_dispatch;
 
 use axum::{
     Router,
-    http::{Method, StatusCode},
+    http::{HeaderValue, Method, StatusCode},
     response::IntoResponse,
     routing::get,
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use futures::stream::StreamExt;
 use std::{net::SocketAddr, sync::Arc};
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::handlers::ws_handler;
@@ -31,9 +31,47 @@ async fn health_check() -> impl IntoResponse {
     (StatusCode::OK, "OK")
 }
 
-/// Entry point: initialise tracing, connect to Redis, spawn background tasks,
-/// configure CORS, build the Axum router, and start listening on port 3000.
-#[tokio::main]
+/// CORS for `/api/ws` (browser `Origin`) and HTTP helpers on the same router.
+/// `ALLOW_ORIGIN=*` allows all. Otherwise use a comma-separated list, e.g.
+/// `https://canari-emse.fr,http://localhost:1420` so local Vite (`Origin: http://localhost:1420`)
+/// is accepted when the chat-gateway runs with a non-wildcard policy.
+fn chat_gateway_cors_layer(allow_origin: &str) -> CorsLayer {
+    let common = CorsLayer::new()
+        .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+        .allow_headers(Any);
+
+    if allow_origin.trim() == "*" {
+        return common.allow_origin(Any);
+    }
+
+    let mut origins: Vec<HeaderValue> = Vec::new();
+    for part in allow_origin.split(',') {
+        let s = part.trim();
+        if s.is_empty() {
+            continue;
+        }
+        match s.parse::<HeaderValue>() {
+            Ok(h) => origins.push(h),
+            Err(e) => tracing::warn!("ALLOW_ORIGIN segment '{}' ignored: {}", s, e),
+        }
+    }
+
+    if origins.is_empty() {
+        tracing::error!(
+            "ALLOW_ORIGIN has no valid HTTP origins ('{}'). Falling back to *.",
+            allow_origin
+        );
+        return common.allow_origin(Any);
+    }
+
+    if origins.len() == 1 {
+        common.allow_origin(AllowOrigin::exact(origins[0].clone()))
+    } else {
+        common.allow_origin(AllowOrigin::list(origins))
+    }
+}
+
+#[tokio::main] // use tokio to run the async main function
 async fn main() {
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(
@@ -504,30 +542,7 @@ async fn main() {
     // ── CORS configuration ────────────────────────────────────────────────
     let allow_origin = std::env::var("ALLOW_ORIGIN").unwrap_or_else(|_| "*".to_string());
     tracing::info!("CORS ALLOW_ORIGIN: {}", allow_origin);
-    let cors = if allow_origin == "*" {
-        CorsLayer::new()
-            .allow_origin(Any)
-            .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
-            .allow_headers(Any)
-    } else {
-        match allow_origin.parse::<axum::http::HeaderValue>() {
-            Ok(origin) => CorsLayer::new()
-                .allow_origin(origin)
-                .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
-                .allow_headers(Any),
-            Err(e) => {
-                tracing::error!(
-                    "ALLOW_ORIGIN invalide '{}': {}. Utilisation de '*' en fallback.",
-                    allow_origin,
-                    e
-                );
-                CorsLayer::new()
-                    .allow_origin(Any)
-                    .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
-                    .allow_headers(Any)
-            }
-        }
-    };
+    let cors = chat_gateway_cors_layer(&allow_origin);
 
     let app = Router::new()
         .route("/api/health", get(health_check))

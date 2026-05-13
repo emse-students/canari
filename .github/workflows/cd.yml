@@ -443,6 +443,7 @@ jobs:
           upsert_env_var "FRONTEND_URL" "$FRONTEND_URL"
           upsert_env_var "POSTGRES_USER" "$POSTGRES_USER"
           upsert_env_var "POSTGRES_PASSWORD" "$POSTGRES_PASSWORD"
+          upsert_env_var "ALLOW_ORIGIN" "$FRONTEND_URL,http://localhost:1420"
 
           if [ -n "$FIREBASE_SERVICE_ACCOUNT_JSON" ]; then
             FIREBASE_SERVICE_ACCOUNT_JSON_COMPACT="$(printf '%s' "$FIREBASE_SERVICE_ACCOUNT_JSON" | tr -d '\r\n')"

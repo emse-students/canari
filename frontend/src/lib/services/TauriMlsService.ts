@@ -1393,9 +1393,7 @@ export class TauriMlsService implements IMlsService {
   }
 
   /** Tauri-native `invoke` wrapper — fetches all groups the given user belongs to from the delivery service. */
-  async getUserGroups(
-    userId: string
-  ): Promise<
+  async getUserGroups(userId: string): Promise<
     {
       groupId: string;
       name: string;

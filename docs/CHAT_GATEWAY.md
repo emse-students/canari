@@ -77,7 +77,7 @@ Si le JWT est invalide ou absent, la connexion est rejetée avec `4401 Unauthori
 1. Upgrade HTTP → WebSocket
 2. Validation JWT → extraction `userId`
 3. Enregistrement dans `connected_users["userId:deviceId"]` (mpsc sender)
-4. Set Redis `user:online:{userId}:{deviceId}` avec TTL 120s
+4. Set Redis `user:online:{userId}:{deviceId}` avec TTL **20s** (`set_ex` dans `handlers.rs`)
 5. Drain des `pending_welcomes:{userId}` (messages WS en attente avant connexion)
 6. Lancement de deux tâches asynchrones :
    - `ws_read_loop` : écoute les frames du client
@@ -85,7 +85,9 @@ Si le JWT est invalide ou absent, la connexion est rejetée avec `4401 Unauthori
 
 ### Heartbeat / Présence
 
-La clé Redis `user:online:{userId}:{deviceId}` est rafraîchie toutes les **30s** (TTL 120s). Si le client se déconnecte brutalement, la clé expire en 120s maximum.
+La clé Redis `user:online:{userId}:{deviceId}` est renouvelée (`set_ex`, TTL **20s**) à chaque **Pong** WebSocket et à chaque frame **Text** reçue du client (`refresh_presence`). La tâche d’écriture envoie en parallèle un **ping** WebSocket toutes les **1s** (voir `handlers.rs`). En pratique, un client actif reste « online » tant que le socket répond, plutôt que d’attendre un rafraîchissement périodique long. Si le client se déconnecte brutalement, la clé expire au plus tard après le TTL (20s) une fois les pings sans réponse.
+
+**Note** : une déconnexion explicite (`disconnect`) supprime la clé immédiatement via `handle_disconnect`.
 
 ### Déconnexion
 
