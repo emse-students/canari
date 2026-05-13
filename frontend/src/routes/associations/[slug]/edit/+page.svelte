@@ -19,11 +19,22 @@
   } from '$lib/associations/api';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
-  import { Users, CreditCard, Trash2, UserPlus, ArrowLeft } from 'lucide-svelte';
+  import {
+    Users,
+    CreditCard,
+    Trash2,
+    UserPlus,
+    ArrowLeft,
+    Building2,
+    CalendarDays,
+    AlertTriangle,
+  } from 'lucide-svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
   import UserAutocomplete from '$lib/components/shared/UserAutocomplete.svelte';
   import AssociationLogoCropper from '$lib/components/associations/AssociationLogoCropper.svelte';
+  import AssociationMemberRow from '$lib/components/associations/AssociationMemberRow.svelte';
+  import AssociationCalendarSection from '$lib/components/associations/AssociationCalendarSection.svelte';
   import SvelteMarkdown from '@humanspeak/svelte-markdown';
 
   let asso = $state<Association | null>(null);
@@ -57,6 +68,8 @@
   let stripeLoading = $state(false);
   let logoBusy = $state(false);
   let showCropper = $state(false);
+
+  let editSection = $state<'profile' | 'members' | 'calendar' | 'payments' | 'danger'>('profile');
 
   const slug = $derived((page.params as Record<string, string>).slug);
 
@@ -220,7 +233,7 @@
   }
 </script>
 
-<div class="px-4 py-6 sm:px-6 max-w-3xl mx-auto space-y-6">
+<div class="px-4 py-6 sm:px-6 max-w-4xl mx-auto space-y-6">
   <a
     href="/associations/{encodeURIComponent(slug)}"
     class="inline-flex items-center gap-2 text-sm text-text-muted hover:text-text-main transition-colors"
@@ -238,16 +251,86 @@
   {:else if error && !asso}
     <div class="rounded-xl bg-red-50 border border-red-200 text-red-700 p-4 text-sm">{error}</div>
   {:else if asso}
-    <h1 class="text-2xl font-extrabold text-text-main tracking-tight">Modifier l’association</h1>
-    <p class="text-sm text-text-muted">@{asso.slug}</p>
+    <header class="space-y-1">
+      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">Modifier l’association</h1>
+      <p class="text-sm text-text-muted">@{asso.slug}</p>
+    </header>
 
     {#if error}
       <div class="rounded-xl bg-red-50 border border-red-200 text-red-700 p-4 text-sm">{error}</div>
     {/if}
 
-    <!-- Profil + logo -->
-    <div class="rounded-2xl border border-cn-border bg-white/80 p-6 space-y-4">
-      <h2 class="text-base font-bold text-text-main">Profil et logo</h2>
+    <!-- Section tabs -->
+    <nav
+      class="sticky top-0 z-30 -mx-4 px-4 py-3 bg-[var(--cn-bg)]/95 backdrop-blur-md border-y border-cn-border/80 sm:border sm:rounded-2xl sm:mx-0"
+      aria-label="Sections édition"
+    >
+      <div class="flex gap-2 overflow-x-auto pb-1">
+        <button
+          type="button"
+          onclick={() => (editSection = 'profile')}
+          class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+          {editSection === 'profile'
+            ? 'bg-cn-yellow text-cn-dark shadow-sm'
+            : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
+        >
+          <Building2 size={17} />
+          Profil
+        </button>
+        {#if isAdmin || isGlobalAdminUser}
+          <button
+            type="button"
+            onclick={() => (editSection = 'members')}
+            class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+            {editSection === 'members'
+              ? 'bg-cn-yellow text-cn-dark shadow-sm'
+              : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
+          >
+            <Users size={17} />
+            Membres
+          </button>
+          <button
+            type="button"
+            onclick={() => (editSection = 'calendar')}
+            class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+            {editSection === 'calendar'
+              ? 'bg-cn-yellow text-cn-dark shadow-sm'
+              : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
+          >
+            <CalendarDays size={17} />
+            Agenda
+          </button>
+          <button
+            type="button"
+            onclick={() => (editSection = 'payments')}
+            class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+            {editSection === 'payments'
+              ? 'bg-cn-yellow text-cn-dark shadow-sm'
+              : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
+          >
+            <CreditCard size={17} />
+            Paiements
+          </button>
+        {/if}
+        {#if isGlobalAdminUser}
+          <button
+            type="button"
+            onclick={() => (editSection = 'danger')}
+            class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+            {editSection === 'danger'
+              ? 'bg-red-100 text-red-800 border border-red-200'
+              : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-red-700'}"
+          >
+            <AlertTriangle size={17} />
+            Danger
+          </button>
+        {/if}
+      </div>
+    </nav>
+
+    {#if editSection === 'profile'}
+    <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-5 shadow-sm">
+      <h2 class="text-lg font-bold text-text-main tracking-tight">Profil et logo</h2>
       <div class="flex flex-wrap items-start gap-4">
         {#if associationLogoSrc(asso.logoUrl)}
           <img
@@ -317,26 +400,26 @@
         {saving ? 'Enregistrement…' : 'Enregistrer le profil'}
       </button>
     </div>
+    {/if}
 
-    <!-- Stripe -->
-    {#if isAdmin || isGlobalAdminUser}
-      <div class="rounded-2xl border border-cn-border bg-white/80 p-6 space-y-3">
-        <h2 class="text-base font-bold text-text-main flex items-center gap-2">
-          <CreditCard size={18} />
+    {#if editSection === 'payments' && (isAdmin || isGlobalAdminUser)}
+      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-4 shadow-sm">
+        <h2 class="text-lg font-bold text-text-main flex items-center gap-2 tracking-tight">
+          <CreditCard size={20} />
           Paiements Stripe
         </h2>
         {#if asso.stripeOnboardingComplete}
           <p class="text-sm text-green-600 font-semibold">Stripe Connect activé</p>
         {:else}
-          <p class="text-sm text-text-muted">
-            Connectez un compte Stripe pour les paiements des formulaires et événements associés à
+          <p class="text-sm text-text-muted leading-relaxed">
+            Connectez un compte Stripe pour les paiements des formulaires et billetteries associés à
             cette association.
           </p>
           <button
             type="button"
             onclick={handleStripeOnboarding}
             disabled={stripeLoading}
-            class="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-700 disabled:opacity-50"
+            class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover disabled:opacity-50 shadow-sm"
           >
             {stripeLoading
               ? 'Redirection…'
@@ -348,73 +431,33 @@
       </div>
     {/if}
 
-    <!-- Membres -->
-    {#if isAdmin || isGlobalAdminUser}
-      <div class="rounded-2xl border border-cn-border bg-white/80 p-6 space-y-4">
-        <h2 class="text-base font-bold text-text-main">Membres</h2>
-        <div class="space-y-2">
+    {#if editSection === 'members' && (isAdmin || isGlobalAdminUser)}
+      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-5 shadow-sm">
+        <div>
+          <h2 class="text-lg font-bold text-text-main tracking-tight">Membres</h2>
+          <p class="text-sm text-text-muted mt-1">
+            Rôles affichés sur la page publique. Les admins peuvent gérer l’agenda et les paiements.
+          </p>
+        </div>
+        <div class="space-y-3">
           {#each members as member (member.id)}
-            <div class="flex items-center justify-between rounded-xl bg-cn-bg/50 px-4 py-2.5 gap-2">
-              <div class="flex items-center gap-3 min-w-0">
-                <a
-                  href="/profile/{encodeURIComponent(member.userId)}"
-                  class="text-sm font-medium text-text-main truncate hover:underline"
-                  >{resolvedMemberNames[member.userId] ?? member.displayName ?? member.userId}</a
-                >
-                <span
-                  class="text-xs font-semibold px-2 py-0.5 rounded-full shrink-0
-                  {member.permission === 1
-                    ? 'bg-blue-100 text-blue-700'
-                    : 'bg-gray-100 text-gray-600'}"
-                >
-                  {member.role}
-                </span>
-              </div>
-              <div class="flex items-center gap-2 shrink-0">
-                <input
-                  type="text"
-                  value={member.role}
-                  onchange={(e) =>
-                    handleChangeRole(
-                      member.userId,
-                      (e.target as HTMLInputElement).value,
-                      member.permission as 0 | 1
-                    )}
-                  class="text-xs rounded-lg border border-cn-border bg-white px-2 py-1 w-24"
-                />
-                <select
-                  value={member.permission}
-                  onchange={(e) =>
-                    handleChangeRole(
-                      member.userId,
-                      member.role,
-                      Number((e.target as HTMLSelectElement).value) as 0 | 1
-                    )}
-                  class="text-xs rounded-lg border border-cn-border bg-white px-2 py-1"
-                >
-                  <option value={0}>Membre</option>
-                  <option value={1}>Admin</option>
-                </select>
-                <button
-                  type="button"
-                  onclick={() => handleRemoveMember(member.userId)}
-                  class="text-red-400 hover:text-red-600 p-1"
-                  title="Retirer"
-                >
-                  <Trash2 size={14} />
-                </button>
-              </div>
-            </div>
+            <AssociationMemberRow
+              {member}
+              displayName={resolvedMemberNames[member.userId] ?? member.displayName ?? member.userId}
+              manage={true}
+              onRoleChange={handleChangeRole}
+              onRemove={handleRemoveMember}
+            />
           {/each}
         </div>
 
-        <div class="border-t border-cn-border pt-4">
-          <h3 class="text-sm font-bold text-text-main mb-2 flex items-center gap-2">
-            <UserPlus size={16} />
+        <div class="border-t border-cn-border pt-5">
+          <h3 class="text-sm font-bold text-text-main mb-3 flex items-center gap-2">
+            <UserPlus size={17} />
             Ajouter un membre
           </h3>
           <form
-            class="flex flex-col sm:flex-row gap-2"
+            class="flex flex-col lg:flex-row gap-3"
             onsubmit={(e) => {
               e.preventDefault();
               handleAddMember();
@@ -432,38 +475,51 @@
             <input
               type="text"
               bind:value={newMemberRole}
-              placeholder="Rôle"
-              class="w-full sm:w-28 rounded-xl border border-cn-border bg-white px-3 py-2 text-sm"
+              placeholder="Rôle affiché"
+              class="w-full lg:w-36 rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2.5 text-sm"
             />
-            <select bind:value={newMemberPermission} class="rounded-xl border border-cn-border bg-white px-3 py-2 text-sm">
+            <select
+              bind:value={newMemberPermission}
+              class="rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2.5 text-sm w-full lg:w-auto"
+            >
               <option value={0}>Membre</option>
               <option value={1}>Admin</option>
             </select>
             <button
               type="submit"
               disabled={addingMember || !newMemberUserId.trim()}
-              class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover disabled:opacity-50"
+              class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover disabled:opacity-50"
             >
               {addingMember ? '…' : 'Ajouter'}
             </button>
           </form>
           {#if memberError}
-            <p class="text-sm text-red-600 mt-2">{memberError}</p>
+            <p class="text-sm text-red-600 mt-3">{memberError}</p>
           {/if}
         </div>
       </div>
     {/if}
 
-    {#if isGlobalAdminUser}
-      <div class="rounded-2xl border border-red-200 bg-red-50/50 p-6 space-y-2">
-        <h2 class="text-sm font-bold text-red-600 flex items-center gap-2">
-          <Trash2 size={16} />
+    {#if editSection === 'calendar' && (isAdmin || isGlobalAdminUser)}
+      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 shadow-sm">
+        <AssociationCalendarSection associationId={asso.id} canEdit={true} />
+      </div>
+    {/if}
+
+    {#if editSection === 'danger' && isGlobalAdminUser}
+      <div class="rounded-2xl border border-red-200 bg-red-50/60 p-6 space-y-3">
+        <h2 class="text-base font-bold text-red-700 flex items-center gap-2">
+          <Trash2 size={18} />
           Zone de danger
         </h2>
+        <p class="text-sm text-red-800/90">
+          Supprime définitivement l’association et ses liens (membres, événements d’agenda). Les
+          messages du fil peuvent rester visibles selon la politique serveur.
+        </p>
         <button
           type="button"
           onclick={handleDelete}
-          class="rounded-xl bg-red-50 border border-red-200 px-4 py-2 text-sm font-bold text-red-600 hover:bg-red-100"
+          class="rounded-xl bg-white border border-red-300 px-4 py-2.5 text-sm font-bold text-red-700 hover:bg-red-100"
         >
           Supprimer l’association
         </button>

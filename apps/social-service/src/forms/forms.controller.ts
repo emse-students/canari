@@ -13,11 +13,15 @@ import { Response } from 'express';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { CreateFormDto, SubmitFormDto } from './dto/form.dto';
 import { FormsService } from './forms.service';
+import { AssociationsService } from '../associations/associations.service';
 
 /** Manages form resources including submissions, payment status, and XLSX exports. */
 @Controller('forms')
 export class FormsController {
-  constructor(private readonly service: FormsService) {}
+  constructor(
+    private readonly service: FormsService,
+    private readonly associationsService: AssociationsService
+  ) {}
 
   /** Creates a new form owned by the calling user. */
   @UseGuards(NginxAuthGuard)
@@ -31,6 +35,13 @@ export class FormsController {
   @Get()
   list(@Headers('x-user-id') xUserId: string) {
     return this.service.list(xUserId);
+  }
+
+  /** Association agenda entry linked to this form, if configured. */
+  @Get(':id/calendar-link')
+  async getFormCalendarLink(@Param('id') id: string) {
+    const linkedEvent = await this.associationsService.findCalendarEventByLinkedForm(id);
+    return { linkedEvent };
   }
 
   /** Returns a single form by its ID. */

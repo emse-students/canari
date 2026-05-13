@@ -118,6 +118,13 @@ export class PostsController {
     return this.service.createPost({ ...body, authorId: xUserId });
   }
 
+  /** Association agenda entry linked to this post (same association), if configured. */
+  @Get(':postId/calendar-link')
+  async getPostCalendarLink(@Param('postId') postId: string) {
+    const linkedEvent = await this.associationsService.findCalendarEventByLinkedPost(postId);
+    return { linkedEvent };
+  }
+
   /** Returns a single post by its ID. */
   @Get(':postId')
   getPost(@Param('postId') postId: string) {

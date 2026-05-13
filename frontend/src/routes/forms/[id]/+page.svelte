@@ -17,10 +17,15 @@
     type Form,
     type FormItem,
   } from '$lib/forms/api';
+  import {
+    getCalendarEventLinkedToForm,
+    getAssociation,
+    type AssociationCalendarEvent,
+  } from '$lib/associations/api';
   import Button from '$lib/components/ui/Button.svelte';
   import Card from '$lib/components/ui/Card.svelte';
   import PaymentModal from '$lib/components/ui/PaymentModal.svelte';
-  import { ArrowLeft, ClipboardList, Check, Send } from 'lucide-svelte';
+  import { ArrowLeft, ClipboardList, Check, Send, CalendarDays } from 'lucide-svelte';
 
   const formId = $derived(page.params.id);
   const redirectTo = $derived(page.url.searchParams.get('redirect') || '/posts');
@@ -38,6 +43,8 @@
   let showPaymentModal = $state(false);
   let pendingCheckoutUrl = $state('');
   let pendingSubmissionId = $state('');
+  let linkedAgendaEvent = $state<AssociationCalendarEvent | null>(null);
+  let agendaAssociationSlug = $state('');
 
   onMount(async () => {
     const savedUser = currentUserId();
@@ -60,6 +67,23 @@
       const f = await getForm(id);
       form = f;
       initSelections(f.items);
+
+      linkedAgendaEvent = null;
+      agendaAssociationSlug = '';
+      try {
+        const { linkedEvent } = await getCalendarEventLinkedToForm(f.id);
+        linkedAgendaEvent = linkedEvent;
+        if (linkedEvent) {
+          try {
+            const asso = await getAssociation(linkedEvent.associationId);
+            agendaAssociationSlug = asso.slug;
+          } catch {
+            agendaAssociationSlug = '';
+          }
+        }
+      } catch {
+        linkedAgendaEvent = null;
+      }
 
       const { hasSubmitted } = await checkSubmission(f.id);
       submitted = hasSubmitted;
@@ -262,6 +286,29 @@
         </button>
       </Card>
     {:else if form}
+      {#if linkedAgendaEvent}
+        <a
+          href={agendaAssociationSlug
+            ? `/associations/${encodeURIComponent(agendaAssociationSlug)}`
+            : '/associations'}
+          class="flex items-start gap-3 rounded-2xl border border-cn-yellow/35 bg-cn-yellow/10 px-4 py-3 mb-6 transition-colors hover:bg-cn-yellow/15"
+        >
+          <div class="rounded-xl bg-cn-yellow/25 p-2 text-cn-dark shrink-0">
+            <CalendarDays size={22} />
+          </div>
+          <div class="min-w-0 flex-1">
+            <p class="text-xs font-bold uppercase tracking-wide text-text-muted">Agenda associé</p>
+            <p class="font-semibold text-text-main">{linkedAgendaEvent.title}</p>
+            <p class="text-xs text-text-muted mt-0.5">
+              {new Intl.DateTimeFormat('fr-FR', {
+                dateStyle: 'medium',
+                timeStyle: 'short',
+              }).format(new Date(linkedAgendaEvent.startsAt))}
+            </p>
+          </div>
+          <span class="text-xs font-semibold text-cn-dark shrink-0 self-center">Voir →</span>
+        </a>
+      {/if}
       <!-- Header -->
       <Card class="mb-6">
         <div class="flex items-start gap-4 p-5">

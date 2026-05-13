@@ -8,11 +8,14 @@ import {
   Param,
   Patch,
   Post,
+  Query,
+  Res,
   SetMetadata,
   UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
@@ -24,9 +27,12 @@ import { FollowsService } from '../follows/follows.service';
 import {
   AddMemberDto,
   CreateAssociationDto,
+  CreateAssociationCalendarEventDto,
   UpdateAssociationDto,
+  UpdateAssociationCalendarEventDto,
   UpdateMemberRoleDto,
 } from './dto/association.dto';
+import { buildAggregatedCalendarIcs } from './calendar-ics.util';
 
 const LOGO_UPLOAD_MB = 2;
 
@@ -66,10 +72,53 @@ export class AssociationsController {
     return this.followsService.listFollowedAssociations(userId);
   }
 
+  /**
+   * Aggregated agenda across associations (`startsAt` in `[from, to]`).
+   * Optional `associationId` limits to one association. Public.
+   */
+  @Get('calendar/feed')
+  aggregatedCalendarFeed(
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Query('associationId') associationId?: string
+  ) {
+    return this.service.listAggregatedCalendarFeed(from, to, associationId);
+  }
+
+  /**
+   * Same window as `calendar/feed`, but returns an iCalendar document (`text/calendar`).
+   * Suitable for “subscribe by URL”, opening in Apple/Google Calendar, etc.
+   */
+  @Get('calendar/feed.ics')
+  async aggregatedCalendarFeedIcs(
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Query('associationId') associationId: string | undefined,
+    @Res({ passthrough: true }) res: Response
+  ) {
+    const rows = await this.service.listAggregatedCalendarFeed(from, to, associationId);
+    const body = buildAggregatedCalendarIcs(rows, {
+      frontendBaseUrl: process.env.FRONTEND_URL || 'http://localhost:1420',
+    });
+    res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=120');
+    return body;
+  }
+
   /** Returns all members of the specified association. */
   @Get(':id/members')
   listMembers(@Param('id') id: string) {
     return this.service.listMembers(id);
+  }
+
+  /** Returns scheduled events for the association (optional `from` / `to` ISO date bounds). */
+  @Get(':id/events')
+  listCalendarEvents(
+    @Param('id') id: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string
+  ) {
+    return this.service.listCalendarEvents(id, from, to);
   }
 
   /** Returns whether the calling user is following the specified association. */
@@ -89,6 +138,14 @@ export class AssociationsController {
   ) {
     const ok = await this.service.canPostAs(userId, id, { isGlobalAdmin: ga === 'true' });
     return { ok };
+  }
+
+  /** Recent posts and forms for this association (picker when linking calendar ↔ content). */
+  @SetMetadata(MIN_ROLE_KEY, AssociationPermission.Admin)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Get(':id/link-candidates')
+  linkCandidates(@Param('id') id: string) {
+    return this.service.getCalendarLinkCandidates(id);
   }
 
   /** Returns a single association by its ID. */
@@ -202,6 +259,38 @@ export class AssociationsController {
   @Delete(':id/members/:userId')
   removeMember(@Param('id') id: string, @Param('userId') targetUserId: string) {
     return this.service.removeMember(id, targetUserId);
+  }
+
+  /** Creates a calendar event for the association. */
+  @SetMetadata(MIN_ROLE_KEY, AssociationPermission.Admin)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Post(':id/events')
+  createCalendarEvent(
+    @Headers('x-user-id') userId: string,
+    @Param('id') id: string,
+    @Body() dto: CreateAssociationCalendarEventDto
+  ) {
+    return this.service.createCalendarEvent(id, dto, userId);
+  }
+
+  /** Updates a calendar event. */
+  @SetMetadata(MIN_ROLE_KEY, AssociationPermission.Admin)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Patch(':id/events/:eventId')
+  updateCalendarEvent(
+    @Param('id') id: string,
+    @Param('eventId') eventId: string,
+    @Body() dto: UpdateAssociationCalendarEventDto
+  ) {
+    return this.service.updateCalendarEvent(id, eventId, dto);
+  }
+
+  /** Deletes a calendar event. */
+  @SetMetadata(MIN_ROLE_KEY, AssociationPermission.Admin)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Delete(':id/events/:eventId')
+  deleteCalendarEvent(@Param('id') id: string, @Param('eventId') eventId: string) {
+    return this.service.deleteCalendarEvent(id, eventId);
   }
 
   // ── Internal (called by core-service, bypass nginx auth in Docker network) ─

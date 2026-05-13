@@ -36,19 +36,27 @@
 
 <div class="px-4 py-6 sm:px-6 max-w-4xl mx-auto space-y-8">
   <!-- Header -->
-  <div class="flex items-center justify-between">
+  <div class="flex items-center justify-between gap-3 flex-wrap">
     <div>
       <h1 class="text-2xl font-extrabold text-text-main tracking-tight">Associations</h1>
       <p class="text-sm text-text-muted mt-1">Découvrez les associations de la communauté</p>
     </div>
-    {#if isAdmin}
+    <div class="flex items-center gap-2">
       <a
-        href="/associations/new"
-        class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-5 py-2 text-sm font-bold text-cn-dark shadow-sm transition-all hover:bg-cn-yellow-hover"
+        href="/calendar"
+        class="inline-flex items-center gap-2 rounded-xl border border-cn-border px-4 py-2 text-sm font-bold text-text-main hover:bg-[var(--cn-surface)] transition-colors"
       >
-        Créer une association
+        Agenda global
       </a>
-    {/if}
+      {#if isAdmin}
+        <a
+          href="/associations/new"
+          class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-5 py-2 text-sm font-bold text-cn-dark shadow-sm transition-all hover:bg-cn-yellow-hover"
+        >
+          Créer une association
+        </a>
+      {/if}
+    </div>
   </div>
 
   {#if loading}

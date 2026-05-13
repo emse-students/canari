@@ -1,13 +1,21 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Not, Repository } from 'typeorm';
 import { firstValueFrom } from 'rxjs';
 import FormData from 'form-data';
 import { AxiosError } from 'axios';
 import { Association } from './entities/association.entity';
 import { AssociationMember, AssociationPermission } from './entities/association-member.entity';
-import { CreateAssociationDto, UpdateAssociationDto } from './dto/association.dto';
+import { AssociationCalendarEvent } from './entities/association-calendar-event.entity';
+import { Post } from '../posts/entities/post.entity';
+import { Form } from '../forms/entities/form.entity';
+import {
+  CreateAssociationDto,
+  CreateAssociationCalendarEventDto,
+  UpdateAssociationDto,
+  UpdateAssociationCalendarEventDto,
+} from './dto/association.dto';
 import { RedisService } from '../common/redis/redis.service';
 
 const LOGO_MAX_BYTES = 2 * 1024 * 1024;
@@ -26,6 +34,12 @@ export class AssociationsService {
     private readonly assoRepo: Repository<Association>,
     @InjectRepository(AssociationMember)
     private readonly memberRepo: Repository<AssociationMember>,
+    @InjectRepository(AssociationCalendarEvent)
+    private readonly calendarRepo: Repository<AssociationCalendarEvent>,
+    @InjectRepository(Post)
+    private readonly postRepo: Repository<Post>,
+    @InjectRepository(Form)
+    private readonly formRepo: Repository<Form>,
     private readonly redis: RedisService,
     private readonly httpService: HttpService
   ) {}
@@ -117,6 +131,7 @@ export class AssociationsService {
 
   /** Permanently deletes an association and all its member records, then invalidates post-list caches. */
   async remove(id: string) {
+    await this.calendarRepo.delete({ associationId: id });
     await this.memberRepo.delete({ associationId: id });
     await this.assoRepo.delete(id);
     await this.invalidatePostListCaches();
@@ -385,6 +400,327 @@ export class AssociationsService {
         permission: m?.permission,
       };
     });
+  }
+
+  // ── Calendar events ───────────────────────────────────────────────────────
+
+  private serializeCalendarEvent(e: AssociationCalendarEvent) {
+    const startsAt = e.startsAt instanceof Date ? e.startsAt : new Date(e.startsAt as unknown as string);
+    const endsRaw = e.endsAt;
+    const endsAt =
+      endsRaw === null || endsRaw === undefined
+        ? null
+        : endsRaw instanceof Date
+          ? endsRaw
+          : new Date(endsRaw as unknown as string);
+    const createdAt =
+      e.createdAt instanceof Date ? e.createdAt : new Date(e.createdAt as unknown as string);
+    return {
+      id: e.id,
+      associationId: e.associationId,
+      title: e.title,
+      description: e.description,
+      startsAt: startsAt.toISOString(),
+      endsAt: endsAt ? endsAt.toISOString() : null,
+      createdBy: e.createdBy,
+      createdAt: createdAt.toISOString(),
+      linkedPostId: e.linkedPostId ?? null,
+      linkedFormId: e.linkedFormId ?? null,
+    };
+  }
+
+  /** Posts and forms under this association for calendar ↔ feed linking pickers. */
+  async getCalendarLinkCandidates(associationId: string) {
+    await this.findById(associationId);
+    const posts = await this.postRepo.find({
+      where: { associationId },
+      order: { createdAt: 'DESC' },
+      take: 50,
+      select: ['id', 'markdown', 'createdAt'],
+    });
+    const forms = await this.formRepo.find({
+      where: { associationId },
+      order: { updatedAt: 'DESC' },
+      take: 50,
+      select: ['id', 'title', 'updatedAt'],
+    });
+    return {
+      posts: posts.map((p) => ({
+        id: p.id,
+        preview: (p.markdown ?? '').replace(/\s+/g, ' ').slice(0, 140),
+        createdAt:
+          p.createdAt instanceof Date ? p.createdAt.toISOString() : String(p.createdAt),
+      })),
+      forms: forms.map((f) => ({
+        id: f.id,
+        title: f.title,
+        updatedAt:
+          f.updatedAt instanceof Date ? f.updatedAt.toISOString() : String(f.updatedAt),
+      })),
+    };
+  }
+
+  async findCalendarEventByLinkedPost(postId: string) {
+    const ev = await this.calendarRepo.findOne({ where: { linkedPostId: postId } });
+    return ev ? this.serializeCalendarEvent(ev) : null;
+  }
+
+  async findCalendarEventByLinkedForm(formId: string) {
+    const ev = await this.calendarRepo.findOne({ where: { linkedFormId: formId } });
+    return ev ? this.serializeCalendarEvent(ev) : null;
+  }
+
+  private async assertPostBelongsToAssociation(postId: string, associationId: string) {
+    const p = await this.postRepo.findOne({
+      where: { id: postId },
+      select: ['id', 'associationId'],
+    });
+    if (!p) throw new BadRequestException('Linked post not found');
+    if (p.associationId !== associationId) {
+      throw new BadRequestException('Post must belong to this association');
+    }
+  }
+
+  private async assertFormBelongsToAssociation(formId: string, associationId: string) {
+    const f = await this.formRepo.findOne({
+      where: { id: formId },
+      select: ['id', 'associationId'],
+    });
+    if (!f) throw new BadRequestException('Linked form not found');
+    if (f.associationId !== associationId) {
+      throw new BadRequestException('Form must belong to this association');
+    }
+  }
+
+  /** Ensures at most one calendar row references a given post or form. */
+  private async detachCalendarLinksExcept(
+    opts: { postId?: string | null; formId?: string | null; exceptEventId: string }
+  ) {
+    const { postId, formId, exceptEventId } = opts;
+    if (postId) {
+      await this.calendarRepo.update(
+        { linkedPostId: postId, id: Not(exceptEventId) },
+        { linkedPostId: null }
+      );
+    }
+    if (formId) {
+      await this.calendarRepo.update(
+        { linkedFormId: formId, id: Not(exceptEventId) },
+        { linkedFormId: null }
+      );
+    }
+  }
+
+  private async detachLinksBeforeCreate(postId?: string | null, formId?: string | null) {
+    if (postId) {
+      await this.calendarRepo.update({ linkedPostId: postId }, { linkedPostId: null });
+    }
+    if (formId) {
+      await this.calendarRepo.update({ linkedFormId: formId }, { linkedFormId: null });
+    }
+  }
+
+  /** Lists calendar events for an association, optionally bounded by `from` / `to` ISO timestamps. */
+  async listCalendarEvents(associationId: string, fromIso?: string, toIso?: string) {
+    await this.findById(associationId);
+    const qb = this.calendarRepo
+      .createQueryBuilder('e')
+      .where('e.associationId = :associationId', { associationId })
+      .orderBy('e.startsAt', 'ASC');
+    if (fromIso?.trim()) {
+      qb.andWhere('e.startsAt >= :from', { from: new Date(fromIso) });
+    }
+    if (toIso?.trim()) {
+      qb.andWhere('e.startsAt <= :to', { to: new Date(toIso) });
+    }
+    const rows = await qb.getMany();
+    return rows.map((e) => this.serializeCalendarEvent(e));
+  }
+
+  /** Max span for aggregated calendar queries (abuse guard). */
+  private static readonly CALENDAR_FEED_MAX_MS = 550 * 24 * 60 * 60 * 1000;
+
+  /**
+   * Lists agenda events across all associations in `[from, to]` (by `startsAt`),
+   * optionally restricted to one association. Public (same visibility as per-association `/events`).
+   */
+  async listAggregatedCalendarFeed(fromIso: string, toIso: string, associationId?: string) {
+    const from = new Date(fromIso.trim());
+    const to = new Date(toIso.trim());
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+      throw new BadRequestException('Invalid from or to');
+    }
+    if (from > to) {
+      throw new BadRequestException('from must be before or equal to to');
+    }
+    if (to.getTime() - from.getTime() > AssociationsService.CALENDAR_FEED_MAX_MS) {
+      throw new BadRequestException('Date range too large (max ~18 months)');
+    }
+
+    const aid = associationId?.trim() || null;
+    if (aid) {
+      await this.findById(aid);
+    }
+
+    const qb = this.calendarRepo
+      .createQueryBuilder('e')
+      .innerJoin(Association, 'a', 'a.id = e.associationId')
+      .where('e.startsAt >= :from AND e.startsAt <= :to', { from, to })
+      .orderBy('e.startsAt', 'ASC');
+    if (aid) {
+      qb.andWhere('e.associationId = :aid', { aid });
+    }
+
+    const rows = await qb
+      .select('e.id', 'id')
+      .addSelect('e.associationId', 'associationId')
+      .addSelect('e.title', 'title')
+      .addSelect('e.description', 'description')
+      .addSelect('e.startsAt', 'startsAt')
+      .addSelect('e.endsAt', 'endsAt')
+      .addSelect('e.createdBy', 'createdBy')
+      .addSelect('e.createdAt', 'createdAt')
+      .addSelect('e.linkedPostId', 'linkedPostId')
+      .addSelect('e.linkedFormId', 'linkedFormId')
+      .addSelect('a.name', 'associationName')
+      .addSelect('a.slug', 'associationSlug')
+      .getRawMany();
+
+    return rows.map((r: Record<string, unknown>) => {
+      const base = this.serializeCalendarEvent({
+        id: r.id as string,
+        associationId: r.associationId as string,
+        title: r.title as string,
+        description: (r.description as string | null) ?? null,
+        startsAt: r.startsAt as Date,
+        endsAt: (r.endsAt as Date | null) ?? null,
+        createdBy: r.createdBy as string,
+        createdAt: r.createdAt as Date,
+        linkedPostId: (r.linkedPostId as string | null) ?? null,
+        linkedFormId: (r.linkedFormId as string | null) ?? null,
+      } as AssociationCalendarEvent);
+      return {
+        ...base,
+        associationName: String(r.associationName ?? ''),
+        associationSlug: String(r.associationSlug ?? ''),
+      };
+    });
+  }
+
+  /** Creates a calendar row for the association (association admins only at controller level). */
+  async createCalendarEvent(
+    associationId: string,
+    dto: CreateAssociationCalendarEventDto,
+    userId: string
+  ) {
+    await this.findById(associationId);
+    const startsAt = new Date(dto.startsAt);
+    const endsAt = dto.endsAt ? new Date(dto.endsAt) : null;
+    if (Number.isNaN(startsAt.getTime())) {
+      throw new BadRequestException('Invalid startsAt');
+    }
+    if (endsAt && Number.isNaN(endsAt.getTime())) {
+      throw new BadRequestException('Invalid endsAt');
+    }
+    if (endsAt && endsAt < startsAt) {
+      throw new BadRequestException('endsAt must be after startsAt');
+    }
+
+    const linkedPostId = dto.linkedPostId ?? null;
+    const linkedFormId = dto.linkedFormId ?? null;
+    if (linkedPostId) await this.assertPostBelongsToAssociation(linkedPostId, associationId);
+    if (linkedFormId) await this.assertFormBelongsToAssociation(linkedFormId, associationId);
+    await this.detachLinksBeforeCreate(linkedPostId, linkedFormId);
+
+    const row = this.calendarRepo.create({
+      associationId,
+      title: dto.title.trim(),
+      description: dto.description?.trim() ? dto.description.trim() : null,
+      startsAt,
+      endsAt,
+      createdBy: userId,
+      linkedPostId,
+      linkedFormId,
+    });
+    const saved = await this.calendarRepo.save(row);
+    return this.serializeCalendarEvent(saved);
+  }
+
+  /** Updates an existing calendar event. */
+  async updateCalendarEvent(
+    associationId: string,
+    eventId: string,
+    dto: UpdateAssociationCalendarEventDto
+  ) {
+    await this.findById(associationId);
+    const ev = await this.calendarRepo.findOne({
+      where: { id: eventId, associationId },
+    });
+    if (!ev) throw new NotFoundException('Event not found');
+
+    if (dto.title !== undefined) ev.title = dto.title.trim();
+    if (dto.description !== undefined) {
+      ev.description = dto.description?.trim() ? dto.description.trim() : null;
+    }
+    if (dto.startsAt !== undefined) {
+      const d = new Date(dto.startsAt);
+      if (Number.isNaN(d.getTime())) throw new BadRequestException('Invalid startsAt');
+      ev.startsAt = d;
+    }
+    if (dto.endsAt !== undefined) {
+      if (!dto.endsAt?.trim()) {
+        ev.endsAt = null;
+      } else {
+        const end = new Date(dto.endsAt);
+        if (Number.isNaN(end.getTime())) throw new BadRequestException('Invalid endsAt');
+        ev.endsAt = end;
+      }
+    }
+    const starts = ev.startsAt instanceof Date ? ev.startsAt : new Date(ev.startsAt);
+    const ends = ev.endsAt
+      ? ev.endsAt instanceof Date
+        ? ev.endsAt
+        : new Date(ev.endsAt)
+      : null;
+    if (ends && ends < starts) {
+      throw new BadRequestException('endsAt must be after startsAt');
+    }
+
+    if (dto.linkedPostId !== undefined) {
+      if (dto.linkedPostId === null || dto.linkedPostId === '') {
+        ev.linkedPostId = null;
+      } else {
+        await this.assertPostBelongsToAssociation(dto.linkedPostId, associationId);
+        await this.detachCalendarLinksExcept({
+          postId: dto.linkedPostId,
+          exceptEventId: ev.id,
+        });
+        ev.linkedPostId = dto.linkedPostId;
+      }
+    }
+    if (dto.linkedFormId !== undefined) {
+      if (dto.linkedFormId === null || dto.linkedFormId === '') {
+        ev.linkedFormId = null;
+      } else {
+        await this.assertFormBelongsToAssociation(dto.linkedFormId, associationId);
+        await this.detachCalendarLinksExcept({
+          formId: dto.linkedFormId,
+          exceptEventId: ev.id,
+        });
+        ev.linkedFormId = dto.linkedFormId;
+      }
+    }
+
+    const saved = await this.calendarRepo.save(ev);
+    return this.serializeCalendarEvent(saved);
+  }
+
+  /** Deletes a calendar event. */
+  async deleteCalendarEvent(associationId: string, eventId: string) {
+    await this.findById(associationId);
+    const res = await this.calendarRepo.delete({ id: eventId, associationId });
+    if (!res.affected) throw new NotFoundException('Event not found');
+    return { ok: true };
   }
 
   // ── Stripe helpers ────────────────────────────────────────────────────────

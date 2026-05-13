@@ -40,6 +40,7 @@ export const APP_PLACES: AppPlace[] = [
 ];
 
 export function resolveActivePlaceId(pathname: string): string {
+  if (pathname === '/calendar' || pathname.startsWith('/calendar/')) return 'communities';
   const exact = APP_PLACES.find(
     (place) => pathname === place.href || pathname.startsWith(`${place.href}/`)
   );

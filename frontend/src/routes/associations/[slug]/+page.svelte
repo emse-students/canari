@@ -15,6 +15,8 @@
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { Users, Bell, BellOff, Pencil } from 'lucide-svelte';
   import SvelteMarkdown from '@humanspeak/svelte-markdown';
+  import AssociationMemberRow from '$lib/components/associations/AssociationMemberRow.svelte';
+  import AssociationCalendarSection from '$lib/components/associations/AssociationCalendarSection.svelte';
 
   let asso = $state<Association | null>(null);
   let members = $state<AssociationMember[]>([]);
@@ -96,7 +98,7 @@
   }
 </script>
 
-<div class="px-4 py-6 sm:px-6 max-w-3xl mx-auto space-y-6">
+<div class="px-4 py-6 sm:px-6 max-w-4xl mx-auto space-y-8">
   <a href="/associations" class="text-sm text-text-muted hover:text-text-main transition-colors">
     ← Retour aux associations
   </a>
@@ -110,7 +112,7 @@
   {:else if error && !asso}
     <div class="rounded-xl bg-red-50 border border-red-200 text-red-700 p-4 text-sm">{error}</div>
   {:else if asso}
-    <div class="rounded-2xl border border-cn-border bg-white/80 p-6">
+    <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-6 shadow-sm">
       <div class="flex items-start gap-4">
         {#if logoSrc}
           <img
@@ -172,32 +174,37 @@
     {/if}
 
     {#if asso.bioMarkdown?.trim()}
-      <div class="rounded-2xl border border-cn-border bg-white/80 p-6 prose prose-neutral dark:prose-invert max-w-none">
+      <div
+        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-6 prose prose-neutral dark:prose-invert max-w-none shadow-sm"
+      >
         <SvelteMarkdown source={asso.bioMarkdown} options={{ gfm: true, breaks: true }} />
       </div>
     {/if}
 
-    <div class="rounded-2xl border border-cn-border bg-white/80 p-6 space-y-4">
-      <h2 class="text-base font-bold text-text-main">Membres</h2>
-      <div class="space-y-2">
+    <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-6 shadow-sm">
+      <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-4">
+        <h2 class="text-lg font-bold text-text-main tracking-tight">Agenda</h2>
+        <a
+          href="/calendar?association={encodeURIComponent(asso.id)}"
+          class="text-xs font-semibold text-cn-dark hover:underline"
+        >
+          Voir dans l’agenda global →
+        </a>
+      </div>
+      <AssociationCalendarSection associationId={asso.id} canEdit={false} />
+    </div>
+
+    <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-6 space-y-4 shadow-sm">
+      <h2 class="text-lg font-bold text-text-main tracking-tight">Membres</h2>
+      <p class="text-sm text-text-muted">
+        {members.length} personne{members.length !== 1 ? 's' : ''} dans cette association.
+      </p>
+      <div class="space-y-3">
         {#each members as member (member.id)}
-          <div class="flex items-center justify-between rounded-xl bg-cn-bg/50 px-4 py-2.5">
-            <div class="flex items-center gap-3 min-w-0">
-              <a
-                href="/profile/{encodeURIComponent(member.userId)}"
-                class="text-sm font-medium text-text-main truncate hover:underline"
-                >{resolvedMemberNames[member.userId] ?? member.displayName ?? member.userId}</a
-              >
-              <span
-                class="text-xs font-semibold px-2 py-0.5 rounded-full
-                {member.permission === 1
-                  ? 'bg-blue-100 text-blue-700'
-                  : 'bg-gray-100 text-gray-600'}"
-              >
-                {member.role}
-              </span>
-            </div>
-          </div>
+          <AssociationMemberRow
+            {member}
+            displayName={resolvedMemberNames[member.userId] ?? member.displayName ?? member.userId}
+          />
         {/each}
       </div>
     </div>

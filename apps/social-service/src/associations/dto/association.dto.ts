@@ -1,11 +1,14 @@
 import {
   IsArray,
+  IsDateString,
   IsEnum,
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsUUID,
   Matches,
   MaxLength,
+  ValidateIf,
 } from 'class-validator';
 import { AssociationPermission } from '../entities/association-member.entity';
 
@@ -86,4 +89,66 @@ export class AddMembersBatchDto {
   @IsArray()
   @IsString({ each: true })
   userIds: string[];
+}
+
+export class CreateAssociationCalendarEventDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  title: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(4000)
+  description?: string;
+
+  @IsDateString()
+  startsAt: string;
+
+  @IsDateString()
+  @IsOptional()
+  endsAt?: string;
+
+  /** Optional association post on the feed (same `associationId` as this event). */
+  @IsOptional()
+  @ValidateIf((_, v) => typeof v === 'string' && v.length > 0)
+  @IsUUID()
+  linkedPostId?: string;
+
+  /** Optional form (same association). */
+  @IsOptional()
+  @ValidateIf((_, v) => typeof v === 'string' && v.length > 0)
+  @IsUUID()
+  linkedFormId?: string;
+}
+
+export class UpdateAssociationCalendarEventDto {
+  @IsString()
+  @IsOptional()
+  @MaxLength(200)
+  title?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(4000)
+  description?: string;
+
+  @IsDateString()
+  @IsOptional()
+  startsAt?: string;
+
+  @IsDateString()
+  @IsOptional()
+  endsAt?: string;
+
+  /** Set to empty string or null to remove the link. */
+  @IsOptional()
+  @ValidateIf((_, v) => typeof v === 'string' && v.length > 0)
+  @IsUUID()
+  linkedPostId?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => typeof v === 'string' && v.length > 0)
+  @IsUUID()
+  linkedFormId?: string | null;
 }

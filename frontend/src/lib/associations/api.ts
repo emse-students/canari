@@ -45,6 +45,50 @@ export interface UpdateAssociationPayload {
   logoUrl?: string;
 }
 
+export interface AssociationCalendarEvent {
+  id: string;
+  associationId: string;
+  title: string;
+  description: string | null;
+  startsAt: string;
+  endsAt: string | null;
+  createdBy: string;
+  createdAt: string;
+  /** Same-association post on the feed (optional). */
+  linkedPostId: string | null;
+  /** Same-association form (optional). */
+  linkedFormId: string | null;
+}
+
+/** Row from `GET /api/associations/calendar/feed` (aggregated agenda). */
+export interface AssociationCalendarFeedEvent extends AssociationCalendarEvent {
+  associationName: string;
+  associationSlug: string;
+}
+
+export interface AssociationLinkCandidates {
+  posts: { id: string; preview: string; createdAt: string }[];
+  forms: { id: string; title: string; updatedAt: string }[];
+}
+
+export interface CreateAssociationCalendarEventPayload {
+  title: string;
+  description?: string;
+  startsAt: string;
+  endsAt?: string;
+  linkedPostId?: string;
+  linkedFormId?: string;
+}
+
+export interface UpdateAssociationCalendarEventPayload {
+  title?: string;
+  description?: string;
+  startsAt?: string;
+  endsAt?: string;
+  linkedPostId?: string | null;
+  linkedFormId?: string | null;
+}
+
 /** Resolve association logo URL for `<img src>` (handles relative `/api/...` paths).
  *  On Tauri/mobile, window.location.origin is `tauri://localhost` — use VITE_MEDIA_URL instead. */
 export function associationLogoSrc(logoUrl: string | null | undefined): string | null {
@@ -87,6 +131,128 @@ export async function listMembers(associationId: string): Promise<AssociationMem
   return request<AssociationMember[]>(
     `/api/associations/${encodeURIComponent(associationId)}/members`
   );
+}
+
+export async function listAssociationCalendarEvents(
+  associationId: string,
+  opts?: { from?: string; to?: string }
+): Promise<AssociationCalendarEvent[]> {
+  const q = new URLSearchParams();
+  if (opts?.from) q.set('from', opts.from);
+  if (opts?.to) q.set('to', opts.to);
+  const qs = q.toString();
+  return request<AssociationCalendarEvent[]>(
+    `/api/associations/${encodeURIComponent(associationId)}/events${qs ? `?${qs}` : ''}`
+  );
+}
+
+/** Aggregated public agenda for a date range (optional `associationId` filter). */
+export async function listAggregatedCalendarFeed(opts: {
+  from: string;
+  to: string;
+  associationId?: string;
+}): Promise<AssociationCalendarFeedEvent[]> {
+  const q = new URLSearchParams();
+  q.set('from', opts.from);
+  q.set('to', opts.to);
+  if (opts.associationId?.trim()) q.set('associationId', opts.associationId.trim());
+  return request<AssociationCalendarFeedEvent[]>(`/api/associations/calendar/feed?${q.toString()}`);
+}
+
+/** Path + query for the dynamic iCalendar feed (same params as `listAggregatedCalendarFeed`). */
+export function aggregatedCalendarFeedIcsPath(opts: {
+  from: string;
+  to: string;
+  associationId?: string;
+}): string {
+  const q = new URLSearchParams();
+  q.set('from', opts.from);
+  q.set('to', opts.to);
+  if (opts.associationId?.trim()) q.set('associationId', opts.associationId.trim());
+  return `/api/associations/calendar/feed.ics?${q.toString()}`;
+}
+
+/**
+ * Absolute URL to `feed.ics` for the given window. Prefer `socialUrl()` when set (Tauri / split API).
+ */
+export function aggregatedCalendarFeedIcsAbsoluteUrl(opts: {
+  from: string;
+  to: string;
+  associationId?: string;
+}): string {
+  const path = aggregatedCalendarFeedIcsPath(opts);
+  const base = socialUrl();
+  if (base) return `${base}${path}`;
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return `${window.location.origin}${path}`;
+  }
+  return path;
+}
+
+export async function createAssociationCalendarEvent(
+  associationId: string,
+  payload: CreateAssociationCalendarEventPayload
+): Promise<AssociationCalendarEvent> {
+  return request<AssociationCalendarEvent>(
+    `/api/associations/${encodeURIComponent(associationId)}/events`,
+    { method: 'POST', body: JSON.stringify(payload) }
+  );
+}
+
+export async function updateAssociationCalendarEvent(
+  associationId: string,
+  eventId: string,
+  payload: UpdateAssociationCalendarEventPayload
+): Promise<AssociationCalendarEvent> {
+  return request<AssociationCalendarEvent>(
+    `/api/associations/${encodeURIComponent(associationId)}/events/${encodeURIComponent(eventId)}`,
+    { method: 'PATCH', body: JSON.stringify(payload) }
+  );
+}
+
+export async function deleteAssociationCalendarEvent(
+  associationId: string,
+  eventId: string
+): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(
+    `/api/associations/${encodeURIComponent(associationId)}/events/${encodeURIComponent(eventId)}`,
+    { method: 'DELETE' }
+  );
+}
+
+/** Association admins — publications et formulaires récents pour lier un événement d’agenda. */
+export async function listAssociationLinkCandidates(
+  associationId: string
+): Promise<AssociationLinkCandidates> {
+  return request<AssociationLinkCandidates>(
+    `/api/associations/${encodeURIComponent(associationId)}/link-candidates`
+  );
+}
+
+/** Public — événement d’agenda pointant vers cette publication (fil). */
+export async function getCalendarEventLinkedToPost(postId: string): Promise<{
+  linkedEvent: AssociationCalendarEvent | null;
+}> {
+  const base = socialUrl();
+  const res = await apiFetch(`${base}/api/posts/${encodeURIComponent(postId)}/calendar-link`);
+  if (!res.ok) {
+    const details = await res.text().catch(() => '');
+    throw new Error(`posts ${res.status}: ${details || res.statusText}`);
+  }
+  return (await res.json()) as { linkedEvent: AssociationCalendarEvent | null };
+}
+
+/** Public — événement d’agenda pointant vers ce formulaire. */
+export async function getCalendarEventLinkedToForm(formId: string): Promise<{
+  linkedEvent: AssociationCalendarEvent | null;
+}> {
+  const base = socialUrl();
+  const res = await apiFetch(`${base}/api/forms/${encodeURIComponent(formId)}/calendar-link`);
+  if (!res.ok) {
+    const details = await res.text().catch(() => '');
+    throw new Error(`forms ${res.status}: ${details || res.statusText}`);
+  }
+  return (await res.json()) as { linkedEvent: AssociationCalendarEvent | null };
 }
 
 // ── Authenticated ─────────────────────────────────────────────────────────
