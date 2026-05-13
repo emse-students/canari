@@ -64,6 +64,8 @@ export function useMessaging() {
   let pendingMediaFiles = $state<File[]>([]);
   let isUploadingMedia = $state(false);
 
+  let pendingRetry = $state<{ text: string; convoId: string } | null>(null);
+
   const mediaService = new MediaService();
   const mediaMaxSizeMb = Number.parseInt(import.meta.env.VITE_MEDIA_MAX_SIZE_MB ?? '100', 10);
   const mediaMaxSizeBytes = mediaMaxSizeMb * 1024 * 1024;
@@ -310,7 +312,12 @@ export function useMessaging() {
       const stillMember = await ctx.verifyCurrentUserMembership(ctx.selectedContact);
       ctx.log(`[SEND] membership: stillMember=${stillMember} convo.isReady=${convo.isReady}`);
       if (!stillMember || !convo.isReady) {
-        ctx.setSendError('Le groupe est en cours de resynchronisation. Réessaie plus tard');
+        if (text && ctx.selectedContact) {
+          pendingRetry = { text, convoId: ctx.selectedContact };
+          ctx.setSendError('Resynchronisation en cours — le message sera envoyé automatiquement');
+        } else {
+          ctx.setSendError('Le groupe est en cours de resynchronisation. Réessaie plus tard');
+        }
         return;
       }
     }
@@ -598,6 +605,17 @@ export function useMessaging() {
     }
   }
 
+  // ── Pending retry ─────────────────────────────────────────────────────────
+
+  /** If a message was queued while `isReady: false`, send it now. Called by ChatBackgroundService when a group becomes ready. */
+  async function drainPendingRetry(groupId: string, ctx: MessagingContext) {
+    if (!pendingRetry || pendingRetry.convoId !== groupId) return;
+    const { text } = pendingRetry;
+    pendingRetry = null;
+    ctx.setSendError('');
+    await handleSendChat(ctx, text);
+  }
+
   // ── Reply ─────────────────────────────────────────────────────────────────
 
   /** Sets the message the user is replying to, which will be embedded as a quote preview in the next send. */
@@ -619,6 +637,10 @@ export function useMessaging() {
     /** Message the user is currently replying to (null when no reply is pending). */
     get replyingTo() {
       return replyingTo;
+    },
+    /** Text message queued while `isReady: false` (null when none pending). */
+    get pendingRetry() {
+      return pendingRetry;
     },
     /** Files staged for sending in the next handleSendChat call. */
     get pendingMediaFiles() {
@@ -649,5 +671,7 @@ export function useMessaging() {
     handleReply,
     /** Clears the pending reply state. */
     cancelReply,
+    /** Sends the queued message for `groupId` if one was stored while `isReady: false`. */
+    drainPendingRetry,
   };
 }

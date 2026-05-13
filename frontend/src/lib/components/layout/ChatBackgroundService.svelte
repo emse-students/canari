@@ -223,6 +223,11 @@
       },
       onLoadHistoryForConversation: (contactName: string, groupId: string) =>
         globalConvs.loadHistoryForConversation(contactName, groupId, convCtx()),
+      onGroupReady: (groupId: string) => {
+        if (globalMessaging.pendingRetry?.convoId === groupId) {
+          void globalMessaging.drainPendingRetry(groupId, msgCtx());
+        }
+      },
     };
   }
 

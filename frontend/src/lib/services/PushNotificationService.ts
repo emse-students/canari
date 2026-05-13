@@ -40,7 +40,7 @@ export async function getFcmToken(): Promise<string | null> {
   try {
     const immediate = await invoke<string | null>('get_fcm_token');
     if (immediate) return immediate;
-  } catch (e) {
+  } catch {
     console.warn('[Push] invoke get_fcm_token failed, waiting for event...');
     // Ne plus retourner null ici, laisser le code descendre vers la Promise
   }

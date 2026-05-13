@@ -12,7 +12,6 @@
     globalNotifs as notifs,
     appendLog,
   } from '$lib/stores/globalChatSingleton.svelte';
-  import Modal from './shared/Modal.svelte';
   import Sidebar from './sidebar/Sidebar.svelte';
   import ChannelMembersSidebar from './chat/ChannelMembersSidebar.svelte';
   import ChannelSettingsModal from './chat/ChannelSettingsModal.svelte';

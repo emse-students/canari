@@ -21,7 +21,7 @@ export class PostNotificationsService {
       );
       if (rows[0]) {
         const u = rows[0];
-        return u.displayName || [u.firstName, u.lastName].filter(Boolean).join(' ') || actorId;
+        return (u.displayName as string) || [u.firstName as string, u.lastName as string].filter(Boolean).join(' ') || actorId;
       }
     } catch { /* non-fatal */ }
     return actorId;

@@ -64,7 +64,7 @@
     { type: 'Marteau', emoji: '🔨', icon: 'hammer' },
   ];
 
-  let { post: postProp, currentUserId, authToken = '', currentUserEmail, onRefresh, onDelete }: Props = $props();
+  let { post: postProp, currentUserId, authToken = '', currentUserEmail, onRefresh: _onRefresh, onDelete }: Props = $props();
 
   // Local mutable copy — updated directly after interactions to avoid a full list reload.
   // Re-syncs from postProp whenever the parent explicitly refreshes.

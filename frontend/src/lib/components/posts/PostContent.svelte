@@ -3,7 +3,7 @@
   import type { PostEntity } from '$lib/posts/api';
   import SvelteMarkdown from '@humanspeak/svelte-markdown';
   import LinkPreviewCard from '../messages/LinkPreviewCard.svelte';
-  import { ChevronLeft, ChevronRight, X } from 'lucide-svelte';
+  import { ChevronLeft, ChevronRight } from 'lucide-svelte';
 
   interface Props {
     /** The post whose markdown content and images are rendered. */
@@ -54,7 +54,7 @@
     isTruncatable && !expanded ? post.markdown!.slice(0, MAX_CHARS) + '…' : (post.markdown ?? '')
   );
   const firstLink = $derived(post.markdown ? extractFirstUrl(post.markdown) : null);
-  const multipleImages = $derived((post.images?.length ?? 0) > 1);
+
 </script>
 
 {#if post.markdown}

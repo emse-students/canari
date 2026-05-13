@@ -73,6 +73,8 @@ export interface ChatSessionCallbacks {
   getSelectedContact: () => string | null;
   setSelectedContact: (v: string | null) => void;
   onLoadHistoryForConversation: (contactName: string, groupId: string) => Promise<void>;
+  /** Fired when a group transitions to isReady=true (Welcome processed). Used to drain pending auto-retry messages. */
+  onGroupReady?: (groupId: string) => void;
 }
 
 /** Creates and returns the reactive chat session store covering login, MLS init, WebSocket, biometrics, device sync, backup, and dev tools. */
@@ -454,6 +456,7 @@ export function useChatSession() {
             cb.onLoadHistoryForConversation(groupId, groupId).catch((e) =>
               cb.log(`[WARN] Erreur refresh conv ${groupId}: ${e}`)
             );
+            cb.onGroupReady?.(groupId);
           } else {
             cb.log('[SYNC] Welcome traité, rafraîchissement des conversations...');
             cb.loadAndRestoreConversations().catch((e) =>

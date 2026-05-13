@@ -130,8 +130,8 @@
 
   let chatContainer = $state<HTMLDivElement>();
   let isNearBottom = $state(true);
-  let isMobile = $state(false);
-  let composerFocused = $state(false);
+  let _isMobile = $state(false);
+  let _composerFocused = $state(false);
   let lastConversationKey = $state('');
   let lastMessageCount = $state(0);
   /** First index (inclusive) of the sliding render window inside messageGroups. */
@@ -321,7 +321,7 @@
     if (typeof window === 'undefined') return;
     const mq = window.matchMedia('(max-width: 768px), (pointer: coarse)');
     const apply = () => {
-      isMobile = mq.matches;
+      _isMobile = mq.matches;
     };
     apply();
     mq.addEventListener('change', apply);
@@ -523,7 +523,7 @@
       <ChatComposer
         {messageText}
         {onMessageChange}
-        onFocusChange={(focused) => (composerFocused = focused)}
+        onFocusChange={(focused) => (_composerFocused = focused)}
         {onSend}
         {replyingTo}
         {onCancelReply}

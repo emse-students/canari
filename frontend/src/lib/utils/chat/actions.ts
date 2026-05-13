@@ -274,8 +274,7 @@ export async function discoverMissingGroups(params: {
   deleteConversation?: (key: string) => Promise<void>;
   log: (msg: string) => void;
 }) {
-  const { mlsService, userId, pin, conversations, saveConversation, deleteConversation, log } =
-    params;
+  const { mlsService, userId, conversations, saveConversation, deleteConversation, log } = params;
 
   // ── Phase 1: Create placeholders for server groups not present locally ────
 

@@ -10,6 +10,7 @@ import { Repository, In, LessThan } from 'typeorm';
 import { QueuedMessage } from './entities/queued-message.entity';
 import { KeyPackage } from './entities/key-package.entity';
 import { Group } from './entities/group.entity';
+import { GroupMember } from './entities/group-member.entity';
 import { DeviceGroupMembership } from './entities/device-group-membership.entity';
 import { RevokedDevice } from './entities/revoked-device.entity';
 import Redis from 'ioredis';
@@ -26,6 +27,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   private cleanupMessagesInterval: ReturnType<typeof setInterval>;
   private cleanupKeyPackagesInterval: ReturnType<typeof setInterval>;
   private cleanupOrphanedRedisGroupsInterval: ReturnType<typeof setInterval>;
+  private softDeletedGroupsCleanupInterval: ReturnType<typeof setInterval>;
 
   /**
    * Single source of truth for message retention / stale device TTL.
@@ -40,6 +42,8 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     @InjectRepository(KeyPackage)
     private keyPackageRepo: Repository<KeyPackage>,
     @InjectRepository(Group) private groupRepo: Repository<Group>,
+    @InjectRepository(GroupMember)
+    private groupMemberRepo: Repository<GroupMember>,
     @InjectRepository(DeviceGroupMembership)
     private deviceGroupRepo: Repository<DeviceGroupMembership>,
     @InjectRepository(RevokedDevice)
@@ -107,9 +111,17 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       );
     }, 6 * ONE_HOUR);
 
+    // Purge soft-deleted group tombstones older than 90 days (once per day)
+    this.softDeletedGroupsCleanupInterval = setInterval(() => {
+      void this.cleanupSoftDeletedGroups().catch((e) =>
+        this.logger.error('[CRON] cleanupSoftDeletedGroups failed', e),
+      );
+    }, 24 * ONE_HOUR);
+
     this.logger.log(
       '[CRON] Stale device detection (1h), message cleanup (1h), ' +
-        'key-package cleanup (1h), orphaned Redis groups cleanup (6h) scheduled',
+        'key-package cleanup (1h), orphaned Redis groups cleanup (6h), ' +
+        'soft-deleted groups purge (24h) scheduled',
     );
   }
 
@@ -147,6 +159,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     clearInterval(this.cleanupMessagesInterval);
     clearInterval(this.cleanupKeyPackagesInterval);
     clearInterval(this.cleanupOrphanedRedisGroupsInterval);
+    clearInterval(this.softDeletedGroupsCleanupInterval);
   }
 
   /**
@@ -238,6 +251,34 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         `[CRON] cleanupExpiredKeyPackages: deleted ${toDelete.length} package(s)`,
       );
     }
+  }
+
+  /**
+   * Purge soft-deleted group tombstones (deletedAt != null) older than 90 days,
+   * along with their GroupMember and DeviceGroupMembership rows.
+   * The tombstone is kept for 90 days so that lagging devices can still discover
+   * the successor chain; after that the data has no recovery value.
+   */
+  private async cleanupSoftDeletedGroups() {
+    const TOMBSTONE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
+    const cutoff = new Date(Date.now() - TOMBSTONE_MAX_AGE_MS);
+
+    const deadGroups = await this.groupRepo.find({
+      where: { deletedAt: LessThan(cutoff) },
+      select: ['id'],
+    });
+
+    if (deadGroups.length === 0) return;
+
+    const ids = deadGroups.map((g) => g.id);
+
+    await this.groupMemberRepo.delete({ groupId: In(ids) });
+    await this.deviceGroupRepo.delete({ groupId: In(ids) });
+    await this.groupRepo.delete(ids);
+
+    this.logger.log(
+      `[CRON] cleanupSoftDeletedGroups: purged ${ids.length} tombstone(s)`,
+    );
   }
 
   /**

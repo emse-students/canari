@@ -67,7 +67,7 @@
     onToggleSearch,
     searchActive = false,
     onOpenMembers,
-    onStartCall,
+    onStartCall: _onStartCall,
   }: Props = $props();
 
   let showPanel = $state(false);

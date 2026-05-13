@@ -8,7 +8,6 @@ import type {
 } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
 import { decodeAppMessage } from '$lib/proto/codec';
-import { serializeEnvelope, mkTextEnvelope } from '$lib/envelope';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
 
