@@ -32,6 +32,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Request, Response } from 'express';
 import * as crypto from 'crypto';
+import sharp from 'sharp';
 import { MediaService } from './media.service';
 
 const POLICY_MAX_MEDIA_MB = 100;
@@ -155,8 +156,14 @@ export class MediaController {
       throw new BadRequestException('Logo must be JPEG, PNG, or WebP');
     }
 
-    const mediaId = await this.mediaService.uploadPublicAsset(file.buffer, mime);
-    this.logger.log(`Stored public asset: ${mediaId} (${file.size} bytes, ${mime})`);
+    // Resize to max 512×512, convert to WebP 90% — logos are always public/unencrypted.
+    const compressed = await sharp(file.buffer)
+      .resize(512, 512, { fit: 'inside', withoutEnlargement: true })
+      .webp({ quality: 90 })
+      .toBuffer();
+
+    const mediaId = await this.mediaService.uploadPublicAsset(compressed, 'image/webp');
+    this.logger.log(`Stored public asset: ${mediaId} (${file.size} → ${compressed.length} bytes, webp)`);
     return { mediaId };
   }
 

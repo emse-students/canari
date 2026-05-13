@@ -2,7 +2,7 @@
   import { Image, ChartColumn, CalendarCheck, ClipboardList, Clock, X, CircleAlert, Building2, User, ChevronDown } from 'lucide-svelte';
   import { slide, fade } from 'svelte/transition';
   import { onMount } from 'svelte';
-  import { MediaService } from '$lib/media';
+  import { MediaService, compressImage } from '$lib/media';
   import { getToken } from '$lib/stores/auth';
   import { createPost, type CreatePostPayload } from '$lib/posts/api';
   import { getForms, type Form } from '$lib/forms/api';
@@ -149,10 +149,12 @@
         catch { throw new Error("Impossible d'obtenir un jeton pour l'envoi d'images."); }
       }
 
-      // Encrypt and upload each image; collect the resulting refs
+      // Compress then encrypt-upload each image; collect the resulting refs.
+      // Max 1440px on either side, WebP at 82% quality (Signal/Instagram range).
       const images = [];
       for (let i = 0; i < selectedFiles.length; i++) {
-        const ref = await mediaService.encryptAndUpload(selectedFiles[i], authToken);
+        const compressed = await compressImage(selectedFiles[i], 1440, 1440, 0.82);
+        const ref = await mediaService.encryptAndUpload(compressed, authToken);
         const caption = imageCaptions[i]?.trim();
         images.push({ ...ref, ...(caption ? { caption } : {}) });
       }
