@@ -20,6 +20,10 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
+          # Normalize to 3-part semver: "0.2" → "0.2.0"
+          IFS='.' read -ra PARTS <<< "$VERSION"
+          while [ "${#PARTS[@]}" -lt 3 ]; do PARTS+=("0"); done
+          VERSION="${PARTS[0]}.${PARTS[1]}.${PARTS[2]}"
           jq --arg v "$VERSION" '.version = $v' frontend/package.json > tmp.json && mv tmp.json frontend/package.json
           jq --arg v "$VERSION" '.version = $v' frontend/src-tauri/tauri.conf.json > tmp.json && mv tmp.json frontend/src-tauri/tauri.conf.json
         env:
@@ -110,13 +114,8 @@ jobs:
           echo "VITE_AUTHENTIK_REDIRECT_URI=http://localhost:1421/auth/callback" >> .env
 
       - name: Build Tauri AppImage
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_TARGET: desktop
-        with:
-          projectPath: ./frontend
-          args: --bundles appimage
+        working-directory: frontend
+        run: bun tauri build --bundles appimage
 
       - name: Upload AppImage artifact
         uses: actions/upload-artifact@v7

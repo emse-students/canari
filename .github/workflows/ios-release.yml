@@ -147,15 +147,11 @@ jobs:
           echo "VITE_CORE_URL=${BASE_URL}" >> .env
 
       - name: Build iOS IPA
-        uses: tauri-apps/tauri-action@v0
+        working-directory: frontend
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        with:
-          projectPath: ./frontend
-          tauriScript: bun tauri ios
-          args: build --export-method app-store-connect
+        run: bun tauri ios build --export-method app-store-connect
 
       - name: Upload IPA Artifacts
         uses: actions/upload-artifact@v7
