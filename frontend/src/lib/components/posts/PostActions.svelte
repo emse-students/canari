@@ -50,7 +50,7 @@
 
     {#if showReactionPicker}
       <div
-        class="absolute bottom-full left-0 mb-2 bg-[var(--cn-surface)] border border-cn-border rounded-2xl shadow-lg p-2 flex gap-1 z-10"
+        class="absolute bottom-full left-0 mb-2 bg-[var(--cn-surface)] border border-cn-border rounded-2xl shadow-lg p-2 flex flex-wrap gap-1 z-50 max-w-[min(90vw,22rem)]"
       >
         {#each reactionList as reaction (reaction.type)}
           <button

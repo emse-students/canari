@@ -420,7 +420,7 @@
 </script>
 
 <Card
-  class="group/card mb-6 overflow-hidden !p-0 transition-all duration-300 hover:shadow-xl hover:-translate-y-0.5 border border-black/5 dark:border-white/10 bg-white/70 dark:bg-[#151B2C]/70 backdrop-blur-xl"
+  class="group/card mb-6 !p-0 transition-all duration-300 hover:shadow-xl hover:-translate-y-0.5 border border-black/5 dark:border-white/10 bg-white/70 dark:bg-[#151B2C]/70 backdrop-blur-xl"
 >
   <div class="relative">
     <PostHeader post={localPost} />

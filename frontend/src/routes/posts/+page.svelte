@@ -15,7 +15,7 @@
   import { RefreshCw, PenSquare, Inbox, Search, X } from 'lucide-svelte';
 
   const LAST_VISIT_KEY = 'posts_last_visit';
-  const PAGE_SIZE = 20;
+  const PAGE_SIZE = 10;
 
   let {
     data,

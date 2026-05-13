@@ -36,6 +36,7 @@ export class PostsService {
   /** Deletes the most-common list cache keys so the next request gets fresh data. */
   private async invalidateListCache() {
     await this.redis.del(
+      this.listPostsCacheKey('all', undefined, undefined, undefined, 10, 0),
       this.listPostsCacheKey('all', undefined, undefined, undefined, 20, 0),
       this.listPostsCacheKey('all', undefined, undefined, undefined, 30, 0),
       this.listPostsCacheKey('all', undefined, undefined, undefined, 50, 0)
@@ -111,7 +112,7 @@ export class PostsService {
         options: (poll.options || []).map((opt: any) => ({
           ...opt,
           id: opt.id || crypto.randomUUID(),
-          votes: opt.votes ?? 0,
+          votes: Array.isArray(opt.votes) ? opt.votes : [],
         })),
       }));
     }

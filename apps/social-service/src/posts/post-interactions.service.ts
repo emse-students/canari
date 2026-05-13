@@ -183,7 +183,7 @@ export class PostInteractionsService {
       if (poll.id !== pollId) continue;
       const selectedIds = data.optionIds;
       for (const opt of poll.options) {
-        opt.votes = (opt.votes ?? []).filter((v: string) => v !== data.userId);
+        opt.votes = (Array.isArray(opt.votes) ? opt.votes : []).filter((v: string) => v !== data.userId);
       }
       for (const opt of poll.options) {
         if (selectedIds.includes(opt.id)) opt.votes.push(data.userId);

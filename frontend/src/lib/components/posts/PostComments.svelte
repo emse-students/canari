@@ -135,7 +135,7 @@
   let editingText = $state('');
   let sortMode = $state<SortMode>('recent');
 
-  const PREVIEW_COUNT = 5;
+  const PREVIEW_COUNT = 3;
 
   /** Enters reply mode, targeting the given comment, and cancels any active edit. */
   function initiateReply(comment: PostComment) {

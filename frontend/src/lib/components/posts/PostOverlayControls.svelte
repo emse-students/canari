@@ -96,7 +96,7 @@
   <div class="absolute top-3 right-3">
     {#if reportOpen}
       <div
-        class="flex flex-col gap-2 bg-white dark:bg-[#1a2236] border border-cn-border rounded-xl p-3 shadow-lg w-52 z-20"
+        class="flex flex-col gap-2 bg-white dark:bg-[#1a2236] border border-cn-border rounded-xl p-3 shadow-lg w-52 z-50"
         transition:slide={{ duration: 150 }}
       >
         <p class="text-[0.65rem] font-bold text-text-muted uppercase tracking-wide">
@@ -137,7 +137,7 @@
       <button
         type="button"
         onclick={() => onToggleReport(true)}
-        class="p-1.5 rounded-lg text-text-muted hover:text-red-500 hover:bg-red-500/10 transition-colors outline-none opacity-0 group-hover/card:opacity-100"
+        class="p-1.5 rounded-lg text-text-muted hover:text-red-500 hover:bg-red-500/10 transition-colors outline-none"
         aria-label="Signaler ce post"
       >
         <Flag size={14} strokeWidth={2.5} />
