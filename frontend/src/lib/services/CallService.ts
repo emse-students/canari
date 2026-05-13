@@ -1,5 +1,5 @@
 import { writable, get } from 'svelte/store';
-import type { IMlsService } from './IMlsService';
+import type { IMlsService } from '$lib/mls-client';
 import { canari } from '../proto/canari.js';
 import EncryptionWorker from '../workers/encryption.worker?worker';
 

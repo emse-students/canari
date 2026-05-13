@@ -99,9 +99,10 @@ export function useChatSession() {
   const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 16000, 30000];
   let reconnectAttempts = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Leader-tab periodic successor migration check (cleared on logout). */
+  let healthCheckInterval: ReturnType<typeof setInterval> | null = null;
   let isReconnecting = false;
   let isSyncing = false;
-  let healthCheckInterval: ReturnType<typeof setInterval> | null = null;
 
   // ── Backup ────────────────────────────────────────────────────────────────
   let isExporting = $state(false);

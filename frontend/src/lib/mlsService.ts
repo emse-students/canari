@@ -1,5 +1,5 @@
-export type { IMlsService } from './services/IMlsService';
-import type { IMlsService } from './services/IMlsService';
+export type { IMlsService } from '$lib/mls-client';
+import type { IMlsService } from '$lib/mls-client';
 import { TauriMlsService } from './services/TauriMlsService';
 import { WebMlsService } from './services/WebMlsService';
 

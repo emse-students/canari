@@ -14,7 +14,7 @@
     X,
   } from 'lucide-svelte';
   import Modal from '../shared/Modal.svelte';
-  import type { IMlsService } from '$lib/services/IMlsService';
+  import type { IMlsService } from '$lib/mls-client';
 
   interface DeviceMembership {
     id: string;

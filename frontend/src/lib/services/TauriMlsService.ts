@@ -2,15 +2,18 @@ import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import { fetch } from '@tauri-apps/plugin-http';
 import NativeWebSocket, { type Message as WsMessage } from '@tauri-apps/plugin-websocket';
-import type { IMlsService } from './IMlsService';
-import { getToken } from '$lib/stores/auth';
+import type { IMlsService, GroupMeta, UserGroupRow } from '$lib/mls-client';
 import {
   shouldAckAfterSuccess,
   shouldAckAfterTauriGenericException,
   shouldAckGroupResetControl,
-} from './mlsQueueAckPolicy';
-import { logMlsMetric } from './mlsRecoveryMetrics';
-import { commitBaseEpochForValidation } from './mlsDesyncPrevention';
+  logMlsMetric,
+  commitBaseEpochForValidation,
+  resolveMlsPublicUrls,
+  MlsDeliveryApi,
+  detectRuntimeDeviceOs,
+} from '$lib/mls-client';
+import { getToken } from '$lib/stores/auth';
 
 /** Message pending in the processing queue */
 interface QueuedMessage {
@@ -34,24 +37,6 @@ interface QueuedMessage {
 // Note: We use a dynamic import or checks to prevent this from crashing in pure web if invoked eagerly
 
 export class TauriMlsService implements IMlsService {
-  private ws: NativeWebSocket | null = null;
-  private wsUnlisten: (() => void) | null = null;
-
-  /** Throws a descriptive error if the HTTP response status is not 2xx, including up to 300 chars of body. */
-  private async assertOkResponse(response: Response, context: string): Promise<void> {
-    if (response.ok) return;
-    let bodyPreview = '';
-    try {
-      bodyPreview = (await response.text()).slice(0, 300);
-    } catch {
-      // Silent fallback if response body cannot be read
-    }
-    const details = bodyPreview ? ` - ${bodyPreview}` : '';
-    throw new Error(
-      `Impossible d'envoyer l'invitation sécurisée (${context}). ` +
-        `Le serveur a répondu ${response.status} ${response.statusText}${details}`
-    );
-  }
   public onChannelEvent?: (event: { type: string; data: any }) => void;
   private messageCallback:
     | ((
@@ -74,6 +59,10 @@ export class TauriMlsService implements IMlsService {
   private historyUrl: string;
   private userId: string = 'unknown';
   private deviceId: string;
+  /** Shared chat-delivery REST client (`/api/mls/*`); uses Tauri `plugin-http` fetch. */
+  private readonly delivery: MlsDeliveryApi;
+  private ws: Awaited<ReturnType<typeof NativeWebSocket.connect>> | null = null;
+  private wsUnlisten: (() => void) | null = null;
   /** Cache of locally known MLS group IDs, populated after init and updated on group changes. */
   private _knownGroups: Set<string> = new Set();
   /** Last known MLS epoch per group (native); keeps sync `getEpoch()` meaningful on Tauri. */
@@ -108,43 +97,15 @@ export class TauriMlsService implements IMlsService {
     // Device ID is initialized per-user in init() — see WebMlsService for rationale.
     this.deviceId = 'pending';
 
-    const envGateway = import.meta.env.VITE_GATEWAY_URL;
-    this.baseUrl =
-      envGateway && envGateway.trim()
-        ? envGateway
-        : typeof window !== 'undefined'
-          ? window.location.origin
-          : 'http://localhost:3000';
-
-    const envHistory = import.meta.env.VITE_DELIVERY_URL;
-    this.historyUrl =
-      envHistory && envHistory.trim()
-        ? envHistory
-        : typeof window !== 'undefined'
-          ? window.location.origin
-          : 'http://localhost:3010';
-  }
-
-  /** Resolves the current Bearer token and returns a headers object ready for fetch calls. */
-  private async withAuthHeaders(
-    extra: Record<string, string> = {}
-  ): Promise<Record<string, string>> {
-    const token = await getToken();
-    return { Authorization: `Bearer ${token}`, ...extra };
-  }
-
-  /**
-   * Fire-and-forget POST to the delivery service.
-   * `keepalive: true` lets the request complete even when the page is being
-   * unloaded, so ack/signal calls are never dropped.
-   */
-  private async deliveryPost(path: string, body: Record<string, unknown>): Promise<void> {
-    await fetch(`${this.historyUrl}/api/mls/${path}`, {
-      method: 'POST',
-      headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify(body),
-      keepalive: true,
-    }).catch((e) => console.warn(`[HTTP] ${path} failed:`, e));
+    const urls = resolveMlsPublicUrls();
+    this.baseUrl = urls.baseUrl;
+    this.historyUrl = urls.historyUrl;
+    this.delivery = new MlsDeliveryApi({
+      historyUrl: this.historyUrl,
+      getToken,
+      getEpoch: (groupId) => this.getEpoch(groupId),
+      fetchImpl: fetch,
+    });
   }
 
   /** Refresh cached epoch from native MLS (best-effort). */
@@ -334,22 +295,19 @@ export class TauriMlsService implements IMlsService {
     try {
       const ctrl2 = new AbortController();
       const tid2 = setTimeout(() => ctrl2.abort(), FETCH_TIMEOUT);
-      const res = await fetch(
-        `${this.historyUrl}/api/mls/messages/${this.userId}/${this.deviceId}`,
-        { headers: await this.withAuthHeaders(), signal: ctrl2.signal }
-      );
+      const messages = await this.delivery.pullPendingMessagesJson(ctrl2.signal);
       clearTimeout(tid2);
-      if (res.ok) {
-        const messages = await res.json();
-        if (Array.isArray(messages) && messages.length > 0) {
+      if (Array.isArray(messages)) {
+        if (messages.length > 0) {
           console.log(`Fetched ${messages.length} pending messages`);
 
           // Route all pending messages through the serialized queue so they
           // never race with live WebSocket messages calling messageCallback.
-          for (const msg of messages) {
+          for (const msg of messages as Record<string, unknown>[]) {
             const msgId = (msg.id || msg._id) as string | undefined;
-            const proto: string | undefined = msg.proto || undefined;
-            const content: string | undefined = msg.content || undefined;
+            const proto: string | undefined = typeof msg.proto === 'string' ? msg.proto : undefined;
+            const content: string | undefined =
+              typeof msg.content === 'string' ? msg.content : undefined;
 
             // ── Messages de contrôle (group_reset persisté pour devices offline) ──
             // Ces messages n'ont pas de payload MLS (proto vide). Ils sont injectés
@@ -415,7 +373,7 @@ export class TauriMlsService implements IMlsService {
         }
       } else {
         console.warn(
-          `[MSG][PENDING] Pending message fetch failed: ${res.status} ${res.statusText} (${this.userId}:${this.deviceId})`
+          `[MSG][PENDING] Pending message fetch failed or non-array (${this.userId}:${this.deviceId})`
         );
       }
     } catch (e) {
@@ -641,7 +599,7 @@ export class TauriMlsService implements IMlsService {
 
     if (ackIds.length > 0) {
       logMlsMetric({ kind: 'queue_ack', platform: 'tauri', count: ackIds.length });
-      void this.deliveryPost('messages/ack', {
+      void this.delivery.deliveryPost('messages/ack', {
         userId: this.userId,
         deviceId: this.deviceId,
         messageIds: ackIds,
@@ -662,7 +620,7 @@ export class TauriMlsService implements IMlsService {
 
   /** Tauri-native `invoke` wrapper — broadcasts a reinvite_request signal to online group members via the delivery service. */
   async sendReinviteRequest(groupId: string): Promise<void> {
-    await this.deliveryPost('reinvite-request', {
+    await this.delivery.deliveryPost('reinvite-request', {
       groupId,
       requesterUserId: this.userId,
       requesterDeviceId: this.deviceId,
@@ -675,7 +633,7 @@ export class TauriMlsService implements IMlsService {
 
   /** Tauri-native `invoke` wrapper — signals the delivery service that this device needs a Welcome for the given group. */
   async sendWelcomeRequest(groupId: string): Promise<void> {
-    await this.deliveryPost('welcome-request', {
+    await this.delivery.deliveryPost('welcome-request', {
       groupId,
       requesterUserId: this.userId,
       requesterDeviceId: this.deviceId,
@@ -712,88 +670,31 @@ export class TauriMlsService implements IMlsService {
       deviceAppVersion?: string;
     }>
   > {
-    try {
-      const res = await fetch(`${this.historyUrl}/api/mls/devices/${userId}`, {
-        headers: await this.withAuthHeaders(),
-      });
-      if (!res.ok) return [];
-      const devices = await res.json();
-
-      return devices.map((d: any) => {
-        const binaryString = atob(d.keyPackage);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
-        }
-        return {
-          keyPackage: bytes,
-          deviceId: d.deviceId,
-          deviceName: typeof d.deviceName === 'string' ? d.deviceName : undefined,
-          deviceOs: typeof d.deviceOs === 'string' ? d.deviceOs : undefined,
-          deviceAppVersion: typeof d.deviceAppVersion === 'string' ? d.deviceAppVersion : undefined,
-        };
-      });
-    } catch (e) {
-      console.error('Fetch User Devices Error:', e);
-      return [];
-    }
+    return this.delivery.fetchUserDevices(userId);
   }
 
   /** Registers a user as a server-side member of the given MLS group on the delivery service. */
   async registerMember(groupId: string, userId: string): Promise<void> {
-    try {
-      await fetch(`${this.historyUrl}/api/mls/groups/${groupId}/members`, {
-        method: 'POST',
-        headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ userId }),
-      });
-    } catch (e) {
-      console.error('Failed to register member', e);
-    }
+    return this.delivery.registerMember(groupId, userId);
   }
 
   /** Tauri-native `invoke` wrapper — publishes this device's static fallback KeyPackage to the delivery service, including device name/OS metadata. */
   async publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void> {
-    const base64 = btoa(String.fromCharCode(...keyPackageBytes));
+    const base64 = btoa(Array.from(keyPackageBytes, (b) => String.fromCharCode(b)).join(''));
     const storedName =
       localStorage.getItem(`device-name:${this.userId}:${this.deviceId}`) || undefined;
-    const deviceOs = this.detectRuntimeDeviceOs();
     const deviceAppVersion = await this.getRuntimeAppVersion();
-    const response = await fetch(`${this.historyUrl}/api/mls/register-device`, {
-      method: 'POST',
-      headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({
-        userId: this.userId,
-        deviceId: this.deviceId,
-        keyPackage: base64,
-        ...(storedName ? { deviceName: storedName } : {}),
-        deviceOs,
-        ...(deviceAppVersion ? { deviceAppVersion } : {}),
-      }),
+    await this.delivery.registerDeviceKeyPackage({
+      keyPackageBase64: base64,
+      deviceName: storedName,
+      deviceOs: detectRuntimeDeviceOs('desktop'),
+      ...(deviceAppVersion ? { deviceAppVersion } : {}),
     });
-
-    if (!response.ok) {
-      throw new Error(`Failed to publish KeyPackage: ${response.status} ${response.statusText}`);
-    }
   }
 
   /** Tauri-native `invoke` wrapper — bulk-uploads one-time prekey packages to replenish the server pool. */
   async publishKeyPackages(packages: Uint8Array[]): Promise<void> {
-    const keyPackages = packages.map((bytes) =>
-      btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(''))
-    );
-    const response = await fetch(`${this.historyUrl}/api/mls/register-device/prekeys`, {
-      method: 'POST',
-      headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({
-        userId: this.userId,
-        deviceId: this.deviceId,
-        keyPackages,
-      }),
-    });
-    if (!response.ok) {
-      throw new Error(`Failed to publish key packages: ${response.status} ${response.statusText}`);
-    }
+    return this.delivery.publishKeyPackages(packages);
   }
 
   /** Tauri-native `invoke` wrapper — PATCHes device label and/or OS metadata on the delivery service. */
@@ -807,28 +708,7 @@ export class TauriMlsService implements IMlsService {
     deviceOs: string | null;
     deviceAppVersion: string | null;
   }> {
-    const response = await fetch(
-      `${this.historyUrl}/api/mls/devices/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}/metadata`,
-      {
-        method: 'PATCH',
-        headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify(metadata),
-      }
-    );
-    if (!response.ok) {
-      throw new Error(`Failed to update device metadata: ${response.status}`);
-    }
-    return await response.json();
-  }
-
-  private detectRuntimeDeviceOs(): string {
-    const ua = navigator.userAgent.toLowerCase();
-    if (ua.includes('android')) return 'android';
-    if (ua.includes('iphone') || ua.includes('ipad')) return 'ios';
-    if (ua.includes('windows')) return 'windows';
-    if (ua.includes('mac os') || ua.includes('macintosh')) return 'macos';
-    if (ua.includes('linux')) return 'linux';
-    return 'desktop';
+    return this.delivery.updateDeviceMetadata(userId, deviceId, metadata);
   }
 
   private async getRuntimeAppVersion(): Promise<string | undefined> {
@@ -853,37 +733,13 @@ export class TauriMlsService implements IMlsService {
     targetDeviceId?: string,
     ratchetTreeBytes?: Uint8Array
   ): Promise<void> {
-    const base64 = btoa(String.fromCharCode(...welcomeBytes));
-    const ratchetTreeBase64 = ratchetTreeBytes
-      ? btoa(String.fromCharCode(...ratchetTreeBytes))
-      : undefined;
-
-    let resolvedDeviceId = targetDeviceId;
-    if (!resolvedDeviceId) {
-      const devices = await this.fetchUserDevices(targetUserId);
-      resolvedDeviceId = devices[0]?.deviceId;
-    }
-    if (!resolvedDeviceId) {
-      throw new Error(
-        `Impossible d'envoyer l'invitation sécurisée à ${targetUserId} : ` +
-          `aucun appareil actif trouvé.`
-      );
-    }
-    const response = await fetch(`${this.historyUrl}/api/mls/welcome`, {
-      method: 'POST',
-      headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({
-        targetDeviceId: resolvedDeviceId,
-        targetUserId,
-        senderUserId: this.userId,
-        welcomePayload: base64,
-        ratchetTreePayload: ratchetTreeBase64,
-        groupId,
-      }),
-    });
-    await this.assertOkResponse(
-      response,
-      `Welcome delivery to ${targetUserId}:${resolvedDeviceId} (group ${groupId})`
+    return this.delivery.sendWelcome(
+      welcomeBytes,
+      targetUserId,
+      groupId,
+      targetDeviceId,
+      ratchetTreeBytes,
+      { firstDeviceOnly: true }
     );
   }
 
@@ -897,6 +753,7 @@ export class TauriMlsService implements IMlsService {
   /** Implementation body for init(); resolves device ID from native push context or localStorage, calls `initialiser_mls`, and seeds the known-groups cache. */
   private async _initImpl(userId: string, pin: string, state?: Uint8Array) {
     this.userId = userId;
+    this.delivery.userId = userId;
     this._pin = pin;
     this.freshStart = !state;
 
@@ -930,6 +787,8 @@ export class TauriMlsService implements IMlsService {
       localStorage.setItem(deviceKey, this.deviceId);
     }
 
+    this.delivery.deviceId = this.deviceId;
+
     const encryptedState = state ? Array.from(state) : null;
     try {
       await invoke('initialiser_mls', { userId, deviceId: this.deviceId, pin, encryptedState });
@@ -948,6 +807,7 @@ export class TauriMlsService implements IMlsService {
           '-' +
           Math.random().toString(36).slice(2, 6);
         localStorage.setItem(deviceKey, this.deviceId);
+        this.delivery.deviceId = this.deviceId;
         await invoke('initialiser_mls', {
           userId,
           deviceId: this.deviceId,
@@ -970,7 +830,7 @@ export class TauriMlsService implements IMlsService {
     // Le pushToken est inclus pour que le service Kotlin puisse fetch le proto MLS
     // quand il n'est pas inclus inline dans le payload FCM (messages volumineux).
     void getToken()
-      .then((pushToken) =>
+      .then((pushToken: string) =>
         invoke('store_push_context', {
           pin,
           userId,
@@ -1012,24 +872,7 @@ export class TauriMlsService implements IMlsService {
 
   /** Tauri-native `invoke` wrapper — creates a group record on the delivery service and returns the server-assigned groupId. */
   async createRemoteGroup(name: string, isGroup: boolean = true): Promise<string> {
-    try {
-      const res = await fetch(`${this.historyUrl}/api/mls/groups`, {
-        method: 'POST',
-        headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({
-          name,
-          createdBy: this.userId,
-          isGroup,
-          creatorDeviceId: this.deviceId,
-        }),
-      });
-      if (!res.ok) throw new Error('Failed to create remote group');
-      const data = await res.json();
-      return data.groupId;
-    } catch (e) {
-      console.error('Failed to create remote group', e);
-      throw e;
-    }
+    return this.delivery.createRemoteGroup(name, isGroup);
   }
 
   /** Tauri-native `invoke` wrapper — validates the commit epoch via the delivery service then broadcasts the MLS commit to all group members. */
@@ -1038,77 +881,26 @@ export class TauriMlsService implements IMlsService {
     groupId: string,
     excludeDeviceIds?: string[]
   ): Promise<void> {
-    const proto = btoa(String.fromCharCode(...commitBytes));
+    const proto = btoa(Array.from(commitBytes, (b) => String.fromCharCode(b)).join(''));
     let baseEpoch = 0;
     try {
-      // Rust merges pending commit before returning bytes, so local epoch is already advanced.
-      // The backend validates against the pre-commit epoch.
       const currentEpoch = await invoke<number>('obtenir_epoch', { groupId });
       this._epochByGroupId.set(groupId, currentEpoch);
       baseEpoch = commitBaseEpochForValidation(currentEpoch);
     } catch {
       // If epoch retrieval fails, send 0 (server will validate)
     }
-
-    const validateRes = await fetch(`${this.historyUrl}/api/mls/commit`, {
-      method: 'POST',
-      headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ groupId, deviceId: this.deviceId, baseEpoch }),
-    });
-    if (!validateRes.ok) {
-      throw new Error(`Commit validation HTTP error: ${validateRes.status}`);
-    }
-    const validation = await validateRes.json();
-    if (!validation.accepted) {
-      throw new Error(
-        `Commit rejected: ${validation.reason || 'epoch_mismatch'} (server epoch: ${validation.currentEpoch}, sent: ${baseEpoch})`
-      );
-    }
-
-    const res = await fetch(`${this.historyUrl}/api/mls/send`, {
-      method: 'POST',
-      headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({
-        senderId: this.userId,
-        senderDeviceId: this.deviceId,
-        groupId,
-        proto,
-        isCommit: true,
-        ...(excludeDeviceIds?.length ? { excludeDeviceIds } : {}),
-      }),
-    });
-    if (!res.ok) {
-      throw new Error(`Commit delivery HTTP error: ${res.status}`);
-    }
+    await this.delivery.sendValidatedCommit(proto, groupId, baseEpoch, excludeDeviceIds);
   }
 
   /** Tauri-native `invoke` wrapper — requests the Redis add-lock from the delivery service; fails open (returns true) on network error to avoid deadlock. */
   async acquireAddLock(groupId: string, ttlMs = 10_000): Promise<boolean> {
-    try {
-      const res = await fetch(`${this.historyUrl}/api/mls/add-lock`, {
-        method: 'POST',
-        headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ groupId, deviceId: this.deviceId, ttlMs }),
-      });
-      if (!res.ok) return false;
-      const data = await res.json();
-      return data.acquired === true;
-    } catch {
-      return true; // fail-open
-    }
+    return this.delivery.acquireAddLock(groupId, ttlMs);
   }
 
   /** Tauri-native `invoke` wrapper — releases the Redis add-lock for the given group; errors are silently ignored. */
   async releaseAddLock(groupId: string): Promise<void> {
-    try {
-      await fetch(`${this.historyUrl}/api/mls/add-lock`, {
-        method: 'DELETE',
-        headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ groupId, deviceId: this.deviceId }),
-      });
-    } catch {
-      // Non-bloquant
-    }
+    return this.delivery.releaseAddLock(groupId);
   }
 
   /** Tauri-native `invoke` wrapper — calls `sauvegarder_mls` to encrypt and persist the MLS state to the native mls.bin file. */
@@ -1125,21 +917,6 @@ export class TauriMlsService implements IMlsService {
     return bytes;
   }
 
-  /** Returns the current one-time prekey pool size from the delivery service; returns 0 on error. */
-  private async fetchPrekeyCount(): Promise<number> {
-    try {
-      const res = await fetch(
-        `${this.historyUrl}/api/mls/devices/${this.userId}/${this.deviceId}/prekeys/count`,
-        { headers: await this.withAuthHeaders() }
-      );
-      if (!res.ok) return 0;
-      const data = await res.json();
-      return typeof data.count === 'number' ? data.count : 0;
-    } catch {
-      return 0;
-    }
-  }
-
   /** Tauri-native `invoke` wrapper — calls `generer_key_package`, replenishes the OTKP pool to 50, saves state, then publishes to the delivery service. */
   async generateKeyPackage(pin: string) {
     // Always generate a fresh static fallback KP for this device.
@@ -1151,16 +928,13 @@ export class TauriMlsService implements IMlsService {
     // devices don't consume stale prekeys that would cause NoMatchingKeyPackage.
     if (this.freshStart) {
       this.freshStart = false;
-      await fetch(
-        `${this.historyUrl}/api/mls/devices/${encodeURIComponent(this.userId)}/${encodeURIComponent(this.deviceId)}/prekeys`,
-        { method: 'DELETE', headers: await this.withAuthHeaders() }
-      ).catch(() => {});
+      await this.delivery.deleteAllOneTimePrekeys();
     }
 
     // Replenish the one-time prekey pool up to 50 on each connection.
     // 50 matches WebMlsService and avoids bloating the Rust state with hundreds
     // of unused private key bundles (each ~400 bytes encrypted in mls.bin).
-    const existing = await this.fetchPrekeyCount();
+    const existing = await this.delivery.fetchPrekeyCount();
     const needed = Math.max(0, 50 - existing);
 
     let poolPackages: Uint8Array[] = [];
@@ -1243,20 +1017,8 @@ export class TauriMlsService implements IMlsService {
       messageBytes: Array.from(messageBytes),
     });
     const encryptedBytes = Uint8Array.from(res);
-    const proto = btoa(String.fromCharCode(...encryptedBytes));
-    const httpRes = await fetch(`${this.historyUrl}/api/mls/send`, {
-      method: 'POST',
-      headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({
-        senderId: this.userId,
-        senderDeviceId: this.deviceId,
-        groupId,
-        proto,
-      }),
-    });
-    if (!httpRes.ok) {
-      throw new Error(`Message send HTTP error: ${httpRes.status}`);
-    }
+    const proto = btoa(Array.from(encryptedBytes, (b) => String.fromCharCode(b)).join(''));
+    await this.delivery.postApplicationMessage(groupId, proto);
     return encryptedBytes;
   }
 
@@ -1293,26 +1055,7 @@ export class TauriMlsService implements IMlsService {
     groupId: string,
     afterStreamId?: string
   ): Promise<{ id?: string; sender_id: string; content: string; timestamp: string }[]> {
-    try {
-      const url = new URL(`${this.historyUrl}/api/mls/history/${groupId}`);
-      if (afterStreamId) url.searchParams.set('after', afterStreamId);
-      const res = await fetch(url.toString(), {
-        headers: await this.withAuthHeaders(),
-      });
-      if (!res.ok) return [];
-      const contentType = res.headers.get('content-type') ?? '';
-      if (!contentType.toLowerCase().includes('application/json')) {
-        console.warn(
-          `[History] Non-JSON response for group ${groupId}. Received content-type: ${contentType || 'unknown'}`
-        );
-        return [];
-      }
-      const messages = await res.json();
-      return messages;
-    } catch (e) {
-      console.error('Fetch History Error:', e);
-      return [];
-    }
+    return this.delivery.fetchHistory(groupId, afterStreamId);
   }
 
   /** Returns the list of MLS group IDs known locally, populated from Rust via `lister_groupes` at init time. */
@@ -1335,30 +1078,17 @@ export class TauriMlsService implements IMlsService {
 
   /** Tauri-native `invoke` wrapper — PATCHes the group name on the delivery service. */
   async renameGroup(groupId: string, name: string): Promise<void> {
-    const res = await fetch(`${this.historyUrl}/api/mls/groups/${groupId}`, {
-      method: 'PATCH',
-      headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ name }),
-    });
-    if (!res.ok) throw new Error(`Rename failed: ${res.status}`);
+    return this.delivery.renameGroup(groupId, name);
   }
 
   /** Tauri-native `invoke` wrapper — DELETEs the group record from the delivery service. */
   async deleteGroupOnServer(groupId: string): Promise<void> {
-    const res = await fetch(`${this.historyUrl}/api/mls/groups/${groupId}`, {
-      method: 'DELETE',
-      headers: await this.withAuthHeaders(),
-    });
-    if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+    return this.delivery.deleteGroupOnServer(groupId);
   }
 
   /** Tauri-native `invoke` wrapper — removes a user's server-side membership from the group on the delivery service. */
   async removeMemberFromServer(groupId: string, userId: string): Promise<void> {
-    const res = await fetch(`${this.historyUrl}/api/mls/groups/${groupId}/members/${userId}`, {
-      method: 'DELETE',
-      headers: await this.withAuthHeaders(),
-    });
-    if (!res.ok) throw new Error(`Remove member failed: ${res.status}`);
+    return this.delivery.removeMemberFromServer(groupId, userId);
   }
 
   /** Tauri-native `invoke` wrapper — calls `retirer_membres` to generate a remove commit for all devices of the given users, then broadcasts it. */
@@ -1381,80 +1111,25 @@ export class TauriMlsService implements IMlsService {
 
   /** Tauri-native `invoke` wrapper — fetches the server-side member list for a group from the delivery service. */
   async getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]> {
-    try {
-      const res = await fetch(`${this.historyUrl}/api/mls/groups/${groupId}/members`, {
-        headers: await this.withAuthHeaders(),
-      });
-      if (!res.ok) return [];
-      return await res.json();
-    } catch {
-      return [];
-    }
+    return this.delivery.getGroupMembers(groupId);
   }
 
   /** Tauri-native `invoke` wrapper — fetches all groups the given user belongs to from the delivery service. */
-  async getUserGroups(userId: string): Promise<
-    {
-      groupId: string;
-      name: string;
-      isGroup: boolean;
-      successorId?: string | null;
-      deletedAt?: string | null;
-    }[]
-  > {
-    try {
-      const res = await fetch(`${this.historyUrl}/api/mls/users/${userId}/groups`, {
-        headers: await this.withAuthHeaders(),
-      });
-      if (!res.ok) return [];
-      return await res.json();
-    } catch {
-      return [];
-    }
+  async getUserGroups(userId: string): Promise<UserGroupRow[]> {
+    return this.delivery.getUserGroups(userId);
   }
 
-  /** Tauri-native `invoke` wrapper — fetches full metadata for a single group including successorId and deletedAt. */
-  async getGroupMeta(groupId: string): Promise<{
-    groupId: string;
-    name?: string;
-    isGroup: boolean;
-    activeEpoch: number;
-    successorId?: string | null;
-    deletedAt?: string | null;
-  } | null> {
-    try {
-      const res = await fetch(`${this.historyUrl}/api/mls/groups/${groupId}`, {
-        headers: await this.withAuthHeaders(),
-      });
-      if (!res.ok) return null;
-      return await res.json();
-    } catch {
-      return null;
-    }
+  /** Tauri-native wrapper — fetches server-side group metadata (successor routing). */
+  async getGroupMeta(groupId: string): Promise<GroupMeta | null> {
+    return this.delivery.getGroupMeta(groupId);
   }
 
-  /** Tauri-native `invoke` wrapper — atomically claims a successor for a dead group (first-writer-wins).
-   *  Returns claimed=false with the real successorId if another device already claimed it. */
+  /** Tauri-native wrapper — CAS claim for dead-group successor. */
   async claimGroupSuccessor(
     deadGroupId: string,
     successorId: string
   ): Promise<{ claimed: boolean; successorId: string | null }> {
-    try {
-      const res = await fetch(`${this.historyUrl}/api/mls/groups/${deadGroupId}/successor`, {
-        method: 'POST',
-        headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ successorId }),
-      });
-      if (res.status === 409) {
-        const body = await res.json();
-        return { claimed: false, successorId: body.successorId ?? null };
-      }
-      if (!res.ok) throw new Error(`claimGroupSuccessor HTTP ${res.status}`);
-      const body = await res.json();
-      return { claimed: true, successorId: body.successorId };
-    } catch {
-      return { claimed: false, successorId: null };
-    }
+    return this.delivery.claimGroupSuccessor(deadGroupId, successorId);
   }
 
   /** Tauri-native `invoke` wrapper — retrieves pending device-group invitations for this device from the delivery service. */
@@ -1464,16 +1139,7 @@ export class TauriMlsService implements IMlsService {
   ): Promise<
     Array<{ id: string; userId: string; deviceId: string; groupId: string; status: string }>
   > {
-    try {
-      const res = await fetch(
-        `${this.historyUrl}/api/mls/invitations/pending/${userId}/${deviceId}`,
-        { headers: await this.withAuthHeaders() }
-      );
-      if (!res.ok) return [];
-      return await res.json();
-    } catch {
-      return [];
-    }
+    return this.delivery.getPendingInvitations(userId, deviceId);
   }
 
   /** Tauri-native `invoke` wrapper — retrieves all device-group membership records for this device from the delivery service. */
@@ -1490,16 +1156,7 @@ export class TauriMlsService implements IMlsService {
       lastEpochSeen: number;
     }>
   > {
-    try {
-      const res = await fetch(
-        `${this.historyUrl}/api/mls/device-memberships/${userId}/${deviceId}`,
-        { headers: await this.withAuthHeaders() }
-      );
-      if (!res.ok) return [];
-      return await res.json();
-    } catch {
-      return [];
-    }
+    return this.delivery.getDeviceMemberships(userId, deviceId);
   }
 
   /** Tauri-native `invoke` wrapper — POSTs an invitation status update (e.g. welcome_received) to the delivery service. */
@@ -1510,25 +1167,12 @@ export class TauriMlsService implements IMlsService {
     status: 'pending' | 'welcome_sent' | 'welcome_received' | 'stale',
     lastEpochSeen?: number
   ): Promise<void> {
-    try {
-      await fetch(`${this.historyUrl}/api/mls/invitations/status`, {
-        method: 'POST',
-        headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ deviceId, userId, groupId, status, lastEpochSeen }),
-      });
-    } catch (e) {
-      console.error('Failed to update invitation status', e);
-    }
+    return this.delivery.updateInvitationStatus(deviceId, userId, groupId, status, lastEpochSeen);
   }
 
   /** Tauri-native `invoke` wrapper — resets a device-group membership to pending after an MLS remove commit targeting that device. */
   async kickStaleDevice(deviceId: string, userId: string, groupId: string): Promise<void> {
-    const res = await fetch(`${this.historyUrl}/api/mls/kick-stale-device`, {
-      method: 'POST',
-      headers: await this.withAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ deviceId, userId, groupId }),
-    });
-    if (!res.ok) throw new Error(`kickStaleDevice failed: ${res.status}`);
+    return this.delivery.kickStaleDevice(deviceId, userId, groupId);
   }
 
   /** Tauri-native `invoke` wrapper — DELETEs a single device-group membership record from the delivery service. */
@@ -1537,17 +1181,7 @@ export class TauriMlsService implements IMlsService {
     deviceId: string,
     groupId: string
   ): Promise<{ status: string; affected: number }> {
-    try {
-      const res = await fetch(
-        `${this.historyUrl}/api/mls/device-memberships/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}/${encodeURIComponent(groupId)}`,
-        { method: 'DELETE', headers: await this.withAuthHeaders() }
-      );
-      if (!res.ok) return { status: 'error', affected: 0 };
-      return await res.json();
-    } catch (e) {
-      console.error('Failed to delete device membership', e);
-      return { status: 'error', affected: 0 };
-    }
+    return this.delivery.deleteDeviceMembership(userId, deviceId, groupId);
   }
 
   /** Tauri-native `invoke` wrapper — DELETEs all device-group membership records for a device from the delivery service. */
@@ -1555,17 +1189,7 @@ export class TauriMlsService implements IMlsService {
     userId: string,
     deviceId: string
   ): Promise<{ status: string; affected: number }> {
-    try {
-      const res = await fetch(
-        `${this.historyUrl}/api/mls/device-memberships/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}`,
-        { method: 'DELETE', headers: await this.withAuthHeaders() }
-      );
-      if (!res.ok) return { status: 'error', affected: 0 };
-      return await res.json();
-    } catch (e) {
-      console.error('Failed to delete all device memberships', e);
-      return { status: 'error', affected: 0 };
-    }
+    return this.delivery.deleteAllDeviceMemberships(userId, deviceId);
   }
 
   /** Tauri-native `invoke` wrapper — fully removes a device from the delivery service, cleaning up groups, KeyPackages, and push token. */
@@ -1578,27 +1202,6 @@ export class TauriMlsService implements IMlsService {
     keyPackagesDeleted: number;
     oneTimeKeyPackagesDeleted: number;
   }> {
-    try {
-      const res = await fetch(
-        `${this.historyUrl}/api/mls/devices/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}`,
-        { method: 'DELETE', headers: await this.withAuthHeaders() }
-      );
-      if (!res.ok)
-        return {
-          status: 'error',
-          groupsCleaned: 0,
-          keyPackagesDeleted: 0,
-          oneTimeKeyPackagesDeleted: 0,
-        };
-      return await res.json();
-    } catch (e) {
-      console.error('Failed to delete device', e);
-      return {
-        status: 'error',
-        groupsCleaned: 0,
-        keyPackagesDeleted: 0,
-        oneTimeKeyPackagesDeleted: 0,
-      };
-    }
+    return this.delivery.deleteDevice(userId, deviceId);
   }
 }
