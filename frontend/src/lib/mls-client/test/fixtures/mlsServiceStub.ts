@@ -1,0 +1,78 @@
+import { vi } from 'vitest';
+import type { IMlsService } from '../../IMlsService';
+
+/** Builds an `IMlsService` mock with sensible defaults; shallow-merge `overrides` (e.g. `processWelcome`). */
+export function createMlsServiceStub(
+  overrides: Partial<Record<string, unknown>> = {}
+): IMlsService {
+  const stub = {
+    init: vi.fn().mockResolvedValue(undefined),
+    createGroup: vi.fn().mockResolvedValue(undefined),
+    forceCreateGroup: vi.fn().mockResolvedValue(undefined),
+    createRemoteGroup: vi.fn().mockResolvedValue('group-uuid'),
+    saveState: vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3])),
+    generateKeyPackage: vi.fn().mockResolvedValue(new Uint8Array([9])),
+    addMember: vi.fn().mockResolvedValue({ commit: new Uint8Array([1]) }),
+    addMembersBulk: vi.fn().mockResolvedValue({
+      commit: new Uint8Array([1]),
+      addedDeviceIds: [],
+    }),
+    processWelcome: vi.fn().mockResolvedValue('gid'),
+    sendMessage: vi.fn().mockResolvedValue(new Uint8Array()),
+    processIncomingMessage: vi.fn().mockResolvedValue(null),
+    exportSecret: vi.fn().mockResolvedValue(new Uint8Array(32)),
+    connect: vi.fn().mockResolvedValue(undefined),
+    fetchUserDevices: vi.fn().mockResolvedValue([]),
+    publishKeyPackage: vi.fn().mockResolvedValue(undefined),
+    publishKeyPackages: vi.fn().mockResolvedValue(undefined),
+    sendWelcome: vi.fn().mockResolvedValue(undefined),
+    getEpoch: vi.fn().mockReturnValue(0),
+    sendCommit: vi.fn().mockResolvedValue(undefined),
+    registerMember: vi.fn().mockResolvedValue(undefined),
+    acquireAddLock: vi.fn().mockResolvedValue(true),
+    releaseAddLock: vi.fn().mockResolvedValue(undefined),
+    fetchHistory: vi.fn().mockResolvedValue([]),
+    getDeviceId: vi.fn().mockReturnValue('device-test'),
+    fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
+    getLocalGroups: vi.fn().mockReturnValue([]),
+    forgetGroup: vi.fn(),
+    renameGroup: vi.fn().mockResolvedValue(undefined),
+    deleteGroupOnServer: vi.fn().mockResolvedValue(undefined),
+    removeMemberFromServer: vi.fn().mockResolvedValue(undefined),
+    removeMember: vi.fn().mockResolvedValue(undefined),
+    removeMemberDevice: vi.fn().mockResolvedValue(undefined),
+    getGroupMembers: vi.fn().mockResolvedValue([]),
+    getUserGroups: vi.fn().mockResolvedValue([]),
+    getGroupMeta: vi.fn().mockResolvedValue(null),
+    claimGroupSuccessor: vi.fn().mockResolvedValue({ claimed: true, successorId: 'succ' }),
+    getPendingInvitations: vi.fn().mockResolvedValue([]),
+    getDeviceMemberships: vi.fn().mockResolvedValue([]),
+    updateInvitationStatus: vi.fn().mockResolvedValue(undefined),
+    kickStaleDevice: vi.fn().mockResolvedValue(undefined),
+    deleteDeviceMembership: vi.fn().mockResolvedValue({ status: 'ok', affected: 0 }),
+    deleteAllDeviceMemberships: vi.fn().mockResolvedValue({ status: 'ok', affected: 0 }),
+    deleteDevice: vi.fn().mockResolvedValue({
+      status: 'ok',
+      groupsCleaned: 0,
+      keyPackagesDeleted: 0,
+      oneTimeKeyPackagesDeleted: 0,
+    }),
+    updateDeviceMetadata: vi.fn().mockResolvedValue({
+      status: 'ok',
+      deviceName: null,
+      deviceOs: null,
+      deviceAppVersion: null,
+    }),
+    onMessage: vi.fn(),
+    onDisconnect: vi.fn(),
+    onWelcomeProcessed: vi.fn(),
+    sendReinviteRequest: vi.fn().mockResolvedValue(undefined),
+    onReinviteRequest: vi.fn(),
+    sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
+    onWelcomeRequest: vi.fn(),
+    sendDisconnect: vi.fn(),
+    onChannelEvent: undefined,
+    ...overrides,
+  };
+  return stub as unknown as IMlsService;
+}
