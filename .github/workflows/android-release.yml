@@ -170,30 +170,30 @@ jobs:
           grep -q '^VITE_AUTHENTIK_CLIENT_ID=.' .env
           echo "✅ Android frontend env prepared"
 
-      - name: Build Android APK
+      - name: Build Android AAB
         working-directory: frontend
-        run: bun tauri android build --apk
+        run: bun tauri android build
 
-      - name: Locate APK
-        id: apk
+      - name: Locate AAB
+        id: aab
         run: |
-          APK=$(find frontend/src-tauri/gen/android/app/build/outputs/apk/universal/release -name "*.apk" | head -1)
-          echo "path=$APK" >> "$GITHUB_OUTPUT"
-          echo "Found APK: $APK"
+          AAB=$(find frontend/src-tauri/gen/android/app/build/outputs/bundle -name "*.aab" | grep -i "universalRelease\|release" | head -1)
+          echo "path=$AAB" >> "$GITHUB_OUTPUT"
+          echo "Found AAB: $AAB"
 
-      - name: Upload APK Artifacts
+      - name: Upload AAB Artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: android-release-apk
-          path: ${{ steps.apk.outputs.path }}
+          name: android-release-aab
+          path: ${{ steps.aab.outputs.path }}
 
-      - name: Upload APK to Release
+      - name: Upload AAB to Release
         uses: softprops/action-gh-release@v3
         if: github.event_name == 'release'
         with:
           tag_name: ${{ github.ref_name }}
           fail_on_unmatched_files: true
-          files: ${{ steps.apk.outputs.path }}
+          files: ${{ steps.aab.outputs.path }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -202,6 +202,6 @@ jobs:
         with:
           serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
           packageName: fr.emse.canari
-          releaseFiles: ${{ steps.apk.outputs.path }}
+          releaseFiles: ${{ steps.aab.outputs.path }}
           track: internal
           status: completed
