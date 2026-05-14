@@ -26,7 +26,7 @@ android {
     }
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
-        manifestPlaceholders["debuggable"] = "true"
+        manifestPlaceholders["debuggable"] = "false"
         applicationId = "fr.emse.canari"
         minSdk = 28
         targetSdk = 36
@@ -52,6 +52,7 @@ android {
     buildTypes {
         getByName("debug") {
             manifestPlaceholders["usesCleartextTraffic"] = "true"
+            manifestPlaceholders["debuggable"] = "true"
             isDebuggable = true
             isJniDebuggable = true
             isMinifyEnabled = false

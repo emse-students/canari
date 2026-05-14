@@ -170,30 +170,39 @@ jobs:
           grep -q '^VITE_AUTHENTIK_CLIENT_ID=.' .env
           echo "✅ Android frontend env prepared"
 
-      - name: Build Android AAB
+      - name: Build Android AAB + APK
         working-directory: frontend
-        run: bun tauri android build
-
-      - name: Locate AAB
-        id: aab
         run: |
-          AAB=$(find frontend/src-tauri/gen/android/app/build/outputs/bundle -name "*.aab" | grep -i "universalRelease\|release" | head -1)
-          echo "path=$AAB" >> "$GITHUB_OUTPUT"
-          echo "Found AAB: $AAB"
+          bun tauri android build
+          bun tauri android build --apk
 
-      - name: Upload AAB Artifacts
+      - name: Locate build outputs
+        id: outputs
+        run: |
+          AAB=$(find frontend/src-tauri/gen/android/app/build/outputs/bundle -name "*.aab" | head -1)
+          APK=$(find frontend/src-tauri/gen/android/app/build/outputs/apk/universal/release -name "*.apk" | head -1)
+          echo "aab=$AAB" >> "$GITHUB_OUTPUT"
+          echo "apk=$APK" >> "$GITHUB_OUTPUT"
+          echo "AAB: $AAB"
+          echo "APK: $APK"
+
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: android-release-aab
-          path: ${{ steps.aab.outputs.path }}
+          name: android-release
+          path: |
+            ${{ steps.outputs.outputs.aab }}
+            ${{ steps.outputs.outputs.apk }}
 
-      - name: Upload AAB to Release
+      - name: Upload to Release
         uses: softprops/action-gh-release@v3
         if: github.event_name == 'release'
         with:
           tag_name: ${{ github.ref_name }}
           fail_on_unmatched_files: true
-          files: ${{ steps.aab.outputs.path }}
+          files: |
+            ${{ steps.outputs.outputs.aab }}
+            ${{ steps.outputs.outputs.apk }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -202,6 +211,6 @@ jobs:
         with:
           serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
           packageName: fr.emse.canari
-          releaseFiles: ${{ steps.aab.outputs.path }}
+          releaseFiles: ${{ steps.outputs.outputs.aab }}
           track: internal
           status: completed
