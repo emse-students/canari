@@ -163,18 +163,18 @@ jobs:
         working-directory: frontend
         run: bun tauri android build --apk
 
-      - name: Sign APK
+      - name: Locate APK
+        id: apk
         run: |
-          echo "Listing build outputs..."
-          find frontend/src-tauri/gen/android/app/build/outputs/apk -name "*.apk"
+          APK=$(find frontend/src-tauri/gen/android/app/build/outputs/apk/universal/release -name "*.apk" | head -1)
+          echo "path=$APK" >> "$GITHUB_OUTPUT"
+          echo "Found APK: $APK"
 
       - name: Upload APK Artifacts
         uses: actions/upload-artifact@v7
         with:
           name: android-release-apk
-          path: |
-            frontend/src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk
-            frontend/src-tauri/gen/android/app/build/outputs/apk/*/release/*.apk
+          path: ${{ steps.apk.outputs.path }}
 
       - name: Upload APK to Release
         uses: softprops/action-gh-release@v3
@@ -182,6 +182,15 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           fail_on_unmatched_files: true
-          files: frontend/src-tauri/gen/android/app/build/outputs/apk/*/release/*.apk
+          files: ${{ steps.apk.outputs.path }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to Google Play (internal track)
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: fr.emse.canari
+          releaseFiles: ${{ steps.apk.outputs.path }}
+          track: internal
+          status: completed
