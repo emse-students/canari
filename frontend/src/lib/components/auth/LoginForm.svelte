@@ -118,6 +118,12 @@
       >
         Réinitialiser l'appareil
       </button>
+
+      <div class="flex justify-center gap-4 mt-4 text-xs text-text-muted">
+        <a href="/legal/privacy" class="hover:text-cn-yellow transition-colors">Confidentialité</a>
+        <span>·</span>
+        <a href="/legal/cgu" class="hover:text-cn-yellow transition-colors">CGU</a>
+      </div>
     </div>
   </div>
 </div>

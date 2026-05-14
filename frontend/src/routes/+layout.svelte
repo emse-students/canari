@@ -21,7 +21,7 @@
   const pathname = $derived(page.url.pathname);
   const activePlaceId = $derived(resolveActivePlaceId(pathname));
 
-  const isLoginPage = $derived(pathname === '/login');
+  const isLoginPage = $derived(pathname === '/login' || pathname.startsWith('/legal'));
 
   // Hide BottomNav and remove its padding from the composer when a conversation
   // is open on mobile (only relevant on the chat / communities routes).
