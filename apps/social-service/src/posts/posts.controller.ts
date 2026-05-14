@@ -17,6 +17,7 @@ import { PostsService } from './posts.service';
 import { PostInteractionsService } from './post-interactions.service';
 import { PostNotificationsService } from './post-notifications.service';
 import { AssociationsService } from '../associations/associations.service';
+import { FollowsService } from '../follows/follows.service';
 import {
   CreatePostDto,
   ListPostsQueryDto,
@@ -36,7 +37,8 @@ export class PostsController {
     private readonly service: PostsService,
     private readonly interactions: PostInteractionsService,
     private readonly notifications: PostNotificationsService,
-    private readonly associationsService: AssociationsService
+    private readonly associationsService: AssociationsService,
+    private readonly followsService: FollowsService
   ) {}
 
   /** Returns the health status of the post service. */
@@ -78,7 +80,11 @@ export class PostsController {
 
   /** Returns a paginated list of posts for the requested feed. */
   @Get()
-  listPosts(@Query() query: ListPostsQueryDto, @Headers('x-user-id') xUserId?: string) {
+  listPosts(
+    @Query() query: ListPostsQueryDto,
+    @Headers('x-user-id') xUserId?: string,
+    @Headers('x-global-admin') xGlobalAdmin?: string
+  ) {
     const feed = query.feed ?? 'all';
     if (feed === 'followed' && !xUserId) {
       throw new UnauthorizedException('Authentication required for followed feed');
@@ -88,9 +94,43 @@ export class PostsController {
       offset: query.offset ?? 0,
       feed,
       viewerUserId: xUserId,
+      isAdmin: xGlobalAdmin === 'true',
       promo: query.promo,
       formation: query.formation?.trim() || undefined,
     });
+  }
+
+  // ── User follows (under /api/posts/users/:userId/follow) ─────────────────
+
+  /** Follows a user. */
+  @UseGuards(NginxAuthGuard)
+  @HttpPost('users/:userId/follow')
+  followUser(
+    @Headers('x-user-id') xUserId: string,
+    @Param('userId') userId: string
+  ) {
+    if (userId === xUserId) throw new BadRequestException('Cannot follow yourself');
+    return this.followsService.followUser(xUserId, userId);
+  }
+
+  /** Unfollows a user. */
+  @UseGuards(NginxAuthGuard)
+  @Delete('users/:userId/follow')
+  unfollowUser(
+    @Headers('x-user-id') xUserId: string,
+    @Param('userId') userId: string
+  ) {
+    return this.followsService.unfollowUser(xUserId, userId);
+  }
+
+  /** Returns whether the calling user follows the given user. */
+  @UseGuards(NginxAuthGuard)
+  @Get('users/:userId/follow-status')
+  getUserFollowStatus(
+    @Headers('x-user-id') xUserId: string,
+    @Param('userId') userId: string
+  ) {
+    return this.followsService.isFollowingUser(xUserId, userId).then((following) => ({ following }));
   }
 
   /** Creates a new post on behalf of the calling user or a managed association. */

@@ -9,12 +9,12 @@
   import ConversationsMiniPanel from '$lib/components/posts/ConversationsMiniPanel.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
-  import Input from '$lib/components/ui/Input.svelte';
   import { getToken } from '$lib/stores/auth';
   import { currentUserId } from '$lib/stores/user';
   import { RefreshCw, PenSquare, Inbox, Search, X } from 'lucide-svelte';
+  import { SvelteMap } from 'svelte/reactivity';
 
-  const LAST_VISIT_KEY = 'posts_last_visit';
+  const LAST_SEEN_KEY = 'posts_last_seen_ts';
   const PAGE_SIZE = 10;
 
   let {
@@ -35,7 +35,45 @@
   let loadingMore = $state(false);
   let hasMore = $state(true);
   let errorMessage = $state('');
-  let lastVisitTs = $state(0);
+  let lastSeenTs = $state(0);
+  const elementPostTs = new SvelteMap<Element, number>();
+  let seenObserver: IntersectionObserver | null = null;
+
+  function getSeenObserver(): IntersectionObserver {
+    if (!seenObserver) {
+      seenObserver = new IntersectionObserver(
+        (entries) => {
+          let maxTs = lastSeenTs;
+          for (const entry of entries) {
+            if (entry.isIntersecting) {
+              const ts = elementPostTs.get(entry.target);
+              if (ts !== undefined && ts > maxTs) maxTs = ts;
+            }
+          }
+          if (maxTs > lastSeenTs) {
+            lastSeenTs = maxTs;
+            localStorage.setItem(LAST_SEEN_KEY, String(maxTs));
+          }
+        },
+        { threshold: 0.3 }
+      );
+    }
+    return seenObserver;
+  }
+
+  function markPostSeen(el: HTMLElement, post: PostEntity) {
+    elementPostTs.set(el, postPublishedAt(post));
+    getSeenObserver().observe(el);
+    return {
+      update(newPost: PostEntity) {
+        elementPostTs.set(el, postPublishedAt(newPost));
+      },
+      destroy() {
+        elementPostTs.delete(el);
+        seenObserver?.unobserve(el);
+      },
+    };
+  }
 
   let showCreateModal = $state(false);
 
@@ -80,13 +118,11 @@
     searchResults = null;
   }
 
-  let customPromo = $state('');
-  let customFormation = $state('');
 
   // Sentinel element for IntersectionObserver
   let sentinel = $state<HTMLElement | null>(null);
 
-  const activeFeed = $derived((page.url.searchParams.get('feed') || 'all') as PostFeed);
+  const activeFeed = $derived((page.url.searchParams.get('feed') || 'followed') as PostFeed);
 
   $effect(() => {
     void page.url.search;
@@ -94,12 +130,6 @@
     hasMore = true;
   });
 
-  $effect(() => {
-    const fp = data.feedParams;
-    if (fp.promo !== undefined) customPromo = String(fp.promo);
-    else customPromo = '';
-    customFormation = fp.formation ?? '';
-  });
 
   function buildListOptions(offset = 0) {
     const u = page.url.searchParams;
@@ -120,21 +150,8 @@
   function navigateFeed(feed: PostFeed) {
     const u = new URL(page.url);
     u.searchParams.set('feed', feed);
-    if (feed !== 'custom') {
-      u.searchParams.delete('promo');
-      u.searchParams.delete('formation');
-    }
-    void goto(u, { invalidateAll: true, noScroll: true });
-  }
-
-  function applyCustomFeed() {
-    const u = new URL(page.url);
-    u.searchParams.set('feed', 'custom');
-    const p = customPromo.trim();
-    if (p) u.searchParams.set('promo', p);
-    else u.searchParams.delete('promo');
-    if (customFormation.trim()) u.searchParams.set('formation', customFormation.trim());
-    else u.searchParams.delete('formation');
+    u.searchParams.delete('promo');
+    u.searchParams.delete('formation');
     void goto(u, { invalidateAll: true, noScroll: true });
   }
 
@@ -172,9 +189,13 @@
     void loadScheduled();
   }
 
+  function postPublishedAt(post: PostEntity): number {
+    return new Date(post.scheduledAt ?? post.createdAt).getTime();
+  }
+
   function isNew(post: PostEntity): boolean {
-    if (!lastVisitTs) return false;
-    return new Date(post.createdAt).getTime() > lastVisitTs;
+    if (!lastSeenTs) return false;
+    return postPublishedAt(post) > lastSeenTs;
   }
 
   // Set up IntersectionObserver on sentinel
@@ -203,10 +224,8 @@
       void loadScheduled();
     }
 
-    // Record last visit timestamp for "Nouveau" badge
-    const stored = localStorage.getItem(LAST_VISIT_KEY);
-    lastVisitTs = stored ? parseInt(stored, 10) : 0;
-    localStorage.setItem(LAST_VISIT_KEY, String(Date.now()));
+    const stored = localStorage.getItem(LAST_SEEN_KEY);
+    lastSeenTs = stored ? parseInt(stored, 10) : 0;
   });
 </script>
 
@@ -272,29 +291,7 @@
         >
           Suivis
         </button>
-        <button
-          type="button"
-          onclick={() => navigateFeed('custom')}
-          class="rounded-full px-3.5 py-1.5 text-sm font-medium border transition-colors {activeFeed === 'custom'
-            ? 'bg-amber-500/15 border-amber-500/40 text-text-main'
-            : 'border-cn-border text-text-muted hover:text-text-main'}"
-        >
-          Personnalisé
-        </button>
       </div>
-
-      {#if activeFeed === 'custom' && !searchQuery}
-        <div class="mb-5 rounded-2xl border border-cn-border bg-[var(--cn-surface)]/40 p-4 space-y-3">
-          <p class="text-xs text-text-muted">
-            Filtre les posts personnels par promotion ou formation (les posts des associations sont exclus).
-          </p>
-          <div class="flex flex-col sm:flex-row gap-3 sm:items-end">
-            <Input label="Promotion (année)" type="number" placeholder="ex. 2026" class="flex-1" bind:value={customPromo} />
-            <Input label="Formation" placeholder="ex. Ingénieur" class="flex-1" bind:value={customFormation} />
-            <Button type="button" onclick={applyCustomFeed} class="!shrink-0">Appliquer</Button>
-          </div>
-        </div>
-      {/if}
 
       {#if scheduledPosts.length > 0}
         <ScheduledPostsPanel posts={scheduledPosts} onDelete={deleteScheduled} />
@@ -365,18 +362,16 @@
                 <h3 class="text-lg font-bold text-text-main mb-1">Aucun post</h3>
                 {#if activeFeed === 'followed'}
                   <p class="text-text-muted text-sm">
-                    Suivez des associations pour voir leurs publications ici, ou passez sur
+                    Suivez des associations ou des personnes pour voir leurs publications ici, ou passez sur
                     <button type="button" class="underline font-medium" onclick={() => navigateFeed('all')}>Tout</button>.
                   </p>
-                {:else if activeFeed === 'custom'}
-                  <p class="text-text-muted text-sm">Aucun post personnel ne correspond à ces filtres.</p>
                 {:else}
                   <p class="text-text-muted text-sm">Soyez le premier à partager quelque chose !</p>
                 {/if}
               </div>
             {:else}
               {#each resolvedPosts as post (post.id)}
-                <div class="relative">
+                <div class="relative" use:markPostSeen={post}>
                   {#if isNew(post)}
                     <span class="absolute -top-2 left-4 z-10 text-[0.6rem] font-extrabold uppercase tracking-widest bg-amber-500 text-[#151B2C] px-2 py-0.5 rounded-full shadow-md shadow-amber-500/30">
                       Nouveau

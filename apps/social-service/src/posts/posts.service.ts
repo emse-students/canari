@@ -192,8 +192,11 @@ export class PostsService {
   /**
    * Returns paginated posts for one of three feeds:
    * - "all": every post, pinned first
-   * - "followed": posts from associations the viewer follows
+   * - "followed": posts from associations and users the viewer follows
    * - "custom": personal posts filtered by promo year and/or formation
+   *
+   * Non-admin viewers with a promo year set cannot see posts published before
+   * August 1st of their promo year.
    * Results are cached in Redis for 30 s. Future-scheduled posts are always excluded.
    */
   async listPosts(params: {
@@ -201,10 +204,11 @@ export class PostsService {
     offset: number;
     feed: 'all' | 'followed' | 'custom';
     viewerUserId?: string;
+    isAdmin?: boolean;
     promo?: number;
     formation?: string;
   }) {
-    const { feed, viewerUserId, promo, formation } = params;
+    const { feed, viewerUserId, isAdmin, promo, formation } = params;
     const limit = Number(params.limit);
     const offset = Number(params.offset);
     const cacheKey = this.listPostsCacheKey(feed, viewerUserId, promo, formation, limit, offset);
@@ -219,10 +223,37 @@ export class PostsService {
       // Redis miss or error — fall through to DB
     }
 
+    // Promo-based date gate: non-admin viewers cannot see posts published before
+    // August 1st of their promo year.
+    let promoCutoff: string | null = null;
+    if (!isAdmin && viewerUserId) {
+      try {
+        const rows: { promo: number | null }[] = await this.postRepo.manager.query(
+          `SELECT promo FROM users WHERE id = $1 LIMIT 1`,
+          [viewerUserId]
+        );
+        const viewerPromo = rows[0]?.promo ?? null;
+        if (viewerPromo != null) {
+          promoCutoff = `${viewerPromo}-08-01`;
+        }
+      } catch { /* non-fatal */ }
+    }
+
+    // SQL fragment added to every query when a promo cutoff applies.
+    // The parameter index is computed per-query below.
+    const promoSql = (idx: number) =>
+      promoCutoff
+        ? `AND COALESCE(posts."scheduledAt", posts."createdAt") >= $${idx}::timestamptz`
+        : '';
+
     let followedAssocIds: string[] | undefined;
+    let followedUserIds: string[] | undefined;
     if (feed === 'followed') {
-      followedAssocIds = await this.followsService.getFollowedAssociationIdsForUser(viewerUserId!);
-      if (followedAssocIds.length === 0) {
+      [followedAssocIds, followedUserIds] = await Promise.all([
+        this.followsService.getFollowedAssociationIdsForUser(viewerUserId!),
+        this.followsService.getFollowedUserIdsForUser(viewerUserId!),
+      ]);
+      if (followedAssocIds.length === 0 && followedUserIds.length === 0) {
         return [];
       }
     }
@@ -248,28 +279,35 @@ export class PostsService {
     const formationParam = formation === undefined || formation === '' ? null : formation;
 
     if (feed === 'all') {
+      // $1=limit, $2=offset, $3=promoCutoff (optional)
       rawPosts = await this.postRepo.manager.query(
         `SELECT ${selectBody}
        FROM posts
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
        WHERE (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
+         ${promoSql(3)}
        ORDER BY posts.pinned DESC, posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,
-        [limit, offset]
+        [limit, offset, ...(promoCutoff ? [promoCutoff] : [])]
       );
     } else if (feed === 'followed') {
+      // $1=limit, $2=offset, $3=followedAssocIds, $4=followedUserIds, $5=promoCutoff (optional)
       rawPosts = await this.postRepo.manager.query(
         `SELECT ${selectBody}
        FROM posts
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
-       WHERE posts."associationId" IS NOT NULL
-         AND posts."associationId" = ANY($3::uuid[])
+       WHERE (
+         (posts."associationId" IS NOT NULL AND posts."associationId" = ANY($3::uuid[]))
+         OR (posts."associationId" IS NULL AND posts."authorId" = ANY($4::text[]))
+       )
          AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
+         ${promoSql(5)}
        ORDER BY posts.pinned DESC, posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,
-        [limit, offset, followedAssocIds]
+        [limit, offset, followedAssocIds, followedUserIds, ...(promoCutoff ? [promoCutoff] : [])]
       );
     } else {
+      // $1=limit, $2=offset, $3=promoParam, $4=formationParam, $5=promoCutoff (optional)
       rawPosts = await this.postRepo.manager.query(
         `SELECT ${selectBody}
        FROM posts
@@ -279,9 +317,10 @@ export class PostsService {
          AND ($3::integer IS NULL OR u.promo = $3::integer)
          AND ($4::text IS NULL OR u.formation ILIKE ('%' || $4::text || '%'))
          AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
+         ${promoSql(5)}
        ORDER BY posts.pinned DESC, posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,
-        [limit, offset, promoParam, formationParam]
+        [limit, offset, promoParam, formationParam, ...(promoCutoff ? [promoCutoff] : [])]
       );
     }
 

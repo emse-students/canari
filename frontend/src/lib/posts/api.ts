@@ -68,6 +68,8 @@ export interface PostComment {
   parentId?: string | null;
   likes: string[];
   createdAt: string;
+  /** Encrypted media attached to this comment (GIF, screenshot, etc.). */
+  media?: PostImageRef;
 }
 
 /** Display payload for posts published as an association (author identity hidden). */
@@ -278,7 +280,7 @@ export async function removeReaction(
 
 export async function addComment(
   postId: string,
-  payload: { text: string; parentId?: string }
+  payload: { text: string; parentId?: string; media?: PostImageRef }
 ): Promise<{ ok: boolean; comment: PostComment }> {
   return request(`/api/posts/${postId}/comments`, {
     method: 'POST',
@@ -343,4 +345,24 @@ export async function getPostNotifications(limit = 30): Promise<PostNotification
 
 export async function markPostNotificationsRead(): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>('/api/posts/notifications/read-all', { method: 'POST' });
+}
+
+// ── User follows ──────────────────────────────────────────────────────────────
+
+export async function followUser(userId: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/api/posts/users/${encodeURIComponent(userId)}/follow`, {
+    method: 'POST',
+  });
+}
+
+export async function unfollowUser(userId: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/api/posts/users/${encodeURIComponent(userId)}/follow`, {
+    method: 'DELETE',
+  });
+}
+
+export async function getUserFollowStatus(userId: string): Promise<{ following: boolean }> {
+  return request<{ following: boolean }>(
+    `/api/posts/users/${encodeURIComponent(userId)}/follow-status`
+  );
 }

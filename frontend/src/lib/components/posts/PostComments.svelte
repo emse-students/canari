@@ -1,7 +1,9 @@
 <script lang="ts">
-  import { ChevronDown, ChevronUp, Send, X, CornerDownRight, Pencil, Trash2, ArrowUpDown } from 'lucide-svelte';
-  import type { PostComment } from '$lib/posts/api';
+  import { ChevronDown, ChevronUp, Send, X, CornerDownRight, Pencil, Trash2, ArrowUpDown, ImageIcon } from 'lucide-svelte';
+  import type { PostComment, PostImageRef } from '$lib/posts/api';
   import Avatar from '$lib/components/shared/Avatar.svelte';
+  import PostImage from './PostImage.svelte';
+  import { MediaService, compressImage } from '$lib/media';
   import { apiFetch } from '$lib/utils/apiFetch';
   import { coreUrl } from '$lib/utils/apiUrl';
   import { timeAgo, exactDate } from '$lib/utils/time';
@@ -28,14 +30,16 @@
     onToggleComments: () => void;
     /** Called on each keystroke to sync the comment input value to the parent's state. */
     onCommentTextChange: (text: string) => Promise<void>;
-    /** Called when the user submits a comment (or reply if parentId is provided). */
-    onAddComment: (parentId?: string) => Promise<void>;
+    /** Called when the user submits a comment (or reply if parentId is provided). media is an optional encrypted GIF/image. */
+    onAddComment: (parentId?: string, media?: PostImageRef) => Promise<void>;
     /** Called when the user toggles a like on a comment. */
     onLikeComment: (commentId: string) => void;
     /** Called when the user saves an inline edit. */
     onEditComment: (commentId: string, text: string) => Promise<void>;
     /** Called when the user deletes a comment. */
     onDeleteComment: (commentId: string) => Promise<void>;
+    /** Bearer token forwarded to PostImage for decrypting comment media. */
+    authToken?: string;
     /** If provided, a "Load all comments" button is shown when totalCommentCount >= 20. */
     onLoadAllComments?: () => Promise<void>;
     /** Optional external keydown handler forwarded after internal shortcuts are processed. */
@@ -49,6 +53,7 @@
     commentText,
     submittingComment,
     currentUserId,
+    authToken = '',
     totalCommentCount,
     onToggleComments,
     onCommentTextChange,
@@ -59,6 +64,38 @@
     onLoadAllComments,
     onKeyDown,
   }: Props = $props();
+
+  const mediaService = new MediaService();
+  let pendingMedia = $state<PostImageRef | null>(null);
+  let pendingPreviewUrl = $state<string | null>(null);
+  let uploadingMedia = $state(false);
+
+  function clearPendingMedia() {
+    if (pendingPreviewUrl) { URL.revokeObjectURL(pendingPreviewUrl); }
+    pendingMedia = null;
+    pendingPreviewUrl = null;
+  }
+
+  async function handleCommentPaste(e: ClipboardEvent) {
+    const items = Array.from(e.clipboardData?.items ?? []);
+    const imageItem = items.find((item) => item.kind === 'file' && item.type.startsWith('image/'));
+    if (!imageItem) return;
+    e.preventDefault();
+    const file = imageItem.getAsFile();
+    if (!file || !authToken) return;
+    uploadingMedia = true;
+    try {
+      const compressed = await compressImage(file, 800, 800, 0.80);
+      const ref = await mediaService.encryptAndUpload(compressed, authToken);
+      const { type: _type, ...mediaFields } = ref;
+      pendingMedia = mediaFields as PostImageRef;
+      pendingPreviewUrl = URL.createObjectURL(file);
+    } catch (err) {
+      console.error('Failed to upload comment media', err);
+    } finally {
+      uploadingMedia = false;
+    }
+  }
 
   type MentionUser = { id: string; displayName: string | null };
 
@@ -170,10 +207,12 @@
     cancelEdit();
   }
 
-  /** Submits the comment text as a new comment or reply, then cancels reply mode. */
+  /** Submits the comment (text and/or media) as a new comment or reply, then cancels reply mode. */
   async function handleSubmitComment() {
-    if (!commentText.trim() || submittingComment) return;
-    await onAddComment(replyingToId ?? undefined);
+    if ((!commentText.trim() && !pendingMedia) || submittingComment || uploadingMedia) return;
+    const media = pendingMedia ?? undefined;
+    clearPendingMedia();
+    await onAddComment(replyingToId ?? undefined, media);
     cancelReply();
   }
 
@@ -271,7 +310,12 @@
               </span>
             {/if}
           {/if}
-          <span class="text-[0.9rem] text-text-main leading-snug break-words">{comment.text}</span>
+          {#if comment.text}<span class="text-[0.9rem] text-text-main leading-snug break-words">{comment.text}</span>{/if}
+          {#if comment.media && authToken}
+            <div class="relative mt-1.5 rounded-xl overflow-hidden bg-black/5 dark:bg-white/5" style="width: 200px; height: 140px;">
+              <PostImage media={comment.media} {authToken} />
+            </div>
+          {/if}
         </div>
       {/if}
 
@@ -437,6 +481,32 @@
         {/each}
       </ul>
     {/if}
+    {#if pendingPreviewUrl || uploadingMedia}
+      <div class="flex items-center gap-2 mb-2 ml-[2.125rem]">
+        <div class="relative w-20 h-14 rounded-lg overflow-hidden bg-black/10 dark:bg-white/10 flex-shrink-0">
+          {#if pendingPreviewUrl}
+            <img src={pendingPreviewUrl} alt="GIF" class="w-full h-full object-cover" />
+          {:else}
+            <div class="w-full h-full flex items-center justify-center">
+              <ImageIcon size={20} class="opacity-30 animate-pulse" />
+            </div>
+          {/if}
+          {#if !uploadingMedia}
+            <button
+              type="button"
+              onclick={clearPendingMedia}
+              class="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-red-500 transition-colors"
+              aria-label="Supprimer l'image"
+            >
+              <X size={10} strokeWidth={3} />
+            </button>
+          {/if}
+        </div>
+        {#if uploadingMedia}
+          <span class="text-[0.7rem] text-text-muted animate-pulse">Chargement…</span>
+        {/if}
+      </div>
+    {/if}
     <div class="flex items-center gap-2.5">
       <div class="shrink-0"><Avatar userId={currentUserId} size="sm" /></div>
       <div class="flex-1 flex items-center bg-black/5 dark:bg-white/5 rounded-[1.25rem] px-3.5 py-1.5 border border-black/5 dark:border-white/10 focus-within:ring-2 focus-within:ring-amber-500/50 focus-within:bg-white dark:focus-within:bg-black/40 transition-all shadow-inner">
@@ -444,6 +514,7 @@
           type="text"
           value={commentText}
           oninput={handleCommentInput}
+          onpaste={handleCommentPaste}
           {placeholder}
           class="flex-1 bg-transparent text-[0.9rem] font-medium text-text-main placeholder:text-text-muted/70 outline-none py-1"
           onkeydown={handleInternalKeyDown}
@@ -451,7 +522,7 @@
         <button
           type="button"
           onclick={handleSubmitComment}
-          disabled={!commentText.trim() || submittingComment}
+          disabled={(!commentText.trim() && !pendingMedia) || submittingComment || uploadingMedia}
           class="shrink-0 p-1.5 ml-1 rounded-full text-amber-500 hover:bg-amber-500/10 hover:text-amber-600 disabled:opacity-40 disabled:hover:bg-transparent transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95"
           aria-label="Envoyer le commentaire"
         >

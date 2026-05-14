@@ -82,6 +82,11 @@ android {
             jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
         }
     }
+    sourceSets {
+        getByName("main") {
+            assets.srcDirs("src/main/assets", "extra-assets")
+        }
+    }
     buildFeatures {
         buildConfig = true
     }

@@ -1,13 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import {
-    associationLogoSrc,
     listAssociations,
     listMyAssociations,
     type Association,
   } from '$lib/associations/api';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
-  import { Users } from 'lucide-svelte';
+  import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
 
   let associations = $state<Association[]>([]);
   let myAssociations = $state<Association[]>([]);
@@ -79,19 +78,7 @@
               class="rounded-2xl border border-cn-border bg-white/80 p-5 hover:shadow-md transition-shadow block"
             >
               <div class="flex items-start gap-3">
-                {#if associationLogoSrc(asso.logoUrl)}
-                  <img
-                    src={associationLogoSrc(asso.logoUrl)}
-                    alt={asso.name}
-                    class="h-10 w-10 rounded-xl object-cover flex-shrink-0"
-                  />
-                {:else}
-                  <div
-                    class="flex h-10 w-10 items-center justify-center rounded-xl bg-cn-yellow/20 flex-shrink-0"
-                  >
-                    <Users size={18} class="text-cn-dark" />
-                  </div>
-                {/if}
+                <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="lg" />
                 <div class="min-w-0 flex-1">
                   <h3 class="font-bold text-text-main truncate">{asso.name}</h3>
                   {#if asso.role}
@@ -128,19 +115,7 @@
               class="rounded-2xl border border-cn-border bg-white/80 p-5 hover:shadow-md transition-shadow block"
             >
               <div class="flex items-start gap-3">
-                {#if associationLogoSrc(asso.logoUrl)}
-                  <img
-                    src={associationLogoSrc(asso.logoUrl)}
-                    alt={asso.name}
-                    class="h-10 w-10 rounded-xl object-cover flex-shrink-0"
-                  />
-                {:else}
-                  <div
-                    class="flex h-10 w-10 items-center justify-center rounded-xl bg-cn-yellow/20 flex-shrink-0"
-                  >
-                    <Users size={18} class="text-cn-dark" />
-                  </div>
-                {/if}
+                <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="lg" />
                 <div class="min-w-0 flex-1">
                   <h3 class="font-bold text-text-main truncate">{asso.name}</h3>
                   {#if asso.description}

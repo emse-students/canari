@@ -13,6 +13,8 @@
     onToggleReactionPicker: () => void;
     /** Called when the user selects an emoji from the picker. */
     onReactionSelect: (reactionType: string) => void;
+    /** Total number of comments (top-level + replies). */
+    commentCount?: number;
     /** Called when the user clicks the Comment button to toggle the comment section. */
     onCommentClick: () => void;
   }
@@ -23,6 +25,7 @@
     reactionList,
     onToggleReactionPicker,
     onReactionSelect,
+    commentCount,
     onCommentClick,
   }: Props = $props();
 </script>
@@ -50,7 +53,7 @@
 
     {#if showReactionPicker}
       <div
-        class="absolute bottom-full left-0 mb-2 bg-[var(--cn-surface)] border border-cn-border rounded-2xl shadow-lg p-2 flex flex-wrap gap-1 z-50 max-w-[min(90vw,22rem)]"
+        class="absolute bottom-full left-0 mb-2 bg-[var(--cn-surface)] border border-cn-border rounded-2xl shadow-lg p-2 flex gap-1 z-50 overflow-x-auto max-w-[min(100vw-2rem,32rem)]"
       >
         {#each reactionList as reaction (reaction.type)}
           <button
@@ -77,6 +80,6 @@
     aria-label="Commenter"
   >
     <MessageCircle size={20} />
-    <span class="text-sm">Commenter</span>
+    <span class="text-sm">{commentCount ? commentCount : 'Commenter'}</span>
   </button>
 </div>

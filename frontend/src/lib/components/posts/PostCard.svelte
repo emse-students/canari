@@ -293,13 +293,14 @@
     }
   }
 
-  /** Posts a new comment (or reply if parentId is given) and appends it to the local comments array. */
-  async function handleAddComment(parentId?: string) {
+  /** Posts a new comment (or reply) and appends it to the local comments array. media is an optional encrypted GIF/image ref. */
+  async function handleAddComment(parentId?: string, media?: import('$lib/posts/api').PostImageRef) {
     const text = commentText.trim();
-    if (!text || !currentUserId.trim()) return;
+    if (!text && !media) return;
+    if (!currentUserId.trim()) return;
     submittingComment = true;
     try {
-      const result = await addComment(localPost.id, { text, parentId });
+      const result = await addComment(localPost.id, { text, parentId, media });
       localPost = { ...localPost, comments: [...(localPost.comments ?? []), result.comment] };
       commentText = '';
     } catch (err) {
@@ -475,6 +476,7 @@
     {userReaction}
     {showReactionPicker}
     reactionList={REACTIONS}
+    commentCount={comments.length || undefined}
     onToggleReactionPicker={() => (showReactionPicker = !showReactionPicker)}
     onReactionSelect={handleReaction}
     onCommentClick={() => (showComments = !showComments)}
@@ -511,6 +513,7 @@
     {commentText}
     {submittingComment}
     {currentUserId}
+    {authToken}
     onToggleComments={() => (showComments = !showComments)}
     onCommentTextChange={async (text) => {
       commentText = text;

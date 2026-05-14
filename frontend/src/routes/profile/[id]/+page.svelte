@@ -3,13 +3,16 @@
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { fetchUserProfile, type UserProfile, getSavedUserId } from '$lib/stores/user';
+  import { followUser, unfollowUser, getUserFollowStatus } from '$lib/posts/api';
   import Avatar from '$lib/components/shared/Avatar.svelte';
-  import { GraduationCap, CalendarDays, Loader2, AlertCircle, MessageCircle } from 'lucide-svelte';
+  import { GraduationCap, CalendarDays, Loader2, AlertCircle, MessageCircle, UserPlus, UserCheck } from 'lucide-svelte';
   import { slide, fade } from 'svelte/transition';
 
   let profile = $state<UserProfile | null>(null);
   let loading = $state(true);
   let error = $state('');
+  let following = $state(false);
+  let followLoading = $state(false);
 
   onMount(async () => {
     const userId = page.params.id;
@@ -27,7 +30,12 @@
     }
 
     try {
-      profile = await fetchUserProfile(userId);
+      const [prof, status] = await Promise.all([
+        fetchUserProfile(userId),
+        getUserFollowStatus(userId).catch(() => ({ following: false })),
+      ]);
+      profile = prof;
+      following = status.following;
     } catch (err) {
       error = err instanceof Error ? err.message : 'Impossible de charger ce profil';
     } finally {
@@ -40,7 +48,6 @@
     return `Promotion ${year}`;
   }
 
-  // Utilitaire pour afficher un nom par défaut élégant si displayName est vide
   const displayFallbackName = $derived.by(() => {
     if (profile?.displayName) return profile.displayName;
     if (profile?.email) {
@@ -50,11 +57,26 @@
     return 'Membre Canari';
   });
 
-  // Action rapide pour démarrer une conversation
   function handleSendMessage() {
     if (profile?.id) {
       sessionStorage.setItem('canari_pending_contact', profile.id);
       goto('/chat');
+    }
+  }
+
+  async function handleFollowToggle() {
+    if (!profile?.id || followLoading) return;
+    followLoading = true;
+    try {
+      if (following) {
+        await unfollowUser(profile.id);
+        following = false;
+      } else {
+        await followUser(profile.id);
+        following = true;
+      }
+    } catch { /* silent */ } finally {
+      followLoading = false;
     }
   }
 </script>
@@ -101,13 +123,27 @@
         {/if}
       </div>
 
-      <!-- Call to action (CTA) pour contacter l'utilisateur -->
-      <div class="shrink-0 mt-2 sm:mt-0">
+      <!-- Actions -->
+      <div class="shrink-0 mt-2 sm:mt-0 flex flex-col sm:flex-row gap-2">
+        <button
+          onclick={handleFollowToggle}
+          disabled={followLoading}
+          class="inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold transition-all active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50 disabled:opacity-60
+            {following
+              ? 'bg-white/60 dark:bg-white/10 border border-black/10 dark:border-white/10 text-text-main hover:bg-red-500/10 hover:text-red-600 hover:border-red-500/20'
+              : 'bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400 hover:bg-amber-500/20'}"
+        >
+          {#if following}
+            <UserCheck size={18} strokeWidth={2.5} /> Suivi
+          {:else}
+            <UserPlus size={18} strokeWidth={2.5} /> Suivre
+          {/if}
+        </button>
         <button
           onclick={handleSendMessage}
-          class="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl bg-amber-500 px-5 py-3 text-sm font-bold text-[#151B2C] hover:bg-amber-400 transition-all active:scale-95 shadow-md shadow-amber-500/20 outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50"
+          class="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-500 px-5 py-3 text-sm font-bold text-[#151B2C] hover:bg-amber-400 transition-all active:scale-95 shadow-md shadow-amber-500/20 outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50"
         >
-          <MessageCircle size={18} strokeWidth={2.5} /> Envoyer un message
+          <MessageCircle size={18} strokeWidth={2.5} /> Message
         </button>
       </div>
     </div>

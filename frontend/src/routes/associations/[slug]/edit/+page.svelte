@@ -18,6 +18,7 @@
     type AssociationMember,
   } from '$lib/associations/api';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
+  import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import {
     Users,
@@ -332,19 +333,7 @@
     <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-5 shadow-sm">
       <h2 class="text-lg font-bold text-text-main tracking-tight">Profil et logo</h2>
       <div class="flex flex-wrap items-start gap-4">
-        {#if associationLogoSrc(asso.logoUrl)}
-          <img
-            src={associationLogoSrc(asso.logoUrl)}
-            alt=""
-            class="h-20 w-20 rounded-2xl object-cover border border-cn-border shrink-0"
-          />
-        {:else}
-          <div
-            class="flex h-20 w-20 items-center justify-center rounded-2xl bg-cn-yellow/20 shrink-0"
-          >
-            <Users size={28} class="text-cn-dark" />
-          </div>
-        {/if}
+        <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="lg" />
         <div class="flex flex-wrap gap-2">
           <button
             type="button"

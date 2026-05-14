@@ -70,7 +70,7 @@ export class PostInteractionsService {
    * users table (non-fatal if unavailable). Fires notifications fire-and-forget style:
    * the post author gets a "comment" notification; the parent comment author gets a "reply".
    */
-  async addComment(postId: string, data: { userId: string; text: string; parentId?: string }) {
+  async addComment(postId: string, data: { userId: string; text?: string; parentId?: string; media?: any }) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
 
@@ -93,10 +93,11 @@ export class PostInteractionsService {
       displayName,
       firstName,
       lastName,
-      text: data.text,
+      text: data.text ?? '',
       parentId: data.parentId ?? null,
       likes: [] as string[],
       createdAt: new Date().toISOString(),
+      ...(data.media ? { media: data.media } : {}),
     };
     post.comments = [...(post.comments ?? []), comment];
     await this.postRepo.save(post);
@@ -104,7 +105,8 @@ export class PostInteractionsService {
     // Fire-and-forget: notify post author and parent comment author
     void (async () => {
       try {
-        const preview = data.text.length > 60 ? data.text.slice(0, 57) + '…' : data.text;
+        const text = data.text ?? (data.media ? '📷 Image' : '');
+        const preview = text.length > 60 ? text.slice(0, 57) + '…' : text;
         if (post.authorId && !post.associationId) {
           await this.notifications.createNotification({
             recipientId: post.authorId, type: 'comment', postId, actorId: data.userId, text: preview,

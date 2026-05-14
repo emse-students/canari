@@ -309,12 +309,16 @@ export class AddCommentDto {
   userId?: string;
 
   @IsString()
-  @IsNotEmpty()
-  text: string;
+  @IsOptional()
+  text?: string;
 
   @IsString()
   @IsOptional()
   parentId?: string;
+
+  @IsObject()
+  @IsOptional()
+  media?: { mediaId: string; key: string; iv: string; mimeType: string; size: number; fileName?: string };
 }
 
 export class AddReactionDto {

@@ -11,7 +11,7 @@
     userReaction: string | null;
     /** Full catalogue of available reaction types with their display emoji and icon name. */
     reactionList: Array<{ type: string; emoji: string; icon: string }>;
-    /** Called when the user double-clicks a reaction badge to toggle their own reaction. */
+    /** Called when the user clicks a reaction badge to toggle their own reaction of the same type. */
     onReactionClick: (reactionType: string) => void;
   }
 
@@ -20,16 +20,9 @@
   let popupReactionType = $state<string | null>(null);
   let popupPos = $state<{ top: number; left: number } | null>(null);
   let resolvedNames = $state<Record<string, string[]>>({});
+  let hideTimer: ReturnType<typeof setTimeout> | null = null;
 
-  async function openPopup(reactionType: string, anchor: HTMLElement) {
-    if (popupReactionType === reactionType) {
-      popupReactionType = null;
-      return;
-    }
-    const rect = anchor.getBoundingClientRect();
-    popupPos = { top: rect.bottom + 6, left: rect.left };
-    popupReactionType = reactionType;
-
+  async function loadNames(reactionType: string) {
     if (resolvedNames[reactionType]) return;
     const ids = Object.entries(reactions)
       .filter(([, rt]) => rt === reactionType)
@@ -41,9 +34,23 @@
     };
   }
 
-  function closePopup() {
-    popupReactionType = null;
-    popupPos = null;
+  function onBadgeEnter(reactionType: string, anchor: HTMLElement) {
+    if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+    const rect = anchor.getBoundingClientRect();
+    popupPos = { top: rect.bottom + 6, left: rect.left };
+    popupReactionType = reactionType;
+    void loadNames(reactionType);
+  }
+
+  function scheduleHide() {
+    hideTimer = setTimeout(() => {
+      popupReactionType = null;
+      popupPos = null;
+    }, 120);
+  }
+
+  function cancelHide() {
+    if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
   }
 </script>
 
@@ -53,15 +60,13 @@
       {@const reaction = reactionList.find((r) => r.type === reactionType)}
       <button
         type="button"
-        onclick={(e) => {
-          e.stopPropagation();
-          openPopup(reactionType, e.currentTarget as HTMLElement);
-        }}
-        ondblclick={() => onReactionClick(reactionType)}
+        onclick={() => onReactionClick(reactionType)}
+        onmouseenter={(e) => onBadgeEnter(reactionType, e.currentTarget as HTMLElement)}
+        onmouseleave={scheduleHide}
         class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full transition-all {userReaction === reactionType
           ? 'bg-cn-yellow/20 ring-1 ring-cn-yellow'
           : 'bg-[var(--cn-surface)] hover:bg-cn-yellow/10'}"
-        title="Cliquer pour voir · Double-cliquer pour réagir"
+        title={reaction?.type}
       >
         <span class="text-lg">{reaction?.emoji ?? '😊'}</span>
         <span class="text-sm font-bold text-text-main">{count}</span>
@@ -70,16 +75,15 @@
   </div>
 {/if}
 
-<!-- Popup "Qui a réagi" -->
+<!-- Tooltip "Qui a réagi" — hover uniquement -->
 {#if popupReactionType && popupPos}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div use:portal class="fixed inset-0 z-[9998]" onclick={closePopup} onkeydown={(e) => e.key === 'Escape' && closePopup()}></div>
   <div
     use:portal
-    class="fixed z-[9999] min-w-[10rem] max-w-[14rem] rounded-xl bg-[#1a2236] text-white text-[0.75rem] font-medium shadow-xl px-3 py-2.5"
+    class="fixed z-[9999] min-w-[10rem] max-w-[14rem] rounded-xl bg-[#1a2236] text-white text-[0.75rem] font-medium shadow-xl px-3 py-2.5 pointer-events-auto"
     style="top: {popupPos.top}px; left: {popupPos.left}px;"
-    role="dialog"
-    aria-label="Personnes ayant réagi"
+    role="tooltip"
+    onmouseenter={cancelHide}
+    onmouseleave={scheduleHide}
   >
     <p class="font-bold text-white/60 uppercase tracking-wide text-[0.6rem] mb-1.5">
       {reactionList.find((r) => r.type === popupReactionType)?.emoji ?? '😊'} {popupReactionType}
@@ -93,6 +97,5 @@
     {:else}
       <p class="opacity-60 italic">Chargement…</p>
     {/if}
-    <p class="text-[0.6rem] text-white/40 mt-2">Double-clic pour réagir</p>
   </div>
 {/if}

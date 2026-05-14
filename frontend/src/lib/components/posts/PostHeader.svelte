@@ -1,8 +1,7 @@
 <script lang="ts">
   import type { PostEntity } from '$lib/posts/api';
-  import { associationLogoSrc } from '$lib/associations/api';
   import Avatar from '$lib/components/shared/Avatar.svelte';
-  import { getInitials } from '$lib/utils/avatar';
+  import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import { Clock } from 'lucide-svelte';
   import { timeAgo, exactDate } from '$lib/utils/time';
 
@@ -38,19 +37,7 @@
       class="shrink-0 transition-transform duration-200 hover:scale-105 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 rounded-full shadow-sm"
       aria-label="Voir l'association {post.association.name}"
     >
-      {#if associationLogoSrc(post.association.logoUrl)}
-        <img
-          src={associationLogoSrc(post.association.logoUrl)}
-          alt=""
-          class="w-9 h-9 rounded-full object-cover border border-cn-border/60 bg-[var(--cn-surface)]"
-        />
-      {:else}
-        <div
-          class="w-9 h-9 rounded-full bg-amber-500/15 border border-amber-500/25 flex items-center justify-center text-[0.7rem] font-bold text-amber-800 dark:text-amber-200"
-        >
-          {getInitials(post.association.name)}
-        </div>
-      {/if}
+      <AssociationAvatar name={post.association.name} logoUrl={post.association.logoUrl} size="md" shape="circle" />
     </a>
   {:else}
     <a

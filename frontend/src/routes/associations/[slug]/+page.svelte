@@ -7,10 +7,10 @@
     followAssociation,
     unfollowAssociation,
     getAssociationFollowStatus,
-    associationLogoSrc,
     type Association,
     type AssociationMember,
   } from '$lib/associations/api';
+  import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { Users, Bell, BellOff, Pencil } from 'lucide-svelte';
@@ -39,7 +39,6 @@
 
   const slug = $derived((page.params as Record<string, string>).slug);
 
-  const logoSrc = $derived(associationLogoSrc(asso?.logoUrl));
 
   onMount(loadData);
 
@@ -114,18 +113,8 @@
   {:else if asso}
     <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-6 shadow-sm">
       <div class="flex items-start gap-4">
-        {#if logoSrc}
-          <img
-            src={logoSrc}
-            alt=""
-            class="h-14 w-14 rounded-2xl object-cover flex-shrink-0 border border-cn-border/60"
-          />
-        {:else}
-          <div
-            class="flex h-14 w-14 items-center justify-center rounded-2xl bg-cn-yellow/20 flex-shrink-0"
-          >
-            <Users size={24} class="text-cn-dark" />
-          </div>
+        {#if asso}
+          <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="lg" />
         {/if}
         <div class="flex-1 min-w-0">
           <h1 class="text-xl font-extrabold text-text-main tracking-tight truncate">{asso.name}</h1>
