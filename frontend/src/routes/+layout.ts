@@ -13,7 +13,9 @@ export const load = async (event: LoadEvent) => {
   // Get user ID from local store and validate it against the server.
 
   const isAuthRoute =
-    event.url.pathname.startsWith('/login') || event.url.pathname.startsWith('/auth');
+    event.url.pathname.startsWith('/login') ||
+    event.url.pathname.startsWith('/auth') ||
+    event.url.pathname.startsWith('/legal');
 
   const activePlaceId = resolveActivePlaceId(event.url.pathname);
   if (typeof window === 'undefined') return;

@@ -114,7 +114,7 @@
           <li>Ne pas diffuser de contenu illicite, haineux, ou portant atteinte à la vie privée d'autrui</li>
           <li>Ne pas utiliser le Service à des fins commerciales non autorisées</li>
           <li>Ne pas tenter de déchiffrer les communications d'autres utilisateurs</li>
-          <li>Signaler toute faille de sécurité découverte à <a href="mailto:rootz@emse.fr" class="text-cn-yellow hover:underline">rootz@emse.fr</a> plutôt que de l'exploiter</li>
+          <li>Signaler toute faille de sécurité découverte à <a href="mailto:bureau@rootz-emse.fr" class="text-cn-yellow hover:underline">bureau@rootz-emse.fr</a> plutôt que de l'exploiter</li>
         </ul>
 
         <p class="mt-4 text-text-muted">Le non-respect de ces règles peut entraîner la suspension ou la suppression de votre compte.</p>
@@ -172,7 +172,7 @@
           <p class="text-text-muted">Maison des Élèves, 158 Cours Fauriel, 42100 Saint-Étienne</p>
           <p class="mt-2">
             <strong>Contact RGPD et signalement :</strong>
-            <a href="mailto:rootz@emse.fr" class="text-cn-yellow hover:underline ml-1">rootz@emse.fr</a>
+            <a href="mailto:bureau@rootz-emse.fr" class="text-cn-yellow hover:underline ml-1">bureau@rootz-emse.fr</a>
           </p>
         </div>
       </section>

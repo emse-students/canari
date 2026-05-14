@@ -55,7 +55,7 @@
         <div class="mt-3 rounded-xl border border-white/20 bg-white/10 p-4 dark:bg-white/5">
           <p><strong>Éditeur :</strong> Association Rootz — EMSE</p>
           <p><strong>Hébergement :</strong> Serveurs privés gérés par l'association, hébergés à la Maison des Élèves, 158 Cours Fauriel, 42100 Saint-Étienne</p>
-          <p><strong>Contact :</strong> <a href="mailto:rootz@emse.fr" class="text-cn-yellow hover:underline">rootz@emse.fr</a></p>
+          <p><strong>Contact :</strong> <a href="mailto:bureau@rootz-emse.fr" class="text-cn-yellow hover:underline">bureau@rootz-emse.fr</a></p>
         </div>
       </section>
 
@@ -147,7 +147,7 @@
             </li>
           {/each}
         </ul>
-        <p class="mt-3 text-text-muted">Pour exercer ces droits, contactez-nous à <a href="mailto:rootz@emse.fr" class="text-cn-yellow hover:underline">rootz@emse.fr</a>.</p>
+        <p class="mt-3 text-text-muted">Pour exercer ces droits, contactez-nous à <a href="mailto:bureau@rootz-emse.fr" class="text-cn-yellow hover:underline">bureau@rootz-emse.fr</a>.</p>
       </section>
 
       <!-- 7 -->
@@ -157,7 +157,7 @@
           <p><strong>Association Rootz</strong></p>
           <p class="text-text-muted">Maison des Élèves, 158 Cours Fauriel, 42100 Saint-Étienne</p>
           <p class="mt-2">
-            <a href="mailto:rootz@emse.fr" class="text-cn-yellow hover:underline">rootz@emse.fr</a>
+            <a href="mailto:bureau@rootz-emse.fr" class="text-cn-yellow hover:underline">bureau@rootz-emse.fr</a>
           </p>
         </div>
         <p class="mt-4 text-xs text-text-muted">
