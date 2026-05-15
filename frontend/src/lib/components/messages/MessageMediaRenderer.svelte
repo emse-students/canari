@@ -52,6 +52,10 @@
     showLightbox = false;
   }
 
+  function onLightboxKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape') closeLightbox();
+  }
+
   // Utilitaires dynamiques pour s'adapter au fond du message
   // isOwn = fond ambré (texte sombre), !isOwn = fond glassmorphism clair/sombre (texte adapté au thème)
   const glassBoxClass = $derived(
@@ -85,6 +89,7 @@
           <button
             type="button"
             onclick={openLightbox}
+            onpointerdown={(e) => e.stopPropagation()}
             aria-label="Ouvrir l'image en plein écran"
             class="block overflow-hidden rounded-[1.1rem] bg-black/5 dark:bg-white/5"
           >
@@ -302,7 +307,13 @@
 {/if}
 
 {#if showLightbox && blobUrl && mediaRef && (mediaRef.type === 'image' || mediaRef.type === 'video')}
-  <div class="fixed inset-0 z-[150] bg-black/92 backdrop-blur-sm">
+  <div
+    class="fixed inset-0 z-[150] bg-black/92 backdrop-blur-sm"
+    role="dialog"
+    aria-modal="true"
+    aria-label="Aperçu média"
+    onkeydown={onLightboxKeydown}
+  >
     <button
       type="button"
       class="absolute inset-0"

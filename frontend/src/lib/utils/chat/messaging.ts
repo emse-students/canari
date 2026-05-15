@@ -98,15 +98,8 @@ export async function sendChatMessage(
     if (contactName.startsWith('channel_')) {
       const rawChannelId = contactName.replace(/^channel_/, '');
       await sendEncryptedChannelMessage(rawChannelId, payload, messageId);
-      await addMessageToChat(
-        userId,
-        serializeEnvelope(mkTextEnvelope(text, replyToData)),
-        contactName,
-        {
-          messageId,
-          skipDbSave: true,
-        }
-      );
+      // No optimistic add: the backend echoes channel.message.created to all members
+      // including the sender, so the WS handler will add the message.
     } else {
       const envelope = serializeEnvelope(mkTextEnvelope(text, replyToData));
 
