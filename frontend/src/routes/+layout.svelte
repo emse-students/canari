@@ -1,6 +1,6 @@
 <script lang="ts">
   import '../app.css';
-  import { goto } from '$app/navigation';
+  import { beforeNavigate, goto } from '$app/navigation';
   import { onMount } from 'svelte';
   import { attachConsole } from '@tauri-apps/plugin-log';
   import BackgroundBlobs from '$lib/components/shared/BackgroundBlobs.svelte';
@@ -11,6 +11,7 @@
   import LogsPanel from '$lib/components/dev/LogsPanel.svelte';
   import { page } from '$app/state';
   import { APP_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
+  import { initHistoryOverlayStack, drainHistoryOverlayStack } from '$lib/utils/historyOverlayStack';
 
   // NOUVEAUX IMPORTS POUR LE PUSH :
   import { getStatusLog, globalSession, globalConvs } from '$lib/stores/globalChatSingleton.svelte';
@@ -53,7 +54,13 @@
     return 120;
   }
 
+  beforeNavigate(() => {
+    drainHistoryOverlayStack();
+  });
+
   onMount(() => {
+    const teardownHistory = initHistoryOverlayStack();
+
     // Redirige console.log/warn/error vers tauri-plugin-log → adb logcat sur Android.
     if (typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__) {
       attachConsole().catch(() => {});
@@ -80,6 +87,7 @@
     window.visualViewport?.addEventListener('scroll', updateViewportHeight);
 
     return () => {
+      teardownHistory();
       window.removeEventListener('canari:toggle-logs', handler);
       window.removeEventListener('resize', updateViewportHeight);
       window.visualViewport?.removeEventListener('resize', updateViewportHeight);

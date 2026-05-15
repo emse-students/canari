@@ -7,13 +7,12 @@
     listAssociations,
     listPendingCalendarEvents,
     listMyAssociations,
-    aggregatedCalendarFeedIcsAbsoluteUrl,
     type AssociationCalendarFeedEvent,
     type Association,
   } from '$lib/associations/api';
   import { isGlobalAdmin } from '$lib/stores/user';
-  import { browser } from '$app/environment';
   import Card from '$lib/components/ui/Card.svelte';
+  import MonthCalendarGrid from '$lib/components/calendar/MonthCalendarGrid.svelte';
   import {
     ChevronLeft,
     ChevronRight,
@@ -21,9 +20,6 @@
     Download,
     ExternalLink,
     ClipboardList,
-    Newspaper,
-    Copy,
-    Link2,
     ShieldAlert,
   } from 'lucide-svelte';
   import {
@@ -95,17 +91,20 @@
   }
 
   function onFilterSelectChange() {
+    selectedDay = null;
     applyFilterToUrl();
     void loadMonth();
   }
 
   function prevMonth() {
     focusDate = new Date(focusDate.getFullYear(), focusDate.getMonth() - 1, 1);
+    selectedDay = null;
     void loadMonth();
   }
 
   function nextMonth() {
     focusDate = new Date(focusDate.getFullYear(), focusDate.getMonth() + 1, 1);
+    selectedDay = null;
     void loadMonth();
   }
 
@@ -195,31 +194,24 @@
     [...events].sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime())
   );
 
-  const dynamicIcsFeedUrl = $derived.by(() => {
-    if (!browser) return '';
-    const { from, to } = monthRangeISO(focusDate);
-    return aggregatedCalendarFeedIcsAbsoluteUrl({
-      from,
-      to,
-      associationId: filterAssociationId || undefined,
-    });
+  const displayedEvents = $derived.by(() => {
+    if (selectedDay == null) return sortedEvents;
+    const d = new Date(focusDate.getFullYear(), focusDate.getMonth(), selectedDay);
+    return sortedEvents.filter((ev) => sameDay(new Date(ev.startsAt), d));
   });
 
-  let copyIcsHint = $state('');
   let canModerateAgenda = $state(false);
   let pendingCount = $state(0);
+  let selectedDay = $state<number | null>(null);
 
-  async function copyDynamicIcsUrl() {
-    if (!dynamicIcsFeedUrl) return;
-    try {
-      await navigator.clipboard.writeText(dynamicIcsFeedUrl);
-      copyIcsHint = 'Copié.';
-      setTimeout(() => (copyIcsHint = ''), 2000);
-    } catch {
-      copyIcsHint = 'Copie impossible (navigateur).';
-      setTimeout(() => (copyIcsHint = ''), 3000);
-    }
+  function sameDay(a: Date, b: Date): boolean {
+    return (
+      a.getFullYear() === b.getFullYear() &&
+      a.getMonth() === b.getMonth() &&
+      a.getDate() === b.getDate()
+    );
   }
+
 </script>
 
 <div class="px-4 py-6 sm:px-6 max-w-3xl mx-auto space-y-6">
@@ -234,8 +226,7 @@
         Agenda des associations
       </h1>
       <p class="text-sm text-text-muted mt-1">
-        Vue mensuelle, filtre par association, export <span class="font-medium">.ics</span> (iPhone,
-        Android, Outlook…) et ouverture dans Google&nbsp;Agenda.
+        Calendrier mensuel et liste des événements validés, filtrables par association.
       </p>
     </div>
   </div>
@@ -297,71 +288,26 @@
       </label>
     </div>
 
-    <div class="flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between border-t border-cn-border/60 pt-4">
-      <p class="text-xs text-text-muted max-w-xl">
-        Téléchargez le fichier <strong class="text-text-main">.ics</strong> puis ouvrez-le sur
-        téléphone : iOS et Android proposent d’ajouter les événements au calendrier système. Vous
-        pouvez aussi importer le fichier dans Google&nbsp;Agenda (Paramètres → Importer).
-      </p>
+    <div class="flex justify-end border-t border-cn-border/60 pt-4">
       <button
         type="button"
         onclick={exportMonthIcs}
         disabled={loading || events.length === 0}
         class="inline-flex items-center justify-center gap-2 shrink-0 rounded-xl bg-cn-yellow px-4 py-2.5 text-sm font-bold text-cn-dark shadow-sm hover:bg-cn-yellow-hover transition-colors disabled:opacity-40 disabled:pointer-events-none"
+        title="Télécharger les événements du mois au format .ics"
       >
         <Download size={18} />
-        .ics (ce mois)
+        Exporter (.ics)
       </button>
     </div>
-
-    <div class="space-y-2 border-t border-cn-border/60 pt-4">
-      <div class="flex items-center gap-2 text-sm font-bold text-text-main">
-        <Link2 size={16} class="text-cn-dark shrink-0" />
-        URL dynamique <span class="font-mono text-xs font-normal">.ics</span>
-      </div>
-      <p class="text-xs text-text-muted">
-        Le fichier est généré côté serveur à chaque ouverture (même mois et même filtre association
-        que ci-dessus). Copiez l’URL dans Google&nbsp;Agenda / Apple&nbsp;Calendrier (abonnement ou
-        import), ou ouvrez-la dans un nouvel onglet.
-      </p>
-      {#if dynamicIcsFeedUrl}
-        <div class="flex flex-col sm:flex-row gap-2 sm:items-stretch">
-          <input
-            type="text"
-            readonly
-            class="flex-1 min-w-0 rounded-xl border border-cn-border bg-black/5 dark:bg-white/5 px-3 py-2 text-xs font-mono text-text-main"
-            value={dynamicIcsFeedUrl}
-          />
-          <div class="flex gap-2 shrink-0">
-            <button
-              type="button"
-              onclick={copyDynamicIcsUrl}
-              class="inline-flex flex-1 sm:flex-none items-center justify-center gap-1.5 rounded-xl border border-cn-border px-3 py-2 text-xs font-bold text-text-main hover:bg-[var(--cn-surface)] transition-colors"
-            >
-              <Copy size={16} />
-              Copier
-            </button>
-            <a
-              href={dynamicIcsFeedUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              class="inline-flex flex-1 sm:flex-none items-center justify-center gap-1.5 rounded-xl border border-cn-border px-3 py-2 text-xs font-bold text-text-main hover:bg-[var(--cn-surface)] transition-colors"
-            >
-              <ExternalLink size={16} />
-              Ouvrir
-            </a>
-          </div>
-        </div>
-        {#if copyIcsHint}
-          <p class="text-xs text-cn-dark font-medium">{copyIcsHint}</p>
-        {/if}
-        <p class="text-[11px] text-text-muted">
-          Sur certaines apps, remplacez <span class="font-mono">https://</span> par
-          <span class="font-mono">webcal://</span> pour un abonnement automatique.
-        </p>
-      {/if}
-    </div>
   </Card>
+
+  <MonthCalendarGrid
+    {focusDate}
+    events={sortedEvents}
+    {loading}
+    bind:selectedDay
+  />
 
   {#if loadError}
     <div class="rounded-xl bg-red-50 border border-red-200 text-red-700 p-4 text-sm">{loadError}</div>
@@ -375,9 +321,26 @@
     </div>
   {:else if sortedEvents.length === 0}
     <Card class="p-8 text-center text-text-muted text-sm">Aucun événement ce mois-ci.</Card>
+  {:else if displayedEvents.length === 0}
+    <Card class="p-8 text-center text-text-muted text-sm">
+      Aucun événement ce jour-là.
+      <button
+        type="button"
+        class="mt-2 block mx-auto text-sm font-semibold text-cn-dark hover:underline"
+        onclick={() => (selectedDay = null)}
+      >
+        Voir tout le mois
+      </button>
+    </Card>
   {:else}
+    {#if selectedDay != null}
+      <p class="text-sm font-semibold text-text-muted px-1">
+        {displayedEvents.length} événement{displayedEvents.length > 1 ? 's' : ''} le {selectedDay}
+        {new Intl.DateTimeFormat('fr-FR', { month: 'long' }).format(focusDate)}
+      </p>
+    {/if}
     <ul class="space-y-3">
-      {#each sortedEvents as ev (ev.id)}
+      {#each displayedEvents as ev (ev.id)}
         <li>
           <Card class="p-4 sm:p-5">
             <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -398,17 +361,8 @@
                 {#if ev.description?.trim()}
                   <p class="text-sm text-text-main/90 whitespace-pre-wrap">{ev.description}</p>
                 {/if}
-                <div class="flex flex-wrap gap-2 pt-1">
-                  {#if ev.linkedPostId}
-                    <a
-                      href="/posts"
-                      class="inline-flex items-center gap-1 rounded-lg bg-cn-yellow/15 px-2 py-1 text-xs font-semibold text-cn-dark hover:bg-cn-yellow/25"
-                    >
-                      <Newspaper size={12} />
-                      Publication
-                    </a>
-                  {/if}
-                  {#if ev.linkedFormId}
+                {#if ev.linkedFormId}
+                  <div class="flex flex-wrap gap-2 pt-1">
                     <a
                       href="/forms/{encodeURIComponent(ev.linkedFormId)}"
                       class="inline-flex items-center gap-1 rounded-lg bg-cn-yellow/15 px-2 py-1 text-xs font-semibold text-cn-dark hover:bg-cn-yellow/25"
@@ -416,8 +370,8 @@
                       <ClipboardList size={12} />
                       Formulaire
                     </a>
-                  {/if}
-                </div>
+                  </div>
+                {/if}
               </div>
               <div class="flex flex-wrap gap-2 shrink-0">
                 <button

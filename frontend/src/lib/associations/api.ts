@@ -59,8 +59,6 @@ export interface AssociationCalendarEvent {
   status: AssociationCalendarEventStatus;
   validatedAt: string | null;
   validatedBy: string | null;
-  /** Same-association post on the feed (optional). */
-  linkedPostId: string | null;
   /** Same-association form (optional). */
   linkedFormId: string | null;
 }
@@ -72,7 +70,6 @@ export interface AssociationCalendarFeedEvent extends AssociationCalendarEvent {
 }
 
 export interface AssociationLinkCandidates {
-  posts: { id: string; preview: string; createdAt: string }[];
   forms: { id: string; title: string; updatedAt: string }[];
 }
 
@@ -81,7 +78,6 @@ export interface CreateAssociationCalendarEventPayload {
   description?: string;
   startsAt: string;
   endsAt?: string;
-  linkedPostId?: string;
   linkedFormId?: string;
 }
 
@@ -90,8 +86,17 @@ export interface UpdateAssociationCalendarEventPayload {
   description?: string;
   startsAt?: string;
   endsAt?: string;
-  linkedPostId?: string | null;
   linkedFormId?: string | null;
+}
+
+/** Validated agenda events for linking from a publication (wide date window). */
+export async function listLinkableValidatedCalendarEvents(
+  associationId: string
+): Promise<AssociationCalendarEvent[]> {
+  const now = new Date();
+  const from = new Date(now.getFullYear(), now.getMonth() - 12, 1).toISOString();
+  const to = new Date(now.getFullYear(), now.getMonth() + 24, 0, 23, 59, 59, 999).toISOString();
+  return listAssociationCalendarEvents(associationId, { from, to });
 }
 
 /** Resolve association logo URL for `<img src>` (handles relative `/api/...` paths).

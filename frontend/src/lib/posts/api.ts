@@ -80,6 +80,15 @@ export interface PostAssociationAuthor {
   logoUrl: string | null;
 }
 
+/** Validated agenda event linked from a publication. */
+export interface PostLinkedCalendarEvent {
+  id: string;
+  title: string;
+  startsAt: string;
+  endsAt: string | null;
+  associationSlug: string;
+}
+
 export interface PostEntity {
   id: string;
   /** Omitted when the post is published as an association (`association` is set). */
@@ -99,6 +108,8 @@ export interface PostEntity {
   paymentAssociationId?: string;
   /** Present for association posts; use instead of author fields. */
   association?: PostAssociationAuthor;
+  linkedCalendarEventId?: string | null;
+  linkedCalendarEvent?: PostLinkedCalendarEvent | null;
   reactions?: Record<string, string>; // userId -> reactionType
   comments?: PostComment[];
   pinned?: boolean;
@@ -150,6 +161,7 @@ export interface CreatePostPayload {
   }>;
   attachedFormId?: string;
   associationId?: string;
+  linkedCalendarEventId?: string;
   paymentAssociationId?: string;
 }
 

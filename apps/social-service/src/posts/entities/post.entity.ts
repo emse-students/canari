@@ -45,6 +45,11 @@ export class Post {
   @Index()
   associationId: string;
 
+  /** Validated association agenda event this post relates to (compte-rendu, annonce, etc.). */
+  @Column({ type: 'uuid', nullable: true })
+  @Index()
+  linkedCalendarEventId: string | null;
+
   @Column({ type: 'uuid', nullable: true })
   paymentAssociationId: string;
 

@@ -436,7 +436,6 @@ export class AssociationsService {
       endsAt: endsAt ? endsAt.toISOString() : null,
       createdBy: e.createdBy,
       createdAt: createdAt.toISOString(),
-      linkedPostId: e.linkedPostId ?? null,
       linkedFormId: e.linkedFormId ?? null,
       status: e.status ?? AssociationCalendarEventStatus.Pending,
       validatedAt: e.validatedAt
@@ -446,15 +445,9 @@ export class AssociationsService {
     };
   }
 
-  /** Posts and forms under this association for calendar ↔ feed linking pickers. */
+  /** Forms under this association (optional link from calendar event editor). */
   async getCalendarLinkCandidates(associationId: string) {
     await this.findById(associationId);
-    const posts = await this.postRepo.find({
-      where: { associationId },
-      order: { createdAt: 'DESC' },
-      take: 50,
-      select: ['id', 'markdown', 'createdAt'],
-    });
     const forms = await this.formRepo.find({
       where: { associationId },
       order: { updatedAt: 'DESC' },
@@ -462,11 +455,6 @@ export class AssociationsService {
       select: ['id', 'title', 'updatedAt'],
     });
     return {
-      posts: posts.map((p) => ({
-        id: p.id,
-        preview: (p.markdown ?? '').replace(/\s+/g, ' ').slice(0, 140),
-        createdAt: p.createdAt instanceof Date ? p.createdAt.toISOString() : String(p.createdAt),
-      })),
       forms: forms.map((f) => ({
         id: f.id,
         title: f.title,
@@ -475,11 +463,60 @@ export class AssociationsService {
     };
   }
 
-  async findCalendarEventByLinkedPost(postId: string) {
+  /**
+   * Ensures a post may reference a validated agenda event (same association).
+   * Returns the event id or null when omitted.
+   */
+  async resolvePostCalendarEventLink(
+    associationId: string | null | undefined,
+    eventId: string | null | undefined
+  ): Promise<string | null> {
+    if (!eventId?.trim()) return null;
+    if (!associationId?.trim()) {
+      throw new BadRequestException('associationId is required to link an agenda event');
+    }
     const ev = await this.calendarRepo.findOne({
-      where: { linkedPostId: postId, status: AssociationCalendarEventStatus.Validated },
+      where: {
+        id: eventId.trim(),
+        associationId: associationId.trim(),
+        status: AssociationCalendarEventStatus.Validated,
+      },
+    });
+    if (!ev) {
+      throw new BadRequestException(
+        'Agenda event not found, not validated yet, or belongs to another association'
+      );
+    }
+    return ev.id;
+  }
+
+  async findCalendarEventByLinkedPost(postId: string) {
+    const post = await this.postRepo.findOne({
+      where: { id: postId },
+      select: ['id', 'linkedCalendarEventId'],
+    });
+    if (!post?.linkedCalendarEventId) return null;
+    const ev = await this.calendarRepo.findOne({
+      where: {
+        id: post.linkedCalendarEventId,
+        status: AssociationCalendarEventStatus.Validated,
+      },
     });
     return ev ? this.serializeCalendarEvent(ev) : null;
+  }
+
+  /** Minimal event payload for post cards (validated events only). */
+  async findValidatedCalendarEventSummary(eventId: string) {
+    const ev = await this.calendarRepo.findOne({
+      where: { id: eventId, status: AssociationCalendarEventStatus.Validated },
+    });
+    if (!ev) return null;
+    const asso = await this.assoRepo.findOne({
+      where: { id: ev.associationId },
+      select: ['slug'],
+    });
+    const base = this.serializeCalendarEvent(ev);
+    return { ...base, associationSlug: asso?.slug ?? '' };
   }
 
   async findCalendarEventByLinkedForm(formId: string) {
@@ -487,17 +524,6 @@ export class AssociationsService {
       where: { linkedFormId: formId, status: AssociationCalendarEventStatus.Validated },
     });
     return ev ? this.serializeCalendarEvent(ev) : null;
-  }
-
-  private async assertPostBelongsToAssociation(postId: string, associationId: string) {
-    const p = await this.postRepo.findOne({
-      where: { id: postId },
-      select: ['id', 'associationId'],
-    });
-    if (!p) throw new BadRequestException('Linked post not found');
-    if (p.associationId !== associationId) {
-      throw new BadRequestException('Post must belong to this association');
-    }
   }
 
   private async assertFormBelongsToAssociation(formId: string, associationId: string) {
@@ -511,19 +537,9 @@ export class AssociationsService {
     }
   }
 
-  /** Ensures at most one calendar row references a given post or form. */
-  private async detachCalendarLinksExcept(opts: {
-    postId?: string | null;
-    formId?: string | null;
-    exceptEventId: string;
-  }) {
-    const { postId, formId, exceptEventId } = opts;
-    if (postId) {
-      await this.calendarRepo.update(
-        { linkedPostId: postId, id: Not(exceptEventId) },
-        { linkedPostId: null }
-      );
-    }
+  /** Ensures at most one calendar row references a given form. */
+  private async detachCalendarLinksExcept(opts: { formId?: string | null; exceptEventId: string }) {
+    const { formId, exceptEventId } = opts;
     if (formId) {
       await this.calendarRepo.update(
         { linkedFormId: formId, id: Not(exceptEventId) },
@@ -532,10 +548,7 @@ export class AssociationsService {
     }
   }
 
-  private async detachLinksBeforeCreate(postId?: string | null, formId?: string | null) {
-    if (postId) {
-      await this.calendarRepo.update({ linkedPostId: postId }, { linkedPostId: null });
-    }
+  private async detachLinksBeforeCreate(formId?: string | null) {
     if (formId) {
       await this.calendarRepo.update({ linkedFormId: formId }, { linkedFormId: null });
     }
@@ -610,7 +623,6 @@ export class AssociationsService {
       .addSelect('e.endsAt', 'endsAt')
       .addSelect('e.createdBy', 'createdBy')
       .addSelect('e.createdAt', 'createdAt')
-      .addSelect('e.linkedPostId', 'linkedPostId')
       .addSelect('e.linkedFormId', 'linkedFormId')
       .addSelect('e.status', 'status')
       .addSelect('e.validatedAt', 'validatedAt')
@@ -629,7 +641,6 @@ export class AssociationsService {
         endsAt: (r.endsAt as Date | null) ?? null,
         createdBy: r.createdBy as string,
         createdAt: r.createdAt as Date,
-        linkedPostId: (r.linkedPostId as string | null) ?? null,
         linkedFormId: (r.linkedFormId as string | null) ?? null,
         status: AssociationCalendarEventStatus.Pending,
         validatedAt: (r.validatedAt as Date | null) ?? null,
@@ -686,7 +697,6 @@ export class AssociationsService {
       .addSelect('e.endsAt', 'endsAt')
       .addSelect('e.createdBy', 'createdBy')
       .addSelect('e.createdAt', 'createdAt')
-      .addSelect('e.linkedPostId', 'linkedPostId')
       .addSelect('e.linkedFormId', 'linkedFormId')
       .addSelect('e.status', 'status')
       .addSelect('e.validatedAt', 'validatedAt')
@@ -705,7 +715,6 @@ export class AssociationsService {
         endsAt: (r.endsAt as Date | null) ?? null,
         createdBy: r.createdBy as string,
         createdAt: r.createdAt as Date,
-        linkedPostId: (r.linkedPostId as string | null) ?? null,
         linkedFormId: (r.linkedFormId as string | null) ?? null,
         status:
           (r.status as AssociationCalendarEventStatus) ?? AssociationCalendarEventStatus.Validated,
@@ -739,11 +748,9 @@ export class AssociationsService {
       throw new BadRequestException('endsAt must be after startsAt');
     }
 
-    const linkedPostId = dto.linkedPostId ?? null;
     const linkedFormId = dto.linkedFormId ?? null;
-    if (linkedPostId) await this.assertPostBelongsToAssociation(linkedPostId, associationId);
     if (linkedFormId) await this.assertFormBelongsToAssociation(linkedFormId, associationId);
-    await this.detachLinksBeforeCreate(linkedPostId, linkedFormId);
+    await this.detachLinksBeforeCreate(linkedFormId);
 
     const row = this.calendarRepo.create({
       associationId,
@@ -752,7 +759,6 @@ export class AssociationsService {
       startsAt,
       endsAt,
       createdBy: userId,
-      linkedPostId,
       linkedFormId,
       status: AssociationCalendarEventStatus.Pending,
       validatedAt: null,
@@ -798,18 +804,6 @@ export class AssociationsService {
       throw new BadRequestException('endsAt must be after startsAt');
     }
 
-    if (dto.linkedPostId !== undefined) {
-      if (dto.linkedPostId === null || dto.linkedPostId === '') {
-        ev.linkedPostId = null;
-      } else {
-        await this.assertPostBelongsToAssociation(dto.linkedPostId, associationId);
-        await this.detachCalendarLinksExcept({
-          postId: dto.linkedPostId,
-          exceptEventId: ev.id,
-        });
-        ev.linkedPostId = dto.linkedPostId;
-      }
-    }
     if (dto.linkedFormId !== undefined) {
       if (dto.linkedFormId === null || dto.linkedFormId === '') {
         ev.linkedFormId = null;

@@ -6,7 +6,13 @@
   import { getToken } from '$lib/stores/auth';
   import { createPost, type CreatePostPayload } from '$lib/posts/api';
   import { getForms, type Form } from '$lib/forms/api';
-  import { listAssociations, listMyAssociations, type Association } from '$lib/associations/api';
+  import {
+    listAssociations,
+    listMyAssociations,
+    listLinkableValidatedCalendarEvents,
+    type Association,
+    type AssociationCalendarEvent,
+  } from '$lib/associations/api';
   import { isGlobalAdmin } from '$lib/stores/user';
   import PollSection from './PollSection.svelte';
   import EventButtonSection from './EventButtonSection.svelte';
@@ -60,6 +66,9 @@
   let myAssociations = $state<Association[]>([]);
   let selectedAssociationId = $state('');
   let selectedPaymentAssociationId = $state('');
+  let selectedLinkedCalendarEventId = $state('');
+  let linkableCalendarEvents = $state<AssociationCalendarEvent[]>([]);
+  let loadingLinkableEvents = $state(false);
 
   /** Associations the user may post as (admin/owner). Global admins can post as any. */
   let postAsAssociations = $derived(
@@ -155,6 +164,32 @@
     }
   });
 
+  /** Load validated agenda events when posting as an association. */
+  $effect(() => {
+    const assoId = selectedAssociationId;
+    selectedLinkedCalendarEventId = '';
+    linkableCalendarEvents = [];
+    if (!assoId) return;
+    loadingLinkableEvents = true;
+    listLinkableValidatedCalendarEvents(assoId)
+      .then((rows) => {
+        linkableCalendarEvents = rows;
+      })
+      .catch((e) => {
+        console.error('Failed to load linkable calendar events', e);
+      })
+      .finally(() => {
+        loadingLinkableEvents = false;
+      });
+  });
+
+  function formatLinkableEventLabel(ev: AssociationCalendarEvent): string {
+    const d = new Date(ev.startsAt);
+    const date = d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
+    const time = d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    return `${date} ${time} — ${ev.title}`;
+  }
+
   const mediaService = new MediaService();
   const imageInputId = 'create-post-images-input';
 
@@ -244,6 +279,9 @@
       }
 
       if (selectedAssociationId) payload.associationId = selectedAssociationId;
+      if (selectedLinkedCalendarEventId.trim()) {
+        payload.linkedCalendarEventId = selectedLinkedCalendarEventId.trim();
+      }
       if (selectedPaymentAssociationId) payload.paymentAssociationId = selectedPaymentAssociationId;
 
       await createPost(payload);
@@ -258,6 +296,9 @@
       includeEventButton = false;
       includeForm = false;
       scheduledAt = '';
+      selectedAssociationId = '';
+      selectedPaymentAssociationId = '';
+      selectedLinkedCalendarEventId = '';
       onPostCreated();
     } catch (err) {
       errorMessage = err instanceof Error ? err.message : 'Impossible de publier le post';
@@ -338,6 +379,36 @@
                 <ChevronDown size={16} strokeWidth={2.5} />
               </div>
             </div>
+          </div>
+        {/if}
+
+        {#if selectedAssociationId}
+          <div class="sm:col-span-2" transition:fade={{ duration: 200 }}>
+            <label
+              for="post-linked-calendar-event"
+              class="mb-1.5 flex items-center gap-1.5 text-[0.65rem] font-extrabold uppercase tracking-wider text-text-muted ml-1"
+            >
+              <CalendarCheck size={14} strokeWidth={2.5} class="text-amber-500" />
+              Lier à un événement validé (optionnel)
+            </label>
+            <select
+              id="post-linked-calendar-event"
+              bind:value={selectedLinkedCalendarEventId}
+              disabled={loadingLinkableEvents}
+              class="w-full appearance-none rounded-xl border border-black/5 dark:border-white/10 bg-black/5 dark:bg-white/5 px-4 py-3 text-sm font-bold text-text-main shadow-inner transition-all outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 hover:bg-black/10 dark:hover:bg-white/10 cursor-pointer disabled:opacity-60"
+            >
+              <option value="" class="bg-white dark:bg-zinc-900 font-medium">
+                {loadingLinkableEvents ? 'Chargement…' : '— Aucun événement —'}
+              </option>
+              {#each linkableCalendarEvents as ev (ev.id)}
+                <option value={ev.id} class="bg-white dark:bg-zinc-900 font-medium">
+                  {formatLinkableEventLabel(ev)}
+                </option>
+              {/each}
+            </select>
+            <p class="mt-1.5 text-[0.7rem] text-text-muted ml-1">
+              Seuls les événements validés de l’agenda apparaissent ici.
+            </p>
           </div>
         {/if}
       </div>

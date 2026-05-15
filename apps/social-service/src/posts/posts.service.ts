@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument */
 import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { AssociationsService } from '../associations/associations.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Post } from './entities/post.entity';
@@ -21,7 +22,8 @@ export class PostsService {
   constructor(
     @InjectRepository(Post) private readonly postRepo: Repository<Post>,
     private readonly redis: RedisService,
-    private readonly followsService: FollowsService
+    private readonly followsService: FollowsService,
+    private readonly associationsService: AssociationsService
   ) {}
 
   private listPostsCacheKey(
@@ -90,6 +92,11 @@ export class PostsService {
         logoUrl: rows[0].logoUrl,
       };
     }
+    if (raw.linkedCalendarEventId) {
+      raw.linkedCalendarEvent = await this.associationsService.findValidatedCalendarEventSummary(
+        raw.linkedCalendarEventId as string
+      );
+    }
     return raw;
   }
 
@@ -98,6 +105,12 @@ export class PostsService {
    * saves to DB, invalidates the Redis list cache, and returns the public-shaped entity.
    */
   async createPost(data: any) {
+    if (data.linkedCalendarEventId) {
+      data.linkedCalendarEventId = await this.associationsService.resolvePostCalendarEventLink(
+        data.associationId,
+        data.linkedCalendarEventId
+      );
+    }
     if (Array.isArray(data.eventButtons)) {
       data.eventButtons = data.eventButtons.map((btn: any) => ({
         ...btn,

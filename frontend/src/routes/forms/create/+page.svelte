@@ -113,7 +113,7 @@
   }
 </script>
 
-<div class="px-4 py-6 sm:px-6 max-w-3xl mx-auto pb-24">
+<div class="px-3 py-5 sm:px-6 max-w-3xl mx-auto pb-24">
   <!-- Header -->
   <div class="flex items-center gap-3 mb-8">
     <button
@@ -157,8 +157,8 @@
   {/if}
 
   <!-- Section 1: General Settings -->
-  <section class="rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] p-6 mb-5">
-    <div class="flex items-center gap-2.5 mb-5">
+  <section class="rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] p-4 sm:p-6 mb-4 sm:mb-5">
+    <div class="flex items-center gap-2.5 mb-4 sm:mb-5">
       <div class="p-2 rounded-xl bg-cn-yellow/15 text-cn-dark">
         <FileText size={20} />
       </div>
@@ -194,8 +194,8 @@
   </section>
 
   <!-- Section 2: Payment -->
-  <section class="rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] p-6 mb-5">
-    <div class="flex items-center gap-2.5 mb-5">
+  <section class="rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] p-4 sm:p-6 mb-4 sm:mb-5">
+    <div class="flex items-center gap-2.5 mb-4 sm:mb-5">
       <div class="p-2 rounded-xl bg-cn-yellow/15 text-cn-dark">
         <CreditCard size={20} />
       </div>
@@ -306,8 +306,8 @@
   </section>
 
   <!-- Section 3: Questions -->
-  <section class="rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] p-6">
-    <div class="flex items-center gap-2.5 mb-5">
+  <section class="rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] p-3 sm:p-6">
+    <div class="flex items-center gap-2.5 mb-4 sm:mb-5 px-1 sm:px-0">
       <div class="p-2 rounded-xl bg-cn-yellow/15 text-cn-dark">
         <ListChecks size={20} />
       </div>
@@ -319,10 +319,10 @@
       </span>
     </div>
 
-    <div class="space-y-4">
+    <div class="space-y-3 sm:space-y-4">
       {#each items as _item, i (_item.id)}
-        <div class="flex gap-2 items-start">
-          <div class="flex flex-col items-center gap-1 pt-5">
+        <div class="flex gap-2 items-start min-w-0">
+          <div class="hidden sm:flex flex-col items-center gap-1 pt-5 shrink-0">
             <span
               class="text-xs font-bold text-text-muted w-6 h-6 flex items-center justify-center rounded-lg bg-cn-border/40"
             >
@@ -367,11 +367,16 @@
               >
             </button>
           </div>
-          <div class="flex-1 min-w-0">
+          <div class="flex-1 min-w-0 w-full">
             <FormBuilder
               bind:item={items[i]}
               onRemove={() => removeItem(i)}
               showPriceModifier={requiresPayment}
+              questionIndex={i + 1}
+              onMoveUp={() => moveItem(i, 'up')}
+              onMoveDown={() => moveItem(i, 'down')}
+              canMoveUp={i > 0}
+              canMoveDown={i < items.length - 1}
             />
           </div>
         </div>
@@ -389,9 +394,9 @@
 
   <!-- Floating Save Bar -->
   <div class="fixed bottom-0 left-0 right-0 z-50 pointer-events-none">
-    <div class="max-w-3xl mx-auto px-4 sm:px-6 pb-5">
+    <div class="max-w-3xl mx-auto px-3 sm:px-6 pb-4 sm:pb-5">
       <div
-        class="pointer-events-auto rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] shadow-lg px-5 py-3.5 flex items-center justify-between gap-4"
+        class="pointer-events-auto rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] shadow-lg px-3 sm:px-5 py-3 sm:py-3.5 flex items-center justify-between gap-3 sm:gap-4"
       >
         <p class="text-sm text-text-muted hidden sm:block">
           {#if titleMissing}

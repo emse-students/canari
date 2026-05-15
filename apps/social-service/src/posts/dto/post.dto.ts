@@ -11,7 +11,9 @@ import {
   IsObject,
   IsOptional,
   IsString,
+  IsUUID,
   Min,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 
@@ -229,6 +231,11 @@ export class CreatePostDto {
   @IsString()
   @IsOptional()
   associationId?: string;
+
+  @IsOptional()
+  @ValidateIf((_, v) => typeof v === 'string' && v.length > 0)
+  @IsUUID()
+  linkedCalendarEventId?: string;
 
   @IsString()
   @IsOptional()

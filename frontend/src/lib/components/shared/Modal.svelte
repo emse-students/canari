@@ -3,57 +3,50 @@
   import { X } from 'lucide-svelte';
   import { fly } from 'svelte/transition';
   import { portal } from '$lib/actions/portal';
+  import { pushHistoryOverlay, closeHistoryOverlayFromUi } from '$lib/utils/historyOverlayStack';
 
   interface Props {
-    /** Whether the modal is visible. */
     open?: boolean;
-    /** Title shown in the modal header; omitting it hides the header row. */
     title?: string;
-    /** Tailwind max-width class applied to the dialog panel. */
     maxWidth?: string;
-    /** Called when the user dismisses the modal (backdrop click, Escape, or close button). */
     onClose: () => void;
-    /** Main body content of the modal. */
     children?: Snippet;
-    /** Optional footer content rendered below the body. */
     footer?: Snippet;
   }
 
   let { open = false, title, maxWidth = 'max-w-md', onClose, children, footer }: Props = $props();
 
-  // Track whether this modal pushed a history entry so we only close on the
-  // matching pop, not on unrelated SvelteKit navigation popstate events.
-  let pushedState = false;
+  let historyClose: (() => void) | null = null;
 
   $effect(() => {
-    if (open && !pushedState) {
-      history.pushState({ canariModal: true }, '');
-      pushedState = true;
+    if (open && !historyClose) {
+      historyClose = () => onClose();
+      pushHistoryOverlay(historyClose);
     } else if (!open) {
-      pushedState = false;
+      historyClose = null;
     }
   });
 
-  function handlePopState(_e: PopStateEvent) {
-    if (!open || !pushedState) return;
-    pushedState = false;
-    onClose();
+  function dismiss() {
+    if (historyClose) {
+      closeHistoryOverlayFromUi(historyClose);
+    } else {
+      onClose();
+    }
   }
 
   function handleBackdropClick(e: MouseEvent) {
-    if (e.target === e.currentTarget) onClose();
+    if (e.target === e.currentTarget) dismiss();
   }
 
   function handleKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') onClose();
+    if (e.key === 'Escape') dismiss();
   }
 </script>
 
-<svelte:window onkeydown={open ? handleKeydown : undefined} onpopstate={handlePopState} />
+<svelte:window onkeydown={open ? handleKeydown : undefined} />
 
 {#if open}
-  <!-- Portal + full-screen backdrop. Using fixed+inset-0 on both layers ensures
-       correct coverage even when Tauri's WebView insets are non-zero. -->
   <div use:portal>
     <div
       role="presentation"
@@ -76,7 +69,7 @@
           <div class="px-6 py-4 border-b border-cn-border flex items-center justify-between shrink-0">
             <h2 class="text-base font-semibold text-cn-dark">{title}</h2>
             <button
-              onclick={onClose}
+              onclick={dismiss}
               class="p-1.5 rounded-lg hover:bg-cn-bg transition-colors text-text-muted hover:text-cn-dark"
               aria-label="Fermer"
             >

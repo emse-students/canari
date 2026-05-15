@@ -109,12 +109,6 @@ export class CreateAssociationCalendarEventDto {
   @IsOptional()
   endsAt?: string;
 
-  /** Optional association post on the feed (same `associationId` as this event). */
-  @IsOptional()
-  @ValidateIf((_, v) => typeof v === 'string' && v.length > 0)
-  @IsUUID()
-  linkedPostId?: string;
-
   /** Optional form (same association). */
   @IsOptional()
   @ValidateIf((_, v) => typeof v === 'string' && v.length > 0)
@@ -140,12 +134,6 @@ export class UpdateAssociationCalendarEventDto {
   @IsDateString()
   @IsOptional()
   endsAt?: string;
-
-  /** Set to empty string or null to remove the link. */
-  @IsOptional()
-  @ValidateIf((_, v) => typeof v === 'string' && v.length > 0)
-  @IsUUID()
-  linkedPostId?: string | null;
 
   @IsOptional()
   @ValidateIf((_, v) => typeof v === 'string' && v.length > 0)

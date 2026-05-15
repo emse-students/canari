@@ -4,6 +4,7 @@
   import { Camera, Copy, QrCode, Smartphone, Loader2, X, AlertCircle, Info } from 'lucide-svelte';
   import { portal } from '$lib/actions/portal';
   import { fade, fly } from 'svelte/transition';
+  import { pushHistoryOverlay, closeHistoryOverlayFromUi } from '$lib/utils/historyOverlayStack';
 
   interface Props {
     /** Whether the sync session modal is visible. */
@@ -48,6 +49,16 @@
   let isScanning = $state(false);
   let scanError = $state('');
   let showPayloadFallback = $state(false);
+  let historyClose: (() => void) | null = null;
+
+  $effect(() => {
+    if (isOpen && !historyClose) {
+      historyClose = () => dismiss(false);
+      pushHistoryOverlay(historyClose);
+    } else if (!isOpen) {
+      historyClose = null;
+    }
+  });
   let showManualPaste = $state(false);
 
   let mediaStream: MediaStream | null = null;
@@ -187,9 +198,20 @@
     }
   }
 
-  function handleClose() {
+  function dismiss(fromHistory = false) {
     cleanupStream();
+    if (!fromHistory && historyClose) {
+      closeHistoryOverlayFromUi(historyClose);
+      return;
+    }
+    if (fromHistory) {
+      historyClose = null;
+    }
     onClose();
+  }
+
+  function handleClose() {
+    dismiss(false);
   }
 
   $effect(() => {

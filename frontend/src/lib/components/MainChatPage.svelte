@@ -475,7 +475,7 @@
         onSend={handleSendChat}
         onInviteMembers={(ids) => void convs.inviteMembersToCurrentGroup(ids, convCtx())}
         onBack={convs.goBackToMenu}
-        onOpenConversations={() => { convs.isConversationDrawerOpen = true; }}
+        onOpenConversations={convs.openConversationDrawer}
         onOpenSettings={convs.selectedContact?.startsWith('channel_')
           ? () => (convs.isChannelSettingsModalOpen = true)
           : undefined}
@@ -521,7 +521,7 @@
           }
         }}
         onOpenMembers={routeMode === 'communities' && convs.selectedContact?.startsWith('channel_')
-          ? () => (convs.isChannelMembersDrawerOpen = true)
+          ? convs.openChannelMembersDrawer
           : undefined}
       />
 
@@ -538,7 +538,7 @@
             type="button"
             class="fixed inset-0 z-40 bg-black/30 xl:hidden"
             aria-label="Fermer le panneau membres"
-            onclick={() => { convs.isChannelMembersDrawerOpen = false; }}
+            onclick={convs.closeChannelMembersDrawer}
           ></button>
           <div
             class="fixed right-0 top-0 bottom-0 z-50 w-[90vw] max-w-sm border-l border-cn-border bg-[color-mix(in_srgb,var(--cn-surface)_90%,white)] shadow-2xl xl:hidden"
@@ -546,7 +546,7 @@
             <ChannelMembersSidebar
               mode="mobile"
               currentUserId={session.userId}
-              onClose={() => { convs.isChannelMembersDrawerOpen = false; }}
+              onClose={convs.closeChannelMembersDrawer}
               selectedChannelId={channels.selectedChannelConversationId}
             />
           </div>
@@ -559,7 +559,7 @@
           {...makeSidebarCommonProps()}
           isHidden={false}
           drawerMode={true}
-          onCloseDrawer={() => { convs.isConversationDrawerOpen = false; }}
+          onCloseDrawer={convs.closeConversationDrawer}
         />
       {/if}
 

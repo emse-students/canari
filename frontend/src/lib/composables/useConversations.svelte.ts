@@ -24,6 +24,12 @@ import {
   repairDirectConversation,
 } from '$lib/utils/chat/groupCreation';
 import { loadExistingConversations } from '$lib/utils/chat/conversations';
+import {
+  pushHistoryOverlay,
+  closeHistoryOverlayFromUi,
+  abandonHistoryOverlay,
+  isMobileOverlayLayout,
+} from '$lib/utils/historyOverlayStack';
 
 /** Messages loaded from DB on initial display or after network sync. */
 const INITIAL_MESSAGES_PAGE = 60;
@@ -75,6 +81,44 @@ export function useConversations() {
 
   // Short-lived cache so rapid successive sends don't re-check membership via HTTP
   const membershipCache = new SvelteMap<string, { isMember: boolean; expiresAt: number }>();
+
+  let mobileConvoHistoryClose: (() => void) | null = null;
+  let drawerHistoryClose: (() => void) | null = null;
+  let channelMembersDrawerHistoryClose: (() => void) | null = null;
+
+  function ensureMobileConvoHistory() {
+    if (!isMobileOverlayLayout() || !selectedContact || mobileConvoHistoryClose) return;
+    mobileConvoHistoryClose = () => {
+      mobileConvoHistoryClose = null;
+      selectedContact = null;
+      isConversationDrawerOpen = false;
+    };
+    pushHistoryOverlay(mobileConvoHistoryClose);
+  }
+
+  function ensureDrawerHistory() {
+    if (!isMobileOverlayLayout() || !isConversationDrawerOpen || drawerHistoryClose) return;
+    drawerHistoryClose = () => {
+      drawerHistoryClose = null;
+      isConversationDrawerOpen = false;
+    };
+    pushHistoryOverlay(drawerHistoryClose);
+  }
+
+  function ensureChannelMembersDrawerHistory() {
+    if (
+      !isMobileOverlayLayout() ||
+      !isChannelMembersDrawerOpen ||
+      channelMembersDrawerHistoryClose
+    ) {
+      return;
+    }
+    channelMembersDrawerHistoryClose = () => {
+      channelMembersDrawerHistoryClose = null;
+      isChannelMembersDrawerOpen = false;
+    };
+    pushHistoryOverlay(channelMembersDrawerHistoryClose);
+  }
 
   // ── Derived ───────────────────────────────────────────────────────────────
   const currentConvo = $derived(
@@ -318,21 +362,30 @@ export function useConversations() {
   // ── Selection + navigation ────────────────────────────────────────────────
 
   /** Selects a conversation (sets selectedContact, clears unread badge and send error). Use this version when no ctx is available (e.g. from channel event handlers). */
-  function selectConversation(name: string) {
-    selectedContact = name;
+  function dismissDrawerHistoryIfAny() {
+    if (!drawerHistoryClose) return;
+    const ref = drawerHistoryClose;
+    drawerHistoryClose = null;
     isConversationDrawerOpen = false;
+    abandonHistoryOverlay(ref);
+  }
+
+  function selectConversation(name: string) {
+    dismissDrawerHistoryIfAny();
+    selectedContact = name;
     sendError = '';
     const convo = conversations.get(name);
     if (convo) conversations.set(name, { ...convo, unreadCount: 0 });
     if (convo?.id) {
       void loadGroupMembers(convo.id, null);
     }
+    ensureMobileConvoHistory();
   }
 
   /** Call this version when you have the ctx available (inside handlers). */
   function selectConversationWithCtx(name: string, ctx: ConversationContext) {
+    dismissDrawerHistoryIfAny();
     selectedContact = name;
-    isConversationDrawerOpen = false;
     sendError = '';
     const convo = conversations.get(name);
     if (convo) conversations.set(name, { ...convo, unreadCount: 0 });
@@ -340,12 +393,43 @@ export function useConversations() {
       void loadGroupMembers(convo.id, ctx);
       void verifyCurrentUserMembership(name, ctx);
     }
+    ensureMobileConvoHistory();
   }
 
   /** Deselects the active conversation and closes the drawer (mobile back-button action). */
   function goBackToMenu() {
+    if (mobileConvoHistoryClose) {
+      closeHistoryOverlayFromUi(mobileConvoHistoryClose);
+      return;
+    }
     selectedContact = null;
     isConversationDrawerOpen = false;
+  }
+
+  function openConversationDrawer() {
+    isConversationDrawerOpen = true;
+    ensureDrawerHistory();
+  }
+
+  function closeConversationDrawer() {
+    if (drawerHistoryClose) {
+      closeHistoryOverlayFromUi(drawerHistoryClose);
+      return;
+    }
+    isConversationDrawerOpen = false;
+  }
+
+  function openChannelMembersDrawer() {
+    isChannelMembersDrawerOpen = true;
+    ensureChannelMembersDrawerHistory();
+  }
+
+  function closeChannelMembersDrawer() {
+    if (channelMembersDrawerHistoryClose) {
+      closeHistoryOverlayFromUi(channelMembersDrawerHistoryClose);
+      return;
+    }
+    isChannelMembersDrawerOpen = false;
   }
 
   // ── Group members ─────────────────────────────────────────────────────────
@@ -752,6 +836,10 @@ export function useConversations() {
     selectConversationWithCtx,
     /** Deselects the active conversation and closes the drawer. */
     goBackToMenu,
+    openConversationDrawer,
+    closeConversationDrawer,
+    openChannelMembersDrawer,
+    closeChannelMembersDrawer,
     /** Fetches and stores the deduplicated member list for an MLS group. */
     loadGroupMembers,
     /** Checks and caches whether the current user is still in the given conversation. */

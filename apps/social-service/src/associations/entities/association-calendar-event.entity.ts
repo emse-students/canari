@@ -44,11 +44,6 @@ export class AssociationCalendarEvent {
   @Column({ type: 'varchar', length: 255, nullable: true })
   validatedBy: string | null;
 
-  /** Optional association-authored post shown alongside this agenda entry. */
-  @Column({ type: 'uuid', nullable: true })
-  @Index()
-  linkedPostId: string | null;
-
   /** Optional association form (e.g. signup) tied to this date. */
   @Column({ type: 'uuid', nullable: true })
   @Index()

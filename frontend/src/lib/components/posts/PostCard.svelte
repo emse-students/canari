@@ -29,7 +29,7 @@
   import PostComments from './PostComments.svelte';
   import PostOverlayControls from './PostOverlayControls.svelte';
   import PostFeedback from './PostFeedback.svelte';
-  import { Pin } from 'lucide-svelte';
+  import { Pin, CalendarCheck } from 'lucide-svelte';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { untrack } from 'svelte';
 
@@ -452,6 +452,29 @@
       onSubmitReport={submitReport}
     />
   </div>
+
+  {#if localPost.linkedCalendarEvent}
+    {@const ev = localPost.linkedCalendarEvent}
+    <div class="px-5 pb-3">
+      <a
+        href="/associations/{encodeURIComponent(ev.associationSlug)}?section=agenda"
+        class="inline-flex items-center gap-2 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs font-bold text-amber-800 dark:text-amber-300 hover:bg-amber-500/20 transition-colors"
+      >
+        <CalendarCheck size={14} strokeWidth={2.5} />
+        <span>
+          Événement :
+          {ev.title}
+          ·
+          {new Date(ev.startsAt).toLocaleString('fr-FR', {
+            day: 'numeric',
+            month: 'short',
+            hour: '2-digit',
+            minute: '2-digit',
+          })}
+        </span>
+      </a>
+    </div>
+  {/if}
 
   {#if editingPost}
     <div class="px-5 pb-4 flex flex-col gap-2">

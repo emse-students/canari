@@ -26,7 +26,6 @@
     Trash2,
     Clock,
     Link2,
-    Newspaper,
     ClipboardList,
     CalendarSync,
     Download,
@@ -35,6 +34,7 @@
   import Input from '$lib/components/ui/Input.svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
   import { SvelteDate } from 'svelte/reactivity';
+  import { pushHistoryOverlay, closeHistoryOverlayFromUi } from '$lib/utils/historyOverlayStack';
 
   interface Props {
     associationId: string;
@@ -56,6 +56,16 @@
   );
 
   let modalOpen = $state(false);
+  let eventModalHistoryClose: (() => void) | null = null;
+
+  $effect(() => {
+    if (modalOpen && !eventModalHistoryClose) {
+      eventModalHistoryClose = () => dismissEventModal(true);
+      pushHistoryOverlay(eventModalHistoryClose);
+    } else if (!modalOpen) {
+      eventModalHistoryClose = null;
+    }
+  });
   let editingId = $state<string | null>(null);
   let formTitle = $state('');
   let formDescription = $state('');
@@ -65,8 +75,7 @@
   let saving = $state(false);
   let formError = $state('');
   let linkCandidates = $state<AssociationLinkCandidates | null>(null);
-  /** Selected post/form IDs for modal (empty = none). */
-  let formLinkedPostId = $state('');
+  /** Selected form ID for modal (empty = none). */
   let formLinkedFormId = $state('');
 
   let showSubscribeModal = $state(false);
@@ -135,7 +144,7 @@
     try {
       linkCandidates = await listAssociationLinkCandidates(associationId);
     } catch {
-      linkCandidates = { posts: [], forms: [] };
+      linkCandidates = { forms: [] };
     }
   }
 
@@ -239,7 +248,6 @@
     editingId = null;
     formTitle = '';
     formDescription = '';
-    formLinkedPostId = '';
     formLinkedFormId = '';
     const now = new SvelteDate();
     now.setMinutes(0, 0, 0);
@@ -256,15 +264,25 @@
     formDescription = ev.description ?? '';
     formStart = toDatetimeLocalValue(ev.startsAt);
     formEnd = ev.endsAt ? toDatetimeLocalValue(ev.endsAt) : '';
-    formLinkedPostId = ev.linkedPostId ?? '';
     formLinkedFormId = ev.linkedFormId ?? '';
     formError = '';
     modalOpen = true;
     await ensureLinkCandidates();
   }
 
-  function closeModal() {
+  function dismissEventModal(fromHistory = false) {
     modalOpen = false;
+    if (!fromHistory && eventModalHistoryClose) {
+      closeHistoryOverlayFromUi(eventModalHistoryClose);
+      return;
+    }
+    if (fromHistory) {
+      eventModalHistoryClose = null;
+    }
+  }
+
+  function closeModal() {
+    dismissEventModal(false);
   }
 
   async function submitForm() {
@@ -283,7 +301,6 @@
           description: formDescription.trim() || undefined,
           startsAt: startIso,
           endsAt: endIso,
-          linkedPostId: formLinkedPostId.trim() || null,
           linkedFormId: formLinkedFormId.trim() || null,
         });
       } else {
@@ -292,11 +309,10 @@
           description: formDescription.trim() || undefined,
           startsAt: startIso,
           endsAt: endIso,
-          ...(formLinkedPostId.trim() ? { linkedPostId: formLinkedPostId.trim() } : {}),
           ...(formLinkedFormId.trim() ? { linkedFormId: formLinkedFormId.trim() } : {}),
         });
       }
-      modalOpen = false;
+      dismissEventModal(false);
       await loadMonth();
     } catch (e) {
       formError = e instanceof Error ? e.message : 'Erreur';
@@ -537,32 +553,15 @@
             {#if ev.description?.trim()}
               <p class="text-sm text-text-muted mt-2 whitespace-pre-wrap">{ev.description}</p>
             {/if}
-            {#if ev.linkedPostId || ev.linkedFormId}
-              <div class="mt-3 flex flex-wrap items-center gap-2">
-                <span
-                  class="inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wide text-text-muted"
+            {#if ev.linkedFormId}
+              <div class="mt-3">
+                <a
+                  href="/forms/{encodeURIComponent(ev.linkedFormId)}"
+                  class="inline-flex items-center gap-1 rounded-lg border border-cn-border bg-cn-bg/50 px-2 py-1 text-xs font-medium text-text-main hover:border-cn-yellow/50"
                 >
-                  <Link2 size={12} />
-                  Liens
-                </span>
-                {#if ev.linkedPostId}
-                  <a
-                    href="/posts"
-                    class="inline-flex items-center gap-1 rounded-lg border border-cn-border bg-cn-bg/50 px-2 py-1 text-xs font-medium text-text-main hover:border-cn-yellow/50"
-                  >
-                    <Newspaper size={13} />
-                    Publication
-                  </a>
-                {/if}
-                {#if ev.linkedFormId}
-                  <a
-                    href="/forms/{encodeURIComponent(ev.linkedFormId)}"
-                    class="inline-flex items-center gap-1 rounded-lg border border-cn-border bg-cn-bg/50 px-2 py-1 text-xs font-medium text-text-main hover:border-cn-yellow/50"
-                  >
-                    <ClipboardList size={13} />
-                    Formulaire
-                  </a>
-                {/if}
+                  <ClipboardList size={13} />
+                  Formulaire lié
+                </a>
               </div>
             {/if}
           </div>
@@ -644,25 +643,8 @@
             class="text-xs font-bold text-text-muted uppercase tracking-wide flex items-center gap-1"
           >
             <Link2 size={14} />
-            Lier du contenu (même association)
+            Lier un formulaire (optionnel)
           </p>
-          <div>
-            <label class="block text-xs font-semibold text-text-main mb-1" for="cal-link-post"
-              >Publication sur le fil</label
-            >
-            <select
-              id="cal-link-post"
-              bind:value={formLinkedPostId}
-              class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm text-text-main"
-            >
-              <option value="">— Aucune —</option>
-              {#each linkCandidates.posts as p (p.id)}
-                <option value={p.id}>
-                  {p.preview.length > 90 ? `${p.preview.slice(0, 90)}…` : p.preview || p.id}
-                </option>
-              {/each}
-            </select>
-          </div>
           <div>
             <label class="block text-xs font-semibold text-text-main mb-1" for="cal-link-form"
               >Formulaire</label
