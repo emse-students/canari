@@ -3,7 +3,9 @@
   import type { PostEntity } from '$lib/posts/api';
   import SvelteMarkdown from '@humanspeak/svelte-markdown';
   import LinkPreviewCard from '../messages/LinkPreviewCard.svelte';
+  import PostMentionLink from './PostMentionLink.svelte';
   import { ChevronLeft, ChevronRight } from 'lucide-svelte';
+  import { preprocessPostMarkdown } from '$lib/utils/posts/postMarkdown';
 
   interface Props {
     /** The post whose markdown content and images are rendered. */
@@ -49,10 +51,13 @@
     return match?.[0] ?? null;
   }
 
+  const renderers = { link: PostMentionLink };
+
   const isTruncatable = $derived((post.markdown?.length ?? 0) > MAX_CHARS);
-  const displayedMarkdown = $derived(
+  const rawMarkdown = $derived(
     isTruncatable && !expanded ? post.markdown!.slice(0, MAX_CHARS) + '…' : (post.markdown ?? '')
   );
+  const displayedMarkdown = $derived(preprocessPostMarkdown(rawMarkdown));
   const firstLink = $derived(post.markdown ? extractFirstUrl(post.markdown) : null);
 
 </script>
@@ -61,7 +66,7 @@
   <div class="px-5 pb-3">
     <div class="text-[0.95rem] text-text-main leading-relaxed break-words">
       <div class="prose prose-sm dark:prose-invert max-w-none opacity-90">
-        <SvelteMarkdown source={displayedMarkdown} options={{ gfm: true, breaks: true }} />
+        <SvelteMarkdown source={displayedMarkdown} {renderers} options={{ gfm: true, breaks: true }} />
       </div>
       {#if isTruncatable}
         <button

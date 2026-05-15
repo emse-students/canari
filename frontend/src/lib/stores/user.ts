@@ -91,6 +91,16 @@ export async function fetchUserProfile(userId: string): Promise<UserProfile> {
   return (await res.json()) as UserProfile;
 }
 
+/** Searches users by display name (case-insensitive). Returns up to 10 results. */
+export async function searchUsers(
+  q: string
+): Promise<Array<{ id: string; displayName: string | null }>> {
+  if (!q.trim()) return [];
+  const res = await apiFetch(`${coreUrl()}/api/users/search?q=${encodeURIComponent(q)}`);
+  if (!res.ok) return [];
+  return (await res.json()) as Array<{ id: string; displayName: string | null }>;
+}
+
 /** Returns `true` if a user with the given ID exists on the platform. */
 export async function userExists(userId: string): Promise<boolean> {
   try {
