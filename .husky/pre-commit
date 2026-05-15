@@ -19,11 +19,15 @@ if [ "$RUN_ALL" -eq 1 ]; then
 fi
 
 if [ "$RUN_FRONTEND" -eq 1 ]; then
-  (cd frontend && bun run lint:fix -- --no-cache --quiet && bun run format) || {
+  (cd frontend && bun run lint:fix -- --no-cache && bun run format) || {
     echo "❌ Frontend lint/format échoué."
     exit 1
   }
   git diff --name-only -- frontend/ | xargs -r git add
+  (cd frontend && npx svelte-check --tsconfig ./tsconfig.json --threshold warning) || {
+    echo "❌ Frontend svelte-check échoué."
+    exit 1
+  }
 fi
 
 if [ "$RUN_DELIVERY" -eq 1 ]; then

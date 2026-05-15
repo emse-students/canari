@@ -13,7 +13,6 @@
     startStripeOnboarding,
     uploadAssociationLogo,
     deleteAssociationLogo,
-    associationLogoSrc,
     type Association,
     type AssociationMember,
   } from '$lib/associations/api';

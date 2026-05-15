@@ -13,7 +13,7 @@
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
-  import { Users, Bell, BellOff, Pencil } from 'lucide-svelte';
+  import { Bell, BellOff, Pencil } from 'lucide-svelte';
   import SvelteMarkdown from '@humanspeak/svelte-markdown';
   import AssociationMemberRow from '$lib/components/associations/AssociationMemberRow.svelte';
   import AssociationCalendarSection from '$lib/components/associations/AssociationCalendarSection.svelte';

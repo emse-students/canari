@@ -10,6 +10,8 @@
 
   type SortMode = 'recent' | 'oldest' | 'liked';
 
+  function focusOnMount(el: HTMLElement) { el.focus(); }
+
   /** Props for the PostComments section of a post card. */
   interface Props {
     /** All comments on the post (including replies). */
@@ -283,7 +285,7 @@
             bind:value={editingText}
             onkeydown={handleEditKeyDown}
             class="flex-1 bg-transparent text-[0.9rem] font-medium text-text-main outline-none"
-            autofocus
+            use:focusOnMount
           />
           <button type="button" onclick={submitEdit} class="text-amber-500 hover:text-amber-400 shrink-0 outline-none" aria-label="Valider">
             <Send size={15} strokeWidth={2.5} />
