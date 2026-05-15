@@ -374,6 +374,32 @@ export class ChannelService {
     return res.json() as Promise<{ success: boolean; channelId: string; imageMediaId: string }>;
   }
 
+  async getChannelAccess(channelId: string): Promise<{
+    channelId: string;
+    isPrivate: boolean;
+    allowedRoles: string[];
+    workspaceRoles: { id: string; name: string; priority: number }[];
+  }> {
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/access`);
+    await this.handleError(res);
+    return res.json();
+  }
+
+  async updateChannelAccess(
+    channelId: string,
+    isPrivate: boolean,
+    allowedRoleIds: string[]
+  ): Promise<{ ok: boolean }> {
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/access`, {
+      method: 'PATCH',
+      body: JSON.stringify({ isPrivate, allowedRoleIds }),
+    });
+    await this.handleError(res);
+    return res.json();
+  }
+
   async updateWorkspaceImage(workspaceId: string, mediaId: string) {
     const res = await this.fetchWithAuth(
       `${this.baseUrl}/api/channels/workspaces/${encodeURIComponent(workspaceId)}/image`,

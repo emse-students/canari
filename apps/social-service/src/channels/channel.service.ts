@@ -435,6 +435,61 @@ export class ChannelService {
     return { success: true, channelId, name: channel.name };
   }
 
+  /** Returns the channel's current access settings plus the workspace's available roles. */
+  async getChannelAccess(channelId: string, actorUserId: string) {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
+
+    const member = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId: actorUserId },
+    });
+    if (!member) throw new ForbiddenException('Not a member of this workspace');
+
+    const workspaceRoles = await this.roleRepo.find({
+      where: { workspaceId: channel.workspaceId },
+      order: { priority: 'DESC' },
+    });
+
+    return {
+      channelId,
+      isPrivate: channel.isPrivate,
+      allowedRoles: channel.allowedRoles || [],
+      workspaceRoles: workspaceRoles.map((r) => ({ id: r.id, name: r.name, priority: r.priority })),
+    };
+  }
+
+  /** Updates the channel's visibility and allowed-role list. Requires MANAGE_CHANNELS permission. */
+  async updateChannelAccess(
+    channelId: string,
+    actorUserId: string,
+    isPrivate: boolean,
+    allowedRoleIds: string[]
+  ) {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
+
+    const actorMember = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId: actorUserId },
+    });
+    if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
+
+    let hasPerm = false;
+    if (actorMember.roleIds?.length > 0) {
+      const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
+      hasPerm = roles.some(
+        (r) =>
+          r.permissions.includes('MANAGE_WORKSPACE') || r.permissions.includes('MANAGE_CHANNELS')
+      );
+    }
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNELS permission');
+
+    channel.isPrivate = isPrivate;
+    channel.allowedRoles = isPrivate ? allowedRoleIds : [];
+    await this.channelRepo.save(channel);
+
+    return { ok: true, channelId, isPrivate: channel.isPrivate, allowedRoles: channel.allowedRoles };
+  }
+
   /** Marks a channel as archived (hidden from listings) and broadcasts a channel.deleted event to workspace members. */
   async archiveChannel(channelId: string, actorUserId: string) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });

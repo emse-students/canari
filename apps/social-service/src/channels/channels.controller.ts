@@ -277,6 +277,32 @@ export class ChannelsController {
     );
   }
 
+  /** Returns the channel's access settings (isPrivate, allowedRoles) and the workspace role list. */
+  @UseGuards(NginxAuthGuard)
+  @Get(':channelId/access')
+  getChannelAccess(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string
+  ) {
+    return this.service.getChannelAccess(channelId, xUserId.trim().toLowerCase());
+  }
+
+  /** Updates the channel's isPrivate flag and allowedRoles list. */
+  @UseGuards(NginxAuthGuard)
+  @Patch(':channelId/access')
+  updateChannelAccess(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string,
+    @Body() body: { isPrivate: boolean; allowedRoleIds: string[] }
+  ) {
+    return this.service.updateChannelAccess(
+      channelId,
+      xUserId.trim().toLowerCase(),
+      body.isPrivate,
+      body.allowedRoleIds ?? []
+    );
+  }
+
   /** Renames a channel. */
   @UseGuards(NginxAuthGuard)
   @Patch(':channelId')
