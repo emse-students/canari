@@ -5,6 +5,7 @@
   import { presenceMap, watchUsers } from '$lib/stores/presenceStore';
   import { onMount } from 'svelte';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
+  import { isCanonicalDirectKey } from '$lib/utils/chat/conversations';
 
   interface Props {
     /** Raw contact/user ID used for presence lookup and direct-message routing. */
@@ -48,7 +49,11 @@
   let resolvedDisplayName = $state('');
 
   const effectiveDisplayName = $derived(
-    displayName && displayName !== contactName ? displayName : resolvedDisplayName
+    displayName &&
+      displayName !== contactName &&
+      !(isDirect && isCanonicalDirectKey(displayName))
+      ? displayName
+      : resolvedDisplayName
   );
 
   onMount(() => {

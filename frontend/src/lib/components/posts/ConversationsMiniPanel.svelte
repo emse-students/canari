@@ -4,8 +4,10 @@
   import { IndexedDbStorage, type ConversationMeta } from '$lib/db';
   import type { Conversation } from '$lib/types';
   import { getSavedUserId } from '$lib/stores/user';
-  import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
-  import { deriveConversationIdentity } from '$lib/utils/chat/conversations';
+  import {
+    deriveConversationIdentity,
+    resolveConversationListPresentation,
+  } from '$lib/utils/chat/conversations';
   import ConversationTile from '$lib/components/chat/ConversationTile.svelte';
   import { MessageCircle, ChevronRight, LoaderCircle } from 'lucide-svelte';
   import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
@@ -29,34 +31,24 @@
     return String(id ?? '').startsWith('channel_');
   }
 
-  function looksLikeUuid(value: string): boolean {
-    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.trim());
-  }
-
-  function pickGroupDisplayName(...candidates: Array<string | undefined>): string {
-    for (const candidate of candidates) {
-      const trimmed = candidate?.trim();
-      if (trimmed && !looksLikeUuid(trimmed) && !trimmed.includes('::')) {
-        return trimmed;
-      }
-    }
-    return candidates.find((c) => c?.trim())?.trim() ?? '';
-  }
-
   function buildItemFromMeta(meta: ConversationMeta, uid: string): ConvItem {
     const identity = deriveConversationIdentity(meta.name, uid, meta.id);
-    const contactId =
-      identity.conversationType === 'direct'
-        ? (identity.directPeerId ?? identity.contactName)
-        : meta.id;
+    const pres = resolveConversationListPresentation(
+      {
+        id: meta.id,
+        name: meta.name,
+        contactName: identity.contactName,
+        conversationType: identity.conversationType,
+        directPeerId: identity.directPeerId,
+        metaName: meta.name,
+      },
+      uid
+    );
     return {
       meta,
-      contactId,
-      displayName:
-        identity.conversationType === 'direct'
-          ? getUserDisplayNameSync(contactId, identity.displayName)
-          : pickGroupDisplayName(meta.name, identity.displayName),
-      conversationType: identity.conversationType,
+      contactId: pres.contactId,
+      displayName: pres.displayName,
+      conversationType: pres.conversationType,
       isReady: meta.isReady,
       unreadCount: 0,
       imageMediaId: null,
@@ -69,15 +61,18 @@
     uid: string,
     baseline?: ConvItem
   ): ConvItem {
-    const identity = deriveConversationIdentity(
-      conv.name || baseline?.meta.name || key,
-      uid,
-      conv.id
+    const pres = resolveConversationListPresentation(
+      {
+        id: conv.id,
+        name: conv.name,
+        contactName: conv.contactName,
+        conversationType: conv.conversationType,
+        directPeerId: conv.directPeerId,
+        metaName: baseline?.meta.name,
+        fallbackDisplayName: baseline?.displayName,
+      },
+      uid
     );
-    const contactId =
-      identity.conversationType === 'direct'
-        ? (identity.directPeerId ?? identity.contactName)
-        : conv.id;
     const msgs = conv.messages;
     const lastTs =
       msgs.length > 0
@@ -93,12 +88,9 @@
         isReady: conv.isReady,
         updatedAt: Math.max(baseline?.meta.updatedAt ?? 0, lastTs),
       },
-      contactId,
-      displayName:
-        identity.conversationType === 'direct'
-          ? getUserDisplayNameSync(contactId, baseline?.displayName ?? identity.displayName)
-          : pickGroupDisplayName(conv.name, baseline?.displayName, baseline?.meta.name),
-      conversationType: identity.conversationType,
+      contactId: pres.contactId,
+      displayName: pres.displayName,
+      conversationType: pres.conversationType,
       isReady: conv.isReady,
       unreadCount: conv.unreadCount ?? baseline?.unreadCount ?? 0,
       imageMediaId: conv.imageMediaId ?? baseline?.imageMediaId ?? null,
@@ -164,7 +156,7 @@
   <!-- En-tête -->
   <div
     class="flex items-center justify-between px-5 py-4 border-b border-black/5 dark:border-white/10 flex-shrink-0 bg-white/40 dark:bg-black/10"
-  >
+  >  >
     <div class="flex items-center gap-2.5">
       <div class="p-1.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded-lg">
         <MessageCircle size={16} strokeWidth={2.5} />

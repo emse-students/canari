@@ -14,6 +14,19 @@ import { migrateFromLocalStorage } from '../migration';
 import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
 import { apiFetch } from '$lib/utils/apiFetch';
+import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** True when `value` is a single user/group UUID (not a canonical direct key). */
+export function isUuidLike(value: string): boolean {
+  return UUID_RE.test(value.trim());
+}
+
+/** True when `value` is the persisted direct-conversation key (`userId::peerId`). */
+export function isCanonicalDirectKey(value: string): boolean {
+  return value.includes('::');
+}
 
 /** Number of messages loaded from local DB on first display. Older messages load on scroll-up. */
 const INITIAL_MESSAGES_PAGE = 60;
@@ -119,6 +132,84 @@ export function deriveConversationIdentity(
   }
 
   return { conversationType: 'group', contactName: normalizedName, displayName: normalizedName };
+}
+
+export interface ConversationListPresentation {
+  conversationType: 'direct' | 'group';
+  contactId: string;
+  displayName: string;
+}
+
+/**
+ * Resolves sidebar / mini-panel row data from a conversation record.
+ * Prefer stored `conversationType` / `directPeerId` — re-parsing `conv.name` alone
+ * breaks after MLS reload when `name` is only the peer UUID (no `::` key).
+ */
+export function resolveConversationListPresentation(
+  input: {
+    id: string;
+    name: string;
+    contactName: string;
+    conversationType?: 'direct' | 'group' | 'channel';
+    directPeerId?: string;
+    /** Persisted IndexedDB name (often `userId::peerId` for DMs). */
+    metaName?: string;
+    /** Previously resolved label to keep across reloads. */
+    fallbackDisplayName?: string;
+  },
+  userId: string
+): ConversationListPresentation {
+  const metaName = input.metaName?.trim();
+  const identity = deriveConversationIdentity(metaName || input.name, userId, input.id);
+  const conversationType = input.conversationType ?? identity.conversationType;
+
+  if (conversationType === 'direct') {
+    const peerId = (
+      input.directPeerId ??
+      identity.directPeerId ??
+      (input.contactName && !isCanonicalDirectKey(input.contactName)
+        ? input.contactName
+        : undefined) ??
+      identity.contactName
+    ).toLowerCase();
+
+    const rawName = input.name.trim();
+    const needsResolve =
+      isCanonicalDirectKey(rawName) ||
+      !rawName ||
+      rawName.toLowerCase() === peerId ||
+      isUuidLike(rawName);
+
+    const fallback =
+      input.fallbackDisplayName &&
+      !isCanonicalDirectKey(input.fallbackDisplayName) &&
+      input.fallbackDisplayName.toLowerCase() !== peerId
+        ? input.fallbackDisplayName
+        : undefined;
+
+    return {
+      conversationType: 'direct',
+      contactId: peerId,
+      displayName: needsResolve ? getUserDisplayNameSync(peerId, fallback) : rawName,
+    };
+  }
+
+  for (const candidate of [input.name, input.fallbackDisplayName, metaName]) {
+    const trimmed = candidate?.trim();
+    if (trimmed && !isUuidLike(trimmed) && !isCanonicalDirectKey(trimmed)) {
+      return {
+        conversationType: 'group',
+        contactId: input.id,
+        displayName: trimmed,
+      };
+    }
+  }
+
+  return {
+    conversationType: 'group',
+    contactId: input.id,
+    displayName: input.name.trim() || input.id,
+  };
 }
 
 // ---------- De-duplication ----------
@@ -308,10 +399,15 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
       prev.name !== identity.displayName &&
       identity.conversationType === 'group'
         ? prev.name
-        : identity.displayName;
+        : identity.conversationType === 'direct' && identity.directPeerId
+          ? identity.directPeerId
+          : identity.displayName;
     ctx.conversations.set(meta.id, {
       id: meta.id,
-      contactName: identity.contactName,
+      contactName:
+        identity.conversationType === 'direct' && identity.directPeerId
+          ? identity.directPeerId
+          : identity.contactName,
       name: resolvedName,
       messages: [],
       isReady: meta.isReady,
