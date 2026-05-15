@@ -68,6 +68,18 @@ export class PostsController {
     return this.service.getMyScheduledPosts(xUserId);
   }
 
+  /** Returns all posts that have at least one report. Global admin only. */
+  @UseGuards(NginxAuthGuard)
+  @Get('reported')
+  getReportedPosts(
+    @Headers('x-global-admin') xGlobalAdmin: string | undefined,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string
+  ) {
+    if (xGlobalAdmin !== 'true') throw new UnauthorizedException('Global admin required');
+    return this.service.getReportedPosts(Number(limit ?? 50), Number(offset ?? 0));
+  }
+
   /** Returns posts matching the given search query. */
   @Get('search')
   searchPosts(
@@ -276,15 +288,16 @@ export class PostsController {
     return this.interactions.editComment(postId, commentId, xUserId, body.text);
   }
 
-  /** Deletes a comment owned by the calling user. */
+  /** Deletes a comment; the author or a global admin may delete. */
   @UseGuards(NginxAuthGuard)
   @Delete(':postId/comments/:commentId')
   deleteComment(
     @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') xGlobalAdmin: string | undefined,
     @Param('postId') postId: string,
     @Param('commentId') commentId: string
   ) {
-    return this.interactions.deleteComment(postId, commentId, xUserId);
+    return this.interactions.deleteComment(postId, commentId, xUserId, xGlobalAdmin === 'true');
   }
 
   /** Pins a post; requires global admin privileges. */

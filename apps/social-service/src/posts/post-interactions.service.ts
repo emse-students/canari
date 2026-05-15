@@ -156,14 +156,14 @@ export class PostInteractionsService {
     return { ok: true, comment };
   }
 
-  /** Removes a comment and all of its replies. Only the original author may delete. */
-  async deleteComment(postId: string, commentId: string, userId: string) {
+  /** Removes a comment and all of its replies. Original author or global admin may delete. */
+  async deleteComment(postId: string, commentId: string, userId: string, isAdmin = false) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
     const comments: any[] = post.comments ?? [];
     const comment = comments.find((c: any) => c.id === commentId);
     if (!comment) throw new NotFoundException('Comment not found');
-    if (comment.userId !== userId) throw new UnauthorizedException('Not your comment');
+    if (!isAdmin && comment.userId !== userId) throw new UnauthorizedException('Not your comment');
     post.comments = comments.filter((c: any) => c.id !== commentId && c.parentId !== commentId);
     await this.postRepo.save(post);
     return { ok: true };

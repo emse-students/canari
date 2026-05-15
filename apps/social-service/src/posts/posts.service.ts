@@ -381,6 +381,19 @@ export class PostsService {
     return safe;
   }
 
+  /** Returns posts that have at least one report, ordered by most recent. Admin only. */
+  async getReportedPosts(limit = 50, offset = 0): Promise<any[]> {
+    const rows: any[] = await this.postRepo.manager.query(
+      `SELECT id, "authorId", markdown, "createdAt", reports, pinned, "associationId"
+       FROM posts
+       WHERE jsonb_array_length(COALESCE(reports, '[]'::jsonb)) > 0
+       ORDER BY "createdAt" DESC
+       LIMIT $1 OFFSET $2`,
+      [limit, offset]
+    );
+    return rows;
+  }
+
   /** Returns the author's own future-scheduled posts (max 20), ordered by scheduled date. */
   async getMyScheduledPosts(userId: string) {
     const rows: any[] = await this.postRepo.manager.query(

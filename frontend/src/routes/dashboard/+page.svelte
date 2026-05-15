@@ -17,6 +17,8 @@
     Moon,
     Sun,
     LogOut,
+    ShieldAlert,
+    Activity,
   } from 'lucide-svelte';
   import { goto } from '$app/navigation';
   import { clearAuth } from '$lib/stores/auth';
@@ -396,6 +398,24 @@
       </button>
 
       {#if isAdmin}
+        <a
+          href="/admin/moderation"
+          class="flex flex-col items-center gap-2 p-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] hover:border-red-400 hover:bg-red-50/40 transition-colors"
+          title="Modération"
+        >
+          <ShieldAlert size={22} class="text-red-500" />
+          <span class="text-sm font-medium text-text-main">Modération</span>
+          <span class="text-xs text-text-muted text-center">Posts signalés</span>
+        </a>
+        <a
+          href="/admin/status"
+          class="flex flex-col items-center gap-2 p-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] hover:border-cn-yellow hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))] transition-colors"
+          title="Statut système"
+        >
+          <Activity size={22} class="text-text-muted" />
+          <span class="text-sm font-medium text-text-main">Statut</span>
+          <span class="text-xs text-text-muted text-center">Présence et appareils</span>
+        </a>
         <button
           type="button"
           onclick={() => void handleBroadcastPushTest()}
