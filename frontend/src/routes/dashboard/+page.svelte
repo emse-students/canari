@@ -19,6 +19,7 @@
     LogOut,
     ShieldAlert,
     Activity,
+    UserCog,
   } from 'lucide-svelte';
   import { goto } from '$app/navigation';
   import { clearAuth } from '$lib/stores/auth';
@@ -415,6 +416,15 @@
           <Activity size={22} class="text-text-muted" />
           <span class="text-sm font-medium text-text-main">Statut</span>
           <span class="text-xs text-text-muted text-center">Présence et appareils</span>
+        </a>
+        <a
+          href="/admin/users"
+          class="flex flex-col items-center gap-2 p-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] hover:border-amber-400 hover:bg-amber-50/40 dark:hover:bg-amber-900/10 transition-colors"
+          title="Gestion des admins"
+        >
+          <UserCog size={22} class="text-amber-500" />
+          <span class="text-sm font-medium text-text-main">Admins</span>
+          <span class="text-xs text-text-muted text-center">Droits d'administration</span>
         </a>
         <button
           type="button"

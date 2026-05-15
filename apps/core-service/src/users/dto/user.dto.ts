@@ -78,4 +78,6 @@ export class PublicUserDto {
   bio?: string | null;
   /** Account creation timestamp. */
   createdAt?: Date;
+  /** Whether the user has global admin privileges (only included in admin-facing responses). */
+  admin?: boolean;
 }

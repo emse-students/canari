@@ -93,6 +93,22 @@ export class UsersService {
     return await this.userRepository.save(newUser);
   }
 
+  /** Sets or clears the admin flag on a user. */
+  async setAdmin(targetId: string, admin: boolean): Promise<void> {
+    const user = await this.findOne(targetId);
+    user.admin = admin;
+    await this.userRepository.save(user);
+  }
+
+  /** Returns all users (id, displayName, admin) — admin-only listing. */
+  async listAll(): Promise<Pick<User, 'id' | 'displayName' | 'admin'>[]> {
+    return this.userRepository
+      .createQueryBuilder('user')
+      .select(['user.id', 'user.displayName', 'user.admin'])
+      .orderBy('user.displayName', 'ASC')
+      .getMany();
+  }
+
   /**
    * Search users by displayName (case-insensitive prefix match).
    * Returns up to 10 results, excluding the current user.

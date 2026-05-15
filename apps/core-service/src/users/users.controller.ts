@@ -16,6 +16,7 @@ import { UsersService } from './users.service';
 import { AvatarService } from './avatar.service';
 import { CreateUserDto, UpdateUserDto } from './dto/user.dto';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
+import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 
 interface JwtUser {
   sub?: string;
@@ -89,5 +90,23 @@ export class UsersController {
   ) {
     const user = await this.usersService.update(userId, updateUserDto);
     return this.usersService.toPublicDto(user);
+  }
+
+  /** Returns all users with their admin status; requires global admin. */
+  @UseGuards(NginxAuthGuard, GlobalAdminGuard)
+  @Get('admin/list')
+  listAll() {
+    return this.usersService.listAll();
+  }
+
+  /** Sets or clears the global admin flag on a user; requires global admin. */
+  @UseGuards(NginxAuthGuard, GlobalAdminGuard)
+  @Patch(':id/admin')
+  async setAdmin(
+    @Param('id') targetId: string,
+    @Body() body: { admin: boolean },
+  ) {
+    await this.usersService.setAdmin(targetId, body.admin);
+    return { ok: true, userId: targetId, admin: body.admin };
   }
 }
