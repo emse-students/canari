@@ -1,6 +1,6 @@
 {
   "productName": "Canari",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "identifier": "fr.emse.canari",
   "build": {
     "beforeDevCommand": "bun run dev",
@@ -26,7 +26,9 @@
     "deep-link": {
       "mobile": [
         {
-          "scheme": ["fr.emse.canari"],
+          "scheme": [
+            "fr.emse.canari"
+          ],
           "host": "callback"
         }
       ]
