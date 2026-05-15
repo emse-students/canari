@@ -1,6 +1,6 @@
 import { saveMlsState } from '$lib/utils/hex';
 import { decodeAppMessage, encodeAppMessage, mkSystem } from '$lib/proto/codec';
-import { serializeEnvelope, mkTextEnvelope } from '$lib/envelope';
+import { serializeEnvelope, mkTextEnvelope, mkChannelInviteEnvelope } from '$lib/envelope';
 import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
 import { ChannelService } from '$lib/services/ChannelService';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
@@ -510,12 +510,10 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                     .catch(() => {});
 
                   const displayName = data.channelName || channelId;
-                  await addMessageToChat(
-                    'system',
-                    `Vous avez ete invite a rejoindre #${displayName}. Les cles de chiffrement ont ete recues en prive.`,
-                    convoKey,
-                    { isSystem: true }
+                  const inviteEnvelope = serializeEnvelope(
+                    mkChannelInviteEnvelope(channelId, displayName, data.workspaceName)
                   );
+                  await addMessageToChat('system', inviteEnvelope, convoKey, { isSystem: true });
                   log(
                     `[CHANNEL-KEY] ${keysToImport.length} cle(s) recue(s) via MLS pour #${displayName} (jusqu'a v${keyVersion}).`
                   );

@@ -34,6 +34,12 @@ export interface MediaEnvelope {
 export interface SystemEnvelope {
   kind: 'system';
   text: string;
+  /** Present when the system event is a channel invitation; enables the Join button in the UI. */
+  channelInvite?: {
+    channelId: string;
+    channelName: string;
+    workspaceName?: string;
+  };
 }
 
 export type MessageEnvelope = TextEnvelope | MediaEnvelope | SystemEnvelope;
@@ -104,7 +110,16 @@ export function parseEnvelope(content: string): MessageEnvelope {
       }
 
       if (obj.kind === 'system' && typeof obj.text === 'string') {
-        return { kind: 'system', text: obj.text };
+        const ci = obj.channelInvite as Record<string, unknown> | undefined;
+        const channelInvite =
+          ci && typeof ci.channelId === 'string' && typeof ci.channelName === 'string'
+            ? {
+                channelId: ci.channelId,
+                channelName: ci.channelName,
+                workspaceName: typeof ci.workspaceName === 'string' ? ci.workspaceName : undefined,
+              }
+            : undefined;
+        return { kind: 'system', text: obj.text, ...(channelInvite ? { channelInvite } : {}) };
       }
 
       if (obj.kind === 'media' && typeof obj.media === 'object' && obj.media !== null) {
@@ -175,4 +190,17 @@ export function mkMediaEnvelope(
 /** Build a system / group-event envelope (e.g. "Alice renamed the group"). These are never user-authored. */
 export function mkSystemEnvelope(text: string): MessageEnvelope {
   return { kind: 'system', text };
+}
+
+/** Build a channel-invite system envelope that the UI renders as an actionable Join card. */
+export function mkChannelInviteEnvelope(
+  channelId: string,
+  channelName: string,
+  workspaceName?: string
+): SystemEnvelope {
+  return {
+    kind: 'system',
+    text: `Invitation à rejoindre #${channelName}`,
+    channelInvite: { channelId, channelName, workspaceName },
+  };
 }

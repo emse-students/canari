@@ -3,7 +3,7 @@ import { ChannelService } from '$lib/services/ChannelService';
 import type { WorkspaceDto, ChannelDto } from '$lib/services/ChannelService';
 import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
-import { encodeAppMessage, mkSystem, mkText } from '$lib/proto/codec';
+import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
 import { hydrateChannelBootstrap } from '$lib/utils/chat/channelCrypto';
 
 /** One channel entry shown in the sidebar under its workspace. */
@@ -432,16 +432,16 @@ export function useChannelWorkspaces() {
           if (directConvo) {
             const mlsService = await ctx.ensureMls();
             const controlMsg = encodeAppMessage(
-              mkSystem('channel_key_distribution', JSON.stringify(inviteResult.keyDistribution))
-            );
-            await mlsService.sendMessage(directConvo[1].id, controlMsg);
-
-            const inviteNotice = encodeAppMessage(
-              mkText(
-                `Je t'invite à rejoindre #${channelDisplayName} dans ${workspaceDisplayName}. Ouvre l'onglet Communautés puis clique sur Rejoindre.`
+              mkSystem(
+                'channel_key_distribution',
+                JSON.stringify({
+                  ...inviteResult.keyDistribution,
+                  channelName: channelDisplayName,
+                  workspaceName: workspaceDisplayName,
+                })
               )
             );
-            await mlsService.sendMessage(directConvo[1].id, inviteNotice);
+            await mlsService.sendMessage(directConvo[1].id, controlMsg);
 
             await service.markKeyDistributionSent(
               channelId,

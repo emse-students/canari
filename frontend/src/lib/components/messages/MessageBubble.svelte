@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { EllipsisVertical, Info } from 'lucide-svelte';
+  import { EllipsisVertical, Info, Hash } from 'lucide-svelte';
   import { MediaService } from '$lib/media';
   import type { MediaRef } from '$lib/media';
   import { parseEnvelope } from '$lib/envelope';
@@ -130,6 +130,9 @@
 
   let envelope = $derived(parseEnvelope(content));
   let effectiveSystem = $derived(isSystem || envelope.kind === 'system');
+  let channelInvite = $derived(
+    envelope.kind === 'system' ? (envelope.channelInvite ?? null) : null
+  );
   let textContent = $derived(
     envelope.kind === 'text' || envelope.kind === 'system'
       ? envelope.text
@@ -308,14 +311,40 @@
 </script>
 
 {#if effectiveSystem}
-  <div
-    class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-medium text-text-muted text-center max-w-md border border-black/5 dark:border-white/10 bg-black/5 dark:bg-white/5 backdrop-blur-md shadow-sm {shouldAnimate
-      ? 'animate-rise-in'
-      : ''}"
-  >
-    <Info size={14} class="flex-shrink-0 opacity-60" />
-    <span>{textContent}</span>
-  </div>
+  {#if channelInvite}
+    <!-- Channel invite card with Join button -->
+    <div
+      class="inline-flex flex-col gap-2.5 px-4 py-3 rounded-2xl max-w-xs border border-amber-500/20 bg-amber-500/5 dark:bg-amber-500/10 backdrop-blur-md shadow-sm {shouldAnimate
+        ? 'animate-rise-in'
+        : ''}"
+    >
+      <div class="flex items-center gap-2 text-amber-700 dark:text-amber-400">
+        <Hash size={15} strokeWidth={2.5} class="flex-shrink-0" />
+        <span class="text-xs font-bold truncate">{channelInvite.channelName}</span>
+        {#if channelInvite.workspaceName}
+          <span class="text-xs text-text-muted font-medium truncate">· {channelInvite.workspaceName}</span>
+        {/if}
+      </div>
+      <p class="text-xs text-text-muted leading-relaxed">
+        Vous avez été invité à rejoindre ce canal chiffré.
+      </p>
+      <a
+        href="/chat"
+        class="inline-flex items-center justify-center gap-1.5 rounded-xl bg-amber-500 px-3 py-1.5 text-xs font-bold text-[#151B2C] hover:bg-amber-400 active:scale-95 transition-all shadow-sm shadow-amber-500/20"
+      >
+        <Hash size={12} strokeWidth={3} /> Rejoindre le canal
+      </a>
+    </div>
+  {:else}
+    <div
+      class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-medium text-text-muted text-center max-w-md border border-black/5 dark:border-white/10 bg-black/5 dark:bg-white/5 backdrop-blur-md shadow-sm {shouldAnimate
+        ? 'animate-rise-in'
+        : ''}"
+    >
+      <Info size={14} class="flex-shrink-0 opacity-60" />
+      <span>{textContent}</span>
+    </div>
+  {/if}
 {:else}
   <div
     id={`msg-${messageId}`}
