@@ -19,6 +19,7 @@ import * as admin from 'firebase-admin';
 import { PushToken } from '../entities/push-token.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
+import { ThrottlerGuard } from '@nestjs/throttler';
 import {
   sanitizeQueryValue,
   sanitizeOptionalQueryValue,
@@ -53,7 +54,7 @@ export class PushController {
    * Register or refresh a push token for a device.
    * Upserts on (userId, deviceId) — one token per device per user.
    */
-  @UseGuards(HeaderAuthGuard)
+  @UseGuards(ThrottlerGuard, HeaderAuthGuard)
   @Post('mls/push/register')
   async registerPushToken(
     @Body() body: { token: string; deviceId: string; platform?: string },

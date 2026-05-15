@@ -1,5 +1,6 @@
 import { Module, Provider } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { HealthController } from './controllers/health.controller';
 import { SyncController } from './controllers/sync.controller';
@@ -36,6 +37,7 @@ const RedisProvider: Provider = {
 /** Root NestJS module: wires PostgreSQL via TypeORM, Redis, and all MLS controllers. */
 @Module({
   imports: [
+    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 10 }]),
     TypeOrmModule.forRoot({
       type: 'postgres',
       url:

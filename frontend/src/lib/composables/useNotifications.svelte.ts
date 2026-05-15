@@ -239,7 +239,7 @@ export function useNotifications() {
           }
           n.close();
         };
-        setTimeout(() => n.close(), 5000);
+        setTimeout(() => n.close(), 8000);
       } catch {
         /* ignore */
       }

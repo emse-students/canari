@@ -9,8 +9,11 @@ import android.os.Build
 import android.util.Base64
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.work.BackoffPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
+import androidx.work.WorkRequest
+import java.util.concurrent.TimeUnit
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import org.json.JSONObject
@@ -52,7 +55,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // 1. Vérifie si on doit déclencher un travail lourd (ex: envoyer un Welcome, traiter la queue)
         if (data["action"] == "process_queue") {
             Log.d(TAG, "action=process_queue → enqueue MlsBackgroundWorker")
-            val workRequest = OneTimeWorkRequestBuilder<MlsBackgroundWorker>().build()
+            val workRequest = OneTimeWorkRequestBuilder<MlsBackgroundWorker>()
+                .setBackoffCriteria(
+                    BackoffPolicy.EXPONENTIAL,
+                    WorkRequest.MIN_BACKOFF_MILLIS,
+                    TimeUnit.MILLISECONDS
+                )
+                .build()
             WorkManager.getInstance(this).enqueue(workRequest)
 
             // Si c'est juste un ping de synchro (pas de message à afficher), on s'arrête là
@@ -141,35 +150,45 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Log.e(TAG, "fetchProtoFromBackend: pushSecret absent du Keystore")
             return null
         }
-        return try {
-            val url = URL(
-                "${ctx.baseUrl}/api/mls/push/fetch-proto" +
-                    "?messageId=${java.net.URLEncoder.encode(queuedMessageId, "UTF-8")}" +
-                    "&userId=${java.net.URLEncoder.encode(ctx.userId, "UTF-8")}" +
-                    "&deviceId=${java.net.URLEncoder.encode(ctx.deviceId, "UTF-8")}"
-            )
-            Log.d(TAG, "fetchProtoFromBackend: GET $url")
-            val conn = (url.openConnection() as HttpURLConnection).apply {
-                connectTimeout = 5_000
-                readTimeout    = 5_000
-                requestMethod  = "GET"
-                setRequestProperty("Authorization", "PushSecret $secret")
+        var lastException: Exception? = null
+        repeat(2) { attempt ->
+            try {
+                val result = doFetchProto(queuedMessageId, ctx, secret)
+                if (result != null) return result
+            } catch (e: Exception) {
+                lastException = e
+                if (attempt == 0) Thread.sleep(1_000)
             }
-            val code = conn.responseCode
-            if (code != 200) {
-                Log.e(TAG, "fetchProtoFromBackend: HTTP $code")
-                conn.disconnect()
-                return null
-            }
-            val text = conn.inputStream.bufferedReader().use { it.readText() }
-            conn.disconnect()
-            val proto = JSONObject(text).optString("proto").takeIf { it.isNotEmpty() }
-            Log.d(TAG, "fetchProtoFromBackend: proto reçu=${proto != null} (${proto?.length ?: 0} chars)")
-            proto
-        } catch (e: Exception) {
-            Log.e(TAG, "fetchProtoFromBackend: exception: ${e.message}")
-            null
         }
+        Log.e(TAG, "fetchProtoFromBackend: échec après 2 tentatives: ${lastException?.message}")
+        return null
+    }
+
+    private fun doFetchProto(queuedMessageId: String, ctx: PushContext, secret: String): String? {
+        val url = URL(
+            "${ctx.baseUrl}/api/mls/push/fetch-proto" +
+                "?messageId=${java.net.URLEncoder.encode(queuedMessageId, "UTF-8")}" +
+                "&userId=${java.net.URLEncoder.encode(ctx.userId, "UTF-8")}" +
+                "&deviceId=${java.net.URLEncoder.encode(ctx.deviceId, "UTF-8")}"
+        )
+        Log.d(TAG, "doFetchProto: GET $url")
+        val conn = (url.openConnection() as HttpURLConnection).apply {
+            connectTimeout = 5_000
+            readTimeout    = 5_000
+            requestMethod  = "GET"
+            setRequestProperty("Authorization", "PushSecret $secret")
+        }
+        val code = conn.responseCode
+        if (code != 200) {
+            Log.e(TAG, "doFetchProto: HTTP $code")
+            conn.disconnect()
+            return null
+        }
+        val text = conn.inputStream.bufferedReader().use { it.readText() }
+        conn.disconnect()
+        val proto = JSONObject(text).optString("proto").takeIf { it.isNotEmpty() }
+        Log.d(TAG, "doFetchProto: proto reçu=${proto != null} (${proto?.length ?: 0} chars)")
+        return proto
     }
 
     private fun decryptProto(
