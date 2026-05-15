@@ -42,7 +42,27 @@ if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
             const u = new URL(url);
             console.log('[hooks] Parsed URL protocol:', u.protocol, 'host:', u.host);
 
-            // Only handle our scheme
+            // Chat conversation deep link: fr.emse.canari://chat/{groupId}
+            if (u.protocol === 'fr.emse.canari:' && u.host === 'chat') {
+              const groupId = u.pathname.replace(/^\//, '');
+              if (groupId) {
+                import('$lib/stores/notifNav.svelte')
+                  .then(({ notifNav }) => {
+                    notifNav.navigate(groupId);
+                    if (window.location.pathname !== '/chat') {
+                      import('$app/navigation')
+                        .then(({ goto }) => goto('/chat'))
+                        .catch(() => {
+                          window.location.href = '/chat';
+                        });
+                    }
+                  })
+                  .catch(() => {});
+              }
+              continue;
+            }
+
+            // Only handle OIDC callback scheme
             if (u.protocol !== 'fr.emse.canari:' || u.host !== 'callback') {
               console.log('[hooks] URL is not our deep link, ignoring');
               continue;

@@ -97,6 +97,27 @@ export async function resolveUserDisplayName(userId: string): Promise<string | n
 }
 
 /**
+ * Resolves display names for multiple IDs concurrently.
+ * Returns a getter function (id) => name for building system message text.
+ */
+export async function resolveDisplayNames(ids: string[]): Promise<(id: string) => string> {
+  const map = new Map<string, string>();
+  await Promise.all(
+    ids.map(async (id) => {
+      const norm = normalizeUserId(id);
+      const sync = getUserDisplayNameSync(norm);
+      if (sync !== norm) {
+        map.set(norm, sync);
+        return;
+      }
+      const resolved = await resolveUserDisplayName(norm);
+      map.set(norm, resolved ?? id);
+    })
+  );
+  return (id: string) => map.get(normalizeUserId(id)) ?? id;
+}
+
+/**
  * Get user initials for avatar placeholder.
  * Priority: (firstName initial + lastName initial) > firstName initial > lastName initial > first letter of displayName/id
  */

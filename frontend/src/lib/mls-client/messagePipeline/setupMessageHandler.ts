@@ -3,7 +3,7 @@ import { decodeAppMessage, encodeAppMessage, mkSystem } from '$lib/proto/codec';
 import { serializeEnvelope, mkTextEnvelope, mkChannelInviteEnvelope } from '$lib/envelope';
 import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
 import { ChannelService } from '$lib/services/ChannelService';
-import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
+import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
 import { recoverDeadGroup } from '$lib/utils/chat/recovery';
 import {
@@ -529,18 +529,18 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               if (event === 'groupRenamed' && data.newName) {
                 conversations.set(convoKey, { ...convo, name: data.newName });
                 if (storage) await saveConversation(convoKey);
-                const senderName = getUserDisplayNameSync(senderNorm, senderNorm);
+                const getName = await resolveDisplayNames([senderNorm]);
                 await addMessageToChat(
                   'system',
-                  `${senderName} a renommé le groupe en "${data.newName}"`,
+                  `${getName(senderNorm)} a renommé le groupe en "${data.newName}"`,
                   convoKey,
                   { isSystem: true }
                 );
-                log(`📝 Groupe renommé en "${data.newName}" par ${senderName}`);
+                log(`📝 Groupe renommé en "${data.newName}" par ${getName(senderNorm)}`);
                 return true;
               }
               if (event === 'memberRemoved' && data.targetUser) {
-                const senderName = getUserDisplayNameSync(senderNorm, senderNorm);
+                const getName = await resolveDisplayNames([senderNorm, data.targetUser]);
                 if (data.targetUser.toLowerCase() === userId.toLowerCase()) {
                   // Current user was kicked — purge the conversation immediately
                   try {
@@ -557,12 +557,11 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                   if (deleteConversation) await deleteConversation(convoKey);
                   conversations.delete(convoKey);
                   if (getSelectedContact() === convoKey) setSelectedContact(null);
-                  log(`[INFO] Expulsé du groupe "${convoKey}" par ${senderName}`);
+                  log(`[INFO] Expulsé du groupe "${convoKey}" par ${getName(senderNorm)}`);
                 } else {
-                  const targetName = getUserDisplayNameSync(data.targetUser, data.targetUser);
                   await addMessageToChat(
                     'system',
-                    `${senderName} a retiré ${targetName} du groupe`,
+                    `${getName(senderNorm)} a retiré ${getName(data.targetUser)} du groupe`,
                     convoKey,
                     { isSystem: true }
                   );
@@ -570,16 +569,18 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                 return true;
               }
               if (event === 'memberAdded') {
-                const senderName = getUserDisplayNameSync(senderNorm, senderNorm);
-                const added =
+                const newUserIds: string[] =
                   data.newUsers && Array.isArray(data.newUsers)
-                    ? data.newUsers.map((u: string) => getUserDisplayNameSync(u, u)).join(', ')
-                    : getUserDisplayNameSync(data.newUser, data.newUser);
-
+                    ? data.newUsers
+                    : data.newUser
+                      ? [data.newUser]
+                      : [];
+                const getName = await resolveDisplayNames([senderNorm, ...newUserIds]);
+                const added = newUserIds.map((u: string) => getName(u)).join(', ');
                 if (added) {
                   await addMessageToChat(
                     'system',
-                    `${senderName} a ajouté ${added} au groupe`,
+                    `${getName(senderNorm)} a ajouté ${added} au groupe`,
                     convoKey,
                     { isSystem: true }
                   );
@@ -587,7 +588,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                 return true;
               }
               if (event === 'groupDeleted') {
-                const senderName = getUserDisplayNameSync(senderNorm, senderNorm);
+                const getName = await resolveDisplayNames([senderNorm]);
+                const senderName = getName(senderNorm);
                 try {
                   mlsService.forgetGroup(convo.id);
                 } catch {

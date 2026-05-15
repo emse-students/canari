@@ -51,6 +51,8 @@ class CanariApplication : Application() {
             if (secret.isNotEmpty()) {
                 PushSecretKeystore.store(this, secret)
             }
+            // Overwrite before delete to prevent recovery from filesystem
+            file.writeBytes(ByteArray(secret.length) { 0 })
             file.delete()
         } catch (_: Exception) { }
     }

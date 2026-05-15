@@ -32,10 +32,22 @@
   // target conversation ID. This effect consumes it and opens the conversation.
   $effect(() => {
     const id = notifNav.pending;
-    if (id) {
+    if (!id) return;
+    // Direct key match (web notifications use the conversation map key)
+    if (convs.conversations.has(id)) {
       notifNav.clear();
       convs.selectConversation(id);
+      return;
     }
+    // Search by convo.id (Android deep link uses the MLS groupId)
+    for (const [key, convo] of convs.conversations) {
+      if (convo.id === id) {
+        notifNav.clear();
+        convs.selectConversation(key);
+        return;
+      }
+    }
+    // Conversations not yet loaded — effect re-runs when map changes
   });
 
   // ─── Sync session (local — scoped to /chat, not the global background service) ──

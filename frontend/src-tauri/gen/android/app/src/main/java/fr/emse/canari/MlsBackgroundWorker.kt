@@ -26,7 +26,11 @@ class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
     external fun nativeProcessBackgroundTasks(filesDir: String, stateBytes: ByteArray, pin: String): Boolean
 
     override fun doWork(): Result {
-        Log.d(TAG, "doWork: démarrage")
+        if (runAttemptCount >= 3) {
+            Log.e(TAG, "doWork: max retries reached, giving up")
+            return Result.failure()
+        }
+        Log.d(TAG, "doWork: démarrage (attempt $runAttemptCount)")
         val stateBytes = loadMlsState()
         if (stateBytes == null) {
             Log.e(TAG, "doWork: mls.bin absent → failure")

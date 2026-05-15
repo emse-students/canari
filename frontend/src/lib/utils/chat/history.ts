@@ -8,7 +8,7 @@ import type {
 } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
 import { decodeAppMessage } from '$lib/proto/codec';
-import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
+import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
 
 /** Return the localStorage key used to persist the set of already-processed ciphertext fingerprints for a group. */
@@ -66,6 +66,7 @@ export function mapStoredMessagesToChatMessages(storedMessages: StoredMessage[],
       content: m.content,
       timestamp: new Date(m.timestamp),
       isOwn: m.senderId.toLowerCase() === userId.toLowerCase(),
+      isSystem: m.senderId === 'system',
       readBy: m.readBy,
       reactions: m.reactions,
       ...(m.isDeleted ? { isDeleted: true } : {}),
@@ -207,22 +208,24 @@ export async function replayConversationHistory(params: {
               if (convo && convo.name !== data.newName) {
                 setConversation(contactName, { ...convo, name: data.newName });
               }
-              const senderName = getUserDisplayNameSync(senderNorm, senderNorm);
-              systemText = `${senderName} a renommé le groupe en "${data.newName}"`;
+              const getName = await resolveDisplayNames([senderNorm]);
+              systemText = `${getName(senderNorm)} a renommé le groupe en "${data.newName}"`;
             } else if (parsed.system.event === 'memberRemoved' && data.targetUser) {
-              const senderName = getUserDisplayNameSync(senderNorm, senderNorm);
-              const targetName = getUserDisplayNameSync(data.targetUser, data.targetUser);
-              systemText = `${senderName} a retiré ${targetName} du groupe`;
+              const getName = await resolveDisplayNames([senderNorm, data.targetUser]);
+              systemText = `${getName(senderNorm)} a retiré ${getName(data.targetUser)} du groupe`;
             } else if (parsed.system.event === 'memberAdded') {
-              const senderName = getUserDisplayNameSync(senderNorm, senderNorm);
-              const added =
+              const newUserIds: string[] =
                 data.newUsers && Array.isArray(data.newUsers)
-                  ? data.newUsers.map((u: string) => getUserDisplayNameSync(u, u)).join(', ')
-                  : getUserDisplayNameSync(data.newUser, data.newUser);
-              if (added) systemText = `${senderName} a ajouté ${added} au groupe`;
+                  ? data.newUsers
+                  : data.newUser
+                    ? [data.newUser]
+                    : [];
+              const getName = await resolveDisplayNames([senderNorm, ...newUserIds]);
+              const added = newUserIds.map((u: string) => getName(u)).join(', ');
+              if (added) systemText = `${getName(senderNorm)} a ajouté ${added} au groupe`;
             } else if (parsed.system.event === 'groupDeleted') {
-              const senderName = getUserDisplayNameSync(senderNorm, senderNorm);
-              systemText = `${senderName} a supprimé le groupe`;
+              const getName = await resolveDisplayNames([senderNorm]);
+              systemText = `${getName(senderNorm)} a supprimé le groupe`;
             } else if (parsed.system.event === 'read_receipt') {
               const msgIds: string[] = data.messageIds ?? [];
               const convo = getConversation(contactName);

@@ -26,6 +26,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         const val CHANNEL_NAME = "Messages Canari"
         const val PREFS_NAME   = "canari_prefs"
         const val KEY_FCM_TOKEN = "fcm_token"
+        private val notificationIdCounter = java.util.concurrent.atomic.AtomicInteger(0)
     }
 
     external fun nativeDecryptMessage(
@@ -40,7 +41,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         Log.i(TAG, "onNewToken: nouveau token FCM reçu")
         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit().putString(KEY_FCM_TOKEN, token).apply()
-        try { File(filesDir, "fcm_token.txt").writeText(token) } catch (_: Exception) { }
+        // Token stored in SharedPreferences only — no plaintext file
     }
 
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
@@ -197,13 +198,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         ensureNotificationChannel(manager)
 
+        val groupId = data["groupId"] ?: ""
         val tapIntent = Intent(this, MainActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            setData(android.net.Uri.parse("fr.emse.canari://chat/$groupId"))
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             data.forEach { (k, v) -> putExtra(k, v) }
         }
         val pendingIntent = PendingIntent.getActivity(
             this,
-            System.currentTimeMillis().toInt(),
+            notificationIdCounter.incrementAndGet(),
             tapIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -218,7 +222,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             .setContentIntent(pendingIntent)
             .build()
 
-        manager.notify(System.currentTimeMillis().toInt(), notification)
+        manager.notify(notificationIdCounter.incrementAndGet(), notification)
     }
 
     private fun ensureNotificationChannel(manager: NotificationManager) {

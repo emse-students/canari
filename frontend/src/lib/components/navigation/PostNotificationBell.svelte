@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Bell } from 'lucide-svelte';
   import { onMount } from 'svelte';
+  import { portal } from '$lib/actions/portal';
   import { goto } from '$app/navigation';
   import { getPostNotifications, markPostNotificationsRead } from '$lib/posts/api';
   import type { PostNotification } from '$lib/posts/api';
@@ -63,13 +64,15 @@
   {#if open}
     <!-- backdrop -->
     <div
+      use:portal
       role="presentation"
-      class="fixed inset-0 z-30"
+      class="fixed inset-0 z-[190]"
       onclick={() => (open = false)}
     ></div>
 
     <div
-      class="absolute right-0 top-11 z-40 w-80 rounded-xl border border-cn-border bg-surface-elevated shadow-xl overflow-hidden"
+      use:portal
+      class="fixed right-4 top-14 z-[200] w-80 rounded-xl border border-cn-border bg-white dark:bg-[#0f1622] shadow-2xl overflow-hidden"
     >
       <div class="px-4 py-3 border-b border-cn-border flex items-center justify-between">
         <span class="text-sm font-semibold">Notifications</span>
