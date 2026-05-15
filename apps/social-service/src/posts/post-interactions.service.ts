@@ -27,11 +27,18 @@ export class PostInteractionsService {
    * Copies a reactions map into a null-prototype object to prevent prototype-pollution
    * attacks where a user ID like "__proto__" could shadow Object properties.
    */
-  private sanitizeReactions(raw: Record<string, string> | null | undefined): Record<string, string> {
+  private sanitizeReactions(
+    raw: Record<string, string> | null | undefined
+  ): Record<string, string> {
     const out = Object.create(null) as Record<string, string>;
     if (!raw || typeof raw !== 'object') return out;
     for (const key of Object.keys(raw)) {
-      if (['__proto__', 'constructor', 'prototype', '__defineGetter__', '__defineSetter__'].includes(key)) continue;
+      if (
+        ['__proto__', 'constructor', 'prototype', '__defineGetter__', '__defineSetter__'].includes(
+          key
+        )
+      )
+        continue;
       out[key] = raw[key];
     }
     return out;
@@ -70,7 +77,10 @@ export class PostInteractionsService {
    * users table (non-fatal if unavailable). Fires notifications fire-and-forget style:
    * the post author gets a "comment" notification; the parent comment author gets a "reply".
    */
-  async addComment(postId: string, data: { userId: string; text?: string; parentId?: string; media?: any }) {
+  async addComment(
+    postId: string,
+    data: { userId: string; text?: string; parentId?: string; media?: any }
+  ) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
 
@@ -85,7 +95,9 @@ export class PostInteractionsService {
       if (rows[0]) {
         ({ displayName = null, firstName = null, lastName = null } = rows[0]);
       }
-    } catch { /* non-fatal */ }
+    } catch {
+      /* non-fatal */
+    }
 
     const comment = {
       id: crypto.randomUUID(),
@@ -109,18 +121,28 @@ export class PostInteractionsService {
         const preview = text.length > 60 ? text.slice(0, 57) + '…' : text;
         if (post.authorId && !post.associationId) {
           await this.notifications.createNotification({
-            recipientId: post.authorId, type: 'comment', postId, actorId: data.userId, text: preview,
+            recipientId: post.authorId,
+            type: 'comment',
+            postId,
+            actorId: data.userId,
+            text: preview,
           });
         }
         if (data.parentId) {
-          const parent = (post.comments as any[]).find((c: any) => c.id === data.parentId);
+          const parent = post.comments.find((c: any) => c.id === data.parentId);
           if (parent?.userId) {
             await this.notifications.createNotification({
-              recipientId: parent.userId, type: 'reply', postId, actorId: data.userId, text: preview,
+              recipientId: parent.userId,
+              type: 'reply',
+              postId,
+              actorId: data.userId,
+              text: preview,
             });
           }
         }
-      } catch { /* non-fatal */ }
+      } catch {
+        /* non-fatal */
+      }
     })();
 
     return { ok: true, comment };
@@ -175,7 +197,8 @@ export class PostInteractionsService {
    * Also persists votesByUser so the frontend can restore the selection on reload.
    */
   async votePoll(postId: string, pollId: string, data: { userId: string; optionIds: string[] }) {
-    const post = await this.postRepo.createQueryBuilder('post')
+    const post = await this.postRepo
+      .createQueryBuilder('post')
       .where('post.id = :postId', { postId })
       .getOne();
     if (!post) throw new NotFoundException('Poll not found');
@@ -185,7 +208,9 @@ export class PostInteractionsService {
       if (poll.id !== pollId) continue;
       const selectedIds = data.optionIds;
       for (const opt of poll.options) {
-        opt.votes = (Array.isArray(opt.votes) ? opt.votes : []).filter((v: string) => v !== data.userId);
+        opt.votes = (Array.isArray(opt.votes) ? opt.votes : []).filter(
+          (v: string) => v !== data.userId
+        );
       }
       for (const opt of poll.options) {
         if (selectedIds.includes(opt.id)) opt.votes.push(data.userId);
@@ -218,24 +243,41 @@ export class PostInteractionsService {
 
     const btn = { ...buttons[btnIndex] };
     if (!Array.isArray(btn.registrants)) btn.registrants = [];
-    if (btn.capacity && btn.registrants.length >= btn.capacity) throw new BadRequestException('Event is full');
-    if (btn.registrants.includes(data.userId)) return { alreadyRegistered: true, requiresPayment: false };
+    if (btn.capacity && btn.registrants.length >= btn.capacity)
+      throw new BadRequestException('Event is full');
+    if (btn.registrants.includes(data.userId))
+      return { alreadyRegistered: true, requiresPayment: false };
 
     if (btn.requiresPayment && btn.amountCents > 0) {
-      const paymentBase = this.configService.get<string>('PAYMENT_SERVICE_URL') || 'http://core-service:3012';
+      const paymentBase =
+        this.configService.get<string>('PAYMENT_SERVICE_URL') || 'http://core-service:3012';
       const frontendUrl = this.configService.get<string>('FRONTEND_URL') || 'http://localhost';
       try {
         const res = await lastValueFrom(
-          this.httpService.post(`${paymentBase.replace(/\/$/, '')}/api/payments/create-checkout-session`, {
-            lineItems: [{ price_data: { currency: (btn.currency || 'eur').toLowerCase(), product_data: { name: btn.label }, unit_amount: btn.amountCents }, quantity: 1 }],
-            successUrl: `${frontendUrl}/posts?registered=${buttonId}`,
-            cancelUrl: `${frontendUrl}/posts`,
-            metadata: { postId, buttonId, userId: data.userId },
-          })
+          this.httpService.post(
+            `${paymentBase.replace(/\/$/, '')}/api/payments/create-checkout-session`,
+            {
+              lineItems: [
+                {
+                  price_data: {
+                    currency: (btn.currency || 'eur').toLowerCase(),
+                    product_data: { name: btn.label },
+                    unit_amount: btn.amountCents,
+                  },
+                  quantity: 1,
+                },
+              ],
+              successUrl: `${frontendUrl}/posts?registered=${buttonId}`,
+              cancelUrl: `${frontendUrl}/posts`,
+              metadata: { postId, buttonId, userId: data.userId },
+            }
+          )
         );
-        const checkoutUrl = (res.data as any)?.url;
+        const checkoutUrl = res.data?.url;
         if (checkoutUrl) return { requiresPayment: true, checkoutUrl };
-      } catch { /* payment service unavailable */ }
+      } catch {
+        /* payment service unavailable */
+      }
       return { requiresPayment: true, message: 'Payment service unavailable' };
     }
 

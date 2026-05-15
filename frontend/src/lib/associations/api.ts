@@ -45,6 +45,8 @@ export interface UpdateAssociationPayload {
   logoUrl?: string;
 }
 
+export type AssociationCalendarEventStatus = 'pending' | 'validated';
+
 export interface AssociationCalendarEvent {
   id: string;
   associationId: string;
@@ -54,6 +56,9 @@ export interface AssociationCalendarEvent {
   endsAt: string | null;
   createdBy: string;
   createdAt: string;
+  status: AssociationCalendarEventStatus;
+  validatedAt: string | null;
+  validatedBy: string | null;
   /** Same-association post on the feed (optional). */
   linkedPostId: string | null;
   /** Same-association form (optional). */
@@ -135,11 +140,12 @@ export async function listMembers(associationId: string): Promise<AssociationMem
 
 export async function listAssociationCalendarEvents(
   associationId: string,
-  opts?: { from?: string; to?: string }
+  opts?: { from?: string; to?: string; includePending?: boolean }
 ): Promise<AssociationCalendarEvent[]> {
   const q = new URLSearchParams();
   if (opts?.from) q.set('from', opts.from);
   if (opts?.to) q.set('to', opts.to);
+  if (opts?.includePending) q.set('includePending', 'true');
   const qs = q.toString();
   return request<AssociationCalendarEvent[]>(
     `/api/associations/${encodeURIComponent(associationId)}/events${qs ? `?${qs}` : ''}`
@@ -218,6 +224,21 @@ export async function deleteAssociationCalendarEvent(
     `/api/associations/${encodeURIComponent(associationId)}/events/${encodeURIComponent(eventId)}`,
     { method: 'DELETE' }
   );
+}
+
+export async function validateAssociationCalendarEvent(
+  associationId: string,
+  eventId: string
+): Promise<AssociationCalendarEvent> {
+  return request<AssociationCalendarEvent>(
+    `/api/associations/${encodeURIComponent(associationId)}/events/${encodeURIComponent(eventId)}/validate`,
+    { method: 'POST' }
+  );
+}
+
+/** Pending events the caller may validate (global admin: all associations). */
+export async function listPendingCalendarEvents(): Promise<AssociationCalendarFeedEvent[]> {
+  return request<AssociationCalendarFeedEvent[]>('/api/associations/calendar/pending');
 }
 
 /** Association admins — publications et formulaires récents pour lier un événement d’agenda. */

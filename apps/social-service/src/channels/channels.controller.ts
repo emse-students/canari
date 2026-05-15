@@ -280,10 +280,7 @@ export class ChannelsController {
   /** Returns the channel's access settings (isPrivate, allowedRoles) and the workspace role list. */
   @UseGuards(NginxAuthGuard)
   @Get(':channelId/access')
-  getChannelAccess(
-    @Headers('x-user-id') xUserId: string,
-    @Param('channelId') channelId: string
-  ) {
+  getChannelAccess(@Headers('x-user-id') xUserId: string, @Param('channelId') channelId: string) {
     return this.service.getChannelAccess(channelId, xUserId.trim().toLowerCase());
   }
 

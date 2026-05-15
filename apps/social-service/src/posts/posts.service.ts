@@ -13,7 +13,9 @@ export class PostsService {
 
   /** PostgreSQL BIGINT fields break JSON.stringify — convert to Number. */
   private stripBigIntForJson<T>(value: T): T {
-    return JSON.parse(JSON.stringify(value, (_key, v) => (typeof v === 'bigint' ? Number(v) : v))) as T;
+    return JSON.parse(
+      JSON.stringify(value, (_key, v) => (typeof v === 'bigint' ? Number(v) : v))
+    ) as T;
   }
 
   constructor(
@@ -163,25 +165,44 @@ export class PostsService {
       post.commentCount = Number(post.commentCount) || 0;
     }
 
-    const authorIds = [...new Set(
-      rawPosts.filter((p: any) => !p.associationId && p.authorId).map((p: any) => p.authorId),
-    )] as string[];
+    const authorIds = [
+      ...new Set(
+        rawPosts.filter((p: any) => !p.associationId && p.authorId).map((p: any) => p.authorId)
+      ),
+    ] as string[];
 
-    let nameMap: Record<string, { displayName: string | null; firstName: string | null; lastName: string | null }> = {};
+    let nameMap: Record<
+      string,
+      { displayName: string | null; firstName: string | null; lastName: string | null }
+    > = {};
     if (authorIds.length > 0) {
-      const rows: { id: string; displayName: string | null; firstName: string | null; lastName: string | null }[] =
-        await this.postRepo.manager.query(
-          `SELECT id, "displayName", "firstName", "lastName" FROM users WHERE id = ANY($1)`,
-          [authorIds]
-        );
-      nameMap = Object.fromEntries(rows.map((r) => [r.id, { displayName: r.displayName, firstName: r.firstName, lastName: r.lastName }]));
+      const rows: {
+        id: string;
+        displayName: string | null;
+        firstName: string | null;
+        lastName: string | null;
+      }[] = await this.postRepo.manager.query(
+        `SELECT id, "displayName", "firstName", "lastName" FROM users WHERE id = ANY($1)`,
+        [authorIds]
+      );
+      nameMap = Object.fromEntries(
+        rows.map((r) => [
+          r.id,
+          { displayName: r.displayName, firstName: r.firstName, lastName: r.lastName },
+        ])
+      );
     }
 
     const result = rawPosts.map((p: any) => {
       let row = p;
       if (!p.associationId && p.authorId) {
         const info = nameMap[p.authorId] ?? { displayName: null, firstName: null, lastName: null };
-        row = { ...p, authorDisplayName: info.displayName, authorFirstName: info.firstName, authorLastName: info.lastName };
+        row = {
+          ...p,
+          authorDisplayName: info.displayName,
+          authorFirstName: info.firstName,
+          authorLastName: info.lastName,
+        };
       }
       return this.shapeListRow(row);
     });
@@ -236,7 +257,9 @@ export class PostsService {
         if (viewerPromo != null) {
           promoCutoff = `${viewerPromo}-08-01`;
         }
-      } catch { /* non-fatal */ }
+      } catch {
+        /* non-fatal */
+      }
     }
 
     // SQL fragment added to every query when a promo cutoff applies.
@@ -250,8 +273,8 @@ export class PostsService {
     let followedUserIds: string[] | undefined;
     if (feed === 'followed') {
       [followedAssocIds, followedUserIds] = await Promise.all([
-        this.followsService.getFollowedAssociationIdsForUser(viewerUserId!),
-        this.followsService.getFollowedUserIdsForUser(viewerUserId!),
+        this.followsService.getFollowedAssociationIdsForUser(viewerUserId),
+        this.followsService.getFollowedUserIdsForUser(viewerUserId),
       ]);
       if (followedAssocIds.length === 0 && followedUserIds.length === 0) {
         return [];
@@ -344,22 +367,36 @@ export class PostsService {
       ),
     ] as string[];
 
-    let nameMap: Record<string, { displayName: string | null; firstName: string | null; lastName: string | null }> = {};
+    let nameMap: Record<
+      string,
+      { displayName: string | null; firstName: string | null; lastName: string | null }
+    > = {};
     if (authorIds.length > 0) {
-      const rows: { id: string; displayName: string | null; firstName: string | null; lastName: string | null }[] =
-        await this.postRepo.manager.query(
-          `SELECT id, "displayName", "firstName", "lastName" FROM users WHERE id = ANY($1)`,
-          [authorIds]
-        );
+      const rows: {
+        id: string;
+        displayName: string | null;
+        firstName: string | null;
+        lastName: string | null;
+      }[] = await this.postRepo.manager.query(
+        `SELECT id, "displayName", "firstName", "lastName" FROM users WHERE id = ANY($1)`,
+        [authorIds]
+      );
       nameMap = Object.fromEntries(
-        rows.map((r) => [r.id, { displayName: r.displayName, firstName: r.firstName, lastName: r.lastName }])
+        rows.map((r) => [
+          r.id,
+          { displayName: r.displayName, firstName: r.firstName, lastName: r.lastName },
+        ])
       );
     }
 
     const result = rawPosts.map((p: any) => {
       let row = p;
       if (!p.associationId && p.authorId) {
-        const authorInfo = nameMap[p.authorId] ?? { displayName: null, firstName: null, lastName: null };
+        const authorInfo = nameMap[p.authorId] ?? {
+          displayName: null,
+          firstName: null,
+          lastName: null,
+        };
         row = {
           ...p,
           authorDisplayName: authorInfo.displayName,

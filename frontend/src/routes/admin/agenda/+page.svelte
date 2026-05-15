@@ -1,0 +1,149 @@
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import {
+    listPendingCalendarEvents,
+    validateAssociationCalendarEvent,
+    deleteAssociationCalendarEvent,
+    type AssociationCalendarFeedEvent,
+  } from '$lib/associations/api';
+  import { Check, Trash2, ExternalLink, Clock } from 'lucide-svelte';
+
+  let events = $state<AssociationCalendarFeedEvent[]>([]);
+  let loading = $state(true);
+  let error = $state('');
+  let actingId = $state<string | null>(null);
+
+  async function load() {
+    loading = true;
+    error = '';
+    try {
+      events = await listPendingCalendarEvents();
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Erreur';
+      events = [];
+    } finally {
+      loading = false;
+    }
+  }
+
+  onMount(load);
+
+  function formatRange(ev: AssociationCalendarFeedEvent): string {
+    const s = new Date(ev.startsAt);
+    const fmt = new Intl.DateTimeFormat('fr-FR', {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    if (!ev.endsAt) return fmt.format(s);
+    const e = new Date(ev.endsAt);
+    return `${fmt.format(s)} — ${new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' }).format(e)}`;
+  }
+
+  async function validate(ev: AssociationCalendarFeedEvent) {
+    actingId = ev.id;
+    try {
+      await validateAssociationCalendarEvent(ev.associationId, ev.id);
+      await load();
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Erreur';
+    } finally {
+      actingId = null;
+    }
+  }
+
+  async function remove(ev: AssociationCalendarFeedEvent) {
+    if (!confirm(`Supprimer « ${ev.title} » ?`)) return;
+    actingId = ev.id;
+    try {
+      await deleteAssociationCalendarEvent(ev.associationId, ev.id);
+      await load();
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Erreur';
+    } finally {
+      actingId = null;
+    }
+  }
+</script>
+
+<div class="space-y-4">
+  <div>
+    <h2 class="text-lg font-bold text-text-main">Événements en attente</h2>
+    <p class="text-sm text-text-muted mt-1">
+      Validez un événement pour le rendre visible sur l'agenda public et dans l'agenda global.
+    </p>
+  </div>
+
+  {#if error}
+    <div class="rounded-xl border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm">{error}</div>
+  {/if}
+
+  {#if loading}
+    <div class="flex justify-center py-16">
+      <div class="h-8 w-8 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"></div>
+    </div>
+  {:else if events.length === 0}
+    <div class="rounded-2xl border border-dashed border-cn-border px-6 py-12 text-center text-sm text-text-muted">
+      Aucun événement en attente de validation.
+    </div>
+  {:else}
+    <ul class="space-y-3">
+      {#each events as ev (ev.id)}
+        <li
+          class="rounded-2xl border border-amber-200 bg-amber-50/50 dark:bg-amber-950/20 px-4 py-4 flex flex-col sm:flex-row sm:items-start gap-4"
+        >
+          <div
+            class="flex h-12 w-12 shrink-0 flex-col items-center justify-center rounded-xl bg-amber-200/60 text-amber-900 font-bold text-xs"
+          >
+            <Clock size={14} class="mb-0.5 opacity-70" />
+            {new Date(ev.startsAt).getDate()}
+          </div>
+          <div class="min-w-0 flex-1 space-y-1">
+            <p class="text-xs font-semibold uppercase tracking-wide text-cn-dark/80">
+              <a
+                href="/associations/{encodeURIComponent(ev.associationSlug)}"
+                class="hover:underline"
+              >
+                {ev.associationName}
+              </a>
+            </p>
+            <p class="font-bold text-text-main">{ev.title}</p>
+            <p class="text-xs text-text-muted">{formatRange(ev)}</p>
+            {#if ev.description?.trim()}
+              <p class="text-sm text-text-muted whitespace-pre-wrap">{ev.description}</p>
+            {/if}
+          </div>
+          <div class="flex flex-wrap gap-2 shrink-0">
+            <button
+              type="button"
+              onclick={() => validate(ev)}
+              disabled={actingId === ev.id}
+              class="inline-flex items-center gap-1.5 rounded-xl bg-cn-yellow px-3 py-2 text-xs font-bold text-cn-dark hover:bg-cn-yellow-hover disabled:opacity-50"
+            >
+              <Check size={14} />
+              Valider
+            </button>
+            <a
+              href="/associations/{encodeURIComponent(ev.associationSlug)}"
+              class="inline-flex items-center gap-1 rounded-xl border border-cn-border px-3 py-2 text-xs font-semibold hover:bg-cn-bg"
+            >
+              <ExternalLink size={14} />
+              Association
+            </a>
+            <button
+              type="button"
+              onclick={() => remove(ev)}
+              disabled={actingId === ev.id}
+              class="inline-flex items-center gap-1 rounded-xl border border-red-200 px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
+            >
+              <Trash2 size={14} />
+              Supprimer
+            </button>
+          </div>
+        </li>
+      {/each}
+    </ul>
+  {/if}
+</div>

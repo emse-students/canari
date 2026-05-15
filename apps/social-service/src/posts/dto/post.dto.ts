@@ -318,7 +318,14 @@ export class AddCommentDto {
 
   @IsObject()
   @IsOptional()
-  media?: { mediaId: string; key: string; iv: string; mimeType: string; size: number; fileName?: string };
+  media?: {
+    mediaId: string;
+    key: string;
+    iv: string;
+    mimeType: string;
+    size: number;
+    fileName?: string;
+  };
 }
 
 export class AddReactionDto {

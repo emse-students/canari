@@ -7,7 +7,10 @@ import FormData from 'form-data';
 import { AxiosError } from 'axios';
 import { Association } from './entities/association.entity';
 import { AssociationMember, AssociationPermission } from './entities/association-member.entity';
-import { AssociationCalendarEvent } from './entities/association-calendar-event.entity';
+import {
+  AssociationCalendarEvent,
+  AssociationCalendarEventStatus,
+} from './entities/association-calendar-event.entity';
 import { Post } from '../posts/entities/post.entity';
 import { Form } from '../forms/entities/form.entity';
 import {
@@ -282,7 +285,7 @@ export class AssociationsService {
           associationId: r.m_associationId,
           userId: r.m_userId,
           role: r.m_role,
-          permission: Number(r.m_permission) as AssociationPermission,
+          permission: Number(r.m_permission),
           createdAt: r.m_createdAt,
           displayName: r.displayName || null,
         }))
@@ -404,18 +407,26 @@ export class AssociationsService {
 
   // ── Calendar events ───────────────────────────────────────────────────────
 
+  /** Coerces TypeORM raw join columns to string without `[object Object]`. */
+  private rawQueryString(value: unknown, fallback = ''): string {
+    if (value === null || value === undefined) return fallback;
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+      return String(value);
+    }
+    return fallback;
+  }
+
   private serializeCalendarEvent(e: AssociationCalendarEvent) {
-    const startsAt =
-      e.startsAt instanceof Date ? e.startsAt : new Date(e.startsAt as unknown as string);
+    const startsAt = e.startsAt instanceof Date ? e.startsAt : new Date(e.startsAt);
     const endsRaw = e.endsAt;
     const endsAt =
       endsRaw === null || endsRaw === undefined
         ? null
         : endsRaw instanceof Date
           ? endsRaw
-          : new Date(endsRaw as unknown as string);
-    const createdAt =
-      e.createdAt instanceof Date ? e.createdAt : new Date(e.createdAt as unknown as string);
+          : new Date(endsRaw);
+    const createdAt = e.createdAt instanceof Date ? e.createdAt : new Date(e.createdAt);
     return {
       id: e.id,
       associationId: e.associationId,
@@ -427,6 +438,11 @@ export class AssociationsService {
       createdAt: createdAt.toISOString(),
       linkedPostId: e.linkedPostId ?? null,
       linkedFormId: e.linkedFormId ?? null,
+      status: e.status ?? AssociationCalendarEventStatus.Pending,
+      validatedAt: e.validatedAt
+        ? (e.validatedAt instanceof Date ? e.validatedAt : new Date(e.validatedAt)).toISOString()
+        : null,
+      validatedBy: e.validatedBy ?? null,
     };
   }
 
@@ -460,12 +476,16 @@ export class AssociationsService {
   }
 
   async findCalendarEventByLinkedPost(postId: string) {
-    const ev = await this.calendarRepo.findOne({ where: { linkedPostId: postId } });
+    const ev = await this.calendarRepo.findOne({
+      where: { linkedPostId: postId, status: AssociationCalendarEventStatus.Validated },
+    });
     return ev ? this.serializeCalendarEvent(ev) : null;
   }
 
   async findCalendarEventByLinkedForm(formId: string) {
-    const ev = await this.calendarRepo.findOne({ where: { linkedFormId: formId } });
+    const ev = await this.calendarRepo.findOne({
+      where: { linkedFormId: formId, status: AssociationCalendarEventStatus.Validated },
+    });
     return ev ? this.serializeCalendarEvent(ev) : null;
   }
 
@@ -522,12 +542,22 @@ export class AssociationsService {
   }
 
   /** Lists calendar events for an association, optionally bounded by `from` / `to` ISO timestamps. */
-  async listCalendarEvents(associationId: string, fromIso?: string, toIso?: string) {
+  async listCalendarEvents(
+    associationId: string,
+    fromIso?: string,
+    toIso?: string,
+    opts?: { includePending?: boolean }
+  ) {
     await this.findById(associationId);
     const qb = this.calendarRepo
       .createQueryBuilder('e')
       .where('e.associationId = :associationId', { associationId })
       .orderBy('e.startsAt', 'ASC');
+    if (!opts?.includePending) {
+      qb.andWhere('e.status = :validated', {
+        validated: AssociationCalendarEventStatus.Validated,
+      });
+    }
     if (fromIso?.trim()) {
       qb.andWhere('e.startsAt >= :from', { from: new Date(fromIso) });
     }
@@ -540,6 +570,78 @@ export class AssociationsService {
 
   /** Max span for aggregated calendar queries (abuse guard). */
   private static readonly CALENDAR_FEED_MAX_MS = 550 * 24 * 60 * 60 * 1000;
+
+  /** True if the user can validate calendar events for at least one association. */
+  async canModerateAnyAssociationCalendar(userId: string): Promise<boolean> {
+    const n = await this.memberRepo.count({
+      where: { userId, permission: AssociationPermission.Admin },
+    });
+    return n > 0;
+  }
+
+  /**
+   * Pending calendar rows the caller may validate (global admin: all; else admin memberships only).
+   */
+  async listPendingCalendarEvents(userId: string, opts?: { isGlobalAdmin?: boolean }) {
+    const qb = this.calendarRepo
+      .createQueryBuilder('e')
+      .innerJoin(Association, 'a', 'a.id = e.associationId')
+      .where('e.status = :pending', { pending: AssociationCalendarEventStatus.Pending })
+      .orderBy('e.startsAt', 'ASC');
+
+    if (!opts?.isGlobalAdmin) {
+      const adminMemberships = await this.memberRepo.find({
+        where: { userId, permission: AssociationPermission.Admin },
+        select: ['associationId'],
+      });
+      const adminAssoIds = adminMemberships.map((m) => m.associationId);
+      if (adminAssoIds.length === 0) {
+        return [];
+      }
+      qb.andWhere('e.associationId IN (:...adminAssoIds)', { adminAssoIds });
+    }
+
+    const rows = await qb
+      .select('e.id', 'id')
+      .addSelect('e.associationId', 'associationId')
+      .addSelect('e.title', 'title')
+      .addSelect('e.description', 'description')
+      .addSelect('e.startsAt', 'startsAt')
+      .addSelect('e.endsAt', 'endsAt')
+      .addSelect('e.createdBy', 'createdBy')
+      .addSelect('e.createdAt', 'createdAt')
+      .addSelect('e.linkedPostId', 'linkedPostId')
+      .addSelect('e.linkedFormId', 'linkedFormId')
+      .addSelect('e.status', 'status')
+      .addSelect('e.validatedAt', 'validatedAt')
+      .addSelect('e.validatedBy', 'validatedBy')
+      .addSelect('a.name', 'associationName')
+      .addSelect('a.slug', 'associationSlug')
+      .getRawMany();
+
+    return rows.map((r: Record<string, unknown>) => {
+      const base = this.serializeCalendarEvent({
+        id: r.id as string,
+        associationId: r.associationId as string,
+        title: r.title as string,
+        description: (r.description as string | null) ?? null,
+        startsAt: r.startsAt as Date,
+        endsAt: (r.endsAt as Date | null) ?? null,
+        createdBy: r.createdBy as string,
+        createdAt: r.createdAt as Date,
+        linkedPostId: (r.linkedPostId as string | null) ?? null,
+        linkedFormId: (r.linkedFormId as string | null) ?? null,
+        status: AssociationCalendarEventStatus.Pending,
+        validatedAt: (r.validatedAt as Date | null) ?? null,
+        validatedBy: (r.validatedBy as string | null) ?? null,
+      });
+      return {
+        ...base,
+        associationName: this.rawQueryString(r.associationName),
+        associationSlug: this.rawQueryString(r.associationSlug),
+      };
+    });
+  }
 
   /**
    * Lists agenda events across all associations in `[from, to]` (by `startsAt`),
@@ -567,6 +669,9 @@ export class AssociationsService {
       .createQueryBuilder('e')
       .innerJoin(Association, 'a', 'a.id = e.associationId')
       .where('e.startsAt >= :from AND e.startsAt <= :to', { from, to })
+      .andWhere('e.status = :validated', {
+        validated: AssociationCalendarEventStatus.Validated,
+      })
       .orderBy('e.startsAt', 'ASC');
     if (aid) {
       qb.andWhere('e.associationId = :aid', { aid });
@@ -583,6 +688,9 @@ export class AssociationsService {
       .addSelect('e.createdAt', 'createdAt')
       .addSelect('e.linkedPostId', 'linkedPostId')
       .addSelect('e.linkedFormId', 'linkedFormId')
+      .addSelect('e.status', 'status')
+      .addSelect('e.validatedAt', 'validatedAt')
+      .addSelect('e.validatedBy', 'validatedBy')
       .addSelect('a.name', 'associationName')
       .addSelect('a.slug', 'associationSlug')
       .getRawMany();
@@ -599,11 +707,15 @@ export class AssociationsService {
         createdAt: r.createdAt as Date,
         linkedPostId: (r.linkedPostId as string | null) ?? null,
         linkedFormId: (r.linkedFormId as string | null) ?? null,
-      } as AssociationCalendarEvent);
+        status:
+          (r.status as AssociationCalendarEventStatus) ?? AssociationCalendarEventStatus.Validated,
+        validatedAt: (r.validatedAt as Date | null) ?? null,
+        validatedBy: (r.validatedBy as string | null) ?? null,
+      });
       return {
         ...base,
-        associationName: (r.associationName as string | null) ?? '',
-        associationSlug: (r.associationSlug as string | null) ?? '',
+        associationName: this.rawQueryString(r.associationName),
+        associationSlug: this.rawQueryString(r.associationSlug),
       };
     });
   }
@@ -642,6 +754,9 @@ export class AssociationsService {
       createdBy: userId,
       linkedPostId,
       linkedFormId,
+      status: AssociationCalendarEventStatus.Pending,
+      validatedAt: null,
+      validatedBy: null,
     });
     const saved = await this.calendarRepo.save(row);
     return this.serializeCalendarEvent(saved);
@@ -708,6 +823,23 @@ export class AssociationsService {
       }
     }
 
+    const saved = await this.calendarRepo.save(ev);
+    return this.serializeCalendarEvent(saved);
+  }
+
+  /** Marks a pending calendar event as validated (visible on public agenda and feeds). */
+  async validateCalendarEvent(associationId: string, eventId: string, userId: string) {
+    await this.findById(associationId);
+    const ev = await this.calendarRepo.findOne({
+      where: { id: eventId, associationId },
+    });
+    if (!ev) throw new NotFoundException('Event not found');
+    if (ev.status === AssociationCalendarEventStatus.Validated) {
+      return this.serializeCalendarEvent(ev);
+    }
+    ev.status = AssociationCalendarEventStatus.Validated;
+    ev.validatedAt = new Date();
+    ev.validatedBy = userId;
     const saved = await this.calendarRepo.save(ev);
     return this.serializeCalendarEvent(saved);
   }

@@ -1,10 +1,6 @@
 /** RFC 5545 TEXT escaping for SUMMARY/DESCRIPTION/UID fragments. */
 export function icsEscapeText(s: string): string {
-  return s
-    .replace(/\\/g, '\\\\')
-    .replace(/\n/g, '\\n')
-    .replace(/;/g, '\\;')
-    .replace(/,/g, '\\,');
+  return s.replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/;/g, '\\;').replace(/,/g, '\\,');
 }
 
 function formatIcsUtc(dt: Date): string {

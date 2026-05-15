@@ -117,10 +117,7 @@ export class PostsController {
   /** Follows a user. */
   @UseGuards(NginxAuthGuard)
   @HttpPost('users/:userId/follow')
-  followUser(
-    @Headers('x-user-id') xUserId: string,
-    @Param('userId') userId: string
-  ) {
+  followUser(@Headers('x-user-id') xUserId: string, @Param('userId') userId: string) {
     if (userId === xUserId) throw new BadRequestException('Cannot follow yourself');
     return this.followsService.followUser(xUserId, userId);
   }
@@ -128,21 +125,17 @@ export class PostsController {
   /** Unfollows a user. */
   @UseGuards(NginxAuthGuard)
   @Delete('users/:userId/follow')
-  unfollowUser(
-    @Headers('x-user-id') xUserId: string,
-    @Param('userId') userId: string
-  ) {
+  unfollowUser(@Headers('x-user-id') xUserId: string, @Param('userId') userId: string) {
     return this.followsService.unfollowUser(xUserId, userId);
   }
 
   /** Returns whether the calling user follows the given user. */
   @UseGuards(NginxAuthGuard)
   @Get('users/:userId/follow-status')
-  getUserFollowStatus(
-    @Headers('x-user-id') xUserId: string,
-    @Param('userId') userId: string
-  ) {
-    return this.followsService.isFollowingUser(xUserId, userId).then((following) => ({ following }));
+  getUserFollowStatus(@Headers('x-user-id') xUserId: string, @Param('userId') userId: string) {
+    return this.followsService
+      .isFollowingUser(xUserId, userId)
+      .then((following) => ({ following }));
   }
 
   /** Creates a new post on behalf of the calling user or a managed association. */

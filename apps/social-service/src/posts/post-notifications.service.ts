@@ -15,15 +15,22 @@ export class PostNotificationsService {
   /** Looks up a user's display name from the shared users table. */
   async resolveActorName(actorId: string): Promise<string> {
     try {
-      const rows: any[] = await this.postRepo.manager.query(
+      const rows: unknown = await this.postRepo.manager.query(
         `SELECT "displayName", "firstName", "lastName" FROM users WHERE id = $1`,
         [actorId]
       );
-      if (rows[0]) {
-        const u = rows[0];
-        return (u.displayName as string) || [u.firstName as string, u.lastName as string].filter(Boolean).join(' ') || actorId;
-      }
-    } catch { /* non-fatal */ }
+      if (!Array.isArray(rows) || rows.length === 0) return actorId;
+      const u: unknown = rows[0];
+      if (typeof u !== 'object' || u === null) return actorId;
+      const row = u as Record<string, unknown>;
+      const displayName = typeof row.displayName === 'string' ? row.displayName.trim() : '';
+      const firstName = typeof row.firstName === 'string' ? row.firstName : '';
+      const lastName = typeof row.lastName === 'string' ? row.lastName : '';
+      const fromParts = [firstName, lastName].filter((p) => p.length > 0).join(' ');
+      return displayName || fromParts || actorId;
+    } catch {
+      /* non-fatal */
+    }
     return actorId;
   }
 

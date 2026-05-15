@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { goto } from '$app/navigation';
+  import { isGlobalAdmin } from '$lib/stores/user';
   import { apiFetch } from '$lib/utils/apiFetch';
   import { fetchUserProfile, type UserProfile } from '$lib/stores/user';
   import { RefreshCw, Wifi, WifiOff, TriangleAlert, Info } from 'lucide-svelte';
@@ -60,6 +62,10 @@
   }
 
   onMount(() => {
+    if (!isGlobalAdmin()) {
+      void goto('/admin', { replaceState: true });
+      return;
+    }
     void fetchPresence();
     intervalId = setInterval(() => void fetchPresence(), REFRESH_MS);
   });

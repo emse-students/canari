@@ -1,5 +1,10 @@
 import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, Index } from 'typeorm';
 
+export enum AssociationCalendarEventStatus {
+  Pending = 'pending',
+  Validated = 'validated',
+}
+
 /** Scheduled event displayed on an association public page (meetings, deadlines, etc.). */
 @Entity('association_calendar_events')
 export class AssociationCalendarEvent {
@@ -24,6 +29,20 @@ export class AssociationCalendarEvent {
 
   @Column({ type: 'varchar', length: 255 })
   createdBy: string;
+
+  @Column({
+    type: 'varchar',
+    length: 16,
+    default: AssociationCalendarEventStatus.Validated,
+  })
+  @Index()
+  status: AssociationCalendarEventStatus;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  validatedAt: Date | null;
+
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  validatedBy: string | null;
 
   /** Optional association-authored post shown alongside this agenda entry. */
   @Column({ type: 'uuid', nullable: true })
