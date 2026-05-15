@@ -41,6 +41,8 @@ import {
 const INITIAL_MESSAGES_PAGE = 60;
 /** Messages loaded per scroll-up DB page request. */
 const OLDER_MESSAGES_PAGE = 50;
+/** Skip channel REST history refetch when the in-memory copy was loaded recently. */
+const CHANNEL_HISTORY_CACHE_TTL_MS = 5 * 60 * 1000;
 
 /** Runtime dependencies injected into all conversation and group operations. */
 export interface ConversationContext {
@@ -87,6 +89,13 @@ export function useConversations() {
 
   // Short-lived cache so rapid successive sends don't re-check membership via HTTP
   const membershipCache = new SvelteMap<string, { isMember: boolean; expiresAt: number }>();
+  /** When a channel history was last fetched from the API (per user + channel). */
+  const channelHistoryLoadedAt = new SvelteMap<string, { loadedAt: number; userId: string }>();
+
+  function invalidateChannelHistoryCache(channelConversationId?: string) {
+    if (channelConversationId) channelHistoryLoadedAt.delete(channelConversationId);
+    else channelHistoryLoadedAt.clear();
+  }
 
   let mobileConvoHistoryClose: (() => void) | null = null;
   let drawerHistoryClose: (() => void) | null = null;
@@ -154,11 +163,12 @@ export function useConversations() {
   async function loadHistoryForConversation(
     contactName: string,
     id: string,
-    ctx: ConversationContext
+    ctx: ConversationContext,
+    options?: { force?: boolean }
   ) {
     // Channel conversations: load via REST API instead of MLS replay
     if (contactName.startsWith('channel_')) {
-      await loadChannelHistory(contactName, ctx);
+      await loadChannelHistory(contactName, ctx, options?.force);
       return;
     }
 
@@ -208,7 +218,11 @@ export function useConversations() {
   }
 
   /** Loads channel history from the server (source of truth) into memory only — never IndexedDB. */
-  async function loadChannelHistory(channelConversationId: string, ctx: ConversationContext) {
+  async function loadChannelHistory(
+    channelConversationId: string,
+    ctx: ConversationContext,
+    force = false
+  ) {
     const { channelService } = await import('$lib/services/ChannelService');
     const { channelKeyManager } = await import('$lib/crypto/ChannelKeyVault');
     const { decodeAppMessage } = await import('$lib/proto/codec');
@@ -217,6 +231,16 @@ export function useConversations() {
     const rawId = channelConversationId.replace(/^channel_/, '');
     const convo = conversations.get(channelConversationId);
     if (!convo) return;
+
+    const cached = channelHistoryLoadedAt.get(channelConversationId);
+    if (
+      !force &&
+      cached &&
+      cached.userId === ctx.userId &&
+      Date.now() - cached.loadedAt < CHANNEL_HISTORY_CACHE_TTL_MS
+    ) {
+      return;
+    }
 
     const isSelected = selectedContact === channelConversationId;
     if (isSelected) isLoadingHistory = true;
@@ -299,6 +323,10 @@ export function useConversations() {
       const current = conversations.get(channelConversationId);
       if (current) {
         conversations.set(channelConversationId, { ...current, messages: loaded });
+        channelHistoryLoadedAt.set(channelConversationId, {
+          loadedAt: Date.now(),
+          userId: ctx.userId,
+        });
       }
     } catch (e) {
       ctx.log(`[CHANNEL] Échec chargement historique: ${e instanceof Error ? e.message : e}`);
@@ -850,6 +878,8 @@ export function useConversations() {
     saveConversation,
     /** Fetches and decrypts network history for a conversation, then reloads from DB. */
     loadHistoryForConversation,
+    /** Clears the in-memory channel history TTL cache (one channel or all). */
+    invalidateChannelHistoryCache,
     /** Reads saved conversations from IndexedDB and populates the reactive map. */
     loadAndRestoreConversations,
     /** Prepends an older page of messages from IndexedDB to the conversation. */

@@ -52,6 +52,8 @@ export interface ChannelWorkspaceContext {
   getSelectedConversationId?: () => string | null;
   /** Refetch channel messages from the server (in-memory only). */
   reloadChannelHistory?: (channelConversationId: string) => Promise<void>;
+  /** Drops cached channel history so the next open refetches from the API. */
+  invalidateChannelHistoryCache?: (channelConversationId: string) => void;
   /** Appends a message to the debug log panel. */
   log: (msg: string) => void;
 }
@@ -227,7 +229,7 @@ export function useChannelWorkspaces() {
             contactName: channelConversationId,
             name: channel.name,
             id: channelConversationId,
-            messages: [],
+            messages: existing?.messages ?? [],
             isReady: true,
             mlsStateHex: null,
             imageMediaId: channel.imageMediaId ?? null,
@@ -245,6 +247,7 @@ export function useChannelWorkspaces() {
         (id) => id.startsWith('channel_') && !validChannelConversationIds.includes(id)
       );
       for (const staleId of staleLocalChannelIds) {
+        ctx.invalidateChannelHistoryCache?.(staleId);
         ctx.conversations.delete(staleId);
         removeChannelFromWorkspaces(staleId);
         if (selectedChannelConversationId === staleId) {
@@ -501,6 +504,7 @@ export function useChannelWorkspaces() {
     if (!channelConversationId) return;
     try {
       await service.leaveChannel(channelConversationId);
+      ctx.invalidateChannelHistoryCache?.(channelConversationId);
       ctx.conversations.delete(channelConversationId);
       await ctx.deleteConversation?.(channelConversationId).catch(() => {});
       removeChannelFromWorkspaces(channelConversationId);
@@ -522,6 +526,7 @@ export function useChannelWorkspaces() {
       const workspace = channelWorkspaces.find((ws) => ws.workspaceDbId === workspaceDbId);
       if (workspace) {
         for (const ch of workspace.channels) {
+          ctx.invalidateChannelHistoryCache?.(ch.id);
           ctx.conversations.delete(ch.id);
           await ctx.deleteConversation?.(ch.id).catch(() => {});
         }
@@ -572,6 +577,7 @@ export function useChannelWorkspaces() {
     if (!channelConversationId) return;
     try {
       await service.deleteChannel(channelConversationId);
+      ctx.invalidateChannelHistoryCache?.(channelConversationId);
       ctx.conversations.delete(channelConversationId);
       await ctx.deleteConversation?.(channelConversationId).catch(() => {});
       removeChannelFromWorkspaces(channelConversationId);

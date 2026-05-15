@@ -80,6 +80,8 @@
       getSelectedConversationId: () => convs.selectedContact,
       reloadChannelHistory: (channelConversationId: string) =>
         convs.loadHistoryForConversation(channelConversationId, channelConversationId, convCtx()),
+      invalidateChannelHistoryCache: (channelConversationId: string) =>
+        convs.invalidateChannelHistoryCache(channelConversationId),
       log,
     };
   }

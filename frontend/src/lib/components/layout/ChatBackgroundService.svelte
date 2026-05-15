@@ -112,6 +112,8 @@
           channelConversationId,
           convCtx()
         ),
+      invalidateChannelHistoryCache: (channelConversationId: string) =>
+        globalConvs.invalidateChannelHistoryCache(channelConversationId),
       log: appendLog,
     };
   }
