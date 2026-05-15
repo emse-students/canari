@@ -118,7 +118,7 @@ export interface PostEntity {
   updatedAt: string;
 }
 
-export type PostFeed = 'all' | 'followed' | 'custom';
+export type PostFeed = 'all' | 'followed' | 'custom' | 'associations';
 
 export interface ListPostsOptions {
   limit?: number;

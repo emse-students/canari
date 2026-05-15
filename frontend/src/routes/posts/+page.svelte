@@ -122,7 +122,7 @@
   // Sentinel element for IntersectionObserver
   let sentinel = $state<HTMLElement | null>(null);
 
-  const activeFeed = $derived((page.url.searchParams.get('feed') || 'followed') as PostFeed);
+  const activeFeed = $derived((page.url.searchParams.get('feed') || 'associations') as PostFeed);
 
   $effect(() => {
     void page.url.search;
@@ -273,12 +273,12 @@
       <div class="mb-5 flex flex-wrap gap-2" class:hidden={!!searchQuery}>
         <button
           type="button"
-          onclick={() => navigateFeed('all')}
-          class="rounded-full px-3.5 py-1.5 text-sm font-medium border transition-colors {activeFeed === 'all'
+          onclick={() => navigateFeed('associations')}
+          class="rounded-full px-3.5 py-1.5 text-sm font-medium border transition-colors {activeFeed === 'associations'
             ? 'bg-amber-500/15 border-amber-500/40 text-text-main'
             : 'border-cn-border text-text-muted hover:text-text-main'}"
         >
-          Tout
+          Associations
         </button>
         <button
           type="button"
@@ -288,6 +288,15 @@
             : 'border-cn-border text-text-muted hover:text-text-main'}"
         >
           Suivis
+        </button>
+        <button
+          type="button"
+          onclick={() => navigateFeed('all')}
+          class="rounded-full px-3.5 py-1.5 text-sm font-medium border transition-colors {activeFeed === 'all'
+            ? 'bg-amber-500/15 border-amber-500/40 text-text-main'
+            : 'border-cn-border text-text-muted hover:text-text-main'}"
+        >
+          Tout
         </button>
       </div>
 
@@ -358,7 +367,11 @@
               <div class="text-center py-16 px-6 bg-[var(--cn-surface)]/50 backdrop-blur-xl rounded-3xl border border-dashed border-cn-border">
                 <Inbox size={48} class="mx-auto mb-3 text-text-muted opacity-40" />
                 <h3 class="text-lg font-bold text-text-main mb-1">Aucun post</h3>
-                {#if activeFeed === 'followed'}
+                {#if activeFeed === 'associations'}
+                  <p class="text-text-muted text-sm">
+                    Aucune association n'a encore publié. Revenez bientôt !
+                  </p>
+                {:else if activeFeed === 'followed'}
                   <p class="text-text-muted text-sm">
                     Suivez des associations ou des personnes pour voir leurs publications ici, ou passez sur
                     <button type="button" class="underline font-medium" onclick={() => navigateFeed('all')}>Tout</button>.

@@ -5,9 +5,9 @@
   import PostCard from '$lib/components/posts/PostCard.svelte';
   import { getToken } from '$lib/stores/auth';
   import { currentUserId } from '$lib/stores/user';
-  import { ArrowLeft } from 'lucide-svelte';
+  import { ArrowLeft, FileX } from 'lucide-svelte';
 
-  let { data }: { data: { post: PostEntity } } = $props();
+  let { data }: { data: { post: PostEntity | null } } = $props();
 
   const userId = $derived(currentUserId() ?? '');
   let authToken = $state('');
@@ -32,11 +32,21 @@
       Retour aux publications
     </button>
 
-    <PostCard
-      post={data.post}
-      currentUserId={userId}
-      {authToken}
-      onDelete={() => goto('/posts')}
-    />
+    {#if data.post}
+      <PostCard
+        post={data.post}
+        currentUserId={userId}
+        {authToken}
+        onDelete={() => goto('/posts')}
+      />
+    {:else}
+      <div class="text-center py-16 px-6 bg-[var(--cn-surface)]/50 backdrop-blur-xl rounded-3xl border border-dashed border-cn-border">
+        <FileX size={48} class="mx-auto mb-3 text-text-muted opacity-40" />
+        <h3 class="text-lg font-bold text-text-main mb-1">Publication introuvable</h3>
+        <p class="text-text-muted text-sm">
+          Cette publication n'existe plus ou a été supprimée.
+        </p>
+      </div>
+    {/if}
   </div>
 </main>

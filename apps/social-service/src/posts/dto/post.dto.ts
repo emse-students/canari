@@ -261,8 +261,8 @@ export class ListPostsQueryDto {
 
   /** Default `all` when omitted. */
   @IsOptional()
-  @IsIn(['all', 'followed', 'custom'])
-  feed?: 'all' | 'followed' | 'custom';
+  @IsIn(['all', 'followed', 'custom', 'associations'])
+  feed?: 'all' | 'followed' | 'custom' | 'associations';
 
   /** Custom feed: filter by author promotion (personal posts only). */
   @IsOptional()

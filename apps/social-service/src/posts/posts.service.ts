@@ -43,7 +43,11 @@ export class PostsService {
       this.listPostsCacheKey('all', undefined, undefined, undefined, 10, 0),
       this.listPostsCacheKey('all', undefined, undefined, undefined, 20, 0),
       this.listPostsCacheKey('all', undefined, undefined, undefined, 30, 0),
-      this.listPostsCacheKey('all', undefined, undefined, undefined, 50, 0)
+      this.listPostsCacheKey('all', undefined, undefined, undefined, 50, 0),
+      this.listPostsCacheKey('associations', undefined, undefined, undefined, 10, 0),
+      this.listPostsCacheKey('associations', undefined, undefined, undefined, 20, 0),
+      this.listPostsCacheKey('associations', undefined, undefined, undefined, 30, 0),
+      this.listPostsCacheKey('associations', undefined, undefined, undefined, 50, 0)
     );
   }
 
@@ -236,7 +240,7 @@ export class PostsService {
   async listPosts(params: {
     limit: number;
     offset: number;
-    feed: 'all' | 'followed' | 'custom';
+    feed: 'all' | 'followed' | 'custom' | 'associations';
     viewerUserId?: string;
     isAdmin?: boolean;
     promo?: number;
@@ -314,7 +318,20 @@ export class PostsService {
     const promoParam = promo === undefined ? null : promo;
     const formationParam = formation === undefined || formation === '' ? null : formation;
 
-    if (feed === 'all') {
+    if (feed === 'associations') {
+      // $1=limit, $2=offset, $3=promoCutoff (optional)
+      rawPosts = await this.postRepo.manager.query(
+        `SELECT ${selectBody}
+       FROM posts
+       LEFT JOIN associations assoc ON assoc.id = posts."associationId"
+       WHERE posts."associationId" IS NOT NULL
+         AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
+         ${promoSql(3)}
+       ORDER BY posts.pinned DESC, posts."createdAt" DESC
+       LIMIT $1 OFFSET $2`,
+        [limit, offset, ...(promoCutoff ? [promoCutoff] : [])]
+      );
+    } else if (feed === 'all') {
       // $1=limit, $2=offset, $3=promoCutoff (optional)
       rawPosts = await this.postRepo.manager.query(
         `SELECT ${selectBody}

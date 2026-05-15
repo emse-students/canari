@@ -1,5 +1,4 @@
-import { getPost } from '$lib/posts/api';
-import { error } from '@sveltejs/kit';
+import { getPost, type PostEntity } from '$lib/posts/api';
 import type { PageLoad } from './$types';
 import { fetchMyProfile, isGlobalAdmin } from '$lib/stores/user';
 import { goto } from '$app/navigation';
@@ -16,10 +15,11 @@ export const load: PageLoad = async ({ params }) => {
     }
   }
 
+  let post: PostEntity | null = null;
   try {
-    const post = await getPost(params.postId);
-    return { post };
+    post = await getPost(params.postId);
   } catch {
-    error(404, 'Publication introuvable');
+    // Post doesn't exist or network error — show "not found" UI instead of hard 404
   }
+  return { post };
 };

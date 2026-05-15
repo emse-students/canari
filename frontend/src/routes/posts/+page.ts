@@ -6,7 +6,7 @@ import { goto } from '$app/navigation';
 export const load: PageLoad = async ({ url }) => {
   const feedRaw = url.searchParams.get('feed');
   const feed = (
-    ['all', 'followed', 'custom'].includes(feedRaw || '') ? feedRaw : 'followed'
+    ['all', 'followed', 'custom', 'associations'].includes(feedRaw || '') ? feedRaw : 'associations'
   ) as PostFeed;
   const promoStr = url.searchParams.get('promo');
   const promoParsed = promoStr !== null && promoStr !== '' ? parseInt(promoStr, 10) : undefined;
