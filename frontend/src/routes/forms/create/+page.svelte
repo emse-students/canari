@@ -1,7 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
+  import { page } from '$app/state';
   import { createForm, type CreateFormPayload } from '$lib/forms/api';
+  import {
+    POST_NEW_FORM_ATTACH_KEY,
+    POST_NEW_FORM_ID_KEY,
+    loadPostComposerDraft,
+  } from '$lib/posts/postComposerDraft';
   import { listAssociations, type Association } from '$lib/associations/api';
   import FormBuilder from '$lib/components/forms/FormBuilder.svelte';
   import Input from '$lib/components/ui/Input.svelte';
@@ -15,13 +21,22 @@
   let currency = $state('eur');
   let submitLabel = $state('Envoyer');
   let maxSubmissions = $state<number | undefined>(undefined);
+  let opensAt = $state('');
   let requiresPayment = $state(false);
   let associationId = $state('');
+
+  const returnTo = $derived(page.url.searchParams.get('returnTo') || '/forms');
+  const attachMode = $derived(page.url.searchParams.get('attach') as 'form' | 'event' | null);
+  const fromPostComposer = $derived(returnTo === '/posts' && !!attachMode);
 
   // Associations with Stripe account (eligible as recipients)
   let associations = $state<Association[]>([]);
 
   onMount(async () => {
+    const draft = loadPostComposerDraft();
+    if (draft?.scheduledAt && !opensAt) {
+      opensAt = draft.scheduledAt;
+    }
     try {
       const all = await listAssociations();
       associations = all.filter((a) => a.stripeAccountId);
@@ -74,11 +89,18 @@
           rows: item.rows?.map((r: any) => (typeof r === 'string' ? r : r.value)) || [],
         })),
         maxSubmissions,
+        ...(opensAt ? { opensAt: new Date(opensAt).toISOString() } : {}),
         requiresPayment,
         associationId: requiresPayment && associationId ? associationId : undefined,
       };
-      await createForm(payload);
-      goto('/forms');
+      const created = await createForm(payload);
+      if (fromPostComposer && attachMode) {
+        sessionStorage.setItem(POST_NEW_FORM_ID_KEY, created.id);
+        sessionStorage.setItem(POST_NEW_FORM_ATTACH_KEY, attachMode);
+        goto('/posts');
+      } else {
+        goto(returnTo);
+      }
     } catch (e: any) {
       error = e.message;
     } finally {
@@ -117,7 +139,7 @@
   <!-- Header -->
   <div class="flex items-center gap-3 mb-8">
     <button
-      onclick={() => goto('/forms')}
+      onclick={() => goto(fromPostComposer ? '/posts' : returnTo)}
       class="p-2 rounded-xl text-text-muted hover:text-text-main hover:bg-cn-border/30 transition-colors"
       title="Retour"
     >
@@ -189,6 +211,21 @@
           placeholder="Illimité"
           min="1"
         />
+      </div>
+
+      <div>
+        <label for="form-opens-at" class="block text-sm font-bold text-text-main mb-2 ml-1">
+          Date d’ouverture (shotgun)
+        </label>
+        <input
+          id="form-opens-at"
+          type="datetime-local"
+          bind:value={opensAt}
+          class="w-full px-4 py-3 border-2 border-cn-border rounded-2xl text-base text-text-main bg-[var(--cn-surface)] outline-none transition-all focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)]"
+        />
+        <p class="text-xs text-text-muted mt-1.5 ml-1">
+          Laissez vide pour ouvrir immédiatement. Les réponses seront bloquées avant cette date.
+        </p>
       </div>
     </div>
   </section>

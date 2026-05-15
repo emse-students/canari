@@ -29,6 +29,8 @@ import { checkGroupSuccessors } from '$lib/utils/chat/recovery';
 import {
   setupMessageHandler,
   initializeConnection,
+  openGatewayConnection,
+  syncConnectionAfterWsOpen,
   initTabLeadershipAsync,
   getIsTabLeader,
 } from '$lib/utils/chat/connection';
@@ -109,6 +111,9 @@ export function useChatSession() {
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   /** Leader-tab periodic successor migration check (cleared on logout). */
   let healthCheckInterval: ReturnType<typeof setInterval> | null = null;
+  /** Detects a dead WebSocket while the UI still shows online (cleared on logout). */
+  let connectionWatchdogInterval: ReturnType<typeof setInterval> | null = null;
+  const CONNECTION_WATCHDOG_MS = 30_000;
   let isReconnecting = false;
   let isSyncing = false;
 
@@ -602,6 +607,8 @@ export function useChatSession() {
         5 * 60 * 1_000
       );
 
+      startConnectionWatchdog(cb);
+
       const isTauri = !!(window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
       if (isTauri && !(await BiometricService.isConfigured()) && !isBiometricPromptDismissed()) {
         showBiometricEnrollPrompt = true;
@@ -710,6 +717,7 @@ export function useChatSession() {
       clearInterval(healthCheckInterval);
       healthCheckInterval = null;
     }
+    stopConnectionWatchdog();
     reconnectAttempts = 0;
     isLoggedIn = false;
     isWsConnected = false;
@@ -727,6 +735,26 @@ export function useChatSession() {
 
   // ── Reconnection ──────────────────────────────────────────────────────────
 
+  function startConnectionWatchdog(cb: ChatSessionCallbacks) {
+    if (connectionWatchdogInterval !== null) return;
+    connectionWatchdogInterval = setInterval(() => {
+      if (!isLoggedIn || !getIsTabLeader()) return;
+      const svc = mls;
+      if (svc?.isWsOpen()) return;
+      if (isWsConnected) isWsConnected = false;
+      if (reconnectTimer !== null || isReconnecting) return;
+      cb.log('[WS] Surveillance: socket inactif, reconnexion...');
+      scheduleReconnect(cb);
+    }, CONNECTION_WATCHDOG_MS);
+  }
+
+  function stopConnectionWatchdog() {
+    if (connectionWatchdogInterval !== null) {
+      clearInterval(connectionWatchdogInterval);
+      connectionWatchdogInterval = null;
+    }
+  }
+
   /** Schedules an exponential-backoff WebSocket reconnect attempt (delays: 1s, 2s, 4s … 30s max). No-op when already logged out or a timer is already pending. */
   function scheduleReconnect(cb: ChatSessionCallbacks) {
     if (!isLoggedIn) return;
@@ -740,47 +768,48 @@ export function useChatSession() {
     reconnectTimer = setTimeout(() => attemptReconnect(cb), delay);
   }
 
-  /** Performs one WebSocket reconnect attempt, re-fetches pending MLS messages, and re-runs device sync. Falls back to scheduleReconnect on failure. */
+  /** Performs one WebSocket reconnect with full post-connect sync (same as login). Falls back to scheduleReconnect on failure. */
   async function attemptReconnect(cb: ChatSessionCallbacks) {
     reconnectTimer = null;
     if (!isLoggedIn || isReconnecting) return;
+    if (!getIsTabLeader()) {
+      cb.log('[TAB] Onglet follower — reconnexion ignorée.');
+      return;
+    }
     isReconnecting = true;
     try {
       cb.log('Reconnexion en cours...');
-      const token = await getToken();
       const mlsService = ensureMls();
-      await mlsService.connect(token);
-      mlsService.onDisconnect(() => scheduleReconnect(cb));
-      isWsConnected = true;
-      reconnectAttempts = 0;
-      cb.log('[OK] Reconnecte au reseau.');
-      console.log('[WS] Reconnected to Chat Gateway');
-      cb.log('[SYNC] Récupération des messages manquants...');
-      mlsService
-        .fetchPendingMessages()
-        .catch((e) =>
-          cb.log(
-            `[WARN] Echec récupération messages manquants: ${e instanceof Error ? e.message : String(e)}`
-          )
-        );
-      processDeviceInvitationsLocally(cb)
-        .then(() => {
-          const st2 = storage;
-          return discoverMissingGroups({
-            mlsService: ensureMls(),
-            userId,
-            pin,
-            conversations: cb.conversations,
-            saveConversation: cb.saveConversation,
-            deleteConversation: st2 ? (id) => st2.deleteConversation(id) : undefined,
-            log: cb.log,
-          });
-        })
-        .catch((e) =>
-          cb.log(
-            `[WARN] Echec sync appareils (reconnect): ${e instanceof Error ? e.message : String(e)}`
-          )
-        );
+      const connectionDeps = {
+        mlsService,
+        userId,
+        pin,
+        scheduleReconnect: () => scheduleReconnect(cb),
+        setIsWsConnected: (v: boolean) => (isWsConnected = v),
+        setReconnectAttempts: (v: number) => (reconnectAttempts = v),
+        processDeviceInvitationsLocally: () => processDeviceInvitationsLocally(cb),
+        log: cb.log,
+      };
+      const connected = await openGatewayConnection(connectionDeps);
+      if (!connected) {
+        scheduleReconnect(cb);
+        return;
+      }
+      await syncConnectionAfterWsOpen(connectionDeps);
+      const st2 = storage;
+      discoverMissingGroups({
+        mlsService: ensureMls(),
+        userId,
+        pin,
+        conversations: cb.conversations,
+        saveConversation: cb.saveConversation,
+        deleteConversation: st2 ? (id) => st2.deleteConversation(id) : undefined,
+        log: cb.log,
+      }).catch((e) =>
+        cb.log(
+          `[WARN] Echec decouverte groupes (reconnect): ${e instanceof Error ? e.message : String(e)}`
+        )
+      );
     } catch (err) {
       cb.log(`Reconnexion echouee: ${err instanceof Error ? err.message : String(err)}`);
       console.error('[WS] Reconnection failed:', err instanceof Error ? err.message : err);

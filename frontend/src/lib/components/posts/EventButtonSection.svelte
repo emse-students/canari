@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { X, CalendarCheck, ChevronDown } from 'lucide-svelte';
+  import { X, CalendarCheck, ChevronDown, Plus } from 'lucide-svelte';
+  import { formatFormOpensAt, formOpensAtIso } from '$lib/posts/postComposerDraft';
   import { slide } from 'svelte/transition';
   import Input from '$lib/components/ui/Input.svelte';
   import type { Form } from '$lib/forms/api';
@@ -26,6 +27,8 @@
     formId: string;
     /** Available forms pre-loaded from the API. */
     availableForms: Form[];
+    createFormHref: string;
+    onBeforeCreateForm?: () => void;
     /** Called when the user clicks the remove (✕) button. */
     onRemove: () => void;
   }
@@ -39,8 +42,18 @@
     capacity = $bindable(),
     formId = $bindable(),
     availableForms,
+    createFormHref,
+    onBeforeCreateForm,
     onRemove,
   }: Props = $props();
+
+  function formOptionLabel(form: Form): string {
+    const base = form.title;
+    if (form.opensAt && formOpensAtIso(form.opensAt)) {
+      return `${base} — ouvre ${formatFormOpensAt(form.opensAt)}`;
+    }
+    return base;
+  }
 
   const selectPlainClass =
     'w-full appearance-none rounded-xl border border-cn-border/70 bg-cn-surface/95 dark:bg-cn-dark/50 px-4 pr-10 py-3 text-sm font-medium text-text-main shadow-sm transition-all outline-none focus:border-cn-yellow focus:ring-2 focus:ring-cn-yellow/25 hover:border-cn-border';
@@ -97,26 +110,34 @@
     {/if}
 
     <!-- Optional linked form -->
-    {#if availableForms.length > 0}
-      <div class="pt-1">
+    <div class="pt-1">
         <label
           for="event-form-select"
           class="ml-1 mb-1.5 block text-[0.65rem] font-bold uppercase tracking-wider text-text-muted"
         >
           Formulaire lié (optionnel)
         </label>
+      {#if availableForms.length > 0}
         <div class="relative">
           <select id="event-form-select" bind:value={formId} class={selectPlainClass}>
             <option value="">— Aucun —</option>
             {#each availableForms as form (form.id)}
-              <option value={form.id}>{form.title}</option>
+              <option value={form.id}>{formOptionLabel(form)}</option>
             {/each}
           </select>
           <div class={chevronWrapClass}>
             <ChevronDown size={18} strokeWidth={2} />
           </div>
         </div>
-      </div>
-    {/if}
+      {/if}
+      <a
+        href={createFormHref}
+        onclick={() => onBeforeCreateForm?.()}
+        class="mt-2 inline-flex items-center gap-1.5 text-xs font-bold text-cn-yellow hover:underline"
+      >
+        <Plus size={14} strokeWidth={2.5} />
+        Créer un nouveau formulaire
+      </a>
+    </div>
   </div>
 </div>

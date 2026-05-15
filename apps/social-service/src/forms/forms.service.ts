@@ -29,8 +29,10 @@ export class FormsService {
 
   /** Creates a form and assigns stable IDs to all items and options that lack them. */
   async create(input: CreateFormDto) {
+    const { opensAt: opensAtRaw, ...rest } = input;
     const form = this.formRepo.create({
-      ...input,
+      ...rest,
+      opensAt: opensAtRaw ? new Date(opensAtRaw) : null,
       items: input.items.map((item: any) => ({
         ...item,
         id: item.id || makeId('item'),
@@ -80,6 +82,10 @@ export class FormsService {
   async submit(id: string, input: SubmitFormDto) {
     const form = await this.formRepo.findOne({ where: { id } });
     if (!form) throw new NotFoundException('Form not found');
+
+    if (form.opensAt && new Date(form.opensAt) > new Date()) {
+      throw new BadRequestException('Le formulaire n’est pas encore ouvert');
+    }
 
     // Validation & Price Calculation
     let totalCents = form.basePrice;

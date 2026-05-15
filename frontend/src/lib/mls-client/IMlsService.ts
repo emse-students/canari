@@ -61,6 +61,8 @@ export interface IMlsService {
   // Networking
   /** Opens a WebSocket connection to the chat gateway using the given JWT access token. */
   connect(token: string): Promise<void>;
+  /** True when the live gateway WebSocket is open (used for reconnect watchdog). */
+  isWsOpen(): boolean;
   /** Fetches all registered devices (with KeyPackages) for the given user from the delivery service. */
   fetchUserDevices(userId: string): Promise<
     Array<{

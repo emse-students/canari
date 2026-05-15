@@ -27,6 +27,8 @@ export interface CreateFormPayload {
   submitLabel: string;
   items: FormItem[];
   maxSubmissions?: number;
+  /** ISO 8601 — submissions blocked until this instant. */
+  opensAt?: string;
   requiresPayment?: boolean;
   associationId?: string;
   paymentMethods?: string[];

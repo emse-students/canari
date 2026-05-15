@@ -105,7 +105,7 @@
   let comments = $derived<PostComment[]>(localPost.comments ?? []);
   let topLevelComments = $derived(comments.filter((c) => !c.parentId));
 
-  let formInfos = $state<{ id: string; title: string; submitted: boolean }[]>([]);
+  let formInfos = $state<{ id: string; title: string; submitted: boolean; opensAt?: string | null }[]>([]);
   let btnFormInfos = $state<Record<string, { formId: string; title: string; submitted: boolean }>>(
     {}
   );
@@ -164,20 +164,20 @@
 
     for (const src of formSources) {
       if (formInfos.find((fi) => fi.id === src.id)) continue;
-      const doCheck = (id: string, title: string) => {
+      const doCheck = (id: string, title: string, opensAt?: string | null) => {
         checkSubmission(id)
           .then(({ hasSubmitted }) => {
-            formInfos = [...formInfos, { id, title, submitted: hasSubmitted }];
+            formInfos = [...formInfos, { id, title, submitted: hasSubmitted, opensAt }];
           })
           .catch(() => {
-            formInfos = [...formInfos, { id, title, submitted: false }];
+            formInfos = [...formInfos, { id, title, submitted: false, opensAt }];
           });
       };
       if (src.title) {
         doCheck(src.id, src.title);
       } else {
         getForm(src.id)
-          .then((f) => doCheck(f.id, f.title))
+          .then((f) => doCheck(f.id, f.title, f.opensAt))
           .catch((e) => console.error('Failed to load attached form', e));
       }
     }

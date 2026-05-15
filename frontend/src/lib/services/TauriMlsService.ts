@@ -614,6 +614,10 @@ export class TauriMlsService implements IMlsService {
     this.welcomeProcessedCallback = callback;
   }
 
+  isWsOpen(): boolean {
+    return this.ws !== null;
+  }
+
   onDisconnect(callback: () => void) {
     this.disconnectCallback = callback;
   }

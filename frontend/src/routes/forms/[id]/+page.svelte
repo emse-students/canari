@@ -17,6 +17,7 @@
     type Form,
     type FormItem,
   } from '$lib/forms/api';
+  import { formatFormOpensAt, formOpensAtIso } from '$lib/posts/postComposerDraft';
   import {
     getCalendarEventLinkedToForm,
     getAssociation,
@@ -31,6 +32,8 @@
   const redirectTo = $derived(page.url.searchParams.get('redirect') || '/posts');
 
   let form = $state<Form | null>(null);
+  const opensLaterIso = $derived(form?.opensAt ? formOpensAtIso(form.opensAt) : null);
+  const isNotOpenYet = $derived(!!opensLaterIso);
   let selections = $state<Record<string, any>>({});
   let submitted = $state(false);
   let loading = $state(true);
@@ -160,6 +163,10 @@
 
   async function handleSubmit() {
     if (!form) return;
+    if (isNotOpenYet && form.opensAt) {
+      error = `Ce formulaire ouvre le ${formatFormOpensAt(form.opensAt)}.`;
+      return;
+    }
     if (!userId.trim()) {
       error = 'Veuillez vous connecter pour soumettre.';
       return;
@@ -336,6 +343,14 @@
         </div>
       </Card>
 
+      {#if isNotOpenYet && form.opensAt}
+        <Card class="mb-6 border-amber-500/30 bg-amber-500/10 p-4">
+          <p class="text-sm font-semibold text-amber-800 dark:text-amber-300">
+            Ouverture le {formatFormOpensAt(form.opensAt)} — les réponses ne sont pas encore acceptées.
+          </p>
+        </Card>
+      {/if}
+
       {#if successMessage}
         <Card class="mb-6">
           <div class="p-5 flex items-center gap-3">
@@ -367,7 +382,7 @@
                   class="w-full px-4 py-3 border-2 border-cn-border rounded-2xl text-sm text-text-main bg-[var(--cn-surface)] outline-none transition-all placeholder:text-text-muted/50 focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)] disabled:opacity-50 disabled:bg-cn-border/20"
                   bind:value={selections[item.id]}
                   placeholder="Votre réponse"
-                  disabled={submitted}
+                  disabled={submitted || isNotOpenYet}
                 />
               {:else if item.type === 'long_text'}
                 <textarea
@@ -375,13 +390,13 @@
                   class="w-full px-4 py-3 border-2 border-cn-border rounded-2xl text-sm text-text-main bg-[var(--cn-surface)] outline-none transition-all resize-y placeholder:text-text-muted/50 focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)] disabled:opacity-50 disabled:bg-cn-border/20"
                   bind:value={selections[item.id]}
                   placeholder="Votre réponse"
-                  disabled={submitted}
+                  disabled={submitted || isNotOpenYet}
                 ></textarea>
               {:else if item.type === 'dropdown' || item.type === 'single'}
                 <select
                   class="w-full px-4 py-3 border-2 border-cn-border rounded-2xl text-sm text-text-main bg-[var(--cn-surface)] outline-none transition-all appearance-none focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)] disabled:opacity-50 disabled:bg-cn-border/20"
                   bind:value={selections[item.id]}
-                  disabled={submitted}
+                  disabled={submitted || isNotOpenYet}
                 >
                   <option value="" disabled selected>Choisir une option…</option>
                   {#each item.options ?? [] as opt (opt.id)}
@@ -411,7 +426,7 @@
                         value={opt.id}
                         bind:group={selections[item.id]}
                         class="h-4 w-4 accent-cn-yellow"
-                        disabled={submitted}
+                        disabled={submitted || isNotOpenYet}
                       />
                       <span class="text-sm text-text-main font-medium">
                         {opt.label}
@@ -444,7 +459,7 @@
                         value={opt.id}
                         bind:group={selections[item.id]}
                         class="h-4 w-4 accent-cn-yellow"
-                        disabled={submitted}
+                        disabled={submitted || isNotOpenYet}
                       />
                       <span class="text-sm text-text-main font-medium">
                         {opt.label}
@@ -484,7 +499,7 @@
                           value={val}
                           bind:group={selections[item.id]}
                           class="h-5 w-5 accent-cn-yellow"
-                          disabled={submitted}
+                          disabled={submitted || isNotOpenYet}
                         />
                         <span
                           class="text-xs font-bold text-text-muted group-hover:text-cn-dark transition-colors"
@@ -527,7 +542,7 @@
                                     value={col.id}
                                     bind:group={selections[item.id][row]}
                                     class="h-4 w-4 accent-cn-yellow"
-                                    disabled={submitted}
+                                    disabled={submitted || isNotOpenYet}
                                   />
                                 {:else}
                                   <input
@@ -535,7 +550,7 @@
                                     value={col.id}
                                     bind:group={selections[item.id][row]}
                                     class="h-4 w-4 accent-cn-yellow"
-                                    disabled={submitted}
+                                    disabled={submitted || isNotOpenYet}
                                   />
                                 {/if}
                               </div>
@@ -571,7 +586,7 @@
                 <span class="text-xs font-semibold text-green-600 ml-2">(Déjà envoyé)</span>
               {/if}
             </div>
-            <Button variant="primary" class="px-6" disabled={submitted} onclick={handleSubmit}>
+            <Button variant="primary" class="px-6" disabled={submitted || isNotOpenYet} onclick={handleSubmit}>
               {#if submitted}
                 Envoyé
                 <Check size={16} class="ml-1" />

@@ -1,6 +1,7 @@
 import {
   IsArray,
   IsBoolean,
+  IsDateString,
   IsNotEmpty,
   IsNumber,
   IsObject,
@@ -85,6 +86,10 @@ export class CreateFormDto {
   @IsOptional()
   @Min(1)
   maxSubmissions?: number;
+
+  @IsDateString()
+  @IsOptional()
+  opensAt?: string;
 
   @IsBoolean()
   @IsOptional()

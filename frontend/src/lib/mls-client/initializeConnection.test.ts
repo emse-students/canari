@@ -110,7 +110,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
     expect(sync).toHaveBeenCalled();
   });
 
-  it('still runs generateKeyPackage and membership sync when connect throws', async () => {
+  it('skips membership sync when connect throws', async () => {
     const mls = {
       connect: vi.fn().mockRejectedValue(new Error('gateway down')),
       fetchPendingMessages: vi.fn(),
@@ -123,7 +123,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       getDeviceId: vi.fn().mockReturnValue('d'),
     };
     const log = vi.fn();
-    const p = initializeConnection({
+    await initializeConnection({
       mlsService: mls as any,
       userId: 'u',
       pin: 'p',
@@ -133,9 +133,8 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
       log,
     });
-    await vi.advanceTimersByTimeAsync(600);
-    await p;
     expect(log).toHaveBeenCalledWith(expect.stringMatching(/Gateway inaccessible/));
-    expect(mls.generateKeyPackage).toHaveBeenCalledWith('p');
+    expect(mls.generateKeyPackage).not.toHaveBeenCalled();
+    expect(mls.getDeviceMemberships).not.toHaveBeenCalled();
   });
 });

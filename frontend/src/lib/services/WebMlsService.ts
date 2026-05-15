@@ -56,6 +56,7 @@ export class WebMlsService implements IMlsService {
   /** True when initialized without existing state — triggers OTKP purge before new ones are published. */
   private freshStart = false;
   private networkListenersRegistered = false;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
   // Message queue for sequential processing
   private messageQueue: QueuedMessage[] = [];
@@ -77,8 +78,37 @@ export class WebMlsService implements IMlsService {
     });
   }
 
+  private clearHeartbeat(): void {
+    if (this.heartbeatTimer !== null) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+  }
+
+  private startHeartbeat(): void {
+    this.clearHeartbeat();
+    this.heartbeatTimer = setInterval(() => {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        this.clearHeartbeat();
+        this.disconnectCallback?.();
+        return;
+      }
+      try {
+        this.ws.send(JSON.stringify({ type: 'ping' }));
+      } catch {
+        this.clearHeartbeat();
+        this.disconnectCallback?.();
+      }
+    }, 8_000);
+  }
+
+  isWsOpen(): boolean {
+    return this.ws?.readyState === WebSocket.OPEN;
+  }
+
   /** WASM client wrapper — opens a native browser WebSocket to the chat gateway, wiring message/close handlers and registering reconnect listeners once. */
   async connect(): Promise<void> {
+    this.clearHeartbeat();
     // Close existing socket before creating a new one
     if (this.ws) {
       try {
@@ -142,6 +172,7 @@ export class WebMlsService implements IMlsService {
       this.ws.onopen = () => {
         clearTimeout(timeout);
         resolved = true;
+        this.startHeartbeat();
         console.log('Connected to Chat Gateway with DeviceID:', this.deviceId);
         resolve();
       };
@@ -167,6 +198,7 @@ export class WebMlsService implements IMlsService {
             )
           );
         } else {
+          this.clearHeartbeat();
           console.warn(
             `WebSocket disconnected. Code: ${event.code}, Reason: ${event.reason || 'no reason'}`
           );

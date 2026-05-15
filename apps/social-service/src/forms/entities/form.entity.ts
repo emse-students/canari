@@ -35,6 +35,10 @@ export class Form {
   @Column({ nullable: true })
   maxSubmissions: number;
 
+  /** When set, submissions are rejected until this instant (shotgun / scheduled opening). */
+  @Column({ type: 'timestamptz', nullable: true })
+  opensAt: Date | null;
+
   @Column({ default: false })
   requiresPayment: boolean;
 

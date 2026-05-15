@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { CheckCircle2, ClipboardList, ArrowRight, ExternalLink } from 'lucide-svelte';
+  import { CheckCircle2, ClipboardList, ArrowRight, ExternalLink, Clock } from 'lucide-svelte';
+  import { formatFormOpensAt, formOpensAtIso } from '$lib/posts/postComposerDraft';
 
   interface Props {
     /** Forms attached to the post, each with its submission status for the current user. */
-    formInfos: Array<{ id: string; title: string; submitted: boolean }>;
+    formInfos: Array<{ id: string; title: string; submitted: boolean; opensAt?: string | null }>;
   }
 
   let { formInfos }: Props = $props();
@@ -36,7 +37,16 @@
               {fi.title || 'Formulaire'}
             </h3>
             <p class="text-[0.75rem] font-semibold mt-0.5 {fi.submitted ? 'text-emerald-600/80 dark:text-emerald-400/80' : 'text-text-muted'}">
-              {fi.submitted ? 'Réponse envoyée' : 'Remplir le formulaire'}
+              {#if fi.submitted}
+                Réponse envoyée
+              {:else if fi.opensAt && formOpensAtIso(fi.opensAt)}
+                <span class="inline-flex items-center gap-1">
+                  <Clock size={12} strokeWidth={2.5} />
+                  Ouvre le {formatFormOpensAt(fi.opensAt)}
+                </span>
+              {:else}
+                Remplir le formulaire
+              {/if}
             </p>
           </div>
         </div>

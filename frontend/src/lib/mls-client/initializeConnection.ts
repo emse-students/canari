@@ -13,32 +13,21 @@ export interface ConnectionDeps {
   log: (msg: string) => void;
 }
 
+export type SyncAfterConnectDeps = Pick<
+  ConnectionDeps,
+  'mlsService' | 'userId' | 'pin' | 'processDeviceInvitationsLocally' | 'log'
+>;
+
 /**
- * Open the WebSocket connection, publish a fresh MLS KeyPackage, and reconcile membership state.
- *
- * Steps performed on every (re-)connect:
- *  1. Guard: only runs on the tab-leader (multi-tab coordination).
- *  2. Connect to the chat gateway and start listening for pending messages.
- *  3. Generate and publish a new KeyPackage so other devices can invite this one.
- *  4. Iterate server-side memberships: send welcome_request for pending groups,
- *     reinvite_request for stale leaves, and detect groups missing from local MLS state.
- *  5. Process pending device invitations (add new devices to existing groups).
+ * Opens the WebSocket to the chat gateway (leader tab only).
+ * Returns true when the socket is up; false when skipped or connect failed.
  */
-export async function initializeConnection(deps: ConnectionDeps): Promise<void> {
-  const {
-    mlsService,
-    userId: _userId,
-    pin,
-    scheduleReconnect,
-    setIsWsConnected,
-    setReconnectAttempts,
-    processDeviceInvitationsLocally,
-    log,
-  } = deps;
+export async function openGatewayConnection(deps: ConnectionDeps): Promise<boolean> {
+  const { mlsService, scheduleReconnect, setIsWsConnected, setReconnectAttempts, log } = deps;
 
   if (!getIsTabLeader()) {
-    log('[TAB] Onglet follower — skip initializeConnection.');
-    return;
+    log('[TAB] Onglet follower — skip openGatewayConnection.');
+    return false;
   }
 
   log('Connexion Gateway...');
@@ -63,11 +52,24 @@ export async function initializeConnection(deps: ConnectionDeps): Promise<void> 
       const sendDisconnectOnUnload = () => mlsService.sendDisconnect();
       window.addEventListener('beforeunload', sendDisconnectOnUnload, { once: true });
     }
-  } catch (_wsErr: unknown) {
-    const msg = _wsErr instanceof Error ? _wsErr.message : String(_wsErr);
+    return true;
+  } catch (wsErr: unknown) {
+    const msg = wsErr instanceof Error ? wsErr.message : String(wsErr);
+    setIsWsConnected(false);
     log(`Gateway inaccessible: ${msg}`);
     console.error('[WS] Gateway connection failed:', msg);
+    return false;
   }
+}
+
+/**
+ * After WS is open: publish KeyPackage, reconcile memberships (welcome/reinvite),
+ * process device invitations.
+ */
+export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Promise<void> {
+  const { mlsService, userId, pin, processDeviceInvitationsLocally, log } = deps;
+
+  if (!getIsTabLeader()) return;
 
   try {
     await mlsService.generateKeyPackage(pin);
@@ -77,7 +79,7 @@ export async function initializeConnection(deps: ConnectionDeps): Promise<void> 
   }
 
   try {
-    const memberships = await mlsService.getDeviceMemberships(_userId, mlsService.getDeviceId());
+    const memberships = await mlsService.getDeviceMemberships(userId, mlsService.getDeviceId());
     const localGroups = new Set(mlsService.getLocalGroups());
     for (const m of memberships) {
       if (m.status === 'pending') {
@@ -89,7 +91,7 @@ export async function initializeConnection(deps: ConnectionDeps): Promise<void> 
         log(`[SYNC] reinvite_request envoyé (stale sur groupe ${m.groupId}, état local effacé)`);
       } else if (m.status === 'welcome_received' && !localGroups.has(m.groupId)) {
         await mlsService
-          .updateInvitationStatus(mlsService.getDeviceId(), _userId, m.groupId, 'stale')
+          .updateInvitationStatus(mlsService.getDeviceId(), userId, m.groupId, 'stale')
           .catch(() => {});
         await mlsService.sendReinviteRequest(m.groupId);
         log(`[SYNC] welcome_request envoyé (état local manquant pour ${m.groupId})`);
@@ -98,7 +100,7 @@ export async function initializeConnection(deps: ConnectionDeps): Promise<void> 
 
     const membershipGroupIds = new Set(memberships.map((m) => m.groupId));
     const userGroups = await mlsService
-      .getUserGroups(_userId)
+      .getUserGroups(userId)
       .catch(() => [] as { groupId: string; name: string; isGroup: boolean }[]);
     for (const group of userGroups) {
       if (!membershipGroupIds.has(group.groupId) && !localGroups.has(group.groupId)) {
@@ -114,4 +116,27 @@ export async function initializeConnection(deps: ConnectionDeps): Promise<void> 
   await new Promise((r) => setTimeout(r, 500));
 
   processDeviceInvitationsLocally().catch(() => {});
+}
+
+/**
+ * Open the WebSocket connection, publish a fresh MLS KeyPackage, and reconcile membership state.
+ *
+ * Steps performed on every (re-)connect:
+ *  1. Guard: only runs on the tab-leader (multi-tab coordination).
+ *  2. Connect to the chat gateway and start listening for pending messages.
+ *  3. Generate and publish a new KeyPackage so other devices can invite this one.
+ *  4. Iterate server-side memberships: send welcome_request for pending groups,
+ *     reinvite_request for stale leaves, and detect groups missing from local MLS state.
+ *  5. Process pending device invitations (add new devices to existing groups).
+ */
+export async function initializeConnection(deps: ConnectionDeps): Promise<void> {
+  if (!getIsTabLeader()) {
+    deps.log('[TAB] Onglet follower — skip initializeConnection.');
+    return;
+  }
+
+  const connected = await openGatewayConnection(deps);
+  if (!connected) return;
+
+  await syncConnectionAfterWsOpen(deps);
 }

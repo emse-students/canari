@@ -7,6 +7,16 @@
   import { createPost, type CreatePostPayload } from '$lib/posts/api';
   import { getForms, type Form } from '$lib/forms/api';
   import {
+    buildCreateFormHref,
+    clearPostComposerDraft,
+    emptyPostComposerDraft,
+    loadPostComposerDraft,
+    POST_NEW_FORM_ATTACH_KEY,
+    POST_NEW_FORM_ID_KEY,
+    savePostComposerDraft,
+    type PostComposerDraft,
+  } from '$lib/posts/postComposerDraft';
+  import {
     listAssociations,
     listMyAssociations,
     listLinkableValidatedCalendarEvents,
@@ -135,23 +145,76 @@
     textareaEl.setSelectionRange(newSelStart, newSelEnd);
   }
 
-  // --- Draft auto-save ---
-  const DRAFT_KEY = 'canari_post_draft';
+  // --- Draft auto-save (full composer state; images are not persisted) ---
   let draftRestored = $state(false);
   let draftSaved = $state(false);
   let draftSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
-  /** Debounced draft save: writes to localStorage 800 ms after the user stops typing. */
+  function snapshotComposerDraft(): PostComposerDraft {
+    return {
+      version: 1,
+      markdown,
+      imageCaptions: [...imageCaptions],
+      includePoll,
+      pollQuestion,
+      pollOptionsRaw,
+      pollMultipleChoice,
+      includeEventButton,
+      eventLabel,
+      eventId,
+      eventRequiresPayment,
+      eventAmount,
+      eventCurrency,
+      eventCapacity,
+      eventFormId,
+      includeForm,
+      selectedFormId,
+      scheduledAt,
+      selectedAssociationId,
+      selectedPaymentAssociationId,
+      selectedLinkedCalendarEventId,
+    };
+  }
+
+  function applyComposerDraft(draft: PostComposerDraft) {
+    markdown = draft.markdown;
+    imageCaptions = draft.imageCaptions ?? [];
+    includePoll = draft.includePoll;
+    pollQuestion = draft.pollQuestion;
+    pollOptionsRaw = draft.pollOptionsRaw;
+    pollMultipleChoice = draft.pollMultipleChoice;
+    includeEventButton = draft.includeEventButton;
+    eventLabel = draft.eventLabel;
+    eventId = draft.eventId;
+    eventRequiresPayment = draft.eventRequiresPayment;
+    eventAmount = draft.eventAmount;
+    eventCurrency = draft.eventCurrency;
+    eventCapacity = draft.eventCapacity;
+    eventFormId = draft.eventFormId;
+    includeForm = draft.includeForm;
+    selectedFormId = draft.selectedFormId;
+    scheduledAt = draft.scheduledAt;
+    selectedAssociationId = draft.selectedAssociationId;
+    selectedPaymentAssociationId = draft.selectedPaymentAssociationId;
+    selectedLinkedCalendarEventId = draft.selectedLinkedCalendarEventId;
+  }
+
+  function persistComposerDraft() {
+    savePostComposerDraft(snapshotComposerDraft());
+  }
+
+  /** Debounced draft save after any composer field changes. */
   $effect(() => {
-    const text = markdown;
+    void snapshotComposerDraft();
     if (draftSaveTimer) clearTimeout(draftSaveTimer);
     draftSaveTimer = setTimeout(() => {
-      if (text.trim()) {
-        localStorage.setItem(DRAFT_KEY, text);
+      const snap = snapshotComposerDraft();
+      if (snap.markdown.trim() || snap.includePoll || snap.includeEventButton || snap.includeForm) {
+        savePostComposerDraft(snap);
         draftSaved = true;
         setTimeout(() => { draftSaved = false; }, 1800);
       } else {
-        localStorage.removeItem(DRAFT_KEY);
+        clearPostComposerDraft();
       }
     }, 800);
   });
@@ -194,11 +257,36 @@
   const imageInputId = 'create-post-images-input';
 
   onMount(async () => {
-    const saved = localStorage.getItem(DRAFT_KEY);
-    if (saved) { markdown = saved; draftRestored = true; }
+    const saved = loadPostComposerDraft();
+    if (saved) {
+      applyComposerDraft(saved);
+      draftRestored = true;
+    }
 
     try { authToken = await getToken(); } catch { /* retried on upload */ }
     try { availableForms = await getForms(); } catch (e) { console.error('Failed to load forms', e); }
+
+    const newFormId = sessionStorage.getItem(POST_NEW_FORM_ID_KEY);
+    const attach = sessionStorage.getItem(POST_NEW_FORM_ATTACH_KEY);
+    if (newFormId) {
+      sessionStorage.removeItem(POST_NEW_FORM_ID_KEY);
+      sessionStorage.removeItem(POST_NEW_FORM_ATTACH_KEY);
+      try {
+        availableForms = await getForms();
+      } catch {
+        /* keep previous list */
+      }
+      if (attach === 'event') {
+        includeEventButton = true;
+        includeForm = false;
+        eventFormId = newFormId;
+      } else {
+        includeForm = true;
+        includeEventButton = false;
+        selectedFormId = newFormId;
+      }
+    }
+
     try {
       myAssociations = isGlobalAdmin() ? await listAssociations() : await listMyAssociations();
     } catch (e) { console.error('Failed to load associations', e); }
@@ -287,7 +375,7 @@
       await createPost(payload);
 
       // Reset all state after successful creation
-      localStorage.removeItem(DRAFT_KEY);
+      clearPostComposerDraft();
       draftRestored = false;
       markdown = '';
       filePreviews.forEach((url) => URL.revokeObjectURL(url));
@@ -422,10 +510,15 @@
       >
         <span class="text-[0.75rem] font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
           Brouillon restauré
+          <span class="font-medium text-amber-700/70 dark:text-amber-400/70">(texte et options ; pas les photos)</span>
         </span>
         <button
           type="button"
-          onclick={() => { markdown = ''; localStorage.removeItem(DRAFT_KEY); draftRestored = false; }}
+          onclick={() => {
+            applyComposerDraft(emptyPostComposerDraft());
+            clearPostComposerDraft();
+            draftRestored = false;
+          }}
           class="text-xs font-bold text-amber-700/60 dark:text-amber-400/60 hover:text-amber-700 dark:hover:text-amber-400 transition-colors outline-none focus-visible:underline"
         >
           Effacer
@@ -532,6 +625,8 @@
           bind:capacity={eventCapacity}
           bind:formId={eventFormId}
           {availableForms}
+          createFormHref={buildCreateFormHref('event')}
+          onBeforeCreateForm={persistComposerDraft}
           onRemove={() => (includeEventButton = false)}
         />
       </div>
@@ -543,6 +638,8 @@
         <FormSection
           bind:selectedFormId
           {availableForms}
+          createFormHref={buildCreateFormHref('form')}
+          onBeforeCreateForm={persistComposerDraft}
           onRemove={() => (includeForm = false)}
         />
       </div>

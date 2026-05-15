@@ -1,5 +1,16 @@
 <script lang="ts">
-  import { ChevronDown, ChevronUp, Send, X, CornerDownRight, Pencil, Trash2, ArrowUpDown, ImageIcon } from 'lucide-svelte';
+  import {
+    ChevronDown,
+    ChevronUp,
+    Send,
+    X,
+    CornerDownRight,
+    Pencil,
+    Trash2,
+    ArrowUpDown,
+    ImageIcon,
+  } from 'lucide-svelte';
+  import { tick } from 'svelte';
   import type { PostComment, PostImageRef } from '$lib/posts/api';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import PostImage from './PostImage.svelte';
@@ -9,8 +20,6 @@
   import { timeAgo, exactDate } from '$lib/utils/time';
 
   type SortMode = 'recent' | 'oldest' | 'liked';
-
-  function focusOnMount(el: HTMLElement) { el.focus(); }
 
   /** Props for the PostComments section of a post card. */
   interface Props {
@@ -73,7 +82,9 @@
   let uploadingMedia = $state(false);
 
   function clearPendingMedia() {
-    if (pendingPreviewUrl) { URL.revokeObjectURL(pendingPreviewUrl); }
+    if (pendingPreviewUrl) {
+      URL.revokeObjectURL(pendingPreviewUrl);
+    }
     pendingMedia = null;
     pendingPreviewUrl = null;
   }
@@ -87,7 +98,7 @@
     if (!file || !authToken) return;
     uploadingMedia = true;
     try {
-      const compressed = await compressImage(file, 800, 800, 0.80);
+      const compressed = await compressImage(file, 800, 800, 0.8);
       const ref = await mediaService.encryptAndUpload(compressed, authToken);
       const { type: _type, ...mediaFields } = ref;
       pendingMedia = mediaFields as PostImageRef;
@@ -172,7 +183,14 @@
   let replyingToName = $state<string>('');
   let editingCommentId = $state<string | null>(null);
   let editingText = $state('');
+  let editInputEl = $state<HTMLInputElement | null>(null);
   let sortMode = $state<SortMode>('recent');
+
+  $effect(() => {
+    if (editingCommentId && editInputEl) {
+      void tick().then(() => editInputEl?.focus());
+    }
+  });
 
   const PREVIEW_COUNT = 3;
 
@@ -221,10 +239,26 @@
   /** Handles keyboard shortcuts on the comment input: Arrow keys navigate the mention dropdown, Enter submits, Escape cancels reply mode. */
   function handleInternalKeyDown(e: KeyboardEvent) {
     if (mentionOpen && mentionSuggestions.length > 0) {
-      if (e.key === 'ArrowDown') { e.preventDefault(); mentionSelectedIdx = Math.min(mentionSelectedIdx + 1, mentionSuggestions.length - 1); return; }
-      if (e.key === 'ArrowUp') { e.preventDefault(); mentionSelectedIdx = Math.max(mentionSelectedIdx - 1, -1); return; }
-      if (e.key === 'Enter') { e.preventDefault(); if (mentionSelectedIdx >= 0) selectMention(mentionSuggestions[mentionSelectedIdx]); return; }
-      if (e.key === 'Escape') { mentionOpen = false; mentionSuggestions = []; return; }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        mentionSelectedIdx = Math.min(mentionSelectedIdx + 1, mentionSuggestions.length - 1);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        mentionSelectedIdx = Math.max(mentionSelectedIdx - 1, -1);
+        return;
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (mentionSelectedIdx >= 0) selectMention(mentionSuggestions[mentionSelectedIdx]);
+        return;
+      }
+      if (e.key === 'Escape') {
+        mentionOpen = false;
+        mentionSuggestions = [];
+        return;
+      }
     }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -256,13 +290,17 @@
 
   const sortedTopLevel = $derived.by(() => {
     const list = [...topLevelComments];
-    if (sortMode === 'oldest') return list.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-    if (sortMode === 'liked') return list.sort((a, b) => (b.likes?.length ?? 0) - (a.likes?.length ?? 0));
+    if (sortMode === 'oldest')
+      return list.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    if (sortMode === 'liked')
+      return list.sort((a, b) => (b.likes?.length ?? 0) - (a.likes?.length ?? 0));
     // recent = newest first
     return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   });
 
-  const visibleComments = $derived(showComments ? sortedTopLevel : sortedTopLevel.slice(0, PREVIEW_COUNT));
+  const visibleComments = $derived(
+    showComments ? sortedTopLevel : sortedTopLevel.slice(0, PREVIEW_COUNT)
+  );
 </script>
 
 {#snippet commentNode(comment: PostComment, isReply: boolean)}
@@ -279,23 +317,37 @@
     <div class="flex-1 min-w-0">
       {#if isEditing}
         <!-- Mode édition inline -->
-        <div class="flex items-center gap-2 bg-black/5 dark:bg-white/5 rounded-2xl rounded-tl-sm px-3.5 py-2.5 border border-amber-500/40">
+        <div
+          class="flex items-center gap-2 bg-black/5 dark:bg-white/5 rounded-2xl rounded-tl-sm px-3.5 py-2.5 border border-amber-500/40"
+        >
           <input
             type="text"
+            bind:this={editInputEl}
             bind:value={editingText}
             onkeydown={handleEditKeyDown}
             class="flex-1 bg-transparent text-[0.9rem] font-medium text-text-main outline-none"
-            use:focusOnMount
           />
-          <button type="button" onclick={submitEdit} class="text-amber-500 hover:text-amber-400 shrink-0 outline-none" aria-label="Valider">
+          <button
+            type="button"
+            onclick={submitEdit}
+            class="text-amber-500 hover:text-amber-400 shrink-0 outline-none"
+            aria-label="Valider"
+          >
             <Send size={15} strokeWidth={2.5} />
           </button>
-          <button type="button" onclick={cancelEdit} class="text-text-muted hover:text-text-main shrink-0 outline-none" aria-label="Annuler">
+          <button
+            type="button"
+            onclick={cancelEdit}
+            class="text-text-muted hover:text-text-main shrink-0 outline-none"
+            aria-label="Annuler"
+          >
             <X size={15} strokeWidth={2.5} />
           </button>
         </div>
       {:else}
-        <div class="bg-black/5 dark:bg-white/5 rounded-2xl rounded-tl-sm px-3.5 py-2.5 w-fit max-w-full border border-black/5 dark:border-white/5 shadow-sm">
+        <div
+          class="bg-black/5 dark:bg-white/5 rounded-2xl rounded-tl-sm px-3.5 py-2.5 w-fit max-w-full border border-black/5 dark:border-white/5 shadow-sm"
+        >
           <a
             href="/profile/{encodeURIComponent(comment.userId)}"
             class="font-bold text-[0.8rem] text-text-main hover:text-amber-500 transition-colors block mb-0.5 outline-none focus-visible:underline"
@@ -306,15 +358,22 @@
             <!-- Badge "En réponse à" sur les replies rendus -->
             {@const parentComment = comments.find((c) => c.id === comment.parentId)}
             {#if parentComment}
-              <span class="flex items-center gap-1 text-[0.65rem] font-semibold text-text-muted mb-1 opacity-75">
+              <span
+                class="flex items-center gap-1 text-[0.65rem] font-semibold text-text-muted mb-1 opacity-75"
+              >
                 <CornerDownRight size={11} />
                 {getCommentAuthorName(parentComment)}
               </span>
             {/if}
           {/if}
-          {#if comment.text}<span class="text-[0.9rem] text-text-main leading-snug break-words">{comment.text}</span>{/if}
+          {#if comment.text}<span class="text-[0.9rem] text-text-main leading-snug break-words"
+              >{comment.text}</span
+            >{/if}
           {#if comment.media && authToken}
-            <div class="relative mt-1.5 rounded-xl overflow-hidden bg-black/5 dark:bg-white/5" style="width: 200px; height: 140px;">
+            <div
+              class="relative mt-1.5 rounded-xl overflow-hidden bg-black/5 dark:bg-white/5"
+              style="width: 200px; height: 140px;"
+            >
               <PostImage media={comment.media} {authToken} />
             </div>
           {/if}
@@ -324,13 +383,15 @@
       <div class="flex items-center gap-3.5 px-2 mt-1">
         <span
           class="text-[0.65rem] font-bold text-text-muted opacity-80"
-          title={exactDate(comment.createdAt)}
-        >{timeAgo(comment.createdAt)}</span>
+          title={exactDate(comment.createdAt)}>{timeAgo(comment.createdAt)}</span
+        >
 
         <button
           type="button"
           onclick={() => onLikeComment(comment.id)}
-          class="text-[0.7rem] font-extrabold transition-colors outline-none focus-visible:underline {comment.likes?.includes(currentUserId)
+          class="text-[0.7rem] font-extrabold transition-colors outline-none focus-visible:underline {comment.likes?.includes(
+            currentUserId
+          )
             ? 'text-red-500'
             : 'text-text-muted hover:text-text-main'}"
         >
@@ -370,7 +431,9 @@
       {#if !isReply}
         {@const replies = comments.filter((c) => c.parentId === comment.id)}
         {#if replies.length > 0}
-          <div class="pl-3 sm:pl-4 ml-2 sm:ml-3.5 mt-1 border-l-2 border-black/5 dark:border-white/10">
+          <div
+            class="pl-3 sm:pl-4 ml-2 sm:ml-3.5 mt-1 border-l-2 border-black/5 dark:border-white/10"
+          >
             {#each replies as reply (reply.id)}
               {@render commentNode(reply, true)}
             {/each}
@@ -382,7 +445,9 @@
 {/snippet}
 
 {#if comments.length > 0 || showComments}
-  <div class="border-t border-black/5 dark:border-white/10 px-4 sm:px-5 py-4 bg-white/30 dark:bg-black/10">
+  <div
+    class="border-t border-black/5 dark:border-white/10 px-4 sm:px-5 py-4 bg-white/30 dark:bg-black/10"
+  >
     <!-- Contrôles : afficher/masquer + tri -->
     <div class="flex items-center justify-between mb-2 gap-2">
       <div>
@@ -411,11 +476,12 @@
       {#if topLevelComments.length > 1}
         <div class="flex items-center gap-1">
           <ArrowUpDown size={12} class="text-text-muted opacity-60" />
-          {#each ([['recent', 'Récents'], ['oldest', 'Anciens'], ['liked', 'Aimés']] as const) as [mode, label] (mode)}
+          {#each [['recent', 'Récents'], ['oldest', 'Anciens'], ['liked', 'Aimés']] as const as [mode, label] (mode)}
             <button
               type="button"
               onclick={() => (sortMode = mode)}
-              class="text-[0.65rem] font-bold px-2 py-0.5 rounded-full transition-colors {sortMode === mode
+              class="text-[0.65rem] font-bold px-2 py-0.5 rounded-full transition-colors {sortMode ===
+              mode
                 ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
                 : 'text-text-muted hover:text-text-main'}"
             >
@@ -451,17 +517,27 @@
         <div
           class="flex items-center justify-between px-3 py-1.5 bg-amber-500/10 border border-amber-500/20 rounded-xl text-amber-700 dark:text-amber-400 text-[0.7rem] font-bold ml-10 animate-in fade-in slide-in-from-bottom-1"
         >
-          <span class="flex items-center gap-1.5"><CornerDownRight size={14} /> En réponse à {replyingToName}</span>
-          <button onclick={cancelReply} class="hover:bg-amber-500/20 rounded-full p-1 transition-colors outline-none" aria-label="Annuler la réponse">
+          <span class="flex items-center gap-1.5"
+            ><CornerDownRight size={14} /> En réponse à {replyingToName}</span
+          >
+          <button
+            onclick={cancelReply}
+            class="hover:bg-amber-500/20 rounded-full p-1 transition-colors outline-none"
+            aria-label="Annuler la réponse"
+          >
             <X size={14} strokeWidth={2.5} />
           </button>
         </div>
       {/if}
-      {@render commentInputRow(replyingToId ? 'Écrivez votre réponse...' : 'Ajouter un commentaire...')}
+      {@render commentInputRow(
+        replyingToId ? 'Écrivez votre réponse...' : 'Ajouter un commentaire...'
+      )}
     </div>
   </div>
 {:else}
-  <div class="border-t border-black/5 dark:border-white/10 px-4 sm:px-5 py-4 bg-white/30 dark:bg-black/10">
+  <div
+    class="border-t border-black/5 dark:border-white/10 px-4 sm:px-5 py-4 bg-white/30 dark:bg-black/10"
+  >
     {@render commentInputRow('Soyez le premier à commenter...')}
   </div>
 {/if}
@@ -469,15 +545,22 @@
 {#snippet commentInputRow(placeholder: string)}
   <div class="relative">
     {#if mentionOpen && mentionSuggestions.length > 0}
-      <ul class="absolute bottom-full mb-1 left-10 right-0 z-50 bg-white/95 dark:bg-gray-900/95 border border-black/10 dark:border-white/10 rounded-xl shadow-xl max-h-48 overflow-auto backdrop-blur-sm">
+      <ul
+        class="absolute bottom-full mb-1 left-10 right-0 z-50 bg-white/95 dark:bg-gray-900/95 border border-black/10 dark:border-white/10 rounded-xl shadow-xl max-h-48 overflow-auto backdrop-blur-sm"
+      >
         {#each mentionSuggestions as user, i (user.id)}
           <li>
             <button
               type="button"
-              class="w-full px-4 py-2 text-left text-sm transition-colors first:rounded-t-xl last:rounded-b-xl {i === mentionSelectedIdx ? 'bg-amber-100/60 dark:bg-amber-900/30' : 'hover:bg-amber-50 dark:hover:bg-amber-900/20'}"
+              class="w-full px-4 py-2 text-left text-sm transition-colors first:rounded-t-xl last:rounded-b-xl {i ===
+              mentionSelectedIdx
+                ? 'bg-amber-100/60 dark:bg-amber-900/30'
+                : 'hover:bg-amber-50 dark:hover:bg-amber-900/20'}"
               onmousedown={() => selectMention(user)}
             >
-              <span class="font-bold text-amber-600 dark:text-amber-400 mr-0.5">@</span><span class="font-medium text-text-main">{user.displayName || user.id}</span>
+              <span class="font-bold text-amber-600 dark:text-amber-400 mr-0.5">@</span><span
+                class="font-medium text-text-main">{user.displayName || user.id}</span
+              >
             </button>
           </li>
         {/each}
@@ -485,7 +568,9 @@
     {/if}
     {#if pendingPreviewUrl || uploadingMedia}
       <div class="flex items-center gap-2 mb-2 ml-[2.125rem]">
-        <div class="relative w-20 h-14 rounded-lg overflow-hidden bg-black/10 dark:bg-white/10 flex-shrink-0">
+        <div
+          class="relative w-20 h-14 rounded-lg overflow-hidden bg-black/10 dark:bg-white/10 flex-shrink-0"
+        >
           {#if pendingPreviewUrl}
             <img src={pendingPreviewUrl} alt="GIF" class="w-full h-full object-cover" />
           {:else}
@@ -511,7 +596,9 @@
     {/if}
     <div class="flex items-center gap-2.5">
       <div class="shrink-0"><Avatar userId={currentUserId} size="sm" /></div>
-      <div class="flex-1 flex items-center bg-black/5 dark:bg-white/5 rounded-[1.25rem] px-3.5 py-1.5 border border-black/5 dark:border-white/10 focus-within:ring-2 focus-within:ring-amber-500/50 focus-within:bg-white dark:focus-within:bg-black/40 transition-all shadow-inner">
+      <div
+        class="flex-1 flex items-center bg-black/5 dark:bg-white/5 rounded-[1.25rem] px-3.5 py-1.5 border border-black/5 dark:border-white/10 focus-within:ring-2 focus-within:ring-amber-500/50 focus-within:bg-white dark:focus-within:bg-black/40 transition-all shadow-inner"
+      >
         <input
           type="text"
           value={commentText}

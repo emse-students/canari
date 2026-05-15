@@ -19,7 +19,13 @@ export {
   setupMessageHandler,
   type MessageHandlerDeps,
 } from './messagePipeline/setupMessageHandler';
-export { initializeConnection, type ConnectionDeps } from './initializeConnection';
+export {
+  initializeConnection,
+  openGatewayConnection,
+  syncConnectionAfterWsOpen,
+  type ConnectionDeps,
+  type SyncAfterConnectDeps,
+} from './initializeConnection';
 export {
   resolveMlsPublicUrls,
   assertOkMlsDeliveryResponse,

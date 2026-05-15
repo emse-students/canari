@@ -22,6 +22,7 @@ export function createMlsServiceStub(
     processIncomingMessage: vi.fn().mockResolvedValue(null),
     exportSecret: vi.fn().mockResolvedValue(new Uint8Array(32)),
     connect: vi.fn().mockResolvedValue(undefined),
+    isWsOpen: vi.fn().mockReturnValue(true),
     fetchUserDevices: vi.fn().mockResolvedValue([]),
     publishKeyPackage: vi.fn().mockResolvedValue(undefined),
     publishKeyPackages: vi.fn().mockResolvedValue(undefined),
