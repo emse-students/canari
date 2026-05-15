@@ -146,6 +146,18 @@
     channelWorkspaces.find((w) => w.id === selectedCommunityWorkspaceId)
   );
 
+  // When a channel is selected externally (e.g. "Rejoindre" button after invite),
+  // auto-reveal the workspace that contains it.
+  $effect(() => {
+    if (!selectedChannelId || viewMode !== 'communities') return;
+    const ws = channelWorkspaces.find((w) =>
+      w.channels.some((ch) => ch.id === selectedChannelId)
+    );
+    if (ws && selectedCommunityWorkspaceId !== ws.id) {
+      selectedCommunityWorkspaceId = ws.id;
+    }
+  });
+
   interface ChannelItem {
     id: string;
     name: string;
@@ -275,7 +287,11 @@
           workspace.id
             ? 'ring-2 ring-cn-yellow ring-offset-2 ring-offset-cn-bg'
             : 'opacity-70 hover:opacity-100 hover:rounded-xl'}"
-          onclick={() => (selectedCommunityWorkspaceId = workspace.id)}
+          onclick={() => {
+            selectedCommunityWorkspaceId = workspace.id;
+            const firstChannel = workspace.channels[0];
+            if (firstChannel) onSelectChannelConversation?.(firstChannel.id);
+          }}
           title={workspace.name}
           aria-label={workspace.name}
         >

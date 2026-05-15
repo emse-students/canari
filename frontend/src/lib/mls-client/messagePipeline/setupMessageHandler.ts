@@ -181,7 +181,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         const convoKey: string | undefined = conversations.has(channelId) ? channelId : undefined;
 
         if (convoKey) {
-          let content = '[Message chiffré]';
+          let content: string | undefined;
           let appMessageId: string | undefined;
           try {
             if (data.ciphertext) {
@@ -210,6 +210,10 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           } catch (e) {
             console.error('Failed to parse channel message:', e);
           }
+
+          // Only persist if decryption succeeded — a missing key here means
+          // loadChannelHistory (with a fresh key hydration) will replay it cleanly.
+          if (content === undefined) return true;
 
           addMessageToChat(sender, content, convoKey, {
             messageId: appMessageId || data.messageId || data.id,

@@ -156,8 +156,11 @@ export function useConversations() {
       return;
     }
 
-    const { replayConversationHistory, mapStoredMessagesToChatMessages } =
-      await import('$lib/utils/chat/history');
+    const {
+      replayConversationHistory,
+      mapStoredMessagesToChatMessages,
+      retroactivelyResolveHexIds,
+    } = await import('$lib/utils/chat/history');
     const isSelected = selectedContact === contactName;
     if (isSelected) isLoadingHistory = true;
     try {
@@ -177,7 +180,12 @@ export function useConversations() {
       // Reload from DB so display reflects the latest saved state
       if (ctx.storage) {
         const refreshed = await ctx.storage.getMessagesPage(id, ctx.pin, INITIAL_MESSAGES_PAGE);
-        const msgs = mapStoredMessagesToChatMessages(refreshed, ctx.userId);
+        const msgs = await retroactivelyResolveHexIds(
+          mapStoredMessagesToChatMessages(refreshed, ctx.userId),
+          ctx.storage,
+          id,
+          ctx.pin
+        );
         const current = conversations.get(contactName);
         if (current) {
           conversations.set(contactName, { ...current, messages: msgs });
@@ -198,7 +206,7 @@ export function useConversations() {
     const { channelService } = await import('$lib/services/ChannelService');
     const { channelKeyManager } = await import('$lib/crypto/ChannelKeyVault');
     const { decodeAppMessage } = await import('$lib/proto/codec');
-    const { serializeEnvelope, mkTextEnvelope } = await import('$lib/envelope');
+    const { appMsgToEnvelope } = await import('$lib/utils/chat/messageUtils');
 
     const rawId = channelConversationId.replace(/^channel_/, '');
     const convo = conversations.get(channelConversationId);
@@ -227,57 +235,54 @@ export function useConversations() {
       const messages: any[] = await channelService.listMessages(rawId, 200);
       if (!Array.isArray(messages) || messages.length === 0) return;
 
-      // Avoid duplicates: collect existing message IDs
+      // Purge any messages that were stored with the decryption-failure placeholder
+      // (written by a previous buggy real-time handler) so they get a retry below.
+      const PLACEHOLDER = '[Message chiffré]';
+      {
+        const cur = conversations.get(channelConversationId);
+        if (cur) {
+          const clean = cur.messages.filter((m) => m.content !== PLACEHOLDER);
+          if (clean.length < cur.messages.length) {
+            conversations.set(channelConversationId, { ...cur, messages: clean });
+          }
+        }
+      }
+
+      // Avoid duplicates: collect existing message IDs (placeholders already removed above)
       // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local lookup set, not reactive state
-      const existingIds = new Set(convo.messages.map((m) => m.id).filter(Boolean));
+      const existingIds = new Set(
+        (conversations.get(channelConversationId)?.messages ?? []).map((m) => m.id).filter(Boolean)
+      );
 
       for (const msg of messages) {
         if (msg.id && existingIds.has(msg.id)) continue;
 
-        let content = '[Message chiffré]';
-        let shouldAppendMessage = false;
+        let content: string | undefined;
         try {
+          let bytes: Uint8Array | undefined;
           if (msg.ciphertext && msg.nonce && msg.keyVersion !== undefined) {
-            const bytes = await channelKeyManager.decryptMessage(
+            bytes = await channelKeyManager.decryptMessage(
               rawId,
               msg.ciphertext,
               msg.nonce,
               msg.keyVersion
             );
-            const decoded = decodeAppMessage(bytes);
-            if (decoded?.text) {
-              content = serializeEnvelope(mkTextEnvelope(decoded.text.content ?? ''));
-              shouldAppendMessage = true;
-            } else if (decoded?.reply) {
-              const replyTo = decoded.reply.replyTo
-                ? {
-                    id: decoded.reply.replyTo.id || '',
-                    senderId: decoded.reply.replyTo.senderId || '',
-                    content: decoded.reply.replyTo.preview || '',
-                  }
-                : undefined;
-              content = serializeEnvelope(mkTextEnvelope(decoded.reply.content ?? '', replyTo));
-              shouldAppendMessage = true;
-            }
           } else if (msg.ciphertext) {
-            // Legacy base64 fallback
+            // Legacy base64 ciphertext stored without nonce/keyVersion
             const binStr = atob(msg.ciphertext);
-            const bytes = new Uint8Array(binStr.length);
+            bytes = new Uint8Array(binStr.length);
             for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
+          }
+          if (bytes) {
             const decoded = decodeAppMessage(bytes);
-            if (decoded?.text) {
-              content = serializeEnvelope(mkTextEnvelope(decoded.text.content ?? ''));
-              shouldAppendMessage = true;
-            }
+            if (decoded) content = appMsgToEnvelope(decoded)?.content;
           }
         } catch (e) {
           ctx.log(`[CHANNEL] Message non lisible (clé indisponible) ${msg.id}: ${e}`);
-          shouldAppendMessage = false;
         }
 
-        // Keep history clean for newly invited users: skip messages that
-        // cannot be decrypted with the locally available channel keys.
-        if (!shouldAppendMessage) continue;
+        // Skip messages that cannot be decrypted with locally available keys.
+        if (content === undefined) continue;
 
         await ctx.addMessageToChat(msg.senderId || 'unknown', content, channelConversationId, {
           messageId: msg.id,
@@ -334,8 +339,14 @@ export function useConversations() {
     );
     if (older.length === 0) return false;
 
-    const { mapStoredMessagesToChatMessages } = await import('$lib/utils/chat/history');
-    const mapped = mapStoredMessagesToChatMessages(older, ctx.userId);
+    const { mapStoredMessagesToChatMessages, retroactivelyResolveHexIds } =
+      await import('$lib/utils/chat/history');
+    const mapped = await retroactivelyResolveHexIds(
+      mapStoredMessagesToChatMessages(older, ctx.userId),
+      ctx.storage ?? null,
+      convo.id,
+      ctx.pin
+    );
 
     const current = conversations.get(contactName);
     if (!current) return false;

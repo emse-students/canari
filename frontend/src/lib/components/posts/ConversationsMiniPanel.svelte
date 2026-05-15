@@ -3,12 +3,9 @@
   import { goto } from '$app/navigation';
   import { IndexedDbStorage, type ConversationMeta } from '$lib/db';
   import { getSavedUserId } from '$lib/stores/user';
-  import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
+  import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { deriveConversationIdentity } from '$lib/utils/chat/conversations';
-  import { getPreviewText, parseEnvelope } from '$lib/envelope';
-  import { presenceMap, watchUsers } from '$lib/stores/presenceStore';
-  import Avatar from '$lib/components/shared/Avatar.svelte';
-  import GroupAvatar from '$lib/components/shared/GroupAvatar.svelte';
+  import ConversationTile from '$lib/components/chat/ConversationTile.svelte';
   import { MessageCircle, ChevronRight, LoaderCircle } from 'lucide-svelte';
   import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
 
@@ -16,7 +13,7 @@
     meta: ConversationMeta;
     contactId: string;
     displayName: string;
-    isGroup: boolean;
+    conversationType: 'direct' | 'group';
     isReady: boolean;
     unreadCount: number;
     imageMediaId: string | null;
@@ -25,7 +22,6 @@
 
   let items = $state<ConvItem[]>([]);
   let loading = $state(true);
-  let resolvedNames = $state<Record<string, string>>({});
 
   function isCommunityChannelId(id: string | undefined): boolean {
     return String(id ?? '').startsWith('channel_');
@@ -50,7 +46,7 @@
                 identity.conversationType === 'direct'
                   ? getUserDisplayNameSync(contactId, identity.displayName)
                   : conv.name,
-              isGroup: identity.conversationType !== 'direct',
+              conversationType: identity.conversationType,
               isReady: conv.isReady,
               unreadCount: conv.unreadCount ?? 0,
               imageMediaId: conv.imageMediaId ?? null,
@@ -63,12 +59,6 @@
 
   const displayItems = $derived(globalSession.isLoggedIn ? liveItems : items);
   const isLoading = $derived(globalSession.isLoggedIn ? false : loading);
-
-  // Watch presence for direct conversations
-  $effect(() => {
-    const directIds = displayItems.filter((i) => !i.isGroup).map((i) => i.contactId);
-    if (directIds.length > 0) watchUsers(directIds);
-  });
 
   onMount(async () => {
     const uid = getSavedUserId();
@@ -94,22 +84,12 @@
               identity.conversationType === 'direct'
                 ? getUserDisplayNameSync(contactId, identity.displayName)
                 : meta.name,
-            isGroup: identity.conversationType !== 'direct',
+            conversationType: identity.conversationType,
             isReady: meta.isReady,
             unreadCount: 0,
             imageMediaId: null,
           } satisfies ConvItem;
         });
-
-      for (const item of items) {
-        if (!item.isGroup) {
-          const identity = deriveConversationIdentity(item.meta.name, uid, item.meta.id);
-          const peerId = identity.directPeerId ?? identity.contactName;
-          resolveUserDisplayName(peerId).then((resolved) => {
-            if (resolved) resolvedNames = { ...resolvedNames, [item.meta.id]: resolved };
-          });
-        }
-      }
     } catch { /* silent */ } finally {
       loading = false;
     }
@@ -118,20 +98,6 @@
   function navigateToConversation(metaId: string) {
     sessionStorage.setItem('canari_pending_contact', metaId);
     void goto('/chat');
-  }
-
-  function getEffectiveName(item: ConvItem): string {
-    return resolvedNames[item.meta.id] ?? item.displayName;
-  }
-
-
-  function getPreview(item: ConvItem): string | null {
-    if (!item.lastMessageContent) return null;
-    try {
-      return getPreviewText(parseEnvelope(item.lastMessageContent));
-    } catch {
-      return null;
-    }
   }
 </script>
 
@@ -183,68 +149,19 @@
         </a>
       </div>
     {:else}
-      <div class="flex flex-col gap-0.5 px-2 animate-in fade-in duration-300">
+      <div class="flex flex-col px-2 animate-in fade-in duration-300">
         {#each displayItems as item (item.meta.id)}
-          {@const preview = getPreview(item)}
-          {@const isOnline = !item.isGroup && ($presenceMap[item.contactId] ?? false)}
-          <button
-            type="button"
-            class="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-white/80 dark:hover:bg-white/5 transition-all duration-200 text-left rounded-2xl group outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 border border-transparent hover:border-black/5 dark:hover:border-white/5 {item.unreadCount > 0 ? 'bg-white/30 dark:bg-white/5' : ''}"
-            onclick={() => navigateToConversation(item.meta.id)}
-          >
-            <!-- Avatar -->
-            <div class="flex-shrink-0 relative">
-              {#if item.isGroup}
-                <GroupAvatar
-                  imageMediaId={item.imageMediaId}
-                  name={getEffectiveName(item)}
-                  size="md"
-                  shape="soft"
-                />
-              {:else}
-                <Avatar
-                  userId={item.contactId}
-                  size="md"
-                  fallbackLabel={getEffectiveName(item)}
-                />
-                {#if isOnline}
-                  <span
-                    class="absolute bottom-0 right-0 block h-2.5 w-2.5 rounded-full ring-2 ring-white dark:ring-zinc-900 bg-green-500 shadow-sm"
-                  ></span>
-                {/if}
-              {/if}
-
-              <!-- Badge Non-lu -->
-              {#if item.unreadCount > 0}
-                <span
-                  class="absolute -top-1 -right-1 min-w-[1.1rem] h-4 px-1 rounded-full bg-red-500 text-white text-[0.6rem] font-bold flex items-center justify-center leading-none shadow-sm ring-2 ring-[var(--cn-surface)] dark:ring-[#151B2C] z-10"
-                >
-                  {item.unreadCount > 99 ? '99+' : item.unreadCount}
-                </span>
-              {/if}
-            </div>
-
-            <!-- Informations -->
-            <div class="flex-1 min-w-0">
-              <div class="flex items-center justify-between gap-2 mb-0.5">
-                <span
-                  class="text-[0.875rem] truncate transition-colors group-hover:text-amber-600 dark:group-hover:text-amber-400 {item.unreadCount > 0 ? 'font-extrabold text-text-main' : 'font-bold text-text-main'}"
-                >
-                  {getEffectiveName(item)}
-                </span>
-                {#if !item.isReady}
-                  <span class="text-[0.55rem] font-bold uppercase tracking-wider bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/20 px-1.5 py-0.5 rounded-full flex-shrink-0">
-                    Sync
-                  </span>
-                {/if}
-              </div>
-              <p
-                class="text-[0.75rem] truncate {item.unreadCount > 0 ? 'text-text-main font-semibold' : 'text-text-muted'}"
-              >
-                {preview ?? (item.isGroup ? 'Groupe chiffré' : 'Message direct')}
-              </p>
-            </div>
-          </button>
+          <ConversationTile
+            contactName={item.contactId}
+            displayName={item.displayName}
+            conversationType={item.conversationType}
+            lastMessage={item.lastMessageContent}
+            isReady={item.isReady}
+            isSelected={false}
+            unreadCount={item.unreadCount}
+            imageMediaId={item.imageMediaId}
+            onClick={() => navigateToConversation(item.meta.id)}
+          />
         {/each}
       </div>
     {/if}

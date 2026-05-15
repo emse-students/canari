@@ -184,18 +184,29 @@
         );
         appendLog(`Retiré du canal #${event.channelName || event.channelId}`);
       },
-      onChannelUpdated: (event: { channelId: string; name?: string }) => {
-        if (!event.channelId || !event.name) return;
+      onChannelUpdated: (event: {
+        channelId: string;
+        name?: string;
+        imageMediaId?: string;
+      }) => {
+        if (!event.channelId) return;
         const channelConversationId = `channel_${event.channelId}`;
-        globalChannels.channelWorkspaces = globalChannels.channelWorkspaces.map((ws) => ({
-          ...ws,
-          channels: ws.channels.map((ch) =>
-            ch.id === channelConversationId ? { ...ch, name: event.name! } : ch
-          ),
-        }));
+        if (event.name) {
+          globalChannels.channelWorkspaces = globalChannels.channelWorkspaces.map((ws) => ({
+            ...ws,
+            channels: ws.channels.map((ch) =>
+              ch.id === channelConversationId ? { ...ch, name: event.name! } : ch
+            ),
+          }));
+        }
         const convo = globalConvs.conversations.get(channelConversationId);
-        if (convo)
-          globalConvs.conversations.set(channelConversationId, { ...convo, name: event.name });
+        if (convo) {
+          globalConvs.conversations.set(channelConversationId, {
+            ...convo,
+            ...(event.name ? { name: event.name } : {}),
+            ...(event.imageMediaId !== undefined ? { imageMediaId: event.imageMediaId } : {}),
+          });
+        }
       },
       onChannelDeleted: (event: { channelId: string }) => {
         if (!event.channelId) return;
@@ -209,6 +220,12 @@
         if (globalChannels.selectedChannelConversationId === channelConversationId) {
           globalChannels.selectedChannelConversationId = '';
         }
+      },
+      onWorkspaceUpdated: (event: { workspaceId: string; imageMediaId?: string }) => {
+        globalChannels.handleWorkspaceUpdated(event);
+      },
+      onReadReceiptReceived: () => {
+        globalNotifs.playReadTone();
       },
       onSendError: (msg: string) => {
         globalConvs.sendError = msg;

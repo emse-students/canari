@@ -5,7 +5,11 @@
  */
 import { SvelteMap } from 'svelte/reactivity';
 import type { IStorage, ConversationMeta, StoredMessage } from '$lib/db';
-import { mapStoredMessagesToChatMessages, replayConversationHistory } from './history';
+import {
+  mapStoredMessagesToChatMessages,
+  replayConversationHistory,
+  retroactivelyResolveHexIds,
+} from './history';
 import { migrateFromLocalStorage } from '../migration';
 import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
@@ -367,7 +371,12 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
         ctx.pin,
         INITIAL_MESSAGES_PAGE
       );
-      const msgs = mapStoredMessagesToChatMessages(storedMessages, ctx.userId);
+      const msgs = await retroactivelyResolveHexIds(
+        mapStoredMessagesToChatMessages(storedMessages, ctx.userId),
+        ctx.storage,
+        meta.id,
+        ctx.pin
+      );
       const preReplayMsgIds = new Set(msgs.map((m) => m.id));
       const existing = ctx.conversations.get(meta.id);
       if (existing && msgs.length > 0) {
@@ -395,7 +404,12 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
       });
       // Reload from DB after network sync so display reflects new messages
       const refreshed = await ctx.storage.getMessagesPage(meta.id, ctx.pin, INITIAL_MESSAGES_PAGE);
-      const refreshedMsgs = mapStoredMessagesToChatMessages(refreshed, ctx.userId);
+      const refreshedMsgs = await retroactivelyResolveHexIds(
+        mapStoredMessagesToChatMessages(refreshed, ctx.userId),
+        ctx.storage,
+        meta.id,
+        ctx.pin
+      );
       const current = ctx.conversations.get(meta.id);
       if (current) {
         const newUnreadCount = refreshedMsgs.filter(

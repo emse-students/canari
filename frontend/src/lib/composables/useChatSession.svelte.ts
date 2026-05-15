@@ -53,10 +53,16 @@ export interface ChatSessionCallbacks {
   ) => Promise<void>;
   saveConversation: (contactName: string) => Promise<void>;
   selectConversation: (name: string) => void;
-  onChannelMemberJoined: (event: any) => void;
-  onChannelMemberKicked: (event: any) => void;
-  onChannelUpdated?: (event: { channelId: string; name?: string; workspaceId?: string }) => void;
+  onChannelMemberJoined?: (event: any) => void;
+  onChannelMemberKicked?: (event: any) => void;
+  onChannelUpdated?: (event: {
+    channelId: string;
+    name?: string;
+    workspaceId?: string;
+    imageMediaId?: string;
+  }) => void;
   onChannelDeleted?: (event: { channelId: string; workspaceId?: string }) => void;
+  onWorkspaceUpdated?: (event: { workspaceId: string; imageMediaId?: string }) => void;
   onReadReceiptReceived?: (event: {
     conversationKey: string;
     senderId: string;
@@ -419,6 +425,7 @@ export function useChatSession() {
         onChannelMemberKicked: cb.onChannelMemberKicked,
         onChannelUpdated: cb.onChannelUpdated,
         onChannelDeleted: cb.onChannelDeleted,
+        onWorkspaceUpdated: cb.onWorkspaceUpdated,
         onReadReceiptReceived: cb.onReadReceiptReceived,
         onCallSignal: (senderId: string, callMsg: any) => {
           callService?.handleCallSignal(senderId, callMsg);

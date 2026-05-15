@@ -407,3 +407,53 @@ export async function replayConversationHistory(params: {
     );
   }
 }
+
+const HEX_ID_RE = /\b[0-9a-f]{64}\b/g;
+
+/**
+ * Retroactively resolves 64-char hex user IDs baked into stored system message
+ * content (e.g. "abc…def a ajouté xyz…uvw au groupe") that were stored before
+ * async name resolution was applied. Updates the local DB so future loads are
+ * already clean.
+ */
+export async function retroactivelyResolveHexIds(
+  messages: ChatMessage[],
+  storage: IStorage | null,
+  conversationId: string,
+  pin: string
+): Promise<ChatMessage[]> {
+  const hexIds = new Set<string>();
+  for (const m of messages) {
+    if (m.isSystem) {
+      for (const id of m.content.match(HEX_ID_RE) ?? []) hexIds.add(id);
+    }
+  }
+  if (hexIds.size === 0) return messages;
+
+  const getName = await resolveDisplayNames([...hexIds]);
+
+  const updated = messages.map((m) => {
+    if (!m.isSystem) return m;
+    const newContent = m.content.replace(HEX_ID_RE, (id) => getName(id));
+    return newContent === m.content ? m : { ...m, content: newContent };
+  });
+
+  if (storage) {
+    const toSave: StoredMessage[] = updated
+      .filter((m, i) => m !== messages[i])
+      .map((m) => ({
+        id: m.id,
+        conversationId,
+        senderId: 'system',
+        content: m.content,
+        timestamp: m.timestamp instanceof Date ? m.timestamp.getTime() : Number(m.timestamp),
+        readBy: m.readBy ?? [],
+        reactions: m.reactions,
+        ...(m.isDeleted ? { isDeleted: true } : {}),
+        ...(m.isEdited ? { isEdited: true } : {}),
+      }));
+    if (toSave.length > 0) storage.saveMessages(toSave, pin).catch(() => {});
+  }
+
+  return updated;
+}
