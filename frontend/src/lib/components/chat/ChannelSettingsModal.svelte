@@ -14,6 +14,7 @@
   } from 'lucide-svelte';
   import Modal from '../shared/Modal.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
+  import UserAutocomplete from '../shared/UserAutocomplete.svelte';
   import { MediaService } from '$lib/media';
   import { getToken } from '$lib/stores/auth';
 
@@ -487,19 +488,19 @@
           <div
             class="bg-white/60 dark:bg-black/20 border border-black/5 dark:border-white/10 rounded-[1.5rem] p-5 md:p-6 space-y-5 shadow-sm backdrop-blur-md"
           >
-            <!-- Input Identifiant -->
+            <!-- Recherche utilisateur -->
             <div class="space-y-2">
               <label
                 class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5"
-                for="invite-id"
+                for="invite-autocomplete"
               >
-                <Users size={14} /> Identifiant de l'utilisateur
+                <Users size={14} /> Rechercher un utilisateur
               </label>
-              <input
-                id="invite-id"
-                class="w-full bg-white/80 dark:bg-black/40 border border-black/10 dark:border-white/10 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-amber-500/50 shadow-inner transition-all text-sm font-medium placeholder:font-normal placeholder:opacity-60"
-                placeholder="ex: jolan.dupont"
-                bind:value={permissionMembersId}
+              <UserAutocomplete
+                value={permissionMembersId}
+                onValueChange={(v) => (permissionMembersId = v)}
+                placeholder="Nom ou identifiant…"
+                inputId="invite-autocomplete"
               />
             </div>
 

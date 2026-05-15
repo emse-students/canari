@@ -2,6 +2,7 @@
   import { SvelteMap } from 'svelte/reactivity';
   import { Settings, Users, Trash2, ShieldCheck, Upload, Loader } from 'lucide-svelte';
   import Modal from '../shared/Modal.svelte';
+  import UserAutocomplete from '../shared/UserAutocomplete.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
   import { MediaService } from '$lib/media';
   import { getToken } from '$lib/stores/auth';
@@ -171,14 +172,14 @@
   });
 
   function handleGenerateInvitation() {
-    const memberId = inviteUserId.trim().toLowerCase();
+    const memberId = inviteUserId.trim();
     if (!selectedWorkspace?.name) {
       inviteStatus = "Sélectionnez d'abord une communauté.";
       return;
     }
 
     if (!memberId) {
-      inviteStatus = "Saisissez l'identifiant du membre à inviter.";
+      inviteStatus = 'Sélectionnez un utilisateur dans la liste.';
       return;
     }
 
@@ -354,11 +355,11 @@
             </div>
             <div class="px-4 py-3 border-b border-cn-border bg-white/70 space-y-2.5">
               <div class="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2.5">
-                <input
-                  type="text"
-                  bind:value={inviteUserId}
-                  placeholder="Identifiant utilisateur (ex: leon.muselli)"
-                  class="w-full bg-white border border-cn-border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-500/40"
+                <UserAutocomplete
+                  value={inviteUserId}
+                  onValueChange={(v) => (inviteUserId = v)}
+                  placeholder="Rechercher un utilisateur…"
+                  inputId="community-invite-autocomplete"
                 />
                 <select
                   bind:value={inviteRole}
