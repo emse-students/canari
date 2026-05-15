@@ -280,22 +280,46 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
     persistArchivedConversations(ctx.userId, prunedArchivedIds);
   }
 
+  // Preserve in-memory UI fields (avatars, resolved names) across reload — they are
+  // not stored in ConversationMeta and would otherwise flash away on every login.
+  const snapshot = new SvelteMap<
+    string,
+    Pick<Conversation, 'name' | 'imageMediaId' | 'conversationType' | 'directPeerId'>
+  >();
+  for (const [key, conv] of ctx.conversations.entries()) {
+    snapshot.set(key, {
+      name: conv.name,
+      imageMediaId: conv.imageMediaId,
+      conversationType: conv.conversationType,
+      directPeerId: conv.directPeerId,
+    });
+  }
+
   ctx.conversations.clear();
   ctx.messageReactions.clear();
 
   // Phase 1 — fast, immediately usable conversation stubs.
   for (const meta of mergedConvMetas) {
     const identity = deriveConversationIdentity(meta.name, ctx.userId, meta.id);
+    const prev = snapshot.get(meta.id);
+    const resolvedName =
+      prev?.name &&
+      prev.name.trim() &&
+      prev.name !== identity.displayName &&
+      identity.conversationType === 'group'
+        ? prev.name
+        : identity.displayName;
     ctx.conversations.set(meta.id, {
       id: meta.id,
       contactName: identity.contactName,
-      name: identity.displayName,
+      name: resolvedName,
       messages: [],
       isReady: meta.isReady,
       mlsStateHex: null,
       unreadCount: 0,
-      conversationType: identity.conversationType,
-      directPeerId: identity.directPeerId,
+      conversationType: prev?.conversationType ?? identity.conversationType,
+      directPeerId: prev?.directPeerId ?? identity.directPeerId,
+      imageMediaId: prev?.imageMediaId ?? null,
     });
   }
 

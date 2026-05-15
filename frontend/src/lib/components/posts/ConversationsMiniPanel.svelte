@@ -2,12 +2,14 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { IndexedDbStorage, type ConversationMeta } from '$lib/db';
+  import type { Conversation } from '$lib/types';
   import { getSavedUserId } from '$lib/stores/user';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { deriveConversationIdentity } from '$lib/utils/chat/conversations';
   import ConversationTile from '$lib/components/chat/ConversationTile.svelte';
   import { MessageCircle, ChevronRight, LoaderCircle } from 'lucide-svelte';
   import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
+  import { SvelteMap } from 'svelte/reactivity';
 
   interface ConvItem {
     meta: ConversationMeta;
@@ -20,78 +22,133 @@
     lastMessageContent?: string;
   }
 
-  let items = $state<ConvItem[]>([]);
-  let loading = $state(true);
+  let idbItems = $state<ConvItem[]>([]);
+  let idbLoading = $state(true);
 
   function isCommunityChannelId(id: string | undefined): boolean {
     return String(id ?? '').startsWith('channel_');
   }
 
-  const liveItems = $derived(
-    globalSession.isLoggedIn
-      ? [...globalConvs.conversations.entries()]
-          .filter(([key, conv]) => !isCommunityChannelId(key) && !isCommunityChannelId(conv.id))
-          .map(([key, conv]) => {
-            const uid = globalSession.userId ?? getSavedUserId() ?? '';
-            const identity = deriveConversationIdentity(key, uid, conv.id);
-            const contactId =
-              identity.conversationType === 'direct'
-                ? (identity.directPeerId ?? identity.contactName)
-                : conv.id;
-            const msgs = conv.messages;
-            return {
-              meta: { id: key, name: conv.name, isReady: conv.isReady, updatedAt: 0 } as ConversationMeta,
-              contactId,
-              displayName:
-                identity.conversationType === 'direct'
-                  ? getUserDisplayNameSync(contactId, identity.displayName)
-                  : conv.name,
-              conversationType: identity.conversationType,
-              isReady: conv.isReady,
-              unreadCount: conv.unreadCount ?? 0,
-              imageMediaId: conv.imageMediaId ?? null,
-              lastMessageContent: msgs.length > 0 ? msgs[msgs.length - 1].content : undefined,
-            } satisfies ConvItem;
-          })
-          .slice(0, 20)
-      : []
-  );
+  function looksLikeUuid(value: string): boolean {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.trim());
+  }
 
-  const displayItems = $derived(globalSession.isLoggedIn ? liveItems : items);
-  const isLoading = $derived(globalSession.isLoggedIn ? false : loading);
+  function pickGroupDisplayName(...candidates: Array<string | undefined>): string {
+    for (const candidate of candidates) {
+      const trimmed = candidate?.trim();
+      if (trimmed && !looksLikeUuid(trimmed) && !trimmed.includes('::')) {
+        return trimmed;
+      }
+    }
+    return candidates.find((c) => c?.trim())?.trim() ?? '';
+  }
+
+  function buildItemFromMeta(meta: ConversationMeta, uid: string): ConvItem {
+    const identity = deriveConversationIdentity(meta.name, uid, meta.id);
+    const contactId =
+      identity.conversationType === 'direct'
+        ? (identity.directPeerId ?? identity.contactName)
+        : meta.id;
+    return {
+      meta,
+      contactId,
+      displayName:
+        identity.conversationType === 'direct'
+          ? getUserDisplayNameSync(contactId, identity.displayName)
+          : pickGroupDisplayName(meta.name, identity.displayName),
+      conversationType: identity.conversationType,
+      isReady: meta.isReady,
+      unreadCount: 0,
+      imageMediaId: null,
+    };
+  }
+
+  function buildItemFromLive(
+    key: string,
+    conv: Conversation,
+    uid: string,
+    baseline?: ConvItem
+  ): ConvItem {
+    const identity = deriveConversationIdentity(
+      conv.name || baseline?.meta.name || key,
+      uid,
+      conv.id
+    );
+    const contactId =
+      identity.conversationType === 'direct'
+        ? (identity.directPeerId ?? identity.contactName)
+        : conv.id;
+    const msgs = conv.messages;
+    const lastTs =
+      msgs.length > 0
+        ? msgs[msgs.length - 1].timestamp instanceof Date
+          ? msgs[msgs.length - 1].timestamp.getTime()
+          : new Date(msgs[msgs.length - 1].timestamp as Date).getTime()
+        : 0;
+
+    return {
+      meta: {
+        id: key,
+        name: conv.name,
+        isReady: conv.isReady,
+        updatedAt: Math.max(baseline?.meta.updatedAt ?? 0, lastTs),
+      },
+      contactId,
+      displayName:
+        identity.conversationType === 'direct'
+          ? getUserDisplayNameSync(contactId, baseline?.displayName ?? identity.displayName)
+          : pickGroupDisplayName(conv.name, baseline?.displayName, baseline?.meta.name),
+      conversationType: identity.conversationType,
+      isReady: conv.isReady,
+      unreadCount: conv.unreadCount ?? baseline?.unreadCount ?? 0,
+      imageMediaId: conv.imageMediaId ?? baseline?.imageMediaId ?? null,
+      lastMessageContent:
+        msgs.length > 0 ? msgs[msgs.length - 1].content : baseline?.lastMessageContent,
+    };
+  }
+
+  /** Merge IndexedDB baseline with live globalConvs — avoids a flash when login reloads conversations. */
+  const displayItems = $derived.by(() => {
+    const uid = globalSession.userId ?? getSavedUserId() ?? '';
+    if (!uid) return [];
+
+    const byId = new SvelteMap<string, ConvItem>();
+    for (const item of idbItems) {
+      byId.set(item.meta.id, item);
+    }
+
+    if (globalSession.isLoggedIn) {
+      for (const [key, conv] of globalConvs.conversations.entries()) {
+        if (isCommunityChannelId(key) || isCommunityChannelId(conv.id)) continue;
+        const baseline = byId.get(key);
+        byId.set(key, buildItemFromLive(key, conv, uid, baseline));
+      }
+    }
+
+    return [...byId.values()].sort((a, b) => b.meta.updatedAt - a.meta.updatedAt).slice(0, 20);
+  });
+
+  const isLoading = $derived(idbLoading && displayItems.length === 0);
 
   onMount(async () => {
     const uid = getSavedUserId();
-    if (!uid) { loading = false; return; }
+    if (!uid) {
+      idbLoading = false;
+      return;
+    }
     try {
       const storage = new IndexedDbStorage(uid);
       await storage.init();
       const convos = await storage.getConversations();
-      items = convos
+      idbItems = convos
         .filter((meta) => !isCommunityChannelId(meta.id))
         .sort((a, b) => b.updatedAt - a.updatedAt)
         .slice(0, 20)
-        .map((meta) => {
-          const identity = deriveConversationIdentity(meta.name, uid, meta.id);
-          const contactId =
-            identity.conversationType === 'direct'
-              ? (identity.directPeerId ?? identity.contactName)
-              : meta.id;
-          return {
-            meta,
-            contactId,
-            displayName:
-              identity.conversationType === 'direct'
-                ? getUserDisplayNameSync(contactId, identity.displayName)
-                : meta.name,
-            conversationType: identity.conversationType,
-            isReady: meta.isReady,
-            unreadCount: 0,
-            imageMediaId: null,
-          } satisfies ConvItem;
-        });
-    } catch { /* silent */ } finally {
-      loading = false;
+        .map((meta) => buildItemFromMeta(meta, uid));
+    } catch {
+      /* silent */
+    } finally {
+      idbLoading = false;
     }
   });
 
