@@ -30,6 +30,7 @@
   const _fallbackSrc = $derived(generateAvatarPlaceholder(userId));
 
   let imageFailed = $state(false);
+  let imageLoaded = $state(false);
   let displayLabel = $state('');
   let resolveToken = 0;
   let lastResolvedUserId = $state('');
@@ -53,6 +54,7 @@
     if (lastResolvedUserId !== userId) {
       lastResolvedUserId = userId;
       imageFailed = false;
+      imageLoaded = false;
     }
   });
 
@@ -70,20 +72,31 @@
 
 {#if imageFailed}
   <div
-    class="{shapeClasses} shadow-sm ring-1 ring-white/20 flex-shrink-0 select-none {sizeClasses} bg-cn-dark text-cn-yellow flex items-center justify-center font-bold"
+    class="{shapeClasses} shadow-sm ring-1 ring-white/20 flex-shrink-0 select-none {sizeClasses} bg-cn-dark text-cn-yellow flex items-center justify-center font-bold overflow-hidden"
     title={displayLabel}
     aria-label={`Avatar de ${displayLabel}`}
   >
     {initials}
   </div>
 {:else}
-  <img
-    src={avatarSrc}
-    alt={`Avatar de ${displayLabel}`}
-    class="{shapeClasses} object-cover shadow-sm ring-1 ring-white/20 flex-shrink-0 select-none {sizeClasses}"
+  <div
+    class="{shapeClasses} shadow-sm ring-1 ring-white/20 flex-shrink-0 {sizeClasses} relative overflow-hidden"
     title={displayLabel}
-    onerror={() => {
-      imageFailed = true;
-    }}
-  />
+    aria-label={`Avatar de ${displayLabel}`}
+  >
+    {#if !imageLoaded}
+      <div class="absolute inset-0 bg-cn-border/40 animate-pulse"></div>
+    {/if}
+    <img
+      src={avatarSrc}
+      alt={`Avatar de ${displayLabel}`}
+      class="w-full h-full object-cover select-none transition-opacity duration-150 {imageLoaded ? 'opacity-100' : 'opacity-0'}"
+      onload={() => {
+        imageLoaded = true;
+      }}
+      onerror={() => {
+        imageFailed = true;
+      }}
+    />
+  </div>
 {/if}
