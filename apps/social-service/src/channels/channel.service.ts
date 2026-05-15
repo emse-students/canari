@@ -82,11 +82,17 @@ export class ChannelService {
     return name?.trim() || 'Membre';
   }
 
-  /** Returns true if the member holds at least one of the roles listed in a private channel's allowedRoles. Always true for public channels. */
-  private canAccessChannel(channel: Channel, member: ChannelMember): boolean {
+  /** Returns true if the user can access a private channel.
+   * Prefers member-based access (allowedUsers) over role-based (allowedRoles). Public channels always return true. */
+  private canAccessChannel(channel: Channel, member: ChannelMember, userId?: string): boolean {
     if (!channel.isPrivate) return true;
+    const allowedUsers = (channel.allowedUsers as string[] | null) || [];
+    if (allowedUsers.length > 0 && userId) {
+      return allowedUsers.includes(userId.trim().toLowerCase());
+    }
     const roleIds = member.roleIds || [];
     const allowed = channel.allowedRoles || [];
+    if (allowed.length === 0) return true;
     return allowed.some((roleId) => roleIds.includes(roleId));
   }
 
@@ -279,20 +285,12 @@ export class ChannelService {
     const masterSecret = crypto.randomBytes(32).toString('base64');
     const isPrivate = input.visibility === 'private';
 
-    // For private channels, only Admin and Moderator roles can access by default
-    let allowedRoles: string[] = [];
-    if (isPrivate) {
-      const adminAndMod = await this.roleRepo.find({
-        where: { workspaceId: input.workspaceId, name: In(['Administrateur', 'Modérateur']) },
-      });
-      allowedRoles = adminAndMod.map((r) => r.id);
-    }
-
     const channel = this.channelRepo.create({
       workspaceId: input.workspaceId,
       name: input.name,
       isPrivate,
-      allowedRoles,
+      allowedRoles: [],
+      allowedUsers: isPrivate ? [input.actorUserId.trim().toLowerCase()] : [],
       masterSecret,
       keyVersion: 1,
     });
@@ -445,25 +443,19 @@ export class ChannelService {
     });
     if (!member) throw new ForbiddenException('Not a member of this workspace');
 
-    const workspaceRoles = await this.roleRepo.find({
-      where: { workspaceId: channel.workspaceId },
-      order: { priority: 'DESC' },
-    });
-
     return {
       channelId,
       isPrivate: channel.isPrivate,
-      allowedRoles: channel.allowedRoles || [],
-      workspaceRoles: workspaceRoles.map((r) => ({ id: r.id, name: r.name, priority: r.priority })),
+      allowedUsers: (channel.allowedUsers as string[] | null) || [],
     };
   }
 
-  /** Updates the channel's visibility and allowed-role list. Requires MANAGE_CHANNELS permission. */
+  /** Updates the channel's visibility and allowed-user list. Requires MANAGE_CHANNELS permission. */
   async updateChannelAccess(
     channelId: string,
     actorUserId: string,
     isPrivate: boolean,
-    allowedRoleIds: string[]
+    allowedUserIds: string[]
   ) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
@@ -484,10 +476,10 @@ export class ChannelService {
     if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNELS permission');
 
     channel.isPrivate = isPrivate;
-    channel.allowedRoles = isPrivate ? allowedRoleIds : [];
+    channel.allowedUsers = isPrivate ? allowedUserIds.map((u) => u.trim().toLowerCase()) : [];
     await this.channelRepo.save(channel);
 
-    return { ok: true, channelId, isPrivate: channel.isPrivate, allowedRoles: channel.allowedRoles };
+    return { ok: true, channelId, isPrivate: channel.isPrivate, allowedUsers: channel.allowedUsers };
   }
 
   /** Marks a channel as archived (hidden from listings) and broadcasts a channel.deleted event to workspace members. */
@@ -660,7 +652,7 @@ export class ChannelService {
 
     const channels = await this.channelRepo.find({ where: { workspaceId, archived: false } });
     return channels
-      .filter((ch) => this.canAccessChannel(ch, member))
+      .filter((ch) => this.canAccessChannel(ch, member, userId))
       .map((channel) => ({
         id: channel.id,
         workspaceId: channel.workspaceId,
@@ -838,6 +830,15 @@ export class ChannelService {
         workspaceMemberIds
       );
 
+      // For private channels with user-based access, add the new member to allowedUsers.
+      if (channel.isPrivate) {
+        const existing = (channel.allowedUsers as string[] | null) || [];
+        const normalized = input.targetUserId.trim().toLowerCase();
+        if (!existing.includes(normalized)) {
+          channel.allowedUsers = [...existing, normalized];
+        }
+      }
+
       // Membership change => mandatory channel key rotation.
       if (!channel.masterSecret) {
         channel.masterSecret = crypto.randomBytes(32).toString('base64');
@@ -899,9 +900,11 @@ export class ChannelService {
     if (!member) throw new NotFoundException('Member not found');
 
     if (channel.isPrivate) {
-      const remainingRoles = member.roleIds.filter((r) => !channel.allowedRoles?.includes(r));
-      member.roleIds = remainingRoles;
-      await this.memberRepo.save(member);
+      const normalized = input.userId.trim().toLowerCase();
+      channel.allowedUsers = ((channel.allowedUsers as string[] | null) || []).filter(
+        (u) => u !== normalized
+      );
+      await this.channelRepo.save(channel);
     } else {
       await this.memberRepo.delete({ workspaceId: channel.workspaceId, userId: input.userId });
     }
@@ -1013,6 +1016,14 @@ export class ChannelService {
     if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNELS permission');
 
     await this.memberRepo.delete({ workspaceId: channel.workspaceId, userId: input.targetUserId });
+
+    if (channel.isPrivate) {
+      const normalized = input.targetUserId.trim().toLowerCase();
+      channel.allowedUsers = ((channel.allowedUsers as string[] | null) || []).filter(
+        (u) => u !== normalized
+      );
+      await this.channelRepo.save(channel);
+    }
 
     // Publish event to notify the kicked user and connected clients
     const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);

@@ -3,7 +3,6 @@
     Shield,
     Settings,
     Users,
-    Key,
     Trash2,
     LogOut,
     Check,
@@ -64,8 +63,8 @@
     onUpdateChannelImage?: (channelId: string, mediaId: string) => void;
     /** Callback to close the modal. */
     onClose: () => void;
-    /** Callback fired when channel access settings (isPrivate, allowedRoles) are updated. */
-    onUpdateChannelAccess?: (channelId: string, isPrivate: boolean, allowedRoleIds: string[]) => void;
+    /** Callback fired when channel access settings are updated. */
+    onUpdateChannelAccess?: (channelId: string, isPrivate: boolean, allowedUserIds: string[]) => void;
   }
 
   let {
@@ -105,58 +104,6 @@
   let permissionMembersId = $state('');
   let permissionRole = $state<'member' | 'moderator' | 'admin'>('member');
 
-  interface RoleMatrixItem {
-    id: string;
-    label: string;
-    permissions: {
-      read: boolean;
-      write: boolean;
-      channelManage: boolean;
-      memberInvite: boolean;
-      memberKick: boolean;
-      roleManage: boolean;
-    };
-  }
-
-  const communityRoleMatrix: RoleMatrixItem[] = [
-    {
-      id: 'admin',
-      label: 'Administrateur',
-      permissions: {
-        read: true,
-        write: true,
-        channelManage: true,
-        memberInvite: true,
-        memberKick: true,
-        roleManage: true,
-      },
-    },
-    {
-      id: 'moderator',
-      label: 'Modérateur',
-      permissions: {
-        read: true,
-        write: true,
-        channelManage: true,
-        memberInvite: true,
-        memberKick: true,
-        roleManage: false,
-      },
-    },
-    {
-      id: 'member',
-      label: 'Membre',
-      permissions: {
-        read: true,
-        write: true,
-        channelManage: false,
-        memberInvite: true,
-        memberKick: false,
-        roleManage: false,
-      },
-    },
-  ];
-
   function handleInviteAction() {
     if (permissionMembersId.trim()) {
       onInviteMember(selectedChannelId, permissionMembersId, permissionRole);
@@ -179,9 +126,9 @@
   let accessSaving = $state(false);
   let accessSaved = $state(false);
   let accessIsPrivate = $state(false);
-  let accessAllowedRoleIds = $state<string[]>([]);
-  let workspaceRoles = $state<{ id: string; name: string; priority: number }[]>([]);
+  let accessAllowedUserIds = $state<string[]>([]);
   let accessLoaded = $state(false);
+  let addingUserId = $state('');
 
   $effect(() => {
     if (open && activeTab === 'permissions' && selectedChannelId && !accessLoaded) {
@@ -200,8 +147,7 @@
     try {
       const data = await channelService.getChannelAccess(selectedChannelId);
       accessIsPrivate = data.isPrivate;
-      accessAllowedRoleIds = data.allowedRoles ?? [];
-      workspaceRoles = data.workspaceRoles ?? [];
+      accessAllowedUserIds = data.allowedUsers ?? [];
       accessLoaded = true;
     } catch (e) {
       accessError = e instanceof Error ? e.message : 'Erreur chargement accès';
@@ -215,8 +161,8 @@
     accessSaved = false;
     accessError = '';
     try {
-      await channelService.updateChannelAccess(selectedChannelId, accessIsPrivate, accessAllowedRoleIds);
-      onUpdateChannelAccess?.(selectedChannelId, accessIsPrivate, accessAllowedRoleIds);
+      await channelService.updateChannelAccess(selectedChannelId, accessIsPrivate, accessAllowedUserIds);
+      onUpdateChannelAccess?.(selectedChannelId, accessIsPrivate, accessAllowedUserIds);
       accessSaved = true;
       setTimeout(() => { accessSaved = false; }, 2500);
     } catch (e) {
@@ -226,12 +172,16 @@
     }
   }
 
-  function toggleAllowedRole(roleId: string) {
-    if (accessAllowedRoleIds.includes(roleId)) {
-      accessAllowedRoleIds = accessAllowedRoleIds.filter((id) => id !== roleId);
-    } else {
-      accessAllowedRoleIds = [...accessAllowedRoleIds, roleId];
+  function addAllowedUser() {
+    const uid = addingUserId.trim().toLowerCase();
+    if (uid && !accessAllowedUserIds.includes(uid)) {
+      accessAllowedUserIds = [...accessAllowedUserIds, uid];
     }
+    addingUserId = '';
+  }
+
+  function removeAllowedUser(userId: string) {
+    accessAllowedUserIds = accessAllowedUserIds.filter((u) => u !== userId);
   }
 
   // Image upload state
@@ -451,7 +401,7 @@
           <div>
             <h2 class="text-xl font-extrabold text-text-main mb-1">Accès au canal</h2>
             <p class="text-sm font-medium text-text-muted leading-relaxed">
-              Définissez si le canal est ouvert à tous les membres ou restreint à certains rôles.
+              Définissez si le canal est ouvert à tous les membres ou restreint à certains utilisateurs.
             </p>
           </div>
 
@@ -474,7 +424,7 @@
                     </div>
                     <div>
                       <p class="font-bold text-text-main text-sm">Canal privé</p>
-                      <p class="text-xs text-text-muted">Seuls les rôles sélectionnés peuvent accéder</p>
+                      <p class="text-xs text-text-muted">Seuls les membres autorisés peuvent accéder</p>
                     </div>
                   {:else}
                     <div class="p-2 rounded-xl bg-emerald-500/10 text-emerald-600">
@@ -500,31 +450,57 @@
                 </button>
               </div>
 
-              <!-- Role selection (only when private) -->
+              <!-- Member allowlist (only when private) -->
               {#if accessIsPrivate}
                 <div class="border-t border-black/5 dark:border-white/10 pt-4 space-y-3">
                   <p class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5">
-                    <Key size={13} /> Rôles autorisés
+                    <Users size={13} /> Membres autorisés
                   </p>
-                  {#if workspaceRoles.length === 0}
-                    <p class="text-sm text-text-muted">Aucun rôle disponible dans cette communauté.</p>
+
+                  <!-- Existing allowed users -->
+                  {#if accessAllowedUserIds.length === 0}
+                    <p class="text-sm text-text-muted italic">Aucun membre autorisé — le canal sera inaccessible.</p>
                   {:else}
-                    <div class="space-y-2">
-                      {#each workspaceRoles as role (role.id)}
-                        <label class="flex items-center gap-3 cursor-pointer group">
-                          <input
-                            type="checkbox"
-                            checked={accessAllowedRoleIds.includes(role.id)}
-                            onchange={() => toggleAllowedRole(role.id)}
-                            class="w-4 h-4 rounded border-black/20 text-amber-500 focus:ring-amber-500/50 accent-amber-500"
-                          />
-                          <span class="text-sm font-semibold text-text-main group-hover:text-amber-600 transition-colors">
-                            {role.name}
-                          </span>
-                        </label>
+                    <ul class="space-y-1.5">
+                      {#each accessAllowedUserIds as uid (uid)}
+                        <li class="flex items-center justify-between gap-2 rounded-xl bg-black/5 dark:bg-white/5 px-3 py-2">
+                          <span class="text-sm font-mono text-text-main truncate">{uid}</span>
+                          <button
+                            type="button"
+                            onclick={() => removeAllowedUser(uid)}
+                            class="text-red-500 hover:text-red-700 transition-colors flex-shrink-0"
+                            title="Retirer"
+                          >
+                            <Minus size={14} strokeWidth={3} />
+                          </button>
+                        </li>
                       {/each}
-                    </div>
+                    </ul>
                   {/if}
+
+                  <!-- Add a user -->
+                  <div class="space-y-2 pt-1">
+                    <p class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5">
+                      <UserPlus size={13} /> Ajouter un membre
+                    </p>
+                    <div class="flex gap-2 items-start">
+                      <div class="flex-1">
+                        <UserAutocomplete
+                          value={addingUserId}
+                          onValueChange={(v) => (addingUserId = v)}
+                          placeholder="Rechercher un utilisateur…"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onclick={addAllowedUser}
+                        disabled={!addingUserId.trim()}
+                        class="rounded-xl bg-amber-500 px-3 py-2.5 text-sm font-bold text-[#151B2C] hover:bg-amber-400 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 shadow-md shadow-amber-500/20 mt-0"
+                      >
+                        <Check size={14} strokeWidth={3} /> Ajouter
+                      </button>
+                    </div>
+                  </div>
                 </div>
               {/if}
 
@@ -547,68 +523,6 @@
                     <Check size={12} strokeWidth={3} /> Sauvegardé
                   </span>
                 {/if}
-              </div>
-            </div>
-
-            <!-- Static permissions reference table -->
-            <div>
-              <h3 class="text-sm font-bold text-text-muted mb-3 uppercase tracking-wider">Référence des permissions</h3>
-              <div class="border border-black/10 dark:border-white/10 rounded-[1.5rem] overflow-x-auto bg-white/60 dark:bg-black/20 shadow-sm backdrop-blur-md">
-                <table class="w-full text-sm text-left">
-                  <thead class="bg-black/5 dark:bg-white/5 border-b border-black/5 dark:border-white/10">
-                    <tr>
-                      <th class="px-5 py-3 font-bold text-text-muted uppercase tracking-wider text-xs">Rôle</th>
-                      <th class="px-5 py-3 font-bold text-text-muted uppercase tracking-wider text-xs text-center">Lire</th>
-                      <th class="px-5 py-3 font-bold text-text-muted uppercase tracking-wider text-xs text-center">Écrire</th>
-                      <th class="px-5 py-3 font-bold text-text-muted uppercase tracking-wider text-xs text-center">Gérer</th>
-                    </tr>
-                  </thead>
-                  <tbody class="divide-y divide-black/5 dark:divide-white/5">
-                    {#each communityRoleMatrix as roleItem (roleItem.id)}
-                      <tr class="hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
-                        <td class="px-5 py-3 flex items-center gap-2.5 font-bold text-text-main">
-                          <div class="p-1.5 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400">
-                            <Key size={14} strokeWidth={2.5} />
-                          </div>
-                          {roleItem.label}
-                        </td>
-                        <td class="px-5 py-3 text-center">
-                          <div class="flex justify-center">
-                            {#if roleItem.permissions.read}
-                              <div class="w-5 h-5 rounded-full bg-emerald-500/15 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
-                                <Check size={12} strokeWidth={3} />
-                              </div>
-                            {:else}
-                              <Minus size={14} class="text-text-muted opacity-50" strokeWidth={3} />
-                            {/if}
-                          </div>
-                        </td>
-                        <td class="px-5 py-3 text-center">
-                          <div class="flex justify-center">
-                            {#if roleItem.permissions.write}
-                              <div class="w-5 h-5 rounded-full bg-emerald-500/15 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
-                                <Check size={12} strokeWidth={3} />
-                              </div>
-                            {:else}
-                              <Minus size={14} class="text-text-muted opacity-50" strokeWidth={3} />
-                            {/if}
-                          </div>
-                        </td>
-                        <td class="px-5 py-3 text-center">
-                          <div class="flex justify-center">
-                            {#if roleItem.permissions.roleManage}
-                              <div class="w-5 h-5 rounded-full bg-emerald-500/15 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
-                                <Check size={12} strokeWidth={3} />
-                              </div>
-                            {:else}
-                              <Minus size={14} class="text-text-muted opacity-50" strokeWidth={3} />
-                            {/if}
-                          </div>
-                        </td>
-                      </tr>
-                    {/each}
-                  </tbody>
-                </table>
               </div>
             </div>
           {/if}

@@ -287,19 +287,19 @@ export class ChannelsController {
     return this.service.getChannelAccess(channelId, xUserId.trim().toLowerCase());
   }
 
-  /** Updates the channel's isPrivate flag and allowedRoles list. */
+  /** Updates the channel's isPrivate flag and allowedUsers list. */
   @UseGuards(NginxAuthGuard)
   @Patch(':channelId/access')
   updateChannelAccess(
     @Headers('x-user-id') xUserId: string,
     @Param('channelId') channelId: string,
-    @Body() body: { isPrivate: boolean; allowedRoleIds: string[] }
+    @Body() body: { isPrivate: boolean; allowedUserIds: string[] }
   ) {
     return this.service.updateChannelAccess(
       channelId,
       xUserId.trim().toLowerCase(),
       body.isPrivate,
-      body.allowedRoleIds ?? []
+      body.allowedUserIds ?? []
     );
   }
 

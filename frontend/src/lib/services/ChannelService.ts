@@ -377,8 +377,7 @@ export class ChannelService {
   async getChannelAccess(channelId: string): Promise<{
     channelId: string;
     isPrivate: boolean;
-    allowedRoles: string[];
-    workspaceRoles: { id: string; name: string; priority: number }[];
+    allowedUsers: string[];
   }> {
     const cid = this.normalizeChannelId(channelId);
     const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/access`);
@@ -389,12 +388,12 @@ export class ChannelService {
   async updateChannelAccess(
     channelId: string,
     isPrivate: boolean,
-    allowedRoleIds: string[]
+    allowedUserIds: string[]
   ): Promise<{ ok: boolean }> {
     const cid = this.normalizeChannelId(channelId);
     const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/access`, {
       method: 'PATCH',
-      body: JSON.stringify({ isPrivate, allowedRoleIds }),
+      body: JSON.stringify({ isPrivate, allowedUserIds }),
     });
     await this.handleError(res);
     return res.json();
