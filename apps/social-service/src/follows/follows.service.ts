@@ -34,7 +34,10 @@ export class FollowsService {
   }
 
   /** Removes a follow relationship. Throws NotFoundException if no such relationship exists. */
-  async unfollowAssociation(followerUserId: string, associationId: string): Promise<{ ok: boolean }> {
+  async unfollowAssociation(
+    followerUserId: string,
+    associationId: string
+  ): Promise<{ ok: boolean }> {
     const res = await this.followRepo.delete({ followerUserId, associationId });
     if (!res.affected) {
       throw new NotFoundException('Follow relationship not found');
@@ -58,9 +61,9 @@ export class FollowsService {
   }
 
   /** Returns lightweight summary rows (id, name, slug, logoUrl) for all associations the user follows. */
-  async listFollowedAssociations(followerUserId: string): Promise<
-    Pick<Association, 'id' | 'name' | 'slug' | 'logoUrl'>[]
-  > {
+  async listFollowedAssociations(
+    followerUserId: string
+  ): Promise<Pick<Association, 'id' | 'name' | 'slug' | 'logoUrl'>[]> {
     const ids = await this.getFollowedAssociationIdsForUser(followerUserId);
     if (ids.length === 0) return [];
     const assos = await this.assoRepo.findBy({ id: In(ids) });
@@ -76,7 +79,9 @@ export class FollowsService {
 
   /** Follows a user. Idempotent — silently ignores duplicate follows. */
   async followUser(followerUserId: string, followedUserId: string): Promise<{ ok: boolean }> {
-    const already = await this.userFollowRepo.findOne({ where: { followerUserId, followedUserId } });
+    const already = await this.userFollowRepo.findOne({
+      where: { followerUserId, followedUserId },
+    });
     if (!already) {
       const row = this.userFollowRepo.create({ followerUserId, followedUserId });
       await this.userFollowRepo.save(row);

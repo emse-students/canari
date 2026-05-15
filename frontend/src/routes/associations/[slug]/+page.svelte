@@ -13,7 +13,7 @@
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
-  import { Bell, BellOff, Pencil } from 'lucide-svelte';
+  import { Bell, BellOff, Pencil, Building2, CalendarDays, Users } from 'lucide-svelte';
   import SvelteMarkdown from '@humanspeak/svelte-markdown';
   import AssociationMemberRow from '$lib/components/associations/AssociationMemberRow.svelte';
   import AssociationCalendarSection from '$lib/components/associations/AssociationCalendarSection.svelte';
@@ -36,6 +36,7 @@
 
   let following = $state(false);
   let followLoading = $state(false);
+  let activeSection = $state<'about' | 'calendar' | 'members'>('about');
 
   const slug = $derived((page.params as Record<string, string>).slug);
 
@@ -124,9 +125,6 @@
               ? 's'
               : ''}
           </p>
-          {#if asso.description?.trim() && !asso.bioMarkdown?.trim()}
-            <p class="text-sm text-text-muted mt-2 whitespace-pre-wrap">{asso.description}</p>
-          {/if}
         </div>
         <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0">
           {#if userId}
@@ -162,40 +160,93 @@
       <div class="rounded-xl bg-red-50 border border-red-200 text-red-700 p-4 text-sm">{error}</div>
     {/if}
 
-    {#if asso.bioMarkdown?.trim()}
-      <div
-        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-6 prose prose-neutral dark:prose-invert max-w-none shadow-sm"
-      >
-        <SvelteMarkdown source={asso.bioMarkdown} options={{ gfm: true, breaks: true }} />
+    <nav
+      class="sticky top-0 z-30 -mx-4 px-4 py-3 bg-[var(--cn-bg)]/95 backdrop-blur-md border-y border-cn-border/80 sm:border sm:rounded-2xl sm:mx-0"
+      aria-label="Sections de l'association"
+    >
+      <div class="flex gap-2 overflow-x-auto pb-1">
+        <button
+          type="button"
+          onclick={() => (activeSection = 'about')}
+          class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+          {activeSection === 'about'
+            ? 'bg-cn-yellow text-cn-dark shadow-sm'
+            : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
+        >
+          <Building2 size={17} />
+          À propos
+        </button>
+        <button
+          type="button"
+          onclick={() => (activeSection = 'calendar')}
+          class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+          {activeSection === 'calendar'
+            ? 'bg-cn-yellow text-cn-dark shadow-sm'
+            : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
+        >
+          <CalendarDays size={17} />
+          Agenda
+        </button>
+        <button
+          type="button"
+          onclick={() => (activeSection = 'members')}
+          class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+          {activeSection === 'members'
+            ? 'bg-cn-yellow text-cn-dark shadow-sm'
+            : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
+        >
+          <Users size={17} />
+          Membres
+        </button>
+      </div>
+    </nav>
+
+    {#if activeSection === 'about'}
+      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-6 space-y-4 shadow-sm">
+        <h2 class="text-lg font-bold text-text-main tracking-tight">À propos</h2>
+        {#if asso.description?.trim()}
+          <p class="text-sm text-text-muted whitespace-pre-wrap">{asso.description}</p>
+        {/if}
+        {#if asso.bioMarkdown?.trim()}
+          <div class="prose prose-neutral dark:prose-invert max-w-none">
+            <SvelteMarkdown source={asso.bioMarkdown} options={{ gfm: true, breaks: true }} />
+          </div>
+        {:else if !asso.description?.trim()}
+          <p class="text-sm text-text-muted">Aucune description pour le moment.</p>
+        {/if}
+      </div>
+    {:else if activeSection === 'calendar'}
+      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-6 shadow-sm">
+        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-4">
+          <h2 class="text-lg font-bold text-text-main tracking-tight">Agenda</h2>
+          <a
+            href="/calendar?association={encodeURIComponent(asso.id)}"
+            class="text-xs font-semibold text-cn-dark hover:underline"
+          >
+            Voir dans l’agenda global →
+          </a>
+        </div>
+        <AssociationCalendarSection
+          associationId={asso.id}
+          associationSlug={asso.slug}
+          canEdit={canManage}
+        />
+      </div>
+    {:else if activeSection === 'members'}
+      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-6 space-y-4 shadow-sm">
+        <h2 class="text-lg font-bold text-text-main tracking-tight">Membres</h2>
+        <p class="text-sm text-text-muted">
+          {members.length} personne{members.length !== 1 ? 's' : ''} dans cette association.
+        </p>
+        <div class="space-y-3">
+          {#each members as member (member.id)}
+            <AssociationMemberRow
+              {member}
+              displayName={resolvedMemberNames[member.userId] ?? member.displayName ?? member.userId}
+            />
+          {/each}
+        </div>
       </div>
     {/if}
-
-    <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-6 shadow-sm">
-      <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-4">
-        <h2 class="text-lg font-bold text-text-main tracking-tight">Agenda</h2>
-        <a
-          href="/calendar?association={encodeURIComponent(asso.id)}"
-          class="text-xs font-semibold text-cn-dark hover:underline"
-        >
-          Voir dans l’agenda global →
-        </a>
-      </div>
-      <AssociationCalendarSection associationId={asso.id} canEdit={false} />
-    </div>
-
-    <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-6 space-y-4 shadow-sm">
-      <h2 class="text-lg font-bold text-text-main tracking-tight">Membres</h2>
-      <p class="text-sm text-text-muted">
-        {members.length} personne{members.length !== 1 ? 's' : ''} dans cette association.
-      </p>
-      <div class="space-y-3">
-        {#each members as member (member.id)}
-          <AssociationMemberRow
-            {member}
-            displayName={resolvedMemberNames[member.userId] ?? member.displayName ?? member.userId}
-          />
-        {/each}
-      </div>
-    </div>
   {/if}
 </div>

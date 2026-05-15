@@ -5,10 +5,13 @@
   import {
     listAggregatedCalendarFeed,
     listAssociations,
+    listPendingCalendarEvents,
+    listMyAssociations,
     aggregatedCalendarFeedIcsAbsoluteUrl,
     type AssociationCalendarFeedEvent,
     type Association,
   } from '$lib/associations/api';
+  import { isGlobalAdmin } from '$lib/stores/user';
   import { browser } from '$app/environment';
   import Card from '$lib/components/ui/Card.svelte';
   import {
@@ -21,6 +24,7 @@
     Newspaper,
     Copy,
     Link2,
+    ShieldAlert,
   } from 'lucide-svelte';
   import {
     buildIcsCalendar,
@@ -109,6 +113,24 @@
     filterAssociationId = page.url.searchParams.get('association')?.trim() ?? '';
     await loadAssociations();
     await loadMonth();
+    if (isGlobalAdmin()) {
+      canModerateAgenda = true;
+    } else {
+      try {
+        const mine = await listMyAssociations();
+        canModerateAgenda = mine.some((a) => a.permission === 1);
+      } catch {
+        canModerateAgenda = false;
+      }
+    }
+    if (canModerateAgenda) {
+      try {
+        const pending = await listPendingCalendarEvents();
+        pendingCount = pending.length;
+      } catch {
+        pendingCount = 0;
+      }
+    }
   });
 
   afterNavigate((n) => {
@@ -184,6 +206,8 @@
   });
 
   let copyIcsHint = $state('');
+  let canModerateAgenda = $state(false);
+  let pendingCount = $state(0);
 
   async function copyDynamicIcsUrl() {
     if (!dynamicIcsFeedUrl) return;
@@ -215,6 +239,24 @@
       </p>
     </div>
   </div>
+
+  {#if canModerateAgenda}
+    <a
+      href="/admin/agenda"
+      class="flex items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50/70 dark:bg-amber-950/30 px-4 py-3 hover:border-amber-300 transition-colors"
+    >
+      <span class="flex items-center gap-2 text-sm font-semibold text-amber-900 dark:text-amber-100">
+        <ShieldAlert size={18} />
+        Modérer les événements en attente
+        {#if pendingCount > 0}
+          <span class="rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-bold text-white">
+            {pendingCount}
+          </span>
+        {/if}
+      </span>
+      <span class="text-xs text-amber-800/80 dark:text-amber-200/80">Ouvrir la file →</span>
+    </a>
+  {/if}
 
   <Card class="p-4 sm:p-5 space-y-4">
     <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

@@ -86,7 +86,7 @@ export class ChannelService {
    * Prefers member-based access (allowedUsers) over role-based (allowedRoles). Public channels always return true. */
   private canAccessChannel(channel: Channel, member: ChannelMember, userId?: string): boolean {
     if (!channel.isPrivate) return true;
-    const allowedUsers = (channel.allowedUsers as string[] | null) || [];
+    const allowedUsers = channel.allowedUsers || [];
     if (allowedUsers.length > 0 && userId) {
       return allowedUsers.includes(userId.trim().toLowerCase());
     }
@@ -446,7 +446,7 @@ export class ChannelService {
     return {
       channelId,
       isPrivate: channel.isPrivate,
-      allowedUsers: (channel.allowedUsers as string[] | null) || [],
+      allowedUsers: channel.allowedUsers || [],
     };
   }
 
@@ -479,7 +479,12 @@ export class ChannelService {
     channel.allowedUsers = isPrivate ? allowedUserIds.map((u) => u.trim().toLowerCase()) : [];
     await this.channelRepo.save(channel);
 
-    return { ok: true, channelId, isPrivate: channel.isPrivate, allowedUsers: channel.allowedUsers };
+    return {
+      ok: true,
+      channelId,
+      isPrivate: channel.isPrivate,
+      allowedUsers: channel.allowedUsers,
+    };
   }
 
   /** Marks a channel as archived (hidden from listings) and broadcasts a channel.deleted event to workspace members. */
@@ -832,7 +837,7 @@ export class ChannelService {
 
       // For private channels with user-based access, add the new member to allowedUsers.
       if (channel.isPrivate) {
-        const existing = (channel.allowedUsers as string[] | null) || [];
+        const existing = channel.allowedUsers || [];
         const normalized = input.targetUserId.trim().toLowerCase();
         if (!existing.includes(normalized)) {
           channel.allowedUsers = [...existing, normalized];
@@ -901,9 +906,7 @@ export class ChannelService {
 
     if (channel.isPrivate) {
       const normalized = input.userId.trim().toLowerCase();
-      channel.allowedUsers = ((channel.allowedUsers as string[] | null) || []).filter(
-        (u) => u !== normalized
-      );
+      channel.allowedUsers = (channel.allowedUsers || []).filter((u) => u !== normalized);
       await this.channelRepo.save(channel);
     } else {
       await this.memberRepo.delete({ workspaceId: channel.workspaceId, userId: input.userId });
@@ -1019,9 +1022,7 @@ export class ChannelService {
 
     if (channel.isPrivate) {
       const normalized = input.targetUserId.trim().toLowerCase();
-      channel.allowedUsers = ((channel.allowedUsers as string[] | null) || []).filter(
-        (u) => u !== normalized
-      );
+      channel.allowedUsers = (channel.allowedUsers || []).filter((u) => u !== normalized);
       await this.channelRepo.save(channel);
     }
 

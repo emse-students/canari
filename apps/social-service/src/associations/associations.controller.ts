@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   Headers,
   Param,
@@ -89,6 +90,23 @@ export class AssociationsController {
    * Same window as `calendar/feed`, but returns an iCalendar document (`text/calendar`).
    * Suitable for “subscribe by URL”, opening in Apple/Google Calendar, etc.
    */
+  /** Pending agenda events the caller may validate (global admin or association admin). */
+  @UseGuards(NginxAuthGuard)
+  @Get('calendar/pending')
+  async listPendingCalendarEvents(
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    const isGlobalAdmin = ga === 'true';
+    if (!isGlobalAdmin) {
+      const can = await this.service.canModerateAnyAssociationCalendar(userId);
+      if (!can) {
+        throw new ForbiddenException('Association admin or global admin required');
+      }
+    }
+    return this.service.listPendingCalendarEvents(userId, { isGlobalAdmin });
+  }
+
   @Get('calendar/feed.ics')
   async aggregatedCalendarFeedIcs(
     @Query('from') from: string,
@@ -113,12 +131,22 @@ export class AssociationsController {
 
   /** Returns scheduled events for the association (optional `from` / `to` ISO date bounds). */
   @Get(':id/events')
-  listCalendarEvents(
+  async listCalendarEvents(
     @Param('id') id: string,
     @Query('from') from?: string,
-    @Query('to') to?: string
+    @Query('to') to?: string,
+    @Query('includePending') includePending?: string,
+    @Headers('x-user-id') userId?: string,
+    @Headers('x-global-admin') ga?: string
   ) {
-    return this.service.listCalendarEvents(id, from, to);
+    const wantPending = includePending === 'true' || includePending === '1';
+    let include = false;
+    if (wantPending && userId?.trim()) {
+      include = await this.service.canPostAs(userId.trim(), id, {
+        isGlobalAdmin: ga === 'true',
+      });
+    }
+    return this.service.listCalendarEvents(id, from, to, { includePending: include });
   }
 
   /** Returns whether the calling user is following the specified association. */
@@ -199,9 +227,7 @@ export class AssociationsController {
   /** Uploads and sets a new logo for the association. */
   @SetMetadata(MIN_ROLE_KEY, AssociationPermission.Admin)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
-  @UseInterceptors(
-    FileInterceptor('file', { limits: { fileSize: LOGO_UPLOAD_MB * 1024 * 1024 } })
-  )
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: LOGO_UPLOAD_MB * 1024 * 1024 } }))
   @Post(':id/logo')
   uploadLogo(
     @Param('id') id: string,
@@ -226,10 +252,7 @@ export class AssociationsController {
   @SetMetadata(MIN_ROLE_KEY, AssociationPermission.Admin)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Delete(':id/logo')
-  deleteLogo(
-    @Param('id') id: string,
-    @Headers('authorization') authorization: string | undefined
-  ) {
+  deleteLogo(@Param('id') id: string, @Headers('authorization') authorization: string | undefined) {
     return this.service.clearStoredLogo(id, authorization);
   }
 
@@ -291,6 +314,18 @@ export class AssociationsController {
   @Delete(':id/events/:eventId')
   deleteCalendarEvent(@Param('id') id: string, @Param('eventId') eventId: string) {
     return this.service.deleteCalendarEvent(id, eventId);
+  }
+
+  /** Validates a pending calendar event (makes it visible publicly). */
+  @SetMetadata(MIN_ROLE_KEY, AssociationPermission.Admin)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Post(':id/events/:eventId/validate')
+  validateCalendarEvent(
+    @Headers('x-user-id') userId: string,
+    @Param('id') id: string,
+    @Param('eventId') eventId: string
+  ) {
+    return this.service.validateCalendarEvent(id, eventId, userId);
   }
 
   // ── Internal (called by core-service, bypass nginx auth in Docker network) ─

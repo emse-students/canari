@@ -26,7 +26,6 @@
     UserPlus,
     ArrowLeft,
     Building2,
-    CalendarDays,
     AlertTriangle,
   } from 'lucide-svelte';
   import Input from '$lib/components/ui/Input.svelte';
@@ -34,7 +33,6 @@
   import UserAutocomplete from '$lib/components/shared/UserAutocomplete.svelte';
   import AssociationLogoCropper from '$lib/components/associations/AssociationLogoCropper.svelte';
   import AssociationMemberRow from '$lib/components/associations/AssociationMemberRow.svelte';
-  import AssociationCalendarSection from '$lib/components/associations/AssociationCalendarSection.svelte';
   import SvelteMarkdown from '@humanspeak/svelte-markdown';
 
   let asso = $state<Association | null>(null);
@@ -69,7 +67,7 @@
   let logoBusy = $state(false);
   let showCropper = $state(false);
 
-  let editSection = $state<'profile' | 'members' | 'calendar' | 'payments' | 'danger'>('profile');
+  let editSection = $state<'profile' | 'members' | 'payments' | 'danger'>('profile');
 
   const slug = $derived((page.params as Record<string, string>).slug);
 
@@ -291,17 +289,6 @@
           </button>
           <button
             type="button"
-            onclick={() => (editSection = 'calendar')}
-            class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-            {editSection === 'calendar'
-              ? 'bg-cn-yellow text-cn-dark shadow-sm'
-              : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
-          >
-            <CalendarDays size={17} />
-            Agenda
-          </button>
-          <button
-            type="button"
             onclick={() => (editSection = 'payments')}
             class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {editSection === 'payments'
@@ -485,12 +472,6 @@
             <p class="text-sm text-red-600 mt-3">{memberError}</p>
           {/if}
         </div>
-      </div>
-    {/if}
-
-    {#if editSection === 'calendar' && (isAdmin || isGlobalAdminUser)}
-      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 shadow-sm">
-        <AssociationCalendarSection associationId={asso.id} canEdit={true} />
       </div>
     {/if}
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import {
     LayoutDashboard,
     MessageCircle,
@@ -6,25 +7,26 @@
     Users,
     CalendarDays,
     FileText,
-    Settings,
     Upload,
     Download,
     ScanLine,
     Smartphone,
     Monitor,
     User,
-    Bell,
     Moon,
     Sun,
     LogOut,
     ShieldAlert,
     Activity,
     UserCog,
+    Bell,
+    Shield,
   } from 'lucide-svelte';
   import { goto } from '$app/navigation';
   import { clearAuth } from '$lib/stores/auth';
   import { apiFetch } from '$lib/utils/apiFetch';
   import { isGlobalAdmin } from '$lib/stores/user';
+  import { listMyAssociations } from '$lib/associations/api';
   import { useSyncSession } from '$lib/composables/useSyncSession.svelte';
   import SyncSessionModal from '$lib/components/chat/SyncSessionModal.svelte';
   import DeviceManagementPanel from '$lib/components/chat/DeviceManagementPanel.svelte';
@@ -38,8 +40,8 @@
     label: string;
     description: string;
     href: string;
-    icon: 'users' | 'newspaper' | 'message-circle' | 'calendar-days' | 'file-text' | 'settings';
-    group: 'principal' | 'outils';
+    icon: 'users' | 'newspaper' | 'message-circle' | 'calendar-days' | 'file-text' | 'shield';
+    group: 'principal' | 'outils' | 'admin';
   }
 
   const sections: Section[] = [
@@ -72,9 +74,9 @@
       group: 'outils',
     },
     {
-      label: 'Évènements',
-      description: 'Calendrier, rendez-vous, évènements',
-      href: '/events',
+      label: 'Agenda global',
+      description: 'Calendrier des associations (événements validés)',
+      href: '/calendar',
       icon: 'calendar-days',
       group: 'outils',
     },
@@ -85,17 +87,35 @@
       icon: 'file-text',
       group: 'outils',
     },
+  ];
+
+  const adminSections: Section[] = [
     {
-      label: "Gestion de l'association",
-      description: "Tableau de bord administrateur de l'asso",
-      href: '/dashboard/association',
-      icon: 'settings',
-      group: 'outils',
+      label: 'Administration',
+      description: 'Modération agenda, présence, outils globaux',
+      href: '/admin',
+      icon: 'shield',
+      group: 'admin',
     },
   ];
 
   const principal = sections.filter((s) => s.group === 'principal');
   const outils = sections.filter((s) => s.group === 'outils');
+
+  let showAdminSection = $state(false);
+
+  onMount(async () => {
+    if (isGlobalAdmin()) {
+      showAdminSection = true;
+      return;
+    }
+    try {
+      const mine = await listMyAssociations();
+      showAdminSection = mine.some((a) => a.permission === 1);
+    } catch {
+      showAdminSection = false;
+    }
+  });
 
   // ─── Sync & Device tools ──────────────────────────────────────────────────
   const sync = useSyncSession();
@@ -104,28 +124,12 @@
   let pendingInvitationCount = $state(0);
   let fileInput: HTMLInputElement | undefined = $state();
   let isDarkMode = $state(false);
+  let isAdmin = $derived(isGlobalAdmin());
   let isPushTestRunning = $state(false);
   let pushTestResult = $state('');
-  let isAdmin = $derived(isGlobalAdmin());
-
-  function applyTheme(isDark: boolean) {
-    document.documentElement.dataset.theme = isDark ? 'dark' : 'light';
-    localStorage.setItem('canari-theme', isDark ? 'dark' : 'light');
-  }
-
-  function toggleTheme() {
-    isDarkMode = !isDarkMode;
-    applyTheme(isDarkMode);
-  }
-
-  async function handleLogout() {
-    await clearAuth();
-    void goto('/login', { replaceState: true });
-  }
 
   async function handleBroadcastPushTest() {
     if (isPushTestRunning) return;
-
     isPushTestRunning = true;
     pushTestResult = '';
     try {
@@ -140,19 +144,33 @@
         const text = await response.text().catch(() => '');
         throw new Error(`HTTP ${response.status}${text ? `: ${text}` : ''}`);
       }
-
       const data = (await response.json()) as {
         traceId: string;
         targetedDevices: number;
         sent: number;
         failed: number;
       };
-      pushTestResult = `Test envoye. trace=${data.traceId} devices=${data.targetedDevices} sent=${data.sent} failed=${data.failed}`;
-    } catch (error) {
-      pushTestResult = `Echec test push: ${error instanceof Error ? error.message : String(error)}`;
+      pushTestResult = `Test envoyé — trace ${data.traceId}, ${data.sent}/${data.targetedDevices} appareils.`;
+    } catch (e) {
+      pushTestResult = e instanceof Error ? e.message : 'Erreur';
     } finally {
       isPushTestRunning = false;
     }
+  }
+
+  function applyTheme(isDark: boolean) {
+    document.documentElement.dataset.theme = isDark ? 'dark' : 'light';
+    localStorage.setItem('canari-theme', isDark ? 'dark' : 'light');
+  }
+
+  function toggleTheme() {
+    isDarkMode = !isDarkMode;
+    applyTheme(isDarkMode);
+  }
+
+  async function handleLogout() {
+    await clearAuth();
+    void goto('/login', { replaceState: true });
   }
 
   function syncCtx() {
@@ -247,8 +265,8 @@
           <CalendarDays size={20} class="text-text-muted" />
         {:else if s.icon === 'file-text'}
           <FileText size={20} class="text-text-muted" />
-        {:else if s.icon === 'settings'}
-          <Settings size={20} class="text-text-muted" />
+        {:else if s.icon === 'shield'}
+          <Shield size={20} class="text-text-muted" />
         {/if}
       </span>
       <span>
@@ -318,6 +336,19 @@
       {/each}
     </div>
   </section>
+
+  {#if showAdminSection}
+    <section class="mb-8">
+      <h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted mb-3">
+        Administration
+      </h2>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {#each adminSections as s (s.href)}
+          {@render card(s)}
+        {/each}
+      </div>
+    </section>
+  {/if}
 
   <!-- Données & synchronisation -->
   <section class="mb-8">
@@ -441,7 +472,6 @@
         </button>
       {/if}
     </div>
-
     {#if pushTestResult}
       <p class="mt-3 text-sm text-text-muted">{pushTestResult}</p>
     {/if}

@@ -1,14 +1,23 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { browser } from '$app/environment';
   import {
     listAssociationCalendarEvents,
     createAssociationCalendarEvent,
     updateAssociationCalendarEvent,
     deleteAssociationCalendarEvent,
+    validateAssociationCalendarEvent,
     listAssociationLinkCandidates,
+    aggregatedCalendarFeedIcsAbsoluteUrl,
     type AssociationCalendarEvent,
     type AssociationLinkCandidates,
   } from '$lib/associations/api';
+  import {
+    buildIcsCalendar,
+    downloadTextFile,
+    type AgendaExportEvent,
+  } from '$lib/calendar/agendaExport';
+  import Modal from '$lib/components/shared/Modal.svelte';
   import {
     ChevronLeft,
     ChevronRight,
@@ -19,6 +28,9 @@
     Link2,
     Newspaper,
     ClipboardList,
+    CalendarSync,
+    Download,
+    Check,
   } from 'lucide-svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
@@ -26,10 +38,12 @@
 
   interface Props {
     associationId: string;
+    /** Used in exported / subscribed ICS (`URL` field). */
+    associationSlug?: string;
     canEdit?: boolean;
   }
 
-  let { associationId, canEdit = false }: Props = $props();
+  let { associationId, associationSlug, canEdit = false }: Props = $props();
 
   let events = $state<AssociationCalendarEvent[]>([]);
   let loading = $state(true);
@@ -54,6 +68,67 @@
   /** Selected post/form IDs for modal (empty = none). */
   let formLinkedPostId = $state('');
   let formLinkedFormId = $state('');
+
+  let showSubscribeModal = $state(false);
+  let isCopied = $state(false);
+
+  /** ~15 months window for feed subscription (server max ~18 months). */
+  function icsSubscriptionRangeISO(): { from: string; to: string } {
+    const now = new Date();
+    const from = new Date(now.getFullYear(), now.getMonth() - 3, 1, 0, 0, 0, 0);
+    const to = new Date(now.getFullYear(), now.getMonth() + 12, 0, 23, 59, 59, 999);
+    return { from: from.toISOString(), to: to.toISOString() };
+  }
+
+  const calendarIcsUrl = $derived.by(() => {
+    if (!browser) return '';
+    const { from, to } = icsSubscriptionRangeISO();
+    return aggregatedCalendarFeedIcsAbsoluteUrl({ from, to, associationId });
+  });
+
+  const googleCalendarSubscribeUrl = $derived.by(() => {
+    if (!calendarIcsUrl) return '';
+    const httpUrl = calendarIcsUrl.replace(/^https:/, 'http:');
+    return `https://calendar.google.com/calendar/render?cid=${encodeURIComponent(httpUrl)}`;
+  });
+
+  const webcalUrl = $derived(calendarIcsUrl.replace(/^https?:/, 'webcal:'));
+
+  function copyCalendarLink() {
+    if (!calendarIcsUrl) return;
+    void navigator.clipboard.writeText(calendarIcsUrl);
+    isCopied = true;
+    setTimeout(() => {
+      isCopied = false;
+    }, 2000);
+  }
+
+  function associationPageUrl(): string {
+    if (!browser || !associationSlug?.trim()) return '';
+    return `${window.location.origin}/associations/${encodeURIComponent(associationSlug.trim())}`;
+  }
+
+  function toAgendaExport(ev: AssociationCalendarEvent): AgendaExportEvent {
+    return {
+      id: ev.id,
+      title: ev.title,
+      description: ev.description,
+      startsAt: ev.startsAt,
+      endsAt: ev.endsAt,
+      sourceUrl: associationPageUrl() || undefined,
+    };
+  }
+
+  function exportMonthIcs() {
+    if (validatedEvents.length === 0) return;
+    const y = focusDate.getFullYear();
+    const m = pad(focusDate.getMonth() + 1);
+    downloadTextFile(
+      `agenda-${associationSlug ?? associationId}-${y}-${m}.ics`,
+      buildIcsCalendar(validatedEvents.map(toAgendaExport)),
+      'text/calendar;charset=utf-8'
+    );
+  }
 
   async function ensureLinkCandidates() {
     if (!canEdit) return;
@@ -84,7 +159,11 @@
     loadError = '';
     try {
       const { from, to } = monthRangeISO(focusDate);
-      events = await listAssociationCalendarEvents(associationId, { from, to });
+      events = await listAssociationCalendarEvents(associationId, {
+        from,
+        to,
+        includePending: canEdit,
+      });
     } catch (e) {
       loadError = e instanceof Error ? e.message : 'Erreur';
     } finally {
@@ -112,9 +191,20 @@
     );
   }
 
-  function hasEventOnDay(day: number): boolean {
+  const validatedEvents = $derived(
+    events.filter((e) => (e.status ?? 'validated') === 'validated')
+  );
+  const pendingEvents = $derived(events.filter((e) => e.status === 'pending'));
+
+  function hasValidatedEventOnDay(day: number): boolean {
     const d = new Date(focusDate.getFullYear(), focusDate.getMonth(), day);
-    return events.some((ev) => sameDay(new Date(ev.startsAt), d));
+    return validatedEvents.some((ev) => sameDay(new Date(ev.startsAt), d));
+  }
+
+  function hasPendingEventOnDay(day: number): boolean {
+    if (!canEdit) return false;
+    const d = new Date(focusDate.getFullYear(), focusDate.getMonth(), day);
+    return pendingEvents.some((ev) => sameDay(new Date(ev.startsAt), d));
   }
 
   /** Monday-first calendar cells for the visible month */
@@ -135,8 +225,14 @@
 
   const weekdayLabels = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
 
-  const sortedEvents = $derived(
-    [...events].sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime())
+  const sortedValidatedEvents = $derived(
+    [...validatedEvents].sort(
+      (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime()
+    )
+  );
+
+  const sortedPendingEvents = $derived(
+    [...pendingEvents].sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime())
   );
 
   async function openCreate() {
@@ -219,6 +315,15 @@
     }
   }
 
+  async function validateEvent(id: string) {
+    try {
+      await validateAssociationCalendarEvent(associationId, id);
+      await loadMonth();
+    } catch (e) {
+      loadError = e instanceof Error ? e.message : 'Erreur';
+    }
+  }
+
   function formatEventRange(ev: AssociationCalendarEvent): string {
     const s = new Date(ev.startsAt);
     const fmt = new Intl.DateTimeFormat('fr-FR', {
@@ -239,20 +344,41 @@
     <div>
       <h2 class="text-lg font-bold text-text-main tracking-tight">Agenda</h2>
       <p class="text-sm text-text-muted">
-        Calendrier mensuel (repères visuels) et liste des événements — réunions, permanences,
-        échéances.
+        Calendrier mensuel et liste des événements validés.
+        {#if canEdit}
+          Les nouveaux événements sont en attente de validation avant publication.
+        {/if}
       </p>
     </div>
-    {#if canEdit}
+    <div class="flex flex-wrap gap-2">
       <button
         type="button"
-        onclick={openCreate}
-        class="inline-flex items-center justify-center gap-2 rounded-xl bg-cn-yellow px-4 py-2.5 text-sm font-bold text-cn-dark shadow-sm hover:bg-cn-yellow-hover transition-colors"
+        onclick={() => (showSubscribeModal = true)}
+        class="inline-flex items-center justify-center gap-2 rounded-xl border border-cn-border px-4 py-2.5 text-sm font-semibold text-text-main hover:bg-cn-bg transition-colors"
       >
-        <CalendarPlus size={18} />
-        Nouvel événement
+        <CalendarSync size={18} />
+        S'abonner au calendrier
       </button>
-    {/if}
+      <button
+        type="button"
+        onclick={exportMonthIcs}
+        disabled={loading || validatedEvents.length === 0}
+        class="inline-flex items-center justify-center gap-2 rounded-xl border border-cn-border px-4 py-2.5 text-sm font-semibold text-text-main hover:bg-cn-bg transition-colors disabled:opacity-40 disabled:pointer-events-none"
+      >
+        <Download size={18} />
+        .ics (ce mois)
+      </button>
+      {#if canEdit}
+        <button
+          type="button"
+          onclick={openCreate}
+          class="inline-flex items-center justify-center gap-2 rounded-xl bg-cn-yellow px-4 py-2.5 text-sm font-bold text-cn-dark shadow-sm hover:bg-cn-yellow-hover transition-colors"
+        >
+          <CalendarPlus size={18} />
+          Proposer un événement
+        </button>
+      {/if}
+    </div>
   </div>
 
   <div class="flex items-center justify-between gap-2">
@@ -304,13 +430,17 @@
           {:else}
             <div
               class="aspect-square rounded-xl flex flex-col items-center justify-center text-sm relative border transition-colors
-              {hasEventOnDay(cell.day)
+              {hasValidatedEventOnDay(cell.day)
                 ? 'border-cn-yellow/50 bg-cn-yellow/10 font-semibold text-text-main'
-                : 'border-cn-border/40 bg-cn-bg/30 text-text-muted'}"
+                : hasPendingEventOnDay(cell.day)
+                  ? 'border-amber-300/50 bg-amber-50/80 font-semibold text-text-main'
+                  : 'border-cn-border/40 bg-cn-bg/30 text-text-muted'}"
             >
               <span>{cell.day}</span>
-              {#if hasEventOnDay(cell.day)}
+              {#if hasValidatedEventOnDay(cell.day)}
                 <span class="absolute bottom-1 h-1 w-1 rounded-full bg-cn-yellow"></span>
+              {:else if hasPendingEventOnDay(cell.day)}
+                <span class="absolute bottom-1 h-1 w-1 rounded-full bg-amber-500"></span>
               {/if}
             </div>
           {/if}
@@ -319,9 +449,61 @@
     {/if}
   </div>
 
+  {#if canEdit && !loading && sortedPendingEvents.length > 0}
+    <div class="space-y-3">
+      <h3 class="text-sm font-bold text-amber-700 uppercase tracking-wide">
+        En attente de validation ({sortedPendingEvents.length})
+      </h3>
+      {#each sortedPendingEvents as ev (ev.id)}
+        <div
+          class="rounded-2xl border border-amber-200 bg-amber-50/60 px-4 py-3 flex flex-col sm:flex-row sm:items-start gap-3"
+        >
+          <div class="min-w-0 flex-1">
+            <p class="font-bold text-text-main flex items-center gap-2 flex-wrap">
+              {ev.title}
+              <span
+                class="text-[10px] font-bold uppercase tracking-wide text-amber-800 bg-amber-200/80 px-2 py-0.5 rounded-full"
+              >
+                En attente
+              </span>
+            </p>
+            <p class="text-xs text-text-muted mt-0.5">{formatEventRange(ev)}</p>
+          </div>
+          <div class="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onclick={() => validateEvent(ev.id)}
+              class="inline-flex items-center gap-1 rounded-xl bg-cn-yellow px-3 py-2 text-xs font-bold text-cn-dark hover:bg-cn-yellow-hover"
+              title="Valider et publier"
+            >
+              <Check size={14} />
+              Valider
+            </button>
+            <button
+              type="button"
+              onclick={() => openEdit(ev)}
+              class="rounded-xl border border-cn-border p-2 hover:bg-cn-bg text-text-main"
+              title="Modifier"
+            >
+              <Pencil size={16} />
+            </button>
+            <button
+              type="button"
+              onclick={() => removeEvent(ev.id)}
+              class="rounded-xl border border-red-200 p-2 text-red-600 hover:bg-red-50"
+              title="Supprimer"
+            >
+              <Trash2 size={16} />
+            </button>
+          </div>
+        </div>
+      {/each}
+    </div>
+  {/if}
+
   <div class="space-y-3">
-    <h3 class="text-sm font-bold text-text-muted uppercase tracking-wide">Événements du mois</h3>
-    {#if !loading && sortedEvents.length === 0}
+    <h3 class="text-sm font-bold text-text-muted uppercase tracking-wide">Événements publiés</h3>
+    {#if !loading && sortedValidatedEvents.length === 0}
       <p
         class="text-sm text-text-muted rounded-2xl border border-dashed border-cn-border px-4 py-8 text-center"
       >
@@ -337,7 +519,7 @@
         {/if}
       </p>
     {:else}
-      {#each sortedEvents as ev (ev.id)}
+      {#each sortedValidatedEvents as ev (ev.id)}
         <div
           class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 px-4 py-3 flex flex-col sm:flex-row sm:items-start gap-3 shadow-sm"
         >
@@ -423,8 +605,13 @@
       aria-labelledby="cal-modal-title"
     >
       <h3 id="cal-modal-title" class="text-lg font-bold text-text-main">
-        {editingId ? 'Modifier l’événement' : 'Nouvel événement'}
+        {editingId ? 'Modifier l’événement' : 'Proposer un événement'}
       </h3>
+      {#if !editingId}
+        <p class="text-xs text-text-muted">
+          L’événement sera visible par tous après validation par un administrateur.
+        </p>
+      {/if}
       <Input label="Titre" bind:value={formTitle} />
       <div class="grid gap-4 sm:grid-cols-2">
         <div>
@@ -516,3 +703,94 @@
     </div>
   </div>
 {/if}
+
+<Modal
+  open={showSubscribeModal}
+  title="Ajouter au calendrier"
+  maxWidth="max-w-lg"
+  onClose={() => (showSubscribeModal = false)}
+>
+  <div class="space-y-6 text-sm text-text-main">
+    <p class="text-text-muted">
+      Pour ajouter les événements de cette association à votre calendrier personnel :
+    </p>
+
+    <div class="space-y-3">
+      <h3 class="text-sm font-bold text-cn-dark">Google Agenda / Android</h3>
+      {#if googleCalendarSubscribeUrl}
+        <a
+          href={googleCalendarSubscribeUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          class="inline-flex w-full items-center justify-center rounded-xl bg-cn-yellow px-4 py-2.5 text-sm font-bold text-cn-dark shadow-sm hover:bg-cn-yellow-hover transition-colors"
+        >
+          Ajouter à Google Agenda
+        </a>
+      {/if}
+
+      <details class="group">
+        <summary class="cursor-pointer text-text-muted hover:text-text-main">
+          Ou ajouter manuellement
+        </summary>
+        <ol class="mt-3 ml-4 list-decimal space-y-1.5 text-text-muted leading-relaxed">
+          <li>Copiez le lien ci-dessous</li>
+          <li>
+            Ouvrez
+            <a
+              href="https://calendar.google.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="font-semibold text-cn-dark underline"
+            >
+              Google Agenda
+            </a>
+          </li>
+          <li>
+            Dans le menu de gauche, cliquez sur le <strong>+</strong> à côté de « Autres agendas »
+          </li>
+          <li>Sélectionnez <strong>À partir de l'URL</strong></li>
+          <li>Collez le lien et validez</li>
+        </ol>
+
+        {#if calendarIcsUrl}
+          <div class="mt-3 flex flex-col gap-2 sm:flex-row">
+            <input
+              type="text"
+              readonly
+              value={calendarIcsUrl}
+              class="min-w-0 flex-1 rounded-xl border border-cn-border bg-cn-bg/50 px-3 py-2 text-xs font-mono text-text-main"
+              onclick={(e) => e.currentTarget.select()}
+            />
+            <button
+              type="button"
+              onclick={copyCalendarLink}
+              class="shrink-0 rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold hover:bg-cn-bg transition-colors"
+            >
+              {isCopied ? 'Copié !' : 'Copier'}
+            </button>
+          </div>
+        {/if}
+      </details>
+    </div>
+
+    <div class="space-y-3">
+      <h3 class="text-sm font-bold text-cn-dark">iOS (Apple Calendar) / Autres</h3>
+      <p class="text-text-muted">
+        Cliquez sur le bouton ci-dessous pour vous abonner automatiquement :
+      </p>
+      {#if webcalUrl}
+        <a
+          href={webcalUrl}
+          class="inline-flex w-full items-center justify-center rounded-xl bg-cn-yellow px-4 py-2.5 text-sm font-bold text-cn-dark shadow-sm hover:bg-cn-yellow-hover transition-colors"
+        >
+          S'abonner automatiquement
+        </a>
+      {/if}
+    </div>
+
+    <p class="text-[11px] text-text-muted">
+      L'abonnement couvre environ 3 mois passés et 12 mois à venir. Le fichier est régénéré côté
+      serveur à chaque synchronisation.
+    </p>
+  </div>
+</Modal>
