@@ -156,7 +156,7 @@
   <!-- En-tête -->
   <div
     class="flex items-center justify-between px-5 py-4 border-b border-black/5 dark:border-white/10 flex-shrink-0 bg-white/40 dark:bg-black/10"
-  >  >
+  >
     <div class="flex items-center gap-2.5">
       <div class="p-1.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded-lg">
         <MessageCircle size={16} strokeWidth={2.5} />
