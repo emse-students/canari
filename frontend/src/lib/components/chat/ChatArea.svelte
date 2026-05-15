@@ -305,7 +305,7 @@
       if (hasConversationChanged) {
         switchTime = Date.now();
         windowStart = Math.max(0, messageGroups.length - INITIAL_RENDER_GROUPS);
-        hasMoreInDb = true;
+        hasMoreInDb = !isChannel;
         tick().then(() => requestAnimationFrame(() => scrollToBottom(false)));
         isNearBottom = true;
       } else if (hasNewMessage && isNearBottom) {
@@ -451,11 +451,11 @@
       </div>
     {/if}
 
-    <!-- Messages -->
+    <!-- Messages (padding bas pour laisser défiler sous le composeur glass) -->
     <div
       bind:this={chatContainer}
       onscroll={handleScroll}
-      class="chat-scrollbar flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 py-3 md:px-6 md:py-6 pb-4 md:pb-6 flex flex-col gap-2"
+      class="chat-scrollbar chat-messages-scroll flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 py-3 md:px-6 md:py-6 flex flex-col gap-2"
     >
       {#if isLoadingHistory}
         <!-- Loading skeleton — hides per-message pop-in while history replays -->
@@ -519,7 +519,7 @@
       <div class="chat-sticky-date-indicator">{stickyDateLabel}</div>
     {/if}
 
-    <div class="relative z-20">
+    <div class="absolute inset-x-0 bottom-0 z-20 pointer-events-none">
       <ChatComposer
         {messageText}
         {onMessageChange}
@@ -531,6 +531,7 @@
         {pendingFiles}
         {onRemovePendingFile}
         {isUploading}
+        focusKey={conversation.id}
       />
     </div>
   {:else}

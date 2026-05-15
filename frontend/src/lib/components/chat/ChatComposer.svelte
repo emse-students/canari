@@ -33,6 +33,8 @@
     onRemovePendingFile?: (index: number) => void;
     /** Whether an upload is currently in progress (disables the send button). */
     isUploading?: boolean;
+    /** When this value changes, focus the textarea (e.g. active conversation id). */
+    focusKey?: string;
   }
 
   let {
@@ -46,6 +48,7 @@
     pendingFiles = [],
     onRemovePendingFile,
     isUploading = false,
+    focusKey = '',
   }: Props = $props();
 
   let textareaEl: HTMLTextAreaElement;
@@ -226,6 +229,12 @@
     if (replyingTo && textareaEl) {
       textareaEl.focus();
     }
+  });
+
+  $effect(() => {
+    const key = focusKey;
+    if (!key || !textareaEl) return;
+    tick().then(() => textareaEl?.focus());
   });
 
   $effect(() => {

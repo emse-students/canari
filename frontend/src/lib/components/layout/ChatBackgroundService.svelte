@@ -106,6 +106,12 @@
       startDirectConversation: (targetUserId: string) =>
         globalConvs.startNewConversation(targetUserId, convCtx()),
       getSelectedConversationId: () => globalConvs.selectedContact,
+      reloadChannelHistory: (channelConversationId: string) =>
+        globalConvs.loadHistoryForConversation(
+          channelConversationId,
+          channelConversationId,
+          convCtx()
+        ),
       log: appendLog,
     };
   }

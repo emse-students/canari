@@ -18,6 +18,8 @@ export interface AddMessageToChatOptions {
   messageId?: string;
   timestamp?: Date;
   status?: 'sending' | 'sent' | 'error';
+  /** When true, keep the message in memory only (e.g. server-authoritative community channels). */
+  skipDbSave?: boolean;
 }
 
 export interface ChatMessage {

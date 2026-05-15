@@ -9,7 +9,13 @@
 import { SvelteDate, SvelteMap, SvelteSet } from 'svelte/reactivity';
 import type { IStorage } from '$lib/db';
 import type { IMlsService } from '$lib/mlsService';
-import type { AddMessageToChatOptions, MessageReaction, Conversation } from '$lib/types';
+import type {
+  AddMessageToChatOptions,
+  MessageReaction,
+  Conversation,
+  ChatMessage,
+} from '$lib/types';
+import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import {
   fetchUniqueGroupMembers,
   removeMemberAndBroadcast,
@@ -201,7 +207,7 @@ export function useConversations() {
     }
   }
 
-  /** Loads channel message history from the social-service REST API, decrypts each message with the stored HKDF epoch key, and appends new messages to the conversation (skipping already-loaded IDs). */
+  /** Loads channel history from the server (source of truth) into memory only — never IndexedDB. */
   async function loadChannelHistory(channelConversationId: string, ctx: ConversationContext) {
     const { channelService } = await import('$lib/services/ChannelService');
     const { channelKeyManager } = await import('$lib/crypto/ChannelKeyVault');
@@ -212,7 +218,13 @@ export function useConversations() {
     const convo = conversations.get(channelConversationId);
     if (!convo) return;
 
+    const isSelected = selectedContact === channelConversationId;
+    if (isSelected) isLoadingHistory = true;
+
     try {
+      if (ctx.storage) {
+        await ctx.storage.deleteMessagesForConversation(channelConversationId).catch(() => {});
+      }
       // Fresh devices may miss historical channel epochs in memory.
       // Hydrate all known epochs before decrypting history.
       try {
@@ -232,66 +244,66 @@ export function useConversations() {
         );
       }
 
-      const messages: any[] = await channelService.listMessages(rawId, 200);
-      if (!Array.isArray(messages) || messages.length === 0) return;
+      const rows: any[] = await channelService.listMessages(rawId, 200);
+      const loaded: ChatMessage[] = [];
 
-      // Purge any messages that were stored with the decryption-failure placeholder
-      // (written by a previous buggy real-time handler) so they get a retry below.
-      const PLACEHOLDER = '[Message chiffré]';
-      {
-        const cur = conversations.get(channelConversationId);
-        if (cur) {
-          const clean = cur.messages.filter((m) => m.content !== PLACEHOLDER);
-          if (clean.length < cur.messages.length) {
-            conversations.set(channelConversationId, { ...cur, messages: clean });
+      if (Array.isArray(rows)) {
+        for (const msg of rows) {
+          let content: string | undefined;
+          try {
+            let bytes: Uint8Array | undefined;
+            if (msg.ciphertext && msg.nonce && msg.keyVersion !== undefined) {
+              bytes = await channelKeyManager.decryptMessage(
+                rawId,
+                msg.ciphertext,
+                msg.nonce,
+                msg.keyVersion
+              );
+            } else if (msg.ciphertext) {
+              const binStr = atob(msg.ciphertext);
+              bytes = new Uint8Array(binStr.length);
+              for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
+            }
+            if (bytes) {
+              const decoded = decodeAppMessage(bytes);
+              if (decoded) content = appMsgToEnvelope(decoded)?.content;
+            }
+          } catch (e) {
+            ctx.log(`[CHANNEL] Message non lisible (clé indisponible) ${msg.id}: ${e}`);
           }
+          if (content === undefined) continue;
+
+          const senderId = String(msg.senderId || 'unknown').toLowerCase();
+          loaded.push({
+            id: msg.id,
+            senderId,
+            content,
+            timestamp: msg.createdAt ? new SvelteDate(msg.createdAt) : new SvelteDate(),
+            isOwn: senderId === ctx.userId.toLowerCase(),
+          });
         }
       }
 
-      // Avoid duplicates: collect existing message IDs (placeholders already removed above)
-      // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local lookup set, not reactive state
-      const existingIds = new Set(
-        (conversations.get(channelConversationId)?.messages ?? []).map((m) => m.id).filter(Boolean)
-      );
+      loaded.sort((a, b) => {
+        const ta =
+          a.timestamp instanceof Date
+            ? a.timestamp.getTime()
+            : new SvelteDate(a.timestamp as Date).getTime();
+        const tb =
+          b.timestamp instanceof Date
+            ? b.timestamp.getTime()
+            : new SvelteDate(b.timestamp as Date).getTime();
+        return ta !== tb ? ta - tb : a.id.localeCompare(b.id);
+      });
 
-      for (const msg of messages) {
-        if (msg.id && existingIds.has(msg.id)) continue;
-
-        let content: string | undefined;
-        try {
-          let bytes: Uint8Array | undefined;
-          if (msg.ciphertext && msg.nonce && msg.keyVersion !== undefined) {
-            bytes = await channelKeyManager.decryptMessage(
-              rawId,
-              msg.ciphertext,
-              msg.nonce,
-              msg.keyVersion
-            );
-          } else if (msg.ciphertext) {
-            // Legacy base64 ciphertext stored without nonce/keyVersion
-            const binStr = atob(msg.ciphertext);
-            bytes = new Uint8Array(binStr.length);
-            for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
-          }
-          if (bytes) {
-            const decoded = decodeAppMessage(bytes);
-            if (decoded) content = appMsgToEnvelope(decoded)?.content;
-          }
-        } catch (e) {
-          ctx.log(`[CHANNEL] Message non lisible (clé indisponible) ${msg.id}: ${e}`);
-        }
-
-        // Skip messages that cannot be decrypted with locally available keys.
-        if (content === undefined) continue;
-
-        await ctx.addMessageToChat(msg.senderId || 'unknown', content, channelConversationId, {
-          messageId: msg.id,
-          // eslint-disable-next-line svelte/prefer-svelte-reactivity -- plain timestamp conversion
-          timestamp: msg.createdAt ? new Date(msg.createdAt) : undefined,
-        });
+      const current = conversations.get(channelConversationId);
+      if (current) {
+        conversations.set(channelConversationId, { ...current, messages: loaded });
       }
     } catch (e) {
       ctx.log(`[CHANNEL] Échec chargement historique: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      if (isSelected) isLoadingHistory = false;
     }
   }
 
@@ -320,6 +332,7 @@ export function useConversations() {
     contactName: string,
     ctx: ConversationContext
   ): Promise<boolean> {
+    if (isChannelConversationId(contactName)) return false;
     if (!ctx.storage) return false;
     const convo = conversations.get(contactName);
     if (!convo) return false;

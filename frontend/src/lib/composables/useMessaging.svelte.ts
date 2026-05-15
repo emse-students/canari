@@ -30,7 +30,10 @@ import type {
 import type { IMlsService } from '$lib/mlsService';
 import type { IStorage, StoredMessage } from '$lib/db';
 import { ChannelService } from '$lib/services/ChannelService';
-import { sendEncryptedChannelMessage } from '$lib/utils/chat/channelCrypto';
+import {
+  isChannelConversationId,
+  sendEncryptedChannelMessage,
+} from '$lib/utils/chat/channelCrypto';
 
 /** Runtime dependencies injected into all messaging operations. */
 export interface MessagingContext {
@@ -88,7 +91,7 @@ export function useMessaging() {
     msgs[idx] = { ...msgs[idx], ...patch };
     ctx.conversations.set(key, { ...convo, messages: msgs });
 
-    if (ctx.storage) {
+    if (ctx.storage && !isChannelConversationId(key)) {
       const target = msgs[idx];
       ctx.storage
         .saveMessage(
@@ -174,8 +177,8 @@ export function useMessaging() {
       void ctx.sendSystemNotification(convo.name, preview || 'Nouveau message', normalized);
     }
 
-    // --- LE NOYAU DU CORRECTIF EST LÀ ---
-    if (ctx.storage && !options.skipDbSave) {
+    const skipDbSave = options.skipDbSave ?? isChannelConversationId(normalized);
+    if (ctx.storage && !skipDbSave) {
       try {
         await ctx.storage.saveMessage(
           {
@@ -260,8 +263,8 @@ export function useMessaging() {
 
     ctx.conversations.set(normalized, { ...convo, messages: merged });
 
-    // Single batch DB write
-    if (ctx.storage && toStore.length > 0) {
+    // Single batch DB write (community channels are server-authoritative)
+    if (ctx.storage && toStore.length > 0 && !isChannelConversationId(normalized)) {
       try {
         await ctx.storage.saveMessages(toStore, ctx.pin);
         await ctx.saveConversation(normalized);
@@ -376,11 +379,12 @@ export function useMessaging() {
             const stateBytes = await mlsService.saveState(ctx.pin);
             await saveMlsState(ctx.userId, stateBytes);
           }
-          const payload = serializeEnvelope(mkMediaEnvelope({ ...mediaRef }, captionForFile));
-          await addMessageToChat(ctx.userId, payload, ctx.selectedContact!, ctx, {
-            messageId,
-            skipDbSave: false,
-          });
+          if (!isChannel) {
+            const payload = serializeEnvelope(mkMediaEnvelope({ ...mediaRef }, captionForFile));
+            await addMessageToChat(ctx.userId, payload, ctx.selectedContact!, ctx, {
+              messageId,
+            });
+          }
           sentMediaMessageCount++;
         }
         if (sentMediaMessageCount > 0) {

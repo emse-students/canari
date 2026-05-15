@@ -50,6 +50,8 @@ export interface ChannelWorkspaceContext {
   startDirectConversation?: (targetUserId: string) => Promise<void>;
   /** Returns the conversation ID currently visible in the chat panel. */
   getSelectedConversationId?: () => string | null;
+  /** Refetch channel messages from the server (in-memory only). */
+  reloadChannelHistory?: (channelConversationId: string) => Promise<void>;
   /** Appends a message to the debug log panel. */
   log: (msg: string) => void;
 }
@@ -225,13 +227,18 @@ export function useChannelWorkspaces() {
             contactName: channelConversationId,
             name: channel.name,
             id: channelConversationId,
-            messages: existing?.messages ?? [],
+            messages: [],
             isReady: true,
             mlsStateHex: null,
             imageMediaId: channel.imageMediaId ?? null,
             ...(existing?.unreadCount !== undefined ? { unreadCount: existing.unreadCount } : {}),
           });
         }
+      }
+
+      const selectedChannel = ctx.getSelectedConversationId?.();
+      if (selectedChannel?.startsWith('channel_') && ctx.reloadChannelHistory) {
+        await ctx.reloadChannelHistory(selectedChannel);
       }
 
       const staleLocalChannelIds = Array.from(ctx.conversations.keys()).filter(
@@ -287,7 +294,7 @@ export function useChannelWorkspaces() {
             contactName: channelConversationId,
             name: channel.name,
             id: channelConversationId,
-            messages: existingEws?.messages ?? [],
+            messages: [],
             isReady: true,
             mlsStateHex: null,
             imageMediaId: channel.imageMediaId ?? null,

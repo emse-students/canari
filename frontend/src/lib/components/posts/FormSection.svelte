@@ -29,8 +29,17 @@
     selectedForm?.opensAt ? formOpensAtIso(selectedForm.opensAt) : null
   );
 
+  function formPriceLabel(form: Form): string {
+    if (!form.requiresPayment || !form.basePrice || form.basePrice <= 0) return '';
+    const euros = (form.basePrice / 100).toLocaleString('fr-FR', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    });
+    return ` — ${euros} €`;
+  }
+
   function formOptionLabel(form: Form): string {
-    const base = `${form.title} (${form.items.length} questions)`;
+    const base = `${form.title} (${form.items.length} questions)${formPriceLabel(form)}`;
     if (form.opensAt && formOpensAtIso(form.opensAt)) {
       return `${base} — ouvre ${formatFormOpensAt(form.opensAt)}`;
     }

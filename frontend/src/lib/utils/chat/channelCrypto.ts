@@ -8,6 +8,11 @@ function normalizeChannelId(channelId: string): string {
   return String(channelId).replace(/^channel_/, '');
 }
 
+/** True for community channel conversations (`channel_<uuid>`). */
+export function isChannelConversationId(conversationId: string): boolean {
+  return String(conversationId).startsWith('channel_');
+}
+
 /** Return true when an encryption error indicates the local channel key is stale and must be refreshed from the server before retrying. */
 function shouldRefreshChannelKey(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);

@@ -218,6 +218,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           addMessageToChat(sender, content, convoKey, {
             messageId: appMessageId || data.messageId || data.id,
             timestamp: new Date(data.createdAt),
+            skipDbSave: true,
           }).catch((e) => console.error(e));
         } else {
           // We might want to auto-create the conversation if not found, but we skip for now

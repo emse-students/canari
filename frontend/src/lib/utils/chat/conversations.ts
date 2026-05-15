@@ -423,6 +423,10 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
   // Serialised (not parallel) because replayConversationHistory calls the shared
   // WASM MLS client which is not safe to invoke concurrently.
   for (const meta of mergedConvMetas) {
+    if (meta.id.startsWith('channel_')) {
+      await ctx.storage.deleteMessagesForConversation(meta.id).catch(() => {});
+      continue;
+    }
     try {
       const existingConvo = ctx.conversations.get(meta.id);
       if (

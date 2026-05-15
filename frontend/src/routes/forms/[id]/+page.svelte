@@ -579,13 +579,19 @@
           {/if}
 
           <!-- Footer: total + submit -->
-          <div class="pt-4 mt-2 border-t-2 border-cn-border flex items-center justify-between">
-            <div class="font-bold text-lg text-cn-dark">
-              Total : {formatCurrency(calculateTotal(), form.currency)}
-              {#if submitted}
-                <span class="text-xs font-semibold text-green-600 ml-2">(Déjà envoyé)</span>
-              {/if}
-            </div>
+          <div
+            class="pt-4 mt-2 border-t-2 border-cn-border flex items-center {calculateTotal() > 0
+              ? 'justify-between'
+              : 'justify-end'}"
+          >
+            {#if calculateTotal() > 0}
+              <div class="font-bold text-lg text-cn-dark">
+                Total : {formatCurrency(calculateTotal(), form.currency)}
+                {#if submitted}
+                  <span class="text-xs font-semibold text-green-600 ml-2">(Déjà envoyé)</span>
+                {/if}
+              </div>
+            {/if}
             <Button variant="primary" class="px-6" disabled={submitted || isNotOpenYet} onclick={handleSubmit}>
               {#if submitted}
                 Envoyé

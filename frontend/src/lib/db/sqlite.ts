@@ -141,8 +141,13 @@ export class SqliteStorage implements IStorage {
 
   /** Delete the conversation row and all of its messages (messages first to respect the foreign key). */
   async deleteConversation(id: string): Promise<void> {
-    await this.db.execute('DELETE FROM messages WHERE conversation_id = $1', [id]);
+    await this.deleteMessagesForConversation(id);
     await this.db.execute('DELETE FROM conversations WHERE id = $1', [id]);
+  }
+
+  /** Delete all messages for a conversation without removing its metadata row. */
+  async deleteMessagesForConversation(conversationId: string): Promise<void> {
+    await this.db.execute('DELETE FROM messages WHERE conversation_id = $1', [conversationId]);
   }
 
   // -- Messages ------------------------------------------------------------

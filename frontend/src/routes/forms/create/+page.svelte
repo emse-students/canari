@@ -28,6 +28,7 @@
   const returnTo = $derived(page.url.searchParams.get('returnTo') || '/forms');
   const attachMode = $derived(page.url.searchParams.get('attach') as 'form' | 'event' | null);
   const fromPostComposer = $derived(returnTo === '/posts' && !!attachMode);
+  const contentMaxWidth = $derived(fromPostComposer ? 'max-w-xl' : 'max-w-3xl');
 
   // Associations with Stripe account (eligible as recipients)
   let associations = $state<Association[]>([]);
@@ -135,7 +136,7 @@
   }
 </script>
 
-<div class="px-3 py-5 sm:px-6 max-w-3xl mx-auto pb-24">
+<div class="px-3 py-5 sm:px-6 {contentMaxWidth} mx-auto pb-28">
   <!-- Header -->
   <div class="flex items-center gap-3 mb-8">
     <button
@@ -430,24 +431,28 @@
   </section>
 
   <!-- Floating Save Bar -->
-  <div class="fixed bottom-0 left-0 right-0 z-50 pointer-events-none">
-    <div class="max-w-3xl mx-auto px-3 sm:px-6 pb-4 sm:pb-5">
+  <div
+    class="fixed bottom-0 inset-x-0 md:left-[4.5rem] z-50 pointer-events-none pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-5"
+  >
+    <div class="{contentMaxWidth} mx-auto px-3 sm:px-6">
       <div
-        class="pointer-events-auto rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] shadow-lg px-3 sm:px-5 py-3 sm:py-3.5 flex items-center justify-between gap-3 sm:gap-4"
+        class="pointer-events-auto rounded-2xl border border-cn-border/60 bg-[var(--cn-surface)]/85 dark:bg-[#151B2C]/85 backdrop-blur-xl shadow-lg px-4 sm:px-5 py-3.5 flex flex-col sm:flex-row items-center justify-center sm:justify-between gap-3 text-center sm:text-left"
       >
-        <p class="text-sm text-text-muted hidden sm:block">
+        <p class="text-sm text-text-muted min-h-[1.25rem]">
           {#if titleMissing}
             <span class="text-amber-600 font-medium">Renseignez un titre pour enregistrer</span>
           {:else}
-            {items.length} question{items.length > 1 ? 's' : ''} · {requiresPayment
-              ? `${basePrice.toFixed(2)} €`
-              : 'Gratuit'}
+            {items.length} question{items.length > 1 ? 's' : ''}{#if requiresPayment && basePrice > 0}
+              · {basePrice.toLocaleString('fr-FR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} €
+            {:else if !requiresPayment}
+              · Gratuit
+            {/if}
           {/if}
         </p>
         <button
           onclick={handleSave}
           disabled={isSubmitting || titleMissing}
-          class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          class="inline-flex items-center justify-center gap-2 rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0 w-full sm:w-auto"
         >
           <Save size={16} />
           {isSubmitting ? 'Enregistrement…' : 'Enregistrer le formulaire'}

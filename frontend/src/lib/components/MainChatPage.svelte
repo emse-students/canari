@@ -78,6 +78,8 @@
       startDirectConversation: (targetUserId: string) =>
         convs.startNewConversation(targetUserId, convCtx()),
       getSelectedConversationId: () => convs.selectedContact,
+      reloadChannelHistory: (channelConversationId: string) =>
+        convs.loadHistoryForConversation(channelConversationId, channelConversationId, convCtx()),
       log,
     };
   }

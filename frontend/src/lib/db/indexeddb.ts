@@ -151,19 +151,33 @@ export class IndexedDbStorage implements IStorage {
     return new Promise((resolve, reject) => {
       const tx = db.transaction(['conversations', 'messages'], 'readwrite');
       tx.objectStore('conversations').delete(id);
-      // Cascade-delete messages linked to this conversation
-      const index = tx.objectStore('messages').index('byConversation');
-      const cursorReq = index.openCursor(IDBKeyRange.only(id));
-      cursorReq.onsuccess = () => {
-        const cursor = cursorReq.result;
-        if (cursor) {
-          cursor.delete();
-          cursor.continue();
-        }
-      };
+      this.deleteMessagesInTransaction(tx, id);
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
+  }
+
+  /** Delete all messages for a conversation; metadata row is kept. */
+  async deleteMessagesForConversation(conversationId: string): Promise<void> {
+    const db = this.ensureDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('messages', 'readwrite');
+      this.deleteMessagesInTransaction(tx, conversationId);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  private deleteMessagesInTransaction(tx: IDBTransaction, conversationId: string): void {
+    const index = tx.objectStore('messages').index('byConversation');
+    const cursorReq = index.openCursor(IDBKeyRange.only(conversationId));
+    cursorReq.onsuccess = () => {
+      const cursor = cursorReq.result;
+      if (cursor) {
+        cursor.delete();
+        cursor.continue();
+      }
+    };
   }
 
   // -- Messages ------------------------------------------------------------

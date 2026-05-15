@@ -73,6 +73,8 @@ export interface IStorage {
   getConversations(): Promise<ConversationMeta[]>;
   /** Delete the conversation row and cascade-delete all of its messages. */
   deleteConversation(id: string): Promise<void>;
+  /** Delete all messages for a conversation without removing its metadata row. */
+  deleteMessagesForConversation(conversationId: string): Promise<void>;
 
   // Messages (content encrypted with user PIN)
 
