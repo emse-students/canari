@@ -12,6 +12,7 @@
     globalNotifs as notifs,
     appendLog,
   } from '$lib/stores/globalChatSingleton.svelte';
+  import { notifNav } from '$lib/stores/notifNav.svelte';
   import Sidebar from './sidebar/Sidebar.svelte';
   import ChannelMembersSidebar from './chat/ChannelMembersSidebar.svelte';
   import ChannelSettingsModal from './chat/ChannelSettingsModal.svelte';
@@ -25,6 +26,17 @@
   }
 
   let { routeMode = 'chat' }: Props = $props();
+
+  // ─── Notification click navigation ────────────────────────────────────────
+  // When a system notification is clicked, notifNav.pending is set to the
+  // target conversation ID. This effect consumes it and opens the conversation.
+  $effect(() => {
+    const id = notifNav.pending;
+    if (id) {
+      notifNav.clear();
+      convs.selectConversation(id);
+    }
+  });
 
   // ─── Sync session (local — scoped to /chat, not the global background service) ──
   const sync = useSyncSession();

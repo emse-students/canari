@@ -54,7 +54,7 @@ export interface MessagingContext {
   playSendTone?: () => void;
   playReceiveTone?: () => void;
   playReadTone?: () => void;
-  sendSystemNotification: (title: string, body: string) => Promise<void>;
+  sendSystemNotification: (title: string, body: string, conversationId?: string) => Promise<void>;
 }
 
 /** Creates and returns the reactive messaging store covering send, receive, reactions, edit, delete, replies, and media uploads. */
@@ -171,7 +171,7 @@ export function useMessaging() {
 
     if (shouldSendSystemNotification) {
       const preview = getPreviewText(parseEnvelope(content));
-      void ctx.sendSystemNotification(convo.name, preview || 'Nouveau message');
+      void ctx.sendSystemNotification(convo.name, preview || 'Nouveau message', normalized);
     }
 
     // --- LE NOYAU DU CORRECTIF EST LÀ ---

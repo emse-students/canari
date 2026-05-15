@@ -156,7 +156,8 @@
         );
         void globalNotifs.sendSystemNotification(
           'Canal rejoint',
-          `Je t'invite à rejoindre #${event.channelName || event.channelId}`
+          `Je t'invite à rejoindre #${event.channelName || event.channelId}`,
+          channelConversationId
         );
         appendLog(`Ajout au canal #${event.channelName || event.channelId}`);
       },

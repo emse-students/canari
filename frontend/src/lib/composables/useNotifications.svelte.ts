@@ -2,6 +2,7 @@
  * Reactive composable for audio tone, system (OS-level) notifications,
  * and the channel-membership banner notice.
  */
+import { notifNav } from '$lib/stores/notifNav.svelte';
 
 export function useNotifications() {
   let audioContext = $state<AudioContext | null>(null);
@@ -190,8 +191,8 @@ export function useNotifications() {
     }
   }
 
-  /** Shows an OS-level notification (via Tauri plugin or Web Notification API) rate-limited to one every 800 ms. Clicking the notification focuses the app window. */
-  async function sendSystemNotification(title: string, body: string) {
+  /** Shows an OS-level notification (via Tauri plugin or Web Notification API) rate-limited to one every 800 ms. Clicking the notification focuses the app and opens the given conversation. */
+  async function sendSystemNotification(title: string, body: string, conversationId?: string) {
     if (typeof window === 'undefined') return;
     const now = Date.now();
     if (now - lastSystemNotificationAt < 800) return;
@@ -217,20 +218,24 @@ export function useNotifications() {
       }
 
       try {
-        const n = new Notification(title, { body, tag: 'canari-message' });
+        const n = new Notification(title, {
+          body,
+          tag: `canari-${conversationId ?? 'message'}`,
+        });
         n.onclick = async () => {
           try {
-            if ((window as any).__TAURI_INTERNALS__) {
-              const { getCurrentWindow } = await import('@tauri-apps/api/window');
-              const win = getCurrentWindow();
-              await win.show();
-              await win.unminimize();
-              await win.setFocus();
-            } else {
-              window.focus();
-            }
+            window.focus();
           } catch {
             /* ignore */
+          }
+          if (conversationId) {
+            notifNav.navigate(conversationId);
+            try {
+              const { goto } = await import('$app/navigation');
+              await goto('/chat');
+            } catch {
+              /* ignore */
+            }
           }
           n.close();
         };
