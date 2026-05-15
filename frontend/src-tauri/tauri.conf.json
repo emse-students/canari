@@ -26,9 +26,7 @@
     "deep-link": {
       "mobile": [
         {
-          "scheme": [
-            "fr.emse.canari"
-          ],
+          "scheme": ["fr.emse.canari"],
           "host": "callback"
         }
       ]
