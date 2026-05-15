@@ -150,7 +150,6 @@
       }
 
       // Compress then encrypt-upload each image; collect the resulting refs.
-      // Max 1440px on either side, WebP at 82% quality (Signal/Instagram range).
       const images = [];
       for (let i = 0; i < selectedFiles.length; i++) {
         const compressed = await compressImage(selectedFiles[i], 1440, 1440, 0.82);
@@ -215,138 +214,152 @@
       publishing = false;
     }
   }
-
-  // Tailwind class constants for the association selects
-  const selectClass =
-    'w-full appearance-none rounded-xl border border-cn-border/70 bg-cn-surface/95 dark:bg-cn-dark/50 pl-11 pr-10 py-3 text-sm font-semibold text-text-main shadow-sm transition-all outline-none focus:border-cn-yellow focus:ring-2 focus:ring-cn-yellow/25 hover:border-cn-border';
-  const chevronWrapClass =
-    'pointer-events-none absolute inset-y-0 right-3 flex items-center text-text-muted';
 </script>
 
 <article
-  class="relative mb-6 overflow-hidden rounded-3xl border border-cn-border/70 bg-[var(--surface-elevated)] shadow-sm backdrop-blur-xl transition-shadow duration-300 focus-within:shadow-md focus-within:ring-1 focus-within:ring-cn-yellow/20 dark:border-cn-border/80 dark:bg-[color-mix(in_srgb,var(--cn-surface)_88%,transparent)]"
+  class="relative mb-6 overflow-hidden rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/70 dark:bg-[#151B2C]/70 shadow-sm backdrop-blur-2xl transition-all duration-300 focus-within:shadow-lg focus-within:border-amber-500/30"
 >
-  <!-- Form header -->
-  <div class="border-b border-cn-border/50 bg-cn-surface/40 px-4 py-3 dark:bg-black/15 sm:px-5">
-    <p class="text-xs font-bold uppercase tracking-[0.12em] text-text-muted">Publication</p>
-    <p class="mt-0.5 text-sm font-semibold text-text-main">
-      Rédigez votre message — ajoutez des images, un sondage ou un bouton d'événement ci-dessous.
+  <!-- En-tête du Formulaire -->
+  <div class="border-b border-black/5 dark:border-white/10 bg-white/40 dark:bg-black/20 px-5 py-4">
+    <p class="text-[0.65rem] font-extrabold uppercase tracking-widest text-amber-500 mb-0.5">Créer une publication</p>
+    <p class="text-sm font-semibold text-text-main opacity-90">
+      Partagez une annonce, un événement ou un sondage avec le réseau.
     </p>
   </div>
 
   <div class="p-4 sm:p-5">
-    <!-- Association identity selector (only shown when the user manages at least one asso) -->
+
+    <!-- Sélecteurs d'Association (Affichés uniquement si l'utilisateur gère une asso) -->
     {#if postAsAssociations.length > 0}
       <div class="mb-5 grid gap-4 sm:grid-cols-2">
-        <!-- "Post as" selector -->
+        <!-- Publier en tant que -->
         <div>
           <label
             for="post-association-select"
-            class="mb-2 flex items-center gap-2 text-[0.7rem] font-bold uppercase tracking-wider text-text-muted"
+            class="mb-1.5 flex items-center gap-1.5 text-[0.65rem] font-extrabold uppercase tracking-wider text-text-muted ml-1"
           >
-            <User size={14} class="opacity-70" aria-hidden="true" />
             Publier en tant que
           </label>
-          <div class="relative">
-            <span class="pointer-events-none absolute left-3 top-1/2 z-[1] -translate-y-1/2 text-text-muted" aria-hidden="true">
-              {#if selectedAssociationId}<Building2 size={18} strokeWidth={2.2} />{:else}<User size={18} strokeWidth={2.2} />{/if}
+          <div class="relative group">
+            <span class="pointer-events-none absolute left-3.5 top-1/2 z-[1] -translate-y-1/2 text-text-muted group-focus-within:text-amber-500 transition-colors" aria-hidden="true">
+              {#if selectedAssociationId}<Building2 size={16} strokeWidth={2.5} />{:else}<User size={16} strokeWidth={2.5} />{/if}
             </span>
-            <select id="post-association-select" bind:value={selectedAssociationId} class={selectClass}>
-              <option value="">Profil personnel</option>
+            <select
+              id="post-association-select"
+              bind:value={selectedAssociationId}
+              class="w-full appearance-none rounded-xl border border-black/5 dark:border-white/10 bg-black/5 dark:bg-white/5 pl-10 pr-10 py-3 text-sm font-bold text-text-main shadow-inner transition-all outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 hover:bg-black/10 dark:hover:bg-white/10 cursor-pointer"
+            >
+              <option value="" class="bg-white dark:bg-zinc-900 font-medium">Profil personnel</option>
               {#each postAsAssociations as a (a.id)}
-                <option value={a.id}>{a.name}</option>
+                <option value={a.id} class="bg-white dark:bg-zinc-900 font-medium">{a.name}</option>
               {/each}
             </select>
-            <div class={chevronWrapClass}><ChevronDown size={18} strokeWidth={2} /></div>
+            <div class="pointer-events-none absolute inset-y-0 right-3.5 flex items-center text-text-muted group-focus-within:text-amber-500 transition-colors">
+              <ChevronDown size={16} strokeWidth={2.5} />
+            </div>
           </div>
         </div>
 
-        <!-- Stripe payment association (only shown when posting as an asso) -->
+        <!-- Encaissement Stripe (Affiché uniquement si une asso est sélectionnée) -->
         {#if payableAssociations.length > 0 && selectedAssociationId}
           <div transition:fade={{ duration: 200 }}>
             <label
               for="post-payment-association-select"
-              class="mb-2 flex items-center gap-2 text-[0.7rem] font-bold uppercase tracking-wider text-text-muted"
+              class="mb-1.5 flex items-center gap-1.5 text-[0.65rem] font-extrabold uppercase tracking-wider text-text-muted ml-1"
             >
               Encaissement (Stripe)
             </label>
-            <div class="relative">
-              <span class="pointer-events-none absolute left-3 top-1/2 z-[1] -translate-y-1/2 text-cn-yellow" aria-hidden="true">
-                <Building2 size={18} strokeWidth={2.2} />
+            <div class="relative group">
+              <span class="pointer-events-none absolute left-3.5 top-1/2 z-[1] -translate-y-1/2 text-amber-500" aria-hidden="true">
+                <Building2 size={16} strokeWidth={2.5} />
               </span>
-              <select id="post-payment-association-select" bind:value={selectedPaymentAssociationId} class={selectClass}>
-                <option value="">Aucun compte lié</option>
+              <select
+                id="post-payment-association-select"
+                bind:value={selectedPaymentAssociationId}
+                class="w-full appearance-none rounded-xl border border-black/5 dark:border-white/10 bg-black/5 dark:bg-white/5 pl-10 pr-10 py-3 text-sm font-bold text-text-main shadow-inner transition-all outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 hover:bg-black/10 dark:hover:bg-white/10 cursor-pointer"
+              >
+                <option value="" class="bg-white dark:bg-zinc-900 font-medium">Aucun compte lié</option>
                 {#each payableAssociations as a (a.id)}
-                  <option value={a.id}>{a.name}</option>
+                  <option value={a.id} class="bg-white dark:bg-zinc-900 font-medium">{a.name}</option>
                 {/each}
               </select>
-              <div class={chevronWrapClass}><ChevronDown size={18} strokeWidth={2} /></div>
+              <div class="pointer-events-none absolute inset-y-0 right-3.5 flex items-center text-text-muted group-focus-within:text-amber-500 transition-colors">
+                <ChevronDown size={16} strokeWidth={2.5} />
+              </div>
             </div>
           </div>
         {/if}
       </div>
     {/if}
 
-    <!-- Draft restored banner -->
+    <!-- Bannière Brouillon Restauré -->
     {#if draftRestored}
       <div
-        class="mb-3 flex items-center justify-between rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-[0.72rem] font-bold text-amber-700 dark:text-amber-400"
+        class="mb-3 flex items-center justify-between rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 shadow-sm"
         transition:slide={{ duration: 200 }}
       >
-        <span>Brouillon restauré</span>
+        <span class="text-[0.75rem] font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
+          Brouillon restauré
+        </span>
         <button
           type="button"
           onclick={() => { markdown = ''; localStorage.removeItem(DRAFT_KEY); draftRestored = false; }}
-          class="opacity-70 transition-opacity hover:opacity-100 hover:underline"
+          class="text-xs font-bold text-amber-700/60 dark:text-amber-400/60 hover:text-amber-700 dark:hover:text-amber-400 transition-colors outline-none focus-visible:underline"
         >
           Effacer
         </button>
       </div>
     {/if}
 
-    <!-- Text area -->
-    <div class="relative rounded-2xl border border-cn-border/50 bg-cn-surface/60 p-1 shadow-inner dark:border-cn-border/50 dark:bg-cn-dark/40">
+    <!-- Zone de Texte & Aperçu Médias (Inner Shadow Container) -->
+    <div class="relative rounded-[1.5rem] border border-black/5 dark:border-white/10 bg-black/5 dark:bg-black/40 shadow-inner p-2 mb-2 transition-colors focus-within:bg-white/50 dark:focus-within:bg-black/60">
+
+      <!-- Feedback de Sauvegarde auto -->
       {#if draftSaved}
         <span
-          class="pointer-events-none absolute right-3 top-2 text-[0.6rem] font-bold text-text-muted opacity-60"
+          class="pointer-events-none absolute right-4 top-3 text-[0.65rem] font-bold uppercase tracking-wider text-text-muted opacity-60"
           transition:fade={{ duration: 200 }}
         >
-          Brouillon sauvegardé
+          Sauvegardé
         </span>
       {/if}
+
       <textarea
         bind:value={markdown}
-        placeholder="Votre texte (markdown supporté)…"
+        placeholder="Écrivez votre message ici (Markdown supporté)..."
         rows={5}
-        class="custom-scrollbar min-h-[120px] w-full resize-none rounded-xl bg-transparent px-4 py-3.5 text-[1rem] font-medium leading-relaxed text-text-main placeholder:text-text-muted/55 outline-none"
+        class="custom-scrollbar min-h-[120px] w-full resize-none rounded-xl bg-transparent px-4 py-3.5 text-[0.95rem] sm:text-[1rem] font-medium leading-relaxed text-text-main placeholder:text-text-muted/60 outline-none"
       ></textarea>
 
-      <!-- Image previews with caption inputs -->
+      <!-- Aperçu des images & Légendes -->
       {#if filePreviews.length > 0}
         <div
-          class="flex snap-x snap-mandatory gap-2 overflow-x-auto px-3 pb-3 pt-1"
+          class="flex snap-x snap-mandatory gap-2.5 overflow-x-auto px-3 pb-3 pt-2 custom-scrollbar"
           transition:slide={{ duration: 200 }}
           role="list"
         >
           {#each filePreviews as src, i (src)}
-            <div class="flex w-[88px] shrink-0 snap-start flex-col gap-1.5 sm:w-[100px]" role="listitem">
-              <div class="relative aspect-square w-full overflow-hidden rounded-xl border border-cn-border/50 shadow-sm">
-                <img {src} alt="" class="h-full w-full object-cover" />
+            <div class="flex w-[100px] shrink-0 snap-start flex-col gap-2 sm:w-[120px]" role="listitem">
+              <!-- Miniature -->
+              <div class="relative aspect-square w-full overflow-hidden rounded-2xl border border-black/10 dark:border-white/10 shadow-sm group">
+                <img {src} alt="Aperçu" class="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" />
                 <button
                   type="button"
                   onclick={() => removeFile(i)}
-                  class="absolute right-1 top-1 rounded-full bg-black/65 p-1.5 text-white shadow backdrop-blur-sm transition hover:bg-red-500 focus-visible:outline focus-visible:ring-2 focus-visible:ring-red-400"
+                  class="absolute right-1.5 top-1.5 rounded-full bg-black/60 p-1.5 text-white shadow-sm backdrop-blur-md transition-all hover:bg-red-500 hover:scale-110 active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-red-400 opacity-0 group-hover:opacity-100 focus:opacity-100"
                   aria-label="Retirer cette image"
+                  title="Supprimer"
                 >
                   <X size={14} strokeWidth={2.5} />
                 </button>
               </div>
+              <!-- Input Légende -->
               <input
                 type="text"
                 bind:value={imageCaptions[i]}
-                placeholder="Légende…"
+                placeholder="Légende (opt.)"
                 maxlength="120"
-                class="w-full rounded-lg border border-cn-border/40 bg-cn-surface/70 px-2 py-1 text-[0.65rem] font-medium text-text-main placeholder:text-text-muted/60 outline-none focus:border-cn-yellow focus:ring-1 focus:ring-cn-yellow/30"
+                class="w-full rounded-lg border border-black/10 dark:border-white/10 bg-white/70 dark:bg-black/40 px-2.5 py-1.5 text-[0.7rem] font-semibold text-text-main placeholder:text-text-muted/60 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 transition-all shadow-inner"
               />
             </div>
           {/each}
@@ -355,9 +368,10 @@
     </div>
   </div>
 
-  <!-- Optional sections + toolbar + publish button -->
-  <div class="space-y-4 border-t border-cn-border/50 px-4 pb-5 pt-4 sm:px-5">
-    <!-- Poll configuration card -->
+  <!-- Sections Optionnelles & Footer -->
+  <div class="space-y-4 border-t border-black/5 dark:border-white/10 px-4 pb-5 pt-5 sm:px-5">
+
+    <!-- Sondage -->
     {#if includePoll}
       <div transition:slide={{ duration: 300, easing: (t) => t * (2 - t) }}>
         <PollSection
@@ -369,7 +383,7 @@
       </div>
     {/if}
 
-    <!-- Event button configuration card -->
+    <!-- Événement -->
     {#if includeEventButton}
       <div transition:slide={{ duration: 300, easing: (t) => t * (2 - t) }}>
         <EventButtonSection
@@ -386,7 +400,7 @@
       </div>
     {/if}
 
-    <!-- Standalone form attachment card (mutually exclusive with event button) -->
+    <!-- Formulaire (Exclusif avec l'Événement) -->
     {#if includeForm && !includeEventButton}
       <div transition:slide={{ duration: 300, easing: (t) => t * (2 - t) }}>
         <FormSection
@@ -397,97 +411,100 @@
       </div>
     {/if}
 
-    <!-- Error banner -->
+    <!-- Bannière d'Erreur -->
     {#if errorMessage}
       <div
         transition:slide={{ duration: 200 }}
-        class="flex items-start gap-3 rounded-xl border border-red-500/25 bg-red-500/10 p-3.5 text-red-600 shadow-inner dark:text-red-400"
+        class="flex items-start gap-3 rounded-xl border border-red-500/20 bg-red-500/10 p-4 text-red-600 dark:text-red-400 shadow-inner"
       >
-        <CircleAlert size={18} class="mt-0.5 shrink-0" />
+        <CircleAlert size={18} strokeWidth={2.5} class="mt-0.5 shrink-0" />
         <span class="text-sm font-bold leading-snug">{errorMessage}</span>
       </div>
     {/if}
 
-    <!-- Toolbar (attachment toggles) + publish button -->
-    <div class="flex flex-col-reverse gap-4 border-t border-cn-border/40 pt-4 sm:flex-row sm:items-center sm:justify-between">
-      <div class="custom-scrollbar flex flex-wrap items-stretch gap-2 overflow-x-auto rounded-2xl bg-cn-surface/50 p-1.5 ring-1 ring-cn-border/40 dark:bg-black/20">
-        <!-- Image picker -->
+    <!-- Barre d'outils (Toggles) + Bouton Publier -->
+    <div class="flex flex-col-reverse gap-4 pt-1 sm:flex-row sm:items-center sm:justify-between">
+
+      <!-- Boutons d'ajouts (Toolbar) -->
+      <div class="custom-scrollbar flex flex-wrap items-center gap-2 overflow-x-auto rounded-[1.25rem] bg-white/50 dark:bg-black/20 p-1.5 shadow-inner border border-black/5 dark:border-white/5 w-full sm:w-auto">
+
+        <!-- Ajouter des photos -->
         <label
           for={imageInputId}
           title="Photos"
-          class="flex cursor-pointer items-center gap-2 rounded-xl px-2.5 py-2 text-text-muted transition-all outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow active:scale-[0.98] sm:px-3 {selectedFiles.length > 0 ? 'bg-cn-yellow/20 font-semibold text-cn-dark dark:text-cn-yellow' : 'hover:bg-cn-border/40 hover:text-text-main'}"
+          class="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-text-muted transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 shrink-0
+          {selectedFiles.length > 0 ? 'bg-amber-500/15 font-bold text-amber-600 dark:text-amber-400 shadow-sm' : 'hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main'}"
         >
-          <Image size={20} strokeWidth={selectedFiles.length > 0 ? 2.5 : 2} />
-          <span class="hidden text-xs font-semibold sm:inline">Photos</span>
+          <Image size={18} strokeWidth={selectedFiles.length > 0 ? 2.5 : 2} />
+          <span class="hidden text-xs sm:inline">Photos</span>
         </label>
         <input id={imageInputId} type="file" accept="image/*" multiple onchange={onPickFiles} class="sr-only" />
 
-        <!-- Poll toggle -->
+        <!-- Ajouter un sondage -->
         <button
           type="button" title="Sondage"
           onclick={() => (includePoll = !includePoll)}
-          class="flex items-center gap-2 rounded-xl px-2.5 py-2 text-text-muted transition-all outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow active:scale-[0.98] sm:px-3 {includePoll ? 'bg-cn-yellow/20 font-semibold text-cn-dark dark:text-cn-yellow' : 'hover:bg-cn-border/40 hover:text-text-main'}"
+          class="flex items-center gap-2 rounded-xl px-3 py-2 text-text-muted transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 shrink-0
+          {includePoll ? 'bg-amber-500/15 font-bold text-amber-600 dark:text-amber-400 shadow-sm' : 'hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main'}"
         >
-          <ChartColumn size={20} strokeWidth={includePoll ? 2.5 : 2} />
-          <span class="hidden text-xs font-semibold sm:inline">Sondage</span>
+          <ChartColumn size={18} strokeWidth={includePoll ? 2.5 : 2} />
+          <span class="hidden text-xs sm:inline">Sondage</span>
         </button>
 
-        <!-- Event button toggle -->
+        <!-- Ajouter un événement -->
         <button
           type="button" title="Événement"
           onclick={() => { includeEventButton = !includeEventButton; if (includeEventButton) includeForm = false; }}
-          class="flex items-center gap-2 rounded-xl px-2.5 py-2 text-text-muted transition-all outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow active:scale-[0.98] sm:px-3 {includeEventButton ? 'bg-cn-yellow/20 font-semibold text-cn-dark dark:text-cn-yellow' : 'hover:bg-cn-border/40 hover:text-text-main'}"
+          class="flex items-center gap-2 rounded-xl px-3 py-2 text-text-muted transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 shrink-0
+          {includeEventButton ? 'bg-amber-500/15 font-bold text-amber-600 dark:text-amber-400 shadow-sm' : 'hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main'}"
         >
-          <CalendarCheck size={20} strokeWidth={includeEventButton ? 2.5 : 2} />
-          <span class="hidden text-xs font-semibold sm:inline">Événement</span>
+          <CalendarCheck size={18} strokeWidth={includeEventButton ? 2.5 : 2} />
+          <span class="hidden text-xs sm:inline">Événement</span>
         </button>
 
-        <!-- Form toggle (hidden when event button is active) -->
+        <!-- Ajouter un formulaire (si pas d'événement) -->
         {#if !includeEventButton}
           <button
             type="button" title="Formulaire"
             onclick={() => (includeForm = !includeForm)}
-            class="flex items-center gap-2 rounded-xl px-2.5 py-2 text-text-muted transition-all outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow active:scale-[0.98] sm:px-3 {includeForm ? 'bg-cn-yellow/20 font-semibold text-cn-dark dark:text-cn-yellow' : 'hover:bg-cn-border/40 hover:text-text-main'}"
+            class="flex items-center gap-2 rounded-xl px-3 py-2 text-text-muted transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 shrink-0
+            {includeForm ? 'bg-amber-500/15 font-bold text-amber-600 dark:text-amber-400 shadow-sm' : 'hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main'}"
           >
-            <ClipboardList size={20} strokeWidth={includeForm ? 2.5 : 2} />
-            <span class="hidden text-xs font-semibold sm:inline">Formulaire</span>
+            <ClipboardList size={18} strokeWidth={includeForm ? 2.5 : 2} />
+            <span class="hidden text-xs sm:inline">Formulaire</span>
           </button>
         {/if}
 
-        <!-- Scheduled date picker -->
-        <div class="flex items-center gap-1.5">
-          <button
-            type="button"
-            title={scheduledAt ? 'Modifier la programmation' : 'Programmer la publication'}
-            class="flex items-center gap-2 rounded-xl px-2.5 py-2 text-text-muted transition-all outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow active:scale-[0.98] sm:px-3 {scheduledAt ? 'bg-cn-yellow/20 font-semibold text-cn-dark dark:text-cn-yellow' : 'hover:bg-cn-border/40 hover:text-text-main'}"
-          >
-            <Clock size={20} strokeWidth={scheduledAt ? 2.5 : 2} />
-            <span class="hidden text-xs font-semibold sm:inline">Programmer</span>
-          </button>
+        <!-- Séparateur vertical visuel -->
+        <div class="h-6 w-px bg-black/10 dark:bg-white/10 mx-0.5 shrink-0 hidden sm:block"></div>
+
+        <!-- Programmation (Date Picker intégré) -->
+        <div class="relative flex items-center bg-black/5 dark:bg-white/5 rounded-xl px-2 py-1.5 focus-within:ring-2 focus-within:ring-amber-500/50 transition-all shrink-0 {scheduledAt ? 'bg-amber-500/10 border border-amber-500/20' : ''}">
+          <Clock size={16} strokeWidth={2.5} class="ml-1 text-text-muted {scheduledAt ? 'text-amber-600 dark:text-amber-400' : ''}" />
           <input
             type="datetime-local"
             bind:value={scheduledAt}
             min={new Date(Date.now() + 60000).toISOString().slice(0, 16)}
-            class="rounded-xl border border-cn-border/60 bg-cn-surface/70 px-2 py-1.5 text-xs font-medium text-text-main outline-none focus:border-cn-yellow focus:ring-1 focus:ring-cn-yellow/30 {scheduledAt ? 'w-44' : 'w-32'}"
+            title="Programmer la publication"
+            class="bg-transparent pl-2 pr-1 text-[0.7rem] font-bold text-text-main outline-none cursor-pointer {scheduledAt ? 'w-36 text-amber-700 dark:text-amber-400' : 'w-5 sm:w-28 text-transparent sm:text-text-main'} transition-all"
           />
           {#if scheduledAt}
             <button
               type="button"
               onclick={() => (scheduledAt = '')}
-              class="rounded-full p-1 text-text-muted transition-colors hover:text-red-500"
+              class="rounded-full p-1 text-text-muted transition-colors hover:text-red-500 hover:bg-red-500/10 outline-none"
               title="Annuler la programmation"
-              aria-label="Annuler"
             >
-              <X size={14} />
+              <X size={14} strokeWidth={2.5} />
             </button>
           {/if}
         </div>
       </div>
 
-      <!-- Publish / Schedule button -->
+      <!-- Bouton Publier / Programmer -->
       <Button
         type="button"
-        class="min-w-[9rem] shrink-0 px-8 py-2.5 text-sm !font-extrabold sm:w-auto"
+        class="min-w-[10rem] shrink-0 px-8 py-3 text-sm !font-extrabold sm:w-auto shadow-md shadow-amber-500/20 active:translate-y-0"
         disabled={publishing || (!markdown.trim() && selectedFiles.length === 0)}
         loading={publishing}
         onclick={publishPost}
@@ -511,5 +528,15 @@
   }
   :global([data-theme='dark']) .custom-scrollbar::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.15);
+  }
+
+  /* Pour cacher la petite icône calendrier native sur Webkit et avoir juste l'icône personnalisée Lucide */
+  input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    opacity: 0;
+    position: absolute;
+    left: 0;
+    width: 100%;
+    height: 100%;
   }
 </style>
