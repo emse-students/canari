@@ -6,4 +6,13 @@ export NVM_DIR="$HOME/.nvm"
 export PATH="$HOME/.bun/bin:$PATH"
 
 cd frontend
+
+# 1. Auto-format then re-stage so CI prettier --check always passes
+npm run format
+git add -u .
+
+# 2. Lint (fails on unfixable ESLint errors)
+npm run lint
+
+# 3. Type-check + Svelte diagnostics
 npx svelte-check --tsconfig ./tsconfig.json --threshold warning
