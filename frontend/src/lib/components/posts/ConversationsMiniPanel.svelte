@@ -124,11 +124,6 @@
     return resolvedNames[item.meta.id] ?? item.displayName;
   }
 
-  function getAvatarUserId(item: ConvItem): string {
-    const uid = getSavedUserId() ?? '';
-    const identity = deriveConversationIdentity(item.meta.name, uid, item.meta.id);
-    return identity.directPeerId ?? identity.contactName;
-  }
 
   function getPreview(item: ConvItem): string | null {
     if (!item.lastMessageContent) return null;
@@ -208,7 +203,7 @@
                 />
               {:else}
                 <Avatar
-                  userId={getAvatarUserId(item)}
+                  userId={item.contactId}
                   size="md"
                   fallbackLabel={getEffectiveName(item)}
                 />

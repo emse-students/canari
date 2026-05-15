@@ -26,7 +26,7 @@
     };
   } = $props();
 
-  let userId = $state('');
+  const userId = $derived(currentUserId() ?? '');
   let email = $state('');
   let authToken = $state('');
 
@@ -215,9 +215,7 @@
   });
 
   onMount(() => {
-    const savedUser = currentUserId();
-    if (savedUser) {
-      userId = savedUser;
+    if (userId) {
       getToken()
         .then((t) => { authToken = t; })
         .catch((e) => console.error('[Posts] Failed to get token', e));

@@ -183,32 +183,37 @@
     }
   });
 
-  /** Toggles a poll option selection. Replaces the selection for single-choice polls; adds/removes for multiple-choice. */
-  function toggleOption(pollId: string, optionId: string, multipleChoice: boolean) {
+  /**
+   * Handles a click on a poll option.
+   * Single-choice: toggles the selection and immediately submits (click = vote, click again = remove).
+   * Multiple-choice: toggles selection only; user submits manually with the "Voter" button.
+   */
+  function handleVoteClick(pollId: string, optionId: string, multipleChoice: boolean) {
     if (!multipleChoice) {
-      selectedOptions = [optionId];
-      return;
-    }
-    if (selectedOptions.includes(optionId)) {
-      selectedOptions = selectedOptions.filter((id) => id !== optionId);
+      selectedOptions = selectedOptions.includes(optionId) ? [] : [optionId];
+      void submitVote(pollId, true);
     } else {
-      selectedOptions = [...selectedOptions, optionId];
+      if (selectedOptions.includes(optionId)) {
+        selectedOptions = selectedOptions.filter((id) => id !== optionId);
+      } else {
+        selectedOptions = [...selectedOptions, optionId];
+      }
     }
   }
 
   /** Submits the current selectedOptions to the API and updates the local poll vote counts on success. */
-  async function submitVote(pollId: string) {
+  async function submitVote(pollId: string, allowEmpty = false) {
     if (!currentUserId.trim()) {
       errorMessage = 'Identifiez-vous avant de voter.';
       return;
     }
-    if (selectedOptions.length === 0) {
+    if (!allowEmpty && selectedOptions.length === 0) {
       errorMessage = 'Sélectionnez au moins une option.';
       return;
     }
     try {
       await votePoll(localPost.id, pollId, { optionIds: selectedOptions });
-      actionMessage = 'Vote enregistré !';
+      actionMessage = selectedOptions.length === 0 ? 'Vote retiré.' : 'Vote enregistré !';
       // Update the poll locally — track votesByUser + per-option vote arrays
       const updatedPolls = (localPost.polls ?? []).map((p) => {
         if (p.id !== pollId) return p;
@@ -493,7 +498,7 @@
   <PostPolls
     polls={localPost.polls}
     {selectedOptions}
-    onToggleOption={toggleOption}
+    onVoteClick={handleVoteClick}
     onSubmitVote={submitVote}
   />
 

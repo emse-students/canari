@@ -9,13 +9,13 @@
     polls: Poll[] | undefined;
     /** Option IDs the current user has selected across all polls. */
     selectedOptions: string[];
-    /** Called when the user clicks a poll option to toggle its selection. */
-    onToggleOption: (pollId: string, optionId: string, multipleChoice: boolean) => void;
-    /** Called when the user clicks the "Voter" button to submit their selection. */
+    /** Called when the user clicks a poll option. Single-choice: also submits immediately. */
+    onVoteClick: (pollId: string, optionId: string, multipleChoice: boolean) => void;
+    /** Called when the user clicks the "Voter" button (multiple-choice polls only). */
     onSubmitVote: (pollId: string) => void;
   }
 
-  let { polls, selectedOptions, onToggleOption, onSubmitVote }: Props = $props();
+  let { polls, selectedOptions, onVoteClick, onSubmitVote }: Props = $props();
 
   // Tooltip state
   let tooltipOptionId = $state<string | null>(null);
@@ -147,7 +147,7 @@
                 {isSelected
                 ? 'border-amber-500 bg-amber-500/5'
                 : 'border-black/5 dark:border-white/5 bg-white/50 dark:bg-black/40 hover:border-amber-500/40 hover:bg-white/80 dark:hover:bg-black/60'}"
-              onclick={() => onToggleOption(poll.id, option.id, poll.multipleChoice)}
+              onclick={() => onVoteClick(poll.id, option.id, poll.multipleChoice)}
               aria-pressed={isSelected}
             >
               <!-- Barre de progression visuelle des votes en arrière-plan -->
@@ -233,22 +233,22 @@
           {/each}
         </div>
 
-        <!-- Pied du sondage (Total + Bouton de validation) -->
+        <!-- Pied du sondage (Total + Bouton de validation pour multi-choice) -->
         <div class="mt-5 flex items-center justify-between">
           <span class="text-xs font-semibold text-text-muted">
             {totalVotes} vote{totalVotes > 1 ? 's' : ''} au total
           </span>
-          {#if !poll.endsAt || new Date(poll.endsAt).getTime() > Date.now()}
+          {#if poll.endsAt && new Date(poll.endsAt).getTime() <= Date.now()}
+            <span class="text-xs font-bold text-text-muted opacity-60">Sondage terminé</span>
+          {:else if poll.multipleChoice}
             <button
               type="button"
               class="px-5 py-2.5 rounded-xl bg-amber-500 text-[#151B2C] font-extrabold text-sm transition-all shadow-md shadow-amber-500/20 hover:bg-amber-400 hover:shadow-lg hover:shadow-amber-500/30 active:scale-95 active:shadow-md disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-md disabled:active:scale-100 disabled:shadow-none outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50"
               disabled={selectedOptions.length === 0}
               onclick={() => onSubmitVote(poll.id)}
             >
-              {hasVoted(poll) ? 'Modifier mon vote' : 'Voter'}
+              Voter
             </button>
-          {:else}
-            <span class="text-xs font-bold text-text-muted opacity-60">Sondage terminé</span>
           {/if}
         </div>
       </div>
