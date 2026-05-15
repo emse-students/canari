@@ -310,6 +310,7 @@
   <div
     class="fixed inset-0 z-[150] bg-black/92 backdrop-blur-sm"
     role="dialog"
+    tabindex="-1"
     aria-modal="true"
     aria-label="Aperçu média"
     onkeydown={onLightboxKeydown}
