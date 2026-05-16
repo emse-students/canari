@@ -41,7 +41,7 @@ class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
             Log.e(TAG, "doWork: PIN absent (push_context.json manquant ou invalide) → failure")
             return Result.failure()
         }
-        val filesDir = applicationContext.filesDir.absolutePath
+        val filesDir = applicationContext.filesDir.parentFile!!.absolutePath
         Log.d(TAG, "doWork: état MLS=${stateBytes.size} octets, filesDir=$filesDir")
 
         return try {
@@ -63,13 +63,13 @@ class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
     }
 
     private fun loadMlsState(): ByteArray? {
-        val file = File(applicationContext.filesDir, "mls.bin")
+        val file = File(applicationContext.filesDir.parentFile, "mls.bin")
         if (!file.exists()) return null
         return try { file.readBytes() } catch (_: Exception) { null }
     }
 
     private fun loadPin(): String? {
-        val file = File(applicationContext.filesDir, "push_context.json")
+        val file = File(applicationContext.filesDir.parentFile, "push_context.json")
         if (!file.exists()) return null
         return try {
             JSONObject(file.readText()).optString("pin").takeIf { it.isNotEmpty() }

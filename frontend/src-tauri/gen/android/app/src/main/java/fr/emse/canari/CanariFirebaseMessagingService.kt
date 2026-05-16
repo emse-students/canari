@@ -44,9 +44,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         Log.i(TAG, "onNewToken: nouveau token FCM reçu")
         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit().putString(KEY_FCM_TOKEN, token).apply()
-        // Also write to file so the Rust get_fcm_token command can read it
+        // Also write to file so the Rust get_fcm_token command can read it.
+        // app_data_dir() in Rust resolves to activity.dataDir (parent of filesDir).
         try {
-            File(filesDir, "fcm_token.txt").writeText(token)
+            File(filesDir.parentFile, "fcm_token.txt").writeText(token)
         } catch (e: Exception) {
             Log.w(TAG, "onNewToken: impossible d'écrire fcm_token.txt: ${e.message}")
         }
@@ -132,7 +133,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     )
 
     private fun loadPushContext(): PushContext? {
-        val file = File(filesDir, "push_context.json")
+        val file = File(filesDir.parentFile, "push_context.json")
         if (!file.exists()) return null
         return try {
             val j = JSONObject(file.readText())
@@ -146,7 +147,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     }
 
     private fun loadMlsState(): ByteArray? {
-        val file = File(filesDir, "mls.bin")
+        val file = File(filesDir.parentFile, "mls.bin")
         return if (file.exists()) try { file.readBytes() } catch (_: Exception) { null } else null
     }
 

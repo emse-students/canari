@@ -45,7 +45,7 @@ class CanariApplication : Application() {
 
     private fun processPendingPushSecret() {
         try {
-            val file = File(filesDir, "pending_push_secret.txt")
+            val file = File(filesDir.parentFile, "pending_push_secret.txt")
             if (!file.exists()) return
             val secret = file.readText().trim()
             if (secret.isNotEmpty()) {

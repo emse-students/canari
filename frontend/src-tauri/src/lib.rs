@@ -1043,13 +1043,17 @@ fn exporter_secret(
 fn get_fcm_token(app: tauri::AppHandle) -> Option<String> {
     #[cfg(target_os = "android")]
     {
-        let data_dir = app.path().app_data_dir().ok()?;
-        let token = std::fs::read_to_string(data_dir.join("fcm_token.txt")).ok()?;
-        let token = token.trim().to_string();
-        if token.is_empty() {
-            None
-        } else {
-            Some(token)
+        let data_dir = match app.path().app_data_dir() {
+            Ok(d) => d,
+            Err(e) => { log::warn!("[FCM] app_data_dir() failed: {e}"); return None; }
+        };
+        match std::fs::read_to_string(data_dir.join("fcm_token.txt")) {
+            Ok(token) => {
+                let token = token.trim().to_string();
+                if token.is_empty() { log::warn!("[FCM] fcm_token.txt is empty"); None }
+                else { Some(token) }
+            }
+            Err(e) => { log::warn!("[FCM] read fcm_token.txt: {e}"); None }
         }
     }
     #[cfg(not(target_os = "android"))]
@@ -1256,9 +1260,20 @@ fn delete_mls_state(app: tauri::AppHandle) -> Result<(), String> {
 /// Utilisé pour restaurer le device ID quand localStorage est vide (réinstall Android).
 #[tauri::command]
 fn load_push_context(app: tauri::AppHandle) -> Option<serde_json::Value> {
-    let data_dir = app.path().app_data_dir().ok()?;
-    let bytes = std::fs::read(data_dir.join("push_context.json")).ok()?;
-    serde_json::from_slice(&bytes).ok()
+    let data_dir = match app.path().app_data_dir() {
+        Ok(d) => d,
+        Err(e) => { log::warn!("[PushCtx] app_data_dir() failed: {e}"); return None; }
+    };
+    let path = data_dir.join("push_context.json");
+    let bytes = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => { log::warn!("[PushCtx] read push_context.json: {e}"); return None; }
+    };
+    match serde_json::from_slice(&bytes) {
+        Ok(v) => Some(v),
+        Err(e) => { log::warn!("[PushCtx] parse push_context.json: {e}"); None }
+    }
 }
 
 /// Lit {app_data_dir}/mls.bin et retourne son contenu chiffré.
@@ -1266,9 +1281,16 @@ fn load_push_context(app: tauri::AppHandle) -> Option<serde_json::Value> {
 /// Utilisé au démarrage sur mobile quand localStorage est vide (WebView nettoyé).
 #[tauri::command]
 fn load_mls_state(app: tauri::AppHandle) -> Option<Vec<u8>> {
-    let data_dir = app.path().app_data_dir().ok()?;
+    let data_dir = match app.path().app_data_dir() {
+        Ok(d) => d,
+        Err(e) => { log::warn!("[MLS] app_data_dir() failed: {e}"); return None; }
+    };
     let path = data_dir.join("mls.bin");
-    std::fs::read(&path).ok()
+    match std::fs::read(&path) {
+        Ok(b) => Some(b),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => { log::warn!("[MLS] read mls.bin: {e}"); None }
+    }
 }
 
 // Supprime tous les fichiers .db dans le dossier de l'app
@@ -1329,8 +1351,9 @@ fn set_native_flag(key: String, value: bool, app: tauri::AppHandle) -> Result<()
 /// Returns an empty object if the file does not exist yet.
 #[tauri::command]
 fn get_native_flags(app: tauri::AppHandle) -> serde_json::Value {
-    let Ok(data_dir) = app.path().app_data_dir() else {
-        return serde_json::Value::Object(serde_json::Map::new());
+    let data_dir = match app.path().app_data_dir() {
+        Ok(d) => d,
+        Err(e) => { log::warn!("[Flags] app_data_dir() failed: {e}"); return serde_json::Value::Object(serde_json::Map::new()); }
     };
     let path = data_dir.join("native_flags.json");
     if !path.exists() {
@@ -1399,6 +1422,7 @@ pub fn run() {
             // Initialisé ici avec le chemin appData définitif.
             // block_on est sûr : setup() s'exécute avant le démarrage de l'event loop Tauri.
             let data_dir = app.path().app_data_dir().map_err(|e| format!("{e}"))?;
+            log::info!("[Path] app_data_dir = {}", data_dir.display());
             std::fs::create_dir_all(&data_dir)?;
             let db_path = data_dir.join("mls_pending.db");
             let pending_pool = tauri::async_runtime::block_on(async {

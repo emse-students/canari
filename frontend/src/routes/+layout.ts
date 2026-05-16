@@ -4,8 +4,8 @@
 
 import type { LoadEvent } from '@sveltejs/kit';
 import { currentUserId, fetchUserProfile } from '$lib/stores/user';
+import { refresh } from '$lib/stores/auth';
 import { goto } from '$app/navigation';
-import { resolveActivePlaceId } from '$lib/navigation/places';
 // See: https://v2.tauri.app/start/frontend/sveltekit/ for more info
 export const ssr = false;
 
@@ -17,15 +17,25 @@ export const load = async (event: LoadEvent) => {
     event.url.pathname.startsWith('/auth') ||
     event.url.pathname.startsWith('/legal');
 
-  const activePlaceId = resolveActivePlaceId(event.url.pathname);
   if (typeof window === 'undefined') return;
   if (isAuthRoute) return;
 
-  const userId = currentUserId();
+  let userId = currentUserId();
   if (!userId) {
-    return goto(`/login?returnTo=${encodeURIComponent(activePlaceId)}`, {
-      replaceState: true,
-    }).catch(() => {});
+    // userId may be transiently null if clearUserLocally() was called (e.g. after
+    // an MLS login failure) while the HTTP session (refresh cookie) is still valid.
+    // Attempt a silent refresh — _doRefresh restores userId from the JWT sub claim.
+    try {
+      await refresh();
+      userId = currentUserId();
+    } catch {
+      // refresh failed — session truly expired
+    }
+    if (!userId) {
+      return goto(`/login?returnTo=${encodeURIComponent(event.url.pathname)}`, {
+        replaceState: true,
+      }).catch(() => {});
+    }
   }
 
   // Keep the strict "unknown user => login" behavior, but avoid false redirects
@@ -35,7 +45,7 @@ export const load = async (event: LoadEvent) => {
   } catch (error) {
     const message = String(error);
     if (message.includes('(404)')) {
-      return goto(`/login?returnTo=${encodeURIComponent(activePlaceId)}`, {
+      return goto(`/login?returnTo=${encodeURIComponent(event.url.pathname)}`, {
         replaceState: true,
       }).catch(() => {});
     }
