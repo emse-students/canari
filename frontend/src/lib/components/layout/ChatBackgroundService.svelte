@@ -11,7 +11,7 @@
    * En utilisant les singletons globaux (globalChatSingleton.svelte.ts), la
    * connexion persiste sur toutes les routes et non seulement sur /chat.
    */
-  import { onMount, untrack } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { afterNavigate, goto } from '$app/navigation';
   import { BiometricService } from '$lib/services/biometric';
   import { loadPin } from '$lib/utils/pinVault';
@@ -473,15 +473,19 @@
         <button
           type="button"
           class="shrink-0 rounded-xl bg-amber-500 px-4 py-2 text-xs font-bold text-[#151B2C] shadow-sm transition-all hover:-translate-y-0.5 hover:bg-amber-400 hover:shadow-md"
-          onclick={() => {
+          onclick={async () => {
+            const channelId = globalNotifs.channelMembershipActionChannelId;
+            if (!channelId) return;
             globalNotifs.openJoinedChannelFromNotice(
               globalConvs.selectConversation,
               (id) => (globalChannels.selectedChannelConversationId = id)
             );
-            void (async () => {
-              const { goto: gotoPage } = await import('$app/navigation');
-              void gotoPage('/communities');
-            })();
+            await goto('/communities');
+            // La navigation déclenche un $effect dans MainChatPage qui remet
+            // selectedContact à null. On re-sélectionne le canal après le flush.
+            await tick();
+            globalChannels.selectedChannelConversationId = channelId;
+            globalConvs.selectConversation(channelId);
           }}
         >
           Rejoindre

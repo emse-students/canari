@@ -88,7 +88,7 @@
   <div class="w-full mt-1">
     {#if post.images.length === 1}
       <div>
-        <div class="relative w-full min-h-48 max-h-[75vh] bg-black/5 dark:bg-white/5 flex items-center justify-center overflow-hidden">
+        <div class="relative w-full aspect-[4/3] bg-black/5 dark:bg-white/5 overflow-hidden">
           <!-- Single image: PostImage handles its own lightbox -->
           <PostImage media={post.images[0]} {authToken} />
         </div>

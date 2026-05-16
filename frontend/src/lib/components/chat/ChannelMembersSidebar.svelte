@@ -99,11 +99,9 @@
             >
               <div class="relative shrink-0">
                 <Avatar userId={member.userId} size="sm" />
-                <span
-                  class="absolute bottom-0 right-0 block h-3 w-3 rounded-full ring-2 ring-white dark:ring-[#151B2C] shadow-sm {member.status === 'online'
-                    ? 'bg-emerald-500'
-                    : 'bg-zinc-400 dark:bg-zinc-600'}"
-                ></span>
+                {#if member.status === 'online'}
+                  <span class="absolute bottom-0 right-0 block h-3 w-3 rounded-full ring-2 ring-white dark:ring-[#151B2C] shadow-sm bg-emerald-500"></span>
+                {/if}
               </div>
               <UserName
                 userId={member.userId}
@@ -129,11 +127,9 @@
             >
               <div class="relative shrink-0">
                 <Avatar userId={member.userId} size="sm" />
-                <span
-                  class="absolute bottom-0 right-0 block h-3 w-3 rounded-full ring-2 ring-white dark:ring-[#151B2C] shadow-sm {member.status === 'online'
-                    ? 'bg-emerald-500'
-                    : 'bg-zinc-400 dark:bg-zinc-600'}"
-                ></span>
+                {#if member.status === 'online'}
+                  <span class="absolute bottom-0 right-0 block h-3 w-3 rounded-full ring-2 ring-white dark:ring-[#151B2C] shadow-sm bg-emerald-500"></span>
+                {/if}
               </div>
               <UserName
                 userId={member.userId}

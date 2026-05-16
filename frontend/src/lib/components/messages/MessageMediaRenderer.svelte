@@ -91,12 +91,12 @@
             onclick={openLightbox}
             onpointerdown={(e) => e.stopPropagation()}
             aria-label="Ouvrir l'image en plein écran"
-            class="block overflow-hidden rounded-[1.1rem] bg-black/5 dark:bg-white/5"
+            class="block overflow-hidden rounded-[1.1rem] bg-black/5 dark:bg-white/5 w-full max-w-[14rem] sm:w-56 aspect-[4/3]"
           >
             <img
               src={blobUrl}
               alt={mediaRef.fileName ?? 'Image partagée'}
-              class="max-h-[22rem] max-w-full object-contain cursor-zoom-in transition-transform duration-500 md:group-hover/media:scale-[1.02]"
+              class="w-full h-full object-cover cursor-zoom-in transition-transform duration-500 md:group-hover/media:scale-[1.02]"
             />
           </button>
 
