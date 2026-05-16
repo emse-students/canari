@@ -44,7 +44,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         Log.i(TAG, "onNewToken: nouveau token FCM reçu")
         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit().putString(KEY_FCM_TOKEN, token).apply()
-        // Token stored in SharedPreferences only — no plaintext file
+        // Also write to file so the Rust get_fcm_token command can read it
+        try {
+            File(filesDir, "fcm_token.txt").writeText(token)
+        } catch (e: Exception) {
+            Log.w(TAG, "onNewToken: impossible d'écrire fcm_token.txt: ${e.message}")
+        }
     }
 
     override fun onMessageReceived(remoteMessage: RemoteMessage) {

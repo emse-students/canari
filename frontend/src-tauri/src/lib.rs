@@ -1059,18 +1059,6 @@ fn get_fcm_token(app: tauri::AppHandle) -> Option<String> {
     }
 }
 
-/// Appelée depuis Kotlin via evaluateJavascript → window.__TAURI_INTERNALS__.invoke.
-/// Persiste le token dans fcm_token.txt (Android) puis émet un événement Tauri
-/// "fcm-token" vers le frontend — remplace le CustomEvent DOM précédent.
-#[tauri::command]
-fn notify_fcm_token(app: tauri::AppHandle, token: String) -> Result<(), String> {
-    #[cfg(target_os = "android")]
-    {
-        let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-        std::fs::write(data_dir.join("fcm_token.txt"), &token).map_err(|e| e.to_string())?;
-    }
-    app.emit("fcm-token", token).map_err(|e| e.to_string())
-}
 
 // ─── Protobuf minimal helpers (pas de dépendance externe) ────────────────────
 
@@ -1649,7 +1637,6 @@ pub fn run() {
             recevoir_message_bytes,
             exporter_secret,
             get_fcm_token,
-            notify_fcm_token,
             store_push_context,
             load_push_context,
             save_mls_state,

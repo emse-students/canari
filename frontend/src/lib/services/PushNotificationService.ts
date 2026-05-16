@@ -1,20 +1,20 @@
 /**
  * PushNotificationService.ts
  *
- * Gestion des notifications push (FCM/APNs) sur Android et iOS via Tauri.
+ * Gestion des notifications push FCM sur Android via Tauri.
  *
  * Flux :
- *  1. Au démarrage, détecte la plateforme (Android / iOS / desktop)
- *  2. Lit le token push via la commande Rust `get_fcm_token`
- *     – Android : token FCM lu depuis les SharedPreferences Kotlin
- *     – iOS     : token APNs/FCM lu depuis UserDefaults Swift (à implémenter)
- *  3. Envoie le token au backend Canari avec la plateforme correcte
+ *  1. `startPushService` est appelé au démarrage (après login).
+ *  2. `getFcmToken` interroge la commande Rust `get_fcm_token` (lit fcm_token.txt
+ *     écrit par MainActivity.onCreate ou CanariFirebaseMessagingService.onNewToken)
+ *     avec des tentatives toutes les 500 ms pendant 30 s max.
+ *  3. Le token est envoyé au backend qui retourne un `pushSecret` stocké
+ *     dans le Keystore Android via `store_push_secret`.
  *
- * Sur desktop/web, les méthodes sont des no-op silencieux.
+ * Sur desktop/web, toutes les méthodes sont des no-op silencieux.
  */
 
 import { isTauri, invoke } from '@tauri-apps/api/core';
-import { once } from '@tauri-apps/api/event';
 import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
 import { currentUserId } from '$lib/stores/user';
 
@@ -22,7 +22,7 @@ const FCM_TOKEN_STORAGE_KEY = 'canari_fcm_token';
 const BACKGROUND_RETRY_ATTEMPTS = 6;
 const BACKGROUND_RETRY_DELAY_MS = 5000;
 
-// Prevent infinite retry spam when Google Play Services are unavailable.
+// Évite le spam de tentatives si Google Play Services est indisponible.
 let pushAttempted = false;
 
 function isTauriRuntime(): boolean {
@@ -31,27 +31,23 @@ function isTauriRuntime(): boolean {
 }
 
 /**
- * Lit le token FCM. Tente d'abord un invoke immédiat (token déjà écrit),
- * puis écoute l'événement natif `canari:fcm-token` émis par MainActivity
- * dès que Firebase confirme le token (max 30 s).
+ * Lit le token FCM via la commande Rust `get_fcm_token` (lit fcm_token.txt).
+ * Interroge toutes les 500 ms pendant 30 s pour laisser le temps à
+ * MainActivity.onCreate de terminer l'appel Firebase asynchrone.
  */
 export async function getFcmToken(): Promise<string | null> {
   if (!isTauriRuntime()) return null;
-  try {
-    const immediate = await invoke<string | null>('get_fcm_token');
-    if (immediate) return immediate;
-  } catch {
-    console.warn('[Push] invoke get_fcm_token failed, waiting for event...');
-    // Ne plus retourner null ici, laisser le code descendre vers la Promise
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    try {
+      const token = await invoke<string | null>('get_fcm_token');
+      if (token) return token;
+    } catch {
+      return null; // commande Rust indisponible
+    }
+    await new Promise<void>((r) => setTimeout(r, 500));
   }
-  // Token not yet written — wait for the Tauri event emitted by notify_fcm_token.
-  return new Promise<string | null>((resolve) => {
-    const timer = setTimeout(() => resolve(null), 30_000);
-    once<string>('fcm-token', (event) => {
-      clearTimeout(timer);
-      resolve(event.payload ?? null);
-    }).catch(() => resolve(null));
-  });
+  return null;
 }
 
 /**

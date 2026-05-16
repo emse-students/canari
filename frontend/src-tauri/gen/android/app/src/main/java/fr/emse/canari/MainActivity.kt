@@ -3,8 +3,11 @@ package fr.emse.canari
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.webkit.CookieManager
 import android.webkit.WebView
+import com.google.firebase.messaging.FirebaseMessaging
+import java.io.File
 
 class MainActivity : TauriActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -14,6 +17,21 @@ class MainActivity : TauriActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
                 requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 101)
+            }
+        }
+
+        // Synchronise le token FCM vers fcm_token.txt lu par la commande Rust get_fcm_token.
+        // Nécessaire au redémarrage : onNewToken n'est pas rappelé si le token est inchangé.
+        FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
+            if (!token.isNullOrEmpty()) {
+                try {
+                    File(filesDir, "fcm_token.txt").writeText(token)
+                    getSharedPreferences(CanariFirebaseMessagingService.PREFS_NAME, MODE_PRIVATE)
+                        .edit().putString(CanariFirebaseMessagingService.KEY_FCM_TOKEN, token).commit()
+                    Log.i("MainActivity", "FCM token synced (${token.take(20)}…)")
+                } catch (e: Exception) {
+                    Log.w("MainActivity", "FCM token sync failed: ${e.message}")
+                }
             }
         }
     }
