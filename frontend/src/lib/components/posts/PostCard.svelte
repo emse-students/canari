@@ -425,16 +425,17 @@
   }
 </script>
 
+<div class="relative mb-6">
+  {#if localPost.pinned}
+    <span class="absolute -top-2 left-4 z-10 text-[0.6rem] font-extrabold uppercase tracking-widest bg-amber-500 text-[#151B2C] px-2 py-0.5 rounded-full shadow-md shadow-amber-500/30 inline-flex items-center gap-1 pointer-events-none">
+      <Pin size={10} strokeWidth={3} /> Épinglé
+    </span>
+  {/if}
 <Card
-  class="group/card mb-6 !p-0 transition-all duration-300 hover:shadow-xl hover:-translate-y-0.5 border border-black/5 dark:border-white/10 bg-white/70 dark:bg-[#151B2C]/70 backdrop-blur-xl"
+  class="group/card !p-0 transition-all duration-300 hover:shadow-xl hover:-translate-y-0.5 border border-black/5 dark:border-white/10 bg-white/70 dark:bg-[#151B2C]/70 backdrop-blur-xl"
 >
   <div class="relative">
     <PostHeader post={localPost} />
-    {#if localPost.pinned}
-      <span class="absolute top-3 left-3 flex items-center gap-1 text-[0.6rem] font-extrabold uppercase tracking-widest text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full">
-        <Pin size={10} strokeWidth={3} /> Épinglé
-      </span>
-    {/if}
     <PostOverlayControls
       pinned={localPost.pinned ?? false}
       {isOwnPost}
@@ -557,3 +558,4 @@
   <!-- Notifications intégrées à la carte -->
   <PostFeedback {errorMessage} {actionMessage} />
 </Card>
+</div>

@@ -21,6 +21,23 @@
   let { textSegments, searchTerm, isDeleted, firstLink }: Props = $props();
 
   const normalizedSearchTerm = $derived(searchTerm.trim().toLowerCase());
+
+  type MentionPart = { type: 'text' | 'mention' | 'hashtag'; value: string };
+  function splitWithMentions(text: string): MentionPart[] {
+    const parts: MentionPart[] = [];
+    const pattern = /(@[\wÀ-ž]{1,50}|#[\wÀ-ž]{2,50})/g;
+    let lastIdx = 0;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(text)) !== null) {
+      if (match.index > lastIdx) parts.push({ type: 'text', value: text.slice(lastIdx, match.index) });
+      const token = match[0];
+      if (token.startsWith('@')) parts.push({ type: 'mention', value: token.slice(1) });
+      else parts.push({ type: 'hashtag', value: token.slice(1) });
+      lastIdx = match.index + token.length;
+    }
+    if (lastIdx < text.length) parts.push({ type: 'text', value: text.slice(lastIdx) });
+    return parts;
+  }
 </script>
 
 <p
@@ -68,7 +85,15 @@
         {#if part.hit}
           <mark class="rounded px-0.5 bg-amber-300/60 text-inherit">{part.text}</mark>
         {:else}
-          {part.text}
+          {#each splitWithMentions(part.text) as mp (`${mp.type}-${mp.value}`)}
+            {#if mp.type === 'mention'}
+              <span class="font-semibold text-amber-600 dark:text-amber-400 bg-amber-500/10 rounded-full px-1 text-[0.9em]">@{mp.value}</span>
+            {:else if mp.type === 'hashtag'}
+              <span class="font-semibold text-amber-600/80 dark:text-amber-400/70">#{mp.value}</span>
+            {:else}
+              {mp.value}
+            {/if}
+          {/each}
         {/if}
       {/each}
     {/if}

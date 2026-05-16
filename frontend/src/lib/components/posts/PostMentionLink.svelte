@@ -14,6 +14,7 @@
   const isMention = $derived(href.startsWith('#mention-'));
   const isHashtag = $derived(href.startsWith('#hashtag-'));
   const mentionName = $derived(isMention ? href.slice(9) : '');
+  const hashtagName = $derived(isHashtag ? href.slice(9) : '');
 
   async function handleMentionClick(e: MouseEvent) {
     e.preventDefault();
@@ -33,9 +34,7 @@
     @{mentionName}
   </button>
 {:else if isHashtag}
-  <span class="font-semibold text-amber-600/80 dark:text-amber-400/70">
-    {@render children?.()}
-  </span>
+  <span class="font-semibold text-amber-600/80 dark:text-amber-400/70">#{hashtagName}</span>
 {:else}
   <a {href} {title} target="_blank" rel="noopener noreferrer" class="text-amber-700 dark:text-amber-400 underline underline-offset-2 hover:text-amber-500 transition-colors">
     {@render children?.()}

@@ -18,6 +18,11 @@
   import { apiFetch } from '$lib/utils/apiFetch';
   import { coreUrl } from '$lib/utils/apiUrl';
   import { timeAgo, exactDate } from '$lib/utils/time';
+  import SvelteMarkdown from '@humanspeak/svelte-markdown';
+  import PostMentionLink from './PostMentionLink.svelte';
+  import { preprocessPostMarkdown } from '$lib/utils/posts/postMarkdown';
+
+  const mentionRenderers = { link: PostMentionLink };
 
   type SortMode = 'recent' | 'oldest' | 'liked';
 
@@ -366,9 +371,11 @@
               </span>
             {/if}
           {/if}
-          {#if comment.text}<span class="text-[0.9rem] text-text-main leading-snug break-words"
-              >{comment.text}</span
-            >{/if}
+          {#if comment.text}
+            <div class="text-[0.9rem] text-text-main leading-snug break-words [&_p]:inline [&_p]:m-0">
+              <SvelteMarkdown source={preprocessPostMarkdown(comment.text)} renderers={mentionRenderers} options={{ gfm: true, breaks: true }} />
+            </div>
+          {/if}
           {#if comment.media && authToken}
             <div
               class="relative mt-1.5 rounded-xl overflow-hidden bg-black/5 dark:bg-white/5"
