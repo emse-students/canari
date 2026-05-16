@@ -159,6 +159,29 @@ export class MessagingService {
       /* non-fatal */
     }
 
+    // Resolve sender display name so the notification title is human-readable
+    // when decryption fails in the background (SQLite lock / MLS state absent).
+    let senderName = '';
+    try {
+      const rows: {
+        displayName: string | null;
+        firstName: string | null;
+        lastName: string | null;
+      }[] = await this.groupRepo.manager.query(
+        `SELECT "displayName", "firstName", "lastName" FROM users WHERE id = $1 LIMIT 1`,
+        [senderId],
+      );
+      if (rows[0]) {
+        const { displayName, firstName, lastName } = rows[0];
+        senderName =
+          displayName?.trim() ||
+          [firstName, lastName].filter(Boolean).join(' ') ||
+          '';
+      }
+    } catch {
+      /* non-fatal */
+    }
+
     // Inline ciphertext eliminates the extra HTTP round-trip in the Kotlin
     // service and avoids auth issues when the app is cold-started.
     // FCM data payloads are limited to 4 KB; skip inline proto for large
@@ -178,6 +201,7 @@ export class MessagingService {
             groupId,
             queuedMessageId: queued.id,
             senderId,
+            senderName,
             groupName,
             // Empty string when proto is too large; Kotlin falls back to
             // fetching it from the backend or showing a generic notification.

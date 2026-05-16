@@ -569,7 +569,7 @@ dependencies = [
 
 [[package]]
 name = "canari"
-version = "0.1.38"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "jni",

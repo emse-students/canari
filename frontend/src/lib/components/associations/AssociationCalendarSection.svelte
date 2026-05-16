@@ -272,12 +272,14 @@
 
   function dismissEventModal(fromHistory = false) {
     modalOpen = false;
-    if (!fromHistory && eventModalHistoryClose) {
-      closeHistoryOverlayFromUi(eventModalHistoryClose);
-      return;
-    }
     if (fromHistory) {
       eventModalHistoryClose = null;
+      return;
+    }
+    if (eventModalHistoryClose) {
+      const h = eventModalHistoryClose;
+      eventModalHistoryClose = null;
+      closeHistoryOverlayFromUi(h);
     }
   }
 

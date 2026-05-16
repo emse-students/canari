@@ -75,15 +75,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val thread = Thread {
             val groupId         = data["groupId"] ?: ""
             val groupName       = data["groupName"]?.takeIf { it.isNotEmpty() } ?: groupId
+            val senderName      = data["senderName"]?.takeIf { it.isNotEmpty() } ?: groupName
             val queuedMessageId = data["queuedMessageId"]
             val inlineProto     = data["proto"]?.takeIf { it.isNotEmpty() }
 
             Log.d(TAG, "Déchiffrement: groupId=$groupId queuedMessageId=$queuedMessageId inlineProto=${inlineProto != null}")
             val body = tryDecrypt(queuedMessageId, groupId, inlineProto)
-                ?: buildFallbackText(groupName).also { Log.w(TAG, "Déchiffrement échoué → fallback: $it") }
+                ?: buildFallbackText(senderName).also { Log.w(TAG, "Déchiffrement échoué → fallback: $it") }
 
             Log.d(TAG, "showNotification: body=${body.take(60)}")
-            showNotification("Canari", body, data)
+            showNotification(senderName, body, data)
         }
         thread.start()
         thread.join(8_000)
@@ -209,8 +210,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         null
     }
 
-    private fun buildFallbackText(groupName: String): String =
-        if (groupName.isNotEmpty()) "Nouveau message dans « $groupName »"
+    private fun buildFallbackText(senderName: String): String =
+        if (senderName.isNotEmpty()) "Nouveau message de $senderName"
         else "Vous avez reçu un message chiffré"
 
     private fun showNotification(title: String, body: String, data: Map<String, String>) {

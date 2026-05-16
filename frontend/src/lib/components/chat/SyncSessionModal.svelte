@@ -200,12 +200,16 @@
 
   function dismiss(fromHistory = false) {
     cleanupStream();
-    if (!fromHistory && historyClose) {
-      closeHistoryOverlayFromUi(historyClose);
-      return;
-    }
     if (fromHistory) {
       historyClose = null;
+      onClose();
+      return;
+    }
+    if (historyClose) {
+      const h = historyClose;
+      historyClose = null;
+      closeHistoryOverlayFromUi(h);
+      return;
     }
     onClose();
   }

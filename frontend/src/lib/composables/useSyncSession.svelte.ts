@@ -41,6 +41,7 @@ export function useSyncSession() {
   let syncQrDataUrl = $state('');
   let syncStatusText = $state('');
   let isSyncSessionBusy = $state(false);
+  let isCancelled = false;
 
   /** Executes one bidirectional sync exchange (upload local messages, download peer messages) then reloads conversations and re-processes invitations. */
   async function runSyncRound(sessionId: string, peerDeviceId: string, ctx: SyncSessionContext) {
@@ -67,6 +68,7 @@ export function useSyncSession() {
   /** Creates a new QR sync session (offer side): generates an ephemeral key pair, registers with the server, renders a QR code, then polls until the other device joins and runs the sync round. Times out after 3 minutes. */
   async function handleStartSyncSession(ctx: SyncSessionContext) {
     try {
+      isCancelled = false;
       isSyncSessionBusy = true;
       isSyncSessionOpen = true;
       syncMode = 'offer';
@@ -85,6 +87,7 @@ export function useSyncSession() {
 
       const waitUntil = Date.now() + 180_000;
       while (Date.now() < waitUntil) {
+        if (isCancelled) return;
         const state = await getSyncSessionState(ctx.historyBaseUrl, {
           sessionId: session.sessionId,
           userId: ctx.userId,
@@ -121,6 +124,7 @@ export function useSyncSession() {
   /** Joins an existing QR sync session (answer side): parses the QR payload, registers this device as the answerer, then runs the bidirectional sync round. */
   async function handleConfirmJoinSync(ctx: SyncSessionContext) {
     try {
+      isCancelled = false;
       isSyncSessionBusy = true;
       syncStatusText = 'Lecture du payload QR...';
 
@@ -197,9 +201,10 @@ export function useSyncSession() {
     syncStatusText = 'Impossible de copier automatiquement. Copiez le texte manuellement.';
   }
 
-  /** Closes the sync modal. No-op while a sync operation is in progress. */
+  /** Closes the sync modal and cancels any in-progress polling. */
   function closeModal() {
-    if (!isSyncSessionBusy) isSyncSessionOpen = false;
+    isCancelled = true;
+    isSyncSessionOpen = false;
   }
 
   return {
