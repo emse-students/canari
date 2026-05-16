@@ -15,12 +15,12 @@
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import PostImage from './PostImage.svelte';
   import { MediaService, compressImage } from '$lib/media';
-  import { apiFetch } from '$lib/utils/apiFetch';
-  import { coreUrl } from '$lib/utils/apiUrl';
   import { timeAgo, exactDate } from '$lib/utils/time';
   import SvelteMarkdown from '@humanspeak/svelte-markdown';
   import PostMentionLink from './PostMentionLink.svelte';
   import { preprocessPostMarkdown } from '$lib/utils/posts/postMarkdown';
+  import { useMentionAutocomplete } from '$lib/composables/useMentionAutocomplete.svelte';
+  import MentionDropdown from '$lib/components/shared/MentionDropdown.svelte';
 
   const mentionRenderers = { link: PostMentionLink };
 
@@ -115,65 +115,13 @@
     }
   }
 
-  type MentionUser = { id: string; displayName: string | null };
+  let commentInputEl = $state<HTMLInputElement | null>(null);
 
-  let mentionQuery = $state('');
-  let mentionSuggestions = $state<MentionUser[]>([]);
-  let mentionOpen = $state(false);
-  let mentionStart = $state(-1);
-  let mentionSelectedIdx = $state(-1);
-  let mentionDebounce: ReturnType<typeof setTimeout> | null = null;
-
-  /** Syncs the input value to the parent and triggers @mention autocomplete after a 250 ms debounce. */
-  function handleCommentInput(e: Event) {
-    const input = e.target as HTMLInputElement;
-    const val = input.value;
-    const cursor = input.selectionStart ?? val.length;
-
-    void onCommentTextChange(val);
-
-    const textBeforeCursor = val.slice(0, cursor);
-    const mentionMatch = textBeforeCursor.match(/@(\w*)$/);
-    if (mentionMatch && mentionMatch[1].length > 0) {
-      mentionStart = cursor - mentionMatch[0].length;
-      const q = mentionMatch[1];
-      mentionQuery = q;
-      if (mentionDebounce) clearTimeout(mentionDebounce);
-      mentionDebounce = setTimeout(() => void searchMentions(q), 250);
-    } else {
-      mentionOpen = false;
-      mentionSuggestions = [];
-      mentionQuery = '';
-    }
-  }
-
-  /** Queries the users search API and populates the mention suggestion dropdown. */
-  async function searchMentions(query: string) {
-    try {
-      const res = await apiFetch(`${coreUrl()}/api/users/search?q=${encodeURIComponent(query)}`);
-      if (res.ok) {
-        const data: MentionUser[] = await res.json();
-        mentionSuggestions = data.slice(0, 6);
-        mentionOpen = mentionSuggestions.length > 0;
-        mentionSelectedIdx = -1;
-      }
-    } catch {
-      mentionSuggestions = [];
-      mentionOpen = false;
-    }
-  }
-
-  /** Replaces the @query in the input with the selected user's display name and closes the dropdown. */
-  function selectMention(user: MentionUser) {
-    const displayName = user.displayName || user.id;
-    const before = commentText.slice(0, mentionStart);
-    const after = commentText.slice(mentionStart + 1 + mentionQuery.length);
-    void onCommentTextChange(`${before}@${displayName} ${after}`);
-    mentionOpen = false;
-    mentionSuggestions = [];
-    mentionQuery = '';
-    mentionStart = -1;
-  }
+  const mention = useMentionAutocomplete({
+    getText: () => commentText,
+    setText: (text) => void onCommentTextChange(text),
+    getEl: () => commentInputEl,
+  });
 
   let loadingAll = $state(false);
 
@@ -241,30 +189,8 @@
     cancelReply();
   }
 
-  /** Handles keyboard shortcuts on the comment input: Arrow keys navigate the mention dropdown, Enter submits, Escape cancels reply mode. */
   function handleInternalKeyDown(e: KeyboardEvent) {
-    if (mentionOpen && mentionSuggestions.length > 0) {
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        mentionSelectedIdx = Math.min(mentionSelectedIdx + 1, mentionSuggestions.length - 1);
-        return;
-      }
-      if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        mentionSelectedIdx = Math.max(mentionSelectedIdx - 1, -1);
-        return;
-      }
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        if (mentionSelectedIdx >= 0) selectMention(mentionSuggestions[mentionSelectedIdx]);
-        return;
-      }
-      if (e.key === 'Escape') {
-        mentionOpen = false;
-        mentionSuggestions = [];
-        return;
-      }
-    }
+    if (mention.handleKeydown(e)) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmitComment();
@@ -551,28 +477,7 @@
 
 {#snippet commentInputRow(placeholder: string)}
   <div class="relative">
-    {#if mentionOpen && mentionSuggestions.length > 0}
-      <ul
-        class="absolute bottom-full mb-1 left-10 right-0 z-50 bg-white/95 dark:bg-gray-900/95 border border-black/10 dark:border-white/10 rounded-xl shadow-xl max-h-48 overflow-auto backdrop-blur-sm"
-      >
-        {#each mentionSuggestions as user, i (user.id)}
-          <li>
-            <button
-              type="button"
-              class="w-full px-4 py-2 text-left text-sm transition-colors first:rounded-t-xl last:rounded-b-xl {i ===
-              mentionSelectedIdx
-                ? 'bg-amber-100/60 dark:bg-amber-900/30'
-                : 'hover:bg-amber-50 dark:hover:bg-amber-900/20'}"
-              onmousedown={() => selectMention(user)}
-            >
-              <span class="font-bold text-amber-600 dark:text-amber-400 mr-0.5">@</span><span
-                class="font-medium text-text-main">{user.displayName || user.id}</span
-              >
-            </button>
-          </li>
-        {/each}
-      </ul>
-    {/if}
+    <MentionDropdown open={mention.open} suggestions={mention.suggestions} selectedIdx={mention.selectedIdx} onSelect={mention.select} />
     {#if pendingPreviewUrl || uploadingMedia}
       <div class="flex items-center gap-2 mb-2 ml-[2.125rem]">
         <div
@@ -607,9 +512,10 @@
         class="flex-1 flex items-center bg-black/5 dark:bg-white/5 rounded-[1.25rem] px-3.5 py-1.5 border border-black/5 dark:border-white/10 focus-within:ring-2 focus-within:ring-amber-500/50 focus-within:bg-white dark:focus-within:bg-black/40 transition-all shadow-inner"
       >
         <input
+          bind:this={commentInputEl}
           type="text"
           value={commentText}
-          oninput={handleCommentInput}
+          oninput={mention.handleInput}
           onpaste={handleCommentPaste}
           {placeholder}
           class="flex-1 bg-transparent text-[0.9rem] font-medium text-text-main placeholder:text-text-muted/70 outline-none py-1"

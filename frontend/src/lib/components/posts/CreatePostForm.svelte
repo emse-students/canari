@@ -24,8 +24,8 @@
     type AssociationCalendarEvent,
   } from '$lib/associations/api';
   import { isGlobalAdmin } from '$lib/stores/user';
-  import { apiFetch } from '$lib/utils/apiFetch';
-  import { coreUrl } from '$lib/utils/apiUrl';
+  import { useMentionAutocomplete } from '$lib/composables/useMentionAutocomplete.svelte';
+  import MentionDropdown from '$lib/components/shared/MentionDropdown.svelte';
   import PollSection from './PollSection.svelte';
   import EventButtonSection from './EventButtonSection.svelte';
   import FormSection from './FormSection.svelte';
@@ -97,82 +97,11 @@
   let authToken = $state('');
   let textareaEl = $state<HTMLTextAreaElement | null>(null);
 
-  // --- @mention autocomplete ---
-  type MentionUser = { id: string; displayName: string | null };
-  let mentionQuery = $state('');
-  let mentionSuggestions = $state<MentionUser[]>([]);
-  let mentionOpen = $state(false);
-  let mentionStart = $state(-1);
-  let mentionSelectedIdx = $state(-1);
-  let mentionDebounce: ReturnType<typeof setTimeout> | null = null;
-
-  async function searchMentions(query: string) {
-    try {
-      const res = await apiFetch(`${coreUrl()}/api/users/search?q=${encodeURIComponent(query)}`);
-      if (res.ok) {
-        const data: MentionUser[] = await res.json();
-        mentionSuggestions = data.slice(0, 6);
-        mentionOpen = mentionSuggestions.length > 0;
-        mentionSelectedIdx = -1;
-      }
-    } catch {
-      mentionSuggestions = [];
-      mentionOpen = false;
-    }
-  }
-
-  function handleMentionInput(e: Event) {
-    const el = e.target as HTMLTextAreaElement;
-    const val = el.value;
-    const cursor = el.selectionStart ?? val.length;
-    const textBeforeCursor = val.slice(0, cursor);
-    const mentionMatch = textBeforeCursor.match(/@(\w*)$/);
-    if (mentionMatch && mentionMatch[1].length > 0) {
-      mentionStart = cursor - mentionMatch[0].length;
-      const q = mentionMatch[1];
-      mentionQuery = q;
-      if (mentionDebounce) clearTimeout(mentionDebounce);
-      mentionDebounce = setTimeout(() => void searchMentions(q), 250);
-    } else {
-      mentionOpen = false;
-      mentionSuggestions = [];
-      mentionQuery = '';
-    }
-  }
-
-  function selectMention(user: MentionUser) {
-    const displayName = user.displayName || user.id;
-    const savedStart = mentionStart;
-    const before = markdown.slice(0, savedStart);
-    const after = markdown.slice(savedStart + 1 + mentionQuery.length);
-    markdown = `${before}@${displayName} ${after}`;
-    const newCursor = before.length + displayName.length + 2;
-    mentionOpen = false;
-    mentionSuggestions = [];
-    mentionQuery = '';
-    mentionStart = -1;
-    void tick().then(() => {
-      textareaEl?.focus();
-      textareaEl?.setSelectionRange(newCursor, newCursor);
-    });
-  }
-
-  function handleMentionKeydown(e: KeyboardEvent) {
-    if (!mentionOpen || mentionSuggestions.length === 0) return;
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      mentionSelectedIdx = Math.min(mentionSelectedIdx + 1, mentionSuggestions.length - 1);
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      mentionSelectedIdx = Math.max(mentionSelectedIdx - 1, -1);
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      if (mentionSelectedIdx >= 0) selectMention(mentionSuggestions[mentionSelectedIdx]);
-    } else if (e.key === 'Escape') {
-      mentionOpen = false;
-      mentionSuggestions = [];
-    }
-  }
+  const mention = useMentionAutocomplete({
+    getText: () => markdown,
+    setText: (text) => { markdown = text; },
+    getEl: () => textareaEl,
+  });
 
   async function applyFormat(type: string) {
     if (!textareaEl) return;
@@ -633,28 +562,12 @@
       </div>
 
       <div class="relative">
-        {#if mentionOpen && mentionSuggestions.length > 0}
-          <ul
-            class="absolute bottom-full mb-1 left-4 right-4 z-50 bg-white/95 dark:bg-gray-900/95 border border-black/10 dark:border-white/10 rounded-xl shadow-xl max-h-48 overflow-auto backdrop-blur-sm"
-          >
-            {#each mentionSuggestions as user, i (user.id)}
-              <li>
-                <button
-                  type="button"
-                  class="w-full px-4 py-2 text-left text-sm transition-colors first:rounded-t-xl last:rounded-b-xl {i === mentionSelectedIdx ? 'bg-amber-100/60 dark:bg-amber-900/30' : 'hover:bg-amber-50 dark:hover:bg-amber-900/20'}"
-                  onmousedown={() => selectMention(user)}
-                >
-                  <span class="font-bold text-amber-600 dark:text-amber-400 mr-0.5">@</span><span class="font-medium text-text-main">{user.displayName || user.id}</span>
-                </button>
-              </li>
-            {/each}
-          </ul>
-        {/if}
+        <MentionDropdown open={mention.open} suggestions={mention.suggestions} selectedIdx={mention.selectedIdx} onSelect={mention.select} />
         <textarea
           bind:this={textareaEl}
           bind:value={markdown}
-          oninput={handleMentionInput}
-          onkeydown={handleMentionKeydown}
+          oninput={mention.handleInput}
+          onkeydown={(e) => mention.handleKeydown(e)}
           placeholder="Écrivez votre message ici..."
           rows={5}
           class="custom-scrollbar min-h-[120px] w-full resize-none rounded-xl bg-transparent px-4 py-3.5 text-[0.95rem] sm:text-[1rem] font-medium leading-relaxed text-text-main placeholder:text-text-muted/60 outline-none"
