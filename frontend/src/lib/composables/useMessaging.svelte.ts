@@ -18,6 +18,7 @@ import {
   deleteMessage,
 } from '$lib/utils/chat/messaging';
 import { insertMessageOrdered } from '$lib/utils/chat/messageOrder';
+import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 import { MediaService } from '$lib/media';
 import { getPreviewText, mkMediaEnvelope, parseEnvelope, serializeEnvelope } from '$lib/envelope';
 import { encodeAppMessage, mkMedia, MediaKind } from '$lib/proto/codec';
@@ -166,15 +167,22 @@ export function useMessaging() {
       (ctx.playReceiveTone ?? ctx.playNotificationTone)();
     }
 
+    const isAndroidTauri =
+      typeof window !== 'undefined' &&
+      !!(window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ &&
+      /android/i.test(navigator.userAgent);
+
     const shouldSendSystemNotification =
       !isOwn &&
       !options.isSystem &&
+      !isAndroidTauri &&
       typeof document !== 'undefined' &&
       (document.visibilityState !== 'visible' || !document.hasFocus());
 
     if (shouldSendSystemNotification) {
       const preview = getPreviewText(parseEnvelope(content));
-      void ctx.sendSystemNotification(convo.name, preview || 'Nouveau message', normalized);
+      const title = getUserDisplayNameSync(senderId, convo.name);
+      void ctx.sendSystemNotification(title, preview || 'Nouveau message', normalized);
     }
 
     const skipDbSave = options.skipDbSave ?? isChannelConversationId(normalized);

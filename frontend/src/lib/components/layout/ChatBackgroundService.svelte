@@ -380,24 +380,23 @@
     }
   }
 
-  async function handlePinSubmit(submittedPin: string) {
+  function handlePinSubmit(submittedPin: string) {
     pinError = '';
     pinLoading = true;
     globalSession.pin = submittedPin;
     _loginInProgress = true;
 
-    await globalSession.login({
+    void globalSession.login({
       ...sessionCb(),
+      onMlsReady: () => {
+        showPinModal = false;
+        pinLoading = false;
+      },
       onLoginFailed: (msg: string) => {
         pinError = msg;
-        // La modal reste ouverte — pinLoading s'arrête ci-dessous
+        pinLoading = false;
       },
     });
-
-    pinLoading = false;
-    if (globalSession.isLoggedIn) {
-      showPinModal = false;
-    }
   }
 
   // Safety net for the OIDC / dev-login race condition:
@@ -445,7 +444,8 @@
   onClose={() => {
     showPinModal = false;
     _loginInProgress = false;
-    void goto('/login', { replaceState: true });
+    const returnTo = encodeURIComponent(window.location.pathname);
+    void goto(`/login?returnTo=${returnTo}`, { replaceState: true });
   }}
   onBiometricRequest={handleBiometricFromModal}
   showBiometricButton={biometricConfigured}

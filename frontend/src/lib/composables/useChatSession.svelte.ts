@@ -72,6 +72,10 @@ export interface ChatSessionCallbacks {
   }) => void;
   onSendError: (msg: string) => void;
   onShowSyncGuidePrompt: () => void;
+  /** Appelé dès que le PIN est validé et MLS initialisé (isLoggedIn vient de passer à true),
+   * avant loadAndRestoreConversations(). Permet de fermer le modal PIN immédiatement
+   * sans attendre la fin complète du login (conversations, WebSocket, etc.). */
+  onMlsReady?: () => void;
   /** Appelé quand le login échoue (PIN incorrect, serveur inaccessible, etc.).
    * Si fourni, la redirection vers /login n'a PAS lieu — le caller gère l'erreur.
    * Si absent, on redirige vers /login comme avant. */
@@ -347,6 +351,7 @@ export function useChatSession() {
 
       isLoggedIn = true;
       saveUserLocally({ id: userId, admin: isGlobalAdmin() });
+      cb.onMlsReady?.();
       // On Tauri (mobile): rely exclusively on the hardware-backed keystore —
       // never cache the PIN in any browser storage. The biometric enrolment
       // prompt that follows will call BiometricService.enableBiometric(pin).

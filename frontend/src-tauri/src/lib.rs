@@ -1195,9 +1195,17 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
         let mut manager =
             MlsManager::load_encrypted("_push_", "_push_", Some(state_vec), &pin_str).ok()?;
 
-        let plaintext = manager
-            .process_incoming_message(&group_id_str, &cipher_vec)
-            .ok()??;
+        let plaintext = match manager.process_incoming_message(&group_id_str, &cipher_vec) {
+            Ok(Some(p)) => p,
+            Ok(None) => {
+                log::warn!("[FCM] process_incoming_message: Ok(None) — message de contrôle MLS, pas de plaintext");
+                return None;
+            }
+            Err(e) => {
+                log::error!("[FCM] process_incoming_message: Err({e}) — group={group_id_str}");
+                return None;
+            }
+        };
 
         extract_app_message_text(&plaintext)
     })()
