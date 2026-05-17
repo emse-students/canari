@@ -23,7 +23,7 @@ class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
     }
 
     // Pont JNI spécifique pour le traitement de la file d'attente (Welcome, etc.)
-    external fun nativeProcessBackgroundTasks(filesDir: String, stateBytes: ByteArray, pin: String): Boolean
+    external fun nativeProcessBackgroundTasks(filesDir: String, stateBytes: ByteArray, pin: String, userId: String, deviceId: String): Boolean
 
     override fun doWork(): Result {
         if (runAttemptCount >= 3) {
@@ -36,16 +36,16 @@ class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
             Log.e(TAG, "doWork: mls.bin absent → failure")
             return Result.failure()
         }
-        val pin = loadPin()
-        if (pin == null) {
-            Log.e(TAG, "doWork: PIN absent (push_context.json manquant ou invalide) → failure")
+        val ctx = loadPushContext()
+        if (ctx == null) {
+            Log.e(TAG, "doWork: push_context.json manquant ou invalide → failure")
             return Result.failure()
         }
         val filesDir = applicationContext.filesDir.parentFile!!.absolutePath
         Log.d(TAG, "doWork: état MLS=${stateBytes.size} octets, filesDir=$filesDir")
 
         return try {
-            val success = nativeProcessBackgroundTasks(filesDir, stateBytes, pin)
+            val success = nativeProcessBackgroundTasks(filesDir, stateBytes, ctx.pin, ctx.userId, ctx.deviceId)
             if (success) {
                 Log.d(TAG, "doWork: nativeProcessBackgroundTasks → succès")
                 Result.success()
@@ -68,11 +68,18 @@ class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
         return try { file.readBytes() } catch (_: Exception) { null }
     }
 
-    private fun loadPin(): String? {
+    private data class PushContext(val pin: String, val userId: String, val deviceId: String)
+
+    private fun loadPushContext(): PushContext? {
         val file = File(applicationContext.filesDir.parentFile, "push_context.json")
         if (!file.exists()) return null
         return try {
-            JSONObject(file.readText()).optString("pin").takeIf { it.isNotEmpty() }
+            val j = JSONObject(file.readText())
+            PushContext(
+                pin      = j.optString("pin").takeIf      { it.isNotEmpty() } ?: return null,
+                userId   = j.optString("userId").takeIf   { it.isNotEmpty() } ?: return null,
+                deviceId = j.optString("deviceId").takeIf { it.isNotEmpty() } ?: return null,
+            )
         } catch (_: Exception) { null }
     }
 }

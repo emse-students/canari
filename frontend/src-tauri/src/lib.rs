@@ -1706,6 +1706,8 @@ pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroun
     files_dir: jni::objects::JString,
     state_bytes: jni::objects::JByteArray,
     pin: jni::objects::JString,
+    user_id: jni::objects::JString,
+    device_id: jni::objects::JString,
 ) -> jni::sys::jboolean {
 
     let files_dir_str: String = match env.get_string(&files_dir) {
@@ -1719,6 +1721,16 @@ pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroun
     };
 
     let pin_str: String = match env.get_string(&pin) {
+        Ok(s) => s.into(),
+        Err(_) => return 0,
+    };
+
+    let user_id_str: String = match env.get_string(&user_id) {
+        Ok(s) => s.into(),
+        Err(_) => return 0,
+    };
+
+    let device_id_str: String = match env.get_string(&device_id) {
         Ok(s) => s.into(),
         Err(_) => return 0,
     };
@@ -1741,7 +1753,7 @@ pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroun
             .await
             .map_err(|e| e.to_string())?;
 
-        let mut manager = MlsManager::load_encrypted("_push_", "_push_", Some(state_vec), &pin_str).map_err(|e| e.to_string())?;
+        let mut manager = MlsManager::load_encrypted(&user_id_str, &device_id_str, Some(state_vec), &pin_str).map_err(|e| e.to_string())?;
 
         // 1. Fetch distinct group_ids that have pending tasks
         let group_ids: Vec<String> = sqlx::query_scalar("SELECT DISTINCT group_id FROM pending_mls_messages WHERE is_ready = 0")
