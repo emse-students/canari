@@ -25,6 +25,7 @@
     CheckCircle2,
   } from 'lucide-svelte';
   import { slide, fade } from 'svelte/transition';
+  import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
 
   let profile = $state<UserProfile | null>(null);
   let loading = $state(true);
@@ -228,7 +229,7 @@
             maxlength="500"
             rows="4"
             class="w-full rounded-[1.25rem] border border-black/10 dark:border-white/10 bg-white/80 dark:bg-black/40 px-4 py-3 text-[0.95rem] text-text-main shadow-inner focus:outline-none focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/30 resize-none transition-all placeholder:text-text-muted/60"
-            placeholder="Décris-toi en quelques mots (passions, projets, etc.)..."
+            placeholder="Décris-toi en quelques mots… Markdown accepté (**gras**, listes, [liens](https://…))."
           ></textarea>
           <div class="flex items-center justify-between">
             <span
@@ -260,12 +261,15 @@
           </div>
         </div>
       {:else}
-        <p
-          class="text-[0.95rem] text-text-main leading-relaxed whitespace-pre-wrap min-h-[3rem] opacity-90"
-          transition:fade={{ duration: 200 }}
-        >
-          {profile.bio || "Aucune bio pour le moment. N'hésite pas à te présenter !"}
-        </p>
+        <div transition:fade={{ duration: 200 }} class="min-h-[3rem]">
+          {#if profile.bio?.trim()}
+            <ProfileBioMarkdown source={profile.bio} />
+          {:else}
+            <p class="text-[0.95rem] text-text-main leading-relaxed opacity-90">
+              Aucune bio pour le moment. N'hésite pas à te présenter !
+            </p>
+          {/if}
+        </div>
       {/if}
     </div>
 

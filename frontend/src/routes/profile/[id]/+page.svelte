@@ -7,6 +7,7 @@
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import { GraduationCap, CalendarDays, Loader2, AlertCircle, MessageCircle, UserPlus, UserCheck } from 'lucide-svelte';
   import { slide, fade } from 'svelte/transition';
+  import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
 
   let profile = $state<UserProfile | null>(null);
   let loading = $state(true);
@@ -155,9 +156,7 @@
         style="animation-fill-mode: backwards;"
       >
         <h2 class="text-lg font-extrabold text-text-main mb-4">À propos</h2>
-        <p class="text-[0.95rem] text-text-main leading-relaxed whitespace-pre-wrap opacity-90">
-          {profile.bio}
-        </p>
+        <ProfileBioMarkdown source={profile.bio} />
       </div>
     {/if}
 
