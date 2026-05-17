@@ -152,9 +152,9 @@ export class MessagingService {
     try {
       const group = await this.groupRepo.findOne({
         where: { id: groupId },
-        select: ['name'],
+        select: ['name', 'isGroup'],
       });
-      groupName = group?.name ?? '';
+      groupName = group?.isGroup ? (group?.name ?? '') : '';
     } catch {
       /* non-fatal */
     }

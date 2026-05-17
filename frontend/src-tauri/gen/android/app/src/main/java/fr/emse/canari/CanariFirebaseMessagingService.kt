@@ -105,7 +105,18 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
             Log.d(TAG, "Déchiffrement: groupId=$groupId queuedMessageId=$queuedMessageId inlineProto=${inlineProto != null}")
             val body = tryDecrypt(queuedMessageId, groupId, inlineProto)
-                ?: buildFallbackText(senderName).also { Log.w(TAG, "Déchiffrement échoué → fallback: $it") }
+                ?: run {
+                    // Group not yet in MLS state (Welcome not processed) — enqueue worker
+                    // so the message is available without a full app restart.
+                    if (!queuedMessageId.isNullOrEmpty()) {
+                        val workRequest = OneTimeWorkRequestBuilder<MlsBackgroundWorker>()
+                            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.MIN_BACKOFF_MILLIS, TimeUnit.MILLISECONDS)
+                            .build()
+                        WorkManager.getInstance(this@CanariFirebaseMessagingService).enqueue(workRequest)
+                        Log.d(TAG, "Déchiffrement échoué → MlsBackgroundWorker enqueued")
+                    }
+                    buildFallbackText(senderName).also { Log.w(TAG, "Déchiffrement échoué → fallback: $it") }
+                }
 
             val avatarBitmap = if (senderId.isNotEmpty()) fetchAvatar(senderId) else null
 
