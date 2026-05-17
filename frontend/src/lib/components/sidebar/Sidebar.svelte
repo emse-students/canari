@@ -175,16 +175,20 @@
   let filteredConversationEntries = $derived.by(() => {
     const query = searchQuery.trim().toLowerCase();
 
-    return [...conversations.entries()].filter(([id, convo]) => {
-      // Hide channels from the discussions tab
-      if (id.startsWith('channel_')) {
-        return false;
-      }
-
-      if (!query) return true;
-      const lastContent = convo.messages.at(-1)?.content ?? '';
-      return convo.name.toLowerCase().includes(query) || lastContent.toLowerCase().includes(query);
-    });
+    return [...conversations.entries()]
+      .filter(([id, convo]) => {
+        if (id.startsWith('channel_')) return false;
+        if (!query) return true;
+        const lastContent = convo.messages.at(-1)?.content ?? '';
+        return convo.name.toLowerCase().includes(query) || lastContent.toLowerCase().includes(query);
+      })
+      .sort(([, a], [, b]) => {
+        const ta = a.messages.at(-1)?.timestamp;
+        const tb = b.messages.at(-1)?.timestamp;
+        const ma = ta instanceof Date ? ta.getTime() : ta ? new Date(ta as any).getTime() : 0;
+        const mb = tb instanceof Date ? tb.getTime() : tb ? new Date(tb as any).getTime() : 0;
+        return mb - ma;
+      });
   });
 
   function openNewChatModal(tab: 'contact' | 'group' | 'channel' = 'contact') {

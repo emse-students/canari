@@ -181,8 +181,8 @@ export async function replayConversationHistory(params: {
           pendingMessages.push({
             senderId: msg.sender_id,
             content: envelope.content,
-            ...envelope.options,
             timestamp: toValidDate(msg.timestamp),
+            ...envelope.options,
           });
           addedMsg++;
           mlsUpdated = true;
