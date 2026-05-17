@@ -170,7 +170,8 @@ export async function addReaction(
 
   try {
     const payload = encodeAppMessage(mkReaction(messageId, emoji));
-    await mlsService.sendMessage(conversation.id, payload);
+    // silent=true: les réactions ne génèrent pas de notification push
+    await mlsService.sendMessage(conversation.id, payload, undefined, true);
     const stateBytes = await mlsService.saveState(pin);
     saveMlsState(userId, stateBytes);
   } catch (e) {
@@ -195,7 +196,7 @@ export async function removeReaction(
     const payload = encodeAppMessage(
       mkSystem('remove_reaction', JSON.stringify({ messageId, emoji }))
     );
-    await mlsService.sendMessage(conversation.id, payload);
+    await mlsService.sendMessage(conversation.id, payload, undefined, true);
     const stateBytes = await mlsService.saveState(pin);
     saveMlsState(userId, stateBytes);
   } catch (e) {
@@ -215,7 +216,7 @@ export async function editMessage(
     const payload = encodeAppMessage(
       mkSystem('edit_message', JSON.stringify({ messageId, newContent, editedAt }))
     );
-    await mlsService.sendMessage(conversation.id, payload);
+    await mlsService.sendMessage(conversation.id, payload, undefined, true);
     const stateBytes = await mlsService.saveState(pin);
     saveMlsState(userId, stateBytes);
   } catch (e) {
@@ -229,7 +230,7 @@ export async function deleteMessage(messageId: string, deps: MessageActionDeps):
   if (!conversation.isReady) return;
   try {
     const payload = encodeAppMessage(mkSystem('delete_message', JSON.stringify({ messageId })));
-    await mlsService.sendMessage(conversation.id, payload);
+    await mlsService.sendMessage(conversation.id, payload, undefined, true);
     const stateBytes = await mlsService.saveState(pin);
     saveMlsState(userId, stateBytes);
   } catch (e) {

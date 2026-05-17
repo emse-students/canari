@@ -3,6 +3,8 @@ package fr.emse.canari
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.media.AudioAttributes
+import android.media.RingtoneManager
 import android.os.Build
 import java.io.File
 
@@ -10,7 +12,8 @@ import java.io.File
  * Application custom chargée AVANT tout composant Android (y compris les services FCM).
  * Rôles :
  *  1. Charger la bibliothèque native Rust mines_app_lib.
- *  2. Transférer le pushSecret depuis pending_push_secret.txt vers le Keystore Android
+ *  2. Créer les canaux de notification Android (requis depuis API 26).
+ *  3. Transférer le pushSecret depuis pending_push_secret.txt vers le Keystore Android
  *     (écrit par Tauri après enregistrement FCM, lu une seule fois puis supprimé).
  *
  * Enregistrée dans AndroidManifest.xml via android:name=".CanariApplication".
@@ -24,23 +27,65 @@ class CanariApplication : Application() {
             // La lib n'est pas disponible sur cette architecture – les appels
             // natifs échoueront gracieusement (notification générique affichée).
         }
-        createNotificationChannel()
+        createNotificationChannels()
         processPendingPushSecret()
     }
 
-    private fun createNotificationChannel() {
+    /**
+     * Crée les trois canaux de notification :
+     *  - canari_messages : DMs et messages de groupe (IMPORTANCE_HIGH, vibration, son)
+     *  - canari_social   : réactions/commentaires sur les posts (IMPORTANCE_DEFAULT, silencieux)
+     *  - canari_forms    : rappels de formulaires (IMPORTANCE_DEFAULT, silencieux)
+     */
+    private fun createNotificationChannels() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = getSystemService(NotificationManager::class.java) ?: return
-        if (manager.getNotificationChannel(CanariFirebaseMessagingService.CHANNEL_ID) != null) return
-        val channel = NotificationChannel(
-            CanariFirebaseMessagingService.CHANNEL_ID,
-            CanariFirebaseMessagingService.CHANNEL_NAME,
-            NotificationManager.IMPORTANCE_HIGH
-        ).apply {
-            description = "Notifications de messages reçus via Canari"
-            enableVibration(true)
+
+        // Canal messages : haute priorité avec son et vibration
+        if (manager.getNotificationChannel(CanariFirebaseMessagingService.CHANNEL_MESSAGES) == null) {
+            val audioAttrs = AudioAttributes.Builder()
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                .build()
+            val messagesChannel = NotificationChannel(
+                CanariFirebaseMessagingService.CHANNEL_MESSAGES,
+                "Messages Canari",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Notifications de messages reçus via Canari"
+                enableVibration(true)
+                setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION), audioAttrs)
+            }
+            manager.createNotificationChannel(messagesChannel)
         }
-        manager.createNotificationChannel(channel)
+
+        // Canal social : priorité normale, sans son (réactions, commentaires)
+        if (manager.getNotificationChannel(CanariFirebaseMessagingService.CHANNEL_SOCIAL) == null) {
+            val socialChannel = NotificationChannel(
+                CanariFirebaseMessagingService.CHANNEL_SOCIAL,
+                "Activité sociale Canari",
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply {
+                description = "Réactions et commentaires sur vos publications"
+                enableVibration(false)
+                setSound(null, null)
+            }
+            manager.createNotificationChannel(socialChannel)
+        }
+
+        // Canal formulaires : priorité normale, sans son (rappels planifiés)
+        if (manager.getNotificationChannel(CanariFirebaseMessagingService.CHANNEL_FORMS) == null) {
+            val formsChannel = NotificationChannel(
+                CanariFirebaseMessagingService.CHANNEL_FORMS,
+                "Rappels de formulaires",
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply {
+                description = "Rappels avant l'ouverture des formulaires"
+                enableVibration(false)
+                setSound(null, null)
+            }
+            manager.createNotificationChannel(formsChannel)
+        }
     }
 
     private fun processPendingPushSecret() {
