@@ -65,7 +65,7 @@
 {#if post.markdown}
   <div class="px-5 pb-3">
     <div class="text-[0.95rem] text-text-main leading-relaxed break-words">
-      <div class="prose prose-sm dark:prose-invert max-w-none opacity-90">
+      <div class="max-w-none opacity-90 [&_br]:block [&_p+p]:mt-3 [&_p:first-child]:mt-0">
         <SvelteMarkdown source={displayedMarkdown} {renderers} options={{ gfm: true, breaks: true }} />
       </div>
       {#if isTruncatable}
