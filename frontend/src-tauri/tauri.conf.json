@@ -28,6 +28,10 @@
         {
           "scheme": ["fr.emse.canari"],
           "host": "callback"
+        },
+        {
+          "scheme": ["fr.emse.canari"],
+          "host": "stripe"
         }
       ]
     }

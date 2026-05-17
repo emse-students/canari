@@ -295,6 +295,14 @@ export class RegisterEventDto {
   @IsString()
   @IsOptional()
   email?: string;
+
+  @IsString()
+  @IsOptional()
+  successUrl?: string;
+
+  @IsString()
+  @IsOptional()
+  cancelUrl?: string;
 }
 
 export class SubmitFormDto {

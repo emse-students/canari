@@ -12,7 +12,7 @@ export class FormReminderScheduler {
   constructor(
     @InjectRepository(FormReminder)
     private readonly reminderRepo: Repository<FormReminder>,
-    private readonly push: PushService,
+    private readonly push: PushService
   ) {}
 
   @Cron('* * * * *')
@@ -33,11 +33,11 @@ export class FormReminderScheduler {
           r.userId,
           '⏰ Formulaire bientôt disponible',
           'Un formulaire que vous suivez ouvre dans 5 minutes !',
-          { type: 'form_reminder', formId: r.formId },
+          { type: 'form_reminder', formId: r.formId }
         );
         await this.reminderRepo.update(r.id, { notified5min: true });
-      } catch (e) {
-        this.logger.warn(`[REMINDER] 5min notify failed for ${r.id}: ${String(e)}`);
+      } catch (e: unknown) {
+        this.logger.warn(`[REMINDER] 5min notify failed for ${r.id}`, e);
       }
     }
 
@@ -54,18 +54,16 @@ export class FormReminderScheduler {
           r.userId,
           '🟢 Formulaire maintenant ouvert !',
           'Le formulaire est disponible — dépêchez-vous, les places sont limitées !',
-          { type: 'form_reminder', formId: r.formId },
+          { type: 'form_reminder', formId: r.formId }
         );
         await this.reminderRepo.update(r.id, { notifiedOnOpen: true });
-      } catch (e) {
-        this.logger.warn(`[REMINDER] open notify failed for ${r.id}: ${String(e)}`);
+      } catch (e: unknown) {
+        this.logger.warn(`[REMINDER] open notify failed for ${r.id}`, e);
       }
     }
 
     if (toNotify5min.length + toNotifyOpen.length > 0) {
-      this.logger.log(
-        `[REMINDER] sent: 5min=${toNotify5min.length} open=${toNotifyOpen.length}`,
-      );
+      this.logger.log(`[REMINDER] sent: 5min=${toNotify5min.length} open=${toNotifyOpen.length}`);
     }
   }
 }

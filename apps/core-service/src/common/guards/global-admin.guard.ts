@@ -1,4 +1,9 @@
-import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  ForbiddenException,
+  Injectable,
+} from '@nestjs/common';
 import type { Request } from 'express';
 
 /**
@@ -11,7 +16,9 @@ export class GlobalAdminGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest<Request>();
     if (request.headers['x-global-admin'] !== 'true') {
-      throw new ForbiddenException('This action requires global admin privileges');
+      throw new ForbiddenException(
+        'This action requires global admin privileges',
+      );
     }
     return true;
   }

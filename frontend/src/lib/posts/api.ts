@@ -242,7 +242,7 @@ export async function votePoll(
 export async function registerEvent(
   postId: string,
   buttonId: string,
-  payload: { email?: string }
+  payload: { email?: string; successUrl?: string; cancelUrl?: string }
 ): Promise<{
   ok: boolean;
   registered?: boolean;

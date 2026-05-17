@@ -16,7 +16,7 @@ export class PushService {
     userId: string,
     title: string,
     body: string,
-    data: Record<string, string> = {},
+    data: Record<string, string> = {}
   ): Promise<void> {
     if (!this.secret) return;
     try {
@@ -30,14 +30,10 @@ export class PushService {
         signal: AbortSignal.timeout(5_000),
       });
       if (!res.ok) {
-        this.logger.warn(
-          `[PUSH] notify HTTP ${res.status} for user=${userId}`,
-        );
+        this.logger.warn(`[PUSH] notify HTTP ${res.status} for user=${userId}`);
       }
-    } catch (e) {
-      this.logger.warn(
-        `[PUSH] notify failed for user=${userId}: ${String(e)}`,
-      );
+    } catch (e: unknown) {
+      this.logger.warn(`[PUSH] notify failed for user=${userId}`, e);
     }
   }
 }

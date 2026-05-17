@@ -396,15 +396,14 @@
       return;
     }
     try {
+      const { eventCheckoutCallbacks } = await import('$lib/utils/stripeCallbacks');
       const response = await registerEvent(localPost.id, buttonId, {
         email: currentUserEmail?.trim() || undefined,
+        ...eventCheckoutCallbacks(localPost.id, buttonId),
       });
       if (response.checkoutUrl) {
-        if ((window as any).__TAURI_INTERNALS__) {
-          window.location.href = response.checkoutUrl;
-        } else {
-          window.open(response.checkoutUrl, '_blank', 'noopener,noreferrer');
-        }
+        const { navigateExternal } = await import('$lib/utils/openExternal');
+        await navigateExternal(response.checkoutUrl);
       }
       actionMessage =
         response.message ||

@@ -10,6 +10,7 @@ import { CreateFormDto, SubmitFormDto } from './dto/form.dto';
 import axios from 'axios';
 import * as ExcelJS from 'exceljs';
 import { AssociationsService } from '../associations/associations.service';
+import { resolveStripeCallbackUrl } from '../common/stripe-callback-url';
 
 /** Generates a short random ID with the given prefix, e.g. "item_a3b9x1". */
 function makeId(prefix: string): string {
@@ -194,10 +195,19 @@ export class FormsService {
           }
         }
 
+        const frontendUrl = this.configService.get('FRONTEND_URL') || 'http://localhost';
         const res = await axios.post(checkoutUrl, {
           lineItems: singleLineItem,
-          successUrl: `${this.configService.get('FRONTEND_URL')}/forms/success?session_id={CHECKOUT_SESSION_ID}`,
-          cancelUrl: `${this.configService.get('FRONTEND_URL')}/forms/cancel?session_id={CHECKOUT_SESSION_ID}`,
+          successUrl: resolveStripeCallbackUrl(
+            input.successUrl,
+            `${frontendUrl}/forms/success?session_id={CHECKOUT_SESSION_ID}`,
+            frontendUrl,
+          ),
+          cancelUrl: resolveStripeCallbackUrl(
+            input.cancelUrl,
+            `${frontendUrl}/forms/cancel?session_id={CHECKOUT_SESSION_ID}`,
+            frontendUrl,
+          ),
           metadata: { submissionId: savedSubmission.id, formId: id, userId: input.userId ?? '' },
           stripeConnectAccountId,
           ...(customerId ? { customerId, saveForFuture: true } : {}),

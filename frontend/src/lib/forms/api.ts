@@ -89,7 +89,12 @@ export async function exportSubmissions(id: string): Promise<Blob> {
 }
 export async function submitForm(
   id: string,
-  payload: { email?: string; answers: any }
+  payload: {
+    email?: string;
+    answers: any;
+    successUrl?: string;
+    cancelUrl?: string;
+  }
 ): Promise<any> {
   const res = await request(`${API_Base}/api/forms/${id}/submit`, {
     method: 'POST',

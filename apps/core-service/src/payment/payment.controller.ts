@@ -22,6 +22,7 @@ import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { ChargeResult } from './payment.service';
 import { Stripe } from 'stripe';
 import axios from 'axios';
+import { resolveStripeCallbackUrl } from './stripe-callback-url';
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -266,7 +267,10 @@ export class PaymentController {
   @UseGuards(NginxAuthGuard)
   @Post('setup-payment-method')
   @HttpCode(200)
-  async setupPaymentMethod(@Headers('x-user-id') userId: string) {
+  async setupPaymentMethod(
+    @Headers('x-user-id') userId: string,
+    @Body() body: { successUrl?: string; cancelUrl?: string } = {},
+  ) {
     if (!this.paymentService.isConfigured()) {
       return { ok: false, message: 'Stripe not configured' };
     }
@@ -287,8 +291,16 @@ export class PaymentController {
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost';
     const result = await this.paymentService.createSetupCheckoutSession({
       customerId,
-      successUrl: `${frontendUrl}/profile?payment_setup=success`,
-      cancelUrl: `${frontendUrl}/profile?payment_setup=cancel`,
+      successUrl: resolveStripeCallbackUrl(
+        body?.successUrl,
+        `${frontendUrl}/profile?payment_setup=success`,
+        frontendUrl,
+      ),
+      cancelUrl: resolveStripeCallbackUrl(
+        body?.cancelUrl,
+        `${frontendUrl}/profile?payment_setup=cancel`,
+        frontendUrl,
+      ),
     });
 
     return { ok: true, url: result.url };

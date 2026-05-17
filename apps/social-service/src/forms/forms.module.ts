@@ -11,7 +11,11 @@ import { FormReminderScheduler } from './forms-reminder.scheduler';
 import { PushService } from '../push/push.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Form, Submission, FormReminder]), ConfigModule, AssociationsModule],
+  imports: [
+    TypeOrmModule.forFeature([Form, Submission, FormReminder]),
+    ConfigModule,
+    AssociationsModule,
+  ],
   controllers: [FormsController],
   providers: [FormsService, FormReminderScheduler, PushService],
 })

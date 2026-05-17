@@ -145,9 +145,13 @@ export interface PaymentMethod {
  * Initiates a Stripe SetupIntent flow to save a new payment method.
  * Returns a redirect URL to the Stripe-hosted form when `url` is present.
  */
-export async function setupPaymentMethod(): Promise<{ ok: boolean; url?: string }> {
+export async function setupPaymentMethod(callbacks?: {
+  successUrl?: string;
+  cancelUrl?: string;
+}): Promise<{ ok: boolean; url?: string }> {
   const res = await apiFetch(`${coreUrl()}/api/payments/setup-payment-method`, {
     method: 'POST',
+    body: JSON.stringify(callbacks ?? {}),
   });
   if (!res.ok) throw new Error(`Failed to start payment setup (${res.status})`);
   return (await res.json()) as { ok: boolean; url?: string };

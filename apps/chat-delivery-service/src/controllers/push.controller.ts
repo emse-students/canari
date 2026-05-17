@@ -21,6 +21,7 @@ import { PushToken } from '../entities/push-token.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { ThrottlerGuard } from '@nestjs/throttler';
+import type { Response } from 'express';
 import {
   sanitizeQueryValue,
   sanitizeOptionalQueryValue,

@@ -13,6 +13,7 @@ import { Repository } from 'typeorm';
 import { Post } from './entities/post.entity';
 import { PostNotificationsService } from './post-notifications.service';
 import { PushService } from '../push/push.service';
+import { resolveStripeCallbackUrl } from '../common/stripe-callback-url';
 
 /** Handles reactions, comments, polls, and event registrations on posts. */
 @Injectable()
@@ -75,9 +76,11 @@ export class PostInteractionsService {
             post.authorId,
             'Nouvelle réaction',
             `${actorName} a réagi à votre publication ${reactionType}`,
-            { type: 'social', postId },
+            { type: 'social', postId }
           );
-        } catch { /* non-fatal */ }
+        } catch {
+          /* non-fatal */
+        }
       })();
     }
 
@@ -161,7 +164,7 @@ export class PostInteractionsService {
             post.authorId,
             `${actorName} a commenté`,
             preview || 'Nouveau commentaire',
-            { type: 'social', postId },
+            { type: 'social', postId }
           );
         }
 
@@ -180,7 +183,7 @@ export class PostInteractionsService {
               parent.userId,
               `${actorName} a répondu`,
               preview || 'Nouvelle réponse',
-              { type: 'social', postId },
+              { type: 'social', postId }
             );
           }
         }
@@ -202,7 +205,7 @@ export class PostInteractionsService {
               recipientId,
               `${actorName} vous a mentionné`,
               preview || 'Vous avez été mentionné dans un commentaire',
-              { type: 'social', postId },
+              { type: 'social', postId }
             );
           }
         }
@@ -299,7 +302,11 @@ export class PostInteractionsService {
    * If the button requires payment, creates a Stripe checkout session and returns
    * a redirect URL instead of completing registration directly.
    */
-  async registerEvent(postId: string, buttonId: string, data: { userId: string; email?: string }) {
+  async registerEvent(
+    postId: string,
+    buttonId: string,
+    data: { userId: string; email?: string; successUrl?: string; cancelUrl?: string }
+  ) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
 
@@ -318,6 +325,8 @@ export class PostInteractionsService {
       const paymentBase =
         this.configService.get<string>('PAYMENT_SERVICE_URL') || 'http://core-service:3012';
       const frontendUrl = this.configService.get<string>('FRONTEND_URL') || 'http://localhost';
+      const defaultSuccess = `${frontendUrl}/posts?registered=${encodeURIComponent(buttonId)}&post_id=${encodeURIComponent(postId)}`;
+      const defaultCancel = `${frontendUrl}/posts`;
       try {
         const res = await lastValueFrom(
           this.httpService.post(
@@ -333,8 +342,8 @@ export class PostInteractionsService {
                   quantity: 1,
                 },
               ],
-              successUrl: `${frontendUrl}/posts?registered=${buttonId}`,
-              cancelUrl: `${frontendUrl}/posts`,
+              successUrl: resolveStripeCallbackUrl(data.successUrl, defaultSuccess, frontendUrl),
+              cancelUrl: resolveStripeCallbackUrl(data.cancelUrl, defaultCancel, frontendUrl),
               metadata: { postId, buttonId, userId: data.userId },
             }
           )

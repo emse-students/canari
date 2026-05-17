@@ -42,7 +42,8 @@
       }
 
       if (result.url) {
-        window.location.href = result.url;
+        const { navigateExternal } = await import('$lib/utils/openExternal');
+        await navigateExternal(result.url);
       }
     } catch (error: any) {
       paymentError = error.message;

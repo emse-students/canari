@@ -27,7 +27,7 @@ export class PostsService {
     private readonly followsService: FollowsService,
     private readonly associationsService: AssociationsService,
     private readonly notifications: PostNotificationsService,
-    private readonly push: PushService,
+    private readonly push: PushService
   ) {}
 
   private listPostsCacheKey(
@@ -171,10 +171,12 @@ export class PostsService {
               recipientId,
               `${actorName} vous a mentionné`,
               'Vous avez été mentionné dans une publication',
-              { type: 'social', postId: entity.id },
+              { type: 'social', postId: entity.id }
             );
           }
-        } catch { /* non-fatal */ }
+        } catch {
+          /* non-fatal */
+        }
       })();
     }
 

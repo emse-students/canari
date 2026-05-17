@@ -7,6 +7,16 @@
  * built-in `fetch` so the client-side router keeps working.
  */
 
+import { installExternalLinkClickHandler } from '$lib/utils/openExternal';
+
+// ════════════════════════════════════════════════════════════════════════════
+// EXTERNAL LINKS — Open in system browser / default app (not in WebView)
+// ════════════════════════════════════════════════════════════════════════════
+
+if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+  installExternalLinkClickHandler();
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // DEEP LINK HANDLER — OIDC on Mobile Tauri
 // ════════════════════════════════════════════════════════════════════════════
@@ -82,6 +92,46 @@ if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
                   .catch(() => {
                     window.location.href = `/forms/${formId}`;
                   });
+              }
+              continue;
+            }
+
+            // Stripe Checkout return: fr.emse.canari://stripe/success|cancel?…
+            if (u.protocol === 'fr.emse.canari:' && u.host === 'stripe') {
+              const path = u.pathname.replace(/\/$/, '') || '/';
+              const sessionId = u.searchParams.get('session_id');
+              const registered = u.searchParams.get('registered');
+              const postId = u.searchParams.get('post_id');
+              const paymentSetup = u.searchParams.get('payment_setup');
+
+              const navigate = (target: string) => {
+                import('$app/navigation')
+                  .then(({ goto }) => goto(target))
+                  .catch(() => {
+                    window.location.href = target;
+                  });
+              };
+
+              if (path === '/success') {
+                if (sessionId) {
+                  navigate(`/forms/success?session_id=${encodeURIComponent(sessionId)}`);
+                } else if (paymentSetup) {
+                  navigate(`/profile?payment_setup=${encodeURIComponent(paymentSetup)}`);
+                } else if (registered) {
+                  const q = new URLSearchParams({ registered });
+                  if (postId) q.set('post_id', postId);
+                  navigate(`/posts?${q}`);
+                } else {
+                  navigate('/posts');
+                }
+              } else if (path === '/cancel') {
+                if (sessionId) {
+                  navigate(`/forms/cancel?session_id=${encodeURIComponent(sessionId)}`);
+                } else if (paymentSetup) {
+                  navigate(`/profile?payment_setup=${encodeURIComponent(paymentSetup)}`);
+                } else {
+                  navigate('/forms');
+                }
               }
               continue;
             }

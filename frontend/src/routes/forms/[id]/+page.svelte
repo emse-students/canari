@@ -213,9 +213,11 @@
 
     error = '';
     try {
+      const { formCheckoutCallbacks } = await import('$lib/utils/stripeCallbacks');
       const res = await submitFormService(form.id, {
         email: '',
         answers: selections,
+        ...formCheckoutCallbacks(),
       });
       if (res.checkoutUrl) {
         // Payment required — check if user has saved payment methods
@@ -224,8 +226,8 @@
           pendingSubmissionId = res.submissionId;
           showPaymentModal = true;
         } else {
-          // No saved methods: redirect to Stripe-hosted checkout
-          window.location.href = res.checkoutUrl;
+          const { navigateExternal } = await import('$lib/utils/openExternal');
+          await navigateExternal(res.checkoutUrl);
         }
       } else {
         submitted = true;
@@ -256,9 +258,10 @@
     setTimeout(() => goto(redirectTo), 1500);
   }
 
-  function handlePayWithNew() {
+  async function handlePayWithNew() {
     showPaymentModal = false;
-    window.location.href = pendingCheckoutUrl;
+    const { navigateExternal } = await import('$lib/utils/openExternal');
+    await navigateExternal(pendingCheckoutUrl);
   }
 
 

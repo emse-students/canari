@@ -92,9 +92,11 @@
     paymentSetupLoading = true;
     paymentError = '';
     try {
-      const result = await setupPaymentMethod();
+      const { profileSetupCallbacks } = await import('$lib/utils/stripeCallbacks');
+      const result = await setupPaymentMethod(profileSetupCallbacks());
       if (result.url) {
-        window.location.href = result.url;
+        const { navigateExternal } = await import('$lib/utils/openExternal');
+        await navigateExternal(result.url);
       }
     } catch (err) {
       paymentError =

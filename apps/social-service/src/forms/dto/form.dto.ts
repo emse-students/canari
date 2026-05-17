@@ -127,4 +127,12 @@ export class SubmitFormDto {
 
   @IsObject()
   answers: Record<string, string | string[] | number | Record<string, any>>;
+
+  @IsString()
+  @IsOptional()
+  successUrl?: string;
+
+  @IsString()
+  @IsOptional()
+  cancelUrl?: string;
 }
