@@ -49,7 +49,7 @@
 
 {#if Object.keys(groupedReactions).length > 0}
   <div
-    class="mt-1 flex w-full max-h-[4.75rem] max-w-[min(100%,38rem)] flex-wrap content-start gap-1.5 overflow-hidden px-0.5 {isOwn
+    class="mt-1 flex w-full max-h-[5.5rem] max-w-[min(100%,38rem)] flex-wrap content-start gap-1.5 overflow-hidden px-1 pb-2 pt-0.5 {isOwn
       ? 'justify-end'
       : 'justify-start'}"
     role="group"

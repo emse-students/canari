@@ -64,17 +64,17 @@
       aria-modal="true"
       aria-label={ariaLabel}
       tabindex="-1"
-      class="fixed inset-0 z-[300] flex flex-col bg-black/95 backdrop-blur-sm text-white"
+      class="fixed inset-0 z-[300] flex flex-col bg-black/55 backdrop-blur-md text-white"
       style="padding: {safeAreaPadding}; height: 100dvh; width: 100vw;"
     >
       <button
         type="button"
-        class="absolute inset-0 z-0"
+        class="absolute inset-0 z-0 cursor-default"
         onclick={onClose}
         aria-label="Fermer l'aperçu"
       ></button>
 
-      <div class="relative z-10 flex shrink-0 items-center justify-between gap-3 pb-2">
+      <div class="relative z-10 flex shrink-0 items-center justify-between gap-3 pb-2 pointer-events-auto">
         <p class="min-w-0 flex-1 truncate text-xs sm:text-sm opacity-85">{title}</p>
         <div class="flex items-center gap-2 shrink-0">
           {#if onDownload}
@@ -103,11 +103,13 @@
         </div>
       </div>
 
-      <div class="relative z-10 flex flex-1 min-h-0 w-full items-center justify-center">
+      <div
+        class="relative z-10 flex flex-1 min-h-0 w-full items-center justify-center pointer-events-none"
+      >
         {#if showPrev && onPrev}
           <button
             type="button"
-            class="absolute left-0 z-20 p-2 rounded-full bg-white/10 hover:bg-white/20 transition-colors"
+            class="absolute left-0 z-20 p-2 rounded-full bg-white/10 hover:bg-white/20 transition-colors pointer-events-auto"
             onclick={(e) => {
               e.stopPropagation();
               onPrev();
@@ -120,7 +122,7 @@
 
         <div
           role="presentation"
-          class="relative z-10 flex h-full w-full max-h-full max-w-full items-center justify-center px-10 sm:px-14"
+          class="relative z-10 flex max-h-full max-w-full shrink-0 items-center justify-center pointer-events-auto"
           onclick={(e) => e.stopPropagation()}
         >
           {@render children?.()}
@@ -129,7 +131,7 @@
         {#if showNext && onNext}
           <button
             type="button"
-            class="absolute right-0 z-20 p-2 rounded-full bg-white/10 hover:bg-white/20 transition-colors"
+            class="absolute right-0 z-20 p-2 rounded-full bg-white/10 hover:bg-white/20 transition-colors pointer-events-auto"
             onclick={(e) => {
               e.stopPropagation();
               onNext();
@@ -142,7 +144,7 @@
       </div>
 
       {#if dotCount > 1 && onDotSelect}
-        <div class="relative z-10 flex shrink-0 justify-center gap-1.5 pt-2 pb-1">
+        <div class="relative z-10 flex shrink-0 justify-center gap-1.5 pt-2 pb-1 pointer-events-auto">
           {#each { length: dotCount } as _, i (i)}
             <button
               type="button"
