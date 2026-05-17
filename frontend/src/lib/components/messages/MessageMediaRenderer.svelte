@@ -9,6 +9,7 @@
   } from 'lucide-svelte';
   import VoiceMessagePlayer from './VoiceMessagePlayer.svelte';
   import type { MediaRef } from '$lib/media';
+  import { mediaAspectStyle } from '$lib/utils/mediaLayout';
 
   interface Props {
     /** Parsed media descriptor from the message envelope, or null for text-only messages. */
@@ -66,6 +67,10 @@
 
   const textMutedClass = $derived(isOwn ? 'text-[#151B2C]/70' : 'text-text-muted');
 
+  const imageAspectStyle = $derived(
+    mediaRef?.type === 'image' ? mediaAspectStyle(mediaRef.width, mediaRef.height) : ''
+  );
+
   function formatFileSize(bytes: number): string {
     if (bytes < 1024) return `${bytes} o`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} Ko`;
@@ -91,7 +96,8 @@
             onclick={openLightbox}
             onpointerdown={(e) => e.stopPropagation()}
             aria-label="Ouvrir l'image en plein écran"
-            class="block overflow-hidden rounded-[1.1rem] bg-black/5 dark:bg-white/5 w-full max-w-[14rem] sm:w-56 aspect-[4/3]"
+            class="block overflow-hidden rounded-[1.1rem] bg-black/5 dark:bg-white/5 w-full max-w-[14rem] sm:w-56"
+            style={imageAspectStyle}
           >
             <img
               src={blobUrl}
@@ -115,7 +121,8 @@
         </div>
       {:else if loadError}
         <div
-          class="w-full max-wxs sm:w-64 aspect-[4/3] rounded-[1.1rem] border border-dashed {glassBoxClass} flex flex-col items-center justify-center gap-3 p-4 text-center"
+          class="w-full max-wxs sm:w-64 rounded-[1.1rem] border border-dashed {glassBoxClass} flex flex-col items-center justify-center gap-3 p-4 text-center"
+          style={imageAspectStyle}
         >
           <CircleAlert size={28} class="opacity-50" />
           <span class="text-xs font-medium leading-snug {textMutedClass}">
@@ -127,9 +134,10 @@
       {:else}
         <!-- Skeleton Image -->
         <div
-          class="w-full max-w-[14rem] sm:w-56 aspect-[4/3] rounded-[1.1rem] {isOwn
+          class="w-full max-w-[14rem] sm:w-56 rounded-[1.1rem] {isOwn
             ? 'bg-black/10'
             : 'bg-black/5 dark:bg-white/10'} animate-pulse flex items-center justify-center"
+          style={imageAspectStyle}
         >
           <ImageIcon size={32} class="opacity-20" />
         </div>

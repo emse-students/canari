@@ -143,6 +143,9 @@ export function parseEnvelope(content: string): MessageEnvelope {
               mimeType: typeof media.mimeType === 'string' ? media.mimeType : '',
               size: typeof media.size === 'number' ? media.size : 0,
               fileName: typeof media.fileName === 'string' ? media.fileName : undefined,
+              width: typeof media.width === 'number' && media.width > 0 ? media.width : undefined,
+              height:
+                typeof media.height === 'number' && media.height > 0 ? media.height : undefined,
             },
             caption: typeof obj.caption === 'string' ? obj.caption : undefined,
             replyTo: safeReplyTo(obj.replyTo),

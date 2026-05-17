@@ -315,11 +315,9 @@ h6,
   align-items: flex-end;
   gap: 0.375rem;
   padding: 0.5rem;
-  border: 1px solid color-mix(in srgb, var(--cn-border) 40%, transparent);
+  border: 1px solid color-mix(in srgb, var(--cn-border) 55%, transparent);
   border-radius: 1.75rem;
-  background: color-mix(in srgb, var(--cn-surface) 42%, transparent);
-  backdrop-filter: blur(20px) saturate(1.35);
-  -webkit-backdrop-filter: blur(20px) saturate(1.35);
+  background: var(--cn-surface);
   box-shadow:
     0 8px 32px rgba(0, 0, 0, 0.06),
     inset 0 1px 0 color-mix(in srgb, white 35%, transparent);
@@ -331,7 +329,7 @@ h6,
 }
 
 :global([data-theme='dark']) .chat-composer-panel {
-  background: color-mix(in srgb, #151b2c 38%, transparent);
+  background: var(--cn-surface);
   border-color: color-mix(in srgb, white 12%, transparent);
   box-shadow:
     0 8px 32px rgba(0, 0, 0, 0.35),

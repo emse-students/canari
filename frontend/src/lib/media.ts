@@ -49,6 +49,28 @@ export interface MediaRef {
   /** Plaintext file size in bytes (for progress / display). */
   size: number;
   fileName?: string;
+  /** Display width in px (after compression), used to reserve layout before decrypt. */
+  width?: number;
+  /** Display height in px (after compression), used to reserve layout before decrypt. */
+  height?: number;
+}
+
+export interface ImageDimensions {
+  width: number;
+  height: number;
+}
+
+export interface CompressedImage {
+  file: File;
+  width: number;
+  height: number;
+}
+
+/** File staged for send with optional display dimensions (images). */
+export interface PendingMediaFile {
+  file: File;
+  width?: number;
+  height?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -74,75 +96,97 @@ function hexDecode(hex: string): Uint8Array<ArrayBuffer> {
  * @param maxWidth Maximum width (default: 1920)
  * @param maxHeight Maximum height (default: 1080)
  * @param quality JPEG/WebP quality 0-1 (default: 0.85)
- * @returns Compressed file or original if compression fails/not needed
+ * @returns Compressed file (or original) with final display dimensions
  */
+export async function readImageDimensions(file: File): Promise<ImageDimensions | null> {
+  if (!file.type.startsWith('image/')) return null;
+
+  return new Promise((resolve) => {
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      const width = img.naturalWidth;
+      const height = img.naturalHeight;
+      if (width > 0 && height > 0) resolve({ width, height });
+      else resolve(null);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      resolve(null);
+    };
+    img.src = objectUrl;
+  });
+}
+
 export async function compressImage(
   file: File,
   maxWidth = 1920,
   maxHeight = 1080,
   quality = 0.85
-): Promise<File> {
-  // Only compress images
+): Promise<CompressedImage> {
   if (!file.type.startsWith('image/')) {
-    return file;
+    return { file, width: 0, height: 0 };
   }
 
-  // Don't compress GIFs (would lose animation) or SVGs (vector)
   if (file.type === 'image/gif' || file.type === 'image/svg+xml') {
-    return file;
+    const dims = await readImageDimensions(file);
+    return { file, width: dims?.width ?? 0, height: dims?.height ?? 0 };
   }
 
   try {
-    return await new Promise((resolve, _reject) => {
+    return await new Promise((resolve) => {
       const img = new Image();
+      const objectUrl = URL.createObjectURL(file);
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
 
       if (!ctx) {
-        resolve(file);
+        URL.revokeObjectURL(objectUrl);
+        void readImageDimensions(file).then((dims) =>
+          resolve({ file, width: dims?.width ?? 0, height: dims?.height ?? 0 })
+        );
         return;
       }
 
       img.onload = () => {
+        URL.revokeObjectURL(objectUrl);
         let { width, height } = img;
 
-        // Calculate new dimensions
         if (width > maxWidth || height > maxHeight) {
           const ratio = Math.min(maxWidth / width, maxHeight / height);
           width = Math.floor(width * ratio);
           height = Math.floor(height * ratio);
         }
 
-        // If image is already small enough, return original
+        const outWidth = width;
+        const outHeight = height;
+
         if (width === img.width && height === img.height && file.size < 500 * 1024) {
-          resolve(file);
+          resolve({ file, width: outWidth, height: outHeight });
           return;
         }
 
         canvas.width = width;
         canvas.height = height;
-
-        // Draw resized image
         ctx.drawImage(img, 0, 0, width, height);
 
-        // Convert to blob (use WebP for better compression, fallback to JPEG)
         const outputType = 'image/webp';
         canvas.toBlob(
           (blob) => {
             if (!blob) {
-              resolve(file);
+              resolve({ file, width: outWidth, height: outHeight });
               return;
             }
 
-            // Only use compressed version if it's actually smaller
             if (blob.size < file.size) {
-              const compressedFile = new File([blob], file.name, {
-                type: outputType,
-                lastModified: Date.now(),
+              resolve({
+                file: new File([blob], file.name, { type: outputType, lastModified: Date.now() }),
+                width: outWidth,
+                height: outHeight,
               });
-              resolve(compressedFile);
             } else {
-              resolve(file);
+              resolve({ file, width: outWidth, height: outHeight });
             }
           },
           outputType,
@@ -150,12 +194,18 @@ export async function compressImage(
         );
       };
 
-      img.onerror = () => resolve(file);
-      img.src = URL.createObjectURL(file);
+      img.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        void readImageDimensions(file).then((dims) =>
+          resolve({ file, width: dims?.width ?? 0, height: dims?.height ?? 0 })
+        );
+      };
+      img.src = objectUrl;
     });
   } catch (error) {
     console.warn('Image compression failed:', error);
-    return file;
+    const dims = await readImageDimensions(file);
+    return { file, width: dims?.width ?? 0, height: dims?.height ?? 0 };
   }
 }
 
@@ -254,7 +304,11 @@ export class MediaService {
    * @returns          A `MediaRef` ready to be JSON-serialised and embedded
    *                   inside the MLS application message.
    */
-  async encryptAndUpload(file: File, authToken: string): Promise<MediaRef> {
+  async encryptAndUpload(
+    file: File,
+    authToken: string,
+    dimensions?: Partial<ImageDimensions>
+  ): Promise<MediaRef> {
     // 1. Generate a fresh CEK and IV for this file
     const { cryptoKey, keyHex } = await generateCek();
     const { iv, ivHex } = generateIv();
@@ -358,6 +412,11 @@ export class MediaService {
           ? 'audio'
           : 'file';
 
+    const width =
+      dimensions?.width && dimensions.width > 0 ? Math.round(dimensions.width) : undefined;
+    const height =
+      dimensions?.height && dimensions.height > 0 ? Math.round(dimensions.height) : undefined;
+
     return {
       type,
       mediaId,
@@ -366,6 +425,7 @@ export class MediaService {
       mimeType: file.type,
       size: file.size,
       fileName: file.name,
+      ...(width && height ? { width, height } : {}),
     };
   }
 

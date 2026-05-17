@@ -15,6 +15,7 @@
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import PostImage from './PostImage.svelte';
   import { MediaService, compressImage } from '$lib/media';
+  import { mediaAspectStyle } from '$lib/utils/mediaLayout';
   import { timeAgo, exactDate } from '$lib/utils/time';
   import SvelteMarkdown from '@humanspeak/svelte-markdown';
   import PostMentionLink from './PostMentionLink.svelte';
@@ -110,7 +111,10 @@
     uploadingMedia = true;
     try {
       const compressed = await compressImage(file, 800, 800, 0.8);
-      const ref = await mediaService.encryptAndUpload(compressed, authToken);
+      const ref = await mediaService.encryptAndUpload(compressed.file, authToken, {
+        width: compressed.width,
+        height: compressed.height,
+      });
       const { type: _type, ...mediaFields } = ref;
       pendingMedia = mediaFields as PostImageRef;
       pendingPreviewUrl = URL.createObjectURL(file);
@@ -310,8 +314,8 @@
           {/if}
           {#if comment.media && authToken}
             <div
-              class="relative mt-1.5 rounded-xl overflow-hidden bg-black/5 dark:bg-white/5"
-              style="width: 200px; height: 140px;"
+              class="relative mt-1.5 w-full max-w-[14rem] rounded-xl overflow-hidden bg-black/5 dark:bg-white/5"
+              style={mediaAspectStyle(comment.media.width, comment.media.height)}
             >
               <PostImage media={comment.media} {authToken} />
             </div>
@@ -487,7 +491,10 @@
     {#if pendingPreviewUrl || uploadingMedia}
       <div class="flex items-center gap-2 mb-2 ml-[2.125rem]">
         <div
-          class="relative w-20 h-14 rounded-lg overflow-hidden bg-black/10 dark:bg-white/10 flex-shrink-0"
+          class="relative w-20 max-h-14 rounded-lg overflow-hidden bg-black/10 dark:bg-white/10 flex-shrink-0"
+          style={pendingMedia?.width && pendingMedia?.height
+            ? mediaAspectStyle(pendingMedia.width, pendingMedia.height)
+            : 'aspect-ratio: 10/7'}
         >
           {#if pendingPreviewUrl}
             <img src={pendingPreviewUrl} alt="GIF" class="w-full h-full object-cover" />

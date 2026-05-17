@@ -32,6 +32,7 @@
   import { Pin, CalendarCheck } from 'lucide-svelte';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { untrack } from 'svelte';
+  import { FORM_CARD_PLACEHOLDER_MIN_HEIGHT } from '$lib/utils/mediaLayout';
 
   /**
    * Props for the PostCard component.
@@ -106,6 +107,20 @@
   let topLevelComments = $derived(comments.filter((c) => !c.parentId));
 
   let formInfos = $state<{ id: string; title: string; submitted: boolean; opensAt?: string | null }[]>([]);
+
+  const expectedAttachedFormIds = $derived.by(() => {
+    const ids: string[] = [];
+    if (localPost.forms?.length) {
+      for (const f of localPost.forms) ids.push(f.id);
+    } else if (localPost.attachedFormId) {
+      ids.push(localPost.attachedFormId);
+    }
+    return ids;
+  });
+
+  const pendingAttachedFormIds = $derived(
+    expectedAttachedFormIds.filter((id) => !formInfos.some((fi) => fi.id === id))
+  );
   let btnFormInfos = $state<Record<string, { formId: string; title: string; submitted: boolean }>>(
     {}
   );
@@ -531,6 +546,17 @@
     {btnFormInfos}
     onRegisterEvent={registerForEvent}
   />
+
+  {#if pendingAttachedFormIds.length > 0}
+    <div class="px-5 py-3 space-y-3" aria-hidden="true">
+      {#each pendingAttachedFormIds as formId (formId)}
+        <div
+          class="rounded-2xl border border-black/5 dark:border-white/10 bg-black/5 dark:bg-white/5 animate-pulse"
+          style="min-height: {FORM_CARD_PLACEHOLDER_MIN_HEIGHT}"
+        ></div>
+      {/each}
+    </div>
+  {/if}
 
   <PostForms {formInfos} />
 

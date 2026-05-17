@@ -38,7 +38,7 @@ export const canari = $root.canari = (() => {
         function WsEnvelope(properties) {
             if (properties)
                 for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
-                    if (properties[keys[i]] != null)
+                    if (properties[keys[i]] != null && keys[i] !== "__proto__")
                         this[keys[i]] = properties[keys[i]];
         }
 
@@ -137,9 +137,13 @@ export const canari = $root.canari = (() => {
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        WsEnvelope.decode = function decode(reader, length, error) {
+        WsEnvelope.decode = function decode(reader, length, error, long) {
             if (!(reader instanceof $Reader))
                 reader = $Reader.create(reader);
+            if (long === undefined)
+                long = 0;
+            if (long > $Reader.recursionLimit)
+                throw Error("maximum nesting depth exceeded");
             let end = length === undefined ? reader.len : reader.pos + length, message = new $root.canari.WsEnvelope();
             while (reader.pos < end) {
                 let tag = reader.uint32();
@@ -147,19 +151,19 @@ export const canari = $root.canari = (() => {
                     break;
                 switch (tag >>> 3) {
                 case 1: {
-                        message.mls = $root.canari.MlsFrame.decode(reader, reader.uint32());
+                        message.mls = $root.canari.MlsFrame.decode(reader, reader.uint32(), undefined, long + 1);
                         break;
                     }
                 case 2: {
-                        message.welcome = $root.canari.WelcomeFrame.decode(reader, reader.uint32());
+                        message.welcome = $root.canari.WelcomeFrame.decode(reader, reader.uint32(), undefined, long + 1);
                         break;
                     }
                 case 3: {
-                        message.read = $root.canari.ReadAck.decode(reader, reader.uint32());
+                        message.read = $root.canari.ReadAck.decode(reader, reader.uint32(), undefined, long + 1);
                         break;
                     }
                 default:
-                    reader.skipType(tag & 7);
+                    reader.skipType(tag & 7, long);
                     break;
                 }
             }
@@ -190,14 +194,18 @@ export const canari = $root.canari = (() => {
          * @param {Object.<string,*>} message Plain object to verify
          * @returns {string|null} `null` if valid, otherwise the reason why it is not
          */
-        WsEnvelope.verify = function verify(message) {
+        WsEnvelope.verify = function verify(message, long) {
             if (typeof message !== "object" || message === null)
                 return "object expected";
+            if (long === undefined)
+                long = 0;
+            if (long > $util.recursionLimit)
+                return "maximum nesting depth exceeded";
             let properties = {};
             if (message.mls != null && message.hasOwnProperty("mls")) {
                 properties.body = 1;
                 {
-                    let error = $root.canari.MlsFrame.verify(message.mls);
+                    let error = $root.canari.MlsFrame.verify(message.mls, long + 1);
                     if (error)
                         return "mls." + error;
                 }
@@ -207,7 +215,7 @@ export const canari = $root.canari = (() => {
                     return "body: multiple values";
                 properties.body = 1;
                 {
-                    let error = $root.canari.WelcomeFrame.verify(message.welcome);
+                    let error = $root.canari.WelcomeFrame.verify(message.welcome, long + 1);
                     if (error)
                         return "welcome." + error;
                 }
@@ -217,7 +225,7 @@ export const canari = $root.canari = (() => {
                     return "body: multiple values";
                 properties.body = 1;
                 {
-                    let error = $root.canari.ReadAck.verify(message.read);
+                    let error = $root.canari.ReadAck.verify(message.read, long + 1);
                     if (error)
                         return "read." + error;
                 }
@@ -233,24 +241,28 @@ export const canari = $root.canari = (() => {
          * @param {Object.<string,*>} object Plain object
          * @returns {canari.WsEnvelope} WsEnvelope
          */
-        WsEnvelope.fromObject = function fromObject(object) {
+        WsEnvelope.fromObject = function fromObject(object, long) {
             if (object instanceof $root.canari.WsEnvelope)
                 return object;
+            if (long === undefined)
+                long = 0;
+            if (long > $util.recursionLimit)
+                throw Error("maximum nesting depth exceeded");
             let message = new $root.canari.WsEnvelope();
             if (object.mls != null) {
                 if (typeof object.mls !== "object")
                     throw TypeError(".canari.WsEnvelope.mls: object expected");
-                message.mls = $root.canari.MlsFrame.fromObject(object.mls);
+                message.mls = $root.canari.MlsFrame.fromObject(object.mls, long + 1);
             }
             if (object.welcome != null) {
                 if (typeof object.welcome !== "object")
                     throw TypeError(".canari.WsEnvelope.welcome: object expected");
-                message.welcome = $root.canari.WelcomeFrame.fromObject(object.welcome);
+                message.welcome = $root.canari.WelcomeFrame.fromObject(object.welcome, long + 1);
             }
             if (object.read != null) {
                 if (typeof object.read !== "object")
                     throw TypeError(".canari.WsEnvelope.read: object expected");
-                message.read = $root.canari.ReadAck.fromObject(object.read);
+                message.read = $root.canari.ReadAck.fromObject(object.read, long + 1);
             }
             return message;
         };
@@ -336,7 +348,7 @@ export const canari = $root.canari = (() => {
         function Recipient(properties) {
             if (properties)
                 for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
-                    if (properties[keys[i]] != null)
+                    if (properties[keys[i]] != null && keys[i] !== "__proto__")
                         this[keys[i]] = properties[keys[i]];
         }
 
@@ -411,9 +423,13 @@ export const canari = $root.canari = (() => {
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        Recipient.decode = function decode(reader, length, error) {
+        Recipient.decode = function decode(reader, length, error, long) {
             if (!(reader instanceof $Reader))
                 reader = $Reader.create(reader);
+            if (long === undefined)
+                long = 0;
+            if (long > $Reader.recursionLimit)
+                throw Error("maximum nesting depth exceeded");
             let end = length === undefined ? reader.len : reader.pos + length, message = new $root.canari.Recipient();
             while (reader.pos < end) {
                 let tag = reader.uint32();
@@ -429,7 +445,7 @@ export const canari = $root.canari = (() => {
                         break;
                     }
                 default:
-                    reader.skipType(tag & 7);
+                    reader.skipType(tag & 7, long);
                     break;
                 }
             }
@@ -460,9 +476,13 @@ export const canari = $root.canari = (() => {
          * @param {Object.<string,*>} message Plain object to verify
          * @returns {string|null} `null` if valid, otherwise the reason why it is not
          */
-        Recipient.verify = function verify(message) {
+        Recipient.verify = function verify(message, long) {
             if (typeof message !== "object" || message === null)
                 return "object expected";
+            if (long === undefined)
+                long = 0;
+            if (long > $util.recursionLimit)
+                return "maximum nesting depth exceeded";
             if (message.userId != null && message.hasOwnProperty("userId"))
                 if (!$util.isString(message.userId))
                     return "userId: string expected";
@@ -480,9 +500,13 @@ export const canari = $root.canari = (() => {
          * @param {Object.<string,*>} object Plain object
          * @returns {canari.Recipient} Recipient
          */
-        Recipient.fromObject = function fromObject(object) {
+        Recipient.fromObject = function fromObject(object, long) {
             if (object instanceof $root.canari.Recipient)
                 return object;
+            if (long === undefined)
+                long = 0;
+            if (long > $util.recursionLimit)
+                throw Error("maximum nesting depth exceeded");
             let message = new $root.canari.Recipient();
             if (object.userId != null)
                 message.userId = String(object.userId);
@@ -567,7 +591,7 @@ export const canari = $root.canari = (() => {
             this.recipients = [];
             if (properties)
                 for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
-                    if (properties[keys[i]] != null)
+                    if (properties[keys[i]] != null && keys[i] !== "__proto__")
                         this[keys[i]] = properties[keys[i]];
         }
 
@@ -653,9 +677,13 @@ export const canari = $root.canari = (() => {
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        MlsFrame.decode = function decode(reader, length, error) {
+        MlsFrame.decode = function decode(reader, length, error, long) {
             if (!(reader instanceof $Reader))
                 reader = $Reader.create(reader);
+            if (long === undefined)
+                long = 0;
+            if (long > $Reader.recursionLimit)
+                throw Error("maximum nesting depth exceeded");
             let end = length === undefined ? reader.len : reader.pos + length, message = new $root.canari.MlsFrame();
             while (reader.pos < end) {
                 let tag = reader.uint32();
@@ -673,11 +701,11 @@ export const canari = $root.canari = (() => {
                 case 3: {
                         if (!(message.recipients && message.recipients.length))
                             message.recipients = [];
-                        message.recipients.push($root.canari.Recipient.decode(reader, reader.uint32()));
+                        message.recipients.push($root.canari.Recipient.decode(reader, reader.uint32(), undefined, long + 1));
                         break;
                     }
                 default:
-                    reader.skipType(tag & 7);
+                    reader.skipType(tag & 7, long);
                     break;
                 }
             }
@@ -708,9 +736,13 @@ export const canari = $root.canari = (() => {
          * @param {Object.<string,*>} message Plain object to verify
          * @returns {string|null} `null` if valid, otherwise the reason why it is not
          */
-        MlsFrame.verify = function verify(message) {
+        MlsFrame.verify = function verify(message, long) {
             if (typeof message !== "object" || message === null)
                 return "object expected";
+            if (long === undefined)
+                long = 0;
+            if (long > $util.recursionLimit)
+                return "maximum nesting depth exceeded";
             if (message.ciphertext != null && message.hasOwnProperty("ciphertext"))
                 if (!(message.ciphertext && typeof message.ciphertext.length === "number" || $util.isString(message.ciphertext)))
                     return "ciphertext: buffer expected";
@@ -721,7 +753,7 @@ export const canari = $root.canari = (() => {
                 if (!Array.isArray(message.recipients))
                     return "recipients: array expected";
                 for (let i = 0; i < message.recipients.length; ++i) {
-                    let error = $root.canari.Recipient.verify(message.recipients[i]);
+                    let error = $root.canari.Recipient.verify(message.recipients[i], long + 1);
                     if (error)
                         return "recipients." + error;
                 }
@@ -737,9 +769,13 @@ export const canari = $root.canari = (() => {
          * @param {Object.<string,*>} object Plain object
          * @returns {canari.MlsFrame} MlsFrame
          */
-        MlsFrame.fromObject = function fromObject(object) {
+        MlsFrame.fromObject = function fromObject(object, long) {
             if (object instanceof $root.canari.MlsFrame)
                 return object;
+            if (long === undefined)
+                long = 0;
+            if (long > $util.recursionLimit)
+                throw Error("maximum nesting depth exceeded");
             let message = new $root.canari.MlsFrame();
             if (object.ciphertext != null)
                 if (typeof object.ciphertext === "string")
@@ -755,7 +791,7 @@ export const canari = $root.canari = (() => {
                 for (let i = 0; i < object.recipients.length; ++i) {
                     if (typeof object.recipients[i] !== "object")
                         throw TypeError(".canari.MlsFrame.recipients: object expected");
-                    message.recipients[i] = $root.canari.Recipient.fromObject(object.recipients[i]);
+                    message.recipients[i] = $root.canari.Recipient.fromObject(object.recipients[i], long + 1);
                 }
             }
             return message;
@@ -850,7 +886,7 @@ export const canari = $root.canari = (() => {
             this.recipients = [];
             if (properties)
                 for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
-                    if (properties[keys[i]] != null)
+                    if (properties[keys[i]] != null && keys[i] !== "__proto__")
                         this[keys[i]] = properties[keys[i]];
         }
 
@@ -936,9 +972,13 @@ export const canari = $root.canari = (() => {
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        WelcomeFrame.decode = function decode(reader, length, error) {
+        WelcomeFrame.decode = function decode(reader, length, error, long) {
             if (!(reader instanceof $Reader))
                 reader = $Reader.create(reader);
+            if (long === undefined)
+                long = 0;
+            if (long > $Reader.recursionLimit)
+                throw Error("maximum nesting depth exceeded");
             let end = length === undefined ? reader.len : reader.pos + length, message = new $root.canari.WelcomeFrame();
             while (reader.pos < end) {
                 let tag = reader.uint32();
@@ -956,11 +996,11 @@ export const canari = $root.canari = (() => {
                 case 3: {
                         if (!(message.recipients && message.recipients.length))
                             message.recipients = [];
-                        message.recipients.push($root.canari.Recipient.decode(reader, reader.uint32()));
+                        message.recipients.push($root.canari.Recipient.decode(reader, reader.uint32(), undefined, long + 1));
                         break;
                     }
                 default:
-                    reader.skipType(tag & 7);
+                    reader.skipType(tag & 7, long);
                     break;
                 }
             }
@@ -991,9 +1031,13 @@ export const canari = $root.canari = (() => {
          * @param {Object.<string,*>} message Plain object to verify
          * @returns {string|null} `null` if valid, otherwise the reason why it is not
          */
-        WelcomeFrame.verify = function verify(message) {
+        WelcomeFrame.verify = function verify(message, long) {
             if (typeof message !== "object" || message === null)
                 return "object expected";
+            if (long === undefined)
+                long = 0;
+            if (long > $util.recursionLimit)
+                return "maximum nesting depth exceeded";
             if (message.ciphertext != null && message.hasOwnProperty("ciphertext"))
                 if (!(message.ciphertext && typeof message.ciphertext.length === "number" || $util.isString(message.ciphertext)))
                     return "ciphertext: buffer expected";
@@ -1004,7 +1048,7 @@ export const canari = $root.canari = (() => {
                 if (!Array.isArray(message.recipients))
                     return "recipients: array expected";
                 for (let i = 0; i < message.recipients.length; ++i) {
-                    let error = $root.canari.Recipient.verify(message.recipients[i]);
+                    let error = $root.canari.Recipient.verify(message.recipients[i], long + 1);
                     if (error)
                         return "recipients." + error;
                 }
@@ -1020,9 +1064,13 @@ export const canari = $root.canari = (() => {
          * @param {Object.<string,*>} object Plain object
          * @returns {canari.WelcomeFrame} WelcomeFrame
          */
-        WelcomeFrame.fromObject = function fromObject(object) {
+        WelcomeFrame.fromObject = function fromObject(object, long) {
             if (object instanceof $root.canari.WelcomeFrame)
                 return object;
+            if (long === undefined)
+                long = 0;
+            if (long > $util.recursionLimit)
+                throw Error("maximum nesting depth exceeded");
             let message = new $root.canari.WelcomeFrame();
             if (object.ciphertext != null)
                 if (typeof object.ciphertext === "string")
@@ -1038,7 +1086,7 @@ export const canari = $root.canari = (() => {
                 for (let i = 0; i < object.recipients.length; ++i) {
                     if (typeof object.recipients[i] !== "object")
                         throw TypeError(".canari.WelcomeFrame.recipients: object expected");
-                    message.recipients[i] = $root.canari.Recipient.fromObject(object.recipients[i]);
+                    message.recipients[i] = $root.canari.Recipient.fromObject(object.recipients[i], long + 1);
                 }
             }
             return message;
@@ -1130,7 +1178,7 @@ export const canari = $root.canari = (() => {
         function ReadAck(properties) {
             if (properties)
                 for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
-                    if (properties[keys[i]] != null)
+                    if (properties[keys[i]] != null && keys[i] !== "__proto__")
                         this[keys[i]] = properties[keys[i]];
         }
 
@@ -1195,9 +1243,13 @@ export const canari = $root.canari = (() => {
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        ReadAck.decode = function decode(reader, length, error) {
+        ReadAck.decode = function decode(reader, length, error, long) {
             if (!(reader instanceof $Reader))
                 reader = $Reader.create(reader);
+            if (long === undefined)
+                long = 0;
+            if (long > $Reader.recursionLimit)
+                throw Error("maximum nesting depth exceeded");
             let end = length === undefined ? reader.len : reader.pos + length, message = new $root.canari.ReadAck();
             while (reader.pos < end) {
                 let tag = reader.uint32();
@@ -1209,7 +1261,7 @@ export const canari = $root.canari = (() => {
                         break;
                     }
                 default:
-                    reader.skipType(tag & 7);
+                    reader.skipType(tag & 7, long);
                     break;
                 }
             }
@@ -1240,9 +1292,13 @@ export const canari = $root.canari = (() => {
          * @param {Object.<string,*>} message Plain object to verify
          * @returns {string|null} `null` if valid, otherwise the reason why it is not
          */
-        ReadAck.verify = function verify(message) {
+        ReadAck.verify = function verify(message, long) {
             if (typeof message !== "object" || message === null)
                 return "object expected";
+            if (long === undefined)
+                long = 0;
+            if (long > $util.recursionLimit)
+                return "maximum nesting depth exceeded";
             if (message.messageId != null && message.hasOwnProperty("messageId"))
                 if (!$util.isString(message.messageId))
                     return "messageId: string expected";
@@ -1257,9 +1313,13 @@ export const canari = $root.canari = (() => {
          * @param {Object.<string,*>} object Plain object
          * @returns {canari.ReadAck} ReadAck
          */
-        ReadAck.fromObject = function fromObject(object) {
+        ReadAck.fromObject = function fromObject(object, long) {
             if (object instanceof $root.canari.ReadAck)
                 return object;
+            if (long === undefined)
+                long = 0;
+            if (long > $util.recursionLimit)
+                throw Error("maximum nesting depth exceeded");
             let message = new $root.canari.ReadAck();
             if (object.messageId != null)
                 message.messageId = String(object.messageId);
@@ -1326,6 +1386,7 @@ export const canari = $root.canari = (() => {
          * @property {string|null} [senderDeviceId] InboundMsg senderDeviceId
          * @property {string|null} [groupId] InboundMsg groupId
          * @property {boolean|null} [isWelcome] InboundMsg isWelcome
+         * @property {boolean|null} [isCommit] InboundMsg isCommit
          */
 
         /**
@@ -1339,7 +1400,7 @@ export const canari = $root.canari = (() => {
         function InboundMsg(properties) {
             if (properties)
                 for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
-                    if (properties[keys[i]] != null)
+                    if (properties[keys[i]] != null && keys[i] !== "__proto__")
                         this[keys[i]] = properties[keys[i]];
         }
 
@@ -1384,6 +1445,14 @@ export const canari = $root.canari = (() => {
         InboundMsg.prototype.isWelcome = false;
 
         /**
+         * InboundMsg isCommit.
+         * @member {boolean} isCommit
+         * @memberof canari.InboundMsg
+         * @instance
+         */
+        InboundMsg.prototype.isCommit = false;
+
+        /**
          * Creates a new InboundMsg instance using the specified properties.
          * @function create
          * @memberof canari.InboundMsg
@@ -1417,6 +1486,8 @@ export const canari = $root.canari = (() => {
                 writer.uint32(/* id 4, wireType 2 =*/34).string(message.groupId);
             if (message.isWelcome != null && Object.hasOwnProperty.call(message, "isWelcome"))
                 writer.uint32(/* id 5, wireType 0 =*/40).bool(message.isWelcome);
+            if (message.isCommit != null && Object.hasOwnProperty.call(message, "isCommit"))
+                writer.uint32(/* id 6, wireType 0 =*/48).bool(message.isCommit);
             return writer;
         };
 
@@ -1444,9 +1515,13 @@ export const canari = $root.canari = (() => {
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        InboundMsg.decode = function decode(reader, length, error) {
+        InboundMsg.decode = function decode(reader, length, error, long) {
             if (!(reader instanceof $Reader))
                 reader = $Reader.create(reader);
+            if (long === undefined)
+                long = 0;
+            if (long > $Reader.recursionLimit)
+                throw Error("maximum nesting depth exceeded");
             let end = length === undefined ? reader.len : reader.pos + length, message = new $root.canari.InboundMsg();
             while (reader.pos < end) {
                 let tag = reader.uint32();
@@ -1473,8 +1548,12 @@ export const canari = $root.canari = (() => {
                         message.isWelcome = reader.bool();
                         break;
                     }
+                case 6: {
+                        message.isCommit = reader.bool();
+                        break;
+                    }
                 default:
-                    reader.skipType(tag & 7);
+                    reader.skipType(tag & 7, long);
                     break;
                 }
             }
@@ -1505,9 +1584,13 @@ export const canari = $root.canari = (() => {
          * @param {Object.<string,*>} message Plain object to verify
          * @returns {string|null} `null` if valid, otherwise the reason why it is not
          */
-        InboundMsg.verify = function verify(message) {
+        InboundMsg.verify = function verify(message, long) {
             if (typeof message !== "object" || message === null)
                 return "object expected";
+            if (long === undefined)
+                long = 0;
+            if (long > $util.recursionLimit)
+                return "maximum nesting depth exceeded";
             if (message.ciphertext != null && message.hasOwnProperty("ciphertext"))
                 if (!(message.ciphertext && typeof message.ciphertext.length === "number" || $util.isString(message.ciphertext)))
                     return "ciphertext: buffer expected";
@@ -1523,6 +1606,9 @@ export const canari = $root.canari = (() => {
             if (message.isWelcome != null && message.hasOwnProperty("isWelcome"))
                 if (typeof message.isWelcome !== "boolean")
                     return "isWelcome: boolean expected";
+            if (message.isCommit != null && message.hasOwnProperty("isCommit"))
+                if (typeof message.isCommit !== "boolean")
+                    return "isCommit: boolean expected";
             return null;
         };
 
@@ -1534,9 +1620,13 @@ export const canari = $root.canari = (() => {
          * @param {Object.<string,*>} object Plain object
          * @returns {canari.InboundMsg} InboundMsg
          */
-        InboundMsg.fromObject = function fromObject(object) {
+        InboundMsg.fromObject = function fromObject(object, long) {
             if (object instanceof $root.canari.InboundMsg)
                 return object;
+            if (long === undefined)
+                long = 0;
+            if (long > $util.recursionLimit)
+                throw Error("maximum nesting depth exceeded");
             let message = new $root.canari.InboundMsg();
             if (object.ciphertext != null)
                 if (typeof object.ciphertext === "string")
@@ -1551,6 +1641,8 @@ export const canari = $root.canari = (() => {
                 message.groupId = String(object.groupId);
             if (object.isWelcome != null)
                 message.isWelcome = Boolean(object.isWelcome);
+            if (object.isCommit != null)
+                message.isCommit = Boolean(object.isCommit);
             return message;
         };
 
@@ -1579,6 +1671,7 @@ export const canari = $root.canari = (() => {
                 object.senderDeviceId = "";
                 object.groupId = "";
                 object.isWelcome = false;
+                object.isCommit = false;
             }
             if (message.ciphertext != null && message.hasOwnProperty("ciphertext"))
                 object.ciphertext = options.bytes === String ? $util.base64.encode(message.ciphertext, 0, message.ciphertext.length) : options.bytes === Array ? Array.prototype.slice.call(message.ciphertext) : message.ciphertext;
@@ -1590,6 +1683,8 @@ export const canari = $root.canari = (() => {
                 object.groupId = message.groupId;
             if (message.isWelcome != null && message.hasOwnProperty("isWelcome"))
                 object.isWelcome = message.isWelcome;
+            if (message.isCommit != null && message.hasOwnProperty("isCommit"))
+                object.isCommit = message.isCommit;
             return object;
         };
 
@@ -1648,7 +1743,7 @@ export const canari = $root.canari = (() => {
         function AppMessage(properties) {
             if (properties)
                 for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
-                    if (properties[keys[i]] != null)
+                    if (properties[keys[i]] != null && keys[i] !== "__proto__")
                         this[keys[i]] = properties[keys[i]];
         }
 
@@ -1787,9 +1882,13 @@ export const canari = $root.canari = (() => {
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        AppMessage.decode = function decode(reader, length, error) {
+        AppMessage.decode = function decode(reader, length, error, long) {
             if (!(reader instanceof $Reader))
                 reader = $Reader.create(reader);
+            if (long === undefined)
+                long = 0;
+            if (long > $Reader.recursionLimit)
+                throw Error("maximum nesting depth exceeded");
             let end = length === undefined ? reader.len : reader.pos + length, message = new $root.canari.AppMessage();
             while (reader.pos < end) {
                 let tag = reader.uint32();
@@ -1801,31 +1900,31 @@ export const canari = $root.canari = (() => {
                         break;
                     }
                 case 1: {
-                        message.text = $root.canari.TextMsg.decode(reader, reader.uint32());
+                        message.text = $root.canari.TextMsg.decode(reader, reader.uint32(), undefined, long + 1);
                         break;
                     }
                 case 2: {
-                        message.reply = $root.canari.ReplyMsg.decode(reader, reader.uint32());
+                        message.reply = $root.canari.ReplyMsg.decode(reader, reader.uint32(), undefined, long + 1);
                         break;
                     }
                 case 3: {
-                        message.reaction = $root.canari.ReactionMsg.decode(reader, reader.uint32());
+                        message.reaction = $root.canari.ReactionMsg.decode(reader, reader.uint32(), undefined, long + 1);
                         break;
                     }
                 case 4: {
-                        message.media = $root.canari.MediaMsg.decode(reader, reader.uint32());
+                        message.media = $root.canari.MediaMsg.decode(reader, reader.uint32(), undefined, long + 1);
                         break;
                     }
                 case 5: {
-                        message.system = $root.canari.SystemMsg.decode(reader, reader.uint32());
+                        message.system = $root.canari.SystemMsg.decode(reader, reader.uint32(), undefined, long + 1);
                         break;
                     }
                 case 7: {
-                        message.call = $root.canari.CallMsg.decode(reader, reader.uint32());
+                        message.call = $root.canari.CallMsg.decode(reader, reader.uint32(), undefined, long + 1);
                         break;
                     }
                 default:
-                    reader.skipType(tag & 7);
+                    reader.skipType(tag & 7, long);
                     break;
                 }
             }
@@ -1856,9 +1955,13 @@ export const canari = $root.canari = (() => {
          * @param {Object.<string,*>} message Plain object to verify
          * @returns {string|null} `null` if valid, otherwise the reason why it is not
          */
-        AppMessage.verify = function verify(message) {
+        AppMessage.verify = function verify(message, long) {
             if (typeof message !== "object" || message === null)
                 return "object expected";
+            if (long === undefined)
+                long = 0;
+            if (long > $util.recursionLimit)
+                return "maximum nesting depth exceeded";
             let properties = {};
             if (message.messageId != null && message.hasOwnProperty("messageId"))
                 if (!$util.isString(message.messageId))
@@ -1866,7 +1969,7 @@ export const canari = $root.canari = (() => {
             if (message.text != null && message.hasOwnProperty("text")) {
                 properties.kind = 1;
                 {
-                    let error = $root.canari.TextMsg.verify(message.text);
+                    let error = $root.canari.TextMsg.verify(message.text, long + 1);
                     if (error)
                         return "text." + error;
                 }
@@ -1876,7 +1979,7 @@ export const canari = $root.canari = (() => {
                     return "kind: multiple values";
                 properties.kind = 1;
                 {
-                    let error = $root.canari.ReplyMsg.verify(message.reply);
+                    let error = $root.canari.ReplyMsg.verify(message.reply, long + 1);
                     if (error)
                         return "reply." + error;
                 }
@@ -1886,7 +1989,7 @@ export const canari = $root.canari = (() => {
                     return "kind: multiple values";
                 properties.kind = 1;
                 {
-                    let error = $root.canari.ReactionMsg.verify(message.reaction);
+                    let error = $root.canari.ReactionMsg.verify(message.reaction, long + 1);
                     if (error)
                         return "reaction." + error;
                 }
@@ -1896,7 +1999,7 @@ export const canari = $root.canari = (() => {
                     return "kind: multiple values";
                 properties.kind = 1;
                 {
-                    let error = $root.canari.MediaMsg.verify(message.media);
+                    let error = $root.canari.MediaMsg.verify(message.media, long + 1);
                     if (error)
                         return "media." + error;
                 }
@@ -1906,7 +2009,7 @@ export const canari = $root.canari = (() => {
                     return "kind: multiple values";
                 properties.kind = 1;
                 {
-                    let error = $root.canari.SystemMsg.verify(message.system);
+                    let error = $root.canari.SystemMsg.verify(message.system, long + 1);
                     if (error)
                         return "system." + error;
                 }
@@ -1916,7 +2019,7 @@ export const canari = $root.canari = (() => {
                     return "kind: multiple values";
                 properties.kind = 1;
                 {
-                    let error = $root.canari.CallMsg.verify(message.call);
+                    let error = $root.canari.CallMsg.verify(message.call, long + 1);
                     if (error)
                         return "call." + error;
                 }
@@ -1932,41 +2035,45 @@ export const canari = $root.canari = (() => {
          * @param {Object.<string,*>} object Plain object
          * @returns {canari.AppMessage} AppMessage
          */
-        AppMessage.fromObject = function fromObject(object) {
+        AppMessage.fromObject = function fromObject(object, long) {
             if (object instanceof $root.canari.AppMessage)
                 return object;
+            if (long === undefined)
+                long = 0;
+            if (long > $util.recursionLimit)
+                throw Error("maximum nesting depth exceeded");
             let message = new $root.canari.AppMessage();
             if (object.messageId != null)
                 message.messageId = String(object.messageId);
             if (object.text != null) {
                 if (typeof object.text !== "object")
                     throw TypeError(".canari.AppMessage.text: object expected");
-                message.text = $root.canari.TextMsg.fromObject(object.text);
+                message.text = $root.canari.TextMsg.fromObject(object.text, long + 1);
             }
             if (object.reply != null) {
                 if (typeof object.reply !== "object")
                     throw TypeError(".canari.AppMessage.reply: object expected");
-                message.reply = $root.canari.ReplyMsg.fromObject(object.reply);
+                message.reply = $root.canari.ReplyMsg.fromObject(object.reply, long + 1);
             }
             if (object.reaction != null) {
                 if (typeof object.reaction !== "object")
                     throw TypeError(".canari.AppMessage.reaction: object expected");
-                message.reaction = $root.canari.ReactionMsg.fromObject(object.reaction);
+                message.reaction = $root.canari.ReactionMsg.fromObject(object.reaction, long + 1);
             }
             if (object.media != null) {
                 if (typeof object.media !== "object")
                     throw TypeError(".canari.AppMessage.media: object expected");
-                message.media = $root.canari.MediaMsg.fromObject(object.media);
+                message.media = $root.canari.MediaMsg.fromObject(object.media, long + 1);
             }
             if (object.system != null) {
                 if (typeof object.system !== "object")
                     throw TypeError(".canari.AppMessage.system: object expected");
-                message.system = $root.canari.SystemMsg.fromObject(object.system);
+                message.system = $root.canari.SystemMsg.fromObject(object.system, long + 1);
             }
             if (object.call != null) {
                 if (typeof object.call !== "object")
                     throw TypeError(".canari.AppMessage.call: object expected");
-                message.call = $root.canari.CallMsg.fromObject(object.call);
+                message.call = $root.canari.CallMsg.fromObject(object.call, long + 1);
             }
             return message;
         };
@@ -2074,7 +2181,7 @@ export const canari = $root.canari = (() => {
         function CallMsg(properties) {
             if (properties)
                 for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
-                    if (properties[keys[i]] != null)
+                    if (properties[keys[i]] != null && keys[i] !== "__proto__")
                         this[keys[i]] = properties[keys[i]];
         }
 
@@ -2193,9 +2300,13 @@ export const canari = $root.canari = (() => {
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        CallMsg.decode = function decode(reader, length, error) {
+        CallMsg.decode = function decode(reader, length, error, long) {
             if (!(reader instanceof $Reader))
                 reader = $Reader.create(reader);
+            if (long === undefined)
+                long = 0;
+            if (long > $Reader.recursionLimit)
+                throw Error("maximum nesting depth exceeded");
             let end = length === undefined ? reader.len : reader.pos + length, message = new $root.canari.CallMsg();
             while (reader.pos < end) {
                 let tag = reader.uint32();
@@ -2223,7 +2334,7 @@ export const canari = $root.canari = (() => {
                         break;
                     }
                 default:
-                    reader.skipType(tag & 7);
+                    reader.skipType(tag & 7, long);
                     break;
                 }
             }
@@ -2254,9 +2365,13 @@ export const canari = $root.canari = (() => {
          * @param {Object.<string,*>} message Plain object to verify
          * @returns {string|null} `null` if valid, otherwise the reason why it is not
          */
-        CallMsg.verify = function verify(message) {
+        CallMsg.verify = function verify(message, long) {
             if (typeof message !== "object" || message === null)
                 return "object expected";
+            if (long === undefined)
+                long = 0;
+            if (long > $util.recursionLimit)
+                return "maximum nesting depth exceeded";
             let properties = {};
             if (message.callId != null && message.hasOwnProperty("callId"))
                 if (!$util.isString(message.callId))
@@ -2298,9 +2413,13 @@ export const canari = $root.canari = (() => {
          * @param {Object.<string,*>} object Plain object
          * @returns {canari.CallMsg} CallMsg
          */
-        CallMsg.fromObject = function fromObject(object) {
+        CallMsg.fromObject = function fromObject(object, long) {
             if (object instanceof $root.canari.CallMsg)
                 return object;
+            if (long === undefined)
+                long = 0;
+            if (long > $util.recursionLimit)
+                throw Error("maximum nesting depth exceeded");
             let message = new $root.canari.CallMsg();
             if (object.callId != null)
                 message.callId = String(object.callId);
@@ -2404,7 +2523,7 @@ export const canari = $root.canari = (() => {
         function TextMsg(properties) {
             if (properties)
                 for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
-                    if (properties[keys[i]] != null)
+                    if (properties[keys[i]] != null && keys[i] !== "__proto__")
                         this[keys[i]] = properties[keys[i]];
         }
 
@@ -2469,9 +2588,13 @@ export const canari = $root.canari = (() => {
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        TextMsg.decode = function decode(reader, length, error) {
+        TextMsg.decode = function decode(reader, length, error, long) {
             if (!(reader instanceof $Reader))
                 reader = $Reader.create(reader);
+            if (long === undefined)
+                long = 0;
+            if (long > $Reader.recursionLimit)
+                throw Error("maximum nesting depth exceeded");
             let end = length === undefined ? reader.len : reader.pos + length, message = new $root.canari.TextMsg();
             while (reader.pos < end) {
                 let tag = reader.uint32();
@@ -2483,7 +2606,7 @@ export const canari = $root.canari = (() => {
                         break;
                     }
                 default:
-                    reader.skipType(tag & 7);
+                    reader.skipType(tag & 7, long);
                     break;
                 }
             }
@@ -2514,9 +2637,13 @@ export const canari = $root.canari = (() => {
          * @param {Object.<string,*>} message Plain object to verify
          * @returns {string|null} `null` if valid, otherwise the reason why it is not
          */
-        TextMsg.verify = function verify(message) {
+        TextMsg.verify = function verify(message, long) {
             if (typeof message !== "object" || message === null)
                 return "object expected";
+            if (long === undefined)
+                long = 0;
+            if (long > $util.recursionLimit)
+                return "maximum nesting depth exceeded";
             if (message.content != null && message.hasOwnProperty("content"))
                 if (!$util.isString(message.content))
                     return "content: string expected";
@@ -2531,9 +2658,13 @@ export const canari = $root.canari = (() => {
          * @param {Object.<string,*>} object Plain object
          * @returns {canari.TextMsg} TextMsg
          */
-        TextMsg.fromObject = function fromObject(object) {
+        TextMsg.fromObject = function fromObject(object, long) {
             if (object instanceof $root.canari.TextMsg)
                 return object;
+            if (long === undefined)
+                long = 0;
+            if (long > $util.recursionLimit)
+                throw Error("maximum nesting depth exceeded");
             let message = new $root.canari.TextMsg();
             if (object.content != null)
                 message.content = String(object.content);
@@ -2611,7 +2742,7 @@ export const canari = $root.canari = (() => {
         function ReplyRef(properties) {
             if (properties)
                 for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
-                    if (properties[keys[i]] != null)
+                    if (properties[keys[i]] != null && keys[i] !== "__proto__")
                         this[keys[i]] = properties[keys[i]];
         }
 
@@ -2696,9 +2827,13 @@ export const canari = $root.canari = (() => {
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        ReplyRef.decode = function decode(reader, length, error) {
+        ReplyRef.decode = function decode(reader, length, error, long) {
             if (!(reader instanceof $Reader))
                 reader = $Reader.create(reader);
+            if (long === undefined)
+                long = 0;
+            if (long > $Reader.recursionLimit)
+                throw Error("maximum nesting depth exceeded");
             let end = length === undefined ? reader.len : reader.pos + length, message = new $root.canari.ReplyRef();
             while (reader.pos < end) {
                 let tag = reader.uint32();
@@ -2718,7 +2853,7 @@ export const canari = $root.canari = (() => {
                         break;
                     }
                 default:
-                    reader.skipType(tag & 7);
+                    reader.skipType(tag & 7, long);
                     break;
                 }
             }
@@ -2749,9 +2884,13 @@ export const canari = $root.canari = (() => {
          * @param {Object.<string,*>} message Plain object to verify
          * @returns {string|null} `null` if valid, otherwise the reason why it is not
          */
-        ReplyRef.verify = function verify(message) {
+        ReplyRef.verify = function verify(message, long) {
             if (typeof message !== "object" || message === null)
                 return "object expected";
+            if (long === undefined)
+                long = 0;
+            if (long > $util.recursionLimit)
+                return "maximum nesting depth exceeded";
             if (message.id != null && message.hasOwnProperty("id"))
                 if (!$util.isString(message.id))
                     return "id: string expected";
@@ -2772,9 +2911,13 @@ export const canari = $root.canari = (() => {
          * @param {Object.<string,*>} object Plain object
          * @returns {canari.ReplyRef} ReplyRef
          */
-        ReplyRef.fromObject = function fromObject(object) {
+        ReplyRef.fromObject = function fromObject(object, long) {
             if (object instanceof $root.canari.ReplyRef)
                 return object;
+            if (long === undefined)
+                long = 0;
+            if (long > $util.recursionLimit)
+                throw Error("maximum nesting depth exceeded");
             let message = new $root.canari.ReplyRef();
             if (object.id != null)
                 message.id = String(object.id);
@@ -2862,7 +3005,7 @@ export const canari = $root.canari = (() => {
         function ReplyMsg(properties) {
             if (properties)
                 for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
-                    if (properties[keys[i]] != null)
+                    if (properties[keys[i]] != null && keys[i] !== "__proto__")
                         this[keys[i]] = properties[keys[i]];
         }
 
@@ -2937,9 +3080,13 @@ export const canari = $root.canari = (() => {
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        ReplyMsg.decode = function decode(reader, length, error) {
+        ReplyMsg.decode = function decode(reader, length, error, long) {
             if (!(reader instanceof $Reader))
                 reader = $Reader.create(reader);
+            if (long === undefined)
+                long = 0;
+            if (long > $Reader.recursionLimit)
+                throw Error("maximum nesting depth exceeded");
             let end = length === undefined ? reader.len : reader.pos + length, message = new $root.canari.ReplyMsg();
             while (reader.pos < end) {
                 let tag = reader.uint32();
@@ -2951,11 +3098,11 @@ export const canari = $root.canari = (() => {
                         break;
                     }
                 case 2: {
-                        message.replyTo = $root.canari.ReplyRef.decode(reader, reader.uint32());
+                        message.replyTo = $root.canari.ReplyRef.decode(reader, reader.uint32(), undefined, long + 1);
                         break;
                     }
                 default:
-                    reader.skipType(tag & 7);
+                    reader.skipType(tag & 7, long);
                     break;
                 }
             }
@@ -2986,14 +3133,18 @@ export const canari = $root.canari = (() => {
          * @param {Object.<string,*>} message Plain object to verify
          * @returns {string|null} `null` if valid, otherwise the reason why it is not
          */
-        ReplyMsg.verify = function verify(message) {
+        ReplyMsg.verify = function verify(message, long) {
             if (typeof message !== "object" || message === null)
                 return "object expected";
+            if (long === undefined)
+                long = 0;
+            if (long > $util.recursionLimit)
+                return "maximum nesting depth exceeded";
             if (message.content != null && message.hasOwnProperty("content"))
                 if (!$util.isString(message.content))
                     return "content: string expected";
             if (message.replyTo != null && message.hasOwnProperty("replyTo")) {
-                let error = $root.canari.ReplyRef.verify(message.replyTo);
+                let error = $root.canari.ReplyRef.verify(message.replyTo, long + 1);
                 if (error)
                     return "replyTo." + error;
             }
@@ -3008,16 +3159,20 @@ export const canari = $root.canari = (() => {
          * @param {Object.<string,*>} object Plain object
          * @returns {canari.ReplyMsg} ReplyMsg
          */
-        ReplyMsg.fromObject = function fromObject(object) {
+        ReplyMsg.fromObject = function fromObject(object, long) {
             if (object instanceof $root.canari.ReplyMsg)
                 return object;
+            if (long === undefined)
+                long = 0;
+            if (long > $util.recursionLimit)
+                throw Error("maximum nesting depth exceeded");
             let message = new $root.canari.ReplyMsg();
             if (object.content != null)
                 message.content = String(object.content);
             if (object.replyTo != null) {
                 if (typeof object.replyTo !== "object")
                     throw TypeError(".canari.ReplyMsg.replyTo: object expected");
-                message.replyTo = $root.canari.ReplyRef.fromObject(object.replyTo);
+                message.replyTo = $root.canari.ReplyRef.fromObject(object.replyTo, long + 1);
             }
             return message;
         };
@@ -3096,7 +3251,7 @@ export const canari = $root.canari = (() => {
         function ReactionMsg(properties) {
             if (properties)
                 for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
-                    if (properties[keys[i]] != null)
+                    if (properties[keys[i]] != null && keys[i] !== "__proto__")
                         this[keys[i]] = properties[keys[i]];
         }
 
@@ -3171,9 +3326,13 @@ export const canari = $root.canari = (() => {
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        ReactionMsg.decode = function decode(reader, length, error) {
+        ReactionMsg.decode = function decode(reader, length, error, long) {
             if (!(reader instanceof $Reader))
                 reader = $Reader.create(reader);
+            if (long === undefined)
+                long = 0;
+            if (long > $Reader.recursionLimit)
+                throw Error("maximum nesting depth exceeded");
             let end = length === undefined ? reader.len : reader.pos + length, message = new $root.canari.ReactionMsg();
             while (reader.pos < end) {
                 let tag = reader.uint32();
@@ -3189,7 +3348,7 @@ export const canari = $root.canari = (() => {
                         break;
                     }
                 default:
-                    reader.skipType(tag & 7);
+                    reader.skipType(tag & 7, long);
                     break;
                 }
             }
@@ -3220,9 +3379,13 @@ export const canari = $root.canari = (() => {
          * @param {Object.<string,*>} message Plain object to verify
          * @returns {string|null} `null` if valid, otherwise the reason why it is not
          */
-        ReactionMsg.verify = function verify(message) {
+        ReactionMsg.verify = function verify(message, long) {
             if (typeof message !== "object" || message === null)
                 return "object expected";
+            if (long === undefined)
+                long = 0;
+            if (long > $util.recursionLimit)
+                return "maximum nesting depth exceeded";
             if (message.messageId != null && message.hasOwnProperty("messageId"))
                 if (!$util.isString(message.messageId))
                     return "messageId: string expected";
@@ -3240,9 +3403,13 @@ export const canari = $root.canari = (() => {
          * @param {Object.<string,*>} object Plain object
          * @returns {canari.ReactionMsg} ReactionMsg
          */
-        ReactionMsg.fromObject = function fromObject(object) {
+        ReactionMsg.fromObject = function fromObject(object, long) {
             if (object instanceof $root.canari.ReactionMsg)
                 return object;
+            if (long === undefined)
+                long = 0;
+            if (long > $util.recursionLimit)
+                throw Error("maximum nesting depth exceeded");
             let message = new $root.canari.ReactionMsg();
             if (object.messageId != null)
                 message.messageId = String(object.messageId);
@@ -3336,6 +3503,8 @@ export const canari = $root.canari = (() => {
          * @property {number|null} [size] MediaMsg size
          * @property {string|null} [fileName] MediaMsg fileName
          * @property {string|null} [caption] MediaMsg caption
+         * @property {number|null} [width] MediaMsg width
+         * @property {number|null} [height] MediaMsg height
          */
 
         /**
@@ -3349,7 +3518,7 @@ export const canari = $root.canari = (() => {
         function MediaMsg(properties) {
             if (properties)
                 for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
-                    if (properties[keys[i]] != null)
+                    if (properties[keys[i]] != null && keys[i] !== "__proto__")
                         this[keys[i]] = properties[keys[i]];
         }
 
@@ -3418,6 +3587,22 @@ export const canari = $root.canari = (() => {
         MediaMsg.prototype.caption = "";
 
         /**
+         * MediaMsg width.
+         * @member {number} width
+         * @memberof canari.MediaMsg
+         * @instance
+         */
+        MediaMsg.prototype.width = 0;
+
+        /**
+         * MediaMsg height.
+         * @member {number} height
+         * @memberof canari.MediaMsg
+         * @instance
+         */
+        MediaMsg.prototype.height = 0;
+
+        /**
          * Creates a new MediaMsg instance using the specified properties.
          * @function create
          * @memberof canari.MediaMsg
@@ -3457,6 +3642,10 @@ export const canari = $root.canari = (() => {
                 writer.uint32(/* id 7, wireType 2 =*/58).string(message.fileName);
             if (message.caption != null && Object.hasOwnProperty.call(message, "caption"))
                 writer.uint32(/* id 8, wireType 2 =*/66).string(message.caption);
+            if (message.width != null && Object.hasOwnProperty.call(message, "width"))
+                writer.uint32(/* id 9, wireType 0 =*/72).uint32(message.width);
+            if (message.height != null && Object.hasOwnProperty.call(message, "height"))
+                writer.uint32(/* id 10, wireType 0 =*/80).uint32(message.height);
             return writer;
         };
 
@@ -3484,9 +3673,13 @@ export const canari = $root.canari = (() => {
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        MediaMsg.decode = function decode(reader, length, error) {
+        MediaMsg.decode = function decode(reader, length, error, long) {
             if (!(reader instanceof $Reader))
                 reader = $Reader.create(reader);
+            if (long === undefined)
+                long = 0;
+            if (long > $Reader.recursionLimit)
+                throw Error("maximum nesting depth exceeded");
             let end = length === undefined ? reader.len : reader.pos + length, message = new $root.canari.MediaMsg();
             while (reader.pos < end) {
                 let tag = reader.uint32();
@@ -3525,8 +3718,16 @@ export const canari = $root.canari = (() => {
                         message.caption = reader.string();
                         break;
                     }
+                case 9: {
+                        message.width = reader.uint32();
+                        break;
+                    }
+                case 10: {
+                        message.height = reader.uint32();
+                        break;
+                    }
                 default:
-                    reader.skipType(tag & 7);
+                    reader.skipType(tag & 7, long);
                     break;
                 }
             }
@@ -3557,9 +3758,13 @@ export const canari = $root.canari = (() => {
          * @param {Object.<string,*>} message Plain object to verify
          * @returns {string|null} `null` if valid, otherwise the reason why it is not
          */
-        MediaMsg.verify = function verify(message) {
+        MediaMsg.verify = function verify(message, long) {
             if (typeof message !== "object" || message === null)
                 return "object expected";
+            if (long === undefined)
+                long = 0;
+            if (long > $util.recursionLimit)
+                return "maximum nesting depth exceeded";
             if (message.kind != null && message.hasOwnProperty("kind"))
                 switch (message.kind) {
                 default:
@@ -3591,6 +3796,12 @@ export const canari = $root.canari = (() => {
             if (message.caption != null && message.hasOwnProperty("caption"))
                 if (!$util.isString(message.caption))
                     return "caption: string expected";
+            if (message.width != null && message.hasOwnProperty("width"))
+                if (!$util.isInteger(message.width))
+                    return "width: integer expected";
+            if (message.height != null && message.hasOwnProperty("height"))
+                if (!$util.isInteger(message.height))
+                    return "height: integer expected";
             return null;
         };
 
@@ -3602,9 +3813,13 @@ export const canari = $root.canari = (() => {
          * @param {Object.<string,*>} object Plain object
          * @returns {canari.MediaMsg} MediaMsg
          */
-        MediaMsg.fromObject = function fromObject(object) {
+        MediaMsg.fromObject = function fromObject(object, long) {
             if (object instanceof $root.canari.MediaMsg)
                 return object;
+            if (long === undefined)
+                long = 0;
+            if (long > $util.recursionLimit)
+                throw Error("maximum nesting depth exceeded");
             let message = new $root.canari.MediaMsg();
             switch (object.kind) {
             default:
@@ -3650,6 +3865,10 @@ export const canari = $root.canari = (() => {
                 message.fileName = String(object.fileName);
             if (object.caption != null)
                 message.caption = String(object.caption);
+            if (object.width != null)
+                message.width = object.width >>> 0;
+            if (object.height != null)
+                message.height = object.height >>> 0;
             return message;
         };
 
@@ -3687,6 +3906,8 @@ export const canari = $root.canari = (() => {
                 object.size = 0;
                 object.fileName = "";
                 object.caption = "";
+                object.width = 0;
+                object.height = 0;
             }
             if (message.kind != null && message.hasOwnProperty("kind"))
                 object.kind = options.enums === String ? $root.canari.MediaKind[message.kind] === undefined ? message.kind : $root.canari.MediaKind[message.kind] : message.kind;
@@ -3704,6 +3925,10 @@ export const canari = $root.canari = (() => {
                 object.fileName = message.fileName;
             if (message.caption != null && message.hasOwnProperty("caption"))
                 object.caption = message.caption;
+            if (message.width != null && message.hasOwnProperty("width"))
+                object.width = message.width;
+            if (message.height != null && message.hasOwnProperty("height"))
+                object.height = message.height;
             return object;
         };
 
@@ -3757,7 +3982,7 @@ export const canari = $root.canari = (() => {
         function SystemMsg(properties) {
             if (properties)
                 for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
-                    if (properties[keys[i]] != null)
+                    if (properties[keys[i]] != null && keys[i] !== "__proto__")
                         this[keys[i]] = properties[keys[i]];
         }
 
@@ -3832,9 +4057,13 @@ export const canari = $root.canari = (() => {
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        SystemMsg.decode = function decode(reader, length, error) {
+        SystemMsg.decode = function decode(reader, length, error, long) {
             if (!(reader instanceof $Reader))
                 reader = $Reader.create(reader);
+            if (long === undefined)
+                long = 0;
+            if (long > $Reader.recursionLimit)
+                throw Error("maximum nesting depth exceeded");
             let end = length === undefined ? reader.len : reader.pos + length, message = new $root.canari.SystemMsg();
             while (reader.pos < end) {
                 let tag = reader.uint32();
@@ -3850,7 +4079,7 @@ export const canari = $root.canari = (() => {
                         break;
                     }
                 default:
-                    reader.skipType(tag & 7);
+                    reader.skipType(tag & 7, long);
                     break;
                 }
             }
@@ -3881,9 +4110,13 @@ export const canari = $root.canari = (() => {
          * @param {Object.<string,*>} message Plain object to verify
          * @returns {string|null} `null` if valid, otherwise the reason why it is not
          */
-        SystemMsg.verify = function verify(message) {
+        SystemMsg.verify = function verify(message, long) {
             if (typeof message !== "object" || message === null)
                 return "object expected";
+            if (long === undefined)
+                long = 0;
+            if (long > $util.recursionLimit)
+                return "maximum nesting depth exceeded";
             if (message.event != null && message.hasOwnProperty("event"))
                 if (!$util.isString(message.event))
                     return "event: string expected";
@@ -3901,9 +4134,13 @@ export const canari = $root.canari = (() => {
          * @param {Object.<string,*>} object Plain object
          * @returns {canari.SystemMsg} SystemMsg
          */
-        SystemMsg.fromObject = function fromObject(object) {
+        SystemMsg.fromObject = function fromObject(object, long) {
             if (object instanceof $root.canari.SystemMsg)
                 return object;
+            if (long === undefined)
+                long = 0;
+            if (long > $util.recursionLimit)
+                throw Error("maximum nesting depth exceeded");
             let message = new $root.canari.SystemMsg();
             if (object.event != null)
                 message.event = String(object.event);

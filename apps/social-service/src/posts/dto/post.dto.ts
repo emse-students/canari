@@ -41,6 +41,16 @@ export class PostImageDto {
   @IsString()
   @IsOptional()
   fileName?: string;
+
+  @IsInt()
+  @IsOptional()
+  @Min(1)
+  width?: number;
+
+  @IsInt()
+  @IsOptional()
+  @Min(1)
+  height?: number;
 }
 
 export class PollOptionInputDto {

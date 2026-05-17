@@ -335,7 +335,10 @@
       const images = [];
       for (let i = 0; i < selectedFiles.length; i++) {
         const compressed = await compressImage(selectedFiles[i], 1440, 1440, 0.82);
-        const ref = await mediaService.encryptAndUpload(compressed, authToken);
+        const ref = await mediaService.encryptAndUpload(compressed.file, authToken, {
+          width: compressed.width,
+          height: compressed.height,
+        });
         const caption = imageCaptions[i]?.trim();
         images.push({ ...ref, ...(caption ? { caption } : {}) });
       }

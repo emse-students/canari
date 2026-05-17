@@ -1,6 +1,7 @@
 <script lang="ts">
   import { CheckCircle2, ExternalLink, CalendarPlus, Ticket, CreditCard, XCircle, ArrowRight } from 'lucide-svelte';
   import type { EventButton } from '$lib/posts/api';
+  import { FORM_CARD_PLACEHOLDER_MIN_HEIGHT } from '$lib/utils/mediaLayout';
 
   interface Props {
     /** Event registration buttons attached to the post, or undefined when the post has none. */
@@ -35,7 +36,13 @@
 
         <!-- Rendu si l'inscription passe par un Formulaire externe/interne -->
         {#if btn.formId}
-          {#if btnInfo?.submitted}
+          {#if !btnInfo}
+            <div
+              class="rounded-xl bg-black/5 dark:bg-white/5 animate-pulse"
+              style="min-height: {FORM_CARD_PLACEHOLDER_MIN_HEIGHT}"
+              aria-hidden="true"
+            ></div>
+          {:else if btnInfo.submitted}
             <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div class="flex items-center gap-2.5 text-emerald-600 dark:text-emerald-400 font-bold">
                 <div class="p-1.5 rounded-full bg-emerald-500/10">

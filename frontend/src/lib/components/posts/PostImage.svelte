@@ -12,6 +12,8 @@
       mimeType: string;
       size: number;
       fileName?: string;
+      width?: number;
+      height?: number;
     };
     /** Bearer token used to authenticate the media download request. */
     authToken: string;
@@ -51,6 +53,8 @@
           mimeType: media.mimeType,
           size: media.size,
           fileName: media.fileName,
+          width: media.width,
+          height: media.height,
         } as MediaRef,
         authToken
       )

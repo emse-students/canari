@@ -10,6 +10,7 @@
   import { groupMessages } from '$lib/utils/messageGrouping';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import type { ChatMessage, MessageReaction, Conversation } from '$lib/types';
+  import type { PendingMediaFile } from '$lib/media';
 
   interface Props {
     /** The active conversation to display, or null when nothing is selected. */
@@ -67,7 +68,7 @@
     /** Callback fired when the user selects or drops files to attach. */
     onFilesSelected?: (files: File[]) => void;
     /** Files staged for sending but not yet uploaded. */
-    pendingFiles?: File[];
+    pendingFiles?: PendingMediaFile[];
     /** Callback to remove a staged file by its index. */
     onRemovePendingFile?: (index: number) => void;
     /** Whether a file upload is currently in progress. */
@@ -531,7 +532,6 @@
         {pendingFiles}
         {onRemovePendingFile}
         {isUploading}
-        focusKey={conversation.id}
       />
     </div>
   {:else}

@@ -550,6 +550,9 @@ export namespace canari {
 
         /** InboundMsg isWelcome */
         isWelcome?: (boolean|null);
+
+        /** InboundMsg isCommit */
+        isCommit?: (boolean|null);
     }
 
     /** Represents an InboundMsg. */
@@ -575,6 +578,9 @@ export namespace canari {
 
         /** InboundMsg isWelcome. */
         public isWelcome: boolean;
+
+        /** InboundMsg isCommit. */
+        public isCommit: boolean;
 
         /**
          * Creates a new InboundMsg instance using the specified properties.
@@ -1360,6 +1366,12 @@ export namespace canari {
 
         /** MediaMsg caption */
         caption?: (string|null);
+
+        /** MediaMsg width */
+        width?: (number|null);
+
+        /** MediaMsg height */
+        height?: (number|null);
     }
 
     /** Represents a MediaMsg. */
@@ -1394,6 +1406,12 @@ export namespace canari {
 
         /** MediaMsg caption. */
         public caption: string;
+
+        /** MediaMsg width. */
+        public width: number;
+
+        /** MediaMsg height. */
+        public height: number;
 
         /**
          * Creates a new MediaMsg instance using the specified properties.

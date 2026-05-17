@@ -10,6 +10,7 @@
   import { preprocessPostMarkdown } from '$lib/utils/posts/postMarkdown';
   import { ensureHljsTheme } from '$lib/utils/posts/hljsTheme';
   import { onMount } from 'svelte';
+  import { mediaAspectStyle, GALLERY_MEDIA_ASPECT } from '$lib/utils/mediaLayout';
 
   interface Props {
     /** The post whose markdown content and images are rendered. */
@@ -96,7 +97,10 @@
   <div class="w-full mt-1">
     {#if post.images.length === 1}
       <div>
-        <div class="relative w-full aspect-[4/3] bg-black/5 dark:bg-white/5 overflow-hidden">
+        <div
+          class="relative w-full bg-black/5 dark:bg-white/5 overflow-hidden"
+          style={mediaAspectStyle(post.images[0].width, post.images[0].height)}
+        >
           <!-- Single image: PostImage handles its own lightbox -->
           <PostImage media={post.images[0]} {authToken} />
         </div>
@@ -108,7 +112,10 @@
       <!-- Multi-image gallery: centralized lightbox with navigation -->
       <div class="grid grid-cols-2 gap-0.5 sm:gap-1 bg-white/20 dark:bg-black/20">
         {#each post.images as img, i (img.mediaId)}
-          <div class="relative aspect-square w-full overflow-hidden bg-black/5 dark:bg-white/5">
+          <div
+            class="relative w-full overflow-hidden bg-black/5 dark:bg-white/5"
+            style={mediaAspectStyle(img.width, img.height, GALLERY_MEDIA_ASPECT)}
+          >
             <PostImage media={img} {authToken} onOpen={() => openLightbox(i)} />
             {#if img.caption}
               <p class="absolute bottom-0 left-0 right-0 bg-black/50 px-2 py-1 text-[0.65rem] text-white/90 truncate pointer-events-none">{img.caption}</p>

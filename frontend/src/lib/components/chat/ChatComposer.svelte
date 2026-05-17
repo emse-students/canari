@@ -7,6 +7,8 @@
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { useMentionAutocomplete } from '$lib/composables/useMentionAutocomplete.svelte';
   import MentionDropdown from '$lib/components/shared/MentionDropdown.svelte';
+  import type { PendingMediaFile } from '$lib/media';
+  import { mediaAspectStyle } from '$lib/utils/mediaLayout';
 
   interface ReplyTo {
     id: string;
@@ -30,13 +32,11 @@
     /** Callback fired when the user selects or drops files to attach. */
     onFilesSelected?: (files: File[]) => void;
     /** Files staged for sending but not yet uploaded. */
-    pendingFiles?: File[];
+    pendingFiles?: PendingMediaFile[];
     /** Callback to remove a staged file by its index. */
     onRemovePendingFile?: (index: number) => void;
     /** Whether an upload is currently in progress (disables the send button). */
     isUploading?: boolean;
-    /** When this value changes, focus the textarea (e.g. active conversation id). */
-    focusKey?: string;
   }
 
   let {
@@ -50,7 +50,6 @@
     pendingFiles = [],
     onRemovePendingFile,
     isUploading = false,
-    focusKey = '',
   }: Props = $props();
 
   let textareaEl: HTMLTextAreaElement;
@@ -241,18 +240,13 @@
   });
 
   $effect(() => {
-    const key = focusKey;
-    if (!key || !textareaEl) return;
-    tick().then(() => textareaEl?.focus());
-  });
-
-  $effect(() => {
     const files = pendingFiles;
     untrack(() => {
       const previous = previewUrls;
       const next: Record<string, string> = {};
 
-      files.forEach((file, index) => {
+      files.forEach((entry, index) => {
+        const file = entry.file;
         const key = fileKey(file, index);
         if (!isImageFile(file) && !isPdfFile(file)) return;
         next[key] = previous[key] ?? URL.createObjectURL(file);
@@ -309,11 +303,17 @@
           {pendingFiles.length} fichier{pendingFiles.length > 1 ? 's' : ''} en attente
         </div>
         <div class="flex flex-wrap gap-3">
-          {#each pendingFiles as file, index (`${file.name}-${index}`)}
+          {#each pendingFiles as entry, index (`${entry.file.name}-${index}`)}
+            {@const file = entry.file}
             {@const key = fileKey(file, index)}
+            {@const thumbAspect =
+              entry.width && entry.height
+                ? mediaAspectStyle(entry.width, entry.height)
+                : 'aspect-ratio: 1'}
             <div
               transition:scale={{ duration: 200, start: 0.9 }}
-              class="relative rounded-[1rem] bg-white/90 dark:bg-[#151B2C]/90 backdrop-blur-xl border border-black/5 dark:border-white/10 overflow-hidden w-20 h-20 sm:w-24 sm:h-24 shadow-md group/file"
+              class="relative rounded-[1rem] bg-white/90 dark:bg-[#151B2C]/90 backdrop-blur-xl border border-black/5 dark:border-white/10 overflow-hidden w-20 sm:w-24 shadow-md group/file"
+              style="{thumbAspect}; max-height: 6rem;"
             >
               {#if isImageFile(file) && previewUrls[key]}
                 <img src={previewUrls[key]} alt={file.name} class="w-full h-full object-cover" />

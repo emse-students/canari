@@ -44,6 +44,8 @@ export function appMsgToEnvelope(
             mimeType: msg.media.mimeType ?? '',
             size: msg.media.size ?? 0,
             fileName: msg.media.fileName ?? undefined,
+            width: msg.media.width && msg.media.width > 0 ? msg.media.width : undefined,
+            height: msg.media.height && msg.media.height > 0 ? msg.media.height : undefined,
           },
           msg.media.caption || undefined
         )

@@ -65,7 +65,7 @@ export interface MessagingContext {
 export function useMessaging() {
   const messageReactions = new SvelteMap<string, MessageReaction[]>();
   let replyingTo = $state<ChatMessage | null>(null);
-  let pendingMediaFiles = $state<File[]>([]);
+  let pendingMediaFiles = $state<import('$lib/media').PendingMediaFile[]>([]);
   let isUploadingMedia = $state(false);
 
   let pendingRetry = $state<{ text: string; convoId: string } | null>(null);
@@ -293,6 +293,7 @@ export function useMessaging() {
   async function handleSendChat(ctx: MessagingContext, messageText: string) {
     const text = messageText.trim();
     const filesToSend = [...pendingMediaFiles];
+    const fileEntries = filesToSend;
     const mediaCaption = text || undefined;
     let sentMediaMessageCount = 0;
 
@@ -339,7 +340,7 @@ export function useMessaging() {
     const mlsService = !isChannel ? ctx.ensureMls() : null;
     const channelSvc = isChannel ? new ChannelService() : null;
 
-    if (filesToSend.length > 0) {
+    if (fileEntries.length > 0) {
       pendingMediaFiles = [];
       isUploadingMedia = true;
       try {
@@ -348,10 +349,13 @@ export function useMessaging() {
           authToken = await getToken();
           ctx.setAuthToken(authToken);
         }
-        for (let index = 0; index < filesToSend.length; index++) {
-          const fileToSend = filesToSend[index];
+        for (let index = 0; index < fileEntries.length; index++) {
+          const entry = fileEntries[index];
           const captionForFile = index === 0 ? mediaCaption : undefined;
-          const mediaRef = await mediaService.encryptAndUpload(fileToSend, authToken);
+          const mediaRef = await mediaService.encryptAndUpload(entry.file, authToken, {
+            width: entry.width,
+            height: entry.height,
+          });
           const messageId = crypto.randomUUID();
           const kindMap: Record<string, number> = {
             image: MediaKind.MEDIA_IMAGE,
@@ -375,6 +379,9 @@ export function useMessaging() {
               size: mediaRef.size,
               fileName: mediaRef.fileName ?? '',
               caption: captionForFile,
+              ...(mediaRef.width && mediaRef.height
+                ? { width: mediaRef.width, height: mediaRef.height }
+                : {}),
             }),
             messageId,
           });
@@ -400,8 +407,8 @@ export function useMessaging() {
         }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        if (sentMediaMessageCount < filesToSend.length) {
-          pendingMediaFiles = [...filesToSend.slice(sentMediaMessageCount), ...pendingMediaFiles];
+        if (sentMediaMessageCount < fileEntries.length) {
+          pendingMediaFiles = [...fileEntries.slice(sentMediaMessageCount), ...pendingMediaFiles];
         }
         ctx.setSendError(`Echec de l'envoi du media : ${errorMessage}`);
         ctx.log(`Erreur envoi media: ${errorMessage}`);
@@ -463,7 +470,7 @@ export function useMessaging() {
 
   /** Validates and enqueues files for sending. Images are auto-compressed with canvas API before queuing. Files exceeding the configured size limit are rejected with an error message. */
   async function handleFilesSelected(files: File[], ctx: MessagingContext) {
-    const readyFiles: File[] = [];
+    const readyFiles: import('$lib/media').PendingMediaFile[] = [];
     for (const file of files) {
       if (Number.isFinite(mediaMaxSizeBytes) && file.size > mediaMaxSizeBytes) {
         const errorMessage = `Fichier trop volumineux (${(file.size / 1024 / 1024).toFixed(1)} Mo). Limite: ${mediaMaxSizeMb} Mo.`;
@@ -471,23 +478,28 @@ export function useMessaging() {
         ctx.log(`Erreur envoi media: ${errorMessage}`);
         continue;
       }
-      let processedFile = file;
+      let entry: import('$lib/media').PendingMediaFile = { file };
       if (file.type.startsWith('image/')) {
         try {
           const { compressImage } = await import('$lib/media');
           const originalSize = file.size;
-          processedFile = await compressImage(file);
-          if (processedFile.size < originalSize) {
-            const savedPercent = ((1 - processedFile.size / originalSize) * 100).toFixed(0);
+          const compressed = await compressImage(file);
+          entry = {
+            file: compressed.file,
+            width: compressed.width > 0 ? compressed.width : undefined,
+            height: compressed.height > 0 ? compressed.height : undefined,
+          };
+          if (compressed.file.size < originalSize) {
+            const savedPercent = ((1 - compressed.file.size / originalSize) * 100).toFixed(0);
             ctx.log(
-              `Image compressee: ${(originalSize / 1024 / 1024).toFixed(1)} Mo -> ${(processedFile.size / 1024 / 1024).toFixed(1)} Mo (-${savedPercent}%)`
+              `Image compressee: ${(originalSize / 1024 / 1024).toFixed(1)} Mo -> ${(compressed.file.size / 1024 / 1024).toFixed(1)} Mo (-${savedPercent}%)`
             );
           }
         } catch (e) {
           console.warn('Compression failed, using original:', e);
         }
       }
-      readyFiles.push(processedFile);
+      readyFiles.push(entry);
     }
     if (readyFiles.length > 0) pendingMediaFiles = [...pendingMediaFiles, ...readyFiles];
   }
