@@ -73,29 +73,32 @@ export interface PendingMediaFile {
   height?: number;
 }
 
+/** Presets par contexte — qualité plus haute, resize moins agressif. */
+export const IMAGE_COMPRESS_PRESETS = {
+  chat: { maxWidth: 2560, maxHeight: 2560, quality: 0.92 },
+  post: { maxWidth: 2048, maxHeight: 2048, quality: 0.92 },
+  comment: { maxWidth: 1280, maxHeight: 1280, quality: 0.9 },
+} as const;
+
+/** Sous ce seuil, on garde l'original si aucun redimensionnement n'est nécessaire. */
+const SKIP_REENCODE_UNDER_BYTES = 2 * 1024 * 1024;
+
+/** N'accepte la version WebP que si elle fait au moins 15 % de moins que l'original. */
+const MIN_SIZE_SAVINGS_RATIO = 0.85;
+
+import { decryptMediaBuffer, encryptMediaBuffer } from '$lib/mediaCrypto';
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/** Encode a byte array to a lowercase hexadecimal string (e.g. key or IV for wire format). */
-function hexEncode(buf: Uint8Array): string {
-  return Array.from(buf)
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-}
-
-/** Decode a lowercase hexadecimal string back to a byte array (inverse of hexEncode). */
-function hexDecode(hex: string): Uint8Array<ArrayBuffer> {
-  return new Uint8Array((hex.match(/.{1,2}/g) ?? []).map((b) => parseInt(b, 16)));
-}
 
 /**
  * Compress an image file using canvas.
  *
  * @param file The original image file
- * @param maxWidth Maximum width (default: 1920)
- * @param maxHeight Maximum height (default: 1080)
- * @param quality JPEG/WebP quality 0-1 (default: 0.85)
+ * @param maxWidth Maximum width (default: 2560)
+ * @param maxHeight Maximum height (default: 2560)
+ * @param quality WebP quality 0-1 (default: 0.92)
  * @returns Compressed file (or original) with final display dimensions
  */
 export async function readImageDimensions(file: File): Promise<ImageDimensions | null> {
@@ -121,9 +124,9 @@ export async function readImageDimensions(file: File): Promise<ImageDimensions |
 
 export async function compressImage(
   file: File,
-  maxWidth = 1920,
-  maxHeight = 1080,
-  quality = 0.85
+  maxWidth: number = IMAGE_COMPRESS_PRESETS.chat.maxWidth,
+  maxHeight: number = IMAGE_COMPRESS_PRESETS.chat.maxHeight,
+  quality: number = IMAGE_COMPRESS_PRESETS.chat.quality
 ): Promise<CompressedImage> {
   if (!file.type.startsWith('image/')) {
     return { file, width: 0, height: 0 };
@@ -161,8 +164,9 @@ export async function compressImage(
 
         const outWidth = width;
         const outHeight = height;
+        const needsResize = width !== img.naturalWidth || height !== img.naturalHeight;
 
-        if (width === img.width && height === img.height && file.size < 500 * 1024) {
+        if (!needsResize && file.size < SKIP_REENCODE_UNDER_BYTES) {
           resolve({ file, width: outWidth, height: outHeight });
           return;
         }
@@ -179,7 +183,11 @@ export async function compressImage(
               return;
             }
 
-            if (blob.size < file.size) {
+            const worthReplacing =
+              blob.size <= file.size * MIN_SIZE_SAVINGS_RATIO ||
+              (needsResize && blob.size < file.size);
+
+            if (worthReplacing) {
               resolve({
                 file: new File([blob], file.name, { type: outputType, lastModified: Date.now() }),
                 width: outWidth,
@@ -238,38 +246,6 @@ export function parseMediaMessage(content: string): MediaRef | null {
 }
 
 // ---------------------------------------------------------------------------
-// Core crypto (SubtleCrypto – available in all modern browsers and Tauri)
-// ---------------------------------------------------------------------------
-
-/** Generate a fresh 256-bit AES-GCM Content Encryption Key and return it as both a CryptoKey and a hex string. */
-async function generateCek(): Promise<{ cryptoKey: CryptoKey; keyHex: string }> {
-  const cryptoKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, [
-    'encrypt',
-    'decrypt',
-  ]);
-  const raw = await crypto.subtle.exportKey('raw', cryptoKey);
-  return { cryptoKey, keyHex: hexEncode(new Uint8Array(raw)) };
-}
-
-/** Re-import a hex-encoded CEK as a non-extractable CryptoKey configured for AES-256-GCM decryption. */
-async function importCek(keyHex: string): Promise<CryptoKey> {
-  return crypto.subtle.importKey(
-    'raw',
-    hexDecode(keyHex),
-    { name: 'AES-GCM', length: 256 },
-    false,
-    ['decrypt']
-  );
-}
-
-/** Generate a fresh 12-byte random initialization vector (nonce) for AES-256-GCM. */
-function generateIv(): { iv: Uint8Array<ArrayBuffer>; ivHex: string } {
-  const iv = new Uint8Array(12);
-  crypto.getRandomValues(iv);
-  return { iv, ivHex: hexEncode(iv) };
-}
-
-// ---------------------------------------------------------------------------
 // MediaService
 // ---------------------------------------------------------------------------
 
@@ -309,13 +285,8 @@ export class MediaService {
     authToken: string,
     dimensions?: Partial<ImageDimensions>
   ): Promise<MediaRef> {
-    // 1. Generate a fresh CEK and IV for this file
-    const { cryptoKey, keyHex } = await generateCek();
-    const { iv, ivHex } = generateIv();
-
-    // 2. Encrypt the file bytes
     const plaintext = await file.arrayBuffer();
-    const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, cryptoKey, plaintext);
+    const { ciphertext, keyHex, ivHex } = await encryptMediaBuffer(plaintext);
 
     // 3. Upload the encrypted blob (server stores opaque bytes, no key)
     const CHUNK_SIZE = 50 * 1024 * 1024; // 50MB
@@ -455,13 +426,7 @@ export class MediaService {
     }
 
     const ciphertext = await res.arrayBuffer();
-    const cryptoKey = await importCek(ref.key);
-
-    const plaintext = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv: hexDecode(ref.iv) },
-      cryptoKey,
-      ciphertext
-    );
+    const plaintext = await decryptMediaBuffer(ciphertext, ref.key, ref.iv);
 
     const blob = new Blob([plaintext], { type: ref.mimeType });
     return URL.createObjectURL(blob);

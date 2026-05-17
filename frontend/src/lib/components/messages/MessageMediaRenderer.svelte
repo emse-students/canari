@@ -10,6 +10,7 @@
   import VoiceMessagePlayer from './VoiceMessagePlayer.svelte';
   import type { MediaRef } from '$lib/media';
   import { mediaAspectStyle } from '$lib/utils/mediaLayout';
+  import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
 
   interface Props {
     /** Parsed media descriptor from the message envelope, or null for text-only messages. */
@@ -51,10 +52,6 @@
 
   function closeLightbox() {
     showLightbox = false;
-  }
-
-  function onLightboxKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') closeLightbox();
   }
 
   // Utilitaires dynamiques pour s'adapter au fond du message
@@ -315,69 +312,28 @@
 {/if}
 
 {#if showLightbox && blobUrl && mediaRef && (mediaRef.type === 'image' || mediaRef.type === 'video')}
-  <div
-    class="fixed inset-0 z-[150] bg-black/92 backdrop-blur-sm"
-    role="dialog"
-    tabindex="-1"
-    aria-modal="true"
-    aria-label="Aperçu média"
-    onkeydown={onLightboxKeydown}
+  <MediaLightbox
+    open={showLightbox}
+    onClose={closeLightbox}
+    title={mediaRef.fileName ?? 'Média'}
+    onDownload={() => downloadBlob(blobUrl, mediaRef.fileName ?? 'media')}
   >
-    <button
-      type="button"
-      class="absolute inset-0"
-      onclick={closeLightbox}
-      aria-label="Fermer l'aperçu média"
-    ></button>
-
-    <div class="relative z-10 h-full flex flex-col">
-      <div class="flex items-center justify-between p-3 sm:p-4 text-white">
-        <div class="text-xs sm:text-sm opacity-85 truncate pr-3">
-          {mediaRef.fileName ?? 'Média'}
-        </div>
-        <div class="flex items-center gap-2">
-          <button
-            type="button"
-            class="px-3 h-9 rounded-lg bg-white/15 hover:bg-white/25 transition-colors"
-            onclick={(e) => {
-              e.stopPropagation();
-              downloadBlob(blobUrl, mediaRef.fileName ?? 'media');
-            }}
-          >
-            Télécharger
-          </button>
-          <button
-            type="button"
-            class="px-3 h-9 rounded-lg bg-white/15 hover:bg-white/25 transition-colors"
-            onclick={(e) => {
-              e.stopPropagation();
-              closeLightbox();
-            }}
-          >
-            Fermer
-          </button>
-        </div>
-      </div>
-
-      <div class="flex-1 min-h-0 flex items-center justify-center p-3 sm:p-6">
-        {#if mediaRef.type === 'image'}
-          <img
-            src={blobUrl}
-            alt={mediaRef.fileName ?? 'Image'}
-            class="max-h-full max-w-full object-contain select-none"
-            style="touch-action: pinch-zoom;"
-          />
-        {:else}
-          <!-- svelte-ignore a11y_media_has_caption -->
-          <video
-            src={blobUrl}
-            controls
-            autoplay
-            class="max-h-full max-w-full object-contain bg-black rounded-xl"
-            style="touch-action: pinch-zoom;"
-          ></video>
-        {/if}
-      </div>
-    </div>
-  </div>
+    {#if mediaRef.type === 'image'}
+      <img
+        src={blobUrl}
+        alt={mediaRef.fileName ?? 'Image'}
+        class="max-h-full max-w-full object-contain select-none"
+        style="touch-action: pinch-zoom;"
+      />
+    {:else}
+      <!-- svelte-ignore a11y_media_has_caption -->
+      <video
+        src={blobUrl}
+        controls
+        autoplay
+        class="max-h-full max-w-full object-contain bg-black rounded-xl"
+        style="touch-action: pinch-zoom;"
+      ></video>
+    {/if}
+  </MediaLightbox>
 {/if}

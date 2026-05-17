@@ -481,9 +481,10 @@ export function useMessaging() {
       let entry: import('$lib/media').PendingMediaFile = { file };
       if (file.type.startsWith('image/')) {
         try {
-          const { compressImage } = await import('$lib/media');
+          const { compressImage, IMAGE_COMPRESS_PRESETS } = await import('$lib/media');
           const originalSize = file.size;
-          const compressed = await compressImage(file);
+          const { maxWidth, maxHeight, quality } = IMAGE_COMPRESS_PRESETS.chat;
+          const compressed = await compressImage(file, maxWidth, maxHeight, quality);
           entry = {
             file: compressed.file,
             width: compressed.width > 0 ? compressed.width : undefined,

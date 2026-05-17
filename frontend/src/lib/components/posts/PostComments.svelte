@@ -14,7 +14,7 @@
   import type { PostComment, PostImageRef } from '$lib/posts/api';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import PostImage from './PostImage.svelte';
-  import { MediaService, compressImage } from '$lib/media';
+  import { MediaService, compressImage, IMAGE_COMPRESS_PRESETS } from '$lib/media';
   import { mediaAspectStyle } from '$lib/utils/mediaLayout';
   import { timeAgo, exactDate } from '$lib/utils/time';
   import SvelteMarkdown from '@humanspeak/svelte-markdown';
@@ -110,7 +110,8 @@
     if (!file || !authToken) return;
     uploadingMedia = true;
     try {
-      const compressed = await compressImage(file, 800, 800, 0.8);
+      const { maxWidth, maxHeight, quality } = IMAGE_COMPRESS_PRESETS.comment;
+      const compressed = await compressImage(file, maxWidth, maxHeight, quality);
       const ref = await mediaService.encryptAndUpload(compressed.file, authToken, {
         width: compressed.width,
         height: compressed.height,

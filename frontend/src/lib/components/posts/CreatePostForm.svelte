@@ -2,7 +2,7 @@
   import { Image, ChartColumn, CalendarCheck, ClipboardList, Clock, X, CircleAlert, Building2, User, ChevronDown, Bold, Italic, Strikethrough, Heading2, Quote, Code, List, Link2 } from 'lucide-svelte';
   import { slide, fade } from 'svelte/transition';
   import { onMount, tick } from 'svelte';
-  import { MediaService, compressImage } from '$lib/media';
+  import { MediaService, compressImage, IMAGE_COMPRESS_PRESETS } from '$lib/media';
   import { getToken } from '$lib/stores/auth';
   import { createPost, type CreatePostPayload } from '$lib/posts/api';
   import { getForms, type Form } from '$lib/forms/api';
@@ -334,7 +334,8 @@
       // Compress then encrypt-upload each image; collect the resulting refs.
       const images = [];
       for (let i = 0; i < selectedFiles.length; i++) {
-        const compressed = await compressImage(selectedFiles[i], 1440, 1440, 0.82);
+        const { maxWidth, maxHeight, quality } = IMAGE_COMPRESS_PRESETS.post;
+        const compressed = await compressImage(selectedFiles[i], maxWidth, maxHeight, quality);
         const ref = await mediaService.encryptAndUpload(compressed.file, authToken, {
           width: compressed.width,
           height: compressed.height,

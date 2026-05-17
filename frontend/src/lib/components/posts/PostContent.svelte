@@ -6,10 +6,10 @@
   import PostMentionLink from './PostMentionLink.svelte';
   import PostCodeBlock from './PostCodeBlock.svelte';
   import PostCodespan from './PostCodespan.svelte';
-  import { ChevronLeft, ChevronRight } from 'lucide-svelte';
   import { preprocessPostMarkdown } from '$lib/utils/posts/postMarkdown';
   import { ensureHljsTheme } from '$lib/utils/posts/hljsTheme';
   import { onMount } from 'svelte';
+  import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
   import { mediaAspectStyle, GALLERY_MEDIA_ASPECT } from '$lib/utils/mediaLayout';
 
   interface Props {
@@ -47,12 +47,6 @@
   function nextImage() {
     if (lightboxIndex === null || !post.images) return;
     lightboxIndex = (lightboxIndex + 1) % post.images.length;
-  }
-
-  function onLightboxKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') closeLightbox();
-    if (e.key === 'ArrowLeft') prevImage();
-    if (e.key === 'ArrowRight') nextImage();
   }
 
   function extractFirstUrl(text: string): string | null {
@@ -129,65 +123,18 @@
 
 <!-- Gallery lightbox with navigation -->
 {#if lightboxIndex !== null && post.images && post.images[lightboxIndex]}
-  <div
-    role="dialog"
-    aria-modal="true"
-    aria-label="Galerie d'images"
-    tabindex="-1"
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/90"
-    onclick={closeLightbox}
-    onkeydown={onLightboxKeydown}
+  <MediaLightbox
+    open={lightboxIndex !== null}
+    onClose={closeLightbox}
+    ariaLabel="Galerie d'images"
+    showPrev={post.images.length > 1}
+    showNext={post.images.length > 1}
+    onPrev={prevImage}
+    onNext={nextImage}
+    dotCount={post.images.length}
+    dotIndex={lightboxIndex}
+    onDotSelect={(i) => (lightboxIndex = i)}
   >
-    <!-- Close -->
-    <button
-      type="button"
-      class="absolute top-4 right-4 text-white/80 hover:text-white text-3xl leading-none z-10"
-      onclick={closeLightbox}
-      aria-label="Fermer"
-    >✕</button>
-
-    <!-- Prev -->
-    {#if post.images.length > 1}
-      <button
-        type="button"
-        class="absolute left-3 top-1/2 -translate-y-1/2 z-10 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
-        onclick={(e) => { e.stopPropagation(); prevImage(); }}
-        aria-label="Image précédente"
-      >
-        <ChevronLeft size={28} strokeWidth={2.5} />
-      </button>
-    {/if}
-
-    <!-- Image -->
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="max-w-full max-h-full flex items-center justify-center" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
-      <PostImage media={post.images[lightboxIndex]} {authToken} galleryMode />
-    </div>
-
-    <!-- Next -->
-    {#if post.images.length > 1}
-      <button
-        type="button"
-        class="absolute right-3 top-1/2 -translate-y-1/2 z-10 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
-        onclick={(e) => { e.stopPropagation(); nextImage(); }}
-        aria-label="Image suivante"
-      >
-        <ChevronRight size={28} strokeWidth={2.5} />
-      </button>
-    {/if}
-
-    <!-- Dots -->
-    {#if post.images.length > 1}
-      <div class="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1.5">
-        {#each post.images as _, i (i)}
-          <button
-            type="button"
-            onclick={(e) => { e.stopPropagation(); lightboxIndex = i; }}
-            class="w-2 h-2 rounded-full transition-all {i === lightboxIndex ? 'bg-white' : 'bg-white/40'}"
-            aria-label="Image {i + 1}"
-          ></button>
-        {/each}
-      </div>
-    {/if}
-  </div>
+    <PostImage media={post.images[lightboxIndex]} {authToken} galleryMode />
+  </MediaLightbox>
 {/if}

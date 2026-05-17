@@ -2,6 +2,7 @@
   import { MediaService } from '$lib/media';
   import type { MediaRef } from '$lib/media';
   import { Image as ImageIcon, CircleAlert } from 'lucide-svelte';
+  import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
 
   interface Props {
     /** Encrypted media descriptor containing the download reference and decryption keys. */
@@ -94,8 +95,7 @@
     }
   }
 
-  function closeLightbox(e: MouseEvent | KeyboardEvent) {
-    if (e instanceof KeyboardEvent && e.key !== 'Escape') return;
+  function closeLightbox() {
     lightboxOpen = false;
   }
 </script>
@@ -103,7 +103,7 @@
 {#if galleryMode}
   <!-- Used inside parent gallery lightbox — just render the image -->
   {#if loading}
-    <div class="flex items-center justify-center w-full h-64">
+    <div class="flex items-center justify-center w-full min-h-[12rem]">
       <ImageIcon size={32} class="opacity-20 text-white animate-pulse" strokeWidth={1.5} />
     </div>
   {:else if loadError}
@@ -115,7 +115,7 @@
     <img
       src={blobUrl}
       alt={media.fileName ?? 'Image de la publication'}
-      class="max-w-[90vw] max-h-[85vh] object-contain select-none"
+      class="max-h-full max-w-full object-contain select-none"
     />
   {/if}
 {:else}
@@ -145,31 +145,19 @@
     </button>
   {/if}
 
-  <!-- Single-image lightbox (only when no onOpen callback) -->
-  {#if lightboxOpen && blobUrl}
-    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label="Image agrandie"
-      tabindex="-1"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/90"
-      onclick={closeLightbox}
-      onkeydown={closeLightbox}
-    >
+  <MediaLightbox
+    open={lightboxOpen && !!blobUrl}
+    onClose={closeLightbox}
+    ariaLabel="Image agrandie"
+    title={media.fileName ?? 'Image'}
+  >
+    {#if blobUrl}
       <img
         src={blobUrl}
         alt={media.fileName ?? 'Image agrandie'}
-        class="max-w-[90vw] max-h-[85vh] object-contain select-none"
-        onclick={(e) => e.stopPropagation()}
-        onkeydown={(e) => e.stopPropagation()}
+        class="max-h-full max-w-full object-contain select-none"
+        style="touch-action: pinch-zoom;"
       />
-      <button
-        type="button"
-        class="absolute top-4 right-4 text-white/80 hover:text-white text-3xl leading-none"
-        onclick={closeLightbox}
-        aria-label="Fermer"
-      >✕</button>
-    </div>
-  {/if}
+    {/if}
+  </MediaLightbox>
 {/if}
