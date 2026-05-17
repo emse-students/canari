@@ -398,3 +398,21 @@ export async function getUserFollowStatus(userId: string): Promise<{ following: 
     `/api/posts/users/${encodeURIComponent(userId)}/follow-status`
   );
 }
+
+// ── Form reminders ────────────────────────────────────────────────────────────
+
+export async function subscribeFormReminder(formId: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/api/forms/${encodeURIComponent(formId)}/remind`, {
+    method: 'POST',
+  });
+}
+
+export async function unsubscribeFormReminder(formId: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/api/forms/${encodeURIComponent(formId)}/remind`, {
+    method: 'DELETE',
+  });
+}
+
+export async function checkFormReminder(formId: string): Promise<{ subscribed: boolean }> {
+  return request<{ subscribed: boolean }>(`/api/forms/${encodeURIComponent(formId)}/remind`);
+}

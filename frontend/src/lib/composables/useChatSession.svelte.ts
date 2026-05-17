@@ -214,17 +214,7 @@ export function useChatSession() {
       const mlsService = ensureMls();
       cb.log('Verification du PIN...');
 
-      let accessToken: string;
-      try {
-        accessToken = await getToken();
-      } catch {
-        loginError = 'Session expiree. Merci de vous reconnecter.';
-        isLoginInProgress = false;
-        return;
-      }
-
-      // Load MLS state from disk in parallel with the pin-check network call —
-      // loadMlsState only needs userId and is pure I/O.
+      // Start MLS state load immediately — pure I/O, doesn't need the token.
       const { loadMlsState } = await import('$lib/utils/hex');
       const _isTauri = !!(window as any).__TAURI_INTERNALS__;
       const mlsStatePromise = (async (): Promise<
@@ -245,6 +235,15 @@ export function useChatSession() {
         return undefined;
       })();
 
+      let accessToken: string;
+      try {
+        accessToken = await getToken();
+      } catch {
+        loginError = 'Session expiree. Merci de vous reconnecter.';
+        isLoginInProgress = false;
+        return;
+      }
+
       const verifier = await computePinVerifier(userId, pin);
       const deviceId = mlsService.getDeviceId();
       const verifierPayload = JSON.stringify({ userId, verifier, deviceId });
@@ -252,34 +251,6 @@ export function useChatSession() {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${accessToken}`,
       };
-      // Bearer auth only — omit credentials so CORS stays simple (refresh cookie is for core-service).
-      let verifierRes = await fetch(`${historyBaseUrl}/api/mls/security/pin-check`, {
-        method: 'POST',
-        headers: verifierHeaders,
-        body: verifierPayload,
-      });
-      if (verifierRes.status === 404 || verifierRes.status === 405) {
-        verifierRes = await fetch(`${historyBaseUrl}/api/mls/security/pin-check`, {
-          method: 'POST',
-          headers: verifierHeaders,
-          body: verifierPayload,
-        });
-      }
-      if (!verifierRes.ok) throw new Error('Impossible de verifier le PIN (serveur inaccessible).');
-      const verifierData = await verifierRes.json();
-      if (verifierData.status === 'mismatch') {
-        throw new Error(
-          'PIN incorrect : ce PIN ne correspond pas a celui enregistre pour cet utilisateur. Tous vos appareils doivent utiliser le meme PIN.'
-        );
-      }
-      if (verifierData.resetRequired === true) {
-        await resetDeviceAsFresh(userId, cb);
-        pin = '';
-        throw new Error(
-          'Cet appareil a ete revoque. L etat local a ete reinitialise: reconnectez-vous avec votre PIN pour l enregistrer comme nouvel appareil.'
-        );
-      }
-      if (verifierData.status === 'registered') cb.log('Premier appareil : PIN enregistre.');
 
       // Collect the MLS state that was loading in the background.
       const mlsStateResult = await mlsStatePromise;
@@ -982,6 +953,10 @@ export function useChatSession() {
     /** True once the full login flow has completed successfully. */
     get isLoggedIn() {
       return isLoggedIn;
+    },
+    /** True while a login attempt is in progress (biometric or PIN). */
+    get isLoginInProgress() {
+      return isLoginInProgress;
     },
     /** True while the WebSocket connection to the gateway is open. */
     get isWsConnected() {

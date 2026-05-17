@@ -23,10 +23,11 @@
     getAssociation,
     type AssociationCalendarEvent,
   } from '$lib/associations/api';
+  import { useFormReminder } from '$lib/posts/useFormReminder.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Card from '$lib/components/ui/Card.svelte';
   import PaymentModal from '$lib/components/ui/PaymentModal.svelte';
-  import { ArrowLeft, ClipboardList, Check, Send, CalendarDays } from 'lucide-svelte';
+  import { ArrowLeft, ClipboardList, Check, Send, CalendarDays, Bell, BellOff } from 'lucide-svelte';
 
   const formId = $derived(page.params.id);
   const redirectTo = $derived(page.url.searchParams.get('redirect') || '/posts');
@@ -34,6 +35,7 @@
   let form = $state<Form | null>(null);
   const opensLaterIso = $derived(form?.opensAt ? formOpensAtIso(form.opensAt) : null);
   const isNotOpenYet = $derived(!!opensLaterIso);
+  const reminder = useFormReminder(page.params.id ?? '');
   let selections = $state<Record<string, any>>({});
   let submitted = $state(false);
   let loading = $state(true);
@@ -90,6 +92,10 @@
 
       const { hasSubmitted } = await checkSubmission(f.id);
       submitted = hasSubmitted;
+
+      if (!hasSubmitted && formOpensAtIso(f.opensAt)) {
+        void reminder.load();
+      }
       if (hasSubmitted) {
         try {
           const sub = await getSubmission(f.id);
@@ -254,6 +260,8 @@
     showPaymentModal = false;
     window.location.href = pendingCheckoutUrl;
   }
+
+
 </script>
 
 <div class="min-h-screen bg-cn-dark/5">
@@ -344,10 +352,26 @@
       </Card>
 
       {#if isNotOpenYet && form.opensAt}
-        <Card class="mb-6 border-amber-500/30 bg-amber-500/10 p-4">
-          <p class="text-sm font-semibold text-amber-800 dark:text-amber-300">
-            Ouverture le {formatFormOpensAt(form.opensAt)} — les réponses ne sont pas encore acceptées.
-          </p>
+        <Card class="mb-6 border-amber-500/30 bg-amber-500/10">
+          <div class="p-4 flex items-center justify-between gap-4">
+            <p class="text-sm font-semibold text-amber-800 dark:text-amber-300">
+              Ouverture le {formatFormOpensAt(form.opensAt)} — les réponses ne sont pas encore acceptées.
+            </p>
+            <button
+              type="button"
+              onclick={reminder.toggle}
+              disabled={reminder.toggling}
+              class="flex items-center gap-1.5 text-xs font-semibold shrink-0 px-3 py-2 rounded-xl transition-colors {reminder.subscribed ? 'bg-amber-600 text-white hover:bg-amber-700' : 'bg-amber-500/20 text-amber-800 dark:text-amber-300 hover:bg-amber-500/30'}"
+            >
+              {#if reminder.subscribed}
+                <BellOff size={13} strokeWidth={2} />
+                Rappel activé
+              {:else}
+                <Bell size={13} strokeWidth={2} />
+                Me prévenir
+              {/if}
+            </button>
+          </div>
         </Card>
       {/if}
 

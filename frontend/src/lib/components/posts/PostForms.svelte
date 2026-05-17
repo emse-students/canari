@@ -1,6 +1,8 @@
 <script lang="ts">
-  import { CheckCircle2, ClipboardList, ArrowRight, ExternalLink, Clock } from 'lucide-svelte';
+  import { CheckCircle2, ClipboardList, ArrowRight, ExternalLink, Clock, Bell, BellOff } from 'lucide-svelte';
   import { formatFormOpensAt, formOpensAtIso } from '$lib/posts/postComposerDraft';
+  import { subscribeFormReminder, unsubscribeFormReminder, checkFormReminder } from '$lib/posts/api';
+  import { onMount } from 'svelte';
 
   interface Props {
     /** Forms attached to the post, each with its submission status for the current user. */
@@ -8,6 +10,37 @@
   }
 
   let { formInfos }: Props = $props();
+
+  let subscribed = $state<Record<string, boolean>>({});
+  let toggling = $state<Record<string, boolean>>({});
+
+  onMount(() => {
+    for (const fi of formInfos) {
+      if (!fi.submitted && formOpensAtIso(fi.opensAt)) {
+        checkFormReminder(fi.id)
+          .then((res) => { subscribed[fi.id] = res.subscribed; })
+          .catch(() => {});
+      }
+    }
+  });
+
+  async function toggleReminder(formId: string) {
+    if (toggling[formId]) return;
+    toggling[formId] = true;
+    try {
+      if (subscribed[formId]) {
+        await unsubscribeFormReminder(formId);
+        subscribed[formId] = false;
+      } else {
+        await subscribeFormReminder(formId);
+        subscribed[formId] = true;
+      }
+    } catch {
+      // silent
+    } finally {
+      toggling[formId] = false;
+    }
+  }
 </script>
 
 {#if formInfos.length > 0}
@@ -60,6 +93,24 @@
           {/if}
         </div>
       </a>
+
+      {#if !fi.submitted && formOpensAtIso(fi.opensAt)}
+        <button
+          type="button"
+          onclick={() => toggleReminder(fi.id)}
+          disabled={toggling[fi.id]}
+          class="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-xl transition-colors {subscribed[fi.id] ? 'text-amber-600 dark:text-amber-400 bg-amber-500/10 hover:bg-amber-500/20' : 'text-text-muted hover:text-text hover:bg-cn-surface'}"
+          title={subscribed[fi.id] ? 'Désactiver le rappel' : 'Me prévenir quand disponible'}
+        >
+          {#if subscribed[fi.id]}
+            <BellOff size={13} strokeWidth={2} />
+            Rappel activé
+          {:else}
+            <Bell size={13} strokeWidth={2} />
+            Me prévenir
+          {/if}
+        </button>
+      {/if}
     {/each}
   </div>
 {/if}

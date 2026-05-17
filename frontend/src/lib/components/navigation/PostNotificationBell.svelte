@@ -93,10 +93,26 @@
                 onclick={() => openPost(notif.postId)}
               >
                 <span class="mt-0.5 text-base shrink-0">
-                  {notif.type === 'reply' ? '↩️' : '💬'}
+                  {#if notif.type === 'reaction'}
+                    {notif.text || '❤️'}
+                  {:else if notif.type === 'mention'}
+                    🔔
+                  {:else if notif.type === 'reply'}
+                    ↩️
+                  {:else}
+                    💬
+                  {/if}
                 </span>
                 <div class="min-w-0 flex-1">
-                  <p class="text-sm leading-snug line-clamp-2">{notif.text}</p>
+                  <p class="text-sm leading-snug line-clamp-2">
+                    {#if notif.type === 'reaction'}
+                      {notif.actorName || 'Quelqu\'un'} a réagi à votre publication
+                    {:else if notif.type === 'mention'}
+                      {notif.actorName || 'Quelqu\'un'} vous a mentionné
+                    {:else}
+                      {notif.text}
+                    {/if}
+                  </p>
                   <p class="text-xs text-text-muted mt-0.5">{formatRelative(notif.createdAt)}</p>
                 </div>
                 {#if !notif.read}

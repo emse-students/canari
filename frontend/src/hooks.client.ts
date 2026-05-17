@@ -60,6 +60,32 @@ if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
               continue;
             }
 
+            // Post deep link: fr.emse.canari://post/{postId}
+            if (u.protocol === 'fr.emse.canari:' && u.host === 'post') {
+              const postId = u.pathname.replace(/^\//, '');
+              if (postId) {
+                import('$app/navigation')
+                  .then(({ goto }) => goto(`/posts/${postId}`))
+                  .catch(() => {
+                    window.location.href = `/posts/${postId}`;
+                  });
+              }
+              continue;
+            }
+
+            // Form deep link: fr.emse.canari://form/{formId}
+            if (u.protocol === 'fr.emse.canari:' && u.host === 'form') {
+              const formId = u.pathname.replace(/^\//, '');
+              if (formId) {
+                import('$app/navigation')
+                  .then(({ goto }) => goto(`/forms/${formId}`))
+                  .catch(() => {
+                    window.location.href = `/forms/${formId}`;
+                  });
+              }
+              continue;
+            }
+
             // Only handle OIDC callback scheme
             if (u.protocol !== 'fr.emse.canari:' || u.host !== 'callback') {
               console.log('[hooks] URL is not our deep link, ignoring');

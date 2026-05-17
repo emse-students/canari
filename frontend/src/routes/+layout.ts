@@ -6,6 +6,7 @@ import type { LoadEvent } from '@sveltejs/kit';
 import { currentUserId, fetchUserProfile } from '$lib/stores/user';
 import { refresh } from '$lib/stores/auth';
 import { goto } from '$app/navigation';
+import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
 // See: https://v2.tauri.app/start/frontend/sveltekit/ for more info
 export const ssr = false;
 
@@ -19,6 +20,9 @@ export const load = async (event: LoadEvent) => {
 
   if (typeof window === 'undefined') return;
   if (isAuthRoute) return;
+
+  // MLS session already active — no need to re-verify the profile on every navigation.
+  if (globalSession.isLoggedIn) return;
 
   let userId = currentUserId();
   if (!userId) {
@@ -40,6 +44,9 @@ export const load = async (event: LoadEvent) => {
 
   // Keep the strict "unknown user => login" behavior, but avoid false redirects
   // on transient mobile startup/network errors: redirect only on confirmed 404.
+  // Skip when MLS login is in progress to avoid racing with the biometric/PIN flow.
+  if (globalSession.isLoginInProgress) return;
+
   try {
     await fetchUserProfile(userId);
   } catch (error) {

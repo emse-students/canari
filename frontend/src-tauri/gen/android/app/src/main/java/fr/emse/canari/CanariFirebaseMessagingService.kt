@@ -64,6 +64,21 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val data = remoteMessage.data
         Log.d(TAG, "onMessageReceived: action=${data["action"]} groupId=${data["groupId"]} queuedMessageId=${data["queuedMessageId"]} hasInlineProto=${!data["proto"].isNullOrEmpty()}")
 
+        val msgType = data["type"]
+        if (msgType == "social" || msgType == "form_reminder") {
+            val title  = data["title"]  ?: "Canari"
+            val body   = data["body"]   ?: ""
+            val postId = data["postId"] ?: ""
+            val formId = data["formId"] ?: ""
+            val deepLink = when {
+                postId.isNotEmpty() -> "fr.emse.canari://post/$postId"
+                formId.isNotEmpty() -> "fr.emse.canari://form/$formId"
+                else                -> "fr.emse.canari://posts"
+            }
+            showSimpleNotification(title, body, deepLink)
+            return
+        }
+
         if (data["action"] == "process_queue") {
             Log.d(TAG, "action=process_queue → enqueue MlsBackgroundWorker")
             val workRequest = OneTimeWorkRequestBuilder<MlsBackgroundWorker>()
@@ -313,6 +328,31 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         if (largeIcon != null) builder.setLargeIcon(largeIcon)
 
         manager.notify(notifId, builder.build())
+    }
+
+    private fun showSimpleNotification(title: String, body: String, deepLink: String) {
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        ensureNotificationChannel(manager)
+        val notifId = notificationIdCounter.incrementAndGet()
+        val tapIntent = Intent(this, MainActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            setData(android.net.Uri.parse(deepLink))
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this, notifId, tapIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setContentIntent(pendingIntent)
+            .build()
+        manager.notify(notifId, notification)
     }
 
     private fun ensureNotificationChannel(manager: NotificationManager) {

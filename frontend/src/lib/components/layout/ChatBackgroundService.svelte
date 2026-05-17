@@ -432,6 +432,17 @@
       });
     } else {
       globalSession.userId = uid;
+      // Try biometric before falling back to the PIN modal.
+      // biometricConfigured is set by onMount.tryLogin which runs before afterNavigate.
+      if (biometricConfigured) {
+        const bioAvailable = await BiometricService.isAvailable().catch(() => false);
+        if (bioAvailable) {
+          _loginInProgress = true;
+          await globalSession.biometricLogin(sessionCb());
+          if (globalSession.isLoggedIn) return;
+          _loginInProgress = false;
+        }
+      }
       showPinModal = true;
     }
   });
