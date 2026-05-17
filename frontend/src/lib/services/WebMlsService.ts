@@ -847,11 +847,12 @@ export class WebMlsService implements IMlsService {
   async sendMessage(
     groupId: string,
     messageBytes: Uint8Array,
-    _messageId?: string
+    _messageId?: string,
+    silent = false
   ): Promise<Uint8Array> {
     const encryptedBytes: Uint8Array = this.client.send_message_bytes(groupId, messageBytes);
     const proto = btoa(Array.from(encryptedBytes, (b) => String.fromCharCode(b)).join(''));
-    await this.delivery.postApplicationMessage(groupId, proto);
+    await this.delivery.postApplicationMessage(groupId, proto, silent);
     return encryptedBytes;
   }
 

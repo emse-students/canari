@@ -331,9 +331,7 @@ h6,
 :global([data-theme='dark']) .chat-composer-panel {
   background: var(--cn-surface);
   border-color: color-mix(in srgb, white 12%, transparent);
-  box-shadow:
-    0 8px 32px rgba(0, 0, 0, 0.35),
-    inset 0 1px 0 color-mix(in srgb, white 8%, transparent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
 }
 
 .chat-composer-panel.is-dragover {

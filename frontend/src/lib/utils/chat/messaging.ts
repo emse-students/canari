@@ -243,7 +243,7 @@ export async function sendReadReceipt(
   if (!conversation.isReady || messageIds.length === 0) return false;
   try {
     const payload = encodeAppMessage(mkSystem('read_receipt', JSON.stringify({ messageIds })));
-    await mlsService.sendMessage(conversation.id, payload);
+    await mlsService.sendMessage(conversation.id, payload, undefined, true /* silent */);
     const stateBytes = await mlsService.saveState(pin);
     saveMlsState(userId, stateBytes);
     return true;

@@ -184,7 +184,7 @@ export class PushController {
       process.env.CORE_SERVICE_INTERNAL_URL ?? 'http://core-service:3012';
     try {
       const upstream = await fetch(
-        `${coreUrl}/users/${encodeURIComponent(targetUserId)}/avatar`,
+        `${coreUrl}/api/users/${encodeURIComponent(targetUserId)}/avatar`,
         { signal: AbortSignal.timeout(4_000) },
       );
       if (!upstream.ok) {

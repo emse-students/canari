@@ -239,6 +239,7 @@
     }
   });
 
+
   $effect(() => {
     const files = pendingFiles;
     untrack(() => {

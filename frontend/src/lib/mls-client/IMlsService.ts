@@ -47,7 +47,12 @@ export interface IMlsService {
   /** Processes an incoming MLS Welcome message and returns the resulting group ID. */
   processWelcome(welcomeBytes: Uint8Array, ratchetTreeBytes?: Uint8Array): Promise<string>;
   /** Encrypts an application message for the group and delivers it via the delivery service. */
-  sendMessage(groupId: string, messageBytes: Uint8Array, messageId?: string): Promise<Uint8Array>;
+  sendMessage(
+    groupId: string,
+    messageBytes: Uint8Array,
+    messageId?: string,
+    silent?: boolean
+  ): Promise<Uint8Array>;
   /** Decrypts and processes an incoming MLS message for the group, returning the plaintext or null. */
   processIncomingMessage(groupId: string, messageBytes: Uint8Array): Promise<Uint8Array | null>;
   /** Exports a derived secret from a group's epoch key material using the given label and context. */

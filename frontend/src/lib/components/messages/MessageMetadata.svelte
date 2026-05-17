@@ -1,5 +1,6 @@
 <script lang="ts">
   import { LoaderCircle, TriangleAlert, CheckCheck, Check } from 'lucide-svelte';
+  import { format } from 'date-fns';
 
   interface Props {
     /** When true, shows an "(modifié)" label. */
@@ -12,13 +13,21 @@
     status?: 'sending' | 'sent' | 'error';
     /** List of user IDs who have read the message. */
     readBy: string[];
+    /** Timestamp of first read receipt (Date.now() on receiving device). */
+    readAt?: number;
   }
 
-  let { isEdited, isOwn, isLastOwn, status, readBy }: Props = $props();
+  let { isEdited, isOwn, isLastOwn, status, readBy, readAt }: Props = $props();
 
   const show = $derived(
     isEdited || (isOwn && isLastOwn) || (isOwn && (status === 'sending' || status === 'error'))
   );
+
+  const readLabel = $derived(() => {
+    let label = `Lu${readBy.length > 1 ? ` (${readBy.length})` : ''}`;
+    if (readAt) label += ` à ${format(readAt, 'HH:mm')}`;
+    return label;
+  });
 </script>
 
 {#if show}
@@ -43,7 +52,7 @@
             class="inline-flex items-center gap-1 text-[0.65rem] font-bold text-emerald-700 dark:text-emerald-400"
           >
             <CheckCheck size={12} strokeWidth={2.5} class="animate-pulse" />
-            Lu{readBy.length > 1 ? ` (${readBy.length})` : ''}
+            {readLabel()}
           </span>
         {:else}
           <span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold opacity-80">

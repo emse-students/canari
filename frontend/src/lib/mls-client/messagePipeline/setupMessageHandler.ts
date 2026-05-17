@@ -623,7 +623,11 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                     const readBy = m.readBy ?? [];
                     if (readBy.includes(senderNorm)) return m;
                     updated = true;
-                    return { ...m, readBy: [...readBy, senderNorm] };
+                    return {
+                      ...m,
+                      readBy: [...readBy, senderNorm],
+                      readAt: m.readAt ?? Date.now(),
+                    };
                   });
                   if (updated) {
                     log(

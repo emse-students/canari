@@ -347,7 +347,11 @@ export class MlsDeliveryApi {
     ).catch(() => {});
   }
 
-  async postApplicationMessage(groupId: string, protoBase64: string): Promise<void> {
+  async postApplicationMessage(
+    groupId: string,
+    protoBase64: string,
+    silent = false
+  ): Promise<void> {
     const res = await this.f(`${this.historyUrl}/api/mls/send`, {
       method: 'POST',
       headers: await this.auth({ 'Content-Type': 'application/json' }),
@@ -356,6 +360,7 @@ export class MlsDeliveryApi {
         senderDeviceId: this.deviceId,
         groupId,
         proto: protoBase64,
+        silent,
       }),
     });
     if (!res.ok) {

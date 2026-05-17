@@ -33,6 +33,8 @@ export interface SendMessageBody {
   isCommit?: boolean;
   /** userId:deviceId pairs to skip (e.g. invitee already receiving a Welcome) */
   excludeDeviceIds?: string[];
+  /** When true, FCM is sent (for MLS state sync) but no notification is displayed (read receipts, own-device copies). */
+  silent?: boolean;
   // legacy fields (frontend fallback / group fan-out)
   content?: string;
   type?: string;
@@ -132,6 +134,7 @@ export class MessagingService {
     traceId: string,
     groupId: string,
     senderId: string,
+    silent = false,
   ): Promise<void> {
     if (admin.apps.length === 0) return;
 
@@ -206,6 +209,11 @@ export class MessagingService {
             // Empty string when proto is too large; Kotlin falls back to
             // fetching it from the backend or showing a generic notification.
             proto: inlineProto,
+            // Kotlin processes the message (MLS state sync) but skips showNotification():
+            // – own-device copy (sender == recipient)
+            // – system messages like read_receipt flagged silent by the caller
+            silent:
+              silent || queued.recipientId === senderId ? 'true' : 'false',
           },
           android: {
             priority: 'high',
@@ -247,12 +255,19 @@ export class MessagingService {
     traceId: string,
     groupId: string,
     senderId: string,
+    silent = false,
   ): void {
     const DELAY_MS = 10_000;
     // setTimeout expects () => void; extract the async work into a separate
     // method to satisfy @typescript-eslint/no-misused-promises.
     setTimeout(() => {
-      void this.runDeferredPush(queued, traceId, groupId, senderId).catch((e) =>
+      void this.runDeferredPush(
+        queued,
+        traceId,
+        groupId,
+        senderId,
+        silent,
+      ).catch((e) =>
         this.logger.warn(
           `[PUSH_DEFERRED][${traceId}] deferred push error: ${e}`,
         ),
@@ -265,6 +280,7 @@ export class MessagingService {
     traceId: string,
     groupId: string,
     senderId: string,
+    silent = false,
   ): Promise<void> {
     const stillQueued = await this.queuedMessageRepo.findOne({
       where: { id: queued.id },
@@ -276,7 +292,13 @@ export class MessagingService {
     this.logger.log(
       `[PUSH_DEFERRED][${traceId}] queuedId=${queued.id} still unACKed after 10 s → FCM fallback`,
     );
-    await this.sendFcmForQueued(queued, `${traceId}-def`, groupId, senderId);
+    await this.sendFcmForQueued(
+      queued,
+      `${traceId}-def`,
+      groupId,
+      senderId,
+      silent,
+    );
   }
 
   /**
@@ -484,6 +506,7 @@ export class MessagingService {
             traceId,
             body.groupId ?? '',
             body.senderId ?? '',
+            body.silent ?? false,
           );
         }
       } else if (!body.isWelcome && !body.isCommit) {
@@ -493,6 +516,7 @@ export class MessagingService {
           traceId,
           body.groupId ?? '',
           body.senderId ?? '',
+          body.silent ?? false,
         );
       }
     }

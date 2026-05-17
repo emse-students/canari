@@ -95,6 +95,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
         }
 
+        val silent = data["silent"] == "true"
         val thread = Thread {
             val groupId         = data["groupId"] ?: ""
             val groupName       = data["groupName"]?.takeIf { it.isNotEmpty() } ?: ""
@@ -103,7 +104,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val queuedMessageId = data["queuedMessageId"]
             val inlineProto     = data["proto"]?.takeIf { it.isNotEmpty() }
 
-            Log.d(TAG, "Déchiffrement: groupId=$groupId queuedMessageId=$queuedMessageId inlineProto=${inlineProto != null}")
+            Log.d(TAG, "Déchiffrement: groupId=$groupId queuedMessageId=$queuedMessageId inlineProto=${inlineProto != null} silent=$silent")
             val body = tryDecrypt(queuedMessageId, groupId, inlineProto)
                 ?: run {
                     // Group not yet in MLS state (Welcome not processed) — enqueue worker
@@ -118,10 +119,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     buildFallbackText(senderName).also { Log.w(TAG, "Déchiffrement échoué → fallback: $it") }
                 }
 
-            val avatarBitmap = if (senderId.isNotEmpty()) fetchAvatar(senderId) else null
+            if (silent) {
+                Log.d(TAG, "FCM silencieux (accusé de lecture ou copie propre) → pas de notification")
+                return@Thread
+            }
 
-            Log.d(TAG, "showNotification: title=${if (groupName.isNotEmpty() && groupName != senderName) groupName else senderName} body=${body.take(60)}")
-            showNotification(senderName, groupName, body, avatarBitmap, data)
+            val avatarBitmap = if (senderId.isNotEmpty()) fetchAvatar(senderId) else null
+            val largeIcon = avatarBitmap ?: generateInitialsBitmap(senderName)
+            val title = if (groupName.isNotEmpty() && groupName != senderName) groupName else senderName
+            Log.d(TAG, "showNotification: title=$title body=${body.take(60)} hasAvatar=${avatarBitmap != null}")
+            showNotification(senderName, groupName, body, largeIcon, data)
         }
         thread.start()
         thread.join(10_000)
@@ -298,11 +305,30 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         if (senderName.isNotEmpty()) "Nouveau message de $senderName"
         else "Vous avez reçu un message chiffré"
 
+    // Generates a circular initials bitmap when no avatar is available.
+    private fun generateInitialsBitmap(name: String): Bitmap {
+        val size = 96
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        paint.color = android.graphics.Color.parseColor("#6366f1")
+        canvas.drawCircle(size / 2f, size / 2f, size / 2f, paint)
+        paint.color = android.graphics.Color.WHITE
+        paint.textSize = size * 0.4f
+        paint.textAlign = Paint.Align.CENTER
+        val fm = paint.fontMetrics
+        canvas.drawText(
+            name.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
+            size / 2f, size / 2f - (fm.ascent + fm.descent) / 2f, paint
+        )
+        return bmp
+    }
+
     private fun showNotification(
         senderName: String,
         groupName: String,
         body: String,
-        largeIcon: Bitmap?,
+        largeIcon: Bitmap,
         data: Map<String, String>,
     ) {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -336,7 +362,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setContentIntent(pendingIntent)
-        if (largeIcon != null) builder.setLargeIcon(largeIcon)
+            .setLargeIcon(largeIcon)
 
         manager.notify(notifId, builder.build())
     }

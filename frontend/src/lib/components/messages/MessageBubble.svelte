@@ -53,6 +53,8 @@
     reactions?: MessageReaction[];
     /** User IDs who have read the message, shown in the info tooltip. */
     readBy?: string[];
+    /** Timestamp of first read receipt (Date.now() on receiving device). */
+    readAt?: number;
     /** When true, shows the delivery status indicator (sent/read) below the bubble. */
     isLastOwn?: boolean;
     /** When true, shows an "(modifié)" label. */
@@ -96,6 +98,7 @@
     replyTo,
     reactions = [],
     readBy = [],
+    readAt,
     isLastOwn = false,
     isEdited = false,
     isDeleted = false,
@@ -435,7 +438,7 @@
         {/if}
       {/if}
 
-      <MessageMetadata {isEdited} {isOwn} {isLastOwn} {status} {readBy} />
+      <MessageMetadata {isEdited} {isOwn} {isLastOwn} {status} {readBy} {readAt} />
     </div>
 
     <MessageBubbleToolbar

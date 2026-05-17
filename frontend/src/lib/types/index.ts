@@ -35,6 +35,8 @@ export interface ChatMessage {
   replyTo?: MessageReference;
   reactions?: MessageReaction[];
   readBy?: string[];
+  /** Timestamp (Date.now()) of when the first read receipt was received. */
+  readAt?: number;
   isEdited?: boolean;
   isDeleted?: boolean;
 }

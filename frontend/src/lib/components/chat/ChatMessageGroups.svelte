@@ -241,6 +241,7 @@
               replyTo={msg.replyTo}
               {reactions}
               readBy={msg.readBy}
+              readAt={msg.readAt}
               isLastOwn={msg.id === lastOwnMessageId}
               isEdited={msg.isEdited}
               editedAt={msg.editedAt}
