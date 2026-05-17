@@ -239,7 +239,7 @@ h6,
   border-radius: 4px;
 }
 
-:global([data-theme='dark']) .chat-scrollbar::-webkit-scrollbar-thumb {
+[data-theme='dark'] .chat-scrollbar::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.1);
 }
 
@@ -247,7 +247,7 @@ h6,
   background: color-mix(in srgb, var(--cn-surface) 40%, transparent);
 }
 
-:global([data-theme='dark']) .chat-scrollbar:hover::-webkit-scrollbar-thumb {
+[data-theme='dark'] .chat-scrollbar:hover::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.2);
 }
 
@@ -304,7 +304,7 @@ h6,
   padding-bottom: 0;
 }
 
-:global([data-theme='dark']) .chat-composer-footer {
+[data-theme='dark'] .chat-composer-footer {
   background: transparent;
 }
 
@@ -328,7 +328,7 @@ h6,
     transform 180ms ease;
 }
 
-:global([data-theme='dark']) .chat-composer-panel {
+[data-theme='dark'] .chat-composer-panel {
   background: var(--cn-surface);
   border-color: color-mix(in srgb, white 12%, transparent);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
@@ -359,7 +359,7 @@ h6,
   background: color-mix(in srgb, var(--cn-dark) 5%, transparent);
 }
 
-:global([data-theme='dark']) .chat-composer-icon-button:hover {
+[data-theme='dark'] .chat-composer-icon-button:hover {
   background: rgba(255, 255, 255, 0.1);
 }
 
@@ -418,7 +418,7 @@ h6,
   transform: none;
 }
 
-:global([data-theme='dark']) .chat-composer-send-button.is-disabled {
+[data-theme='dark'] .chat-composer-send-button.is-disabled {
   background: rgba(255, 255, 255, 0.05);
 }
 

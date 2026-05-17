@@ -9,6 +9,14 @@
 
 import { installExternalLinkClickHandler } from '$lib/utils/openExternal';
 
+/** Called on unhandled client-side errors; logs to console (SvelteKit default behaviour). */
+export function handleError({ error }: { error: unknown }): void {
+  console.error('[App] Client error:', error);
+}
+
+/** Optional init hook — called once before the app starts. No setup needed here. */
+export function init(): void {}
+
 // ════════════════════════════════════════════════════════════════════════════
 // EXTERNAL LINKS — Open in system browser / default app (not in WebView)
 // ════════════════════════════════════════════════════════════════════════════

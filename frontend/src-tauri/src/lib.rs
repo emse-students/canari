@@ -3,7 +3,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use mls_core::MlsManager;
 use std::sync::{Arc, Mutex};
 
-use tauri::{Emitter, Manager};
+use tauri::Manager;
 
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 use tauri::{

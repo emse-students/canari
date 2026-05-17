@@ -288,30 +288,32 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         deviceId: String,
         groupId: String,
         protoB64: String,
-    ): DecryptedMessage? = try {
-        val cipherBytes = Base64.decode(protoB64, Base64.DEFAULT)
-        val jsonStr = nativeDecryptMessage(stateBytes, pin, userId, deviceId, groupId, cipherBytes)
-        val json = JSONObject(jsonStr)
-        if (!json.optBoolean("ok", false)) {
-            Log.w(TAG, "decryptProto: ok=false → déchiffrement échoué")
-            return null
+    ): DecryptedMessage? {
+        return try {
+            val cipherBytes = Base64.decode(protoB64, Base64.DEFAULT)
+            val jsonStr = nativeDecryptMessage(stateBytes, pin, userId, deviceId, groupId, cipherBytes)
+            val json = JSONObject(jsonStr)
+            if (!json.optBoolean("ok", false)) {
+                Log.w(TAG, "decryptProto: ok=false → déchiffrement échoué")
+                return null
+            }
+            val text = json.optString("text").takeIf { it.isNotEmpty() } ?: return null
+            Log.d(TAG, "decryptProto: succès type=${json.optString("type")} → \"${text.take(60)}\"")
+            DecryptedMessage(
+                text      = text.take(200),
+                messageId = json.optString("messageId"),
+                sentAt    = json.optLong("sentAt", System.currentTimeMillis()),
+                type      = json.optString("type", "text"),
+                replyTo   = json.optJSONObject("replyTo"),
+                mediaKind = json.optString("mediaKind").takeIf { it.isNotEmpty() },
+            )
+        } catch (e: UnsatisfiedLinkError) {
+            Log.e(TAG, "decryptProto: librairie native non chargée: ${e.message}")
+            null
+        } catch (e: Exception) {
+            Log.e(TAG, "decryptProto: exception: ${e.message}")
+            null
         }
-        val text = json.optString("text").takeIf { it.isNotEmpty() } ?: return null
-        Log.d(TAG, "decryptProto: succès type=${json.optString("type")} → \"${text.take(60)}\"")
-        DecryptedMessage(
-            text      = text.take(200),
-            messageId = json.optString("messageId"),
-            sentAt    = json.optLong("sentAt", System.currentTimeMillis()),
-            type      = json.optString("type", "text"),
-            replyTo   = json.optJSONObject("replyTo"),
-            mediaKind = json.optString("mediaKind").takeIf { it.isNotEmpty() },
-        )
-    } catch (e: UnsatisfiedLinkError) {
-        Log.e(TAG, "decryptProto: librairie native non chargée: ${e.message}")
-        null
-    } catch (e: Exception) {
-        Log.e(TAG, "decryptProto: exception: ${e.message}")
-        null
     }
 
     /**
