@@ -850,12 +850,58 @@ export class MessagingService {
         this.logger.log(
           `[WELCOME_REQ][${traceId}] FORWARDED target=${member} group=${groupId} requester=${senderKey}`,
         );
+
+        // Drain any welcome_requests that were stored while no peer was online,
+        // so this newly-online peer handles all pending invitees in one pass.
+        const pendingSetKey = `pending_welcome:${groupId}`;
+        const stored: string[] = await this.redis.smembers(pendingSetKey);
+        let drained = 0;
+        for (const storedKey of stored) {
+          if (storedKey === senderKey) continue; // already forwarded above
+          const [storedUserId, storedDeviceId] = storedKey.split(':');
+          if (!storedUserId || !storedDeviceId) continue;
+          await this.redis.publish(
+            'chat:messages',
+            JSON.stringify({
+              recipientId: memberUserId,
+              deviceId: memberDeviceId,
+              proto: Buffer.from(
+                JSON.stringify({
+                  type: 'welcome_request',
+                  groupId,
+                  requesterUserId: storedUserId,
+                  requesterDeviceId: storedDeviceId,
+                }),
+              ).toString('base64'),
+              isWelcomeRequest: true,
+              groupId,
+              senderId: storedUserId,
+              senderDeviceId: storedDeviceId,
+            }),
+          );
+          drained++;
+        }
+        if (stored.length > 0) {
+          await this.redis.del(pendingSetKey);
+          this.logger.log(
+            `[WELCOME_REQ][${traceId}] Drained ${drained} stored welcome_request(s) for group=${groupId}`,
+          );
+        }
+
         return { status: 'forwarded', target: member };
       }
     }
 
+    // No peer online — persist so the request is replayed when a peer connects.
+    // Mirrors the pending_reinvite pattern in notifyReinviteRequest.
+    const pendingSetKey = `pending_welcome:${groupId}`;
+    const pipeline = this.redis.pipeline();
+    pipeline.sadd(pendingSetKey, senderKey);
+    pipeline.expire(pendingSetKey, 86400); // 24 h TTL
+    await pipeline.exec();
+
     this.logger.log(
-      `[WELCOME_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} — processPendingInvitations on next connect`,
+      `[WELCOME_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} — stored in Redis for deferred delivery`,
     );
     return { status: 'no_peer_online' };
   }
@@ -951,11 +997,11 @@ export class MessagingService {
           `[REINVITE_REQ][${traceId}] FORWARDED target=${member} group=${groupId} requester=${senderKey}`,
         );
 
-        // Also drain any previously stored pending reinvites for this group so the
-        // now-online member handles ALL stale devices in a single processing cycle.
-        const stored: string[] = await this.redis.smembers(pendingSetKey);
-        let drained = 0;
-        for (const storedKey of stored) {
+        // Drain any pending reinvite_requests stored while no peer was online.
+        const storedReinvites: string[] =
+          await this.redis.smembers(pendingSetKey);
+        let drainedReinvites = 0;
+        for (const storedKey of storedReinvites) {
           if (storedKey === senderKey) continue; // current request, already forwarded
           const [storedUserId, storedDeviceId] = storedKey.split(':');
           if (!storedUserId || !storedDeviceId) continue;
@@ -978,12 +1024,49 @@ export class MessagingService {
               senderDeviceId: storedDeviceId,
             }),
           );
-          drained++;
+          drainedReinvites++;
         }
-        if (stored.length > 0) {
+        if (storedReinvites.length > 0) {
           await this.redis.del(pendingSetKey);
           this.logger.log(
-            `[REINVITE_REQ][${traceId}] Drained ${drained} stored reinvite(s) for group=${groupId}`,
+            `[REINVITE_REQ][${traceId}] Drained ${drainedReinvites} stored reinvite(s) for group=${groupId}`,
+          );
+        }
+
+        // Also drain pending welcome_requests for the same group (stored by
+        // notifyWelcomeRequest when no peer was online at the time of the request).
+        const pendingWelcomeKey = `pending_welcome:${groupId}`;
+        const storedWelcomes: string[] =
+          await this.redis.smembers(pendingWelcomeKey);
+        let drainedWelcomes = 0;
+        for (const storedKey of storedWelcomes) {
+          const [storedUserId, storedDeviceId] = storedKey.split(':');
+          if (!storedUserId || !storedDeviceId) continue;
+          await this.redis.publish(
+            'chat:messages',
+            JSON.stringify({
+              recipientId: memberUserId,
+              deviceId: memberDeviceId,
+              proto: Buffer.from(
+                JSON.stringify({
+                  type: 'welcome_request',
+                  groupId,
+                  requesterUserId: storedUserId,
+                  requesterDeviceId: storedDeviceId,
+                }),
+              ).toString('base64'),
+              isWelcomeRequest: true,
+              groupId,
+              senderId: storedUserId,
+              senderDeviceId: storedDeviceId,
+            }),
+          );
+          drainedWelcomes++;
+        }
+        if (storedWelcomes.length > 0) {
+          await this.redis.del(pendingWelcomeKey);
+          this.logger.log(
+            `[REINVITE_REQ][${traceId}] Drained ${drainedWelcomes} stored welcome_request(s) for group=${groupId}`,
           );
         }
 

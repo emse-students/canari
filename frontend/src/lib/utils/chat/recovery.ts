@@ -218,6 +218,17 @@ export async function migrateConversation(
 
   log(`[MIGRATE] ${fromGroupId} → ${toGroupId} ("${oldConvo.name}")`);
 
+  // If the target conversation already has local MLS state loaded (e.g. a re-invite
+  // that assigned bc6bb12f as the successor of e304fcd8, while bc6bb12f was already
+  // a ready local conversation), preserve its readiness rather than overwriting it.
+  const existingToConvo = conversations.get(toGroupId);
+  const localGroups = mlsService.getLocalGroups();
+  const targetAlreadyReady = existingToConvo?.isReady === true || localGroups.includes(toGroupId);
+
+  if (targetAlreadyReady) {
+    log(`[MIGRATE] Cible ${toGroupId} déjà prête en local — isReady préservé`);
+  }
+
   if (storage) {
     // Copy decrypted messages to the new conversationId
     try {
@@ -236,14 +247,18 @@ export async function migrateConversation(
       .saveConversation({
         id: toGroupId,
         name: oldConvo.name,
-        isReady: false,
+        isReady: targetAlreadyReady,
         updatedAt: Date.now(),
       })
       .catch((e) => log(`[MIGRATE] Erreur sauvegarde conversation : ${String(e)}`));
   }
 
-  // Update reactive map — mark as not-ready until a Welcome arrives
-  conversations.set(toGroupId, { ...oldConvo, id: toGroupId, isReady: false });
+  // Update reactive map — merge with existing target state when it was already ready,
+  // otherwise mark as not-ready until a Welcome arrives.
+  const mergedConvo: Conversation = existingToConvo
+    ? { ...existingToConvo, name: oldConvo.name, isReady: targetAlreadyReady }
+    : { ...oldConvo, id: toGroupId, isReady: targetAlreadyReady };
+  conversations.set(toGroupId, mergedConvo);
 
   // Keep the UI on the same conversation
   if (getSelectedContact() === fromGroupId) {
