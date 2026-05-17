@@ -35,6 +35,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     external fun nativeDecryptMessage(
         stateBytes: ByteArray,
         pin: String,
+        userId: String,
+        deviceId: String,
         groupId: String,
         ciphertext: ByteArray
     ): String
@@ -122,7 +124,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 .also { if (it == null) Log.e(TAG, "tryDecrypt: fetchProtoFromBackend a échoué") }
             ?: return null
 
-        return decryptProto(stateBytes, ctx.pin, groupId, protoB64)
+        return decryptProto(stateBytes, ctx.pin, ctx.userId, ctx.deviceId, groupId, protoB64)
     }
 
     private data class PushContext(
@@ -201,11 +203,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     private fun decryptProto(
         stateBytes: ByteArray,
         pin: String,
+        userId: String,
+        deviceId: String,
         groupId: String,
         protoB64: String,
     ): String? = try {
         val cipherBytes = Base64.decode(protoB64, Base64.DEFAULT)
-        val text = nativeDecryptMessage(stateBytes, pin, groupId, cipherBytes)
+        val text = nativeDecryptMessage(stateBytes, pin, userId, deviceId, groupId, cipherBytes)
         Log.d(TAG, "decryptProto: succès → \"${text.take(60)}\"")
         text.takeIf { it.isNotEmpty() }?.take(200)
     } catch (e: UnsatisfiedLinkError) {

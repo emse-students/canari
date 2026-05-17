@@ -1180,12 +1180,16 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
     _service: jni::objects::JObject<'a>,
     state_bytes: jni::objects::JByteArray<'a>,
     pin: jni::objects::JString<'a>,
+    user_id: jni::objects::JString<'a>,
+    device_id: jni::objects::JString<'a>,
     group_id: jni::objects::JString<'a>,
     ciphertext: jni::objects::JByteArray<'a>,
 ) -> jni::objects::JString<'a> {
     let text = (|| -> Option<String> {
         let state_vec = env.convert_byte_array(&state_bytes).ok()?;
         let pin_str: String = env.get_string(&pin).ok()?.into();
+        let user_id_str: String = env.get_string(&user_id).ok()?.into();
+        let device_id_str: String = env.get_string(&device_id).ok()?.into();
         let group_id_str: String = env.get_string(&group_id).ok()?.into();
         let cipher_vec = env.convert_byte_array(&ciphertext).ok()?;
 
@@ -1193,7 +1197,7 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
         // Ce manager TEMPORAIRE avance son propre ratchet mais n'écrit rien sur disque.
         // Le MlsManager de l'app principale peut donc traiter le même message normalement.
         let mut manager =
-            MlsManager::load_encrypted("_push_", "_push_", Some(state_vec), &pin_str).ok()?;
+            MlsManager::load_encrypted(&user_id_str, &device_id_str, Some(state_vec), &pin_str).ok()?;
 
         let plaintext = match manager.process_incoming_message(&group_id_str, &cipher_vec) {
             Ok(Some(p)) => p,
