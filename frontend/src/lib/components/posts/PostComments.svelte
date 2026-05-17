@@ -18,11 +18,17 @@
   import { timeAgo, exactDate } from '$lib/utils/time';
   import SvelteMarkdown from '@humanspeak/svelte-markdown';
   import PostMentionLink from './PostMentionLink.svelte';
+  import PostCodeBlock from './PostCodeBlock.svelte';
+  import PostCodespan from './PostCodespan.svelte';
   import { preprocessPostMarkdown } from '$lib/utils/posts/postMarkdown';
   import { useMentionAutocomplete } from '$lib/composables/useMentionAutocomplete.svelte';
   import MentionDropdown from '$lib/components/shared/MentionDropdown.svelte';
 
-  const mentionRenderers = { link: PostMentionLink };
+  const mentionRenderers = {
+    link: PostMentionLink,
+    code: PostCodeBlock,
+    codespan: PostCodespan,
+  };
 
   type SortMode = 'recent' | 'oldest' | 'liked';
 

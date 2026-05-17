@@ -4,8 +4,12 @@
   import SvelteMarkdown from '@humanspeak/svelte-markdown';
   import LinkPreviewCard from '../messages/LinkPreviewCard.svelte';
   import PostMentionLink from './PostMentionLink.svelte';
+  import PostCodeBlock from './PostCodeBlock.svelte';
+  import PostCodespan from './PostCodespan.svelte';
   import { ChevronLeft, ChevronRight } from 'lucide-svelte';
   import { preprocessPostMarkdown } from '$lib/utils/posts/postMarkdown';
+  import { ensureHljsTheme } from '$lib/utils/posts/hljsTheme';
+  import { onMount } from 'svelte';
 
   interface Props {
     /** The post whose markdown content and images are rendered. */
@@ -15,6 +19,10 @@
   }
 
   let { post, authToken = '' }: Props = $props();
+
+  onMount(() => {
+    ensureHljsTheme();
+  });
 
   const MAX_CHARS = 400;
   let expanded = $state(false);
@@ -51,7 +59,7 @@
     return match?.[0] ?? null;
   }
 
-  const renderers = { link: PostMentionLink };
+  const renderers = { link: PostMentionLink, code: PostCodeBlock, codespan: PostCodespan };
 
   const isTruncatable = $derived((post.markdown?.length ?? 0) > MAX_CHARS);
   const rawMarkdown = $derived(
@@ -65,7 +73,7 @@
 {#if post.markdown}
   <div class="px-5 pb-3">
     <div class="text-[0.95rem] text-text-main leading-relaxed break-words">
-      <div class="max-w-none opacity-90 [&_br]:block [&_p+p]:mt-3 [&_p:first-child]:mt-0">
+      <div class="post-markdown max-w-none opacity-90 [&_br]:block [&_p+p]:mt-3 [&_p:first-child]:mt-0">
         <SvelteMarkdown source={displayedMarkdown} {renderers} options={{ gfm: true, breaks: true }} />
       </div>
       {#if isTruncatable}
