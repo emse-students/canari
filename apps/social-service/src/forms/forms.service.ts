@@ -5,6 +5,7 @@ import { Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { Form } from './entities/form.entity';
 import { Submission } from './entities/submission.entity';
+import { FormReminder } from './entities/form-reminder.entity';
 import { CreateFormDto, SubmitFormDto } from './dto/form.dto';
 import axios from 'axios';
 import * as ExcelJS from 'exceljs';
@@ -23,6 +24,7 @@ export class FormsService {
   constructor(
     @InjectRepository(Form) private readonly formRepo: Repository<Form>,
     @InjectRepository(Submission) private readonly submissionRepo: Repository<Submission>,
+    @InjectRepository(FormReminder) private readonly reminderRepo: Repository<FormReminder>,
     private readonly configService: ConfigService,
     private readonly associationsService: AssociationsService
   ) {}
@@ -364,6 +366,32 @@ export class FormsService {
     });
 
     return workbook.xlsx.writeBuffer() as unknown as Promise<Buffer>;
+  }
+
+  /** Subscribes a user to reminders for a form (upsert). Rejects if opensAt is null or already past. */
+  async subscribeReminder(formId: string, userId: string) {
+    const form = await this.formRepo.findOne({ where: { id: formId } });
+    if (!form) throw new NotFoundException('Form not found');
+    if (!form.opensAt || new Date(form.opensAt) <= new Date()) {
+      throw new BadRequestException('Form is already open or has no scheduled opening time');
+    }
+    await this.reminderRepo.upsert(
+      { formId, userId, opensAt: new Date(form.opensAt), notified5min: false, notifiedOnOpen: false },
+      ['formId', 'userId'],
+    );
+    return { ok: true };
+  }
+
+  /** Removes a user's reminder subscription for a form. */
+  async unsubscribeReminder(formId: string, userId: string) {
+    await this.reminderRepo.delete({ formId, userId });
+    return { ok: true };
+  }
+
+  /** Returns whether the user has an active reminder subscription for a form. */
+  async checkReminder(formId: string, userId: string) {
+    const count = await this.reminderRepo.count({ where: { formId, userId } });
+    return { subscribed: count > 0 };
   }
 
   /** Converts a raw answer value to a human-readable string for the Excel export, resolving option IDs to their labels. */

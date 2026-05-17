@@ -4,13 +4,37 @@ import { Repository } from 'typeorm';
 import { PostNotification } from './entities/post-notification.entity';
 import { Post } from './entities/post.entity';
 
-/** Manages in-app notifications triggered by comments and replies on posts. */
+/** Manages in-app notifications triggered by post interactions (comments, reactions, mentions). */
 @Injectable()
 export class PostNotificationsService {
   constructor(
     @InjectRepository(PostNotification) private readonly notifRepo: Repository<PostNotification>,
     @InjectRepository(Post) private readonly postRepo: Repository<Post>
   ) {}
+
+  /**
+   * Extracts `@DisplayName` patterns from text and resolves them to user IDs via the users table.
+   * Returns deduplicated IDs (max 20).
+   */
+  async resolveMentionedUserIds(text: string): Promise<string[]> {
+    const names = [
+      ...new Set(
+        [...text.matchAll(/@([\wÀ-ž][^\s@]*)/gu)].map((m) => m[1].trim()).filter(Boolean)
+      ),
+    ];
+    if (names.length === 0) return [];
+    try {
+      const rows: { id: string }[] = await this.postRepo.manager.query(
+        `SELECT id FROM users WHERE "displayName" = ANY($1)
+           OR TRIM(CONCAT("firstName", ' ', "lastName")) = ANY($1)
+         LIMIT 20`,
+        [names]
+      );
+      return rows.map((r) => r.id);
+    } catch {
+      return [];
+    }
+  }
 
   /** Looks up a user's display name from the shared users table. */
   async resolveActorName(actorId: string): Promise<string> {

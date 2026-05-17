@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Headers,
   Param,
@@ -98,6 +99,27 @@ export class FormsController {
   @Post('submissions/:submissionId/cancel')
   cancelSubmission(@Param('submissionId') submissionId: string) {
     return this.service.cancelSubmission(submissionId);
+  }
+
+  /** Subscribes the calling user to open-time reminders for a form. */
+  @UseGuards(NginxAuthGuard)
+  @Post(':id/remind')
+  subscribeReminder(@Param('id') id: string, @Headers('x-user-id') xUserId: string) {
+    return this.service.subscribeReminder(id, xUserId);
+  }
+
+  /** Unsubscribes the calling user from reminders for a form. */
+  @UseGuards(NginxAuthGuard)
+  @Delete(':id/remind')
+  unsubscribeReminder(@Param('id') id: string, @Headers('x-user-id') xUserId: string) {
+    return this.service.unsubscribeReminder(id, xUserId);
+  }
+
+  /** Returns whether the calling user has an active reminder for a form. */
+  @UseGuards(NginxAuthGuard)
+  @Get(':id/remind')
+  checkReminder(@Param('id') id: string, @Headers('x-user-id') xUserId: string) {
+    return this.service.checkReminder(id, xUserId);
   }
 
   /** Exports all submissions for a form as an XLSX file download. */

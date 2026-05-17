@@ -6,6 +6,8 @@ import { Repository } from 'typeorm';
 import { Post } from './entities/post.entity';
 import { RedisService } from '../common/redis/redis.service';
 import { FollowsService } from '../follows/follows.service';
+import { PostNotificationsService } from './post-notifications.service';
+import { PushService } from '../push/push.service';
 
 /** Core post service: creation, listing (with Redis cache), search, scheduling, and moderation. */
 @Injectable()
@@ -23,7 +25,9 @@ export class PostsService {
     @InjectRepository(Post) private readonly postRepo: Repository<Post>,
     private readonly redis: RedisService,
     private readonly followsService: FollowsService,
-    private readonly associationsService: AssociationsService
+    private readonly associationsService: AssociationsService,
+    private readonly notifications: PostNotificationsService,
+    private readonly push: PushService,
   ) {}
 
   private listPostsCacheKey(
@@ -135,10 +139,45 @@ export class PostsService {
         })),
       }));
     }
+    // Extract mentions before saving so we can populate post.mentions
+    const markdown: string = typeof data.markdown === 'string' ? data.markdown : '';
+    const authorId: string = typeof data.authorId === 'string' ? data.authorId : '';
+    const mentionedIds = markdown
+      ? (await this.notifications.resolveMentionedUserIds(markdown)).filter((id) => id !== authorId)
+      : [];
+    if (mentionedIds.length > 0) {
+      data.mentions = mentionedIds;
+    }
+
     const post = this.postRepo.create(data);
     const saved = await this.postRepo.save(post);
     await this.invalidateListCache();
     const entity = Array.isArray(saved) ? saved[0] : saved;
+
+    // Fire-and-forget mention notifications
+    if (mentionedIds.length > 0 && entity.id) {
+      void (async () => {
+        try {
+          const actorName = await this.notifications.resolveActorName(authorId);
+          for (const recipientId of mentionedIds) {
+            await this.notifications.createNotification({
+              recipientId,
+              type: 'mention',
+              postId: entity.id,
+              actorId: authorId,
+              text: markdown.slice(0, 60),
+            });
+            await this.push.notify(
+              recipientId,
+              `${actorName} vous a mentionné`,
+              'Vous avez été mentionné dans une publication',
+              { type: 'social', postId: entity.id },
+            );
+          }
+        } catch { /* non-fatal */ }
+      })();
+    }
+
     return this.toPublicPostFromEntity(entity);
   }
 

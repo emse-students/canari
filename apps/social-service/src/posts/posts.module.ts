@@ -10,6 +10,7 @@ import { Post } from './entities/post.entity';
 import { PostNotification } from './entities/post-notification.entity';
 import { AssociationsModule } from '../associations/associations.module';
 import { FollowsModule } from '../follows/follows.module';
+import { PushService } from '../push/push.service';
 
 @Module({
   imports: [
@@ -20,6 +21,6 @@ import { FollowsModule } from '../follows/follows.module';
     FollowsModule,
   ],
   controllers: [PostsController],
-  providers: [PostsService, PostInteractionsService, PostNotificationsService],
+  providers: [PostsService, PostInteractionsService, PostNotificationsService, PushService],
 })
 export class PostsModule {}

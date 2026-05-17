@@ -13,6 +13,7 @@ import { LocksController } from './controllers/locks.controller';
 import { MessagingController } from './controllers/messaging.controller';
 import { MessagingService } from './services/messaging.service';
 import { PushController } from './controllers/push.controller';
+import { InternalController } from './controllers/internal.controller';
 import { QueuedMessage } from './entities/queued-message.entity';
 import { KeyPackage } from './entities/key-package.entity';
 import { OneTimeKeyPackage } from './entities/one-time-key-package.entity';
@@ -80,6 +81,7 @@ const RedisProvider: Provider = {
     LocksController,
     MessagingController,
     PushController,
+    InternalController,
   ],
   providers: [RedisProvider, MessagingService],
 })

@@ -12,6 +12,7 @@ import { lastValueFrom } from 'rxjs';
 import { Repository } from 'typeorm';
 import { Post } from './entities/post.entity';
 import { PostNotificationsService } from './post-notifications.service';
+import { PushService } from '../push/push.service';
 
 /** Handles reactions, comments, polls, and event registrations on posts. */
 @Injectable()
@@ -19,6 +20,7 @@ export class PostInteractionsService {
   constructor(
     @InjectRepository(Post) private readonly postRepo: Repository<Post>,
     private readonly notifications: PostNotificationsService,
+    private readonly push: PushService,
     private readonly httpService: HttpService,
     private readonly configService: ConfigService
   ) {}
@@ -52,9 +54,33 @@ export class PostInteractionsService {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
     const reactions = this.sanitizeReactions(post.reactions);
+    const isNew = !reactions[userId];
     reactions[userId] = reactionType;
     post.reactions = reactions;
     await this.postRepo.save(post);
+
+    // Notify post author of a new reaction (not for self-reactions or changes).
+    if (isNew && post.authorId && post.authorId !== userId) {
+      void (async () => {
+        try {
+          const actorName = await this.notifications.resolveActorName(userId);
+          await this.notifications.createNotification({
+            recipientId: post.authorId,
+            type: 'reaction',
+            postId,
+            actorId: userId,
+            text: reactionType,
+          });
+          await this.push.notify(
+            post.authorId,
+            'Nouvelle réaction',
+            `${actorName} a réagi à votre publication ${reactionType}`,
+            { type: 'social', postId },
+          );
+        } catch { /* non-fatal */ }
+      })();
+    }
+
     return { ok: true, reactions: post.reactions };
   }
 
@@ -114,12 +140,16 @@ export class PostInteractionsService {
     post.comments = [...(post.comments ?? []), comment];
     await this.postRepo.save(post);
 
-    // Fire-and-forget: notify post author and parent comment author
+    // Fire-and-forget: notify post author, parent comment author, and mentioned users.
     void (async () => {
       try {
         const text = data.text ?? (data.media ? '📷 Image' : '');
         const preview = text.length > 60 ? text.slice(0, 57) + '…' : text;
-        if (post.authorId && !post.associationId) {
+        const actorName = await this.notifications.resolveActorName(data.userId);
+        const alreadyNotified = new Set<string>([data.userId]);
+
+        if (post.authorId && !post.associationId && !alreadyNotified.has(post.authorId)) {
+          alreadyNotified.add(post.authorId);
           await this.notifications.createNotification({
             recipientId: post.authorId,
             type: 'comment',
@@ -127,10 +157,18 @@ export class PostInteractionsService {
             actorId: data.userId,
             text: preview,
           });
+          await this.push.notify(
+            post.authorId,
+            `${actorName} a commenté`,
+            preview || 'Nouveau commentaire',
+            { type: 'social', postId },
+          );
         }
+
         if (data.parentId) {
           const parent = post.comments.find((c: any) => c.id === data.parentId);
-          if (parent?.userId) {
+          if (parent?.userId && !alreadyNotified.has(parent.userId)) {
+            alreadyNotified.add(parent.userId);
             await this.notifications.createNotification({
               recipientId: parent.userId,
               type: 'reply',
@@ -138,6 +176,34 @@ export class PostInteractionsService {
               actorId: data.userId,
               text: preview,
             });
+            await this.push.notify(
+              parent.userId,
+              `${actorName} a répondu`,
+              preview || 'Nouvelle réponse',
+              { type: 'social', postId },
+            );
+          }
+        }
+
+        // Mention notifications
+        if (data.text) {
+          const mentionedIds = await this.notifications.resolveMentionedUserIds(data.text);
+          for (const recipientId of mentionedIds) {
+            if (alreadyNotified.has(recipientId)) continue;
+            alreadyNotified.add(recipientId);
+            await this.notifications.createNotification({
+              recipientId,
+              type: 'mention',
+              postId,
+              actorId: data.userId,
+              text: preview,
+            });
+            await this.push.notify(
+              recipientId,
+              `${actorName} vous a mentionné`,
+              preview || 'Vous avez été mentionné dans un commentaire',
+              { type: 'social', postId },
+            );
           }
         }
       } catch {

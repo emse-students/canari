@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ChannelsModule } from './channels/channels.module';
 import { PostsModule } from './posts/posts.module';
 import { FormsModule } from './forms/forms.module';
@@ -12,6 +13,7 @@ import { RedisModule } from './common/redis';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    ScheduleModule.forRoot(),
     RedisModule,
     TypeOrmModule.forRootAsync({
       useFactory: () => ({
