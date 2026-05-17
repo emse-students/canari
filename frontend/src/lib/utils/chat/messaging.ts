@@ -153,10 +153,32 @@ interface MessageActionDeps {
   userId: string;
   pin: string;
   conversation: Conversation;
+  /** Display name of the current user — used as actor in reaction notifications. */
+  currentUserDisplayName?: string;
+}
+
+/**
+ * Notifies the author of a message that the current user reacted to it.
+ * Fire-and-forget REST call — the server never sees MLS plaintext.
+ * Exported so it can be reused by other callers (e.g. channel reactions).
+ */
+export async function notifyReaction(params: {
+  groupId: string;
+  targetSenderId: string;
+  emoji: string;
+  messagePreview: string;
+  actorName: string;
+}): Promise<void> {
+  await fetch('/api/mls/notify-reaction', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
 }
 
 /**
  * Sends an emoji reaction to a message via the MLS group, then persists the updated MLS state.
+ * Also notifies the message author via a server-side push if they are a different user.
  * Silently ignored if the conversation is not ready.
  */
 export async function addReaction(
@@ -164,16 +186,29 @@ export async function addReaction(
   emoji: string,
   deps: MessageActionDeps
 ): Promise<void> {
-  const { mlsService, userId, pin, conversation } = deps;
+  const { mlsService, userId, pin, conversation, currentUserDisplayName } = deps;
 
   if (!conversation.isReady) return;
 
   try {
     const payload = encodeAppMessage(mkReaction(messageId, emoji));
-    // silent=true: les réactions ne génèrent pas de notification push
+    // silent=true: MLS state sync only, the push notification is sent via notifyReaction instead
     await mlsService.sendMessage(conversation.id, payload, undefined, true);
     const stateBytes = await mlsService.saveState(pin);
     saveMlsState(userId, stateBytes);
+
+    // Notify the message author (fire-and-forget, non-fatal)
+    const targetMsg = conversation.messages.find((m) => m.id === messageId);
+    if (targetMsg?.senderId && targetMsg.senderId !== userId) {
+      const preview = String(targetMsg.content ?? '').slice(0, 60);
+      void notifyReaction({
+        groupId: conversation.id,
+        targetSenderId: targetMsg.senderId,
+        emoji,
+        messagePreview: preview,
+        actorName: currentUserDisplayName ?? userId,
+      }).catch(() => {});
+    }
   } catch (e) {
     console.warn('Failed to send reaction:', e);
   }

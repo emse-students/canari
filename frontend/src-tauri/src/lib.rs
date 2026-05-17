@@ -1133,44 +1133,131 @@ fn find_length_delimited_field(bytes: &[u8], field_num: u32) -> Option<Vec<u8>> 
     None
 }
 
-/// Extrait le texte d'un `AppMessage` protobuf déchiffré.
-/// - field 1 = TextMsg  (.content = field 1)
-/// - field 2 = ReplyMsg (.content = field 1)
-/// - field 4 = MediaMsg → texte générique
+/// Cherche le premier champ `field_num` de wire type 0 (varint) dans `bytes`.
+/// Utilisé pour extraire `sent_at` (int64, field 8) et les enums depuis un AppMessage.
 #[cfg(target_os = "android")]
-fn extract_app_message_text(bytes: &[u8]) -> Option<String> {
-    // TextMsg
-    if let Some(text_msg) = find_length_delimited_field(bytes, 1) {
-        if let Some(content) = find_length_delimited_field(&text_msg, 1) {
-            if let Ok(s) = String::from_utf8(content) {
-                if !s.is_empty() {
-                    return Some(s);
+fn find_varint_field(bytes: &[u8], field_num: u32) -> Option<u64> {
+    let mut pos = 0usize;
+    while pos < bytes.len() {
+        let (tag, after_tag) = read_varint(bytes, pos)?;
+        let wire_type = tag & 0x7;
+        let field = (tag >> 3) as u32;
+        pos = after_tag;
+        match wire_type {
+            0 => {
+                let (value, next) = read_varint(bytes, pos)?;
+                if field == field_num {
+                    return Some(value);
                 }
+                pos = next;
             }
-        }
-    }
-    // ReplyMsg
-    if let Some(reply_msg) = find_length_delimited_field(bytes, 2) {
-        if let Some(content) = find_length_delimited_field(&reply_msg, 1) {
-            if let Ok(s) = String::from_utf8(content) {
-                if !s.is_empty() {
-                    return Some(s);
-                }
+            1 => {
+                if pos + 8 > bytes.len() { return None; }
+                pos += 8;
             }
+            2 => {
+                let (len, after_len) = read_varint(bytes, pos)?;
+                pos = after_len;
+                let end = pos + len as usize;
+                if end > bytes.len() { return None; }
+                pos = end;
+            }
+            5 => {
+                if pos + 4 > bytes.len() { return None; }
+                pos += 4;
+            }
+            _ => return None,
         }
-    }
-    // MediaMsg
-    if find_length_delimited_field(bytes, 4).is_some() {
-        return Some("📎 Pièce jointe".to_string());
     }
     None
 }
 
+/// Extrait les métadonnées complètes d'un `AppMessage` protobuf déchiffré.
+///
+/// Champs AppMessage parsés :
+///   field 1 = TextMsg  (content = field 1)
+///   field 2 = ReplyMsg (content = field 1, replyTo/ReplyRef = field 2)
+///   field 4 = MediaMsg (kind = field 1 enum, caption = field 8)
+///   field 6 = message_id (string)
+///   field 8 = sent_at (int64 varint, ms epoch)
+///
+/// Retourne {"ok":true,"text":"...","messageId":"...","sentAt":0,"type":"text|reply|media","replyTo":null,"mediaKind":null}
+/// ou {"ok":false} si le message n'est pas affichable (réaction, système, etc.).
+#[cfg(target_os = "android")]
+fn extract_full_message_info(bytes: &[u8]) -> serde_json::Value {
+    let message_id = find_length_delimited_field(bytes, 6)
+        .and_then(|b| String::from_utf8(b).ok())
+        .unwrap_or_default();
+    let sent_at = find_varint_field(bytes, 8).map(|v| v as i64).unwrap_or(0);
+
+    // TextMsg : field 1
+    if let Some(text_msg) = find_length_delimited_field(bytes, 1) {
+        if let Some(content_bytes) = find_length_delimited_field(&text_msg, 1) {
+            if let Ok(text) = String::from_utf8(content_bytes) {
+                if !text.is_empty() {
+                    return serde_json::json!({
+                        "ok": true, "text": text, "messageId": message_id,
+                        "sentAt": sent_at, "type": "text", "replyTo": null, "mediaKind": null
+                    });
+                }
+            }
+        }
+    }
+
+    // ReplyMsg : field 2 (content = field 1, ReplyRef = field 2)
+    if let Some(reply_msg) = find_length_delimited_field(bytes, 2) {
+        let content = find_length_delimited_field(&reply_msg, 1)
+            .and_then(|b| String::from_utf8(b).ok())
+            .unwrap_or_default();
+        if !content.is_empty() {
+            let reply_to = find_length_delimited_field(&reply_msg, 2).map(|ref_bytes| {
+                let id = find_length_delimited_field(&ref_bytes, 1)
+                    .and_then(|b| String::from_utf8(b).ok()).unwrap_or_default();
+                let sender_id = find_length_delimited_field(&ref_bytes, 2)
+                    .and_then(|b| String::from_utf8(b).ok()).unwrap_or_default();
+                let preview = find_length_delimited_field(&ref_bytes, 3)
+                    .and_then(|b| String::from_utf8(b).ok()).unwrap_or_default();
+                serde_json::json!({ "id": id, "senderId": sender_id, "preview": preview })
+            });
+            return serde_json::json!({
+                "ok": true, "text": content, "messageId": message_id,
+                "sentAt": sent_at, "type": "reply", "replyTo": reply_to, "mediaKind": null
+            });
+        }
+    }
+
+    // MediaMsg : field 4 (kind enum = field 1, caption = field 8)
+    if let Some(media_msg) = find_length_delimited_field(bytes, 4) {
+        let kind_str = match find_varint_field(&media_msg, 1) {
+            Some(1) => "image",
+            Some(2) => "video",
+            Some(3) => "audio",
+            _       => "file",
+        };
+        let caption = find_length_delimited_field(&media_msg, 8)
+            .and_then(|b| String::from_utf8(b).ok())
+            .filter(|s| !s.is_empty());
+        let display_text = caption.unwrap_or_else(|| match kind_str {
+            "image" => "📷 Photo".to_string(),
+            "video" => "🎥 Vidéo".to_string(),
+            "audio" => "🎤 Audio".to_string(),
+            _       => "📎 Pièce jointe".to_string(),
+        });
+        return serde_json::json!({
+            "ok": true, "text": display_text, "messageId": message_id,
+            "sentAt": sent_at, "type": "media", "replyTo": null, "mediaKind": kind_str
+        });
+    }
+
+    serde_json::json!({ "ok": false })
+}
+
 // ─── Fonction JNI appelée par CanariFirebaseMessagingService ─────────────────
 
-/// Déchiffre un message MLS et extrait son texte.
+/// Déchiffre un message MLS et retourne ses métadonnées complètes en JSON.
+/// Format retourné : {"ok":true,"text":"...","messageId":"...","sentAt":123,"type":"text|reply|media","replyTo":null,"mediaKind":null}
+/// Sur échec : {"ok":false}
 /// Appelée directement depuis Kotlin via System.loadLibrary("mines_app_lib").
-/// Retourne le texte du message, ou "" si le déchiffrement échoue.
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeDecryptMessage<
@@ -1185,7 +1272,7 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
     group_id: jni::objects::JString<'a>,
     ciphertext: jni::objects::JByteArray<'a>,
 ) -> jni::objects::JString<'a> {
-    let text = (|| -> Option<String> {
+    let result = (|| -> Option<serde_json::Value> {
         let state_vec = env.convert_byte_array(&state_bytes).ok()?;
         let pin_str: String = env.get_string(&pin).ok()?.into();
         let user_id_str: String = env.get_string(&user_id).ok()?.into();
@@ -1193,16 +1280,15 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
         let group_id_str: String = env.get_string(&group_id).ok()?.into();
         let cipher_vec = env.convert_byte_array(&ciphertext).ok()?;
 
-        // Crée un MlsManager temporaire depuis l'état sauvegardé (lecture seule du fichier).
-        // Ce manager TEMPORAIRE avance son propre ratchet mais n'écrit rien sur disque.
-        // Le MlsManager de l'app principale peut donc traiter le même message normalement.
+        // Manager temporaire : avance son propre ratchet, n'écrit rien sur disque.
+        // Le MlsManager principal peut traiter le même message normalement au boot.
         let mut manager =
             MlsManager::load_encrypted(&user_id_str, &device_id_str, Some(state_vec), &pin_str).ok()?;
 
         let plaintext = match manager.process_incoming_message(&group_id_str, &cipher_vec) {
             Ok(Some(p)) => p,
             Ok(None) => {
-                log::warn!("[FCM] process_incoming_message: Ok(None) — message de contrôle MLS, pas de plaintext");
+                log::warn!("[FCM] process_incoming_message: Ok(None) — message de contrôle MLS");
                 return None;
             }
             Err(e) => {
@@ -1211,12 +1297,44 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
             }
         };
 
-        extract_app_message_text(&plaintext)
+        let info = extract_full_message_info(&plaintext);
+        if info["ok"].as_bool().unwrap_or(false) { Some(info) } else { None }
     })()
-    .unwrap_or_default();
+    .unwrap_or_else(|| serde_json::json!({ "ok": false }));
 
-    env.new_string(&text)
-        .unwrap_or_else(|_| env.new_string("").unwrap())
+    let json_str = result.to_string();
+    env.new_string(&json_str)
+        .unwrap_or_else(|_| env.new_string("{\"ok\":false}").unwrap())
+}
+
+// ─── Commande Tauri : cache FCM ───────────────────────────────────────────────
+
+/// Lit {app_data_dir}/fcm_message_cache.ndjson, efface le fichier et retourne les entrées.
+/// Appelé au boot juste après login pour pré-injecter les messages déjà déchiffrés
+/// lors de la réception FCM — évite d'attendre la sync MLS complète (~10s).
+#[tauri::command]
+fn read_and_clear_fcm_cache(app: tauri::AppHandle) -> Vec<serde_json::Value> {
+    let data_dir = match app.path().app_data_dir() {
+        Ok(d) => d,
+        Err(e) => { log::warn!("[FCM_CACHE] app_data_dir() failed: {e}"); return vec![]; }
+    };
+    let path = data_dir.join("fcm_message_cache.ndjson");
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return vec![],
+        Err(e) => { log::warn!("[FCM_CACHE] lecture: {e}"); return vec![]; }
+    };
+    // Effacer immédiatement pour éviter les doublons au prochain boot
+    if let Err(e) = std::fs::remove_file(&path) {
+        log::warn!("[FCM_CACHE] suppression: {e}");
+    }
+    let entries: Vec<serde_json::Value> = content
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect();
+    log::info!("[FCM_CACHE] {} entrée(s) lue(s)", entries.len());
+    entries
 }
 
 // ─── Commandes Tauri : contexte push ─────────────────────────────────────────
@@ -1685,7 +1803,8 @@ pub fn run() {
             process_pending_mls_messages,
             bootstrap_dead_conversation,
             set_native_flag,
-            get_native_flags
+            get_native_flags,
+            read_and_clear_fcm_cache
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

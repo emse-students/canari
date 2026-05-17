@@ -53,6 +53,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         private val notificationIdCounter = java.util.concurrent.atomic.AtomicInteger(0)
     }
 
+    // Retourne un JSON : {"ok":true,"text":"...","messageId":"...","sentAt":123,"type":"text|reply|media","replyTo":null,"mediaKind":null}
+    // ou {"ok":false} en cas d'échec.
     external fun nativeDecryptMessage(
         stateBytes: ByteArray,
         pin: String,
@@ -61,6 +63,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         groupId: String,
         ciphertext: ByteArray
     ): String
+
+    /** Résultat structuré du déchiffrement MLS, extrait depuis le JSON retourné par Rust. */
+    data class DecryptedMessage(
+        val text: String,
+        val messageId: String,
+        val sentAt: Long,
+        val type: String,                 // "text" | "reply" | "media"
+        val replyTo: JSONObject?,
+        val mediaKind: String?,           // "image" | "video" | "audio" | "file" | null
+    )
 
     override fun onNewToken(token: String) {
         super.onNewToken(token)
@@ -85,14 +97,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         if (msgType == "social" || msgType == "form_reminder") {
             val title    = data["title"]  ?: "Canari"
             val body     = data["body"]   ?: ""
+            // deepLink explicite (réactions aux messages) > deepLink construit depuis postId/formId
             val postId   = data["postId"] ?: ""
             val formId   = data["formId"] ?: ""
             val deepLink = when {
-                postId.isNotEmpty() -> "fr.emse.canari://post/$postId"
-                formId.isNotEmpty() -> "fr.emse.canari://form/$formId"
-                else                -> "fr.emse.canari://posts"
+                data["deepLink"]?.isNotEmpty() == true -> data["deepLink"]!!
+                postId.isNotEmpty()                    -> "fr.emse.canari://post/$postId"
+                formId.isNotEmpty()                    -> "fr.emse.canari://form/$formId"
+                else                                   -> "fr.emse.canari://posts"
             }
-            // Choix du canal selon le type : formulaires sur CHANNEL_FORMS, reste sur CHANNEL_SOCIAL
             val channel = if (msgType == "form_reminder") CHANNEL_FORMS else CHANNEL_SOCIAL
             Log.d(TAG, "showSimpleNotification: type=$msgType channel=$channel title=$title deepLink=$deepLink")
             showSimpleNotification(title, body, deepLink, channel)
@@ -128,10 +141,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
             Log.d(TAG, "thread: groupId=$groupId senderName=$senderName silent=$silent inlineProto=${inlineProto != null}")
 
-            val body = tryDecrypt(queuedMessageId, groupId, inlineProto)
+            val decrypted = tryDecrypt(queuedMessageId, groupId, inlineProto)
+            val body: String = decrypted?.text
                 ?: run {
-                    // Déchiffrement échoué : le groupe n'est probablement pas encore dans l'état MLS
-                    // (Welcome non encore traité). On enqueue le worker pour réessayer.
+                    // Déchiffrement échoué : groupe probablement pas encore dans l'état MLS.
+                    // On enqueue le worker pour réessayer au prochain cycle.
                     if (!queuedMessageId.isNullOrEmpty()) {
                         val workRequest = OneTimeWorkRequestBuilder<MlsBackgroundWorker>()
                             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.MIN_BACKOFF_MILLIS, TimeUnit.MILLISECONDS)
@@ -146,6 +160,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // FCM silencieux : accusé de lecture, réaction, édition, suppression, copie propre
                 Log.d(TAG, "FCM silencieux → MLS state mis à jour, pas de notification affichée")
                 return@Thread
+            }
+
+            // Écrire le cache FCM pour affichage immédiat au prochain boot de l'app
+            if (decrypted != null) {
+                writeFcmCache(groupId, senderId, senderName, decrypted)
             }
 
             val avatarBitmap = if (senderId.isNotEmpty()) fetchAvatar(senderId) else null
@@ -163,7 +182,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         queuedMessageId: String?,
         groupId: String,
         inlineProto: String?,
-    ): String? {
+    ): DecryptedMessage? {
         if (queuedMessageId == null) {
             Log.w(TAG, "tryDecrypt: queuedMessageId absent → abandon")
             return null
@@ -261,6 +280,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         return proto
     }
 
+    /** Parse le JSON retourné par nativeDecryptMessage et retourne un DecryptedMessage structuré. */
     private fun decryptProto(
         stateBytes: ByteArray,
         pin: String,
@@ -268,17 +288,65 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         deviceId: String,
         groupId: String,
         protoB64: String,
-    ): String? = try {
+    ): DecryptedMessage? = try {
         val cipherBytes = Base64.decode(protoB64, Base64.DEFAULT)
-        val text = nativeDecryptMessage(stateBytes, pin, userId, deviceId, groupId, cipherBytes)
-        Log.d(TAG, "decryptProto: succès → \"${text.take(60)}\"")
-        text.takeIf { it.isNotEmpty() }?.take(200)
+        val jsonStr = nativeDecryptMessage(stateBytes, pin, userId, deviceId, groupId, cipherBytes)
+        val json = JSONObject(jsonStr)
+        if (!json.optBoolean("ok", false)) {
+            Log.w(TAG, "decryptProto: ok=false → déchiffrement échoué")
+            return null
+        }
+        val text = json.optString("text").takeIf { it.isNotEmpty() } ?: return null
+        Log.d(TAG, "decryptProto: succès type=${json.optString("type")} → \"${text.take(60)}\"")
+        DecryptedMessage(
+            text      = text.take(200),
+            messageId = json.optString("messageId"),
+            sentAt    = json.optLong("sentAt", System.currentTimeMillis()),
+            type      = json.optString("type", "text"),
+            replyTo   = json.optJSONObject("replyTo"),
+            mediaKind = json.optString("mediaKind").takeIf { it.isNotEmpty() },
+        )
     } catch (e: UnsatisfiedLinkError) {
         Log.e(TAG, "decryptProto: librairie native non chargée: ${e.message}")
         null
     } catch (e: Exception) {
         Log.e(TAG, "decryptProto: exception: ${e.message}")
         null
+    }
+
+    /**
+     * Écrit une entrée dans fcm_message_cache.ndjson pour que l'app puisse
+     * pré-injecter le message dans IndexedDB au boot (avant la sync MLS).
+     * Le fichier est en append : plusieurs messages peuvent s'accumuler entre deux ouvertures.
+     */
+    private fun writeFcmCache(
+        groupId: String,
+        senderId: String,
+        senderName: String,
+        msg: DecryptedMessage,
+    ) {
+        if (msg.messageId.isEmpty()) {
+            Log.w(TAG, "writeFcmCache: messageId vide → entrée ignorée")
+            return
+        }
+        try {
+            val entry = JSONObject().apply {
+                put("groupId",    groupId)
+                put("messageId",  msg.messageId)
+                put("senderId",   senderId)
+                put("senderName", senderName)
+                put("content",    msg.text)
+                put("timestamp",  msg.sentAt)
+                put("type",       msg.type)
+                msg.replyTo?.let { put("replyTo", it) }
+                msg.mediaKind?.let { put("mediaKind", it) }
+            }
+            val file = File(filesDir.parentFile, "fcm_message_cache.ndjson")
+            file.appendText(entry.toString() + "\n")
+            Log.d(TAG, "writeFcmCache: ✓ messageId=${msg.messageId.take(8)} groupId=${groupId.take(8)}")
+        } catch (e: Exception) {
+            Log.w(TAG, "writeFcmCache: échec: ${e.message}")
+        }
     }
 
     // ── Avatar ────────────────────────────────────────────────────────────────

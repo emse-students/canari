@@ -572,6 +572,7 @@ export function useMessaging() {
       userId: ctx.userId,
       pin: ctx.pin,
       conversation: convo,
+      currentUserDisplayName: getUserDisplayNameSync(ctx.userId),
     };
     if (alreadyReacted) {
       await removeReaction(messageId, emoji, reactionDeps);

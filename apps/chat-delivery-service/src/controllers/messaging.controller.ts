@@ -7,6 +7,7 @@ import {
   Query,
   UseGuards,
   Headers,
+  BadRequestException,
 } from '@nestjs/common';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
@@ -121,6 +122,51 @@ export class MessagingController {
       body,
       headerUserId,
       headerGlobalAdmin,
+    );
+  }
+
+  /**
+   * Notify the author of a message that someone reacted to it.
+   * Fire-and-forget from the client — the server never sees MLS plaintext;
+   * the client provides all required metadata.
+   * Guard: no notification if the reactor is the same user as the message author
+   * (cross-device own-action — the user already knows what they did).
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Post('mls/notify-reaction')
+  async notifyReaction(
+    @Headers('x-user-id') callerId: string,
+    @Body()
+    body: {
+      groupId: string;
+      targetSenderId: string;
+      emoji: string;
+      messagePreview: string;
+      actorName: string;
+    },
+  ): Promise<{ sent: number; failed: number }> {
+    if (!callerId) throw new BadRequestException('x-user-id header required');
+
+    // Never notify if actor == message author (cross-device own-reaction)
+    if (!body.targetSenderId || callerId === body.targetSenderId) {
+      return { sent: 0, failed: 0 };
+    }
+
+    const emoji = String(body.emoji ?? '').slice(0, 20);
+    const preview = String(body.messagePreview ?? '').slice(0, 80);
+    const actor = String(body.actorName ?? callerId).slice(0, 100);
+
+    const notifBody = `${actor} a réagi avec ${emoji} à « ${preview} »`;
+
+    return this.messagingService.sendPushToUser(
+      body.targetSenderId,
+      'Nouvelle réaction',
+      notifBody,
+      {
+        type: 'social',
+        deepLink: `fr.emse.canari://chat/${body.groupId ?? ''}`,
+        groupId: body.groupId ?? '',
+      },
     );
   }
 }

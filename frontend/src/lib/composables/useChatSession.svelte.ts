@@ -38,6 +38,7 @@ import { BiometricService } from '$lib/services/biometric';
 import { savePin, clearPin, clearPinAndKey } from '$lib/utils/pinVault';
 import { CallService } from '$lib/services/CallService';
 import { startPushService, stopPushService } from '$lib/services/PushNotificationService';
+import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
 import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 import type { AddMessageToChatOptions, Conversation } from '$lib/types';
 
@@ -343,6 +344,9 @@ export function useChatSession() {
         .catch((e) =>
           cb.log(`[WARN] Echec enregistrement push: ${e instanceof Error ? e.message : String(e)}`)
         );
+
+      // Pré-injecter les messages FCM mis en cache avant la sync MLS complète (~10s)
+      await consumeFcmCache(pin, storage).catch(() => {});
 
       await cb.loadAndRestoreConversations();
 

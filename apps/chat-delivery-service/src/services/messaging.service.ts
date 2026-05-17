@@ -1132,4 +1132,61 @@ export class MessagingService {
 
     return { status: 'deleted', count: result.affected || 0 };
   }
+
+  /**
+   * Sends an FCM notification to all registered devices of a given user.
+   * Used for side-channel social signals (reactions, mentions) where the
+   * server never sees the MLS plaintext.
+   *
+   * Returns { sent, failed } — failure is non-fatal for the caller.
+   */
+  async sendPushToUser(
+    userId: string,
+    title: string,
+    body: string,
+    data: Record<string, string>,
+  ): Promise<{ sent: number; failed: number }> {
+    if (admin.apps.length === 0) return { sent: 0, failed: 0 };
+
+    const traceId = this.makeTraceId('social-push');
+    const pushTokens = await this.pushTokenRepo.find({ where: { userId } });
+
+    if (pushTokens.length === 0) {
+      this.logger.log(`[SOCIAL_PUSH][${traceId}] No token for user=${userId}`);
+      return { sent: 0, failed: 0 };
+    }
+
+    let sent = 0;
+    let failed = 0;
+    for (const pt of pushTokens) {
+      try {
+        await admin.messaging().send({
+          token: pt.token,
+          notification: { title, body },
+          data: { ...data, title, body },
+          android: {
+            priority: 'high',
+            notification: { channelId: 'canari_social' },
+          },
+          apns: { payload: { aps: { sound: 'default' } } },
+        });
+        sent++;
+        this.logger.log(
+          `[SOCIAL_PUSH][${traceId}] sent user=${userId} device=${pt.deviceId}`,
+        );
+      } catch (e) {
+        failed++;
+        if (this.isTerminalPushTokenError(e)) {
+          await this.pushTokenRepo.delete({ id: pt.id });
+          this.logger.warn(
+            `[SOCIAL_PUSH][${traceId}] deleted invalid token user=${userId} device=${pt.deviceId}`,
+          );
+        }
+        this.logger.warn(
+          `[SOCIAL_PUSH][${traceId}] FCM failed user=${userId} device=${pt.deviceId} err=${e}`,
+        );
+      }
+    }
+    return { sent, failed };
+  }
 }
