@@ -33,7 +33,7 @@
   import UserAutocomplete from '$lib/components/shared/UserAutocomplete.svelte';
   import AssociationLogoCropper from '$lib/components/associations/AssociationLogoCropper.svelte';
   import AssociationMemberRow from '$lib/components/associations/AssociationMemberRow.svelte';
-  import SvelteMarkdown from '@humanspeak/svelte-markdown';
+  import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
 
   let asso = $state<Association | null>(null);
   let members = $state<AssociationMember[]>([]);
@@ -359,9 +359,7 @@
         <div class="rounded-xl border border-cn-border/70 bg-cn-bg/40 p-3 text-xs text-text-muted">
           <p class="font-semibold text-text-main mb-1">Aperçu markdown</p>
           {#if editBioMarkdown.trim()}
-            <div class="prose prose-sm dark:prose-invert max-w-none">
-              <SvelteMarkdown source={editBioMarkdown} options={{ gfm: true, breaks: true }} />
-            </div>
+            <ProfileBioMarkdown source={editBioMarkdown} />
           {:else}
             <p>(vide)</p>
           {/if}

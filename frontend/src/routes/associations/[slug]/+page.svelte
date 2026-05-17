@@ -14,7 +14,7 @@
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { Bell, BellOff, Pencil, Building2, CalendarDays, Users } from '@lucide/svelte';
-  import SvelteMarkdown from '@humanspeak/svelte-markdown';
+  import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import AssociationMemberRow from '$lib/components/associations/AssociationMemberRow.svelte';
   import AssociationCalendarSection from '$lib/components/associations/AssociationCalendarSection.svelte';
 
@@ -209,9 +209,7 @@
           <p class="text-sm text-text-muted whitespace-pre-wrap">{asso.description}</p>
         {/if}
         {#if asso.bioMarkdown?.trim()}
-          <div class="prose prose-neutral dark:prose-invert max-w-none">
-            <SvelteMarkdown source={asso.bioMarkdown} options={{ gfm: true, breaks: true }} />
-          </div>
+          <ProfileBioMarkdown source={asso.bioMarkdown} />
         {:else if !asso.description?.trim()}
           <p class="text-sm text-text-muted">Aucune description pour le moment.</p>
         {/if}

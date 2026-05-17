@@ -1,7 +1,11 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import SvelteMarkdown from '@humanspeak/svelte-markdown';
   import PostMentionLink from '$lib/components/posts/PostMentionLink.svelte';
+  import PostCodeBlock from '$lib/components/posts/PostCodeBlock.svelte';
+  import PostCodespan from '$lib/components/posts/PostCodespan.svelte';
   import { preprocessPostMarkdown } from '$lib/utils/posts/postMarkdown';
+  import { ensureHljsTheme } from '$lib/utils/posts/hljsTheme';
 
   interface Props {
     /** Raw bio text (Markdown). */
@@ -12,8 +16,12 @@
 
   let { source, class: className = '' }: Props = $props();
 
+  onMount(() => {
+    ensureHljsTheme();
+  });
+
   const rendered = $derived(preprocessPostMarkdown(source.trim()));
-  const renderers = { link: PostMentionLink };
+  const renderers = { link: PostMentionLink, code: PostCodeBlock, codespan: PostCodespan };
 </script>
 
 <div
