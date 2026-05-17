@@ -165,6 +165,22 @@ Key env vars:
 6. `apps/chat-delivery-service/src/app.controller.ts` (for full MLS API list)
 
 
+## Documentation and Comments
+
+Every exported function, class, interface, and non-trivial constant must have a JSDoc comment (TypeScript/JavaScript) or a doc comment (Rust `///`, Kotlin `/**`). This is the project standard — match the existing style throughout the codebase.
+
+What to write:
+- **What** the thing does (one sentence is enough for simple functions)
+- **Why** it exists or why it works a certain way, when non-obvious
+- Key constraints, side-effects, or invariants that would surprise a reader
+
+What NOT to write:
+- Restating the type signature in prose ("Takes a string and returns a boolean")
+- References to the current task, issue number, or callers
+- Temporal language ("added for…", "now handles…")
+
+Inline comments (`//`) inside function bodies: only for non-obvious logic, workarounds, or subtle invariants. Not for every line.
+
 ## General Coding Behavior and Guidelines
 
 ### 1. Think Before Coding
