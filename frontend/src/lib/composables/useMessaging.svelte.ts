@@ -17,7 +17,7 @@ import {
   editMessage,
   deleteMessage,
 } from '$lib/utils/chat/messaging';
-import { insertMessageOrdered } from '$lib/utils/chat/messageOrder';
+import { insertMessageOrdered, mergeMessagesInInputOrder } from '$lib/utils/chat/messageOrder';
 import {
   MAX_DISTINCT_MESSAGE_REACTIONS,
   toggleMessageReaction,
@@ -39,6 +39,7 @@ import {
   isChannelConversationId,
   sendEncryptedChannelMessage,
 } from '$lib/utils/chat/channelCrypto';
+import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 
 /** Runtime dependencies injected into all messaging operations. */
 export interface MessagingContext {
@@ -73,6 +74,18 @@ export function useMessaging() {
   let isUploadingMedia = $state(false);
 
   let pendingRetry = $state<{ text: string; convoId: string } | null>(null);
+
+  /** Depth of nested MLS queue catch-up sessions (overlay stays until zero). */
+  let messageCatchupDepth = 0;
+  let isMessageCatchupActive = $state(false);
+  /** When true, incoming messages are buffered and flushed in one UI update (MLS queue catch-up). */
+  let bulkIngestActive = false;
+  /** Global MLS catch-up sequence (reset when bulk buffer starts). */
+  let bulkIngestSeq = 0;
+  const bulkIngestBuffer = new SvelteMap<
+    string,
+    Array<{ senderId: string; content: string } & AddMessageToChatOptions>
+  >();
 
   const mediaService = new MediaService();
   const mediaMaxSizeMb = Number.parseInt(import.meta.env.VITE_MEDIA_MAX_SIZE_MB ?? '100', 10);
@@ -120,7 +133,48 @@ export function useMessaging() {
     }
   }
 
-  /** Appends a new message to a conversation's reactive state, increments the unread counter if the conversation is not focused, plays the appropriate tone, optionally triggers a system notification, and persists the message to IndexedDB. Silently drops duplicates by message ID. */
+  /**
+   * Marks MLS message catch-up as active (loading overlay).
+   * @param enableBulkBuffer When true, buffers incoming messages for one UI flush per conversation.
+   */
+  function beginBulkMessageIngest(enableBulkBuffer = false) {
+    messageCatchupDepth += 1;
+    isMessageCatchupActive = true;
+    if (enableBulkBuffer) {
+      bulkIngestActive = true;
+      bulkIngestSeq = 0;
+      bulkIngestBuffer.clear();
+    }
+  }
+
+  /** Ends catch-up: flushes bulk buffer when used, then hides the loading overlay. */
+  async function endBulkMessageIngest(ctx: MessagingContext) {
+    if (bulkIngestActive) {
+      bulkIngestActive = false;
+      const entries = [...bulkIngestBuffer.entries()].sort(([, a], [, b]) => {
+        const seqA = a[0]?.ingestSequence ?? Number.MAX_SAFE_INTEGER;
+        const seqB = b[0]?.ingestSequence ?? Number.MAX_SAFE_INTEGER;
+        return seqA - seqB;
+      });
+      bulkIngestBuffer.clear();
+      for (const [contactName, messages] of entries) {
+        if (messages.length > 0) {
+          await batchAddMessages(messages, contactName, ctx);
+          await yieldToMainThread();
+        }
+      }
+      tick().then(() => {
+        const chatContainer = ctx.getChatContainer();
+        if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
+      });
+    }
+
+    messageCatchupDepth = Math.max(0, messageCatchupDepth - 1);
+    if (messageCatchupDepth === 0) {
+      isMessageCatchupActive = false;
+    }
+  }
+
   async function addMessageToChat(
     senderId: string,
     content: string,
@@ -129,6 +183,29 @@ export function useMessaging() {
     options: AddMessageToChatOptions & { skipDbSave?: boolean } = {}
   ) {
     const normalized = contactName.toLowerCase();
+
+    if (bulkIngestActive) {
+      const convo = ctx.conversations.get(normalized);
+      if (!convo) {
+        console.warn(`[ADD_MSG] conversation "${normalized}" introuvable (bulk)...`);
+        return;
+      }
+      const id = options.messageId || crypto.randomUUID();
+      const existing = bulkIngestBuffer.get(normalized) ?? [];
+      if (existing.some((m) => m.messageId === id) || convo.messages.some((m) => m.id === id)) {
+        return;
+      }
+      existing.push({
+        senderId,
+        content,
+        ...options,
+        messageId: id,
+        ingestSequence: options.ingestSequence ?? bulkIngestSeq++,
+      });
+      bulkIngestBuffer.set(normalized, existing);
+      return;
+    }
+
     const convo = ctx.conversations.get(normalized);
     if (!convo) {
       console.warn(`[ADD_MSG] conversation "${normalized}" introuvable...`);
@@ -244,6 +321,7 @@ export function useMessaging() {
         isOwn,
         replyTo: pm.replyTo,
         isSystem: pm.isSystem,
+        ingestSequence: pm.ingestSequence,
       };
       newMessages.push(newMsg);
 
@@ -264,16 +342,18 @@ export function useMessaging() {
 
     if (newMessages.length === 0) return;
 
-    // Sort and merge with existing messages — single reactive update
-    const merged = [...convo.messages, ...newMessages].sort((a, b) => {
-      const ta =
-        a.timestamp instanceof Date ? a.timestamp.getTime() : new SvelteDate(a.timestamp).getTime();
-      const tb =
-        b.timestamp instanceof Date ? b.timestamp.getTime() : new SvelteDate(b.timestamp).getTime();
-      return ta !== tb ? ta - tb : a.id.localeCompare(b.id);
-    });
+    const isConversationOpen = ctx.selectedContact === normalized;
+    const addedFromOthers = newMessages.filter((m) => !m.isOwn && !m.isSystem).length;
+    const nextUnreadCount = isConversationOpen ? 0 : (convo.unreadCount ?? 0) + addedFromOthers;
 
-    ctx.conversations.set(normalized, { ...convo, messages: merged });
+    // Merge in MLS / replay input order (timestamps + ingestSequence), single reactive update
+    const merged = mergeMessagesInInputOrder(convo.messages, newMessages);
+
+    ctx.conversations.set(normalized, {
+      ...convo,
+      unreadCount: nextUnreadCount,
+      messages: merged,
+    });
 
     // Single batch DB write (community channels are server-authoritative)
     if (ctx.storage && toStore.length > 0 && !isChannelConversationId(normalized)) {
@@ -679,9 +759,17 @@ export function useMessaging() {
     get isUploadingMedia() {
       return isUploadingMedia;
     },
+    /** True while the MLS queue is draining after reconnect (catch-up in progress). */
+    get isMessageCatchupActive() {
+      return isMessageCatchupActive;
+    },
 
     /** Appends a single message to a conversation's reactive state and persists it to DB. */
     addMessageToChat,
+    /** Buffers incoming messages during MLS queue catch-up (pair with endBulkMessageIngest). */
+    beginBulkMessageIngest,
+    /** Flushes buffered messages after MLS queue catch-up. */
+    endBulkMessageIngest,
     /** Appends multiple messages in one reactive update and one batch DB write. */
     batchAddMessages,
     /** Main send handler: uploads pending media then sends a text message. */

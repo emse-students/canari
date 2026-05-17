@@ -53,6 +53,12 @@ export interface ChatSessionCallbacks {
     contactName: string,
     options?: AddMessageToChatOptions
   ) => Promise<void>;
+  beginBulkMessageIngest?: (enableBulkBuffer?: boolean) => void;
+  endBulkMessageIngest?: () => void | Promise<void>;
+  batchAddMessages?: (
+    messages: Array<{ senderId: string; content: string } & AddMessageToChatOptions>,
+    contactName: string
+  ) => Promise<void>;
   saveConversation: (contactName: string) => Promise<void>;
   selectConversation: (name: string) => void;
   onChannelMemberJoined?: (event: any) => void;
@@ -401,6 +407,7 @@ export function useChatSession() {
         saveConversation: cb.saveConversation,
         deleteConversation: storage ? (id) => storage!.deleteConversation(id) : undefined,
         addMessageToChat: cb.addMessageToChat,
+        batchAddMessages: cb.batchAddMessages,
         loadHistoryForConversation: cb.onLoadHistoryForConversation,
         onChannelMemberJoined: cb.onChannelMemberJoined,
         onChannelMemberKicked: cb.onChannelMemberKicked,
@@ -413,6 +420,10 @@ export function useChatSession() {
         },
         log: cb.log,
       });
+
+      if (mlsService.setBulkIngestHooks && cb.beginBulkMessageIngest && cb.endBulkMessageIngest) {
+        mlsService.setBulkIngestHooks(cb.beginBulkMessageIngest, cb.endBulkMessageIngest);
+      }
 
       // Rafraîchir Svelte quand on rejoint un groupe
       if ('onWelcomeProcessed' in mlsService) {

@@ -8,12 +8,17 @@ function messageTime(msg: ChatMessage): number {
 }
 
 /**
- * Comparator for two messages: sorts by timestamp ascending, then by message ID
- * lexicographically to give a stable, deterministic order when timestamps collide.
+ * Comparator for two messages: timestamp ascending, then ingestSequence (MLS / catch-up
+ * arrival order), then message id for a stable tie-break.
  */
-function compareMessageOrder(a: ChatMessage, b: ChatMessage): number {
+export function compareMessageOrder(a: ChatMessage, b: ChatMessage): number {
   const t = messageTime(a) - messageTime(b);
   if (t !== 0) return t;
+  const seqA = a.ingestSequence;
+  const seqB = b.ingestSequence;
+  if (seqA !== undefined && seqB !== undefined && seqA !== seqB) {
+    return seqA - seqB;
+  }
   return a.id.localeCompare(b.id);
 }
 
@@ -28,4 +33,20 @@ export function insertMessageOrdered(
   const next = [...messages, incoming];
   next.sort(compareMessageOrder);
   return next;
+}
+
+/**
+ * Merges `incoming` into `existing` in array order (each item is inserted with
+ * {@link insertMessageOrdered}). Use for batch catch-up so processing order is kept
+ * when timestamps collide.
+ */
+export function mergeMessagesInInputOrder(
+  existing: ChatMessage[],
+  incoming: ChatMessage[]
+): ChatMessage[] {
+  let merged = existing;
+  for (const msg of incoming) {
+    merged = insertMessageOrdered(merged, msg);
+  }
+  return merged;
 }

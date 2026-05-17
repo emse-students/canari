@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ShieldCheck, TriangleAlert } from '@lucide/svelte';
+  import { ShieldCheck, TriangleAlert, Loader2 } from '@lucide/svelte';
   import { ArrowDown, Search, ChevronUp, ChevronDown, X } from '@lucide/svelte';
   import { tick, untrack } from 'svelte';
   import { slide } from 'svelte/transition';
@@ -83,6 +83,8 @@
     currentUserId?: string;
     /** Whether the conversation history is being loaded (shows a skeleton). */
     isLoadingHistory?: boolean;
+    /** Whether MLS is catching up messages after reconnect (shows a blocking overlay). */
+    isCatchingUpMessages?: boolean;
     /** Called when in-memory groups are exhausted; should load older messages from DB. Returns true if more may be available. */
     onLoadOlderMessages?: () => Promise<boolean>;
   }
@@ -122,6 +124,7 @@
     onOpenMembers,
     currentUserId = '',
     isLoadingHistory = false,
+    isCatchingUpMessages = false,
     onLoadOlderMessages,
   }: Props = $props();
 
@@ -453,11 +456,12 @@
     {/if}
 
     <!-- Messages (padding bas pour laisser défiler sous le composeur glass) -->
-    <div
-      bind:this={chatContainer}
-      onscroll={handleScroll}
-      class="chat-scrollbar chat-messages-scroll flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 py-3 md:px-6 md:py-6 flex flex-col gap-2"
-    >
+    <div class="relative flex-1 min-h-0 flex flex-col">
+      <div
+        bind:this={chatContainer}
+        onscroll={handleScroll}
+        class="chat-scrollbar chat-messages-scroll flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 py-3 md:px-6 md:py-6 flex flex-col gap-2"
+      >
       {#if isLoadingHistory}
         <!-- Loading skeleton — hides per-message pop-in while history replays -->
         <div class="flex flex-col gap-3 px-1 py-4 animate-pulse" aria-hidden="true">
@@ -492,6 +496,25 @@
           {switchTime}
           {authToken}
         />
+      {/if}
+      </div>
+
+      {#if isCatchingUpMessages}
+        <div
+          class="absolute inset-0 z-30 flex items-center justify-center bg-[var(--color-bg)]/65 backdrop-blur-sm pointer-events-auto"
+          role="status"
+          aria-live="polite"
+          aria-busy="true"
+          aria-label="Synchronisation des messages en cours"
+        >
+          <div
+            class="flex flex-col items-center gap-3 rounded-2xl border border-black/8 dark:border-white/10 bg-[var(--color-surface)] px-6 py-5 shadow-lg"
+          >
+            <Loader2 size={28} class="animate-spin text-amber-500" strokeWidth={2.25} />
+            <p class="text-sm font-medium text-[var(--color-text)]">Synchronisation des messages…</p>
+            <p class="text-xs text-[var(--color-text-muted)]">Récupération après reconnexion</p>
+          </div>
+        </div>
       {/if}
     </div>
 

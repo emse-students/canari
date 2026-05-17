@@ -10,6 +10,7 @@ import {
 } from '$lib/mls-client';
 import { getToken } from '$lib/stores/auth';
 import { saveMlsState } from '$lib/utils/hex';
+import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 
 /** Message pending in the processing queue */
 interface QueuedMessage {
@@ -22,6 +23,9 @@ interface QueuedMessage {
   /** ID from the delivery service queue — used for at-least-once ACK */
   queuedMessageId?: string;
 }
+
+/** Queue depth above which incoming messages are batched into one UI update per conversation. */
+const BULK_CATCHUP_THRESHOLD = 3;
 
 // Implémentation pour le Site Web (WASM)
 export class WebMlsService implements IMlsService {
@@ -61,6 +65,8 @@ export class WebMlsService implements IMlsService {
   // Message queue for sequential processing
   private messageQueue: QueuedMessage[] = [];
   private isProcessingQueue = false;
+  private bulkIngestStart?: (enableBulkBuffer?: boolean) => void;
+  private bulkIngestEnd?: () => void | Promise<void>;
   // Groups currently being joined (Welcome in progress) - buffer messages for these
   private pendingWelcomeGroups = new Map<string, QueuedMessage[]>();
   constructor() {
@@ -354,105 +360,119 @@ export class WebMlsService implements IMlsService {
     }
 
     this.isProcessingQueue = true;
-    console.log(`[QUEUE] Démarrage traitement (${this.messageQueue.length} messages en file)`);
+    const queuedAtStart = this.messageQueue.length;
+    const useBulkCatchup = queuedAtStart >= BULK_CATCHUP_THRESHOLD;
+    console.log(`[QUEUE] Démarrage traitement (${queuedAtStart} messages en file)`);
+
+    this.bulkIngestStart?.(useBulkCatchup);
 
     const ackIds: string[] = [];
 
-    while (this.messageQueue.length > 0) {
-      const msg = this.messageQueue.shift()!;
-      const groupId = msg.groupId;
+    try {
+      while (this.messageQueue.length > 0) {
+        const msg = this.messageQueue.shift()!;
+        const groupId = msg.groupId;
 
-      try {
-        console.log(
-          `[QUEUE] Traitement ${msg.isWelcome ? 'Welcome' : msg.isCommit ? 'Commit' : 'message'} groupe=${groupId ?? 'inconnu'} sender=${msg.senderId}${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`
-        );
-        const cbResult = await this.messageCallback(
-          msg.senderId,
-          msg.ciphertext,
-          msg.groupId,
-          msg.isWelcome,
-          msg.ratchetTreeBytes,
-          msg.isCommit
-        );
-        console.log(
-          `[QUEUE] messageCallback → ${cbResult} (groupe=${groupId ?? 'inconnu'})${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`
-        );
+        try {
+          console.log(
+            `[QUEUE] Traitement ${msg.isWelcome ? 'Welcome' : msg.isCommit ? 'Commit' : 'message'} groupe=${groupId ?? 'inconnu'} sender=${msg.senderId}${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`
+          );
+          const cbResult = await this.messageCallback(
+            msg.senderId,
+            msg.ciphertext,
+            msg.groupId,
+            msg.isWelcome,
+            msg.ratchetTreeBytes,
+            msg.isCommit
+          );
+          console.log(
+            `[QUEUE] messageCallback → ${cbResult} (groupe=${groupId ?? 'inconnu'})${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`
+          );
 
-        const flags = {
-          isWelcome: msg.isWelcome,
-          isCommit: msg.isCommit,
-          hasQueuedId: Boolean(msg.queuedMessageId),
-        };
-        if (shouldAckAfterSuccess(cbResult, flags) && msg.queuedMessageId) {
-          ackIds.push(msg.queuedMessageId);
-        } else if (flags.hasQueuedId && cbResult === false) {
-          logMlsMetric({
-            kind: 'queue_skip_ack',
-            platform: 'web',
-            reason: 'callback_retry',
+          const flags = {
             isWelcome: msg.isWelcome,
             isCommit: msg.isCommit,
-          });
-        }
+            hasQueuedId: Boolean(msg.queuedMessageId),
+          };
+          if (shouldAckAfterSuccess(cbResult, flags) && msg.queuedMessageId) {
+            ackIds.push(msg.queuedMessageId);
+          } else if (flags.hasQueuedId && cbResult === false) {
+            logMlsMetric({
+              kind: 'queue_skip_ack',
+              platform: 'web',
+              reason: 'callback_retry',
+              isWelcome: msg.isWelcome,
+              isCommit: msg.isCommit,
+            });
+          }
 
-        // If this was a Welcome, process buffered messages for this group
-        if (msg.isWelcome && groupId && this.pendingWelcomeGroups.has(groupId)) {
-          const buffered = this.pendingWelcomeGroups.get(groupId)!;
-          console.log(`[QUEUE] Welcome complete, processing ${buffered.length} buffered messages`);
-          this.pendingWelcomeGroups.delete(groupId);
+          // If this was a Welcome, process buffered messages for this group
+          if (msg.isWelcome && groupId && this.pendingWelcomeGroups.has(groupId)) {
+            const buffered = this.pendingWelcomeGroups.get(groupId)!;
+            console.log(
+              `[QUEUE] Welcome complete, processing ${buffered.length} buffered messages`
+            );
+            this.pendingWelcomeGroups.delete(groupId);
 
-          // Add buffered messages to front of queue (in order)
-          for (let i = buffered.length - 1; i >= 0; i--) {
-            this.messageQueue.unshift(buffered[i]);
+            // Add buffered messages to front of queue (in order)
+            for (let i = buffered.length - 1; i >= 0; i--) {
+              this.messageQueue.unshift(buffered[i]);
+            }
+          }
+
+          // Notify Svelte that a Welcome has been fully processed
+          if (msg.isWelcome) {
+            this.welcomeProcessedCallback?.(groupId);
+          }
+        } catch (e) {
+          console.error(`[QUEUE] Error processing message:`, e);
+          const exFlags = {
+            isWelcome: msg.isWelcome,
+            isCommit: msg.isCommit,
+            hasQueuedId: Boolean(msg.queuedMessageId),
+          };
+          if (shouldAckAfterWebException(exFlags) && msg.queuedMessageId) {
+            ackIds.push(msg.queuedMessageId);
+          } else if (exFlags.hasQueuedId) {
+            logMlsMetric({
+              kind: 'queue_skip_ack',
+              platform: 'web',
+              reason: 'web_exception_non_commit',
+              isWelcome: msg.isWelcome,
+              isCommit: msg.isCommit,
+            });
+          }
+          // Flush buffered messages back to the main queue so they are not lost.
+          // They will be processed normally (likely fail with group-not-found, get ACK'd).
+          if (groupId && this.pendingWelcomeGroups.has(groupId)) {
+            const buffered = this.pendingWelcomeGroups.get(groupId)!;
+            this.pendingWelcomeGroups.delete(groupId);
+            for (let i = buffered.length - 1; i >= 0; i--) {
+              this.messageQueue.unshift(buffered[i]);
+            }
           }
         }
 
-        // Notify Svelte that a Welcome has been fully processed
-        if (msg.isWelcome) {
-          this.welcomeProcessedCallback?.(groupId);
-        }
-      } catch (e) {
-        console.error(`[QUEUE] Error processing message:`, e);
-        const exFlags = {
-          isWelcome: msg.isWelcome,
-          isCommit: msg.isCommit,
-          hasQueuedId: Boolean(msg.queuedMessageId),
-        };
-        if (shouldAckAfterWebException(exFlags) && msg.queuedMessageId) {
-          ackIds.push(msg.queuedMessageId);
-        } else if (exFlags.hasQueuedId) {
-          logMlsMetric({
-            kind: 'queue_skip_ack',
-            platform: 'web',
-            reason: 'web_exception_non_commit',
-            isWelcome: msg.isWelcome,
-            isCommit: msg.isCommit,
-          });
-        }
-        // Flush buffered messages back to the main queue so they are not lost.
-        // They will be processed normally (likely fail with group-not-found, get ACK'd).
-        if (groupId && this.pendingWelcomeGroups.has(groupId)) {
-          const buffered = this.pendingWelcomeGroups.get(groupId)!;
-          this.pendingWelcomeGroups.delete(groupId);
-          for (let i = buffered.length - 1; i >= 0; i--) {
-            this.messageQueue.unshift(buffered[i]);
-          }
+        // Let the UI thread paint / handle input between MLS steps (cooperative, not parallel).
+        if (this.messageQueue.length > 0) {
+          await yieldToMainThread();
         }
       }
-    }
 
-    // Batch-ACK all processed real-time messages
-    if (ackIds.length > 0) {
-      logMlsMetric({ kind: 'queue_ack', platform: 'web', count: ackIds.length });
-      void this.delivery.deliveryPost('messages/ack', {
-        userId: this.userId,
-        deviceId: this.deviceId,
-        messageIds: ackIds,
-      });
+      // Batch-ACK all processed real-time messages
+      if (ackIds.length > 0) {
+        logMlsMetric({ kind: 'queue_ack', platform: 'web', count: ackIds.length });
+        void this.delivery.deliveryPost('messages/ack', {
+          userId: this.userId,
+          deviceId: this.deviceId,
+          messageIds: ackIds,
+        });
+      }
+    } finally {
+      await this.bulkIngestEnd?.();
+      this.isProcessingQueue = false;
+      console.log(`[QUEUE] Queue processing complete`);
     }
-
-    this.isProcessingQueue = false;
-    console.log(`[QUEUE] Queue processing complete`);
   }
 
   onDisconnect(callback: () => void) {
@@ -489,6 +509,14 @@ export class WebMlsService implements IMlsService {
 
   onWelcomeProcessed(callback: (groupId?: string) => void): void {
     this.welcomeProcessedCallback = callback;
+  }
+
+  setBulkIngestHooks(
+    onStart?: (enableBulkBuffer?: boolean) => void,
+    onEnd?: () => void | Promise<void>
+  ): void {
+    this.bulkIngestStart = onStart;
+    this.bulkIngestEnd = onEnd;
   }
 
   /** Sends a disconnect control frame over the browser WebSocket so the gateway removes the presence key immediately. */

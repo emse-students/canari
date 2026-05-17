@@ -28,6 +28,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
     saveConversation,
     deleteConversation,
     addMessageToChat,
+    batchAddMessages,
     loadHistoryForConversation,
     onChannelMemberJoined,
     onChannelMemberKicked,
@@ -1218,6 +1219,10 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         if (buffered && buffered.length > 0) {
           pendingGroupMessages.delete(joinedGroupId);
           log(`[BUFFER] Replay ${buffered.length} message(s) bufferise(s) pour ${joinedGroupId}`);
+          const replayBatch: Array<
+            { senderId: string; content: string } & import('$lib/types').AddMessageToChatOptions
+          > = [];
+          let replaySeq = 0;
           for (const msg of buffered) {
             try {
               const decBytes = await mlsService.processIncomingMessage(joinedGroupId, msg.content);
@@ -1227,12 +1232,12 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                   if (appMsg) {
                     const envelope = appMsgToEnvelope(appMsg);
                     if (envelope) {
-                      await addMessageToChat(
-                        msg.sender.toLowerCase(),
-                        envelope.content,
-                        newConvoKey,
-                        envelope.options
-                      );
+                      replayBatch.push({
+                        senderId: msg.sender.toLowerCase(),
+                        content: envelope.content,
+                        ...envelope.options,
+                        ingestSequence: replaySeq++,
+                      });
                     }
                   }
                 } catch {
@@ -1243,6 +1248,15 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               const errMsg = String(e);
               if (!errMsg.includes('CannotDecryptOwnMessage') && !errMsg.includes('WrongEpoch')) {
                 log(`[BUFFER] Erreur replay: ${errMsg.slice(0, 150)}`);
+              }
+            }
+          }
+          if (replayBatch.length > 0) {
+            if (batchAddMessages) {
+              await batchAddMessages(replayBatch, newConvoKey);
+            } else {
+              for (const item of replayBatch) {
+                await addMessageToChat(item.senderId, item.content, newConvoKey, item);
               }
             }
           }

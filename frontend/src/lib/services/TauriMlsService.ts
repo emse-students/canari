@@ -14,6 +14,10 @@ import {
   detectRuntimeDeviceOs,
 } from '$lib/mls-client';
 import { getToken } from '$lib/stores/auth';
+import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
+
+/** Queue depth above which incoming messages are batched into one UI update per conversation. */
+const BULK_CATCHUP_THRESHOLD = 3;
 
 /** Message pending in the processing queue */
 interface QueuedMessage {
@@ -83,6 +87,8 @@ export class TauriMlsService implements IMlsService {
   private welcomeQueue: QueuedMessage[] = []; // Niveau 1 : Welcome MLS
   private messageQueue: QueuedMessage[] = []; // Niveau 2 : messages applicatifs
   private isProcessingQueue = false;
+  private bulkIngestStart?: (enableBulkBuffer?: boolean) => void;
+  private bulkIngestEnd?: () => void | Promise<void>;
   // Groups currently being joined (Welcome in progress) - buffer messages for these
   private pendingWelcomeGroups = new Map<string, QueuedMessage[]>();
   // Serialization lock: prevents fetchPendingMessages and processQueue from calling
@@ -461,157 +467,179 @@ export class TauriMlsService implements IMlsService {
       `[QUEUE] Démarrage — control=${this.controlQueue.length} welcome=${this.welcomeQueue.length} msg=${this.messageQueue.length}`
     );
 
+    const useBulkCatchup = total >= BULK_CATCHUP_THRESHOLD;
     const ackIds: string[] = [];
 
-    while (
-      this.controlQueue.length > 0 ||
-      this.welcomeQueue.length > 0 ||
-      this.messageQueue.length > 0
-    ) {
-      // Dépiler dans l'ordre de priorité décroissant.
-      const msg =
-        this.controlQueue.shift() ?? this.welcomeQueue.shift() ?? this.messageQueue.shift()!;
+    try {
+      this.bulkIngestStart?.(useBulkCatchup);
 
-      const groupId = msg.groupId;
+      while (
+        this.controlQueue.length > 0 ||
+        this.welcomeQueue.length > 0 ||
+        this.messageQueue.length > 0
+      ) {
+        // Dépiler dans l'ordre de priorité décroissant.
+        const msg =
+          this.controlQueue.shift() ?? this.welcomeQueue.shift() ?? this.messageQueue.shift()!;
 
-      // ── Sérialisation des appels async ────────────────────────────────
-      let resolve!: () => void;
-      const prevLock = this.callbackLock;
-      this.callbackLock = new Promise<void>((r) => (resolve = r));
-      await prevLock;
+        const groupId = msg.groupId;
 
-      try {
-        // ── Niveau 0 : signal de contrôle (group_reset persisté) ────────
-        if (msg.type === 'group_reset') {
-          console.log(`[QUEUE] group_reset (persisté) pour groupe ${groupId ?? 'inconnu'}`);
-          if (groupId) {
-            // Annuler la bufférisation en cours pour ce groupe (état perdu).
-            this.pendingWelcomeGroups.delete(groupId);
+        // ── Sérialisation des appels async ────────────────────────────────
+        let resolve!: () => void;
+        const prevLock = this.callbackLock;
+        this.callbackLock = new Promise<void>((r) => (resolve = r));
+        await prevLock;
+
+        try {
+          // ── Niveau 0 : signal de contrôle (group_reset persisté) ────────
+          if (msg.type === 'group_reset') {
+            console.log(`[QUEUE] group_reset (persisté) pour groupe ${groupId ?? 'inconnu'}`);
+            if (groupId) {
+              // Annuler la bufférisation en cours pour ce groupe (état perdu).
+              this.pendingWelcomeGroups.delete(groupId);
+            }
+            if (shouldAckGroupResetControl({ hasQueuedId: Boolean(msg.queuedMessageId) })) {
+              ackIds.push(msg.queuedMessageId!);
+            }
+            if (groupId) {
+              await this.refreshEpochCache(groupId);
+            }
+            continue;
           }
-          if (shouldAckGroupResetControl({ hasQueuedId: Boolean(msg.queuedMessageId) })) {
-            ackIds.push(msg.queuedMessageId!);
-          }
-          if (groupId) {
-            await this.refreshEpochCache(groupId);
-          }
-          continue;
-        }
 
-        // ── Niveaux 1 et 2 : Welcome ou message applicatif ──────────────
-        console.log(
-          `[QUEUE] ${msg.isWelcome ? 'Welcome' : msg.isCommit ? 'Commit' : 'Msg'} groupe=${groupId ?? '?'} sender=${msg.senderId}${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`
-        );
-
-        const cbResult = await this.messageCallback(
-          msg.senderId,
-          msg.ciphertext,
-          msg.groupId,
-          msg.isWelcome,
-          msg.ratchetTreeBytes,
-          msg.isCommit
-        );
-        console.log(
-          `[QUEUE] → ${cbResult} (groupe=${groupId ?? '?'})${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`
-        );
-
-        const flags = {
-          isWelcome: msg.isWelcome,
-          isCommit: msg.isCommit,
-          hasQueuedId: Boolean(msg.queuedMessageId),
-        };
-        if (shouldAckAfterSuccess(cbResult, flags) && msg.queuedMessageId) {
-          ackIds.push(msg.queuedMessageId);
-        } else if (flags.hasQueuedId && cbResult === false) {
-          logMlsMetric({
-            kind: 'queue_skip_ack',
-            platform: 'tauri',
-            reason: 'callback_retry',
-            isWelcome: msg.isWelcome,
-            isCommit: msg.isCommit,
-          });
-        }
-
-        // Après un Welcome, injecter les messages bufférisés en tête de messageQueue.
-        if (msg.isWelcome && groupId && this.pendingWelcomeGroups.has(groupId)) {
-          const buffered = this.pendingWelcomeGroups.get(groupId)!;
+          // ── Niveaux 1 et 2 : Welcome ou message applicatif ──────────────
           console.log(
-            `[QUEUE] Welcome terminé — réinjection de ${buffered.length} message(s) bufférisé(s) pour ${groupId}`
+            `[QUEUE] ${msg.isWelcome ? 'Welcome' : msg.isCommit ? 'Commit' : 'Msg'} groupe=${groupId ?? '?'} sender=${msg.senderId}${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`
           );
-          this.pendingWelcomeGroups.delete(groupId);
-          for (let i = buffered.length - 1; i >= 0; i--) {
-            this.messageQueue.unshift(buffered[i]);
-          }
-        }
 
-        // Notifier uniquement après un Welcome : les messages réguliers sont déjà
-        // insérés en temps réel par connection.ts ; un refresh réseau ici serait
-        // superflu et provoquerait un rechargement visuel de la liste.
-        if (msg.isWelcome) {
-          this.welcomeProcessedCallback?.(groupId);
-        }
-
-        // Chantier 3 : persister l'état MLS après chaque message traité avec succès.
-        // Garantit que le Secret Tree avancé est sauvegardé avant d'ACK le serveur.
-        if (this._pin) {
-          try {
-            const encBytes = await invoke<number[]>('sauvegarder_mls', { pin: this._pin });
-            await invoke('save_mls_state', { data: encBytes });
-          } catch (saveErr) {
-            console.warn('[MLS] State save after message failed:', saveErr);
-          }
-        }
-
-        if (groupId) {
-          await this.refreshEpochCache(groupId);
-        }
-      } catch (e) {
-        const errStr = String(e);
-        console.error(`[QUEUE] Erreur traitement message:`, errStr);
-
-        if (msg.isWelcome) {
-          logMlsMetric({
-            kind: 'queue_skip_ack',
-            platform: 'tauri',
-            reason: 'tauri_welcome_error',
-          });
-          // Le Welcome a été rejeté avec une erreur inattendue (re-thrown depuis connection.ts).
-          // Ne PAS ACK : le message reste en file serveur et sera retenté à la prochaine connexion.
-          // C'est intentionnel — le device a besoin de ce Welcome pour rejoindre le groupe.
-          console.error(
-            `[QUEUE] Welcome échoué pour groupe=${groupId} — NE PAS ACK, retry sur reconnexion`
+          const cbResult = await this.messageCallback(
+            msg.senderId,
+            msg.ciphertext,
+            msg.groupId,
+            msg.isWelcome,
+            msg.ratchetTreeBytes,
+            msg.isCommit
           );
-          if (groupId) this.pendingWelcomeGroups.delete(groupId);
-        } else {
-          const exFlags = {
+          console.log(
+            `[QUEUE] → ${cbResult} (groupe=${groupId ?? '?'})${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`
+          );
+
+          const flags = {
             isWelcome: msg.isWelcome,
             isCommit: msg.isCommit,
             hasQueuedId: Boolean(msg.queuedMessageId),
           };
-          if (shouldAckAfterTauriGenericException(exFlags) && msg.queuedMessageId) {
+          if (shouldAckAfterSuccess(cbResult, flags) && msg.queuedMessageId) {
             ackIds.push(msg.queuedMessageId);
+          } else if (flags.hasQueuedId && cbResult === false) {
+            logMlsMetric({
+              kind: 'queue_skip_ack',
+              platform: 'tauri',
+              reason: 'callback_retry',
+              isWelcome: msg.isWelcome,
+              isCommit: msg.isCommit,
+            });
           }
-          if (groupId) this.pendingWelcomeGroups.delete(groupId);
+
+          // Après un Welcome, injecter les messages bufférisés en tête de messageQueue.
+          if (msg.isWelcome && groupId && this.pendingWelcomeGroups.has(groupId)) {
+            const buffered = this.pendingWelcomeGroups.get(groupId)!;
+            console.log(
+              `[QUEUE] Welcome terminé — réinjection de ${buffered.length} message(s) bufférisé(s) pour ${groupId}`
+            );
+            this.pendingWelcomeGroups.delete(groupId);
+            for (let i = buffered.length - 1; i >= 0; i--) {
+              this.messageQueue.unshift(buffered[i]);
+            }
+          }
+
+          // Notifier uniquement après un Welcome : les messages réguliers sont déjà
+          // insérés en temps réel par connection.ts ; un refresh réseau ici serait
+          // superflu et provoquerait un rechargement visuel de la liste.
+          if (msg.isWelcome) {
+            this.welcomeProcessedCallback?.(groupId);
+          }
+
+          // Chantier 3 : persister l'état MLS après chaque message traité avec succès.
+          // Garantit que le Secret Tree avancé est sauvegardé avant d'ACK le serveur.
+          if (this._pin) {
+            try {
+              const encBytes = await invoke<number[]>('sauvegarder_mls', { pin: this._pin });
+              await invoke('save_mls_state', { data: encBytes });
+            } catch (saveErr) {
+              console.warn('[MLS] State save after message failed:', saveErr);
+            }
+          }
+
+          if (groupId) {
+            await this.refreshEpochCache(groupId);
+          }
+        } catch (e) {
+          const errStr = String(e);
+          console.error(`[QUEUE] Erreur traitement message:`, errStr);
+
+          if (msg.isWelcome) {
+            logMlsMetric({
+              kind: 'queue_skip_ack',
+              platform: 'tauri',
+              reason: 'tauri_welcome_error',
+            });
+            // Le Welcome a été rejeté avec une erreur inattendue (re-thrown depuis connection.ts).
+            // Ne PAS ACK : le message reste en file serveur et sera retenté à la prochaine connexion.
+            // C'est intentionnel — le device a besoin de ce Welcome pour rejoindre le groupe.
+            console.error(
+              `[QUEUE] Welcome échoué pour groupe=${groupId} — NE PAS ACK, retry sur reconnexion`
+            );
+            if (groupId) this.pendingWelcomeGroups.delete(groupId);
+          } else {
+            const exFlags = {
+              isWelcome: msg.isWelcome,
+              isCommit: msg.isCommit,
+              hasQueuedId: Boolean(msg.queuedMessageId),
+            };
+            if (shouldAckAfterTauriGenericException(exFlags) && msg.queuedMessageId) {
+              ackIds.push(msg.queuedMessageId);
+            }
+            if (groupId) this.pendingWelcomeGroups.delete(groupId);
+          }
+        } finally {
+          resolve();
         }
-      } finally {
-        resolve();
+
+        const hasMore =
+          this.controlQueue.length > 0 ||
+          this.welcomeQueue.length > 0 ||
+          this.messageQueue.length > 0;
+        if (hasMore) {
+          await yieldToMainThread();
+        }
       }
-    }
 
-    if (ackIds.length > 0) {
-      logMlsMetric({ kind: 'queue_ack', platform: 'tauri', count: ackIds.length });
-      void this.delivery.deliveryPost('messages/ack', {
-        userId: this.userId,
-        deviceId: this.deviceId,
-        messageIds: ackIds,
-      });
+      if (ackIds.length > 0) {
+        logMlsMetric({ kind: 'queue_ack', platform: 'tauri', count: ackIds.length });
+        void this.delivery.deliveryPost('messages/ack', {
+          userId: this.userId,
+          deviceId: this.deviceId,
+          messageIds: ackIds,
+        });
+      }
+    } finally {
+      await this.bulkIngestEnd?.();
+      this.isProcessingQueue = false;
+      console.log(`[QUEUE] Terminé (${total} messages traités)`);
     }
-
-    this.isProcessingQueue = false;
-    console.log(`[QUEUE] Terminé (${total} messages traités)`);
   }
 
   onWelcomeProcessed(callback: (groupId?: string) => void): void {
     this.welcomeProcessedCallback = callback;
+  }
+
+  setBulkIngestHooks(
+    onStart?: (enableBulkBuffer?: boolean) => void,
+    onEnd?: () => void | Promise<void>
+  ): void {
+    this.bulkIngestStart = onStart;
+    this.bulkIngestEnd = onEnd;
   }
 
   isWsOpen(): boolean {
