@@ -88,6 +88,10 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="fr.emse.canari" />
                 <data android:host="callback" />
+                
+                
+                
+                
             </intent-filter>
             <intent-filter >
                 <action android:name="android.intent.action.VIEW" />
@@ -97,30 +101,49 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="fr.emse.canari" />
                 <data android:host="stripe" />
+                
+                
+                
+                
             </intent-filter>
             <intent-filter >
                 <action android:name="android.intent.action.VIEW" />
+                <!-- ChromeOS ARC++ uses a different action for deep links -->
                 <action android:name="org.chromium.arc.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="fr.emse.canari" />
                 <data android:host="chat" />
+                
+                
+                
+                
             </intent-filter>
             <intent-filter >
                 <action android:name="android.intent.action.VIEW" />
+                <!-- ChromeOS ARC++ uses a different action for deep links -->
                 <action android:name="org.chromium.arc.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="fr.emse.canari" />
                 <data android:host="post" />
+                
+                
+                
+                
             </intent-filter>
             <intent-filter >
                 <action android:name="android.intent.action.VIEW" />
+                <!-- ChromeOS ARC++ uses a different action for deep links -->
                 <action android:name="org.chromium.arc.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="fr.emse.canari" />
                 <data android:host="form" />
+                
+                
+                
+                
             </intent-filter>
             <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->
         </activity>

@@ -65,8 +65,8 @@ export function useMentionAutocomplete(opts: {
     const text = opts.getText();
     const before = text.slice(0, savedStart);
     const after = text.slice(savedStart + 1 + query.length);
-    const newText = `${before}@${displayName} ${after}`;
-    const newCursor = before.length + displayName.length + 2;
+    const newText = `${before}@[${displayName}] ${after}`;
+    const newCursor = before.length + displayName.length + 4;
     opts.setText(newText);
     open = false;
     suggestions = [];

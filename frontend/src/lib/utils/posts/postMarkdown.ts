@@ -13,14 +13,22 @@ export function normalizePostLineBreaks(md: string): string {
  * markdown links with special internal hrefs that PostMentionLink.svelte
  * intercepts for custom rendering and navigation.
  *
- * - @word  → [@word](#mention-word)
- * - #word  → [#word](#hashtag-word)
+ * - @[Full Name]  → [@[Full Name]](#mention-Full Name)   (multi-word, new format)
+ * - @word         → [@word](#mention-word)               (single-word, legacy)
+ * - #word         → [#word](#hashtag-word)
  *
  * Lookbehind prevents double-processing and avoids email addresses / URLs.
  */
 export function preprocessPostMarkdown(md: string): string {
-  // Mentions: @word not preceded by a URL/link/email character or opening paren
-  const withMentions = md.replace(/(?<![[\w@./&#(])@([\wÀ-ž]{1,50})/g, '[@$1](#mention-$1)');
+  // Mentions: @[name] (multi-word) or @word (legacy), not preceded by URL/link chars
+  const withMentions = md.replace(
+    /(?<![[\w@./&#(])@(?:\[([^\]\n]{1,100})\]|([\wÀ-ž]{1,50}))/g,
+    (_, bracketed: string | undefined, word: string | undefined) => {
+      const name = bracketed ?? word ?? '';
+      const display = bracketed ? `@[${name}]` : `@${name}`;
+      return `[${display}](#mention-${name})`;
+    }
+  );
   // Hashtags: #word (2+ chars) not preceded by a URL/link character or opening paren
   // Runs after mentions so (#mention-...) URLs are protected by the `(` lookbehind.
   const withHashtags = withMentions.replace(

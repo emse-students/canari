@@ -17,8 +17,13 @@ export class PostNotificationsService {
    * Returns deduplicated IDs (max 20).
    */
   async resolveMentionedUserIds(text: string): Promise<string[]> {
+    // Match @[Full Name] (new multi-word format) or @word (legacy single-word format)
     const names = [
-      ...new Set([...text.matchAll(/@([\wÀ-ž][^\s@]*)/gu)].map((m) => m[1].trim()).filter(Boolean)),
+      ...new Set(
+        [...text.matchAll(/@\[([^\]\n]{1,100})\]|@([\wÀ-ž][^\s@]*)/gu)]
+          .map((m) => (m[1] ?? m[2]).trim())
+          .filter(Boolean)
+      ),
     ];
     if (names.length === 0) return [];
     try {

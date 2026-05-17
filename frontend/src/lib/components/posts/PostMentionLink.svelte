@@ -13,7 +13,8 @@
 
   const isMention = $derived(href.startsWith('#mention-'));
   const isHashtag = $derived(href.startsWith('#hashtag-'));
-  const mentionName = $derived(isMention ? href.slice(9) : '');
+  // decodeURIComponent handles any percent-encoding the markdown renderer may introduce
+  const mentionName = $derived(isMention ? decodeURIComponent(href.slice(9)) : '');
   const hashtagName = $derived(isHashtag ? href.slice(9) : '');
 
   async function handleMentionClick(e: MouseEvent) {
