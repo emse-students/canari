@@ -225,12 +225,18 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
     private fun fetchAvatar(userId: String): Bitmap? {
         val ctx = loadPushContext() ?: return null
+        val secret = PushSecretKeystore.retrieve(this) ?: return null
         return try {
-            val url = URL("${ctx.baseUrl}/api/users/${java.net.URLEncoder.encode(userId, "UTF-8")}/avatar")
+            val url = URL(
+                "${ctx.baseUrl}/api/mls/push/avatar/${java.net.URLEncoder.encode(userId, "UTF-8")}" +
+                "?requesterId=${java.net.URLEncoder.encode(ctx.userId, "UTF-8")}" +
+                "&deviceId=${java.net.URLEncoder.encode(ctx.deviceId, "UTF-8")}"
+            )
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 connectTimeout = 2_000
                 readTimeout    = 2_000
                 requestMethod  = "GET"
+                setRequestProperty("Authorization", "PushSecret $secret")
                 instanceFollowRedirects = true
             }
             if (conn.responseCode == 200) {
@@ -297,7 +303,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         )
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(notifTitle)
             .setContentText(notifBody)
             .setStyle(NotificationCompat.BigTextStyle().bigText(notifBody))

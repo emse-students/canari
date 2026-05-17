@@ -37,6 +37,7 @@
     if (convs.conversations.has(id)) {
       notifNav.clear();
       convs.selectConversation(id);
+      void convs.loadHistoryForConversation(id, id, convCtx());
       return;
     }
     // Search by convo.id (Android deep link uses the MLS groupId)
@@ -44,6 +45,7 @@
       if (convo.id === id) {
         notifNav.clear();
         convs.selectConversation(key);
+        void convs.loadHistoryForConversation(key, convo.id, convCtx());
         return;
       }
     }

@@ -10,6 +10,7 @@ import {
   ForbiddenException,
   UseGuards,
   Headers,
+  Res,
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -138,6 +139,68 @@ export class PushController {
       return { proto: '' };
     }
     return { proto: queued.proto ?? queued.content ?? '' };
+  }
+
+  /**
+   * Proxy d'avatar pour le background service Android (PushSecret auth, pas de JWT).
+   * Appelé par CanariFirebaseMessagingService.fetchAvatar() pour afficher la photo
+   * de l'expéditeur dans la large icon de la notification.
+   * Auth : Authorization: PushSecret {secret} + ?requesterId=&deviceId= (ownership check)
+   */
+  @Get('mls/push/avatar/:targetUserId')
+  async getAvatarForPush(
+    @Headers('authorization') authHeader: string,
+    @Query('requesterId') requesterIdRaw: string,
+    @Query('deviceId') deviceIdRaw: string,
+    @Param('targetUserId') targetUserIdRaw: string,
+    @Res() res: Response,
+  ) {
+    const secret = authHeader?.startsWith('PushSecret ')
+      ? authHeader.slice('PushSecret '.length).trim()
+      : null;
+    if (!secret) throw new ForbiddenException('PushSecret header required');
+
+    const requesterId = sanitizeQueryValue(requesterIdRaw ?? '', 'requesterId');
+    const deviceId = sanitizeQueryValue(deviceIdRaw ?? '', 'deviceId');
+    const targetUserId = sanitizeQueryValue(targetUserIdRaw, 'targetUserId');
+
+    const pt = await this.pushTokenRepo.findOne({
+      where: { userId: requesterId, deviceId },
+    });
+    if (
+      !pt?.pushSecret ||
+      !crypto.timingSafeEqual(
+        Buffer.from(pt.pushSecret),
+        Buffer.from(
+          secret.slice(0, pt.pushSecret.length).padEnd(pt.pushSecret.length),
+        ),
+      )
+    ) {
+      throw new ForbiddenException('Invalid push secret');
+    }
+
+    const coreUrl =
+      process.env.CORE_SERVICE_INTERNAL_URL ?? 'http://core-service:3012';
+    try {
+      const upstream = await fetch(
+        `${coreUrl}/users/${encodeURIComponent(targetUserId)}/avatar`,
+        { signal: AbortSignal.timeout(4_000) },
+      );
+      if (!upstream.ok) {
+        res.status(upstream.status).send();
+        return;
+      }
+      const buffer = Buffer.from(await upstream.arrayBuffer());
+      res
+        .set({
+          'Content-Type': upstream.headers.get('content-type') ?? 'image/jpeg',
+          'Content-Length': String(buffer.length),
+          'Cache-Control': 'public, max-age=3600',
+        })
+        .send(buffer);
+    } catch {
+      res.status(503).send();
+    }
   }
 
   /**

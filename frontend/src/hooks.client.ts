@@ -26,12 +26,10 @@ if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
   // Initialize deep-link listener immediately (no async race condition).
   Promise.resolve()
     .then(() => import('@tauri-apps/plugin-deep-link'))
-    .then(({ onOpenUrl }) => {
+    .then(({ onOpenUrl, getCurrent }) => {
       console.log('[hooks] Deep-link listener registered');
 
-      // This callback fires immediately if there's a pending URI (cold start),
-      // or whenever a new deep link arrives (app already running).
-      onOpenUrl((urls) => {
+      const processUrls = (urls: string[]) => {
         console.log('[hooks] onOpenUrl called with', urls.length, 'URL(s)');
 
         for (const url of urls) {
@@ -100,7 +98,16 @@ if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
             console.error('[hooks] Error processing deep link URL:', url, err);
           }
         }
-      });
+      };
+
+      // Handles deep links when the app is already running
+      onOpenUrl(processUrls);
+      // Handles deep link that cold-started the app (fired before listener could register)
+      getCurrent()
+        .then((urls) => {
+          if (urls) processUrls(Array.isArray(urls) ? urls : [urls]);
+        })
+        .catch(() => {});
     })
     .catch((err) => {
       // Plugin might not be available (desktop, or in dev without Tauri).
