@@ -165,8 +165,24 @@ Key env vars:
 6. `apps/chat-delivery-service/src/app.controller.ts` (for full MLS API list)
 
 
-## Documentation and Comments
+## Non-Negotiable Code Quality Rules
 
+These rules apply to every file, every function, every PR — no exceptions.
+
+### Logs
+Always add debug logs in new code:
+- Kotlin: `Log.d(TAG, "...")`
+- TypeScript: `appendLog("...")` (chat/session code) or `console.log(...)` (elsewhere)
+- Rust: `log::debug!(...)` or `eprintln!(...)` for Android JNI
+
+Logs must be present at: function entry for non-trivial paths, after key decisions, on every error/fallback branch. They are essential for diagnosing issues on real devices where a debugger is unavailable.
+
+### Factorisation
+- Export the maximum — functions, types, constants. If it could be reused, export it.
+- Never duplicate logic. Before writing something a second time, extract it to a composable / util / shared function.
+- No two mechanisms that do the same thing. Consolidate before adding.
+
+### Documentation and Comments
 Every exported function, class, interface, and non-trivial constant must have a JSDoc comment (TypeScript/JavaScript) or a doc comment (Rust `///`, Kotlin `/**`). This is the project standard — match the existing style throughout the codebase.
 
 What to write:
