@@ -69,6 +69,8 @@ export async function sendChatMessage(
     let replyToData: ChatMessage['replyTo'] = undefined;
     const messageId = crypto.randomUUID();
 
+    const sentAt = Date.now();
+
     if (replyingTo) {
       // Extract the display text from the envelope for the reply preview.
       const replyEnv = parseEnvelope(replyingTo.content);
@@ -85,6 +87,7 @@ export async function sendChatMessage(
           preview: replyPreview,
         }),
         messageId,
+        sentAt,
       });
       replyToData = {
         id: replyingTo.id,
@@ -92,7 +95,7 @@ export async function sendChatMessage(
         content: replyPreview,
       };
     } else {
-      payload = encodeAppMessage({ ...mkText(text), messageId });
+      payload = encodeAppMessage({ ...mkText(text), messageId, sentAt });
     }
 
     if (contactName.startsWith('channel_')) {

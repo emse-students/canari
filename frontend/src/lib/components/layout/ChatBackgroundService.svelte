@@ -320,6 +320,17 @@
           });
         } else if (savedUser) {
           globalSession.userId = savedUser;
+          // On Tauri (Android, no biometrics): try silent login from push_context.json
+          if (w.__TAURI_INTERNALS__) {
+            const ok = await globalSession.nativeStorageLogin({
+              ...sessionCb(),
+              onLoginFailed: (msg: string) => {
+                pinError = msg;
+                showPinModal = true;
+              },
+            });
+            if (ok) return;
+          }
           showPinModal = true;
         } else {
           // No saved user — the layout auth guard will redirect to /login.
@@ -333,8 +344,12 @@
 
     void tryLogin();
 
-    // Reconnexion lors du retour de l'onglet ou du focus
+    // Pause/resume WebSocket based on app visibility (fires on Android when backgrounded)
     const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden' && globalSession.isLoggedIn) {
+        globalSession.pauseConnection();
+        return;
+      }
       if (
         document.visibilityState === 'visible' &&
         globalSession.isLoggedIn &&
@@ -351,6 +366,7 @@
     const GC_INTERVAL = 6 * 60 * 60 * 1000; // 6 hours
     const MESSAGE_MAX_AGE = 90 * 24 * 60 * 60 * 1000; // 90 days
     const gcTimer = setInterval(() => {
+      if (document.hidden) return;
       const storage = globalSession.storage;
       if (storage) {
         storage

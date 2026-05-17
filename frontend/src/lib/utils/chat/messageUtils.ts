@@ -8,13 +8,16 @@ import type { AddMessageToChatOptions, MessageReference } from '$lib/types';
  * Returns null for non-displayable types (reaction, system, call) which require
  * special handling at the call site.
  */
-export function appMsgToEnvelope(
-  msg: IAppMessage
-): { content: string; options: Pick<AddMessageToChatOptions, 'messageId' | 'replyTo'> } | null {
+export function appMsgToEnvelope(msg: IAppMessage): {
+  content: string;
+  options: Pick<AddMessageToChatOptions, 'messageId' | 'replyTo' | 'timestamp'>;
+} | null {
+  const timestamp = msg.sentAt && msg.sentAt > 0 ? new Date(msg.sentAt) : undefined;
+
   if (msg.text) {
     return {
       content: serializeEnvelope(mkTextEnvelope(msg.text.content ?? '')),
-      options: { messageId: msg.messageId || undefined },
+      options: { messageId: msg.messageId || undefined, timestamp },
     };
   }
 
@@ -28,7 +31,7 @@ export function appMsgToEnvelope(
       : undefined;
     return {
       content: serializeEnvelope(mkTextEnvelope(msg.reply.content ?? '', replyTo)),
-      options: { messageId: msg.messageId || undefined, replyTo },
+      options: { messageId: msg.messageId || undefined, replyTo, timestamp },
     };
   }
 
@@ -50,7 +53,7 @@ export function appMsgToEnvelope(
           msg.media.caption || undefined
         )
       ),
-      options: { messageId: msg.messageId || undefined },
+      options: { messageId: msg.messageId || undefined, timestamp },
     };
   }
 

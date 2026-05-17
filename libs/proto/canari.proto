@@ -70,6 +70,8 @@ message InboundMsg {
 message AppMessage {
   // Unique identifier assigned by the sender (UUID string).
   string message_id = 6;
+  // Client-side send timestamp (milliseconds since Unix epoch).
+  int64  sent_at    = 8;
   oneof kind {
     TextMsg     text     = 1;
     ReplyMsg    reply    = 2;

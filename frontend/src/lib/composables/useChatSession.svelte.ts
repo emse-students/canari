@@ -607,6 +607,23 @@ export function useChatSession() {
     }
   }
 
+  /** On Tauri/Android (no biometrics), reads the PIN from push_context.json and delegates to login(). Returns true if login succeeded, false if manual PIN is still needed. */
+  async function nativeStorageLogin(cb: ChatSessionCallbacks): Promise<boolean> {
+    const isTauri = !!(window as any).__TAURI_INTERNALS__;
+    if (!isTauri) return false;
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const ctx = await invoke<{ pin?: string; userId?: string } | null>('load_push_context');
+      if (!ctx?.pin || !ctx.userId || ctx.userId !== userId) return false;
+      appendLog('[PIN] PIN restauré depuis stockage natif — login auto...');
+      pin = ctx.pin;
+      await login(cb);
+      return isLoggedIn;
+    } catch {
+      return false;
+    }
+  }
+
   /** Reads the PIN from the hardware biometric keystore and delegates to login(). Displays a user-friendly error if biometric authentication fails. */
   async function biometricLogin(cb: ChatSessionCallbacks) {
     loginError = '';
@@ -729,6 +746,22 @@ export function useChatSession() {
       clearInterval(connectionWatchdogInterval);
       connectionWatchdogInterval = null;
     }
+  }
+
+  /** Pauses the WebSocket connection and stops all background timers. Called when the app is backgrounded. */
+  function pauseConnection() {
+    if (reconnectTimer !== null) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    if (healthCheckInterval !== null) {
+      clearInterval(healthCheckInterval);
+      healthCheckInterval = null;
+    }
+    stopConnectionWatchdog();
+    mls?.sendDisconnect();
+    isWsConnected = false;
+    appendLog('[LIFECYCLE] App en arrière-plan — connexion pausée.');
   }
 
   /** Schedules an exponential-backoff WebSocket reconnect attempt (delays: 1s, 2s, 4s … 30s max). No-op when already logged out or a timer is already pending. */
@@ -1028,6 +1061,8 @@ export function useChatSession() {
     ensureMls,
     /** Runs the full login flow (PIN verify, MLS init, DB open, WS connect). */
     login,
+    /** On Tauri/Android without biometrics, reads PIN from push_context.json and logs in silently. */
+    nativeStorageLogin,
     /** Retrieves the PIN from the biometric keystore and delegates to login(). */
     biometricLogin,
     /** Saves the PIN to the hardware keystore and clears it from memory. */
@@ -1036,6 +1071,8 @@ export function useChatSession() {
     dismissBiometricPrompt,
     /** Clears session state and redirects to /login. */
     logout,
+    /** Pauses WebSocket and clears background timers when the app is backgrounded. */
+    pauseConnection,
     /** Schedules an exponential-backoff WebSocket reconnect attempt. */
     scheduleReconnect,
     /** Performs one WebSocket reconnect attempt and re-runs device sync. */

@@ -666,6 +666,9 @@ export namespace canari {
         /** AppMessage messageId */
         messageId?: (string|null);
 
+        /** AppMessage sentAt */
+        sentAt?: (number|null);
+
         /** AppMessage text */
         text?: (canari.ITextMsg|null);
 
@@ -696,6 +699,9 @@ export namespace canari {
 
         /** AppMessage messageId. */
         public messageId: string;
+
+        /** AppMessage sentAt. */
+        public sentAt: number;
 
         /** AppMessage text. */
         public text?: (canari.ITextMsg|null);

@@ -1,5 +1,5 @@
 /*eslint-disable block-scoped-var, id-length, no-control-regex, no-magic-numbers, no-prototype-builtins, no-redeclare, no-shadow, no-var, sort-vars*/
-import * as $protobuf from "protobufjs/minimal";
+import $protobuf from "protobufjs/minimal.js";
 
 // Common aliases
 const $Reader = $protobuf.Reader, $Writer = $protobuf.Writer, $util = $protobuf.util;
@@ -1724,6 +1724,7 @@ export const canari = $root.canari = (() => {
          * @memberof canari
          * @interface IAppMessage
          * @property {string|null} [messageId] AppMessage messageId
+         * @property {number|null} [sentAt] AppMessage sentAt
          * @property {canari.ITextMsg|null} [text] AppMessage text
          * @property {canari.IReplyMsg|null} [reply] AppMessage reply
          * @property {canari.IReactionMsg|null} [reaction] AppMessage reaction
@@ -1754,6 +1755,14 @@ export const canari = $root.canari = (() => {
          * @instance
          */
         AppMessage.prototype.messageId = "";
+
+        /**
+         * AppMessage sentAt.
+         * @member {number} sentAt
+         * @memberof canari.AppMessage
+         * @instance
+         */
+        AppMessage.prototype.sentAt = $util.Long ? $util.Long.fromBits(0,0,false) : 0;
 
         /**
          * AppMessage text.
@@ -1855,6 +1864,8 @@ export const canari = $root.canari = (() => {
                 writer.uint32(/* id 6, wireType 2 =*/50).string(message.messageId);
             if (message.call != null && Object.hasOwnProperty.call(message, "call"))
                 $root.canari.CallMsg.encode(message.call, writer.uint32(/* id 7, wireType 2 =*/58).fork()).ldelim();
+            if (message.sentAt != null && Object.hasOwnProperty.call(message, "sentAt"))
+                writer.uint32(/* id 8, wireType 0 =*/64).int64(message.sentAt);
             return writer;
         };
 
@@ -1897,6 +1908,10 @@ export const canari = $root.canari = (() => {
                 switch (tag >>> 3) {
                 case 6: {
                         message.messageId = reader.string();
+                        break;
+                    }
+                case 8: {
+                        message.sentAt = reader.int64();
                         break;
                     }
                 case 1: {
@@ -1966,6 +1981,9 @@ export const canari = $root.canari = (() => {
             if (message.messageId != null && message.hasOwnProperty("messageId"))
                 if (!$util.isString(message.messageId))
                     return "messageId: string expected";
+            if (message.sentAt != null && message.hasOwnProperty("sentAt"))
+                if (!$util.isInteger(message.sentAt) && !(message.sentAt && $util.isInteger(message.sentAt.low) && $util.isInteger(message.sentAt.high)))
+                    return "sentAt: integer|Long expected";
             if (message.text != null && message.hasOwnProperty("text")) {
                 properties.kind = 1;
                 {
@@ -2045,6 +2063,15 @@ export const canari = $root.canari = (() => {
             let message = new $root.canari.AppMessage();
             if (object.messageId != null)
                 message.messageId = String(object.messageId);
+            if (object.sentAt != null)
+                if ($util.Long)
+                    (message.sentAt = $util.Long.fromValue(object.sentAt)).unsigned = false;
+                else if (typeof object.sentAt === "string")
+                    message.sentAt = parseInt(object.sentAt, 10);
+                else if (typeof object.sentAt === "number")
+                    message.sentAt = object.sentAt;
+                else if (typeof object.sentAt === "object")
+                    message.sentAt = new $util.LongBits(object.sentAt.low >>> 0, object.sentAt.high >>> 0).toNumber();
             if (object.text != null) {
                 if (typeof object.text !== "object")
                     throw TypeError(".canari.AppMessage.text: object expected");
@@ -2091,8 +2118,14 @@ export const canari = $root.canari = (() => {
             if (!options)
                 options = {};
             let object = {};
-            if (options.defaults)
+            if (options.defaults) {
                 object.messageId = "";
+                if ($util.Long) {
+                    let long = new $util.Long(0, 0, false);
+                    object.sentAt = options.longs === String ? long.toString() : options.longs === Number ? long.toNumber() : long;
+                } else
+                    object.sentAt = options.longs === String ? "0" : 0;
+            }
             if (message.text != null && message.hasOwnProperty("text")) {
                 object.text = $root.canari.TextMsg.toObject(message.text, options);
                 if (options.oneofs)
@@ -2125,6 +2158,11 @@ export const canari = $root.canari = (() => {
                 if (options.oneofs)
                     object.kind = "call";
             }
+            if (message.sentAt != null && message.hasOwnProperty("sentAt"))
+                if (typeof message.sentAt === "number")
+                    object.sentAt = options.longs === String ? String(message.sentAt) : message.sentAt;
+                else
+                    object.sentAt = options.longs === String ? $util.Long.prototype.toString.call(message.sentAt) : options.longs === Number ? new $util.LongBits(message.sentAt.low >>> 0, message.sentAt.high >>> 0).toNumber() : message.sentAt;
             return object;
         };
 
