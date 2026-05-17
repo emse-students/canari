@@ -11,6 +11,7 @@ import { decodeAppMessage } from '$lib/proto/codec';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
 import { toValidDate } from '$lib/utils/dates';
+import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 import { toggleMessageReaction } from '$lib/utils/chat/messageReactions';
 
 /** Return the localStorage key used to persist the set of already-processed ciphertext fingerprints for a group. */
@@ -152,6 +153,7 @@ export async function replayConversationHistory(params: {
     // Batch-collect decoded messages to flush in one UI update at the end.
     const pendingMessages: Array<{ senderId: string; content: string } & AddMessageToChatOptions> =
       [];
+    let historyIngestSeq = 0;
 
     for (const msg of history) {
       // Update latest stream ID (Redis stream IDs sort lexicographically)
@@ -183,6 +185,7 @@ export async function replayConversationHistory(params: {
             content: envelope.content,
             timestamp: toValidDate(msg.timestamp),
             ...envelope.options,
+            ingestSequence: historyIngestSeq++,
           });
           addedMsg++;
           mlsUpdated = true;
@@ -305,6 +308,7 @@ export async function replayConversationHistory(params: {
               isSystem: true,
               messageId: parsed.messageId || undefined,
               timestamp: toValidDate(msg.timestamp),
+              ingestSequence: historyIngestSeq++,
             });
             addedMsg++;
           }
@@ -328,6 +332,10 @@ export async function replayConversationHistory(params: {
       } finally {
         seenCipherHashes.add(cipherFingerprint);
         seenUpdated = true;
+      }
+
+      if (historyIngestSeq > 0 && historyIngestSeq % 8 === 0) {
+        await yieldToMainThread();
       }
     }
 

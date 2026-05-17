@@ -114,6 +114,12 @@
       loadAndRestoreConversations: () => globalConvs.loadAndRestoreConversations(convCtx()),
       addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
         globalMessaging.addMessageToChat(sid, content, contactName, msgCtx(), options),
+      beginBulkMessageIngest: (bulk?: boolean) => globalMessaging.beginBulkMessageIngest(bulk),
+      endBulkMessageIngest: () => globalMessaging.endBulkMessageIngest(msgCtx()),
+      batchAddMessages: (
+        msgs: Parameters<typeof globalMessaging.batchAddMessages>[0],
+        contactName: string
+      ) => globalMessaging.batchAddMessages(msgs, contactName, msgCtx()),
       saveConversation: (name: string) => globalConvs.saveConversation(name, convCtx()),
       selectConversation: globalConvs.selectConversation,
       onChannelMemberJoined: (event: any) => {

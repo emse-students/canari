@@ -154,6 +154,10 @@
       loadAndRestoreConversations: () => convs.loadAndRestoreConversations(convCtx()),
       addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
         messaging.addMessageToChat(sid, content, contactName, msgCtx(), options),
+      beginBulkMessageIngest: (bulk?: boolean) => messaging.beginBulkMessageIngest(bulk),
+      endBulkMessageIngest: () => messaging.endBulkMessageIngest(msgCtx()),
+      batchAddMessages: (msgs: Parameters<typeof messaging.batchAddMessages>[0], contactName: string) =>
+        messaging.batchAddMessages(msgs, contactName, msgCtx()),
       saveConversation: (name: string) => convs.saveConversation(name, convCtx()),
       selectConversation: convs.selectConversation,
       onSendError: (msg: string) => { convs.sendError = msg; },
@@ -400,6 +404,7 @@
           : undefined}
         isHidden={convs.mobileView === 'list'}
         isLoadingHistory={convs.isLoadingHistory}
+        isCatchingUpMessages={messaging.isMessageCatchupActive}
         groupMembers={convs.groupMembers}
         sendError={convs.sendError}
         onGroupRename={(name) => void convs.handleRenameGroup(name, convCtx())}

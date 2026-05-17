@@ -26,6 +26,10 @@ export interface MessageHandlerDeps {
     contactName: string,
     options?: AddMessageToChatOptions
   ) => Promise<void>;
+  batchAddMessages?: (
+    messages: Array<{ senderId: string; content: string } & AddMessageToChatOptions>,
+    contactName: string
+  ) => Promise<void>;
   loadHistoryForConversation: (contactName: string, groupId: string) => Promise<void>;
   onChannelMemberJoined?: (event: {
     channelId: string;

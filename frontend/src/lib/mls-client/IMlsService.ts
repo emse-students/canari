@@ -242,6 +242,15 @@ export interface IMlsService {
   /** Registers a callback invoked after a Welcome message has been successfully processed. */
   onWelcomeProcessed(callback: (groupId?: string) => void): void;
 
+  /**
+   * Optional hooks for batching UI updates while draining a large MLS message queue
+   * (e.g. after reconnect). Implemented by WebMlsService / TauriMlsService.
+   */
+  setBulkIngestHooks?(
+    onStart?: (enableBulkBuffer?: boolean) => void,
+    onEnd?: () => void | Promise<void>
+  ): void;
+
   // Device sync notification
   /** Broadcasts a reinvite_request control frame so group members know this device needs re-inviting. */
   sendReinviteRequest(groupId: string): Promise<void>;

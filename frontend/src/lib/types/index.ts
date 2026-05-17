@@ -20,6 +20,8 @@ export interface AddMessageToChatOptions {
   status?: 'sending' | 'sent' | 'error';
   /** When true, keep the message in memory only (e.g. server-authoritative community channels). */
   skipDbSave?: boolean;
+  /** Monotonic catch-up index (MLS queue / history replay order); not persisted to DB. */
+  ingestSequence?: number;
 }
 
 export interface ChatMessage {
@@ -39,6 +41,8 @@ export interface ChatMessage {
   readAt?: number;
   isEdited?: boolean;
   isDeleted?: boolean;
+  /** In-memory only: preserves arrival order during bulk catch-up when timestamps tie. */
+  ingestSequence?: number;
 }
 
 export interface Conversation {
