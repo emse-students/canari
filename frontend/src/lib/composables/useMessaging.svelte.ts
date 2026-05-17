@@ -18,6 +18,10 @@ import {
   deleteMessage,
 } from '$lib/utils/chat/messaging';
 import { insertMessageOrdered } from '$lib/utils/chat/messageOrder';
+import {
+  MAX_DISTINCT_MESSAGE_REACTIONS,
+  toggleMessageReaction,
+} from '$lib/utils/chat/messageReactions';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 import { MediaService } from '$lib/media';
 import { getPreviewText, mkMediaEnvelope, parseEnvelope, serializeEnvelope } from '$lib/envelope';
@@ -520,16 +524,16 @@ export function useMessaging() {
     if (!convo) return;
     const meNorm = ctx.userId.toLowerCase();
     const existing = messageReactions.get(messageId) ?? [];
-    const alreadyReacted = existing.some((r) => r.userId === meNorm && r.emoji === emoji);
+    const updated = toggleMessageReaction(existing, meNorm, emoji);
 
-    // Toggle off: même emoji déjà posée → retirer
-    // Toggle on: nouvelle emoji → ajouter (sans retirer les autres emojis de l'utilisateur)
-    const updated = alreadyReacted
-      ? existing.filter((r) => !(r.userId === meNorm && r.emoji === emoji))
-      : [
-          ...existing.filter((r) => !(r.userId === meNorm && r.emoji === emoji)),
-          { emoji, userId: meNorm },
-        ];
+    if (!updated) {
+      ctx.log(
+        `[REACTION] Maximum de ${MAX_DISTINCT_MESSAGE_REACTIONS} réactions différentes atteint sur ce message`
+      );
+      return;
+    }
+
+    const alreadyReacted = existing.some((r) => r.userId === meNorm && r.emoji === emoji);
 
     messageReactions.set(messageId, updated);
 

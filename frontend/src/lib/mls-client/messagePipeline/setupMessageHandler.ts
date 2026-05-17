@@ -6,6 +6,7 @@ import { ChannelService } from '$lib/services/ChannelService';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
 import { toValidDate } from '$lib/utils/dates';
+import { toggleMessageReaction } from '$lib/utils/chat/messageReactions';
 import { recoverDeadGroup } from '$lib/utils/chat/recovery';
 import {
   installWasmDuplicateDeliveryLogInterceptor,
@@ -407,11 +408,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               const msgId = msg.reaction.messageId ?? '';
               const reactions = messageReactions.get(msgId) || [];
               const emoji = msg.reaction.emoji ?? '';
-              // Déduplique l'emoji exact, puis ajoute (permet plusieurs emojis par utilisateur)
-              const filtered = reactions.filter(
-                (r) => !(r.userId === senderNorm && r.emoji === emoji)
-              );
-              filtered.push({ emoji, userId: senderNorm });
+              const filtered = toggleMessageReaction(reactions, senderNorm, emoji);
+              if (!filtered) return true;
               messageReactions.set(msgId, filtered);
 
               // Also update the message object in conversations so the {#each} re-renders.

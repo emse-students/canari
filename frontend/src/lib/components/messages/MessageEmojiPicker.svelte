@@ -3,6 +3,10 @@
   import { onMount } from 'svelte';
   import { scale } from 'svelte/transition';
   import { bindFixedPopover } from '$lib/actions/fixedPopover';
+  import {
+    MAX_DISTINCT_MESSAGE_REACTIONS,
+    canAddDistinctReactionEmoji,
+  } from '$lib/utils/chat/messageReactions';
   import 'emoji-picker-element';
 
   interface Props {
@@ -12,11 +16,23 @@
     isOwn: boolean;
     /** DOM node used to position the picker (message row). */
     anchor?: HTMLElement | null;
+    /** Emoji types already present on the message. */
+    existingReactionEmojis?: string[];
     /** Called when the user picks an emoji. */
     onEmojiSelect?: (emoji: string) => void;
   }
 
-  let { visible = false, isOwn = false, anchor = null, onEmojiSelect }: Props = $props();
+  let {
+    visible = false,
+    isOwn = false,
+    anchor = null,
+    existingReactionEmojis = [],
+    onEmojiSelect,
+  }: Props = $props();
+
+  const reactionsAtLimit = $derived(
+    existingReactionEmojis.length >= MAX_DISTINCT_MESSAGE_REACTIONS
+  );
 
   let panelEl = $state<HTMLElement | null>(null);
   let unbindPosition: (() => void) | null = null;
@@ -55,6 +71,14 @@
   }
 
   function handleEmojiClick(emoji: string) {
+    if (
+      !canAddDistinctReactionEmoji(
+        existingReactionEmojis.map((e) => ({ emoji: e, userId: '_' })),
+        emoji
+      )
+    ) {
+      return;
+    }
     onEmojiSelect?.(emoji);
     persistRecentEmoji(emoji);
   }
@@ -100,6 +124,11 @@
     >
       <Smile size={14} class="text-amber-500" /> Réagir au message
     </div>
+    {#if reactionsAtLimit}
+      <p class="px-4 py-2 text-[0.7rem] text-amber-700 dark:text-amber-400 bg-amber-500/10 border-b border-amber-500/20">
+        Maximum de {MAX_DISTINCT_MESSAGE_REACTIONS} réactions différentes sur ce message.
+      </p>
+    {/if}
 
     <!-- Section Émojis Récents -->
     {#if recentEmojis.length > 0}

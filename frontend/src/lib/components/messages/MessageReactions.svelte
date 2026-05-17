@@ -49,9 +49,9 @@
 
 {#if Object.keys(groupedReactions).length > 0}
   <div
-    class="absolute top-full z-10 flex max-w-[min(70vw,20rem)] gap-1 overflow-x-auto flex-nowrap px-0.5 scrollbar-thin {isOwn
-      ? 'right-0 justify-end'
-      : 'left-0 justify-start'} -mt-1"
+    class="mt-1 flex w-full max-h-[4.75rem] max-w-[min(100%,38rem)] flex-wrap content-start gap-1.5 overflow-hidden px-0.5 {isOwn
+      ? 'justify-end'
+      : 'justify-start'}"
     role="group"
     aria-label="Réactions au message"
   >

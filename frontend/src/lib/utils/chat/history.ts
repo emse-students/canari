@@ -11,6 +11,7 @@ import { decodeAppMessage } from '$lib/proto/codec';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
 import { toValidDate } from '$lib/utils/dates';
+import { toggleMessageReaction } from '$lib/utils/chat/messageReactions';
 
 /** Return the localStorage key used to persist the set of already-processed ciphertext fingerprints for a group. */
 function seenHistoryKey(userId: string, groupId: string): string {
@@ -191,8 +192,8 @@ export async function replayConversationHistory(params: {
           const senderNorm = msg.sender_id.toLowerCase();
           const reactions = messageReactions.get(messageId) || [];
           const emoji = parsed.reaction.emoji ?? '';
-          const filtered = reactions.filter((r) => !(r.userId === senderNorm && r.emoji === emoji));
-          filtered.push({ emoji, userId: senderNorm });
+          const filtered = toggleMessageReaction(reactions, senderNorm, emoji);
+          if (!filtered) continue;
           messageReactions.set(messageId, filtered);
           reactionUpdates.set(messageId, filtered);
           mlsUpdated = true;

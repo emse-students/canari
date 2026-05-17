@@ -179,8 +179,6 @@
     )
   );
 
-  const hasReactions = $derived(Object.keys(groupedReactions).length > 0);
-
   function confirmEdit() {
     const trimmed = editText.trim();
     if (trimmed && trimmed !== textContent.trim()) {
@@ -371,7 +369,7 @@
         showMobileActions = false;
       },
     }}
-    class="group relative flex w-fit max-w-full flex-col {isOwn ? 'items-end' : 'items-start'}"
+    class="group relative flex max-w-full flex-col {isOwn ? 'items-end' : 'items-start'}"
   >
     <!-- Bouton Mobile (Ellipsis) -->
     <button
@@ -385,7 +383,7 @@
       <EllipsisVertical size={16} />
     </button>
 
-    <div class="relative w-fit max-w-full {hasReactions ? 'pb-5' : ''}">
+    <div class="relative w-fit max-w-full">
       <!-- Bulle de message principale -->
       <div
         role="button"
@@ -483,13 +481,14 @@
           : undefined}
       />
 
-      <MessageReactions
-        {groupedReactions}
-        {isOwn}
-        {currentUserId}
-        onReact={(emoji) => onReact?.(messageId, emoji)}
-      />
     </div>
+
+    <MessageReactions
+      {groupedReactions}
+      {isOwn}
+      {currentUserId}
+      onReact={(emoji) => onReact?.(messageId, emoji)}
+    />
 
     <MessageMetadata
       {isEdited}
@@ -506,6 +505,7 @@
       visible={showEmojiPicker}
       {isOwn}
       anchor={bubbleAnchor}
+      existingReactionEmojis={Object.keys(groupedReactions)}
       onEmojiSelect={(emoji) => onReact?.(messageId, emoji)}
     />
 

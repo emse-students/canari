@@ -58,8 +58,8 @@
 
 {#if show}
   <div
-    class="flex items-center gap-1.5 {outsideBubble
-      ? 'mt-1 justify-end px-0.5'
+    class="flex w-full items-center gap-1.5 {outsideBubble
+      ? 'mt-0.5 justify-end px-0.5'
       : 'mt-1.5 justify-end'}"
   >
     {#if showEdited}
