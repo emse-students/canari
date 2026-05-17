@@ -13,7 +13,7 @@
     ChevronRight,
     ShieldAlert,
     UserCog,
-  } from 'lucide-svelte';
+  } from '@lucide/svelte';
 
   let isGlobalAdminUser = $state(false);
   let pendingCount = $state<number | null>(null);
@@ -132,7 +132,9 @@
           href={card.href}
           class="group flex items-start gap-4 p-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] hover:border-cn-yellow transition-colors"
         >
-          <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-cn-yellow/15 text-cn-dark">
+          <span
+            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-cn-yellow/15 text-cn-dark"
+          >
             {#if card.label.includes('Agenda en attente')}
               <CalendarClock size={20} />
             {:else if card.label.includes('signalés')}
@@ -153,7 +155,9 @@
             <span class="flex items-center gap-2">
               <span class="font-bold text-text-main">{card.label}</span>
               {#if card.badge}
-                <span class="rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-bold text-white">
+                <span
+                  class="rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-bold text-white"
+                >
                   {card.badge}
                 </span>
               {/if}

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Send, Paperclip, X, FileText, UploadCloud, Loader2 } from 'lucide-svelte';
+  import { Send, Paperclip, X, FileText, UploadCloud, Loader2 } from '@lucide/svelte';
   import { untrack, tick } from 'svelte';
   import { slide, fade, scale } from 'svelte/transition';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
@@ -239,7 +239,6 @@
     }
   });
 
-
   $effect(() => {
     const files = pendingFiles;
     untrack(() => {
@@ -427,7 +426,12 @@
 
       <!-- Zone de Texte auto-extensible -->
       <div class="relative flex-1 min-w-0">
-        <MentionDropdown open={mention.open} suggestions={mention.suggestions} selectedIdx={mention.selectedIdx} onSelect={mention.select} />
+        <MentionDropdown
+          open={mention.open}
+          suggestions={mention.suggestions}
+          selectedIdx={mention.selectedIdx}
+          onSelect={mention.select}
+        />
         <textarea
           bind:this={textareaEl}
           value={messageText}

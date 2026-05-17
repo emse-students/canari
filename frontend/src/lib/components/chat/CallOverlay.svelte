@@ -1,6 +1,15 @@
 <script lang="ts">
   import { CallService } from '$lib/services/CallService';
-  import { Mic, MicOff, PhoneOff, Video, VideoOff, Phone, Maximize, Minimize } from 'lucide-svelte';
+  import {
+    Mic,
+    MicOff,
+    PhoneOff,
+    Video,
+    VideoOff,
+    Phone,
+    Maximize,
+    Minimize,
+  } from '@lucide/svelte';
   import { fade, scale, fly } from 'svelte/transition';
 
   let {

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Mic, Square, Trash2 } from 'lucide-svelte';
+  import { Mic, Square, Trash2 } from '@lucide/svelte';
   import { onDestroy } from 'svelte';
 
   interface Props {

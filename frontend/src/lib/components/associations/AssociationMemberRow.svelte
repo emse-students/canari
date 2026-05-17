@@ -1,7 +1,7 @@
 <script lang="ts">
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import type { AssociationMember } from '$lib/associations/api';
-  import { Trash2 } from 'lucide-svelte';
+  import { Trash2 } from '@lucide/svelte';
 
   interface Props {
     member: AssociationMember;

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { X, Plus } from 'lucide-svelte';
+  import { X, Plus } from '@lucide/svelte';
   import UserName from './UserName.svelte';
   import { apiFetch } from '$lib/utils/apiFetch';
   import { coreUrl } from '$lib/utils/apiUrl';

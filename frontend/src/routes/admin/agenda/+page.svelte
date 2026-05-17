@@ -6,7 +6,7 @@
     deleteAssociationCalendarEvent,
     type AssociationCalendarFeedEvent,
   } from '$lib/associations/api';
-  import { Check, Trash2, ExternalLink, Clock } from 'lucide-svelte';
+  import { Check, Trash2, ExternalLink, Clock } from '@lucide/svelte';
 
   let events = $state<AssociationCalendarFeedEvent[]>([]);
   let loading = $state(true);
@@ -77,15 +77,21 @@
   </div>
 
   {#if error}
-    <div class="rounded-xl border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm">{error}</div>
+    <div class="rounded-xl border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm">
+      {error}
+    </div>
   {/if}
 
   {#if loading}
     <div class="flex justify-center py-16">
-      <div class="h-8 w-8 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"></div>
+      <div
+        class="h-8 w-8 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+      ></div>
     </div>
   {:else if events.length === 0}
-    <div class="rounded-2xl border border-dashed border-cn-border px-6 py-12 text-center text-sm text-text-muted">
+    <div
+      class="rounded-2xl border border-dashed border-cn-border px-6 py-12 text-center text-sm text-text-muted"
+    >
       Aucun événement en attente de validation.
     </div>
   {:else}

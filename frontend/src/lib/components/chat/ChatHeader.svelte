@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ChevronLeft, LockKeyhole, Clock, Settings, Search, Users } from 'lucide-svelte';
+  import { ChevronLeft, LockKeyhole, Clock, Settings, Search, Users } from '@lucide/svelte';
   import Avatar from '../shared/Avatar.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
   import ChatGroupPanel from './ChatGroupPanel.svelte';
@@ -197,7 +197,11 @@
     {/if}
 
     <button
-      onclick={onOpenSettings ? onOpenSettings : () => { showPanel = true; }}
+      onclick={onOpenSettings
+        ? onOpenSettings
+        : () => {
+            showPanel = true;
+          }}
       aria-label={isChannel
         ? 'Paramètres du canal'
         : isGroupConversation
@@ -219,7 +223,9 @@
     {isGroupConversation}
     currentUserId={currentUserId ?? ''}
     {groupMembers}
-    onClose={() => { showPanel = false; }}
+    onClose={() => {
+      showPanel = false;
+    }}
     onRename={onGroupRename}
     onRemoveMember={onGroupRemoveMember}
     {onGroupDelete}

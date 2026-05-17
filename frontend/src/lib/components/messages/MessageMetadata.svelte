@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { LoaderCircle, TriangleAlert, CheckCheck, Check } from 'lucide-svelte';
+  import { LoaderCircle, TriangleAlert, CheckCheck, Check } from '@lucide/svelte';
   import { format } from 'date-fns';
 
   interface Props {

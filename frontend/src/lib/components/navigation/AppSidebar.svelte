@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { MessageCircle, Newspaper, Users, LayoutDashboard } from 'lucide-svelte';
+  import { MessageCircle, Newspaper, Users, LayoutDashboard } from '@lucide/svelte';
   import { afterNavigate } from '$app/navigation';
   import { APP_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
   import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';

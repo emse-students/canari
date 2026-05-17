@@ -1,7 +1,7 @@
 <script lang="ts">
   import { MediaService } from '$lib/media';
   import type { MediaRef } from '$lib/media';
-  import { Image as ImageIcon, CircleAlert } from 'lucide-svelte';
+  import { Image as ImageIcon, CircleAlert } from '@lucide/svelte';
   import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
 
   interface Props {
@@ -121,11 +121,15 @@
 {:else}
   <!-- Standalone image with its own lightbox (single-image or thumbnail) -->
   {#if loading}
-    <div class="absolute inset-0 flex items-center justify-center bg-black/5 dark:bg-white/5 animate-pulse">
+    <div
+      class="absolute inset-0 flex items-center justify-center bg-black/5 dark:bg-white/5 animate-pulse"
+    >
       <ImageIcon size={32} class="opacity-20 text-text-muted" strokeWidth={1.5} />
     </div>
   {:else if loadError}
-    <div class="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center bg-red-500/5 dark:bg-red-500/10 border border-dashed border-red-500/20">
+    <div
+      class="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center bg-red-500/5 dark:bg-red-500/10 border border-dashed border-red-500/20"
+    >
       <CircleAlert size={24} class="text-red-500 opacity-70" strokeWidth={2} />
       <span class="text-xs font-semibold text-red-600 dark:text-red-400">{loadError}</span>
     </div>

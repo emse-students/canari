@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Pause, Play, Download } from 'lucide-svelte';
+  import { Pause, Play, Download } from '@lucide/svelte';
 
   interface Props {
     /** Audio source URL (object URL or remote URL) to load and play. */

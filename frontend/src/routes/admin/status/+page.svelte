@@ -4,7 +4,7 @@
   import { isGlobalAdmin } from '$lib/stores/user';
   import { apiFetch } from '$lib/utils/apiFetch';
   import { fetchUserProfile, type UserProfile } from '$lib/stores/user';
-  import { RefreshCw, Wifi, WifiOff, TriangleAlert, Info } from 'lucide-svelte';
+  import { RefreshCw, Wifi, WifiOff, TriangleAlert, Info } from '@lucide/svelte';
   import { SvelteMap } from 'svelte/reactivity';
 
   interface DeviceEntry {

@@ -21,7 +21,7 @@
     ExternalLink,
     ClipboardList,
     ShieldAlert,
-  } from 'lucide-svelte';
+  } from '@lucide/svelte';
   import {
     buildIcsCalendar,
     downloadTextFile,

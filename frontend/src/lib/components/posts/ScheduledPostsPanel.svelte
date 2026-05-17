@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Clock, Trash2 } from 'lucide-svelte';
+  import { Clock, Trash2 } from '@lucide/svelte';
   import type { ScheduledPost } from '$lib/posts/api';
 
   /**

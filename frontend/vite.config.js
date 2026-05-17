@@ -74,7 +74,7 @@ export default defineConfig(async () => ({
       '@tauri-apps/plugin-http',
       '@tauri-apps/plugin-notification',
       '@tauri-apps/plugin-sql',
-      'lucide-svelte',
+      '@lucide/svelte',
       'protobufjs/minimal',
     ],
   },

@@ -10,7 +10,7 @@
     X,
     PencilLine,
     Shield,
-  } from 'lucide-svelte';
+  } from '@lucide/svelte';
   import Avatar from '../shared/Avatar.svelte';
   import UserName from '../shared/UserName.svelte';
   import Modal from '../shared/Modal.svelte';
@@ -237,7 +237,9 @@
               </span>
               <button
                 type="button"
-                onclick={() => { showInviteModal = true; }}
+                onclick={() => {
+                  showInviteModal = true;
+                }}
                 class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 text-[0.75rem] font-bold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
               >
                 <UserPlus size={14} strokeWidth={2.5} />
@@ -304,7 +306,9 @@
         >
           {#if onGroupLeave && !confirmLeave && !confirmDelete}
             <button
-              onclick={() => { confirmLeave = true; }}
+              onclick={() => {
+                confirmLeave = true;
+              }}
               class="w-full flex items-center justify-center gap-2.5 px-4 py-3.5 text-orange-600 dark:text-orange-400 font-bold bg-orange-500/10 border border-orange-500/20 rounded-2xl text-[0.95rem] hover:bg-orange-500/20 active:scale-[0.98] transition-all outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
             >
               <LogOut size={18} strokeWidth={2.5} />
@@ -321,13 +325,18 @@
               </p>
               <div class="flex gap-3">
                 <button
-                  onclick={() => { confirmLeave = false; }}
+                  onclick={() => {
+                    confirmLeave = false;
+                  }}
                   class="flex-1 px-4 py-3.5 border border-black/10 dark:border-white/10 bg-white/80 dark:bg-white/5 rounded-2xl font-bold text-text-main hover:bg-black/5 dark:hover:bg-white/10 active:scale-[0.98] transition-all outline-none focus-visible:ring-2 focus-visible:ring-text-muted"
                 >
                   Annuler
                 </button>
                 <button
-                  onclick={() => { onGroupLeave?.(); closePanel(); }}
+                  onclick={() => {
+                    onGroupLeave?.();
+                    closePanel();
+                  }}
                   class="flex-1 px-4 py-3.5 bg-orange-500 text-white rounded-2xl font-bold hover:bg-orange-600 active:scale-[0.98] transition-all shadow-md shadow-orange-500/20 outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
                 >
                   Quitter
@@ -339,7 +348,9 @@
           {#if onGroupDelete && !confirmLeave}
             {#if !confirmDelete}
               <button
-                onclick={() => { confirmDelete = true; }}
+                onclick={() => {
+                  confirmDelete = true;
+                }}
                 class="w-full flex items-center justify-center gap-2.5 px-4 py-3.5 text-red-600 dark:text-red-400 font-bold bg-red-500/10 border border-red-500/20 rounded-2xl text-[0.95rem] hover:bg-red-500/20 active:scale-[0.98] transition-all outline-none focus-visible:ring-2 focus-visible:ring-red-500"
               >
                 <Trash2 size={18} strokeWidth={2.5} />
@@ -354,13 +365,18 @@
                 </p>
                 <div class="flex gap-3">
                   <button
-                    onclick={() => { confirmDelete = false; }}
+                    onclick={() => {
+                      confirmDelete = false;
+                    }}
                     class="flex-1 px-4 py-3.5 border border-black/10 dark:border-white/10 bg-white/80 dark:bg-white/5 rounded-2xl font-bold text-text-main hover:bg-black/5 dark:hover:bg-white/10 active:scale-[0.98] transition-all outline-none focus-visible:ring-2 focus-visible:ring-text-muted"
                   >
                     Annuler
                   </button>
                   <button
-                    onclick={() => { onGroupDelete?.(); closePanel(); }}
+                    onclick={() => {
+                      onGroupDelete?.();
+                      closePanel();
+                    }}
                     class="flex-1 px-4 py-3.5 bg-red-500 text-white rounded-2xl font-bold hover:bg-red-600 active:scale-[0.98] transition-all shadow-md shadow-red-500/20 outline-none focus-visible:ring-2 focus-visible:ring-red-500"
                   >
                     Supprimer
@@ -378,7 +394,10 @@
 <!-- Modal d'invitation -->
 <Modal
   open={showInviteModal}
-  onClose={() => { showInviteModal = false; newMembers = []; }}
+  onClose={() => {
+    showInviteModal = false;
+    newMembers = [];
+  }}
   title="Ajouter des membres"
 >
   <div class="space-y-5 px-1">
@@ -390,7 +409,9 @@
 
     <MultiUserSelector
       users={newMembers}
-      onUsersChange={(users) => { newMembers = users; }}
+      onUsersChange={(users) => {
+        newMembers = users;
+      }}
       placeholder="Identifiant de l'utilisateur..."
     />
 

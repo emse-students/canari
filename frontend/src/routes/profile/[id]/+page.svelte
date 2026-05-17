@@ -5,7 +5,15 @@
   import { fetchUserProfile, type UserProfile, getSavedUserId } from '$lib/stores/user';
   import { followUser, unfollowUser, getUserFollowStatus } from '$lib/posts/api';
   import Avatar from '$lib/components/shared/Avatar.svelte';
-  import { GraduationCap, CalendarDays, Loader2, AlertCircle, MessageCircle, UserPlus, UserCheck } from 'lucide-svelte';
+  import {
+    GraduationCap,
+    CalendarDays,
+    Loader2,
+    AlertCircle,
+    MessageCircle,
+    UserPlus,
+    UserCheck,
+  } from '@lucide/svelte';
   import { slide, fade } from 'svelte/transition';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
 
@@ -76,7 +84,9 @@
         await followUser(profile.id);
         following = true;
       }
-    } catch { /* silent */ } finally {
+    } catch {
+      /* silent */
+    } finally {
       followLoading = false;
     }
   }
@@ -131,8 +141,8 @@
           disabled={followLoading}
           class="inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold transition-all active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50 disabled:opacity-60
             {following
-              ? 'bg-white/60 dark:bg-white/10 border border-black/10 dark:border-white/10 text-text-main hover:bg-red-500/10 hover:text-red-600 hover:border-red-500/20'
-              : 'bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400 hover:bg-amber-500/20'}"
+            ? 'bg-white/60 dark:bg-white/10 border border-black/10 dark:border-white/10 text-text-main hover:bg-red-500/10 hover:text-red-600 hover:border-red-500/20'
+            : 'bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400 hover:bg-amber-500/20'}"
         >
           {#if following}
             <UserCheck size={18} strokeWidth={2.5} /> Suivi

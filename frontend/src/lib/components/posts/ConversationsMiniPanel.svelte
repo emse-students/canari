@@ -9,7 +9,7 @@
     resolveConversationListPresentation,
   } from '$lib/utils/chat/conversations';
   import ConversationTile from '$lib/components/chat/ConversationTile.svelte';
-  import { MessageCircle, ChevronRight, LoaderCircle } from 'lucide-svelte';
+  import { MessageCircle, ChevronRight, LoaderCircle } from '@lucide/svelte';
   import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import { SvelteMap } from 'svelte/reactivity';
 

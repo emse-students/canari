@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { ShieldCheck, TriangleAlert } from 'lucide-svelte';
-  import { ArrowDown, Search, ChevronUp, ChevronDown, X } from 'lucide-svelte';
+  import { ShieldCheck, TriangleAlert } from '@lucide/svelte';
+  import { ArrowDown, Search, ChevronUp, ChevronDown, X } from '@lucide/svelte';
   import { tick, untrack } from 'svelte';
   import { slide } from 'svelte/transition';
   import ChatHeader from './ChatHeader.svelte';

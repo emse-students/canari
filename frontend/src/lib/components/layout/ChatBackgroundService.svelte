@@ -28,7 +28,7 @@
   import CallOverlay from '$lib/components/chat/CallOverlay.svelte';
   import type { ConversationContext } from '$lib/composables/useConversations.svelte';
   import type { MessagingContext } from '$lib/composables/useMessaging.svelte';
-  import { Bell, Fingerprint } from 'lucide-svelte';
+  import { Bell, Fingerprint } from '@lucide/svelte';
 
   let showPinModal = $state(false);
   let pinError = $state('');
@@ -50,19 +50,8 @@
       historyBaseUrl: globalSession.historyBaseUrl,
       messageReactions: globalMessaging.messageReactions,
       log: appendLog,
-      addMessageToChat: (
-        sid: string,
-        content: string,
-        contactName: string,
-        options?: any
-      ) =>
-        globalMessaging.addMessageToChat(
-          sid,
-          content,
-          contactName,
-          msgCtx(),
-          options
-        ),
+      addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
+        globalMessaging.addMessageToChat(sid, content, contactName, msgCtx(), options),
     };
   }
 
@@ -123,19 +112,8 @@
     return {
       conversations: globalConvs.conversations,
       loadAndRestoreConversations: () => globalConvs.loadAndRestoreConversations(convCtx()),
-      addMessageToChat: (
-        sid: string,
-        content: string,
-        contactName: string,
-        options?: any
-      ) =>
-        globalMessaging.addMessageToChat(
-          sid,
-          content,
-          contactName,
-          msgCtx(),
-          options
-        ),
+      addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
+        globalMessaging.addMessageToChat(sid, content, contactName, msgCtx(), options),
       saveConversation: (name: string) => globalConvs.saveConversation(name, convCtx()),
       selectConversation: globalConvs.selectConversation,
       onChannelMemberJoined: (event: any) => {
@@ -192,11 +170,7 @@
         );
         appendLog(`Retiré du canal #${event.channelName || event.channelId}`);
       },
-      onChannelUpdated: (event: {
-        channelId: string;
-        name?: string;
-        imageMediaId?: string;
-      }) => {
+      onChannelUpdated: (event: { channelId: string; name?: string; imageMediaId?: string }) => {
         if (!event.channelId) return;
         const channelConversationId = `channel_${event.channelId}`;
         if (event.name) {
@@ -566,7 +540,9 @@
           } catch (e) {
             // Si l'appareil n'a pas d'empreinte configurée, on attrape l'erreur
             if (String(e).includes('At least one biometric must be enrolled')) {
-              alert("Aucune empreinte n'est configurée sur votre téléphone. Veuillez en ajouter une dans les paramètres d'Android.");
+              alert(
+                "Aucune empreinte n'est configurée sur votre téléphone. Veuillez en ajouter une dans les paramètres d'Android."
+              );
               globalSession.showBiometricEnrollPrompt = false;
             }
           }

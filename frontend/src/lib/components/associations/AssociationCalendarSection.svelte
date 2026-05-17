@@ -30,7 +30,7 @@
     CalendarSync,
     Download,
     Check,
-  } from 'lucide-svelte';
+  } from '@lucide/svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
   import { SvelteDate } from 'svelte/reactivity';
@@ -200,9 +200,7 @@
     );
   }
 
-  const validatedEvents = $derived(
-    events.filter((e) => (e.status ?? 'validated') === 'validated')
-  );
+  const validatedEvents = $derived(events.filter((e) => (e.status ?? 'validated') === 'validated'));
   const pendingEvents = $derived(events.filter((e) => e.status === 'pending'));
 
   function hasValidatedEventOnDay(day: number): boolean {
@@ -241,7 +239,9 @@
   );
 
   const sortedPendingEvents = $derived(
-    [...pendingEvents].sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime())
+    [...pendingEvents].sort(
+      (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime()
+    )
   );
 
   async function openCreate() {

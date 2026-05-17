@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Plus, X, Search, Shield } from 'lucide-svelte';
+  import { Plus, X, Search, Shield } from '@lucide/svelte';
 
   interface Props {
     /** Which sidebar tab is currently active. */

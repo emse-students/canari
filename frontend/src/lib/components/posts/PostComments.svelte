@@ -9,7 +9,7 @@
     Trash2,
     ArrowUpDown,
     ImageIcon,
-  } from 'lucide-svelte';
+  } from '@lucide/svelte';
   import { tick } from 'svelte';
   import type { PostComment, PostImageRef } from '$lib/posts/api';
   import Avatar from '$lib/components/shared/Avatar.svelte';
@@ -309,8 +309,14 @@
             {/if}
           {/if}
           {#if comment.text}
-            <div class="text-[0.9rem] text-text-main leading-snug break-words [&_p]:inline [&_p]:m-0">
-              <SvelteMarkdown source={preprocessPostMarkdown(comment.text)} renderers={mentionRenderers} options={{ gfm: true, breaks: true }} />
+            <div
+              class="text-[0.9rem] text-text-main leading-snug break-words [&_p]:inline [&_p]:m-0"
+            >
+              <SvelteMarkdown
+                source={preprocessPostMarkdown(comment.text)}
+                renderers={mentionRenderers}
+                options={{ gfm: true, breaks: true }}
+              />
             </div>
           {/if}
           {#if comment.media && authToken}
@@ -488,7 +494,12 @@
 
 {#snippet commentInputRow(placeholder: string)}
   <div class="relative">
-    <MentionDropdown open={mention.open} suggestions={mention.suggestions} selectedIdx={mention.selectedIdx} onSelect={mention.select} />
+    <MentionDropdown
+      open={mention.open}
+      suggestions={mention.suggestions}
+      selectedIdx={mention.selectedIdx}
+      onSelect={mention.select}
+    />
     {#if pendingPreviewUrl || uploadingMedia}
       <div class="flex items-center gap-2 mb-2 ml-[2.125rem]">
         <div

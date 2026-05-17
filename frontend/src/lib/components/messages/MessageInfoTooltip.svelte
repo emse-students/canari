@@ -2,7 +2,7 @@
   import { format } from 'date-fns';
   import { fly } from 'svelte/transition';
   import { SvelteSet } from 'svelte/reactivity';
-  import { Clock, Pencil, CheckCheck } from 'lucide-svelte';
+  import { Clock, Pencil, CheckCheck } from '@lucide/svelte';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
 
   interface Props {

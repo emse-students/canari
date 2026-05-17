@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { exportSubmissions, getForms, type Form } from '$lib/forms/api';
-  import { Plus, Download, Copy, FileText } from 'lucide-svelte';
+  import { Plus, Download, Copy, FileText } from '@lucide/svelte';
 
   let forms = $state<Form[]>([]);
   let loading = $state(true);

@@ -4,7 +4,7 @@
   import { page } from '$app/state';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { listMyAssociations } from '$lib/associations/api';
-  import { Shield, CalendarClock, Activity, ArrowLeft, ShieldAlert, UserCog } from 'lucide-svelte';
+  import { Shield, CalendarClock, Activity, ArrowLeft, ShieldAlert, UserCog } from '@lucide/svelte';
 
   let { children } = $props();
 

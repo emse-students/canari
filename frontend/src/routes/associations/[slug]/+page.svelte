@@ -13,7 +13,7 @@
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
-  import { Bell, BellOff, Pencil, Building2, CalendarDays, Users } from 'lucide-svelte';
+  import { Bell, BellOff, Pencil, Building2, CalendarDays, Users } from '@lucide/svelte';
   import SvelteMarkdown from '@humanspeak/svelte-markdown';
   import AssociationMemberRow from '$lib/components/associations/AssociationMemberRow.svelte';
   import AssociationCalendarSection from '$lib/components/associations/AssociationCalendarSection.svelte';
@@ -39,7 +39,6 @@
   let activeSection = $state<'about' | 'calendar' | 'members'>('about');
 
   const slug = $derived((page.params as Record<string, string>).slug);
-
 
   onMount(loadData);
 
@@ -202,7 +201,9 @@
     </nav>
 
     {#if activeSection === 'about'}
-      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-6 space-y-4 shadow-sm">
+      <div
+        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-6 space-y-4 shadow-sm"
+      >
         <h2 class="text-lg font-bold text-text-main tracking-tight">À propos</h2>
         {#if asso.description?.trim()}
           <p class="text-sm text-text-muted whitespace-pre-wrap">{asso.description}</p>
@@ -233,7 +234,9 @@
         />
       </div>
     {:else if activeSection === 'members'}
-      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-6 space-y-4 shadow-sm">
+      <div
+        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-6 space-y-4 shadow-sm"
+      >
         <h2 class="text-lg font-bold text-text-main tracking-tight">Membres</h2>
         <p class="text-sm text-text-muted">
           {members.length} personne{members.length !== 1 ? 's' : ''} dans cette association.
@@ -242,7 +245,9 @@
           {#each members as member (member.id)}
             <AssociationMemberRow
               {member}
-              displayName={resolvedMemberNames[member.userId] ?? member.displayName ?? member.userId}
+              displayName={resolvedMemberNames[member.userId] ??
+                member.displayName ??
+                member.userId}
             />
           {/each}
         </div>

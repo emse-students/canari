@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Image, ChartColumn, CalendarCheck, ClipboardList, Clock, X, CircleAlert, Building2, User, ChevronDown, Bold, Italic, Strikethrough, Heading2, Quote, Code, List, Link2 } from 'lucide-svelte';
+  import { Image, ChartColumn, CalendarCheck, ClipboardList, Clock, X, CircleAlert, Building2, User, ChevronDown, Bold, Italic, Strikethrough, Heading2, Quote, Code, List, Link2 } from '@lucide/svelte';
   import { slide, fade } from 'svelte/transition';
   import { onMount, tick } from 'svelte';
   import { MediaService, compressImage, IMAGE_COMPRESS_PRESETS } from '$lib/media';

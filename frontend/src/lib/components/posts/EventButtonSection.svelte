@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { X, CalendarCheck, ChevronDown, Plus } from 'lucide-svelte';
+  import { X, CalendarCheck, ChevronDown, Plus } from '@lucide/svelte';
   import { formatFormOpensAt, formOpensAtIso } from '$lib/posts/postComposerDraft';
   import { slide } from 'svelte/transition';
   import Input from '$lib/components/ui/Input.svelte';

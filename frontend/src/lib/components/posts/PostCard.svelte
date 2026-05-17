@@ -29,7 +29,7 @@
   import PostComments from './PostComments.svelte';
   import PostOverlayControls from './PostOverlayControls.svelte';
   import PostFeedback from './PostFeedback.svelte';
-  import { Pin, CalendarCheck } from 'lucide-svelte';
+  import { Pin, CalendarCheck } from '@lucide/svelte';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { untrack } from 'svelte';
   import { FORM_CARD_PLACEHOLDER_MIN_HEIGHT } from '$lib/utils/mediaLayout';

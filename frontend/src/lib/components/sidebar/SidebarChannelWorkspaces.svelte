@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Plus, ChevronDown, ChevronRight, Hash, Lock } from 'lucide-svelte';
+  import { Plus, ChevronDown, ChevronRight, Hash, Lock } from '@lucide/svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
 
   interface ChannelItem {

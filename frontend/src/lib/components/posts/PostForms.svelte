@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { CheckCircle2, ClipboardList, ArrowRight, ExternalLink, Clock, Bell, BellOff } from 'lucide-svelte';
+  import { CheckCircle2, ClipboardList, ArrowRight, ExternalLink, Clock, Bell, BellOff } from '@lucide/svelte';
   import { formatFormOpensAt, formOpensAtIso } from '$lib/posts/postComposerDraft';
   import { subscribeFormReminder, unsubscribeFormReminder, checkFormReminder } from '$lib/posts/api';
   import { onMount } from 'svelte';

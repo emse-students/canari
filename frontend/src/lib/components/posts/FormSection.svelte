@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { X, ClipboardList, ChevronDown, Plus } from 'lucide-svelte';
+  import { X, ClipboardList, ChevronDown, Plus } from '@lucide/svelte';
   import type { Form } from '$lib/forms/api';
   import { formatFormOpensAt, formOpensAtIso } from '$lib/posts/postComposerDraft';
 

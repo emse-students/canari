@@ -12,7 +12,7 @@
     Loader,
     Lock,
     Globe,
-  } from 'lucide-svelte';
+  } from '@lucide/svelte';
   import Modal from '../shared/Modal.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
   import UserAutocomplete from '../shared/UserAutocomplete.svelte';
@@ -64,7 +64,11 @@
     /** Callback to close the modal. */
     onClose: () => void;
     /** Callback fired when channel access settings are updated. */
-    onUpdateChannelAccess?: (channelId: string, isPrivate: boolean, allowedUserIds: string[]) => void;
+    onUpdateChannelAccess?: (
+      channelId: string,
+      isPrivate: boolean,
+      allowedUserIds: string[]
+    ) => void;
   }
 
   let {
@@ -161,10 +165,16 @@
     accessSaved = false;
     accessError = '';
     try {
-      await channelService.updateChannelAccess(selectedChannelId, accessIsPrivate, accessAllowedUserIds);
+      await channelService.updateChannelAccess(
+        selectedChannelId,
+        accessIsPrivate,
+        accessAllowedUserIds
+      );
       onUpdateChannelAccess?.(selectedChannelId, accessIsPrivate, accessAllowedUserIds);
       accessSaved = true;
-      setTimeout(() => { accessSaved = false; }, 2500);
+      setTimeout(() => {
+        accessSaved = false;
+      }, 2500);
     } catch (e) {
       accessError = e instanceof Error ? e.message : 'Erreur sauvegarde';
     } finally {
@@ -401,7 +411,8 @@
           <div>
             <h2 class="text-xl font-extrabold text-text-main mb-1">Accès au canal</h2>
             <p class="text-sm font-medium text-text-muted leading-relaxed">
-              Définissez si le canal est ouvert à tous les membres ou restreint à certains utilisateurs.
+              Définissez si le canal est ouvert à tous les membres ou restreint à certains
+              utilisateurs.
             </p>
           </div>
 
@@ -410,11 +421,15 @@
               <Loader size={16} class="animate-spin" /> Chargement…
             </div>
           {:else if accessError}
-            <div class="p-3 rounded-xl bg-red-50 dark:bg-red-900/20 text-red-600 text-sm border border-red-200 dark:border-red-800">
+            <div
+              class="p-3 rounded-xl bg-red-50 dark:bg-red-900/20 text-red-600 text-sm border border-red-200 dark:border-red-800"
+            >
               {accessError}
             </div>
           {:else}
-            <div class="bg-white/60 dark:bg-black/20 border border-black/5 dark:border-white/10 rounded-[1.5rem] p-5 space-y-5 shadow-sm">
+            <div
+              class="bg-white/60 dark:bg-black/20 border border-black/5 dark:border-white/10 rounded-[1.5rem] p-5 space-y-5 shadow-sm"
+            >
               <!-- Visibility toggle -->
               <div class="flex items-center justify-between gap-4">
                 <div class="flex items-center gap-3">
@@ -424,7 +439,9 @@
                     </div>
                     <div>
                       <p class="font-bold text-text-main text-sm">Canal privé</p>
-                      <p class="text-xs text-text-muted">Seuls les membres autorisés peuvent accéder</p>
+                      <p class="text-xs text-text-muted">
+                        Seuls les membres autorisés peuvent accéder
+                      </p>
                     </div>
                   {:else}
                     <div class="p-2 rounded-xl bg-emerald-500/10 text-emerald-600">
@@ -432,20 +449,28 @@
                     </div>
                     <div>
                       <p class="font-bold text-text-main text-sm">Canal public</p>
-                      <p class="text-xs text-text-muted">Tous les membres de la communauté peuvent accéder</p>
+                      <p class="text-xs text-text-muted">
+                        Tous les membres de la communauté peuvent accéder
+                      </p>
                     </div>
                   {/if}
                 </div>
                 <button
                   type="button"
-                  onclick={() => { accessIsPrivate = !accessIsPrivate; }}
-                  class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors {accessIsPrivate ? 'bg-amber-500' : 'bg-black/10 dark:bg-white/20'}"
+                  onclick={() => {
+                    accessIsPrivate = !accessIsPrivate;
+                  }}
+                  class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors {accessIsPrivate
+                    ? 'bg-amber-500'
+                    : 'bg-black/10 dark:bg-white/20'}"
                   role="switch"
                   aria-checked={accessIsPrivate}
                 >
                   <span class="sr-only">Rendre le canal privé</span>
                   <span
-                    class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform {accessIsPrivate ? 'translate-x-6' : 'translate-x-1'}"
+                    class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform {accessIsPrivate
+                      ? 'translate-x-6'
+                      : 'translate-x-1'}"
                   ></span>
                 </button>
               </div>
@@ -453,17 +478,23 @@
               <!-- Member allowlist (only when private) -->
               {#if accessIsPrivate}
                 <div class="border-t border-black/5 dark:border-white/10 pt-4 space-y-3">
-                  <p class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5">
+                  <p
+                    class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5"
+                  >
                     <Users size={13} /> Membres autorisés
                   </p>
 
                   <!-- Existing allowed users -->
                   {#if accessAllowedUserIds.length === 0}
-                    <p class="text-sm text-text-muted italic">Aucun membre autorisé — le canal sera inaccessible.</p>
+                    <p class="text-sm text-text-muted italic">
+                      Aucun membre autorisé — le canal sera inaccessible.
+                    </p>
                   {:else}
                     <ul class="space-y-1.5">
                       {#each accessAllowedUserIds as uid (uid)}
-                        <li class="flex items-center justify-between gap-2 rounded-xl bg-black/5 dark:bg-white/5 px-3 py-2">
+                        <li
+                          class="flex items-center justify-between gap-2 rounded-xl bg-black/5 dark:bg-white/5 px-3 py-2"
+                        >
                           <span class="text-sm font-mono text-text-main truncate">{uid}</span>
                           <button
                             type="button"
@@ -480,7 +511,9 @@
 
                   <!-- Add a user -->
                   <div class="space-y-2 pt-1">
-                    <p class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5">
+                    <p
+                      class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5"
+                    >
                       <UserPlus size={13} /> Ajouter un membre
                     </p>
                     <div class="flex gap-2 items-start">
@@ -505,7 +538,9 @@
               {/if}
 
               <!-- Save -->
-              <div class="flex items-center gap-3 border-t border-black/5 dark:border-white/10 pt-4">
+              <div
+                class="flex items-center gap-3 border-t border-black/5 dark:border-white/10 pt-4"
+              >
                 <button
                   type="button"
                   onclick={saveChannelAccess}

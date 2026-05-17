@@ -1,6 +1,6 @@
 <script lang="ts">
   import { SvelteMap } from 'svelte/reactivity';
-  import { Hand, Hash, Lock, Plus } from 'lucide-svelte';
+  import { Hand, Hash, Lock, Plus } from '@lucide/svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
   import ConversationTile from '../chat/ConversationTile.svelte';
   import SidebarHeaderControls from './SidebarHeaderControls.svelte';
@@ -150,9 +150,7 @@
   // auto-reveal the workspace that contains it.
   $effect(() => {
     if (!selectedChannelId || viewMode !== 'communities') return;
-    const ws = channelWorkspaces.find((w) =>
-      w.channels.some((ch) => ch.id === selectedChannelId)
-    );
+    const ws = channelWorkspaces.find((w) => w.channels.some((ch) => ch.id === selectedChannelId));
     if (ws && selectedCommunityWorkspaceId !== ws.id) {
       selectedCommunityWorkspaceId = ws.id;
     }

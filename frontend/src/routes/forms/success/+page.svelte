@@ -1,7 +1,7 @@
 <script lang="ts">
   import { page } from '$app/state';
   import { onMount } from 'svelte';
-  import { CircleCheck, CircleX, Loader } from 'lucide-svelte';
+  import { CircleCheck, CircleX, Loader } from '@lucide/svelte';
 
   const sessionId = $derived(page.url.searchParams.get('session_id'));
 

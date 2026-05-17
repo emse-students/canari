@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Terminal, LogOut } from 'lucide-svelte';
+  import { Terminal, LogOut } from '@lucide/svelte';
 
   interface Props {
     /** Callback to toggle the logs panel visibility. */

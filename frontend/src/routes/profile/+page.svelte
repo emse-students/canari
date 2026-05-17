@@ -23,7 +23,7 @@
     Loader2,
     AlertCircle,
     CheckCircle2,
-  } from 'lucide-svelte';
+  } from '@lucide/svelte';
   import { slide, fade } from 'svelte/transition';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
 

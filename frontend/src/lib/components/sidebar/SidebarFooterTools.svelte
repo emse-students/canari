@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Download, Upload, ScanLine, Smartphone, Monitor } from 'lucide-svelte';
+  import { Download, Upload, ScanLine, Smartphone, Monitor } from '@lucide/svelte';
 
   interface Props {
     /** Callback fired with the selected backup file to import. */

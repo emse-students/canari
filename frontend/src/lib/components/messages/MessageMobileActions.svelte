@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Reply, Smile, Pencil, Trash2 } from 'lucide-svelte';
+  import { Reply, Smile, Pencil, Trash2 } from '@lucide/svelte';
   import { fly, fade } from 'svelte/transition';
 
   interface Props {

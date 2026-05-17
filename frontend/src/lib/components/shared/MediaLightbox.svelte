@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
-  import { ChevronLeft, ChevronRight, X } from 'lucide-svelte';
+  import { ChevronLeft, ChevronRight, X } from '@lucide/svelte';
   import { portal } from '$lib/actions/portal';
 
   interface Props {
@@ -150,7 +150,9 @@
                 e.stopPropagation();
                 onDotSelect(i);
               }}
-              class="w-2 h-2 rounded-full transition-all {i === dotIndex ? 'bg-white' : 'bg-white/40'}"
+              class="w-2 h-2 rounded-full transition-all {i === dotIndex
+                ? 'bg-white'
+                : 'bg-white/40'}"
               aria-label="Image {i + 1}"
             ></button>
           {/each}

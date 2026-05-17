@@ -1,6 +1,6 @@
 <script lang="ts">
   import Input from '$lib/components/ui/Input.svelte';
-  import { Trash2, X, Plus, GripVertical } from 'lucide-svelte';
+  import { Trash2, X, Plus, GripVertical } from '@lucide/svelte';
 
   let {
     item = $bindable(),
@@ -86,7 +86,11 @@
           Q{questionIndex}
         </span>
       {/if}
-      <GripVertical size={16} class="text-text-muted/40 shrink-0 hidden sm:block" aria-hidden="true" />
+      <GripVertical
+        size={16}
+        class="text-text-muted/40 shrink-0 hidden sm:block"
+        aria-hidden="true"
+      />
     </div>
     <div class="flex items-center gap-0.5 shrink-0">
       {#if onMoveUp && onMoveDown}
@@ -98,7 +102,17 @@
           title="Monter"
           aria-label="Monter la question"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6" /></svg>
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"><path d="m18 15-6-6-6 6" /></svg
+          >
         </button>
         <button
           type="button"
@@ -108,7 +122,17 @@
           title="Descendre"
           aria-label="Descendre la question"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg>
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg
+          >
         </button>
       {/if}
       <button
@@ -137,11 +161,7 @@
       <label for="item-type-select" class="block text-sm font-bold text-text-main mb-1.5 sm:mb-2">
         Type de réponse
       </label>
-      <select
-        id="item-type-select"
-        bind:value={item.type}
-        class={fieldClass}
-      >
+      <select id="item-type-select" bind:value={item.type} class={fieldClass}>
         {#each formItemTypes as type (type.value)}
           <option value={type.value} class="bg-white dark:bg-zinc-800">{type.label}</option>
         {/each}
@@ -152,7 +172,9 @@
   <!-- Obligatoire -->
   <div class="mb-4 sm:mb-6 flex justify-start sm:justify-end">
     <label class="flex items-center gap-2.5 sm:gap-3 cursor-pointer select-none group/toggle">
-      <span class="text-xs sm:text-sm font-semibold text-text-muted group-hover/toggle:text-text-main transition-colors">
+      <span
+        class="text-xs sm:text-sm font-semibold text-text-muted group-hover/toggle:text-text-main transition-colors"
+      >
         Question obligatoire
       </span>
       <div class="relative flex items-center shrink-0">
@@ -217,7 +239,8 @@
           {isMatrix ? 'Colonnes (choix possibles)' : 'Options de réponse'}
         </h4>
         {#if !isMatrix && showPriceModifier}
-          <span class="text-[0.65rem] sm:text-xs text-text-muted font-semibold">Supplément (€)</span>
+          <span class="text-[0.65rem] sm:text-xs text-text-muted font-semibold">Supplément (€)</span
+          >
         {/if}
       </div>
 
@@ -228,7 +251,8 @@
           >
             <div class="flex items-center justify-between gap-2 mb-2 sm:hidden">
               <span class="text-[0.65rem] font-bold uppercase tracking-wide text-text-muted">
-                {isMatrix ? 'Colonne' : 'Option'} {idx + 1}
+                {isMatrix ? 'Colonne' : 'Option'}
+                {idx + 1}
               </span>
               <button
                 class="p-1.5 text-text-muted hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-colors"
@@ -254,7 +278,12 @@
               </div>
               {#if !isMatrix && showPriceModifier}
                 <div class="w-20 shrink-0">
-                  <Input type="number" placeholder="0.00" bind:value={opt.priceModifier} step="0.01" />
+                  <Input
+                    type="number"
+                    placeholder="0.00"
+                    bind:value={opt.priceModifier}
+                    step="0.01"
+                  />
                 </div>
               {/if}
               <button
@@ -277,7 +306,9 @@
               />
               {#if !isMatrix && showPriceModifier}
                 <div>
-                  <label for="opt-price-{opt.id}" class="block text-[0.65rem] font-bold text-text-muted mb-1"
+                  <label
+                    for="opt-price-{opt.id}"
+                    class="block text-[0.65rem] font-bold text-text-muted mb-1"
                     >Supplément (€)</label
                   >
                   <input
@@ -332,7 +363,9 @@
                   </button>
                 </div>
                 <div class="hidden sm:flex gap-2 items-center">
-                  <span class="text-xs font-mono text-text-muted w-5 text-center shrink-0 opacity-60">
+                  <span
+                    class="text-xs font-mono text-text-muted w-5 text-center shrink-0 opacity-60"
+                  >
                     {idx + 1}.
                   </span>
                   <div class="flex-1 min-w-0">

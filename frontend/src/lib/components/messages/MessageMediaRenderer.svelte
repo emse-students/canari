@@ -6,7 +6,7 @@
     Image as ImageIcon,
     Video as VideoIcon,
     Mic,
-  } from 'lucide-svelte';
+  } from '@lucide/svelte';
   import VoiceMessagePlayer from './VoiceMessagePlayer.svelte';
   import type { MediaRef } from '$lib/media';
   import { mediaAspectStyle } from '$lib/utils/mediaLayout';

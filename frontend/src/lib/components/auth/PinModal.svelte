@@ -1,6 +1,6 @@
 <script lang="ts">
   import Modal from '$lib/components/shared/Modal.svelte';
-  import { LoaderCircle, Fingerprint } from 'lucide-svelte';
+  import { LoaderCircle, Fingerprint } from '@lucide/svelte';
 
   interface Props {
     /** Whether the modal is visible. */

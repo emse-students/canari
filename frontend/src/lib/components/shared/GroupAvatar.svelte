@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Users, Hash } from 'lucide-svelte';
+  import { Users, Hash } from '@lucide/svelte';
   import { onDestroy } from 'svelte';
   import { MediaService } from '$lib/media';
   import { getToken } from '$lib/stores/auth';

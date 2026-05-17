@@ -27,7 +27,7 @@
   import Button from '$lib/components/ui/Button.svelte';
   import Card from '$lib/components/ui/Card.svelte';
   import PaymentModal from '$lib/components/ui/PaymentModal.svelte';
-  import { ArrowLeft, ClipboardList, Check, Send, CalendarDays, Bell, BellOff } from 'lucide-svelte';
+  import { ArrowLeft, ClipboardList, Check, Send, CalendarDays, Bell, BellOff } from '@lucide/svelte';
 
   const formId = $derived(page.params.id);
   const redirectTo = $derived(page.url.searchParams.get('redirect') || '/posts');

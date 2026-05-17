@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { MessageCircle, Smile } from 'lucide-svelte';
+  import { MessageCircle, Smile } from '@lucide/svelte';
 
   /** Props for the PostActions bar (reaction picker + comment button). */
   interface Props {

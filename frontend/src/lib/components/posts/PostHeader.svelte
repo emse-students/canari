@@ -2,7 +2,7 @@
   import type { PostEntity } from '$lib/posts/api';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
-  import { Clock } from 'lucide-svelte';
+  import { Clock } from '@lucide/svelte';
   import { timeAgo, exactDate } from '$lib/utils/time';
 
   /** Props for the PostHeader component. */
@@ -37,7 +37,12 @@
       class="shrink-0 transition-transform duration-200 hover:scale-105 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 rounded-full shadow-sm"
       aria-label="Voir l'association {post.association.name}"
     >
-      <AssociationAvatar name={post.association.name} logoUrl={post.association.logoUrl} size="md" shape="circle" />
+      <AssociationAvatar
+        name={post.association.name}
+        logoUrl={post.association.logoUrl}
+        size="md"
+        shape="circle"
+      />
     </a>
   {:else}
     <a
@@ -67,7 +72,9 @@
         </a>
       {/if}
     </div>
-    <div class="text-[0.75rem] font-medium text-text-muted flex items-center gap-1.5 mt-0.5 opacity-80">
+    <div
+      class="text-[0.75rem] font-medium text-text-muted flex items-center gap-1.5 mt-0.5 opacity-80"
+    >
       <Clock size={12} strokeWidth={2.5} />
       <span title={exactDate(post.createdAt)}>{timeAgo(post.createdAt)}</span>
     </div>

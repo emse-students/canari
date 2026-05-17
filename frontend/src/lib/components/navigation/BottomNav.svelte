@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { MessageCircle, Newspaper, Users, LayoutDashboard } from 'lucide-svelte';
+  import { MessageCircle, Newspaper, Users, LayoutDashboard } from '@lucide/svelte';
   import { APP_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
   import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import { page } from '$app/state';
@@ -39,10 +39,16 @@
         href={place.href}
         data-sveltekit-preload-code="viewport"
         class="group relative flex flex-col items-center justify-center gap-1 min-w-0 flex-1 py-1 px-1 transition-all duration-200 active:scale-95
-          {isActive ? 'text-amber-600 dark:text-amber-400' : 'text-text-muted hover:text-text-main'}"
+          {isActive
+          ? 'text-amber-600 dark:text-amber-400'
+          : 'text-text-muted hover:text-text-main'}"
       >
         <!-- Conteneur de l'icône avec léger soulèvement si actif -->
-        <span class="relative transition-transform duration-300 {isActive ? '-translate-y-0.5' : 'group-hover:scale-110'}">
+        <span
+          class="relative transition-transform duration-300 {isActive
+            ? '-translate-y-0.5'
+            : 'group-hover:scale-110'}"
+        >
           <PlaceIcon size={24} strokeWidth={isActive ? 2.5 : 2} />
 
           <!-- Badge rouge pour les messages non lus -->
@@ -55,7 +61,11 @@
         </span>
 
         <!-- Texte du label -->
-        <span class="text-[10px] font-bold leading-none truncate max-w-full transition-opacity duration-200 {isActive ? 'opacity-100' : 'opacity-70 font-medium'}">
+        <span
+          class="text-[10px] font-bold leading-none truncate max-w-full transition-opacity duration-200 {isActive
+            ? 'opacity-100'
+            : 'opacity-70 font-medium'}"
+        >
           {place.label}
         </span>
 

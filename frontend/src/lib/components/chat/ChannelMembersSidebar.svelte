@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Users, X, ShieldAlert, User } from 'lucide-svelte';
+  import { Users, X, ShieldAlert, User } from '@lucide/svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import UserName from '$lib/components/shared/UserName.svelte';
   import { presenceMap, watchUsers } from '$lib/stores/presenceStore';
@@ -66,7 +66,9 @@
     : 'flex h-full w-full'} flex-col bg-white/70 dark:bg-[#151B2C]/90 backdrop-blur-2xl overflow-y-auto custom-scrollbar transition-all duration-300"
 >
   {#if mode === 'mobile'}
-    <div class="flex items-center justify-between border-b border-black/5 dark:border-white/10 p-4 md:p-5 bg-white/40 dark:bg-black/20 backdrop-blur-md sticky top-0 z-10 shadow-sm">
+    <div
+      class="flex items-center justify-between border-b border-black/5 dark:border-white/10 p-4 md:p-5 bg-white/40 dark:bg-black/20 backdrop-blur-md sticky top-0 z-10 shadow-sm"
+    >
       <h2 class="text-[0.95rem] font-bold text-text-main flex items-center gap-2.5">
         <div class="p-1.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded-lg">
           <Users size={16} strokeWidth={2.5} />
@@ -88,7 +90,9 @@
     <!-- Section Administrateurs & Modérateurs -->
     {#if admins.length > 0}
       <div class="animate-in fade-in slide-in-from-bottom-2 duration-300">
-        <h3 class="text-[0.7rem] font-extrabold uppercase tracking-widest text-text-muted mb-3 px-2 flex items-center gap-2">
+        <h3
+          class="text-[0.7rem] font-extrabold uppercase tracking-widest text-text-muted mb-3 px-2 flex items-center gap-2"
+        >
           <ShieldAlert size={14} class="text-amber-500" strokeWidth={2.5} />
           Administrateurs — {admins.length}
         </h3>
@@ -100,7 +104,9 @@
               <div class="relative shrink-0">
                 <Avatar userId={member.userId} size="sm" />
                 {#if member.status === 'online'}
-                  <span class="absolute bottom-0 right-0 block h-3 w-3 rounded-full ring-2 ring-white dark:ring-[#151B2C] shadow-sm bg-emerald-500"></span>
+                  <span
+                    class="absolute bottom-0 right-0 block h-3 w-3 rounded-full ring-2 ring-white dark:ring-[#151B2C] shadow-sm bg-emerald-500"
+                  ></span>
                 {/if}
               </div>
               <UserName
@@ -115,8 +121,13 @@
 
     <!-- Section Membres Réguliers -->
     {#if regulars.length > 0}
-      <div class="animate-in fade-in slide-in-from-bottom-2 duration-300 delay-75" style="animation-fill-mode: backwards;">
-        <h3 class="text-[0.7rem] font-extrabold uppercase tracking-widest text-text-muted mb-3 px-2 flex items-center gap-2">
+      <div
+        class="animate-in fade-in slide-in-from-bottom-2 duration-300 delay-75"
+        style="animation-fill-mode: backwards;"
+      >
+        <h3
+          class="text-[0.7rem] font-extrabold uppercase tracking-widest text-text-muted mb-3 px-2 flex items-center gap-2"
+        >
           <User size={14} class="text-text-muted/70" strokeWidth={2.5} />
           Membres — {regulars.length}
         </h3>
@@ -128,7 +139,9 @@
               <div class="relative shrink-0">
                 <Avatar userId={member.userId} size="sm" />
                 {#if member.status === 'online'}
-                  <span class="absolute bottom-0 right-0 block h-3 w-3 rounded-full ring-2 ring-white dark:ring-[#151B2C] shadow-sm bg-emerald-500"></span>
+                  <span
+                    class="absolute bottom-0 right-0 block h-3 w-3 rounded-full ring-2 ring-white dark:ring-[#151B2C] shadow-sm bg-emerald-500"
+                  ></span>
                 {/if}
               </div>
               <UserName

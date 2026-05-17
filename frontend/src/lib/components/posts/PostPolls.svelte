@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ChartBar, CircleCheck, Circle, SquareCheck, Square } from 'lucide-svelte';
+  import { ChartBar, CircleCheck, Circle, SquareCheck, Square } from '@lucide/svelte';
   import type { Poll } from '$lib/posts/api';
   import { resolveUserDisplayName, getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { portal } from '$lib/actions/portal';
@@ -115,17 +115,23 @@
             </h4>
             <div class="flex flex-wrap items-center gap-2 mt-1.5">
               {#if poll.multipleChoice}
-                <span class="text-[0.65rem] font-bold text-text-muted uppercase tracking-wider opacity-80">
+                <span
+                  class="text-[0.65rem] font-bold text-text-muted uppercase tracking-wider opacity-80"
+                >
                   Choix multiples autorisés
                 </span>
               {/if}
               {#if poll.endsAt}
-                <span class="text-[0.65rem] font-bold text-amber-600 dark:text-amber-400 opacity-90">
+                <span
+                  class="text-[0.65rem] font-bold text-amber-600 dark:text-amber-400 opacity-90"
+                >
                   ⏱ {pollCountdown(poll.endsAt)}
                 </span>
               {/if}
               {#if hasVoted(poll)}
-                <span class="inline-flex items-center gap-1 text-[0.65rem] font-bold text-emerald-600 dark:text-emerald-400">
+                <span
+                  class="inline-flex items-center gap-1 text-[0.65rem] font-bold text-emerald-600 dark:text-emerald-400"
+                >
                   ✓ Vous avez voté
                 </span>
               {/if}

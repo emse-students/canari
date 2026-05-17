@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Reply, Smile, Pencil, Trash2 } from 'lucide-svelte';
+  import { Reply, Smile, Pencil, Trash2 } from '@lucide/svelte';
 
   interface Props {
     /** When true, positions the toolbar on the right side. */

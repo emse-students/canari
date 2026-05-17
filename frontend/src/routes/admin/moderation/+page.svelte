@@ -1,6 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Pin, Trash2, RefreshCw, ShieldAlert, ChevronDown, ChevronUp, MessageSquare } from 'lucide-svelte';
+  import {
+    Pin,
+    Trash2,
+    RefreshCw,
+    ShieldAlert,
+    ChevronDown,
+    ChevronUp,
+    MessageSquare,
+  } from '@lucide/svelte';
   import {
     getReportedPosts,
     getPost,
@@ -133,7 +141,9 @@
   </header>
 
   {#if error}
-    <div class="p-4 rounded-xl bg-red-50 text-red-700 border border-red-200 text-sm mb-6">{error}</div>
+    <div class="p-4 rounded-xl bg-red-50 text-red-700 border border-red-200 text-sm mb-6">
+      {error}
+    </div>
   {/if}
 
   {#if loading}
@@ -154,13 +164,16 @@
   {:else}
     <div class="space-y-5">
       {#each posts as post (post.id)}
-        <div class="rounded-2xl border border-cn-border bg-white/70 backdrop-blur-sm overflow-hidden shadow-sm">
-
+        <div
+          class="rounded-2xl border border-cn-border bg-white/70 backdrop-blur-sm overflow-hidden shadow-sm"
+        >
           <!-- Post header -->
           <div class="flex items-start justify-between gap-3 p-4 border-b border-cn-border/50">
             <div class="min-w-0 flex-1">
               <p class="text-xs text-text-muted mb-1">
-                {post.associationId ? `Association ${post.associationId.slice(0, 8)}…` : (post.authorId?.slice(0, 8) ?? '?') + '…'} · {formatDate(post.createdAt)}
+                {post.associationId
+                  ? `Association ${post.associationId.slice(0, 8)}…`
+                  : (post.authorId?.slice(0, 8) ?? '?') + '…'} · {formatDate(post.createdAt)}
                 {#if post.pinned}
                   <span class="ml-2 inline-flex items-center gap-0.5 text-amber-600 font-semibold">
                     <Pin size={11} /> Épinglé
@@ -195,9 +208,13 @@
             <div class="space-y-1.5">
               {#each post.reports as report (report.userId + report.createdAt)}
                 <div class="flex items-baseline gap-2 text-xs">
-                  <span class="font-medium text-text-main truncate max-w-[180px] shrink-0">{report.userId.slice(0, 12)}…</span>
+                  <span class="font-medium text-text-main truncate max-w-[180px] shrink-0"
+                    >{report.userId.slice(0, 12)}…</span
+                  >
                   <span class="text-red-700 italic min-w-0 truncate">"{report.reason}"</span>
-                  <span class="ml-auto shrink-0 text-text-muted">{formatDate(report.createdAt)}</span>
+                  <span class="ml-auto shrink-0 text-text-muted"
+                    >{formatDate(report.createdAt)}</span
+                  >
                 </div>
               {/each}
             </div>
@@ -205,7 +222,9 @@
 
           <!-- Feedback banner -->
           {#if feedback[post.id]}
-            <div class="px-4 py-2 text-xs font-medium text-text-muted border-b border-cn-border/50 bg-amber-50/50">
+            <div
+              class="px-4 py-2 text-xs font-medium text-text-muted border-b border-cn-border/50 bg-amber-50/50"
+            >
               {feedback[post.id]}
             </div>
           {/if}
@@ -236,11 +255,19 @@
               {:else}
                 <div class="divide-y divide-cn-border/40">
                   {#each commentsByPost[post.id] as comment (comment.id)}
-                    <div class="flex items-start gap-3 px-4 py-3 {comment.parentId ? 'pl-10 bg-black/[0.02]' : ''}">
+                    <div
+                      class="flex items-start gap-3 px-4 py-3 {comment.parentId
+                        ? 'pl-10 bg-black/[0.02]'
+                        : ''}"
+                    >
                       <div class="flex-1 min-w-0">
                         <p class="text-xs font-medium text-text-muted mb-0.5">
-                          {comment.displayName ?? comment.userId?.slice(0, 10) + '…'} · {formatDate(comment.createdAt)}
-                          {#if comment.parentId}<span class="text-text-muted/50"> (réponse)</span>{/if}
+                          {comment.displayName ?? comment.userId?.slice(0, 10) + '…'} · {formatDate(
+                            comment.createdAt
+                          )}
+                          {#if comment.parentId}<span class="text-text-muted/50">
+                              (réponse)</span
+                            >{/if}
                         </p>
                         <p class="text-sm text-text-main">{comment.text}</p>
                       </div>
@@ -257,7 +284,6 @@
               {/if}
             </div>
           {/if}
-
         </div>
       {/each}
     </div>

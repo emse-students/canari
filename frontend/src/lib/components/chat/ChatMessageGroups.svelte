@@ -4,7 +4,7 @@
   import MessageBubble from '../messages/MessageBubble.svelte';
   import type { ChatMessage, MessageReaction } from '$lib/types';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
-  import { ChevronUp } from 'lucide-svelte';
+  import { ChevronUp } from '@lucide/svelte';
 
   interface MessageGroup {
     type: 'date_separator' | 'time_separator' | 'message';

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Smile } from 'lucide-svelte';
+  import { Smile } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import { scale } from 'svelte/transition';
   import 'emoji-picker-element';
@@ -77,7 +77,9 @@
 
     <!-- Section Émojis Récents -->
     {#if recentEmojis.length > 0}
-      <div class="px-3 py-2 border-b border-black/5 dark:border-white/10 flex items-center gap-1.5 flex-wrap bg-white/20 dark:bg-black/10">
+      <div
+        class="px-3 py-2 border-b border-black/5 dark:border-white/10 flex items-center gap-1.5 flex-wrap bg-white/20 dark:bg-black/10"
+      >
         <span class="text-[0.65rem] font-bold uppercase tracking-widest text-text-muted/80 mr-2">
           Récents
         </span>

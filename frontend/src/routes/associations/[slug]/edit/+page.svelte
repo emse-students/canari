@@ -27,7 +27,7 @@
     ArrowLeft,
     Building2,
     AlertTriangle,
-  } from 'lucide-svelte';
+  } from '@lucide/svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
   import UserAutocomplete from '$lib/components/shared/UserAutocomplete.svelte';
@@ -100,8 +100,7 @@
       const mine = members.find((m) => m.userId === uid);
       const canEdit =
         isGlobalAdmin() ||
-        (!!mine &&
-          (mine.permission === 1 || mine.role === 'admin' || mine.role === 'owner'));
+        (!!mine && (mine.permission === 1 || mine.role === 'admin' || mine.role === 'owner'));
       if (!canEdit) {
         await goto(`/associations/${encodeURIComponent(slug)}`);
         return;
@@ -185,8 +184,7 @@
   async function handleStripeOnboarding() {
     if (!asso) return;
     stripeLoading = true;
-    const origin =
-      typeof window !== 'undefined' ? window.location.origin : '';
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
     const base = `${origin}/associations/${encodeURIComponent(asso.slug)}/edit`;
     try {
       const result = await startStripeOnboarding(asso.id, asso.stripeAccountId ?? undefined, {
@@ -316,69 +314,76 @@
     </nav>
 
     {#if editSection === 'profile'}
-    <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-5 shadow-sm">
-      <h2 class="text-lg font-bold text-text-main tracking-tight">Profil et logo</h2>
-      <div class="flex flex-wrap items-start gap-4">
-        <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="lg" />
-        <div class="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onclick={() => (showCropper = !showCropper)}
-            disabled={logoBusy}
-            class="rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold hover:bg-cn-bg disabled:opacity-50"
-          >
-            {showCropper ? 'Fermer le recadrage' : 'Changer le logo'}
-          </button>
-          {#if asso.logoUrl}
+      <div
+        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-5 shadow-sm"
+      >
+        <h2 class="text-lg font-bold text-text-main tracking-tight">Profil et logo</h2>
+        <div class="flex flex-wrap items-start gap-4">
+          <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="lg" />
+          <div class="flex flex-wrap gap-2">
             <button
               type="button"
-              onclick={handleRemoveLogo}
+              onclick={() => (showCropper = !showCropper)}
               disabled={logoBusy}
-              class="rounded-xl px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
+              class="rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold hover:bg-cn-bg disabled:opacity-50"
             >
-              Retirer le logo
+              {showCropper ? 'Fermer le recadrage' : 'Changer le logo'}
             </button>
+            {#if asso.logoUrl}
+              <button
+                type="button"
+                onclick={handleRemoveLogo}
+                disabled={logoBusy}
+                class="rounded-xl px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
+              >
+                Retirer le logo
+              </button>
+            {/if}
+          </div>
+        </div>
+
+        {#if showCropper}
+          <AssociationLogoCropper
+            onExport={onLogoExported}
+            onCancel={() => (showCropper = false)}
+          />
+        {/if}
+
+        <Input label="Nom" bind:value={editName} />
+        <Textarea
+          label="Description courte (texte brut, sous le titre)"
+          bind:value={editDescription}
+          rows={2}
+        />
+        <Textarea label="Bio (markdown)" bind:value={editBioMarkdown} rows={10} />
+        <div class="rounded-xl border border-cn-border/70 bg-cn-bg/40 p-3 text-xs text-text-muted">
+          <p class="font-semibold text-text-main mb-1">Aperçu markdown</p>
+          {#if editBioMarkdown.trim()}
+            <div class="prose prose-sm dark:prose-invert max-w-none">
+              <SvelteMarkdown source={editBioMarkdown} options={{ gfm: true, breaks: true }} />
+            </div>
+          {:else}
+            <p>(vide)</p>
           {/if}
         </div>
-      </div>
-
-      {#if showCropper}
-        <AssociationLogoCropper onExport={onLogoExported} onCancel={() => (showCropper = false)} />
-      {/if}
-
-      <Input label="Nom" bind:value={editName} />
-      <Textarea
-        label="Description courte (texte brut, sous le titre)"
-        bind:value={editDescription}
-        rows={2}
-      />
-      <Textarea label="Bio (markdown)" bind:value={editBioMarkdown} rows={10} />
-      <div class="rounded-xl border border-cn-border/70 bg-cn-bg/40 p-3 text-xs text-text-muted">
-        <p class="font-semibold text-text-main mb-1">Aperçu markdown</p>
-        {#if editBioMarkdown.trim()}
-          <div class="prose prose-sm dark:prose-invert max-w-none">
-            <SvelteMarkdown source={editBioMarkdown} options={{ gfm: true, breaks: true }} />
-          </div>
-        {:else}
-          <p>(vide)</p>
+        {#if settingsError}
+          <div class="text-sm text-red-600">{settingsError}</div>
         {/if}
+        <button
+          type="button"
+          onclick={handleSaveProfile}
+          disabled={saving}
+          class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover disabled:opacity-50"
+        >
+          {saving ? 'Enregistrement…' : 'Enregistrer le profil'}
+        </button>
       </div>
-      {#if settingsError}
-        <div class="text-sm text-red-600">{settingsError}</div>
-      {/if}
-      <button
-        type="button"
-        onclick={handleSaveProfile}
-        disabled={saving}
-        class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover disabled:opacity-50"
-      >
-        {saving ? 'Enregistrement…' : 'Enregistrer le profil'}
-      </button>
-    </div>
     {/if}
 
     {#if editSection === 'payments' && (isAdmin || isGlobalAdminUser)}
-      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-4 shadow-sm">
+      <div
+        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-4 shadow-sm"
+      >
         <h2 class="text-lg font-bold text-text-main flex items-center gap-2 tracking-tight">
           <CreditCard size={20} />
           Paiements Stripe
@@ -407,7 +412,9 @@
     {/if}
 
     {#if editSection === 'members' && (isAdmin || isGlobalAdminUser)}
-      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-5 shadow-sm">
+      <div
+        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-5 shadow-sm"
+      >
         <div>
           <h2 class="text-lg font-bold text-text-main tracking-tight">Membres</h2>
           <p class="text-sm text-text-muted mt-1">
@@ -418,7 +425,9 @@
           {#each members as member (member.id)}
             <AssociationMemberRow
               {member}
-              displayName={resolvedMemberNames[member.userId] ?? member.displayName ?? member.userId}
+              displayName={resolvedMemberNames[member.userId] ??
+                member.displayName ??
+                member.userId}
               manage={true}
               onRoleChange={handleChangeRole}
               onRemove={handleRemoveMember}

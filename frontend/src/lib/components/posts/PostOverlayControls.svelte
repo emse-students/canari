@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Pin, PinOff, Pencil, Trash2, Flag } from 'lucide-svelte';
+  import { Pin, PinOff, Pencil, Trash2, Flag } from '@lucide/svelte';
   import { slide } from 'svelte/transition';
 
   /**

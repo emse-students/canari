@@ -21,7 +21,7 @@
     UserCog,
     Bell,
     Shield,
-  } from 'lucide-svelte';
+  } from '@lucide/svelte';
   import { goto } from '$app/navigation';
   import { clearAuth } from '$lib/stores/auth';
   import { apiFetch } from '$lib/utils/apiFetch';

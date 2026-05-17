@@ -1,5 +1,13 @@
 <script lang="ts">
-  import { CheckCircle2, ExternalLink, CalendarPlus, Ticket, CreditCard, XCircle, ArrowRight } from 'lucide-svelte';
+  import {
+    CheckCircle2,
+    ExternalLink,
+    CalendarPlus,
+    Ticket,
+    CreditCard,
+    XCircle,
+    ArrowRight,
+  } from '@lucide/svelte';
   import type { EventButton } from '$lib/posts/api';
   import { FORM_CARD_PLACEHOLDER_MIN_HEIGHT } from '$lib/utils/mediaLayout';
 
@@ -32,8 +40,9 @@
       {@const isFull = Boolean(btn.capacity && btn.registrants.length >= btn.capacity)}
       {@const btnInfo = btnFormInfos[btn.id]}
 
-      <div class="relative overflow-hidden rounded-2xl border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 backdrop-blur-xl shadow-sm p-4 transition-all hover:shadow-md">
-
+      <div
+        class="relative overflow-hidden rounded-2xl border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 backdrop-blur-xl shadow-sm p-4 transition-all hover:shadow-md"
+      >
         <!-- Rendu si l'inscription passe par un Formulaire externe/interne -->
         {#if btn.formId}
           {#if !btnInfo}
@@ -44,7 +53,9 @@
             ></div>
           {:else if btnInfo.submitted}
             <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div class="flex items-center gap-2.5 text-emerald-600 dark:text-emerald-400 font-bold">
+              <div
+                class="flex items-center gap-2.5 text-emerald-600 dark:text-emerald-400 font-bold"
+              >
                 <div class="p-1.5 rounded-full bg-emerald-500/10">
                   <CheckCircle2 size={18} strokeWidth={2.5} />
                 </div>
@@ -65,14 +76,19 @@
                   {btn.label}
                 </span>
                 {#if btn.requiresPayment && !isFull}
-                  <span class="text-xs font-bold text-amber-600 dark:text-amber-500 flex items-center gap-1 mt-0.5">
-                    <CreditCard size={14} strokeWidth={2.5} /> {formatCurrency(btn.amountCents, btn.currency)}
+                  <span
+                    class="text-xs font-bold text-amber-600 dark:text-amber-500 flex items-center gap-1 mt-0.5"
+                  >
+                    <CreditCard size={14} strokeWidth={2.5} />
+                    {formatCurrency(btn.amountCents, btn.currency)}
                   </span>
                 {/if}
               </div>
 
               {#if isFull}
-                <div class="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-red-500/10 text-red-600 dark:text-red-400 font-bold text-sm w-full sm:w-auto">
+                <div
+                  class="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-red-500/10 text-red-600 dark:text-red-400 font-bold text-sm w-full sm:w-auto"
+                >
                   <XCircle size={16} strokeWidth={2.5} /> Complet
                 </div>
               {:else}
@@ -86,7 +102,7 @@
             </div>
           {/if}
 
-        <!-- Rendu si c'est une inscription en un clic (Event direct) -->
+          <!-- Rendu si c'est une inscription en un clic (Event direct) -->
         {:else}
           <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div class="flex flex-col gap-0.5">
@@ -96,12 +112,17 @@
               </span>
               <div class="flex flex-wrap items-center gap-2 mt-1">
                 {#if btn.requiresPayment && !isRegistered}
-                  <span class="text-xs font-bold text-amber-600 dark:text-amber-500 flex items-center gap-1 bg-amber-500/10 px-2 py-0.5 rounded-md">
-                    <CreditCard size={12} strokeWidth={2.5} /> {formatCurrency(btn.amountCents, btn.currency)}
+                  <span
+                    class="text-xs font-bold text-amber-600 dark:text-amber-500 flex items-center gap-1 bg-amber-500/10 px-2 py-0.5 rounded-md"
+                  >
+                    <CreditCard size={12} strokeWidth={2.5} />
+                    {formatCurrency(btn.amountCents, btn.currency)}
                   </span>
                 {/if}
                 {#if btn.capacity && !isRegistered}
-                  <span class="text-xs font-bold text-text-muted bg-black/5 dark:bg-white/10 px-2 py-0.5 rounded-md">
+                  <span
+                    class="text-xs font-bold text-text-muted bg-black/5 dark:bg-white/10 px-2 py-0.5 rounded-md"
+                  >
                     {btn.registrants.length} / {btn.capacity} places
                   </span>
                 {/if}
@@ -110,11 +131,15 @@
 
             <div class="flex items-center w-full sm:w-auto">
               {#if isRegistered}
-                <div class="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold text-sm w-full">
+                <div
+                  class="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold text-sm w-full"
+                >
                   <CheckCircle2 size={18} strokeWidth={2.5} /> Inscrit
                 </div>
               {:else if isFull}
-                <div class="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-red-500/10 text-red-600 dark:text-red-400 font-bold text-sm w-full">
+                <div
+                  class="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-red-500/10 text-red-600 dark:text-red-400 font-bold text-sm w-full"
+                >
                   <XCircle size={16} strokeWidth={2.5} /> Complet
                 </div>
               {:else}
@@ -129,7 +154,6 @@
             </div>
           </div>
         {/if}
-
       </div>
     {/each}
   </div>

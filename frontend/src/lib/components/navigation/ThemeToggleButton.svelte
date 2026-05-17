@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Moon, Sun } from 'lucide-svelte';
+  import { Moon, Sun } from '@lucide/svelte';
 
   interface Props {
     /** Whether dark mode is currently active. */

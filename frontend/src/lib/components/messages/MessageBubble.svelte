@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { EllipsisVertical, Info, Hash } from 'lucide-svelte';
+  import { EllipsisVertical, Info, Hash } from '@lucide/svelte';
   import { MediaService } from '$lib/media';
   import type { MediaRef } from '$lib/media';
   import { parseEnvelope } from '$lib/envelope';
@@ -154,7 +154,10 @@
   let replySenderDisplayName = $state('');
   $effect(() => {
     const sid = effectiveReplyTo?.senderId;
-    if (!sid) { replySenderDisplayName = ''; return; }
+    if (!sid) {
+      replySenderDisplayName = '';
+      return;
+    }
     replySenderDisplayName = getUserDisplayNameSync(sid, sid);
     resolveUserDisplayName(sid).then((resolved) => {
       if (resolved && effectiveReplyTo?.senderId === sid) replySenderDisplayName = resolved;
@@ -325,7 +328,9 @@
         <Hash size={15} strokeWidth={2.5} class="flex-shrink-0" />
         <span class="text-xs font-bold truncate">{channelInvite.channelName}</span>
         {#if channelInvite.workspaceName}
-          <span class="text-xs text-text-muted font-medium truncate">· {channelInvite.workspaceName}</span>
+          <span class="text-xs text-text-muted font-medium truncate"
+            >· {channelInvite.workspaceName}</span
+          >
         {/if}
       </div>
       <p class="text-xs text-text-muted leading-relaxed">
@@ -393,12 +398,14 @@
           toggleInfo(e as unknown as MouseEvent);
         }
       }}
-      class="{isMediaOnly ? 'p-0' : 'px-4 py-2.5'} cursor-pointer min-w-0 {isMediaOnly ? '' : getBubbleShapeClass(groupPosition, isOwn)} transition-shadow duration-200
+      class="{isMediaOnly ? 'p-0' : 'px-4 py-2.5'} cursor-pointer min-w-0 {isMediaOnly
+        ? ''
+        : getBubbleShapeClass(groupPosition, isOwn)} transition-shadow duration-200
       {isMediaOnly
         ? ''
-        : (isOwn
+        : isOwn
           ? 'bg-gradient-to-br from-amber-400 to-amber-500 text-cn-dark shadow-md shadow-amber-500/20 hover:shadow-lg hover:shadow-amber-500/30'
-          : 'bg-white/70 dark:bg-black/40 backdrop-blur-xl border border-black/5 dark:border-white/10 text-text-main shadow-sm hover:shadow-md')}
+          : 'bg-white/70 dark:bg-black/40 backdrop-blur-xl border border-black/5 dark:border-white/10 text-text-main shadow-sm hover:shadow-md'}
       {isHighlighted
         ? 'ring-2 ring-amber-500/80 ring-offset-2 ring-offset-transparent animate-pulse'
         : ''}
@@ -447,9 +454,17 @@
       hasMedia={!!mediaRef}
       {showEmojiPicker}
       onReply={onReply ? () => onReply!(messageId) : undefined}
-      onToggleEmojiPicker={onReact ? () => { showEmojiPicker = !showEmojiPicker; } : undefined}
+      onToggleEmojiPicker={onReact
+        ? () => {
+            showEmojiPicker = !showEmojiPicker;
+          }
+        : undefined}
       onEdit={!isDeleted && isOwn && !mediaRef && onEdit ? startInlineEdit : undefined}
-      onDelete={!isDeleted && isOwn && onDelete ? () => { showDeleteModal = true; } : undefined}
+      onDelete={!isDeleted && isOwn && onDelete
+        ? () => {
+            showDeleteModal = true;
+          }
+        : undefined}
     />
 
     <MessageReactions

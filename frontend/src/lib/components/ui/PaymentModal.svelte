@@ -1,6 +1,6 @@
 <script lang="ts">
   import { loadStripe } from '@stripe/stripe-js';
-  import { CreditCard, X, Loader2, CheckCircle2, AlertCircle, ChevronRight } from 'lucide-svelte';
+  import { CreditCard, X, Loader2, CheckCircle2, AlertCircle, ChevronRight } from '@lucide/svelte';
   import type { PaymentMethod } from '$lib/stores/user';
 
   interface Props {

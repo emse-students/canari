@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
-  import { X } from 'lucide-svelte';
+  import { X } from '@lucide/svelte';
   import { fly } from 'svelte/transition';
   import { portal } from '$lib/actions/portal';
   import { pushHistoryOverlay, closeHistoryOverlayFromUi } from '$lib/utils/historyOverlayStack';
@@ -66,7 +66,9 @@
         onkeydown={(e) => e.stopPropagation()}
       >
         {#if title}
-          <div class="px-6 py-4 border-b border-cn-border flex items-center justify-between shrink-0">
+          <div
+            class="px-6 py-4 border-b border-cn-border flex items-center justify-between shrink-0"
+          >
             <h2 class="text-base font-semibold text-cn-dark">{title}</h2>
             <button
               onclick={dismiss}

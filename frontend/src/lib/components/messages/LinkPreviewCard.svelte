@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ExternalLink } from 'lucide-svelte';
+  import { ExternalLink } from '@lucide/svelte';
 
   interface Props {
     /** The URL whose Open Graph / meta preview should be fetched and displayed. */
@@ -109,11 +109,15 @@
 
   <!-- Section Texte -->
   <div class="min-w-0 flex-1 py-1">
-    <p class="text-[10px] sm:text-xs uppercase tracking-wider font-bold text-text-muted mb-1 truncate">
+    <p
+      class="text-[10px] sm:text-xs uppercase tracking-wider font-bold text-text-muted mb-1 truncate"
+    >
       {preview?.siteName || parsed.host}
     </p>
 
-    <p class="text-sm font-bold text-text-main leading-snug truncate group-hover:text-amber-600 dark:group-hover:text-amber-400 transition-colors duration-300">
+    <p
+      class="text-sm font-bold text-text-main leading-snug truncate group-hover:text-amber-600 dark:group-hover:text-amber-400 transition-colors duration-300"
+    >
       {preview?.title || parsed.path || parsed.href}
     </p>
 
@@ -126,7 +130,9 @@
   </div>
 
   <!-- Icône d'ouverture (remplace le texte) -->
-  <div class="shrink-0 pl-1 pr-2 opacity-40 text-text-muted group-hover:text-amber-500 group-hover:opacity-100 transition-all duration-300 group-hover:translate-x-1">
+  <div
+    class="shrink-0 pl-1 pr-2 opacity-40 text-text-muted group-hover:text-amber-500 group-hover:opacity-100 transition-all duration-300 group-hover:translate-x-1"
+  >
     <ExternalLink size={20} strokeWidth={2.5} />
   </div>
 </a>

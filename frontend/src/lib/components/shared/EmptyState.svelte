@@ -1,9 +1,9 @@
 <script lang="ts">
-  import type { ComponentType } from 'svelte';
+  import type { Component } from 'svelte';
 
   interface Props {
     /** Lucide (or compatible) icon component rendered above the title. */
-    icon: ComponentType;
+    icon: Component;
     /** Pixel size passed to the icon component. */
     iconSize?: number;
     /** Bold heading displayed below the icon. */

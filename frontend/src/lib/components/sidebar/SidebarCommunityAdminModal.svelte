@@ -1,6 +1,6 @@
 <script lang="ts">
   import { SvelteMap } from 'svelte/reactivity';
-  import { Settings, Users, Trash2, ShieldCheck, Upload, Loader } from 'lucide-svelte';
+  import { Settings, Users, Trash2, ShieldCheck, Upload, Loader } from '@lucide/svelte';
   import Modal from '../shared/Modal.svelte';
   import UserAutocomplete from '../shared/UserAutocomplete.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';

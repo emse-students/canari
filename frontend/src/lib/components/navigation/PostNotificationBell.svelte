@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Bell } from 'lucide-svelte';
+  import { Bell } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import { portal } from '$lib/actions/portal';
   import { goto } from '$app/navigation';
@@ -106,9 +106,9 @@
                 <div class="min-w-0 flex-1">
                   <p class="text-sm leading-snug line-clamp-2">
                     {#if notif.type === 'reaction'}
-                      {notif.actorName || 'Quelqu\'un'} a réagi à votre publication
+                      {notif.actorName || "Quelqu'un"} a réagi à votre publication
                     {:else if notif.type === 'mention'}
-                      {notif.actorName || 'Quelqu\'un'} vous a mentionné
+                      {notif.actorName || "Quelqu'un"} vous a mentionné
                     {:else}
                       {notif.text}
                     {/if}

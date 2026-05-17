@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, tick } from 'svelte';
   import jsQR from 'jsqr';
-  import { Camera, Copy, QrCode, Smartphone, Loader2, X, AlertCircle, Info } from 'lucide-svelte';
+  import { Camera, Copy, QrCode, Smartphone, Loader2, X, AlertCircle, Info } from '@lucide/svelte';
   import { portal } from '$lib/actions/portal';
   import { fade, fly } from 'svelte/transition';
   import { pushHistoryOverlay, closeHistoryOverlayFromUi } from '$lib/utils/historyOverlayStack';
