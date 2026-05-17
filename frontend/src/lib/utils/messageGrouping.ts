@@ -1,6 +1,7 @@
 import { format, isToday, isYesterday } from 'date-fns';
 import { fr } from 'date-fns/locale';
 import type { ChatMessage } from '$lib/types';
+import { formatDateSafe, toValidDate } from '$lib/utils/dates';
 
 /**
  * A discriminated union representing one visual row in the message list.
@@ -34,7 +35,7 @@ export function groupMessages(messages: ChatMessage[]): MessageGroup[] {
 
   // Performance optimization: Using numeric date parts avoids heavy date-fns format() calls in the loop
   for (const msg of messages) {
-    const d = msg.timestamp;
+    const d = toValidDate(msg.timestamp);
     // Format: YYYY-MM-DD
     const msgDate = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
     const msgTime = d.getTime();
@@ -43,7 +44,7 @@ export function groupMessages(messages: ChatMessage[]): MessageGroup[] {
     if (lastDate !== msgDate) {
       groups.push({
         type: 'date_separator',
-        date: formatDateSeparator(msg.timestamp),
+        date: formatDateSeparator(d),
       });
       lastDate = msgDate;
       lastTimestamp = null; // Reset time gap check for new day
@@ -53,7 +54,7 @@ export function groupMessages(messages: ChatMessage[]): MessageGroup[] {
     if (lastTimestamp !== null && !msg.isSystem && msgTime - lastTimestamp > TIME_GAP_MS) {
       groups.push({
         type: 'time_separator',
-        time: format(msg.timestamp, 'HH:mm'),
+        time: formatDateSafe(d, 'HH:mm'),
       });
     }
 

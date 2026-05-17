@@ -16,6 +16,7 @@ import type {
   ChatMessage,
 } from '$lib/types';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
+import { toValidDate } from '$lib/utils/dates';
 import {
   fetchUniqueGroupMembers,
   removeMemberAndBroadcast,
@@ -302,7 +303,7 @@ export function useConversations() {
             id: msg.id,
             senderId,
             content,
-            timestamp: msg.createdAt ? new SvelteDate(msg.createdAt) : new SvelteDate(),
+            timestamp: toValidDate(msg.createdAt),
             isOwn: senderId === ctx.userId.toLowerCase(),
           });
         }

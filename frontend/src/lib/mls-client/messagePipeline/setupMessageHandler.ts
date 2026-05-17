@@ -5,6 +5,7 @@ import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
 import { ChannelService } from '$lib/services/ChannelService';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
+import { toValidDate } from '$lib/utils/dates';
 import { recoverDeadGroup } from '$lib/utils/chat/recovery';
 import {
   installWasmDuplicateDeliveryLogInterceptor,
@@ -217,7 +218,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
 
           addMessageToChat(sender, content, convoKey, {
             messageId: appMessageId || data.messageId || data.id,
-            timestamp: new Date(data.createdAt),
+            timestamp: toValidDate(data.createdAt),
             skipDbSave: true,
           }).catch((e) => console.error(e));
         } else {

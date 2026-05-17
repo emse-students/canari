@@ -10,6 +10,7 @@ import type { IMlsService } from '$lib/mlsService';
 import { decodeAppMessage } from '$lib/proto/codec';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
+import { toValidDate } from '$lib/utils/dates';
 
 /** Return the localStorage key used to persist the set of already-processed ciphertext fingerprints for a group. */
 function seenHistoryKey(userId: string, groupId: string): string {
@@ -64,7 +65,7 @@ export function mapStoredMessagesToChatMessages(storedMessages: StoredMessage[],
       id: m.id,
       senderId: m.senderId,
       content: m.content,
-      timestamp: new Date(m.timestamp),
+      timestamp: toValidDate(m.timestamp),
       isOwn: m.senderId.toLowerCase() === userId.toLowerCase(),
       isSystem: m.senderId === 'system',
       readBy: m.readBy,
@@ -180,7 +181,7 @@ export async function replayConversationHistory(params: {
             senderId: msg.sender_id,
             content: envelope.content,
             ...envelope.options,
-            timestamp: new Date(msg.timestamp),
+            timestamp: toValidDate(msg.timestamp),
           });
           addedMsg++;
           mlsUpdated = true;
@@ -302,7 +303,7 @@ export async function replayConversationHistory(params: {
               content: systemText,
               isSystem: true,
               messageId: parsed.messageId || undefined,
-              timestamp: new Date(msg.timestamp),
+              timestamp: toValidDate(msg.timestamp),
             });
             addedMsg++;
           }
