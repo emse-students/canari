@@ -49,9 +49,11 @@
 
 {#if Object.keys(groupedReactions).length > 0}
   <div
-    class="mt-1.5 flex max-w-full min-w-0 gap-1.5 overflow-x-auto flex-nowrap px-0.5 scrollbar-thin {isOwn
-      ? 'justify-end'
-      : 'justify-start'}"
+    class="absolute top-full z-10 flex max-w-[min(70vw,20rem)] gap-1 overflow-x-auto flex-nowrap px-0.5 scrollbar-thin {isOwn
+      ? 'right-0 justify-end'
+      : 'left-0 justify-start'} -mt-1"
+    role="group"
+    aria-label="Réactions au message"
   >
     {#each Object.entries(groupedReactions) as [emoji, users] (emoji)}
       <!-- On vérifie si l'utilisateur actuel a réagi avec cet émoji -->

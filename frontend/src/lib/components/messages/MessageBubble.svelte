@@ -179,6 +179,8 @@
     )
   );
 
+  const hasReactions = $derived(Object.keys(groupedReactions).length > 0);
+
   function confirmEdit() {
     const trimmed = editText.trim();
     if (trimmed && trimmed !== textContent.trim()) {
@@ -369,7 +371,7 @@
         showMobileActions = false;
       },
     }}
-    class="relative group"
+    class="group relative flex w-fit max-w-full flex-col {isOwn ? 'items-end' : 'items-start'}"
   >
     <!-- Bouton Mobile (Ellipsis) -->
     <button
@@ -383,9 +385,10 @@
       <EllipsisVertical size={16} />
     </button>
 
-    <!-- Bulle de message principale -->
-    <div
-      role="button"
+    <div class="relative w-fit max-w-full {hasReactions ? 'pb-5' : ''}">
+      <!-- Bulle de message principale -->
+      <div
+        role="button"
       tabindex="0"
       onclick={handleBubbleClick}
       onpointerdown={beginLongPress}
@@ -403,7 +406,7 @@
           toggleInfo(e as unknown as MouseEvent);
         }
       }}
-      class="{isMediaOnly ? 'p-0' : 'px-4 py-2.5'} cursor-pointer min-w-0 {isMediaOnly
+      class="{isMediaOnly ? 'p-0' : 'px-4 py-2.5'} w-fit max-w-full cursor-pointer {isMediaOnly
         ? ''
         : getBubbleShapeClass(groupPosition, isOwn)} transition-shadow duration-200
       {isMediaOnly
@@ -461,31 +464,32 @@
       />
     </div>
 
-    <MessageBubbleToolbar
-      {isOwn}
-      {isDeleted}
-      hasMedia={!!mediaRef}
-      {showEmojiPicker}
-      onReply={onReply ? () => onReply!(messageId) : undefined}
-      onToggleEmojiPicker={onReact
-        ? () => {
-            showEmojiPicker = !showEmojiPicker;
-          }
-        : undefined}
-      onEdit={!isDeleted && isOwn && !mediaRef && onEdit ? startInlineEdit : undefined}
-      onDelete={!isDeleted && isOwn && onDelete
-        ? () => {
-            showDeleteModal = true;
-          }
-        : undefined}
-    />
+      <MessageBubbleToolbar
+        {isOwn}
+        {isDeleted}
+        hasMedia={!!mediaRef}
+        {showEmojiPicker}
+        onReply={onReply ? () => onReply!(messageId) : undefined}
+        onToggleEmojiPicker={onReact
+          ? () => {
+              showEmojiPicker = !showEmojiPicker;
+            }
+          : undefined}
+        onEdit={!isDeleted && isOwn && !mediaRef && onEdit ? startInlineEdit : undefined}
+        onDelete={!isDeleted && isOwn && onDelete
+          ? () => {
+              showDeleteModal = true;
+            }
+          : undefined}
+      />
 
-    <MessageReactions
-      {groupedReactions}
-      {isOwn}
-      {currentUserId}
-      onReact={(emoji) => onReact?.(messageId, emoji)}
-    />
+      <MessageReactions
+        {groupedReactions}
+        {isOwn}
+        {currentUserId}
+        onReact={(emoji) => onReact?.(messageId, emoji)}
+      />
+    </div>
 
     <MessageMetadata
       {isEdited}
