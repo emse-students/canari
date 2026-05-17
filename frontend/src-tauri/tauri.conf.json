@@ -32,6 +32,18 @@
         {
           "scheme": ["fr.emse.canari"],
           "host": "stripe"
+        },
+        {
+          "scheme": ["fr.emse.canari"],
+          "host": "chat"
+        },
+        {
+          "scheme": ["fr.emse.canari"],
+          "host": "post"
+        },
+        {
+          "scheme": ["fr.emse.canari"],
+          "host": "form"
         }
       ]
     }

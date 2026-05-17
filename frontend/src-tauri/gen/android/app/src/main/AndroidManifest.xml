@@ -65,6 +65,20 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="fr.emse.canari" android:host="stripe" />
             </intent-filter>
+            <!-- Deep link: post notification → fr.emse.canari://post/{postId} -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="fr.emse.canari" android:host="post" />
+            </intent-filter>
+            <!-- Deep link: form notification → fr.emse.canari://form/{formId} -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="fr.emse.canari" android:host="form" />
+            </intent-filter>
             <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->
             <intent-filter >
                 <action android:name="android.intent.action.VIEW" />
@@ -74,10 +88,6 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="fr.emse.canari" />
                 <data android:host="callback" />
-                
-                
-                
-                
             </intent-filter>
             <intent-filter >
                 <action android:name="android.intent.action.VIEW" />
@@ -87,10 +97,30 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="fr.emse.canari" />
                 <data android:host="stripe" />
-                
-                
-                
-                
+            </intent-filter>
+            <intent-filter >
+                <action android:name="android.intent.action.VIEW" />
+                <action android:name="org.chromium.arc.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="fr.emse.canari" />
+                <data android:host="chat" />
+            </intent-filter>
+            <intent-filter >
+                <action android:name="android.intent.action.VIEW" />
+                <action android:name="org.chromium.arc.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="fr.emse.canari" />
+                <data android:host="post" />
+            </intent-filter>
+            <intent-filter >
+                <action android:name="android.intent.action.VIEW" />
+                <action android:name="org.chromium.arc.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="fr.emse.canari" />
+                <data android:host="form" />
             </intent-filter>
             <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->
         </activity>
