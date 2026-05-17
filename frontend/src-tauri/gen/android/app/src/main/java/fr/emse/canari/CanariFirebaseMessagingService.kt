@@ -5,6 +5,12 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
 import android.os.Build
 import android.util.Base64
 import android.util.Log
@@ -24,10 +30,10 @@ import java.net.URL
 class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
     companion object {
-        const val TAG          = "CanariFCM"
-        const val CHANNEL_ID   = "canari_messages"
-        const val CHANNEL_NAME = "Messages Canari"
-        const val PREFS_NAME   = "canari_prefs"
+        const val TAG           = "CanariFCM"
+        const val CHANNEL_ID    = "canari_messages"
+        const val CHANNEL_NAME  = "Messages Canari"
+        const val PREFS_NAME    = "canari_prefs"
         const val KEY_FCM_TOKEN = "fcm_token"
         private val notificationIdCounter = java.util.concurrent.atomic.AtomicInteger(0)
     }
@@ -46,8 +52,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         Log.i(TAG, "onNewToken: nouveau token FCM reçu")
         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit().putString(KEY_FCM_TOKEN, token).apply()
-        // Also write to file so the Rust get_fcm_token command can read it.
-        // app_data_dir() in Rust resolves to activity.dataDir (parent of filesDir).
         try {
             File(filesDir.parentFile, "fcm_token.txt").writeText(token)
         } catch (e: Exception) {
@@ -60,7 +64,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val data = remoteMessage.data
         Log.d(TAG, "onMessageReceived: action=${data["action"]} groupId=${data["groupId"]} queuedMessageId=${data["queuedMessageId"]} hasInlineProto=${!data["proto"].isNullOrEmpty()}")
 
-        // 1. Vérifie si on doit déclencher un travail lourd (ex: envoyer un Welcome, traiter la queue)
         if (data["action"] == "process_queue") {
             Log.d(TAG, "action=process_queue → enqueue MlsBackgroundWorker")
             val workRequest = OneTimeWorkRequestBuilder<MlsBackgroundWorker>()
@@ -71,19 +74,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 )
                 .build()
             WorkManager.getInstance(this).enqueue(workRequest)
-
-            // Si c'est juste un ping de synchro (pas de message à afficher), on s'arrête là
             if (!data.containsKey("groupId")) {
                 Log.d(TAG, "process_queue sans groupId → pas de notification à afficher")
                 return
             }
         }
 
-        // 2. Traitement classique d'affichage de notification
         val thread = Thread {
             val groupId         = data["groupId"] ?: ""
-            val groupName       = data["groupName"]?.takeIf { it.isNotEmpty() } ?: groupId
-            val senderName      = data["senderName"]?.takeIf { it.isNotEmpty() } ?: groupName
+            val groupName       = data["groupName"]?.takeIf { it.isNotEmpty() } ?: ""
+            val senderName      = data["senderName"]?.takeIf { it.isNotEmpty() } ?: ""
+            val senderId        = data["senderId"] ?: ""
             val queuedMessageId = data["queuedMessageId"]
             val inlineProto     = data["proto"]?.takeIf { it.isNotEmpty() }
 
@@ -91,11 +92,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val body = tryDecrypt(queuedMessageId, groupId, inlineProto)
                 ?: buildFallbackText(senderName).also { Log.w(TAG, "Déchiffrement échoué → fallback: $it") }
 
-            Log.d(TAG, "showNotification: body=${body.take(60)}")
-            showNotification(senderName, body, data)
+            val avatarBitmap = if (senderId.isNotEmpty()) fetchAvatar(senderId) else null
+
+            Log.d(TAG, "showNotification: title=${if (groupName.isNotEmpty() && groupName != senderName) groupName else senderName} body=${body.take(60)}")
+            showNotification(senderName, groupName, body, avatarBitmap, data)
         }
         thread.start()
-        thread.join(8_000)
+        thread.join(10_000)
     }
 
     private fun tryDecrypt(
@@ -220,15 +223,66 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         null
     }
 
+    private fun fetchAvatar(userId: String): Bitmap? {
+        val ctx = loadPushContext() ?: return null
+        return try {
+            val url = URL("${ctx.baseUrl}/api/users/${java.net.URLEncoder.encode(userId, "UTF-8")}/avatar")
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                connectTimeout = 2_000
+                readTimeout    = 2_000
+                requestMethod  = "GET"
+                instanceFollowRedirects = true
+            }
+            if (conn.responseCode == 200) {
+                val bmp = BitmapFactory.decodeStream(conn.inputStream)
+                conn.disconnect()
+                bmp?.let { circleCrop(it) }
+            } else {
+                Log.d(TAG, "fetchAvatar: HTTP ${conn.responseCode} pour $userId")
+                conn.disconnect()
+                null
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "fetchAvatar: ${e.message}")
+            null
+        }
+    }
+
+    private fun circleCrop(src: Bitmap): Bitmap {
+        val size = minOf(src.width, src.height)
+        val output = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(output)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        canvas.drawCircle(size / 2f, size / 2f, size / 2f, paint)
+        paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
+        val dx = (size - src.width) / 2f
+        val dy = (size - src.height) / 2f
+        canvas.drawBitmap(src, dx, dy, paint)
+        src.recycle()
+        return output
+    }
+
     private fun buildFallbackText(senderName: String): String =
         if (senderName.isNotEmpty()) "Nouveau message de $senderName"
         else "Vous avez reçu un message chiffré"
 
-    private fun showNotification(title: String, body: String, data: Map<String, String>) {
+    private fun showNotification(
+        senderName: String,
+        groupName: String,
+        body: String,
+        largeIcon: Bitmap?,
+        data: Map<String, String>,
+    ) {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         ensureNotificationChannel(manager)
 
+        val isGroup    = groupName.isNotEmpty() && groupName != senderName
+        val notifTitle = if (isGroup) groupName else senderName.ifEmpty { "Canari" }
+        val notifBody  = if (isGroup && senderName.isNotEmpty()) "$senderName: $body" else body
+
         val groupId = data["groupId"] ?: ""
+        val notifId = if (groupId.isNotEmpty()) groupId.hashCode() else notificationIdCounter.incrementAndGet()
+
         val tapIntent = Intent(this, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW
             setData(android.net.Uri.parse("fr.emse.canari://chat/$groupId"))
@@ -237,22 +291,22 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
         val pendingIntent = PendingIntent.getActivity(
             this,
-            notificationIdCounter.incrementAndGet(),
+            notifId,
             tapIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle(title)
-            .setContentText(body)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setContentTitle(notifTitle)
+            .setContentText(notifBody)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(notifBody))
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setContentIntent(pendingIntent)
-            .build()
+        if (largeIcon != null) builder.setLargeIcon(largeIcon)
 
-        manager.notify(notificationIdCounter.incrementAndGet(), notification)
+        manager.notify(notifId, builder.build())
     }
 
     private fun ensureNotificationChannel(manager: NotificationManager) {
