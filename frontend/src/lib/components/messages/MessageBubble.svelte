@@ -55,8 +55,10 @@
     readBy?: string[];
     /** Timestamp of first read receipt (Date.now() on receiving device). */
     readAt?: number;
-    /** When true, shows the delivery status indicator (sent/read) below the bubble. */
+    /** When true, shows send status on the last own message. */
     isLastOwn?: boolean;
+    /** When true, shows the read receipt below this message. */
+    isReadReceiptAnchor?: boolean;
     /** When true, shows an "(modifié)" label. */
     isEdited?: boolean;
     /** When true, renders the content as struck-through italic and hides action buttons. */
@@ -100,6 +102,7 @@
     readBy = [],
     readAt,
     isLastOwn = false,
+    isReadReceiptAnchor = false,
     isEdited = false,
     isDeleted = false,
     groupPosition = 'single',
@@ -116,6 +119,7 @@
     status,
   }: Props = $props();
 
+  let bubbleAnchor = $state<HTMLElement | null>(null);
   let showEmojiPicker = $state(false);
   let showInfo = $state(false);
   let showMobileActions = $state(false);
@@ -355,6 +359,7 @@
   {/if}
 {:else}
   <div
+    bind:this={bubbleAnchor}
     id={`msg-${messageId}`}
     use:clickOutside={{
       enabled: showEmojiPicker || showInfo || showMobileActions,
@@ -445,7 +450,15 @@
         {/if}
       {/if}
 
-      <MessageMetadata {isEdited} {isOwn} {isLastOwn} {status} {readBy} {readAt} />
+      <MessageMetadata
+        {isEdited}
+        {isOwn}
+        {isLastOwn}
+        isReadReceiptAnchor={false}
+        {status}
+        {readBy}
+        {readAt}
+      />
     </div>
 
     <MessageBubbleToolbar
@@ -474,9 +487,21 @@
       onReact={(emoji) => onReact?.(messageId, emoji)}
     />
 
+    <MessageMetadata
+      {isEdited}
+      {isOwn}
+      {isLastOwn}
+      {isReadReceiptAnchor}
+      {status}
+      {readBy}
+      {readAt}
+      outsideBubble
+    />
+
     <MessageEmojiPicker
       visible={showEmojiPicker}
       {isOwn}
+      anchor={bubbleAnchor}
       onEmojiSelect={(emoji) => onReact?.(messageId, emoji)}
     />
 

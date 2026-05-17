@@ -2,6 +2,7 @@
   import { Smile } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import { scale } from 'svelte/transition';
+  import { bindFixedPopover } from '$lib/actions/fixedPopover';
   import 'emoji-picker-element';
 
   interface Props {
@@ -9,11 +10,36 @@
     visible: boolean;
     /** When true, anchors the picker to the right side (own messages). */
     isOwn: boolean;
+    /** DOM node used to position the picker (message row). */
+    anchor?: HTMLElement | null;
     /** Called when the user picks an emoji. */
     onEmojiSelect?: (emoji: string) => void;
   }
 
-  let { visible = false, isOwn = false, onEmojiSelect }: Props = $props();
+  let { visible = false, isOwn = false, anchor = null, onEmojiSelect }: Props = $props();
+
+  let panelEl = $state<HTMLElement | null>(null);
+  let unbindPosition: (() => void) | null = null;
+
+  $effect(() => {
+    if (!visible || !panelEl || !anchor) {
+      unbindPosition?.();
+      unbindPosition = null;
+      return;
+    }
+
+    unbindPosition?.();
+    unbindPosition = bindFixedPopover(panelEl, {
+      anchor: () => anchor,
+      alignEnd: isOwn,
+      estimatedHeight: 360,
+    });
+
+    return () => {
+      unbindPosition?.();
+      unbindPosition = null;
+    };
+  });
 
   const RECENT_EMOJIS_KEY = 'canari_recent_emojis';
   let recentEmojis = $state<string[]>([]);
@@ -63,10 +89,10 @@
 
 {#if visible}
   <div
+    bind:this={panelEl}
     transition:scale={{ duration: 250, start: 0.95, opacity: 0, easing: (t) => t * (2 - t) }}
-    class="absolute top-full mt-2 {isOwn
-      ? 'right-0 origin-top-right'
-      : 'left-0 origin-top-left'} w-[min(92vw,22rem)] bg-white/85 dark:bg-black/60 backdrop-blur-2xl border border-black/5 dark:border-white/10 rounded-[1.5rem] shadow-2xl shadow-black/10 dark:shadow-black/40 z-[110] overflow-hidden flex flex-col"
+    class="fixed z-[200] w-[min(92vw,22rem)] bg-white/85 dark:bg-black/60 backdrop-blur-2xl border border-black/5 dark:border-white/10 rounded-[1.5rem] shadow-2xl shadow-black/10 dark:shadow-black/40 overflow-hidden flex flex-col origin-[var(--popover-origin)]"
+    style:--popover-origin={isOwn ? 'top right' : 'top left'}
   >
     <!-- En-tête -->
     <div
@@ -97,7 +123,12 @@
     {/if}
 
     <!-- Composant Web emoji-picker -->
-    <emoji-picker use:attachEmojiPicker class="w-full h-80" locale="fr"></emoji-picker>
+    <emoji-picker
+      use:attachEmojiPicker
+      class="w-full min-h-0 flex-1"
+      style="height: min(20rem, calc(var(--popover-max-h, 20rem) - 7rem));"
+      locale="fr"
+    ></emoji-picker>
   </div>
 {/if}
 

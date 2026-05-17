@@ -48,14 +48,18 @@
 </script>
 
 {#if Object.keys(groupedReactions).length > 0}
-  <div class="flex gap-1.5 flex-wrap mt-2 px-1 {isOwn ? 'justify-end' : 'justify-start'}">
+  <div
+    class="mt-1.5 flex max-w-full min-w-0 gap-1.5 overflow-x-auto flex-nowrap px-0.5 scrollbar-thin {isOwn
+      ? 'justify-end'
+      : 'justify-start'}"
+  >
     {#each Object.entries(groupedReactions) as [emoji, users] (emoji)}
       <!-- On vérifie si l'utilisateur actuel a réagi avec cet émoji -->
       {@const hasReacted = currentUserId ? users.includes(currentUserId) : false}
 
       <button
         type="button"
-        class="flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-sm transition-all duration-200 border shadow-sm active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50
+        class="flex shrink-0 items-center gap-1.5 px-2.5 py-1 rounded-xl text-sm transition-all duration-200 border shadow-sm active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50
           {hasReacted
           ? 'bg-amber-500/15 dark:bg-amber-500/20 border-amber-500/30 dark:border-amber-500/20 text-amber-700 dark:text-amber-400 hover:bg-amber-500/25'
           : 'bg-white/60 dark:bg-black/30 border-black/5 dark:border-white/10 hover:bg-white/90 dark:hover:bg-black/50 text-text-muted hover:text-text-main backdrop-blur-md'}"

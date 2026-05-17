@@ -63,13 +63,25 @@
 
   let resolvedSenderNames = $state<Record<string, string>>({});
 
-  // ID du dernier message envoyé par l'utilisateur courant (isOwn) :
-  // le statut Lu/Envoyé n'est affiché que sur ce message.
+  // Dernier message envoyé par l'utilisateur (statut Envoi / Envoyé).
   const lastOwnMessageId = $derived(
     [...visibleMessageGroups]
       .reverse()
       .find((g) => g.type === 'message' && g.message?.isOwn && !g.message?.isSystem)?.message?.id ??
       null
+  );
+
+  // Dernier message envoyé lu par au moins un interlocuteur (indicateur « Lu »).
+  const lastReadOwnMessageId = $derived(
+    [...visibleMessageGroups]
+      .reverse()
+      .find(
+        (g) =>
+          g.type === 'message' &&
+          g.message?.isOwn &&
+          !g.message?.isSystem &&
+          (g.message.readBy?.length ?? 0) > 0
+      )?.message?.id ?? null
   );
 
   function firstNameOnly(value: string): string {
@@ -214,7 +226,7 @@
 
           <!-- Conteneur Bulle + Nom -->
           <div
-            class="flex flex-col {msg.isOwn
+            class="flex min-w-0 flex-col {msg.isOwn
               ? 'items-end'
               : 'items-start'} max-w-[85%] md:max-w-[70%]"
           >
@@ -243,6 +255,7 @@
               readBy={msg.readBy}
               readAt={msg.readAt}
               isLastOwn={msg.id === lastOwnMessageId}
+              isReadReceiptAnchor={msg.id === lastReadOwnMessageId}
               isEdited={msg.isEdited}
               editedAt={msg.editedAt}
               isDeleted={msg.isDeleted}
