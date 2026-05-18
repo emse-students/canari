@@ -1,4 +1,4 @@
-import type { IMlsService } from './IMlsService';
+import type { IMlsService, UserGroupRow } from './IMlsService';
 import { getIsTabLeader } from './tabLeader';
 
 /** Dependencies injected into initializeConnection; only the tab-leader tab calls this function. */
@@ -99,13 +99,16 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
     }
 
     const membershipGroupIds = new Set(memberships.map((m) => m.groupId));
-    const userGroups = await mlsService
-      .getUserGroups(userId)
-      .catch(() => [] as { groupId: string; name: string; isGroup: boolean }[]);
+    const userGroups = await mlsService.getUserGroups(userId).catch(() => [] as UserGroupRow[]);
     for (const group of userGroups) {
-      if (!membershipGroupIds.has(group.groupId) && !localGroups.has(group.groupId)) {
-        mlsService.sendWelcomeRequest(group.groupId).catch(() => {});
-        log(`[SYNC] welcome_request envoyé (device inconnu du groupe ${group.groupId})`);
+      const targetGroupId = group.successorId ?? group.groupId;
+      if (!membershipGroupIds.has(targetGroupId) && !localGroups.has(targetGroupId)) {
+        mlsService.sendWelcomeRequest(targetGroupId).catch(() => {});
+        log(
+          group.successorId
+            ? `[SYNC] welcome_request envoyé pour successeur ${targetGroupId} (remplace ${group.groupId})`
+            : `[SYNC] welcome_request envoyé (device inconnu du groupe ${targetGroupId})`
+        );
       }
     }
   } catch (e) {

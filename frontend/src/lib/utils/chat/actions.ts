@@ -74,12 +74,19 @@ export async function processPendingInvitations(params: {
 
   let totalWelcomes = 0;
 
-  for (const [groupId, invitations] of byGroup) {
-    // Only process groups where we have a ready local conversation
-    const convo = conversations.get(groupId);
-    if (!convo?.isReady) {
-      log(`[PENDING] Groupe ${groupId}: pas de conversation locale prête — skip`);
-      continue;
+  for (const [origGroupId, invitations] of byGroup) {
+    // Only process groups where we have a ready local conversation.
+    // Si le groupe a un successeur connu, traiter via celui-ci.
+    let groupId = origGroupId;
+    if (!conversations.get(groupId)?.isReady) {
+      const meta = await mlsService.getGroupMeta(groupId).catch(() => null);
+      if (meta?.successorId && conversations.get(meta.successorId)?.isReady) {
+        log(`[PENDING] Groupe ${groupId} → successeur ${meta.successorId}`);
+        groupId = meta.successorId;
+      } else {
+        log(`[PENDING] Groupe ${groupId}: pas de conversation locale prête — skip`);
+        continue;
+      }
     }
 
     // Acquire distributed lock to prevent concurrent Add commits
@@ -587,14 +594,21 @@ export async function handleWelcomeRequest(params: {
     log,
     requesterUserId,
     requesterDeviceId,
-    groupId,
+    groupId: requestedGroupId,
   } = params;
 
-  // Vérifier qu'on a une conversation prête pour ce groupe
-  const convo = conversations.get(groupId);
-  if (!convo?.isReady) {
-    log(`[WELCOME_REQ] Pas de conversation prête pour ${groupId} — skip`);
-    return;
+  // Vérifier qu'on a une conversation prête pour ce groupe.
+  // Si le groupe a un successeur, rediriger vers celui-ci.
+  let groupId = requestedGroupId;
+  if (!conversations.get(groupId)?.isReady) {
+    const meta = await mlsService.getGroupMeta(groupId).catch(() => null);
+    if (meta?.successorId && conversations.get(meta.successorId)?.isReady) {
+      log(`[WELCOME_REQ] Groupe ${groupId} → successeur ${meta.successorId}`);
+      groupId = meta.successorId;
+    } else {
+      log(`[WELCOME_REQ] Pas de conversation prête pour ${groupId} — skip`);
+      return;
+    }
   }
 
   // Guard in-process : empêche deux traitements simultanés du même groupe

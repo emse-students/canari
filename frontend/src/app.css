@@ -629,25 +629,3 @@ h6,
     bottom: 8rem;
   }
 }
-
-/* ── Tablette/desktop large (≥1024px) : centrer le contenu du chat ───────────
-   Sur iPad Pro paysage ou grandes tablettes Android, la zone de chat peut
-   dépasser 900px. On centre le contenu dans une colonne de 56rem max pour
-   garder des bulles lisibles et un compositeur bien proportionné.         */
-@media (min-width: 1024px) {
-  .chat-messages-scroll {
-    /* Centre la zone de messages dans la largeur disponible */
-    max-width: 56rem;
-    margin-left: auto;
-    margin-right: auto;
-    width: 100%;
-  }
-
-  /* Centre le compositeur et le panneau de réponse dans le footer absolu */
-  .chat-composer-footer > div {
-    max-width: 56rem;
-    margin-left: auto;
-    margin-right: auto;
-    width: 100%;
-  }
-}
