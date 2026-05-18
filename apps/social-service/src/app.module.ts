@@ -9,6 +9,7 @@ import { AssociationsModule } from './associations/associations.module';
 import { FollowsModule } from './follows/follows.module';
 import { UserTagModule } from './users/user-tag.module';
 import { PurchaseRecordModule } from './users/purchase-record.module';
+import { ModerationModule } from './moderation/moderation.module';
 import { RedisModule } from './common/redis';
 
 /** Root NestJS module — wires up TypeORM, config, Redis, and all social feature modules. */
@@ -37,6 +38,7 @@ import { RedisModule } from './common/redis';
     FollowsModule,
     UserTagModule,
     PurchaseRecordModule,
+    ModerationModule,
   ],
   controllers: [],
 })

@@ -1,124 +1,119 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { ShieldAlert, Flag, UserX, RefreshCw, Check, X, UserCheck } from '@lucide/svelte';
   import {
-    Pin,
-    Trash2,
-    RefreshCw,
-    ShieldAlert,
-    ChevronDown,
-    ChevronUp,
-    MessageSquare,
-  } from '@lucide/svelte';
-  import {
-    getReportedPosts,
-    getPost,
-    deletePost as deletePostApi,
-    deleteComment as deleteCommentApi,
-    pinPost as pinPostApi,
-    unpinPost as unpinPostApi,
-    type ReportedPost,
-    type PostComment,
-  } from '$lib/posts/api';
+    listReports,
+    reviewReport,
+    muteUser,
+    unmuteUser,
+    listMutedUsers,
+    type ContentReport,
+    type MutedUser,
+  } from '$lib/moderation/api';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { goto } from '$app/navigation';
 
-  let posts = $state<ReportedPost[]>([]);
-  let loading = $state(true);
-  let error = $state('');
-  let expandedPostId = $state<string | null>(null);
-  let commentsByPost = $state<Record<string, PostComment[]>>({});
-  let commentsLoading = $state<Record<string, boolean>>({});
-  let feedback = $state<Record<string, string>>({});
+  type Tab = 'reports' | 'muted';
 
-  async function load() {
-    loading = true;
-    error = '';
-    try {
-      posts = await getReportedPosts();
-    } catch (e) {
-      error = e instanceof Error ? e.message : 'Impossible de charger les signalements.';
-    } finally {
-      loading = false;
-    }
-  }
+  let tab = $state<Tab>('reports');
+  let reports = $state<ContentReport[]>([]);
+  let mutedUsers = $state<MutedUser[]>([]);
+  let loadingReports = $state(true);
+  let loadingMuted = $state(false);
+  let error = $state('');
+  let processingId = $state<string | null>(null);
 
   onMount(() => {
     if (!isGlobalAdmin()) {
       void goto('/');
       return;
     }
-    void load();
+    void loadReports();
   });
 
-  async function toggleComments(postId: string) {
-    if (expandedPostId === postId) {
-      expandedPostId = null;
-      return;
-    }
-    expandedPostId = postId;
-    if (commentsByPost[postId]) return;
-    commentsLoading = { ...commentsLoading, [postId]: true };
+  async function loadReports() {
+    loadingReports = true;
+    error = '';
     try {
-      const full = await getPost(postId);
-      commentsByPost = { ...commentsByPost, [postId]: full.comments ?? [] };
-    } catch {
-      commentsByPost = { ...commentsByPost, [postId]: [] };
+      reports = await listReports();
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Impossible de charger les signalements.';
     } finally {
-      commentsLoading = { ...commentsLoading, [postId]: false };
+      loadingReports = false;
     }
   }
 
-  function setFeedback(postId: string, msg: string) {
-    feedback = { ...feedback, [postId]: msg };
-    setTimeout(() => {
-      feedback = { ...feedback, [postId]: '' };
-    }, 3000);
-  }
-
-  async function handleDelete(postId: string) {
-    if (!confirm('Supprimer ce post définitivement ?')) return;
+  async function loadMuted() {
+    loadingMuted = true;
+    error = '';
     try {
-      await deletePostApi(postId);
-      posts = posts.filter((p) => p.id !== postId);
+      mutedUsers = await listMutedUsers();
     } catch (e) {
-      setFeedback(postId, e instanceof Error ? e.message : 'Erreur');
+      error = e instanceof Error ? e.message : 'Impossible de charger les utilisateurs mutés.';
+    } finally {
+      loadingMuted = false;
     }
   }
 
-  async function handleTogglePin(post: ReportedPost) {
+  async function switchTab(t: Tab) {
+    tab = t;
+    error = '';
+    if (t === 'muted' && mutedUsers.length === 0) void loadMuted();
+  }
+
+  async function handleReview(reportId: string, action: 'reviewed' | 'dismissed') {
+    processingId = reportId;
     try {
-      const res = post.pinned ? await unpinPostApi(post.id) : await pinPostApi(post.id);
-      posts = posts.map((p) => (p.id === post.id ? { ...p, pinned: res.pinned } : p));
-      setFeedback(post.id, res.pinned ? 'Post épinglé.' : 'Post désépinglé.');
+      const updated = await reviewReport(reportId, action);
+      reports = reports.map((r) => (r.id === reportId ? updated : r));
     } catch (e) {
-      setFeedback(post.id, e instanceof Error ? e.message : 'Erreur');
+      error = e instanceof Error ? e.message : 'Erreur';
+    } finally {
+      processingId = null;
     }
   }
 
-  async function handleDeleteComment(postId: string, commentId: string) {
-    if (!confirm('Supprimer ce commentaire ?')) return;
+  async function handleMuteFromReport(report: ContentReport) {
+    processingId = report.id;
     try {
-      await deleteCommentApi(postId, commentId);
-      commentsByPost = {
-        ...commentsByPost,
-        [postId]: (commentsByPost[postId] ?? []).filter(
-          (c) => c.id !== commentId && c.parentId !== commentId
-        ),
-      };
-      setFeedback(postId, 'Commentaire supprimé.');
+      await muteUser(report.reporterId);
+      await handleReview(report.id, 'reviewed');
     } catch (e) {
-      setFeedback(postId, e instanceof Error ? e.message : 'Erreur');
+      error = e instanceof Error ? e.message : 'Erreur';
+      processingId = null;
     }
   }
 
-  function excerpt(md: string): string {
-    const plain = md.replace(/[#*`_~[\]()!]/g, '').trim();
-    return plain.length > 140 ? plain.slice(0, 137) + '…' : plain;
+  async function handleUnmute(userId: string) {
+    processingId = userId;
+    try {
+      await unmuteUser(userId);
+      mutedUsers = mutedUsers.filter((u) => u.userId !== userId);
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Erreur';
+    } finally {
+      processingId = null;
+    }
   }
 
   function formatDate(iso: string): string {
     return new Date(iso).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' });
   }
+
+  const statusLabel: Record<ContentReport['status'], string> = {
+    pending: 'En attente',
+    reviewed: 'Traité',
+    dismissed: 'Ignoré',
+  };
+
+  const statusClass: Record<ContentReport['status'], string> = {
+    pending: 'bg-amber-100 text-amber-700',
+    reviewed: 'bg-green-100 text-green-700',
+    dismissed: 'bg-gray-100 text-text-muted',
+  };
+
+  const pendingReports = $derived(reports.filter((r) => r.status === 'pending'));
+  const resolvedReports = $derived(reports.filter((r) => r.status !== 'pending'));
 </script>
 
 <div class="max-w-3xl mx-auto px-4 py-8">
@@ -127,18 +122,50 @@
       <ShieldAlert size={28} class="text-red-500" />
       <div>
         <h1 class="text-2xl font-bold text-text-main">Modération</h1>
-        <p class="text-sm text-text-muted">Posts signalés par les utilisateurs</p>
+        <p class="text-sm text-text-muted">Signalements et utilisateurs restreints</p>
       </div>
     </div>
     <button
-      onclick={load}
-      disabled={loading}
+      onclick={() => (tab === 'reports' ? loadReports() : loadMuted())}
+      disabled={loadingReports || loadingMuted}
       class="p-2 rounded-xl border border-cn-border text-text-muted hover:text-text-main transition-colors disabled:opacity-40"
       aria-label="Rafraîchir"
     >
-      <RefreshCw size={18} class={loading ? 'animate-spin' : ''} />
+      <RefreshCw size={18} class={loadingReports || loadingMuted ? 'animate-spin' : ''} />
     </button>
   </header>
+
+  <!-- Tabs -->
+  <div class="flex gap-1 p-1 bg-black/5 rounded-xl mb-6">
+    <button
+      onclick={() => switchTab('reports')}
+      class="flex-1 flex items-center justify-center gap-2 py-2 text-sm font-medium rounded-lg transition-colors {tab === 'reports'
+        ? 'bg-white shadow-sm text-text-main'
+        : 'text-text-muted hover:text-text-main'}"
+    >
+      <Flag size={16} />
+      Signalements
+      {#if pendingReports.length > 0}
+        <span class="ml-1 px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-red-500 text-white">
+          {pendingReports.length}
+        </span>
+      {/if}
+    </button>
+    <button
+      onclick={() => switchTab('muted')}
+      class="flex-1 flex items-center justify-center gap-2 py-2 text-sm font-medium rounded-lg transition-colors {tab === 'muted'
+        ? 'bg-white shadow-sm text-text-main'
+        : 'text-text-muted hover:text-text-main'}"
+    >
+      <UserX size={16} />
+      Utilisateurs mutés
+      {#if mutedUsers.length > 0}
+        <span class="ml-1 px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-gray-500 text-white">
+          {mutedUsers.length}
+        </span>
+      {/if}
+    </button>
+  </div>
 
   {#if error}
     <div class="p-4 rounded-xl bg-red-50 text-red-700 border border-red-200 text-sm mb-6">
@@ -146,146 +173,157 @@
     </div>
   {/if}
 
-  {#if loading}
-    <div class="space-y-4">
-      {#each { length: 3 } as _, i (i)}
-        <div class="rounded-2xl border border-cn-border bg-white/60 p-5 animate-pulse space-y-3">
-          <div class="h-3 w-2/3 rounded bg-cn-border/60"></div>
-          <div class="h-3 w-full rounded bg-cn-border/40"></div>
-          <div class="h-3 w-1/2 rounded bg-cn-border/30"></div>
-        </div>
-      {/each}
-    </div>
-  {:else if posts.length === 0}
-    <div class="text-center py-16 text-text-muted">
-      <ShieldAlert size={40} class="mx-auto mb-3 opacity-30" />
-      <p class="font-medium">Aucun post signalé pour le moment.</p>
-    </div>
-  {:else}
-    <div class="space-y-5">
-      {#each posts as post (post.id)}
-        <div
-          class="rounded-2xl border border-cn-border bg-white/70 backdrop-blur-sm overflow-hidden shadow-sm"
-        >
-          <!-- Post header -->
-          <div class="flex items-start justify-between gap-3 p-4 border-b border-cn-border/50">
-            <div class="min-w-0 flex-1">
-              <p class="text-xs text-text-muted mb-1">
-                {post.associationId
-                  ? `Association ${post.associationId.slice(0, 8)}…`
-                  : (post.authorId?.slice(0, 8) ?? '?') + '…'} · {formatDate(post.createdAt)}
-                {#if post.pinned}
-                  <span class="ml-2 inline-flex items-center gap-0.5 text-amber-600 font-semibold">
-                    <Pin size={11} /> Épinglé
-                  </span>
-                {/if}
-              </p>
-              <p class="text-sm text-text-main leading-relaxed">{excerpt(post.markdown)}</p>
-            </div>
-            <div class="flex items-center gap-1.5 shrink-0">
-              <button
-                onclick={() => handleTogglePin(post)}
-                class="p-1.5 rounded-lg border border-cn-border text-text-muted hover:text-amber-600 hover:border-amber-400 transition-colors"
-                title={post.pinned ? 'Désépingler' : 'Épingler'}
-              >
-                <Pin size={15} />
-              </button>
-              <button
-                onclick={() => handleDelete(post.id)}
-                class="p-1.5 rounded-lg border border-cn-border text-text-muted hover:text-red-600 hover:border-red-400 transition-colors"
-                title="Supprimer le post"
-              >
-                <Trash2 size={15} />
-              </button>
-            </div>
+  <!-- Reports tab -->
+  {#if tab === 'reports'}
+    {#if loadingReports}
+      <div class="space-y-3">
+        {#each { length: 3 } as _, i (i)}
+          <div class="rounded-2xl border border-cn-border bg-white/60 p-5 animate-pulse space-y-2">
+            <div class="h-3 w-2/3 rounded bg-cn-border/60"></div>
+            <div class="h-3 w-full rounded bg-cn-border/40"></div>
           </div>
-
-          <!-- Reports -->
-          <div class="px-4 py-3 bg-red-50/60 border-b border-cn-border/50">
-            <p class="text-[11px] font-bold text-red-700 uppercase tracking-wider mb-2">
-              {post.reports.length} signalement{post.reports.length > 1 ? 's' : ''}
-            </p>
-            <div class="space-y-1.5">
-              {#each post.reports as report (report.userId + report.createdAt)}
-                <div class="flex items-baseline gap-2 text-xs">
-                  <span class="font-medium text-text-main truncate max-w-[180px] shrink-0"
-                    >{report.userId.slice(0, 12)}…</span
-                  >
-                  <span class="text-red-700 italic min-w-0 truncate">"{report.reason}"</span>
-                  <span class="ml-auto shrink-0 text-text-muted"
-                    >{formatDate(report.createdAt)}</span
-                  >
-                </div>
-              {/each}
-            </div>
-          </div>
-
-          <!-- Feedback banner -->
-          {#if feedback[post.id]}
+        {/each}
+      </div>
+    {:else if reports.length === 0}
+      <div class="text-center py-16 text-text-muted">
+        <Flag size={40} class="mx-auto mb-3 opacity-30" />
+        <p class="font-medium">Aucun signalement pour le moment.</p>
+      </div>
+    {:else}
+      <!-- Pending reports -->
+      {#if pendingReports.length > 0}
+        <h2 class="text-sm font-bold text-text-muted uppercase tracking-wider mb-3">
+          En attente — {pendingReports.length}
+        </h2>
+        <div class="space-y-3 mb-8">
+          {#each pendingReports as report (report.id)}
             <div
-              class="px-4 py-2 text-xs font-medium text-text-muted border-b border-cn-border/50 bg-amber-50/50"
+              class="rounded-2xl border border-cn-border bg-white/70 backdrop-blur-sm p-4 shadow-sm"
             >
-              {feedback[post.id]}
-            </div>
-          {/if}
-
-          <!-- Comments toggle -->
-          <button
-            onclick={() => toggleComments(post.id)}
-            class="w-full px-4 py-2.5 flex items-center justify-between text-xs text-text-muted hover:bg-black/5 transition-colors"
-          >
-            <span class="flex items-center gap-1.5">
-              <MessageSquare size={13} />
-              Commentaires
-            </span>
-            {#if expandedPostId === post.id}
-              <ChevronUp size={14} />
-            {:else}
-              <ChevronDown size={14} />
-            {/if}
-          </button>
-
-          <!-- Comments list -->
-          {#if expandedPostId === post.id}
-            <div class="border-t border-cn-border/50">
-              {#if commentsLoading[post.id]}
-                <div class="px-4 py-4 text-xs text-text-muted">Chargement…</div>
-              {:else if (commentsByPost[post.id] ?? []).length === 0}
-                <div class="px-4 py-4 text-xs text-text-muted">Aucun commentaire.</div>
-              {:else}
-                <div class="divide-y divide-cn-border/40">
-                  {#each commentsByPost[post.id] as comment (comment.id)}
-                    <div
-                      class="flex items-start gap-3 px-4 py-3 {comment.parentId
-                        ? 'pl-10 bg-black/[0.02]'
-                        : ''}"
+              <div class="flex items-start gap-3">
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2 flex-wrap mb-1">
+                    <span
+                      class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-cn-border/40 text-text-muted"
                     >
-                      <div class="flex-1 min-w-0">
-                        <p class="text-xs font-medium text-text-muted mb-0.5">
-                          {comment.displayName ?? comment.userId?.slice(0, 10) + '…'} · {formatDate(
-                            comment.createdAt
-                          )}
-                          {#if comment.parentId}<span class="text-text-muted/50">
-                              (réponse)</span
-                            >{/if}
-                        </p>
-                        <p class="text-sm text-text-main">{comment.text}</p>
-                      </div>
-                      <button
-                        onclick={() => handleDeleteComment(post.id, comment.id)}
-                        class="p-1 rounded text-text-muted hover:text-red-600 transition-colors shrink-0"
-                        title="Supprimer"
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
-                  {/each}
+                      {report.contentType}
+                    </span>
+                    <span class="text-xs text-text-muted">
+                      Signalé par <code class="font-mono">{report.reporterId.slice(0, 8)}…</code> · {formatDate(
+                        report.createdAt
+                      )}
+                    </span>
+                  </div>
+                  <p class="text-sm text-text-main font-medium mb-0.5">
+                    Raison : <span class="font-bold">{report.reason}</span>
+                  </p>
+                  {#if report.details}
+                    <p class="text-xs text-text-muted italic mt-1">"{report.details}"</p>
+                  {/if}
+                  <p class="text-[11px] text-text-muted/60 mt-1 font-mono">
+                    ID contenu : {report.contentId}
+                  </p>
                 </div>
+                <div class="flex items-center gap-1.5 shrink-0">
+                  <button
+                    onclick={() => handleReview(report.id, 'reviewed')}
+                    disabled={processingId === report.id}
+                    class="p-1.5 rounded-lg border border-cn-border text-text-muted hover:text-green-600 hover:border-green-400 transition-colors disabled:opacity-40"
+                    title="Marquer comme traité"
+                  >
+                    <Check size={15} />
+                  </button>
+                  <button
+                    onclick={() => handleMuteFromReport(report)}
+                    disabled={processingId === report.id}
+                    class="p-1.5 rounded-lg border border-cn-border text-text-muted hover:text-red-600 hover:border-red-400 transition-colors disabled:opacity-40"
+                    title="Muter le signaleur"
+                  >
+                    <UserX size={15} />
+                  </button>
+                  <button
+                    onclick={() => handleReview(report.id, 'dismissed')}
+                    disabled={processingId === report.id}
+                    class="p-1.5 rounded-lg border border-cn-border text-text-muted hover:text-gray-600 hover:border-gray-400 transition-colors disabled:opacity-40"
+                    title="Ignorer"
+                  >
+                    <X size={15} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+
+      <!-- Resolved reports -->
+      {#if resolvedReports.length > 0}
+        <h2 class="text-sm font-bold text-text-muted uppercase tracking-wider mb-3">
+          Traités / Ignorés — {resolvedReports.length}
+        </h2>
+        <div class="space-y-2">
+          {#each resolvedReports as report (report.id)}
+            <div class="rounded-xl border border-cn-border bg-white/40 p-3 flex items-center gap-3">
+              <span
+                class="text-[11px] font-bold px-2 py-0.5 rounded-full {statusClass[report.status]}"
+              >
+                {statusLabel[report.status]}
+              </span>
+              <span class="text-xs text-text-muted">{report.contentType} · {report.reason}</span>
+              <span class="ml-auto text-[11px] text-text-muted/60">{formatDate(report.createdAt)}</span>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    {/if}
+  {/if}
+
+  <!-- Muted users tab -->
+  {#if tab === 'muted'}
+    {#if loadingMuted}
+      <div class="space-y-3">
+        {#each { length: 3 } as _, i (i)}
+          <div class="rounded-2xl border border-cn-border bg-white/60 p-5 animate-pulse space-y-2">
+            <div class="h-3 w-2/3 rounded bg-cn-border/60"></div>
+          </div>
+        {/each}
+      </div>
+    {:else if mutedUsers.length === 0}
+      <div class="text-center py-16 text-text-muted">
+        <UserCheck size={40} class="mx-auto mb-3 opacity-30" />
+        <p class="font-medium">Aucun utilisateur muté actuellement.</p>
+      </div>
+    {:else}
+      <div class="space-y-3">
+        {#each mutedUsers as user (user.userId)}
+          <div
+            class="rounded-2xl border border-cn-border bg-white/70 backdrop-blur-sm p-4 shadow-sm flex items-start gap-3"
+          >
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-medium font-mono text-text-main">{user.userId}</p>
+              {#if user.mutedReason}
+                <p class="text-xs text-text-muted mt-0.5 italic">"{user.mutedReason}"</p>
+              {/if}
+              {#if user.mutedAt}
+                <p class="text-[11px] text-text-muted/60 mt-1">
+                  Muté le {formatDate(user.mutedAt)}
+                  {#if user.mutedBy}
+                    par <code class="font-mono">{user.mutedBy.slice(0, 8)}…</code>
+                  {/if}
+                </p>
               {/if}
             </div>
-          {/if}
-        </div>
-      {/each}
-    </div>
+            <button
+              onclick={() => handleUnmute(user.userId)}
+              disabled={processingId === user.userId}
+              class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-cn-border text-text-muted hover:text-green-600 hover:border-green-400 transition-colors disabled:opacity-40"
+            >
+              <UserCheck size={14} />
+              Démuter
+            </button>
+          </div>
+        {/each}
+      </div>
+    {/if}
   {/if}
 </div>

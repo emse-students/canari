@@ -13,10 +13,10 @@
     getPost,
     pinPost as pinPostApi,
     unpinPost as unpinPostApi,
-    reportPost as reportPostApi,
     type PostEntity,
     type PostComment,
   } from '$lib/posts/api';
+  import { createReport } from '$lib/moderation/api';
   import { getForm, checkSubmission } from '$lib/forms/api';
   import Card from '$lib/components/ui/Card.svelte';
   import PostHeader from './PostHeader.svelte';
@@ -383,22 +383,32 @@
     }
   }
 
-  const REPORT_REASONS = ['Contenu inapproprié', 'Spam', 'Harcèlement', 'Désinformation', 'Autre'];
+  const REPORT_REASONS = [
+    { label: 'Spam', value: 'spam' as const },
+    { label: 'Harcèlement', value: 'harassment' as const },
+    { label: 'Contenu inapproprié', value: 'inappropriate' as const },
+    { label: 'Autre', value: 'other' as const },
+  ];
   let reportOpen = $state(false);
   let reportReason = $state('');
   let reportSubmitting = $state(false);
 
-  /** Submits the selected report reason to the API and shows a confirmation message. */
+  /** Submits the selected report reason via the moderation API. */
   async function submitReport() {
     if (!reportReason) return;
     reportSubmitting = true;
     try {
-      const res = await reportPostApi(localPost.id, reportReason);
-      actionMessage = res.alreadyReported ? 'Vous avez déjà signalé ce post.' : 'Signalement envoyé. Merci !';
+      const value = REPORT_REASONS.find((r) => r.label === reportReason)?.value ?? 'other';
+      await createReport('post', localPost.id, value);
+      actionMessage = 'Signalement envoyé. Merci !';
       reportOpen = false;
       reportReason = '';
     } catch (err) {
-      errorMessage = err instanceof Error ? err.message : 'Impossible de signaler';
+      const msg = err instanceof Error ? err.message : '';
+      actionMessage = msg.includes('already') ? 'Vous avez déjà signalé ce post.' : '';
+      if (!actionMessage) errorMessage = msg || 'Impossible de signaler';
+      reportOpen = false;
+      reportReason = '';
     } finally {
       reportSubmitting = false;
     }
@@ -458,7 +468,7 @@
       {reportOpen}
       {reportReason}
       {reportSubmitting}
-      reportReasons={REPORT_REASONS}
+      reportReasons={REPORT_REASONS.map((r) => r.label)}
       onTogglePin={togglePin}
       onStartEdit={startEditPost}
       onDelete={handleDeletePost}
