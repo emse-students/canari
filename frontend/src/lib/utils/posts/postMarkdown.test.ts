@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { normalizePostLineBreaks, preprocessPostMarkdown } from './postMarkdown';
 
+const USER_ID = '550e8400-e29b-41d4-a716-446655440000';
+
 describe('normalizePostLineBreaks', () => {
   it('turns a single newline into a markdown hard break', () => {
     expect(normalizePostLineBreaks('ligne 1\nligne 2')).toBe('ligne 1  \nligne 2');
@@ -16,7 +18,9 @@ describe('normalizePostLineBreaks', () => {
 });
 
 describe('preprocessPostMarkdown', () => {
-  it('preserves line breaks after mention processing', () => {
-    expect(preprocessPostMarkdown('Bonjour\n@alice')).toBe('Bonjour  \n[@alice](#mention-alice)');
+  it('preserves line breaks after uuid mention processing', () => {
+    const out = preprocessPostMarkdown(`Bonjour\n@[${USER_ID}]`);
+    expect(out).toContain('Bonjour  \n');
+    expect(out).toContain(`](#mention-${USER_ID})`);
   });
 });

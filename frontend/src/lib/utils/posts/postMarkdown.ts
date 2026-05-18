@@ -1,3 +1,9 @@
+import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
+import { MENTION_HREF_PREFIX } from '$lib/utils/mentions';
+
+const MENTION_UUID_IN_TEXT_RE =
+  /(?<![[\w@./&#(])@\[([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\]/gi;
+
 /**
  * Single newlines in markdown are normally collapsed; convert them to hard breaks
  * (two trailing spaces) so one Enter in the composer renders as one line break.
@@ -9,28 +15,19 @@ export function normalizePostLineBreaks(md: string): string {
 }
 
 /**
- * Preprocesses post markdown to convert @mentions and #hashtags into
- * markdown links with special internal hrefs that PostMentionLink.svelte
- * intercepts for custom rendering and navigation.
+ * Preprocesses post markdown to convert `@[uuid]` mentions and #hashtags into
+ * markdown links with special internal hrefs that PostMentionLink intercepts.
  *
- * - @[Full Name]  → [@[Full Name]](#mention-Full Name)   (multi-word, new format)
- * - @word         → [@word](#mention-word)               (single-word, legacy)
- * - #word         → [#word](#hashtag-word)
- *
- * Lookbehind prevents double-processing and avoids email addresses / URLs.
+ * - @[uuid] → [@DisplayName](#mention-uuid)
+ * - #word   → [#word](#hashtag-word)
  */
 export function preprocessPostMarkdown(md: string): string {
-  // Mentions: @[name] (multi-word) or @word (legacy), not preceded by URL/link chars
-  const withMentions = md.replace(
-    /(?<![[\w@./&#(])@(?:\[([^\]\n]{1,100})\]|([\wÀ-ž]{1,50}))/g,
-    (_, bracketed: string | undefined, word: string | undefined) => {
-      const name = bracketed ?? word ?? '';
-      const display = bracketed ? `@[${name}]` : `@${name}`;
-      return `[${display}](#mention-${name})`;
-    }
-  );
-  // Hashtags: #word (2+ chars) not preceded by a URL/link character or opening paren
-  // Runs after mentions so (#mention-...) URLs are protected by the `(` lookbehind.
+  const withMentions = md.replace(MENTION_UUID_IN_TEXT_RE, (_, userId: string) => {
+    const id = userId.toLowerCase();
+    const label = getUserDisplayNameSync(id, id);
+    return `[@${label}](${MENTION_HREF_PREFIX}${id})`;
+  });
+
   const withHashtags = withMentions.replace(
     /(?<![[\w@./&#(])#([\wÀ-ž]{2,50})/g,
     '[#$1](#hashtag-$1)'

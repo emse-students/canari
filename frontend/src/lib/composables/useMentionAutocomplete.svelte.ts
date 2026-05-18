@@ -1,6 +1,7 @@
 import { tick } from 'svelte';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { coreUrl } from '$lib/utils/apiUrl';
+import { formatMentionToken } from '$lib/utils/mentions';
 
 export type MentionUser = { id: string; displayName: string | null };
 
@@ -58,15 +59,15 @@ export function useMentionAutocomplete(opts: {
     }
   }
 
-  /** Replaces the @query token with the selected user's display name. */
+  /** Replaces the @query token with a stable `@[userId]` mention token. */
   function select(user: MentionUser) {
-    const displayName = user.displayName || user.id;
+    const token = formatMentionToken(user.id);
     const savedStart = start;
     const text = opts.getText();
     const before = text.slice(0, savedStart);
     const after = text.slice(savedStart + 1 + query.length);
-    const newText = `${before}@[${displayName}] ${after}`;
-    const newCursor = before.length + displayName.length + 4;
+    const newText = `${before}${token} ${after}`;
+    const newCursor = before.length + token.length + 1;
     opts.setText(newText);
     open = false;
     suggestions = [];

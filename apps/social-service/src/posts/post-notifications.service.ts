@@ -12,31 +12,16 @@ export class PostNotificationsService {
     @InjectRepository(Post) private readonly postRepo: Repository<Post>
   ) {}
 
-  /**
-   * Extracts `@DisplayName` patterns from text and resolves them to user IDs via the users table.
-   * Returns deduplicated IDs (max 20).
-   */
+  private static readonly MENTION_UUID_RE =
+    /@\[([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\]/gi;
+
+  /** Extracts `@[uuid]` mention targets from text. Returns deduplicated IDs (max 20). */
   async resolveMentionedUserIds(text: string): Promise<string[]> {
-    // Match @[Full Name] (new multi-word format) or @word (legacy single-word format)
-    const names = [
-      ...new Set(
-        [...text.matchAll(/@\[([^\]\n]{1,100})\]|@([\wÀ-ž][^\s@]*)/gu)]
-          .map((m) => (m[1] ?? m[2]).trim())
-          .filter(Boolean)
-      ),
-    ];
-    if (names.length === 0) return [];
-    try {
-      const rows: { id: string }[] = await this.postRepo.manager.query(
-        `SELECT id FROM users WHERE "displayName" = ANY($1)
-           OR TRIM(CONCAT("firstName", ' ', "lastName")) = ANY($1)
-         LIMIT 20`,
-        [names]
-      );
-      return rows.map((r) => r.id);
-    } catch {
-      return [];
+    const ids = new Set<string>();
+    for (const match of text.matchAll(PostNotificationsService.MENTION_UUID_RE)) {
+      ids.add(match[1].toLowerCase());
     }
+    return [...ids].slice(0, 20);
   }
 
   /** Looks up a user's display name from the shared users table. */
