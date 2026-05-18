@@ -5,6 +5,7 @@ import { Repository, Between, LessThanOrEqual } from 'typeorm';
 import { FormReminder } from './entities/form-reminder.entity';
 import { PushService } from '../push/push.service';
 import { PostNotificationsService } from '../posts/post-notifications.service';
+import { FormsService } from './forms.service';
 
 @Injectable()
 export class FormReminderScheduler {
@@ -14,7 +15,8 @@ export class FormReminderScheduler {
     @InjectRepository(FormReminder)
     private readonly reminderRepo: Repository<FormReminder>,
     private readonly push: PushService,
-    private readonly notifications: PostNotificationsService
+    private readonly notifications: PostNotificationsService,
+    private readonly formsService: FormsService
   ) {}
 
   @Cron('* * * * *')
@@ -84,6 +86,19 @@ export class FormReminderScheduler {
 
     if (toNotify5min.length + toNotifyOpen.length > 0) {
       this.logger.log(`[REMINDER] sent: 5min=${toNotify5min.length} open=${toNotifyOpen.length}`);
+    }
+  }
+
+  /** Hourly cron — expires unvalidated cash submissions past their deadline. */
+  @Cron('0 * * * *')
+  async expireStaleCashPayments() {
+    try {
+      const count = await this.formsService.expireStalecashPayments();
+      if (count > 0) {
+        this.logger.log(`[CASH] Expired ${count} stale cash payment(s)`);
+      }
+    } catch (e) {
+      this.logger.warn('[CASH] Error expiring stale cash payments', e);
     }
   }
 }

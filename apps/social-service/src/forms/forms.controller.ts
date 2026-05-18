@@ -101,6 +101,36 @@ export class FormsController {
     return this.service.cancelSubmission(submissionId);
   }
 
+  // ── Cash payment admin endpoints ─────────────────────────────────────────
+
+  /**
+   * Lists submissions awaiting cash validation.
+   * Access is controlled at the caller level (asso admin with MANAGE_FORMS).
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get(':id/submissions/pending-cash')
+  listPendingCash(@Param('id') id: string) {
+    return this.service.listPendingCash(id);
+  }
+
+  /** Validates a cash payment, marking it as paid and granting any configured tag. */
+  @UseGuards(NginxAuthGuard)
+  @Post(':id/submissions/:submissionId/validate-cash')
+  validateCash(
+    @Param('id') id: string,
+    @Param('submissionId') submissionId: string,
+    @Headers('x-user-id') userId: string
+  ) {
+    return this.service.validateCashPayment(id, submissionId, userId);
+  }
+
+  /** Cancels a pending cash submission. */
+  @UseGuards(NginxAuthGuard)
+  @Post(':id/submissions/:submissionId/cancel-cash')
+  cancelCash(@Param('id') id: string, @Param('submissionId') submissionId: string) {
+    return this.service.cancelCashPayment(id, submissionId);
+  }
+
   /** Subscribes the calling user to open-time reminders for a form. */
   @UseGuards(NginxAuthGuard)
   @Post(':id/remind')

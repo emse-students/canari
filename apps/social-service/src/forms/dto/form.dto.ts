@@ -2,11 +2,14 @@ import {
   IsArray,
   IsBoolean,
   IsDateString,
+  IsIn,
+  IsInt,
   IsNotEmpty,
   IsNumber,
   IsObject,
   IsOptional,
   IsString,
+  MaxLength,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -112,6 +115,27 @@ export class CreateFormDto {
   @IsString()
   @IsOptional()
   associationId?: string;
+
+  /** When set, grants or renews this tag to the user after a successful payment. */
+  @IsString()
+  @IsOptional()
+  @MaxLength(100)
+  grantedTagName?: string;
+
+  @IsDateString()
+  @IsOptional()
+  tagExpiresAt?: string;
+
+  /** Whether cash (physical) payment is accepted alongside Stripe. */
+  @IsBoolean()
+  @IsOptional()
+  allowCashPayment?: boolean;
+
+  /** Days before an unvalidated cash submission expires. */
+  @IsInt()
+  @IsOptional()
+  @Min(1)
+  cashPaymentExpiryDays?: number;
 }
 
 export class UpdateFormDto extends CreateFormDto {}
@@ -135,4 +159,10 @@ export class SubmitFormDto {
   @IsString()
   @IsOptional()
   cancelUrl?: string;
+
+  /** `stripe` (default) or `cash` (when the form allows it). */
+  @IsString()
+  @IsIn(['stripe', 'cash'])
+  @IsOptional()
+  paymentMethod?: string;
 }

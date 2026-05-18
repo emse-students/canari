@@ -153,8 +153,24 @@ export class FormsService {
         answers: input.answers,
         totalPaid: totalCents,
         paymentStatus: totalCents > 0 ? 'pending' : 'free',
+        paymentMethod: null,
+        cashExpiresAt: null,
       });
       savedSubmission = await this.submissionRepo.save(submission);
+    }
+
+    // Cash payment shortcut — skip Stripe entirely
+    if (totalCents > 0 && form.allowCashPayment && input.paymentMethod === 'cash') {
+      const cashExpiresAt =
+        form.cashPaymentExpiryDays != null
+          ? new Date(Date.now() + form.cashPaymentExpiryDays * 24 * 60 * 60 * 1000)
+          : null;
+      savedSubmission.paymentStatus = 'pending_cash';
+      savedSubmission.paymentMethod = 'cash';
+      savedSubmission.cashExpiresAt = cashExpiresAt;
+      await this.submissionRepo.save(savedSubmission);
+      this.logger.log(`[Forms] Cash payment pending for submission ${savedSubmission.id}`);
+      return { submissionId: savedSubmission.id, cashPayment: true };
     }
 
     if (totalCents > 0) {
@@ -307,6 +323,77 @@ export class FormsService {
     submission.paymentStatus = 'cancelled';
     await this.submissionRepo.save(submission);
     return { ok: true };
+  }
+
+  /** Lists submissions waiting for cash validation on a given form. */
+  async listPendingCash(formId: string) {
+    return this.submissionRepo.find({
+      where: { formId, paymentStatus: 'pending_cash' },
+      order: { createdAt: 'ASC' },
+    });
+  }
+
+  /**
+   * Validates a cash submission — marks as paid and grants the tag if configured.
+   * Must be called by an admin with MANAGE_FORMS permission.
+   */
+  async validateCashPayment(formId: string, submissionId: string, validatedBy: string) {
+    const submission = await this.submissionRepo.findOne({ where: { id: submissionId, formId } });
+    if (!submission) throw new NotFoundException('Submission not found');
+    if (submission.paymentStatus !== 'pending_cash') {
+      return { ok: true, message: 'Already processed' };
+    }
+    submission.paymentStatus = 'paid';
+    await this.submissionRepo.save(submission);
+    this.logger.log(`[Forms] Cash validated for submission ${submissionId} by ${validatedBy}`);
+
+    // Grant tag if form is configured
+    const form = await this.formRepo.findOne({
+      where: { id: formId },
+      select: ['id', 'grantedTagName', 'tagExpiresAt', 'associationId'],
+    });
+    if (form?.grantedTagName) {
+      try {
+        await this.userTagService.grantOrRenew({
+          userId: submission.userId,
+          tagName: form.grantedTagName,
+          issuingAssocId: form.associationId ?? null,
+          grantedBy: validatedBy,
+          expiresAt: form.tagExpiresAt ?? null,
+          metadata: { submissionId, validatedBy, paymentMethod: 'cash' },
+        });
+      } catch (e) {
+        this.logger.error(`[UserTag] Failed to grant tag after cash validation for ${submissionId}`, e);
+      }
+    }
+    return { ok: true };
+  }
+
+  /** Cancels a cash submission awaiting validation. */
+  async cancelCashPayment(formId: string, submissionId: string) {
+    const submission = await this.submissionRepo.findOne({ where: { id: submissionId, formId } });
+    if (!submission) throw new NotFoundException('Submission not found');
+    if (submission.paymentStatus !== 'pending_cash') return { ok: true };
+    submission.paymentStatus = 'cancelled';
+    await this.submissionRepo.save(submission);
+    return { ok: true };
+  }
+
+  /** Called by the hourly cron — expires cash submissions past their deadline. */
+  async expireStalecashPayments(): Promise<number> {
+    const result = await this.submissionRepo
+      .createQueryBuilder()
+      .update()
+      .set({ paymentStatus: 'expired' })
+      .where('paymentStatus = :status', { status: 'pending_cash' })
+      .andWhere('cashExpiresAt IS NOT NULL')
+      .andWhere('cashExpiresAt < NOW()')
+      .execute();
+    const count = result.affected ?? 0;
+    if (count > 0) {
+      this.logger.log(`[Forms] Expired ${count} stale cash payment(s)`);
+    }
+    return count;
   }
 
   /** Returns false for empty arrays, empty objects, null, undefined, and empty strings — used to validate required fields. */
