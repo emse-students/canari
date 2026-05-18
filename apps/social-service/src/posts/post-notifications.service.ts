@@ -12,8 +12,8 @@ export class PostNotificationsService {
     @InjectRepository(Post) private readonly postRepo: Repository<Post>
   ) {}
 
-  /** `@[32-hex]` — compact user id, no dashes. */
-  private static readonly MENTION_UUID_RE = /@\[([0-9a-f]{32})\]/gi;
+  /** `@[userId]` — 64 lowercase hex chars (OIDC sub, no dashes). */
+  private static readonly MENTION_UUID_RE = /@\[([0-9a-f]{64})\]/gi;
 
   /** Extracts `@[id]` mention targets from text. Returns deduplicated IDs (max 20). */
   resolveMentionedUserIds(text: string): string[] {

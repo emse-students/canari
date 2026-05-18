@@ -22,7 +22,10 @@
           class="w-full px-4 py-2 text-left text-sm transition-colors first:rounded-t-xl last:rounded-b-xl {i === selectedIdx
             ? 'bg-amber-100/60 dark:bg-amber-900/30'
             : 'hover:bg-amber-50 dark:hover:bg-amber-900/20'}"
-          onmousedown={() => onSelect(user)}
+          onmousedown={(e) => {
+            e.preventDefault();
+            onSelect(user);
+          }}
         >
           <span class="font-bold text-amber-600 dark:text-amber-400 mr-0.5">@</span><span
             class="font-medium text-text-main">{user.displayName || user.id}</span

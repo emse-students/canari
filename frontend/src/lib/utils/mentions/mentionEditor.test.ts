@@ -11,7 +11,7 @@ import {
   serializeMentionEditor,
 } from './mentionEditor';
 
-const USER_ID = '550e8400e29b41d4a716446655440000';
+import { EXAMPLE_MENTION_USER_ID } from '../mentions';
 
 describe('mentionEditor', () => {
   let root: HTMLDivElement;
@@ -27,23 +27,23 @@ describe('mentionEditor', () => {
   });
 
   it('round-trips @[uuid] through DOM', () => {
-    const text = `Salut @[${USER_ID}]!`;
+    const text = `Salut @[${EXAMPLE_MENTION_USER_ID}]!`;
     renderPlainTextToMentionEditor(root, text);
     expect(serializeMentionEditor(root)).toBe(text);
     expect(root.querySelector('[data-mention-id]')).not.toBeNull();
   });
 
   it('creates a clickable mention chip element', () => {
-    renderPlainTextToMentionEditor(root, `@[${USER_ID}]`);
+    renderPlainTextToMentionEditor(root, `@[${EXAMPLE_MENTION_USER_ID}]`);
     const chip = root.querySelector('[data-mention-id]') as HTMLElement;
     expect(chip?.textContent).toMatch(/^@/);
-    expect(chip?.dataset.mentionId).toBe(USER_ID);
+    expect(chip?.dataset.mentionId).toBe(EXAMPLE_MENTION_USER_ID);
   });
 
-  it('detects raw @[uuid] text that still needs chip rendering', () => {
-    root.textContent = `Salut @[${USER_ID}]!`;
-    expect(needsMentionChipRender(root, `Salut @[${USER_ID}]!`)).toBe(true);
-    renderPlainTextToMentionEditor(root, `Salut @[${USER_ID}]!`);
-    expect(needsMentionChipRender(root, `Salut @[${USER_ID}]!`)).toBe(false);
+  it('detects raw @[id] text that still needs chip rendering', () => {
+    root.textContent = `Salut @[${EXAMPLE_MENTION_USER_ID}]!`;
+    expect(needsMentionChipRender(root, `Salut @[${EXAMPLE_MENTION_USER_ID}]!`)).toBe(true);
+    renderPlainTextToMentionEditor(root, `Salut @[${EXAMPLE_MENTION_USER_ID}]!`);
+    expect(needsMentionChipRender(root, `Salut @[${EXAMPLE_MENTION_USER_ID}]!`)).toBe(false);
   });
 });

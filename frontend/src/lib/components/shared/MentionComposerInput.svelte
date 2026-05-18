@@ -50,7 +50,7 @@
 
   const mention = useMentionAutocomplete({
     getText: () => value,
-    setText: (text) => syncFromPlainText(text),
+    setText: (text, moveCursorTo) => syncFromPlainText(text, moveCursorTo),
     getCursor: () => (editorEl ? getPlainTextSelection(editorEl).start : 0),
     setCursor: (pos) => {
       if (editorEl) setPlainTextSelection(editorEl, pos, pos);

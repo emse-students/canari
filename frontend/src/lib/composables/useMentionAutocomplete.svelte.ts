@@ -13,7 +13,7 @@ export type MentionUser = { id: string; displayName: string | null };
  */
 export function useMentionAutocomplete(opts: {
   getText: () => string;
-  setText: (text: string) => void;
+  setText: (text: string, cursor?: number) => void;
   getEl?: () => HTMLTextAreaElement | HTMLInputElement | null;
   getCursor?: () => number;
   setCursor?: (pos: number) => void;
@@ -96,7 +96,7 @@ export function useMentionAutocomplete(opts: {
     const after = text.slice(start + 1 + query.length);
     const newText = `${before}${token} `;
     const newCursor = before.length + token.length + 1;
-    opts.setText(newText + after);
+    opts.setText(newText + after, newCursor);
     open = false;
     suggestions = [];
     query = '';

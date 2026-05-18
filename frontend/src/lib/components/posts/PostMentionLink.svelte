@@ -1,6 +1,6 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
-  import { isUserUuid, MENTION_HREF_PREFIX, normalizeMentionUserId } from '$lib/utils/mentions';
+  import { isMentionUserId, MENTION_HREF_PREFIX, normalizeMentionUserId } from '$lib/utils/mentions';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import type { Snippet } from 'svelte';
 
@@ -17,7 +17,7 @@
   const mentionUserId = $derived.by(() => {
     if (!isMention) return '';
     const key = normalizeMentionUserId(decodeURIComponent(href.slice(MENTION_HREF_PREFIX.length)));
-    return isUserUuid(key) ? key : '';
+    return isMentionUserId(key) ? key : '';
   });
   const hashtagName = $derived(isHashtag ? href.slice(9) : '');
 

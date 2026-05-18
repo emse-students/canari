@@ -1,44 +1,52 @@
 import { describe, expect, it } from 'vitest';
-import { extractMentionUserIds, formatMentionToken, isUserUuid } from './mentions';
+import {
+  EXAMPLE_MENTION_USER_ID,
+  extractMentionUserIds,
+  formatMentionToken,
+  isMentionUserId,
+} from './mentions';
 import { splitTextWithMentions } from './mentions.parse';
 import { preprocessPostMarkdown } from './posts/postMarkdown';
 
-const USER_ID = '550e8400e29b41d4a716446655440000';
-const USER_ID_DASHED = '550e8400-e29b-41d4-a716-446655440000';
-
 describe('mentions', () => {
-  it('formatMentionToken builds @[uuid]', () => {
-    expect(formatMentionToken(USER_ID)).toBe(`@[${USER_ID}]`);
+  it('formatMentionToken builds @[id]', () => {
+    expect(formatMentionToken(EXAMPLE_MENTION_USER_ID)).toBe(`@[${EXAMPLE_MENTION_USER_ID}]`);
   });
 
-  it('extractMentionUserIds reads uuid tokens', () => {
-    const text = `Salut ${formatMentionToken(USER_ID)} !`;
-    expect(extractMentionUserIds(text)).toEqual([USER_ID]);
+  it('normalizes uppercase hex from API', () => {
+    const upper = EXAMPLE_MENTION_USER_ID.toUpperCase();
+    expect(formatMentionToken(upper)).toBe(`@[${EXAMPLE_MENTION_USER_ID}]`);
+  });
+
+  it('extractMentionUserIds reads tokens', () => {
+    const text = `Salut ${formatMentionToken(EXAMPLE_MENTION_USER_ID)}!`;
+    expect(extractMentionUserIds(text)).toEqual([EXAMPLE_MENTION_USER_ID]);
   });
 
   it('ignores plain @word tokens', () => {
     expect(extractMentionUserIds('Salut @alice')).toEqual([]);
   });
 
-  it('isUserUuid validates canonical ids', () => {
-    expect(isUserUuid(USER_ID)).toBe(true);
-    expect(isUserUuid(USER_ID_DASHED)).toBe(true);
-    expect(isUserUuid('Jean Dupont')).toBe(false);
+  it('ignores truncated or dashed ids in brackets', () => {
+    expect(extractMentionUserIds('@[abc]')).toEqual([]);
+    expect(
+      extractMentionUserIds('@[550e8400-e29b-41d4-a716-4466554400000000000000000000000000000000]')
+    ).toEqual([]);
   });
 
-  it('formatMentionToken strips dashes from dashed ids', () => {
-    expect(formatMentionToken(USER_ID_DASHED)).toBe(`@[${USER_ID}]`);
-  });
-
-  it('ignores legacy dashed tokens in text', () => {
-    expect(extractMentionUserIds(`@[${USER_ID_DASHED}]`)).toEqual([]);
+  it('isMentionUserId validates 64 hex ids', () => {
+    expect(isMentionUserId(EXAMPLE_MENTION_USER_ID)).toBe(true);
+    expect(isMentionUserId('Jean Dupont')).toBe(false);
+    expect(isMentionUserId('abc')).toBe(false);
   });
 });
 
 describe('splitTextWithMentions', () => {
-  it('parses @[uuid] as mention with userId', () => {
-    const parts = splitTextWithMentions(`hey @[${USER_ID}]`);
-    expect(parts.some((p) => p.type === 'mention' && p.userId === USER_ID)).toBe(true);
+  it('parses @[id] as mention with userId', () => {
+    const parts = splitTextWithMentions(`hey @[${EXAMPLE_MENTION_USER_ID}]`);
+    expect(parts.some((p) => p.type === 'mention' && p.userId === EXAMPLE_MENTION_USER_ID)).toBe(
+      true
+    );
   });
 
   it('leaves plain @word as text', () => {
@@ -48,10 +56,10 @@ describe('splitTextWithMentions', () => {
 });
 
 describe('preprocessPostMarkdown', () => {
-  it('links @[uuid] to internal mention href', () => {
-    const out = preprocessPostMarkdown(`Bonjour @[${USER_ID}]`);
-    expect(out).toContain(`](#mention-${USER_ID})`);
-    expect(out).not.toContain(`@[${USER_ID}]`);
+  it('links @[id] to internal mention href', () => {
+    const out = preprocessPostMarkdown(`Bonjour @[${EXAMPLE_MENTION_USER_ID}]`);
+    expect(out).toContain(`](#mention-${EXAMPLE_MENTION_USER_ID})`);
+    expect(out).not.toContain(`@[${EXAMPLE_MENTION_USER_ID}]`);
   });
 
   it('does not transform plain @word', () => {

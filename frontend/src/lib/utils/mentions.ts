@@ -1,5 +1,12 @@
-/** Compact user id inside `@[…]` — 32 lowercase hex chars, no dashes. */
-export const MENTION_USER_ID_PATTERN = '[0-9a-f]{32}';
+/**
+ * User id inside `@[…]` — 64 lowercase hex chars (OIDC sub, no dashes).
+ * @see {@link EXAMPLE_MENTION_USER_ID}
+ */
+export const MENTION_USER_ID_PATTERN = '[0-9a-f]{64}';
+
+/** Example OIDC sub (64 hex, no dashes) — use in tests and docs. */
+export const EXAMPLE_MENTION_USER_ID =
+  'd82cd2268993451edb547bdd7ff278447f6619f67d0d73a520897e54f0714df2';
 
 /** Canonical mention token inserted by autocomplete: `@[userId]`. */
 export const MENTION_UUID_TOKEN_RE = new RegExp(`@\\[(${MENTION_USER_ID_PATTERN})\\]`, 'gi');
@@ -7,14 +14,18 @@ export const MENTION_UUID_TOKEN_RE = new RegExp(`@\\[(${MENTION_USER_ID_PATTERN}
 /** Internal markdown href prefix consumed by PostMentionLink (`#mention-{id}`). */
 export const MENTION_HREF_PREFIX = '#mention-';
 
-/** Normalizes a user id for mention tokens (lowercase, no dashes). */
+/** Normalizes a user id for mention tokens (trim + lowercase hex). */
 export function normalizeMentionUserId(userId: string): string {
-  return userId.trim().toLowerCase().replace(/-/g, '');
+  return userId.trim().toLowerCase();
 }
 
-export function isUserUuid(value: string): boolean {
+/** Whether `value` is a valid mention target id (64 hex). */
+export function isMentionUserId(value: string): boolean {
   return new RegExp(`^${MENTION_USER_ID_PATTERN}$`, 'i').test(normalizeMentionUserId(value));
 }
+
+/** @deprecated use {@link isMentionUserId} */
+export const isUserUuid = isMentionUserId;
 
 /** Extracts user IDs from `@[id]` tokens (deduplicated, normalized). */
 export function extractMentionUserIds(text: string): string[] {
