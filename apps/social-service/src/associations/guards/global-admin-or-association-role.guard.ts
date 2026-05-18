@@ -2,12 +2,12 @@ import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@
 import { Reflector } from '@nestjs/core';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { AssociationMember, AssociationPermission } from '../entities/association-member.entity';
-import { MIN_ROLE_KEY } from './association-role.guard';
+import { AssociationMember, AssociationPermissionFlag } from '../entities/association-member.entity';
+import { PERM_FLAG_KEY } from './association-role.guard';
 
 /**
  * Allows the request if `X-Global-Admin` is true, else requires association membership
- * with at least `MIN_ROLE_KEY` (default: Member — set Admin on the handler).
+ * with the flag declared via `@SetMetadata(PERM_FLAG_KEY, ...)` (default: 0 = any member).
  */
 @Injectable()
 export class GlobalAdminOrAssociationRoleGuard implements CanActivate {
@@ -18,9 +18,8 @@ export class GlobalAdminOrAssociationRoleGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const minPermission =
-      this.reflector.get<AssociationPermission>(MIN_ROLE_KEY, context.getHandler()) ??
-      AssociationPermission.Member;
+    const requiredFlag =
+      this.reflector.get<AssociationPermissionFlag>(PERM_FLAG_KEY, context.getHandler()) ?? 0;
 
     const request = context.switchToHttp().getRequest();
     const userId = (request.headers['x-user-id'] as string | undefined)?.trim();
@@ -42,7 +41,7 @@ export class GlobalAdminOrAssociationRoleGuard implements CanActivate {
       throw new ForbiddenException('You are not a member of this association');
     }
 
-    if (membership.permission < minPermission) {
+    if (requiredFlag !== 0 && (membership.permissions & requiredFlag) === 0) {
       throw new ForbiddenException('Insufficient permissions in this association');
     }
 

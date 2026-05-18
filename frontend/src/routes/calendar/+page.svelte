@@ -117,7 +117,7 @@
     } else {
       try {
         const mine = await listMyAssociations();
-        canModerateAgenda = mine.some((a) => a.permission === 1);
+        canModerateAgenda = mine.some((a) => a.isAdmin);
       } catch {
         canModerateAgenda = false;
       }

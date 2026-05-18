@@ -1,16 +1,18 @@
 import {
   IsArray,
+  IsBoolean,
   IsDateString,
-  IsEnum,
+  IsInt,
   IsNotEmpty,
   IsOptional,
   IsString,
   IsUUID,
   Matches,
+  Max,
   MaxLength,
+  Min,
   ValidateIf,
 } from 'class-validator';
-import { AssociationPermission } from '../entities/association-member.entity';
 
 export class CreateAssociationDto {
   @IsString()
@@ -60,6 +62,17 @@ export class UpdateAssociationDto {
   @IsString()
   @IsOptional()
   logoUrl?: string;
+
+  /** Only global admins may toggle this. */
+  @IsBoolean()
+  @IsOptional()
+  isBDE?: boolean;
+
+  /** Only global admins may change this. Default 500 MiB. */
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  documentQuotaBytes?: number;
 }
 
 export class AddMemberDto {
@@ -71,8 +84,14 @@ export class AddMemberDto {
   @IsNotEmpty()
   role: string;
 
-  @IsEnum(AssociationPermission)
-  permission: AssociationPermission;
+  /**
+   * Bitmask of `AssociationPermissionFlag` values.
+   * 0 = simple member; combine flags with bitwise OR.
+   */
+  @IsInt()
+  @Min(0)
+  @Max(511) // 2^9 - 1 covers all 9 current flags
+  permissions: number;
 }
 
 export class UpdateMemberRoleDto {
@@ -80,9 +99,12 @@ export class UpdateMemberRoleDto {
   @IsOptional()
   role?: string;
 
-  @IsEnum(AssociationPermission)
+  /** Bitmask of `AssociationPermissionFlag` values. */
+  @IsInt()
+  @Min(0)
+  @Max(511)
   @IsOptional()
-  permission?: AssociationPermission;
+  permissions?: number;
 }
 
 export class AddMembersBatchDto {

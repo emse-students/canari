@@ -112,7 +112,7 @@
     }
     try {
       const mine = await listMyAssociations();
-      showAdminSection = mine.some((a) => a.permission === 1);
+      showAdminSection = mine.some((a) => a.isAdmin);
     } catch {
       showAdminSection = false;
     }

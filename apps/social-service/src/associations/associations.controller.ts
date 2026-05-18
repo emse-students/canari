@@ -20,9 +20,9 @@ import type { Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
-import { MIN_ROLE_KEY } from './guards/association-role.guard';
+import { PERM_FLAG_KEY } from './guards/association-role.guard';
 import { GlobalAdminOrAssociationRoleGuard } from './guards/global-admin-or-association-role.guard';
-import { AssociationPermission } from './entities/association-member.entity';
+import { AssociationPermissionFlag } from './entities/association-member.entity';
 import { AssociationsService } from './associations.service';
 import { FollowsService } from '../follows/follows.service';
 import {
@@ -87,26 +87,9 @@ export class AssociationsController {
   }
 
   /**
-   * Same window as `calendar/feed`, but returns an iCalendar document (`text/calendar`).
-   * Suitable for “subscribe by URL”, opening in Apple/Google Calendar, etc.
+   * Returns the iCalendar document for the aggregated feed.
+   * Suitable for "subscribe by URL" in Apple/Google Calendar.
    */
-  /** Pending agenda events the caller may validate (global admin or association admin). */
-  @UseGuards(NginxAuthGuard)
-  @Get('calendar/pending')
-  async listPendingCalendarEvents(
-    @Headers('x-user-id') userId: string,
-    @Headers('x-global-admin') ga?: string
-  ) {
-    const isGlobalAdmin = ga === 'true';
-    if (!isGlobalAdmin) {
-      const can = await this.service.canModerateAnyAssociationCalendar(userId);
-      if (!can) {
-        throw new ForbiddenException('Association admin or global admin required');
-      }
-    }
-    return this.service.listPendingCalendarEvents(userId, { isGlobalAdmin });
-  }
-
   @Get('calendar/feed.ics')
   async aggregatedCalendarFeedIcs(
     @Query('from') from: string,
@@ -123,10 +106,47 @@ export class AssociationsController {
     return body;
   }
 
-  /** Returns all members of the specified association. */
+  /**
+   * Pending agenda events the caller may see.
+   * Global admin or BDE admin sees all; association admins see only their own.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get('calendar/pending')
+  async listPendingCalendarEvents(
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    const isGlobalAdmin = ga === 'true';
+    if (!isGlobalAdmin) {
+      const can = await this.service.canModerateAnyAssociationCalendar(userId);
+      if (!can) {
+        throw new ForbiddenException('Association admin or global admin required');
+      }
+    }
+    return this.service.listPendingCalendarEvents(userId, { isGlobalAdmin });
+  }
+
+  /**
+   * Lists members of an association.
+   * Returns `permissions` bitmask only when the caller holds `MANAGE_MEMBERS`; otherwise only `isAdmin` (boolean).
+   */
+  @UseGuards(NginxAuthGuard)
   @Get(':id/members')
-  listMembers(@Param('id') id: string) {
-    return this.service.listMembers(id);
+  async listMembers(
+    @Param('id') id: string,
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    const isGlobalAdmin = ga === 'true';
+    let includePermissions = isGlobalAdmin;
+    if (!isGlobalAdmin) {
+      includePermissions = await this.service.callerHasFlag(
+        userId,
+        id,
+        AssociationPermissionFlag.MANAGE_MEMBERS
+      );
+    }
+    return this.service.listMembers(id, { includePermissions });
   }
 
   /** Returns scheduled events for the association (optional `from` / `to` ISO date bounds). */
@@ -156,7 +176,7 @@ export class AssociationsController {
     return this.followsService.isFollowing(userId, id).then((following) => ({ following }));
   }
 
-  /** Returns whether the calling user has admin permission to manage the association. */
+  /** Returns whether the calling user has permission to post on behalf of the association. */
   @UseGuards(NginxAuthGuard)
   @Get(':id/manage-permission')
   async managePermission(
@@ -169,7 +189,7 @@ export class AssociationsController {
   }
 
   /** Recent posts and forms for this association (picker when linking calendar ↔ content). */
-  @SetMetadata(MIN_ROLE_KEY, AssociationPermission.Admin)
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.PROPOSE_EVENT)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Get(':id/link-candidates')
   linkCandidates(@Param('id') id: string) {
@@ -198,12 +218,31 @@ export class AssociationsController {
     return this.followsService.unfollowAssociation(userId, id);
   }
 
-  // ── Global Admin only ─────────────────────────────────────────────────────
+  // ── Global Admin OR BDE CREATE_ASSO ──────────────────────────────────────
 
-  /** Creates a new association; requires global admin privileges. */
-  @UseGuards(NginxAuthGuard, GlobalAdminGuard)
+  /**
+   * Creates a new association.
+   * Allowed for global admins, or BDE members holding the CREATE_ASSO flag.
+   */
+  @UseGuards(NginxAuthGuard)
   @Post()
-  create(@Headers('x-user-id') userId: string, @Body() dto: CreateAssociationDto) {
+  async create(
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga: string | undefined,
+    @Body() dto: CreateAssociationDto
+  ) {
+    const isGlobalAdmin = ga === 'true';
+    if (!isGlobalAdmin) {
+      const canCreate = await this.service.isUserBdeAdmin(userId);
+      // isUserBdeAdmin checks VALIDATE_EVENTS; CREATE_ASSO is a separate flag
+      const canCreateAsso = await this.service.callerHasAnyBdeFlag(
+        userId,
+        AssociationPermissionFlag.CREATE_ASSO
+      );
+      if (!canCreateAsso) {
+        throw new ForbiddenException('Global admin or BDE CREATE_ASSO permission required');
+      }
+    }
     return this.service.create(dto, userId);
   }
 
@@ -214,18 +253,31 @@ export class AssociationsController {
     return this.service.remove(id);
   }
 
-  // ── Global Admin OR Association Admin ─────────────────────────────────────
+  // ── Global Admin OR Association Admin (MANAGE_MEMBERS) ───────────────────
 
-  /** Updates association details; requires association admin or global admin. */
-  @SetMetadata(MIN_ROLE_KEY, AssociationPermission.Admin)
+  /**
+   * Updates association details.
+   * `isBDE` and `documentQuotaBytes` are silently ignored unless the caller is a global admin.
+   */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateAssociationDto) {
-    return this.service.update(id, dto);
+  update(
+    @Param('id') id: string,
+    @Headers('x-global-admin') ga: string | undefined,
+    @Body() dto: UpdateAssociationDto
+  ) {
+    const patch = { ...dto };
+    if (ga !== 'true') {
+      // Only global admins may toggle BDE status or adjust document quota
+      delete patch.isBDE;
+      delete patch.documentQuotaBytes;
+    }
+    return this.service.update(id, patch);
   }
 
   /** Uploads and sets a new logo for the association. */
-  @SetMetadata(MIN_ROLE_KEY, AssociationPermission.Admin)
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: LOGO_UPLOAD_MB * 1024 * 1024 } }))
   @Post(':id/logo')
@@ -239,17 +291,13 @@ export class AssociationsController {
     }
     return this.service.setLogoFromUpload(
       id,
-      {
-        buffer: file.buffer,
-        mimetype: file.mimetype,
-        size: file.size,
-      },
+      { buffer: file.buffer, mimetype: file.mimetype, size: file.size },
       authorization
     );
   }
 
   /** Removes the stored logo from an association. */
-  @SetMetadata(MIN_ROLE_KEY, AssociationPermission.Admin)
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Delete(':id/logo')
   deleteLogo(@Param('id') id: string, @Headers('authorization') authorization: string | undefined) {
@@ -257,15 +305,15 @@ export class AssociationsController {
   }
 
   /** Adds a user as a member of the association with the specified role. */
-  @SetMetadata(MIN_ROLE_KEY, AssociationPermission.Admin)
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Post(':id/members')
   addMember(@Param('id') id: string, @Body() dto: AddMemberDto) {
-    return this.service.addMember(id, dto.userId, dto.role, dto.permission);
+    return this.service.addMember({ associationId: id, ...dto });
   }
 
-  /** Updates the role or permission of an existing association member. */
-  @SetMetadata(MIN_ROLE_KEY, AssociationPermission.Admin)
+  /** Updates the role or permission bitmask of an existing association member. */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Patch(':id/members/:userId')
   updateMemberRole(
@@ -273,19 +321,21 @@ export class AssociationsController {
     @Param('userId') targetUserId: string,
     @Body() dto: UpdateMemberRoleDto
   ) {
-    return this.service.updateMemberRole(id, targetUserId, dto.role, dto.permission);
+    return this.service.updateMemberRole(id, targetUserId, dto.role, dto.permissions);
   }
 
   /** Removes a member from the association. */
-  @SetMetadata(MIN_ROLE_KEY, AssociationPermission.Admin)
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Delete(':id/members/:userId')
   removeMember(@Param('id') id: string, @Param('userId') targetUserId: string) {
     return this.service.removeMember(id, targetUserId);
   }
 
-  /** Creates a calendar event for the association. */
-  @SetMetadata(MIN_ROLE_KEY, AssociationPermission.Admin)
+  // ── Calendar (PROPOSE_EVENT flag) ─────────────────────────────────────────
+
+  /** Creates a calendar event proposal for the association (goes into pending queue). */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.PROPOSE_EVENT)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Post(':id/events')
   createCalendarEvent(
@@ -297,7 +347,7 @@ export class AssociationsController {
   }
 
   /** Updates a calendar event. */
-  @SetMetadata(MIN_ROLE_KEY, AssociationPermission.Admin)
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.PROPOSE_EVENT)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Patch(':id/events/:eventId')
   updateCalendarEvent(
@@ -309,22 +359,34 @@ export class AssociationsController {
   }
 
   /** Deletes a calendar event. */
-  @SetMetadata(MIN_ROLE_KEY, AssociationPermission.Admin)
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.PROPOSE_EVENT)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Delete(':id/events/:eventId')
   deleteCalendarEvent(@Param('id') id: string, @Param('eventId') eventId: string) {
     return this.service.deleteCalendarEvent(id, eventId);
   }
 
-  /** Validates a pending calendar event (makes it visible publicly). */
-  @SetMetadata(MIN_ROLE_KEY, AssociationPermission.Admin)
-  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  /**
+   * Validates a pending calendar event (makes it publicly visible).
+   * Requires VALIDATE_EVENTS in a BDE association, or global admin.
+   */
+  @UseGuards(NginxAuthGuard)
   @Post(':id/events/:eventId/validate')
-  validateCalendarEvent(
+  async validateCalendarEvent(
     @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga: string | undefined,
     @Param('id') id: string,
     @Param('eventId') eventId: string
   ) {
+    const isGlobalAdmin = ga === 'true';
+    if (!isGlobalAdmin) {
+      const isBde = await this.service.isUserBdeAdmin(userId);
+      if (!isBde) {
+        throw new ForbiddenException(
+          'Only BDE admins (VALIDATE_EVENTS flag) or global admins can validate events'
+        );
+      }
+    }
     return this.service.validateCalendarEvent(id, eventId, userId);
   }
 

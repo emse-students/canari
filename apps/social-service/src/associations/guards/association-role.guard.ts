@@ -2,16 +2,17 @@ import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@
 import { Reflector } from '@nestjs/core';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { AssociationMember, AssociationPermission } from '../entities/association-member.entity';
+import { AssociationMember, AssociationPermissionFlag } from '../entities/association-member.entity';
 
-export const MIN_ROLE_KEY = 'association_min_permission';
+/** Metadata key used with `@SetMetadata` to declare the required permission flag. */
+export const PERM_FLAG_KEY = 'association_perm_flag';
 
 /**
- * Guard that checks the caller has at least `minPermission` in the association
- * identified by the `:id` route parameter.
+ * Guard that checks the caller holds the required `AssociationPermissionFlag`
+ * in the association identified by the `:id` route parameter.
  *
  * Usage:
- *   @SetMetadata(MIN_ROLE_KEY, AssociationPermission.Admin)
+ *   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
  *   @UseGuards(NginxAuthGuard, AssociationRoleGuard)
  */
 @Injectable()
@@ -23,9 +24,8 @@ export class AssociationRoleGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const minPermission =
-      this.reflector.get<AssociationPermission>(MIN_ROLE_KEY, context.getHandler()) ??
-      AssociationPermission.Member;
+    const requiredFlag =
+      this.reflector.get<AssociationPermissionFlag>(PERM_FLAG_KEY, context.getHandler()) ?? 0;
 
     const request = context.switchToHttp().getRequest();
     const userId = (request.headers['x-user-id'] as string | undefined)?.trim();
@@ -43,7 +43,7 @@ export class AssociationRoleGuard implements CanActivate {
       throw new ForbiddenException('You are not a member of this association');
     }
 
-    if (membership.permission < minPermission) {
+    if (requiredFlag !== 0 && (membership.permissions & requiredFlag) === 0) {
       throw new ForbiddenException('Insufficient permissions in this association');
     }
 

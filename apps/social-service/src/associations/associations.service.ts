@@ -6,7 +6,10 @@ import { firstValueFrom } from 'rxjs';
 import FormData from 'form-data';
 import { AxiosError } from 'axios';
 import { Association } from './entities/association.entity';
-import { AssociationMember, AssociationPermission } from './entities/association-member.entity';
+import {
+  AssociationMember,
+  AssociationPermissionFlag,
+} from './entities/association-member.entity';
 import {
   AssociationCalendarEvent,
   AssociationCalendarEventStatus,
@@ -14,6 +17,7 @@ import {
 import { Post } from '../posts/entities/post.entity';
 import { Form } from '../forms/entities/form.entity';
 import {
+  AddMemberDto,
   CreateAssociationDto,
   CreateAssociationCalendarEventDto,
   UpdateAssociationDto,
@@ -126,6 +130,10 @@ export class AssociationsService {
     const patch = { ...dto } as Partial<Association>;
     if (dto.bioMarkdown !== undefined && dto.bioMarkdown.trim() === '') {
       patch.bioMarkdown = null;
+    }
+    // documentQuotaBytes comes in as bigint but must stay a number in TypeORM
+    if (patch.documentQuotaBytes !== undefined) {
+      patch.documentQuotaBytes = Number(patch.documentQuotaBytes);
     }
     await this.assoRepo.update(id, patch);
     await this.invalidatePostListCaches();
@@ -269,61 +277,59 @@ export class AssociationsService {
 
   // ── Members ───────────────────────────────────────────────────────────────
 
-  /** Lists all members of an association with their user displayName joined from the users table. */
-  async listMembers(associationId: string) {
-    return this.memberRepo
+  /**
+   * Lists all members of an association.
+   * Returns `isAdmin` (permissions > 0) for public callers; the raw `permissions`
+   * bitmask is only included when `includePermissions` is true (MANAGE_MEMBERS flag required).
+   */
+  async listMembers(associationId: string, opts?: { includePermissions?: boolean }) {
+    const rows = await this.memberRepo
       .createQueryBuilder('m')
-      .select(['m.id', 'm.associationId', 'm.userId', 'm.role', 'm.permission', 'm.createdAt'])
+      .select(['m.id', 'm.associationId', 'm.userId', 'm.role', 'm.permissions', 'm.createdAt'])
       .addSelect('u."displayName"', 'displayName')
       .leftJoin('users', 'u', 'u.id = m."userId"')
       .where('m."associationId" = :associationId', { associationId })
       .orderBy('m."createdAt"', 'ASC')
-      .getRawMany()
-      .then((rows) =>
-        rows.map((r) => ({
-          id: r.m_id,
-          associationId: r.m_associationId,
-          userId: r.m_userId,
-          role: r.m_role,
-          permission: Number(r.m_permission),
-          createdAt: r.m_createdAt,
-          displayName: r.displayName || null,
-        }))
-      );
+      .getRawMany();
+
+    return rows.map((r) => {
+      const permissions = Number(r.m_permissions ?? 0);
+      const base = {
+        id: r.m_id,
+        associationId: r.m_associationId,
+        userId: r.m_userId,
+        role: r.m_role,
+        isAdmin: permissions > 0,
+        createdAt: r.m_createdAt,
+        displayName: r.displayName || null,
+      };
+      if (opts?.includePermissions) {
+        return { ...base, permissions };
+      }
+      return base;
+    });
   }
 
-  /** Adds a user to an association with the given role and permission level. Throws if they are already a member. */
-  async addMember(
-    associationId: string,
-    userId: string,
-    role: string,
-    permission: AssociationPermission
-  ) {
-    // Ensure association exists
+  /** Adds a user to an association with the given role and permission bitmask. Throws if they are already a member. */
+  async addMember(dto: AddMemberDto & { associationId: string }) {
+    const { associationId, userId, role, permissions } = dto;
     await this.findById(associationId);
 
-    const existing = await this.memberRepo.findOne({
-      where: { associationId, userId },
-    });
+    const existing = await this.memberRepo.findOne({ where: { associationId, userId } });
     if (existing) {
       throw new BadRequestException('User is already a member');
     }
 
-    const membership = this.memberRepo.create({
-      associationId,
-      userId,
-      role,
-      permission,
-    });
+    const membership = this.memberRepo.create({ associationId, userId, role, permissions });
     return this.memberRepo.save(membership);
   }
 
-  /** Updates a member's role label and/or permission level. Blocks demotion of the last admin. */
+  /** Updates a member's role label and/or permission bitmask. Blocks removal of all flags from the last admin. */
   async updateMemberRole(
     associationId: string,
     targetUserId: string,
     role?: string,
-    permission?: AssociationPermission
+    permissions?: number
   ) {
     const membership = await this.memberRepo.findOne({
       where: { associationId, userId: targetUserId },
@@ -331,19 +337,16 @@ export class AssociationsService {
     if (!membership) {
       throw new NotFoundException('Member not found');
     }
-    if (
-      permission !== undefined &&
-      membership.permission >= AssociationPermission.Admin &&
-      permission < AssociationPermission.Admin
-    ) {
+    // Guard: demoting the only admin to a non-admin (permissions=0) is blocked.
+    if (permissions !== undefined && membership.permissions > 0 && permissions === 0) {
       await this.assertNotLastAdminDemotion(associationId);
     }
     if (role !== undefined) membership.role = role;
-    if (permission !== undefined) membership.permission = permission;
+    if (permissions !== undefined) membership.permissions = permissions;
     return this.memberRepo.save(membership);
   }
 
-  /** Removes a member from the association. Blocks removal of the last admin. */
+  /** Removes a member from the association. Blocks removal of the last admin (permissions > 0). */
   async removeMember(associationId: string, targetUserId: string) {
     const membership = await this.memberRepo.findOne({
       where: { associationId, userId: targetUserId },
@@ -351,7 +354,7 @@ export class AssociationsService {
     if (!membership) {
       throw new NotFoundException('Member not found');
     }
-    if (membership.permission >= AssociationPermission.Admin) {
+    if (membership.permissions > 0) {
       await this.assertNotLastAdminRemoval(associationId);
     }
 
@@ -359,11 +362,13 @@ export class AssociationsService {
     return { ok: true };
   }
 
-  /** Counts members whose permission is ≥ Admin. Used by the last-admin guard. */
+  /** Counts members with at least one permission flag set (i.e. any admin). */
   private async adminMemberCount(associationId: string): Promise<number> {
-    return this.memberRepo.count({
-      where: { associationId, permission: AssociationPermission.Admin },
-    });
+    return this.memberRepo
+      .createQueryBuilder('m')
+      .where('m.associationId = :associationId', { associationId })
+      .andWhere('m.permissions > 0')
+      .getCount();
   }
 
   /** Block removing the only admin-capable member. */
@@ -382,11 +387,9 @@ export class AssociationsService {
     }
   }
 
-  /** Returns all associations a user belongs to, with their role/permission attached to each item. */
+  /** Returns all associations a user belongs to, with their role and permissions bitmask attached to each item. */
   async listByUser(userId: string) {
-    const memberships = await this.memberRepo.find({
-      where: { userId },
-    });
+    const memberships = await this.memberRepo.find({ where: { userId } });
     if (memberships.length === 0) return [];
 
     const assoIds = memberships.map((m) => m.associationId);
@@ -400,7 +403,8 @@ export class AssociationsService {
       return {
         ...a,
         role: m?.role,
-        permission: m?.permission,
+        permissions: m?.permissions ?? 0,
+        isAdmin: (m?.permissions ?? 0) > 0,
       };
     });
   }
@@ -584,16 +588,76 @@ export class AssociationsService {
   /** Max span for aggregated calendar queries (abuse guard). */
   private static readonly CALENDAR_FEED_MAX_MS = 550 * 24 * 60 * 60 * 1000;
 
-  /** True if the user can validate calendar events for at least one association. */
+  /**
+   * Returns true if the user has the PROPOSE_EVENT flag in at least one association.
+   * Used to decide whether to show the pending-events queue link.
+   */
   async canModerateAnyAssociationCalendar(userId: string): Promise<boolean> {
-    const n = await this.memberRepo.count({
-      where: { userId, permission: AssociationPermission.Admin },
-    });
+    const n = await this.memberRepo
+      .createQueryBuilder('m')
+      .where('m.userId = :userId', { userId })
+      .andWhere('(m.permissions & :flag) <> 0', {
+        flag: AssociationPermissionFlag.PROPOSE_EVENT,
+      })
+      .getCount();
+    return n > 0;
+  }
+
+  /** Returns true if the user is an admin (any flag) of at least one association. */
+  async isMemberOfAnyAssoc(userId: string): Promise<boolean> {
+    const n = await this.memberRepo
+      .createQueryBuilder('m')
+      .where('m.userId = :userId', { userId })
+      .andWhere('m.permissions > 0')
+      .getCount();
+    return n > 0;
+  }
+
+  /** Returns true if the user holds VALIDATE_EVENTS in a BDE association. */
+  async isUserBdeAdmin(userId: string): Promise<boolean> {
+    const n = await this.memberRepo
+      .createQueryBuilder('m')
+      .innerJoin(Association, 'a', 'a.id = m.associationId')
+      .where('m.userId = :userId', { userId })
+      .andWhere('a.isBDE = true')
+      .andWhere('(m.permissions & :flag) <> 0', {
+        flag: AssociationPermissionFlag.VALIDATE_EVENTS,
+      })
+      .getCount();
+    return n > 0;
+  }
+
+  /** Returns true if the user holds a specific flag in the given association. */
+  hasPermission(permissions: number, flag: AssociationPermissionFlag): boolean {
+    return (permissions & flag) !== 0;
+  }
+
+  /** Returns true if userId holds `flag` in association `associationId`. */
+  async callerHasFlag(
+    userId: string,
+    associationId: string,
+    flag: AssociationPermissionFlag
+  ): Promise<boolean> {
+    const m = await this.memberRepo.findOne({ where: { associationId, userId } });
+    if (!m) return false;
+    return (m.permissions & flag) !== 0;
+  }
+
+  /** Returns true if userId holds `flag` in ANY BDE association. */
+  async callerHasAnyBdeFlag(userId: string, flag: AssociationPermissionFlag): Promise<boolean> {
+    const n = await this.memberRepo
+      .createQueryBuilder('m')
+      .innerJoin(Association, 'a', 'a.id = m.associationId')
+      .where('m.userId = :userId', { userId })
+      .andWhere('a.isBDE = true')
+      .andWhere('(m.permissions & :flag) <> 0', { flag })
+      .getCount();
     return n > 0;
   }
 
   /**
-   * Pending calendar rows the caller may validate (global admin: all; else admin memberships only).
+   * Pending calendar rows the caller may see (global admin / BDE admin: all; else own assos).
+   * Any member of an association (permissions > 0) sees pending events of their own asso.
    */
   async listPendingCalendarEvents(userId: string, opts?: { isGlobalAdmin?: boolean }) {
     const qb = this.calendarRepo
@@ -603,15 +667,22 @@ export class AssociationsService {
       .orderBy('e.startsAt', 'ASC');
 
     if (!opts?.isGlobalAdmin) {
-      const adminMemberships = await this.memberRepo.find({
-        where: { userId, permission: AssociationPermission.Admin },
-        select: ['associationId'],
-      });
-      const adminAssoIds = adminMemberships.map((m) => m.associationId);
-      if (adminAssoIds.length === 0) {
-        return [];
+      // BDE admins (VALIDATE_EVENTS) see all pending events
+      const isBde = await this.isUserBdeAdmin(userId);
+      if (!isBde) {
+        // Regular asso admins (any flag) see only their own asso's pending events
+        const myMemberships = await this.memberRepo.find({
+          where: { userId },
+          select: ['associationId', 'permissions'],
+        });
+        const adminAssoIds = myMemberships
+          .filter((m) => m.permissions > 0)
+          .map((m) => m.associationId);
+        if (adminAssoIds.length === 0) {
+          return [];
+        }
+        qb.andWhere('e.associationId IN (:...adminAssoIds)', { adminAssoIds });
       }
-      qb.andWhere('e.associationId IN (:...adminAssoIds)', { adminAssoIds });
     }
 
     const rows = await qb
@@ -870,7 +941,7 @@ export class AssociationsService {
 
   // ── Post authorship check ─────────────────────────────────────────────────
 
-  /** Returns true if the user has Admin-level permission in the association (or is a global admin). Used before creating a post on behalf of an association. */
+  /** Returns true if the user holds `POST_AS_ASSO` in the association (or is a global admin). */
   async canPostAs(
     userId: string,
     associationId: string,
@@ -880,10 +951,8 @@ export class AssociationsService {
       const asso = await this.assoRepo.findOne({ where: { id: associationId } });
       return !!asso;
     }
-    const membership = await this.memberRepo.findOne({
-      where: { associationId, userId },
-    });
+    const membership = await this.memberRepo.findOne({ where: { associationId, userId } });
     if (!membership) return false;
-    return membership.permission >= AssociationPermission.Admin;
+    return this.hasPermission(membership.permissions, AssociationPermissionFlag.POST_AS_ASSO);
   }
 }

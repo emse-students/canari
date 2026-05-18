@@ -43,12 +43,7 @@
 
   let userId = $derived(currentUserId());
   let myMembership = $derived(members.find((m) => m.userId === userId));
-  let isAdmin = $derived(
-    !!myMembership &&
-      (myMembership.permission === 1 ||
-        myMembership.role === 'admin' ||
-        myMembership.role === 'owner')
-  );
+  let isAdmin = $derived(!!myMembership && myMembership.isAdmin);
   let isGlobalAdminUser = $derived(isGlobalAdmin());
 
   let editName = $state('');
@@ -59,7 +54,8 @@
 
   let newMemberUserId = $state('');
   let newMemberRole = $state('Membre');
-  let newMemberPermission = $state<0 | 1>(0);
+  /** 0 = simple member; 287 = ALL_CORE_FLAGS (admin). */
+  let newMemberPermissions = $state(0);
   let addingMember = $state(false);
   let memberError = $state('');
 
@@ -98,9 +94,7 @@
 
       const uid = currentUserId();
       const mine = members.find((m) => m.userId === uid);
-      const canEdit =
-        isGlobalAdmin() ||
-        (!!mine && (mine.permission === 1 || mine.role === 'admin' || mine.role === 'owner'));
+      const canEdit = isGlobalAdmin() || (!!mine && mine.isAdmin);
       if (!canEdit) {
         await goto(`/associations/${encodeURIComponent(slug)}`);
         return;
@@ -148,12 +142,12 @@
         asso.id,
         newMemberUserId.trim(),
         newMemberRole,
-        newMemberPermission
+        newMemberPermissions
       );
       members = [...members, member];
       newMemberUserId = '';
       newMemberRole = 'Membre';
-      newMemberPermission = 0;
+      newMemberPermissions = 0;
     } catch (err) {
       memberError = err instanceof Error ? err.message : 'Erreur';
     } finally {
@@ -171,11 +165,13 @@
     }
   }
 
-  async function handleChangeRole(targetId: string, role: string, permission: 0 | 1) {
+  async function handleChangeRole(targetId: string, role: string, permissions: number) {
     if (!asso) return;
     try {
-      await updateMemberRole(asso.id, targetId, role, permission);
-      members = members.map((m) => (m.userId === targetId ? { ...m, role, permission } : m));
+      await updateMemberRole(asso.id, targetId, role, permissions);
+      members = members.map((m) =>
+        m.userId === targetId ? { ...m, role, permissions, isAdmin: permissions > 0 } : m
+      );
     } catch (err) {
       memberError = err instanceof Error ? err.message : 'Erreur';
     }
@@ -461,11 +457,11 @@
               class="w-full lg:w-36 rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2.5 text-sm"
             />
             <select
-              bind:value={newMemberPermission}
+              bind:value={newMemberPermissions}
               class="rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2.5 text-sm w-full lg:w-auto"
             >
               <option value={0}>Membre</option>
-              <option value={1}>Admin</option>
+              <option value={287}>Admin</option>
             </select>
             <button
               type="submit"

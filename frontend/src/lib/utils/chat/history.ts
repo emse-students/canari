@@ -183,8 +183,10 @@ export async function replayConversationHistory(params: {
           pendingMessages.push({
             senderId: msg.sender_id,
             content: envelope.content,
-            timestamp: toValidDate(msg.timestamp),
             ...envelope.options,
+            // Prefer sentAt from the proto payload; fall back to Redis stream timestamp
+            // for older messages that were sent before sentAt was added to the proto.
+            timestamp: envelope.options.timestamp ?? toValidDate(msg.timestamp),
             ingestSequence: historyIngestSeq++,
           });
           addedMsg++;

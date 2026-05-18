@@ -23,7 +23,7 @@
     }
     try {
       const mine = await listMyAssociations();
-      isAssociationAdmin = mine.some((a) => a.permission === 1);
+      isAssociationAdmin = mine.some((a) => a.isAdmin);
     } catch {
       isAssociationAdmin = false;
     }

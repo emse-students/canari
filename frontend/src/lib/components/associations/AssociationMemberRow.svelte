@@ -3,16 +3,24 @@
   import type { AssociationMember } from '$lib/associations/api';
   import { Trash2 } from '@lucide/svelte';
 
+  /** ALL_CORE_FLAGS = POST_AS_ASSO|PROPOSE_EVENT|MANAGE_MEMBERS|MANAGE_DOCUMENTS|MANAGE_FORMS|MANAGE_PRODUCTS = 287 */
+  const ALL_CORE_FLAGS = 287;
+
   interface Props {
     member: AssociationMember;
     displayName: string;
     /** When true, shows role editor and remove (association admins). */
     manage?: boolean;
-    onRoleChange?: (userId: string, role: string, permission: 0 | 1) => void | Promise<void>;
+    onRoleChange?: (userId: string, role: string, permissions: number) => void | Promise<void>;
     onRemove?: (userId: string) => void | Promise<void>;
   }
 
   let { member, displayName, manage = false, onRoleChange, onRemove }: Props = $props();
+
+  /** Resolved bitmask for the select: prefer explicit permissions, fall back to isAdmin heuristic. */
+  const effectivePermissions = $derived(
+    member.permissions !== undefined ? member.permissions : member.isAdmin ? ALL_CORE_FLAGS : 0
+  );
 </script>
 
 <div
@@ -36,13 +44,13 @@
       <div class="flex flex-wrap items-center gap-2 mt-1">
         <span
           class="text-xs font-semibold px-2.5 py-0.5 rounded-full
-          {member.permission === 1
+          {member.isAdmin
             ? 'bg-cn-yellow/25 text-cn-dark dark:text-cn-yellow'
             : 'bg-cn-border/50 text-text-muted'}"
         >
           {member.role}
         </span>
-        {#if member.permission === 1}
+        {#if member.isAdmin}
           <span class="text-[11px] uppercase tracking-wide text-text-muted font-medium">Admin</span>
         {/if}
       </div>
@@ -59,23 +67,23 @@
           onRoleChange(
             member.userId,
             (e.target as HTMLInputElement).value,
-            member.permission as 0 | 1
+            effectivePermissions
           )}
         class="text-sm rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 w-full sm:w-36"
       />
       <select
-        value={member.permission}
-        aria-label="Niveau d’accès"
+        value={effectivePermissions === 0 ? 0 : ALL_CORE_FLAGS}
+        aria-label="Niveau d'accès"
         onchange={(e) =>
           onRoleChange(
             member.userId,
             member.role,
-            Number((e.target as HTMLSelectElement).value) as 0 | 1
+            Number((e.target as HTMLSelectElement).value)
           )}
         class="text-sm rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2"
       >
         <option value={0}>Membre</option>
-        <option value={1}>Admin</option>
+        <option value={ALL_CORE_FLAGS}>Admin</option>
       </select>
       <button
         type="button"

@@ -97,7 +97,10 @@
     if (!editorEl) return;
     if (pendingInternalSync > 0) {
       pendingInternalSync--;
-      return;
+      // Only skip if the DOM is already up-to-date (internal update already applied).
+      // If value changed externally (e.g. parent clearing the field after send),
+      // proceed with the DOM update even if the counter wasn't fully drained.
+      if (value === lastRenderedValue) return;
     }
     if (value === lastRenderedValue) return;
 

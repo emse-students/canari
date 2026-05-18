@@ -2,13 +2,37 @@ import { apiFetch } from '$lib/utils/apiFetch';
 import { getToken } from '$lib/stores/auth';
 import { coreUrl, socialUrl } from '$lib/utils/apiUrl';
 
+/**
+ * Discord-style permission flags for association members (mirrors the backend enum).
+ * Combine flags with bitwise OR; test with `(permissions & flag) !== 0`.
+ */
+export enum AssociationPermissionFlag {
+  POST_AS_ASSO = 1 << 0,
+  PROPOSE_EVENT = 1 << 1,
+  MANAGE_MEMBERS = 1 << 2,
+  MANAGE_DOCUMENTS = 1 << 3,
+  MANAGE_FORMS = 1 << 4,
+  VALIDATE_EVENTS = 1 << 5,
+  CREATE_ASSO = 1 << 6,
+  MODERATE = 1 << 7,
+  MANAGE_PRODUCTS = 1 << 8,
+}
+
+/** Returns true if `permissions` includes `flag`. */
+export function hasPermissionFlag(permissions: number, flag: AssociationPermissionFlag): boolean {
+  return (permissions & flag) !== 0;
+}
+
 export interface AssociationMember {
   id: string;
   associationId: string;
   userId: string;
   displayName: string | null;
   role: string;
-  permission: 0 | 1;
+  /** True if the member has at least one permission flag set. */
+  isAdmin: boolean;
+  /** Full bitmask — only present when the caller holds MANAGE_MEMBERS. */
+  permissions?: number;
   createdAt: string;
 }
 
@@ -21,11 +45,19 @@ export interface Association {
   logoUrl: string | null;
   stripeAccountId: string | null;
   stripeOnboardingComplete: boolean;
+  /** True if this is the BDE association (unlocks BDE-only permission flags). */
+  isBDE: boolean;
+  /** Hex-encoded 32-byte master key for the document vault (MANAGE_DOCUMENTS only). */
+  documentVaultKey?: string | null;
+  /** Maximum vault storage in bytes (default 500 MiB). */
+  documentQuotaBytes: number;
   createdBy: string;
   memberCount?: number;
   role?: string;
-  /** 0 = member, 1 = admin (when returned from `/api/associations/me/list`). */
-  permission?: 0 | 1;
+  /** Bitmask of AssociationPermissionFlag (from `/api/associations/me/list`). */
+  permissions?: number;
+  /** True if the calling user has at least one permission in this association. */
+  isAdmin?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -43,6 +75,10 @@ export interface UpdateAssociationPayload {
   description?: string;
   bioMarkdown?: string;
   logoUrl?: string;
+  /** Global admin only — marks this association as the BDE. */
+  isBDE?: boolean;
+  /** Global admin only — sets the document vault quota in bytes. */
+  documentQuotaBytes?: number;
 }
 
 export type AssociationCalendarEventStatus = 'pending' | 'validated';
@@ -368,27 +404,35 @@ export async function deleteAssociationLogo(associationId: string): Promise<Asso
   });
 }
 
+/**
+ * Adds a member to an association with the given role and permissions bitmask.
+ * @param permissions - Bitmask of `AssociationPermissionFlag` values (0 = simple member).
+ */
 export async function addMember(
   associationId: string,
   userId: string,
   role: string,
-  permission: 0 | 1
+  permissions: number
 ): Promise<AssociationMember> {
   return request<AssociationMember>(
     `/api/associations/${encodeURIComponent(associationId)}/members`,
-    { method: 'POST', body: JSON.stringify({ userId, role, permission }) }
+    { method: 'POST', body: JSON.stringify({ userId, role, permissions }) }
   );
 }
 
+/**
+ * Updates a member's role label and/or permissions bitmask.
+ * @param permissions - Full new bitmask (replaces the old one entirely).
+ */
 export async function updateMemberRole(
   associationId: string,
   userId: string,
   role?: string,
-  permission?: 0 | 1
+  permissions?: number
 ): Promise<AssociationMember> {
   return request<AssociationMember>(
     `/api/associations/${encodeURIComponent(associationId)}/members/${encodeURIComponent(userId)}`,
-    { method: 'PATCH', body: JSON.stringify({ role, permission }) }
+    { method: 'PATCH', body: JSON.stringify({ role, permissions }) }
   );
 }
 

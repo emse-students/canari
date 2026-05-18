@@ -40,6 +40,28 @@ export class Association {
   @Column({ default: false })
   stripeOnboardingComplete: boolean;
 
+  /**
+   * When true, members of this association may use BDE-only flags
+   * (VALIDATE_EVENTS, CREATE_ASSO, MODERATE). Set only by global admins.
+   */
+  @Column({ default: false })
+  isBDE: boolean;
+
+  /**
+   * Hex-encoded 32-byte master key for the association's document vault.
+   * Derived per-document via HKDF(vaultKey, salt=docId). Null until the first
+   * document is uploaded (generated lazily).
+   */
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  documentVaultKey: string | null;
+
+  /**
+   * Maximum total bytes the association may store in its document vault.
+   * Default 500 MiB; adjustable by global admins.
+   */
+  @Column({ type: 'bigint', default: 524288000 })
+  documentQuotaBytes: number;
+
   @Column({ type: 'varchar', length: 255 })
   @Index()
   createdBy: string;

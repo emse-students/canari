@@ -85,7 +85,7 @@
   let postAsAssociations = $derived(
     isGlobalAdmin()
       ? myAssociations
-      : myAssociations.filter((a) => a.role === 'admin' || a.role === 'owner' || a.permission === 1)
+      : myAssociations.filter((a) => a.isAdmin)
   );
   /** Associations with completed Stripe onboarding (eligible for payment collection). */
   let payableAssociations = $derived(postAsAssociations.filter((a) => a.stripeOnboardingComplete));

@@ -26,13 +26,7 @@
 
   let userId = $derived(currentUserId());
   let myMembership = $derived(members.find((m) => m.userId === userId));
-  let canManage = $derived(
-    isGlobalAdmin() ||
-      (!!myMembership &&
-        (myMembership.permission === 1 ||
-          myMembership.role === 'admin' ||
-          myMembership.role === 'owner'))
-  );
+  let canManage = $derived(isGlobalAdmin() || (!!myMembership && myMembership.isAdmin));
 
   let following = $state(false);
   let followLoading = $state(false);
