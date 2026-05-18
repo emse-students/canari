@@ -13,7 +13,8 @@
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
-  import { Bell, BellOff, Pencil, Building2, CalendarDays, Users } from '@lucide/svelte';
+  import { Bell, BellOff, Pencil, Building2, CalendarDays, Users, ShoppingBag } from '@lucide/svelte';
+  import { listAssociationProducts, type AssociationProduct } from '$lib/associations/api';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import AssociationMemberRow from '$lib/components/associations/AssociationMemberRow.svelte';
   import AssociationCalendarSection from '$lib/components/associations/AssociationCalendarSection.svelte';
@@ -30,7 +31,8 @@
 
   let following = $state(false);
   let followLoading = $state(false);
-  let activeSection = $state<'about' | 'calendar' | 'members'>('about');
+  let activeSection = $state<'about' | 'calendar' | 'members' | 'shop'>('about');
+  let products = $state<AssociationProduct[]>([]);
 
   const slug = $derived((page.params as Record<string, string>).slug);
 
@@ -41,7 +43,7 @@
     error = '';
     try {
       asso = await getAssociationBySlug(slug);
-      members = await listMembers(asso.id);
+      [members, products] = await Promise.all([listMembers(asso.id), listAssociationProducts(asso.id).catch(() => [])]);
       const names: Record<string, string> = {};
       for (const m of members) {
         names[m.userId] = m.displayName?.trim() || getUserDisplayNameSync(m.userId, m.userId);
@@ -191,6 +193,19 @@
           <Users size={17} />
           Membres
         </button>
+        {#if products.length > 0}
+          <button
+            type="button"
+            onclick={() => (activeSection = 'shop')}
+            class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+            {activeSection === 'shop'
+              ? 'bg-cn-yellow text-cn-dark shadow-sm'
+              : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
+          >
+            <ShoppingBag size={17} />
+            Boutique
+          </button>
+        {/if}
       </div>
     </nav>
 
@@ -241,6 +256,53 @@
                 member.displayName ??
                 member.userId}
             />
+          {/each}
+        </div>
+      </div>
+    {:else if activeSection === 'shop'}
+      <div
+        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-6 space-y-4 shadow-sm"
+      >
+        <div class="flex items-center justify-between gap-2">
+          <h2 class="text-lg font-bold text-text-main tracking-tight flex items-center gap-2">
+            <ShoppingBag size={20} />
+            Boutique
+          </h2>
+          <a
+            href="/shop"
+            class="text-xs font-semibold text-cn-dark hover:underline"
+          >
+            Voir toute la boutique →
+          </a>
+        </div>
+        <div class="space-y-3">
+          {#each products as product (product.id)}
+            <div class="flex items-start gap-4 rounded-xl border border-cn-border p-4">
+              <div class="flex-1 min-w-0">
+                <p class="text-sm font-semibold text-text-main">{product.name}</p>
+                {#if product.description}
+                  <p class="text-xs text-text-muted mt-0.5">{product.description}</p>
+                {/if}
+                <p class="text-xs text-text-muted mt-1">
+                  {#if product.amountCents}
+                    {(product.amountCents / 100).toFixed(2)} {product.currency.toUpperCase()}
+                  {:else if product.allowCustomAmount}
+                    Prix libre
+                  {:else}
+                    Gratuit
+                  {/if}
+                  <span class="ml-2 px-1.5 py-0.5 rounded-full bg-cn-border/40 text-[10px] font-bold uppercase">
+                    {product.type === 'membership' ? 'Cotisation' : product.type === 'balance_topup' ? 'Recharge' : 'Autre'}
+                  </span>
+                </p>
+              </div>
+              <a
+                href="/shop"
+                class="shrink-0 inline-flex items-center gap-1.5 rounded-xl bg-cn-yellow px-3 py-2 text-xs font-bold text-cn-dark hover:bg-cn-yellow-hover transition-colors"
+              >
+                {product.type === 'membership' ? 'Cotiser' : product.type === 'balance_topup' ? 'Recharger' : 'Acheter'}
+              </a>
+            </div>
           {/each}
         </div>
       </div>

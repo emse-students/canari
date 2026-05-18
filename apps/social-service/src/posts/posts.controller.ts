@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   Headers,
   Param,
@@ -18,6 +19,7 @@ import { PostInteractionsService } from './post-interactions.service';
 import { PostNotificationsService } from './post-notifications.service';
 import { AssociationsService } from '../associations/associations.service';
 import { FollowsService } from '../follows/follows.service';
+import { ModerationService } from '../moderation/moderation.service';
 import {
   CreatePostDto,
   ListPostsQueryDto,
@@ -38,8 +40,15 @@ export class PostsController {
     private readonly interactions: PostInteractionsService,
     private readonly notifications: PostNotificationsService,
     private readonly associationsService: AssociationsService,
-    private readonly followsService: FollowsService
+    private readonly followsService: FollowsService,
+    private readonly moderationService: ModerationService
   ) {}
+
+  /** Throws 403 if the given user is currently muted. */
+  private async assertNotMuted(userId: string): Promise<void> {
+    const muted = await this.moderationService.isUserMuted(userId);
+    if (muted) throw new ForbiddenException('Your account has been restricted. You cannot post or react.');
+  }
 
   /** Returns the health status of the post service. */
   @Get('health')
@@ -146,6 +155,7 @@ export class PostsController {
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
     @Body() body: CreatePostDto
   ) {
+    await this.assertNotMuted(xUserId);
     if (body.associationId) {
       const canPost = await this.associationsService.canPostAs(xUserId, body.associationId, {
         isGlobalAdmin: xGlobalAdmin === 'true',
@@ -232,11 +242,12 @@ export class PostsController {
   /** Adds an emoji reaction from the calling user to a post. */
   @UseGuards(NginxAuthGuard)
   @HttpPost(':postId/reactions')
-  addReaction(
+  async addReaction(
     @Headers('x-user-id') xUserId: string,
     @Param('postId') postId: string,
     @Body() body: AddReactionDto
   ) {
+    await this.assertNotMuted(xUserId);
     return this.interactions.addReaction(postId, xUserId, body.reactionType);
   }
 
@@ -250,11 +261,12 @@ export class PostsController {
   /** Adds a comment from the calling user to a post. */
   @UseGuards(NginxAuthGuard)
   @HttpPost(':postId/comments')
-  addComment(
+  async addComment(
     @Headers('x-user-id') xUserId: string,
     @Param('postId') postId: string,
     @Body() body: AddCommentDto
   ) {
+    await this.assertNotMuted(xUserId);
     return this.interactions.addComment(postId, { ...body, userId: xUserId });
   }
 

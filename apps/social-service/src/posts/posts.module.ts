@@ -11,6 +11,7 @@ import { PostNotification } from './entities/post-notification.entity';
 import { AssociationsModule } from '../associations/associations.module';
 import { FollowsModule } from '../follows/follows.module';
 import { PushService } from '../push/push.service';
+import { ModerationModule } from '../moderation/moderation.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { PushService } from '../push/push.service';
     ConfigModule,
     AssociationsModule,
     FollowsModule,
+    ModerationModule,
   ],
   controllers: [PostsController],
   providers: [PostsService, PostInteractionsService, PostNotificationsService, PushService],
