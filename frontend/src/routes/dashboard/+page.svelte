@@ -35,6 +35,7 @@
     globalConvs as convs,
     appendLog,
   } from '$lib/stores/globalChatSingleton.svelte';
+  import { createPausableInterval } from '$lib/utils/backgroundPausableInterval';
 
   interface Section {
     label: string;
@@ -218,6 +219,7 @@
     let cancelled = false;
 
     async function pollPendingInvitations() {
+      if (cancelled) return;
       try {
         const mls = session.ensureMls();
         const memberships = await mls.getDeviceMemberships(userId, deviceId);
@@ -229,11 +231,10 @@
       }
     }
 
-    void pollPendingInvitations();
-    const interval = setInterval(pollPendingInvitations, 30_000);
+    const cleanup = createPausableInterval(() => void pollPendingInvitations(), 30_000);
     return () => {
       cancelled = true;
-      clearInterval(interval);
+      cleanup();
     };
   });
 </script>

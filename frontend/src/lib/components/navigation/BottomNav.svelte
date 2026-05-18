@@ -3,6 +3,7 @@
   import { APP_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
   import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import { page } from '$app/state';
+  import PostNotificationBell from './PostNotificationBell.svelte';
 
   const pathname = $derived(page.url.pathname);
   const activePlaceId = $derived(resolveActivePlaceId(pathname));
@@ -30,6 +31,9 @@
   style="padding-bottom: env(safe-area-inset-bottom)"
 >
   <div class="flex items-stretch justify-around h-16">
+    {#if globalSession.isLoggedIn}
+      <PostNotificationBell mobile={true} />
+    {/if}
     {#each APP_PLACES as place (place.id)}
       {@const PlaceIcon = getIcon(place.icon)}
       {@const isActive = place.id === activePlaceId}

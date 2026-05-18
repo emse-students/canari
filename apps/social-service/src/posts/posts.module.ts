@@ -22,5 +22,6 @@ import { PushService } from '../push/push.service';
   ],
   controllers: [PostsController],
   providers: [PostsService, PostInteractionsService, PostNotificationsService, PushService],
+  exports: [PostNotificationsService],
 })
 export class PostsModule {}

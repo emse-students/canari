@@ -186,12 +186,30 @@ if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
 
       // Handles deep links when the app is already running
       onOpenUrl(processUrls);
+
+      // URL traitée lors du dernier appel getCurrent() — évite de rejouer la même URL
+      // au retour au premier plan si Android n'a pas mis à jour l'intent courant.
+      let lastGetCurrentUrl: string | null = null;
+
+      const checkCurrentUrl = () =>
+        getCurrent()
+          .then((urls) => {
+            if (!urls) return;
+            const first = Array.isArray(urls) ? urls[0] : String(urls);
+            if (first === lastGetCurrentUrl) return; // déjà traité
+            lastGetCurrentUrl = first;
+            processUrls(Array.isArray(urls) ? urls : [urls]);
+          })
+          .catch(() => {});
+
       // Handles deep link that cold-started the app (fired before listener could register)
-      getCurrent()
-        .then((urls) => {
-          if (urls) processUrls(Array.isArray(urls) ? urls : [urls]);
-        })
-        .catch(() => {});
+      void checkCurrentUrl();
+
+      // Re-vérifie au retour au premier plan : couvre le cas où onOpenUrl ne tire pas
+      // quand l'app était en arrière-plan et que l'utilisateur tape une notification.
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') void checkCurrentUrl();
+      });
     })
     .catch((err) => {
       // Plugin might not be available (desktop, or in dev without Tauri).

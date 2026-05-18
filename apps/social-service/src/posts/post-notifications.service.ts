@@ -61,16 +61,20 @@ export class PostNotificationsService {
     return actorId;
   }
 
-  /** Creates a notification unless actor and recipient are the same person. */
+  /**
+   * Creates a notification unless actor and recipient are the same person.
+   * Pass `actorName` to skip the DB lookup (e.g. system-generated notifications).
+   */
   async createNotification(data: {
     recipientId: string;
     type: string;
     postId: string;
     actorId: string;
     text: string;
+    actorName?: string;
   }) {
     if (data.recipientId === data.actorId) return;
-    const actorName = await this.resolveActorName(data.actorId);
+    const actorName = data.actorName ?? (await this.resolveActorName(data.actorId));
     await this.notifRepo.save(this.notifRepo.create({ ...data, actorName }));
   }
 

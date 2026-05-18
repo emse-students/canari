@@ -1243,15 +1243,12 @@ export class MessagingService {
     let failed = 0;
     for (const pt of pushTokens) {
       try {
+        // Data-only → onMessageReceived() fires même en arrière-plan.
+        // Le code Kotlin lit data["type"] pour choisir le canal et construire le deepLink.
         await admin.messaging().send({
           token: pt.token,
-          notification: { title, body },
           data: { ...data, title, body },
-          android: {
-            priority: 'high',
-            notification: { channelId: 'canari_social' },
-          },
-          apns: { payload: { aps: { sound: 'default' } } },
+          android: { priority: 'high' },
         });
         sent++;
         this.logger.log(

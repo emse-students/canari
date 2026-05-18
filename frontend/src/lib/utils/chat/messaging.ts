@@ -169,11 +169,22 @@ export async function notifyReaction(params: {
   messagePreview: string;
   actorName: string;
 }): Promise<void> {
-  await fetch('/api/mls/notify-reaction', {
+  console.log('[notifyReaction] POST notify-reaction', {
+    groupId: params.groupId.slice(0, 8),
+    targetSenderId: params.targetSenderId.slice(0, 8),
+    emoji: params.emoji,
+  });
+  const resp = await fetch('/api/mls/notify-reaction', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
   });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '');
+    console.warn(`[notifyReaction] Échec HTTP ${resp.status}:`, text.slice(0, 200));
+  } else {
+    console.log('[notifyReaction] Notification réaction envoyée avec succès');
+  }
 }
 
 /**

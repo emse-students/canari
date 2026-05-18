@@ -11,7 +11,7 @@ export class PostNotification {
   recipientId: string;
 
   @Column()
-  type: string; // 'comment' | 'reply'
+  type: string; // 'comment' | 'reply' | 'reaction' | 'mention' | 'form_reminder'
 
   @Column()
   postId: string;

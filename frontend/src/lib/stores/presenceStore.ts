@@ -1,5 +1,6 @@
 import { get, writable } from 'svelte/store';
 import { apiFetch } from '$lib/utils/apiFetch';
+import { createPausableInterval } from '$lib/utils/backgroundPausableInterval';
 
 /**
  * Svelte store mapping each watched user ID to a boolean indicating whether
@@ -7,7 +8,7 @@ import { apiFetch } from '$lib/utils/apiFetch';
  */
 export const presenceMap = writable<Record<string, boolean>>({});
 const peerIdsToPoll = new Set<string>();
-let pollInterval: any = null;
+let _destroyInterval: (() => void) | null = null;
 
 /** Returns the base URL for the chat gateway, falling back to the current origin. */
 function getGatewayBase(): string {
@@ -20,13 +21,16 @@ function getGatewayBase(): string {
 
 /**
  * Adds the given user IDs to the polling watchlist and starts the polling loop
- * if it is not already running.
+ * if it is not already running. The loop automatically pauses when the page is
+ * hidden and resumes when visible.
  */
 export function watchUsers(userIds: string[]) {
   userIds.forEach((id) => {
     if (id) peerIdsToPoll.add(id);
   });
-  startPolling();
+  if (!_destroyInterval) {
+    _destroyInterval = createPausableInterval(checkPresenceNow, 10_000);
+  }
 }
 
 /** Returns `true` if the given user is currently marked as online in the local presence map. */
@@ -59,20 +63,5 @@ export async function checkPresenceNow() {
     }
   } catch (err) {
     console.error('Failed to fetch presence', err);
-  }
-}
-
-/** Starts the 10-second presence polling interval. No-op if already running. */
-export function startPolling() {
-  if (pollInterval) return;
-  checkPresenceNow();
-  pollInterval = setInterval(checkPresenceNow, 10000); // 10 secondes
-}
-
-/** Stops the presence polling interval and clears the timer reference. */
-export function stopPolling() {
-  if (pollInterval) {
-    clearInterval(pollInterval);
-    pollInterval = null;
   }
 }

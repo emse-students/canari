@@ -65,15 +65,13 @@ export class InternalController {
 
     for (const pt of tokens) {
       try {
+        // Data-only → onMessageReceived() fires même en arrière-plan.
+        // Le code Kotlin lit data["type"] pour choisir le canal (canari_social / canari_forms)
+        // et construire le deepLink (deepLink, postId ou formId selon le type).
         await admin.messaging().send({
           token: pt.token,
-          notification: { title, body: notifBody },
           data: { ...data, title, body: notifBody },
-          android: {
-            priority: 'high',
-            notification: { channelId: 'canari_messages' },
-          },
-          apns: { payload: { aps: { sound: 'default' } } },
+          android: { priority: 'high' },
         });
         sent++;
       } catch (e) {

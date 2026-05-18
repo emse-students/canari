@@ -12,6 +12,14 @@ export class PushService {
     process.env.DELIVERY_INTERNAL_URL ?? 'http://chat-delivery-service:3010';
   private readonly secret = process.env.INTERNAL_SECRET ?? '';
 
+  constructor() {
+    if (!this.secret) {
+      this.logger.warn(
+        '[PUSH] INTERNAL_SECRET non défini — les notifications FCM de ce service sont désactivées'
+      );
+    }
+  }
+
   async notify(
     userId: string,
     title: string,

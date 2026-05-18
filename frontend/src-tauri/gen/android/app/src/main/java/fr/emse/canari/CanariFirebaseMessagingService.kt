@@ -51,6 +51,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         const val KEY_FCM_TOKEN = "fcm_token"
 
         private val notificationIdCounter = java.util.concurrent.atomic.AtomicInteger(0)
+
+        /** Durée de validité du cache fichier avatar : 24 heures. */
+        private const val AVATAR_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1_000L
+
+        /**
+         * Verrou non-réentrant sur l'état MLS.
+         * Garantit que deux threads FCM parallèles ne lisent/écrivent pas mls.bin simultanément.
+         * Niveau companion object : survivre aux recréations du service entre deux FCM.
+         */
+        private val MLS_LOCK = java.util.concurrent.locks.ReentrantLock()
     }
 
     // Retourne un JSON : {"ok":true,"text":"...","messageId":"...","sentAt":123,"type":"text|reply|media","replyTo":null,"mediaKind":null}
@@ -131,7 +141,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
         // Message MLS chiffré : déchiffrement dans un thread dédié (max 10s)
         val silent = data["silent"] == "true"
-        val thread = Thread {
+        // Le thread tourne en parallèle — onMessageReceived retourne immédiatement
+        // (non-bloquant pour FCM, qui peut traiter le message suivant sans attendre).
+        // MLS_LOCK dans tryDecrypt garantit qu'un seul thread écrit mls.bin à la fois.
+        Thread {
             val groupId         = data["groupId"] ?: ""
             val groupName       = data["groupName"]?.takeIf { it.isNotEmpty() } ?: ""
             val senderName      = data["senderName"]?.takeIf { it.isNotEmpty() } ?: ""
@@ -157,12 +170,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
 
             if (silent) {
-                // FCM silencieux : accusé de lecture, réaction, édition, suppression, copie propre
                 Log.d(TAG, "FCM silencieux → MLS state mis à jour, pas de notification affichée")
                 return@Thread
             }
 
-            // Écrire le cache FCM pour affichage immédiat au prochain boot de l'app
             if (decrypted != null) {
                 writeFcmCache(groupId, senderId, senderName, decrypted)
             }
@@ -171,13 +182,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val largeIcon    = avatarBitmap ?: generateInitialsBitmap(senderName)
             Log.d(TAG, "showNotification: groupId=$groupId senderName=$senderName body=${body.take(60)} hasAvatar=${avatarBitmap != null}")
             showNotification(senderName, groupName, body, largeIcon, groupId)
-        }
-        thread.start()
-        thread.join(10_000)
+        }.start()
     }
 
     // ── Déchiffrement MLS ─────────────────────────────────────────────────────
 
+    /**
+     * Tente de déchiffrer un message MLS en mode exclusif (MLS_LOCK).
+     * Le verrou garantit qu'un seul thread FCM accède à mls.bin à la fois,
+     * même si plusieurs notifications arrivent en rafale.
+     */
     private fun tryDecrypt(
         queuedMessageId: String?,
         groupId: String,
@@ -187,24 +201,32 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Log.w(TAG, "tryDecrypt: queuedMessageId absent → abandon")
             return null
         }
-        val ctx = loadPushContext()
-        if (ctx == null) {
-            Log.e(TAG, "tryDecrypt: push_context.json absent ou invalide → abandon")
+        if (!MLS_LOCK.tryLock(8, java.util.concurrent.TimeUnit.SECONDS)) {
+            Log.w(TAG, "tryDecrypt: lock non acquis après 8s → abandon (un autre thread déchiffre)")
             return null
         }
-        val stateBytes = loadMlsState()
-        if (stateBytes == null) {
-            Log.e(TAG, "tryDecrypt: mls.bin absent → abandon")
-            return null
+        try {
+            val ctx = loadPushContext()
+            if (ctx == null) {
+                Log.e(TAG, "tryDecrypt: push_context.json absent ou invalide → abandon")
+                return null
+            }
+            val stateBytes = loadMlsState()
+            if (stateBytes == null) {
+                Log.e(TAG, "tryDecrypt: mls.bin absent → abandon")
+                return null
+            }
+            Log.d(TAG, "tryDecrypt: état MLS chargé (${stateBytes.size} octets), userId=${ctx.userId} deviceId=${ctx.deviceId}")
+
+            val protoB64 = inlineProto
+                ?: fetchProtoFromBackend(queuedMessageId, ctx)
+                    .also { if (it == null) Log.e(TAG, "tryDecrypt: fetchProtoFromBackend a échoué") }
+                ?: return null
+
+            return decryptProto(stateBytes, ctx.pin, ctx.userId, ctx.deviceId, groupId, protoB64)
+        } finally {
+            MLS_LOCK.unlock()
         }
-        Log.d(TAG, "tryDecrypt: état MLS chargé (${stateBytes.size} octets), userId=${ctx.userId} deviceId=${ctx.deviceId}")
-
-        val protoB64 = inlineProto
-            ?: fetchProtoFromBackend(queuedMessageId, ctx)
-                .also { if (it == null) Log.e(TAG, "tryDecrypt: fetchProtoFromBackend a échoué") }
-            ?: return null
-
-        return decryptProto(stateBytes, ctx.pin, ctx.userId, ctx.deviceId, groupId, protoB64)
     }
 
     private data class PushContext(
@@ -353,8 +375,29 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
     // ── Avatar ────────────────────────────────────────────────────────────────
 
-    /** Télécharge l'avatar de l'expéditeur depuis le backend (authentifié par pushSecret). */
+    /** Fichier de cache pour l'avatar d'un userId (nom sécurisé pour le filesystem). */
+    private fun avatarCacheFile(userId: String): File {
+        val safeId = userId.replace(Regex("[^a-zA-Z0-9_-]"), "_").take(40)
+        return File(filesDir.parentFile, "avatar_$safeId.jpg")
+    }
+
+    /**
+     * Télécharge l'avatar de l'expéditeur, avec cache fichier 24h.
+     * Le cache évite la requête HTTP quand l'app est en arrière-plan et que
+     * le réseau est lent ou que PushSecretKeystore.retrieve() est instable.
+     */
     private fun fetchAvatar(userId: String): Bitmap? {
+        // 1. Lire le cache fichier si récent (< 24h) — pas besoin du Keystore ni du réseau
+        val cacheFile = avatarCacheFile(userId)
+        val now = System.currentTimeMillis()
+        if (cacheFile.exists() && (now - cacheFile.lastModified()) < AVATAR_CACHE_MAX_AGE_MS) {
+            BitmapFactory.decodeFile(cacheFile.absolutePath)?.let { bmp ->
+                Log.d(TAG, "fetchAvatar: depuis cache pour ${userId.take(8)}")
+                return circleCrop(bmp)
+            }
+        }
+
+        // 2. Fetch HTTP (app au premier plan ou cache expiré)
         val ctx    = loadPushContext() ?: return null
         val secret = PushSecretKeystore.retrieve(this) ?: return null
         return try {
@@ -364,16 +407,23 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 "&deviceId=${java.net.URLEncoder.encode(ctx.deviceId, "UTF-8")}"
             )
             val conn = (url.openConnection() as HttpURLConnection).apply {
-                connectTimeout = 5_000   // augmenté de 2s à 5s pour les réseaux lents
+                connectTimeout = 5_000
                 readTimeout    = 5_000
                 requestMethod  = "GET"
                 setRequestProperty("Authorization", "PushSecret $secret")
                 instanceFollowRedirects = true
             }
             if (conn.responseCode == 200) {
-                val bmp = BitmapFactory.decodeStream(conn.inputStream)
+                val bytes = conn.inputStream.readBytes()
                 conn.disconnect()
-                bmp?.let { circleCrop(it) }
+                // Sauvegarder en cache pour les prochaines notifications
+                try {
+                    cacheFile.writeBytes(bytes)
+                    Log.d(TAG, "fetchAvatar: avatar mis en cache pour ${userId.take(8)}")
+                } catch (e: Exception) {
+                    Log.w(TAG, "fetchAvatar: impossible de sauvegarder le cache: ${e.message}")
+                }
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let { circleCrop(it) }
             } else {
                 Log.d(TAG, "fetchAvatar: HTTP ${conn.responseCode} pour $userId → fallback initiales")
                 conn.disconnect()
@@ -420,9 +470,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     // ── Affichage notifications ───────────────────────────────────────────────
 
     /**
-     * Affiche une notification pour un message MLS (DM ou groupe).
-     * Utilise un stacking par conversation : chaque message a un ID unique,
-     * et une notification de résumé (groupId.hashCode()) regroupe la pile.
+     * Affiche (ou met à jour) une notification pour un message MLS (DM ou groupe).
+     * Un seul ID stable par conversation (groupId.hashCode()) : chaque nouveau message
+     * écrase la notification précédente au lieu d'en empiler une nouvelle.
      */
     private fun showNotification(
         senderName: String,
@@ -438,20 +488,20 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val notifTitle = if (isGroup) groupName else senderName.ifEmpty { "Canari" }
         val notifBody  = if (isGroup && senderName.isNotEmpty()) "$senderName: $body" else body
 
+        // ID stable par conversation : notify() avec le même ID met à jour la notif existante
+        val notifId = if (groupId.isNotEmpty()) groupId.hashCode() else 0
+
         val tapIntent = Intent(this, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW
             setData(android.net.Uri.parse("fr.emse.canari://chat/$groupId"))
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
-        val summaryId    = if (groupId.isNotEmpty()) groupId.hashCode() else 0
         val pendingIntent = PendingIntent.getActivity(
-            this, summaryId, tapIntent,
+            this, notifId, tapIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        // Notification individuelle avec ID unique (permet le stacking)
-        val msgNotifId = notificationIdCounter.incrementAndGet()
-        val msgNotif = NotificationCompat.Builder(this, CHANNEL_MESSAGES)
+        val notif = NotificationCompat.Builder(this, CHANNEL_MESSAGES)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(notifTitle)
             .setContentText(notifBody)
@@ -460,23 +510,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setContentIntent(pendingIntent)
             .setLargeIcon(largeIcon)
-            .setGroup(groupId)   // groupe Android pour le stacking par conversation
             .build()
-        manager.notify(msgNotifId, msgNotif)
 
-        // Notification de résumé : une seule par conversation, regroupe les messages individuels
-        val summaryNotif = NotificationCompat.Builder(this, CHANNEL_MESSAGES)
-            .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(notifTitle)
-            .setContentText(notifBody)
-            .setLargeIcon(largeIcon)
-            .setGroup(groupId)
-            .setGroupSummary(true)
-            .setAutoCancel(true)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setContentIntent(pendingIntent)
-            .build()
-        manager.notify(summaryId, summaryNotif)
+        Log.d(TAG, "showNotification: notifId=$notifId title=$notifTitle body=${notifBody.take(40)}")
+        manager.notify(notifId, notif)
     }
 
     /**

@@ -324,19 +324,25 @@
 
     void tryLogin();
 
-    // Pause/resume WebSocket based on app visibility (fires on Android when backgrounded)
+    // Pause/resume WebSocket based on app visibility (fires on Android when backgrounded).
+    // Presence polling and other intervals self-manage via createPausableInterval.
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'hidden' && globalSession.isLoggedIn) {
         globalSession.pauseConnection();
         return;
       }
-      if (
-        document.visibilityState === 'visible' &&
-        globalSession.isLoggedIn &&
-        !globalSession.isWsConnected
-      ) {
-        appendLog('Page visible de nouveau — reconnexion...');
-        void globalSession.attemptReconnect(sessionCb());
+      if (document.visibilityState === 'visible' && globalSession.isLoggedIn) {
+        if (!globalSession.isWsConnected) {
+          appendLog('Page visible de nouveau — reconnexion...');
+          void globalSession.attemptReconnect(sessionCb());
+        }
+        // Injecter les messages FCM mis en cache pendant l'arrière-plan
+        const { pin, storage } = globalSession;
+        if (pin && storage) {
+          import('$lib/utils/chat/fcmCache')
+            .then(({ consumeFcmCache }) => consumeFcmCache(pin, storage).catch(() => {}))
+            .catch(() => {});
+        }
       }
     };
 

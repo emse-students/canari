@@ -4,6 +4,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between, LessThanOrEqual } from 'typeorm';
 import { FormReminder } from './entities/form-reminder.entity';
 import { PushService } from '../push/push.service';
+import { PostNotificationsService } from '../posts/post-notifications.service';
 
 @Injectable()
 export class FormReminderScheduler {
@@ -12,7 +13,8 @@ export class FormReminderScheduler {
   constructor(
     @InjectRepository(FormReminder)
     private readonly reminderRepo: Repository<FormReminder>,
-    private readonly push: PushService
+    private readonly push: PushService,
+    private readonly notifications: PostNotificationsService
   ) {}
 
   @Cron('* * * * *')
@@ -28,14 +30,23 @@ export class FormReminderScheduler {
       },
     });
     for (const r of toNotify5min) {
+      const title = '⏰ Formulaire bientôt disponible';
+      const body = 'Un formulaire que vous suivez ouvre dans 5 minutes !';
       try {
-        await this.push.notify(
-          r.userId,
-          '⏰ Formulaire bientôt disponible',
-          'Un formulaire que vous suivez ouvre dans 5 minutes !',
-          { type: 'form_reminder', formId: r.formId }
-        );
+        await this.push.notify(r.userId, title, body, { type: 'form_reminder', formId: r.formId });
+        // Notification in-app dans la cloche : postId contient le formId pour le deep link
+        await this.notifications.createNotification({
+          recipientId: r.userId,
+          type: 'form_reminder',
+          postId: r.formId,
+          actorId: 'system',
+          actorName: 'Canari',
+          text: body,
+        });
         await this.reminderRepo.update(r.id, { notified5min: true });
+        this.logger.log(
+          `[REMINDER] 5min notifié: userId=${r.userId.slice(0, 8)} formId=${r.formId.slice(0, 8)}`
+        );
       } catch (e: unknown) {
         this.logger.warn(`[REMINDER] 5min notify failed for ${r.id}`, e);
       }
@@ -49,14 +60,23 @@ export class FormReminderScheduler {
       },
     });
     for (const r of toNotifyOpen) {
+      const title = '🟢 Formulaire maintenant ouvert !';
+      const body = 'Le formulaire est disponible — dépêchez-vous, les places sont limitées !';
       try {
-        await this.push.notify(
-          r.userId,
-          '🟢 Formulaire maintenant ouvert !',
-          'Le formulaire est disponible — dépêchez-vous, les places sont limitées !',
-          { type: 'form_reminder', formId: r.formId }
-        );
+        await this.push.notify(r.userId, title, body, { type: 'form_reminder', formId: r.formId });
+        // Notification in-app dans la cloche
+        await this.notifications.createNotification({
+          recipientId: r.userId,
+          type: 'form_reminder',
+          postId: r.formId,
+          actorId: 'system',
+          actorName: 'Canari',
+          text: body,
+        });
         await this.reminderRepo.update(r.id, { notifiedOnOpen: true });
+        this.logger.log(
+          `[REMINDER] ouverture notifiée: userId=${r.userId.slice(0, 8)} formId=${r.formId.slice(0, 8)}`
+        );
       } catch (e: unknown) {
         this.logger.warn(`[REMINDER] open notify failed for ${r.id}`, e);
       }
