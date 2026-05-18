@@ -22,8 +22,7 @@
   import PostCodeBlock from './PostCodeBlock.svelte';
   import PostCodespan from './PostCodespan.svelte';
   import { preprocessPostMarkdown } from '$lib/utils/posts/postMarkdown';
-  import { useMentionAutocomplete } from '$lib/composables/useMentionAutocomplete.svelte';
-  import MentionDropdown from '$lib/components/shared/MentionDropdown.svelte';
+  import MentionComposerInput from '$lib/components/shared/MentionComposerInput.svelte';
 
   const mentionRenderers = {
     link: PostMentionLink,
@@ -126,14 +125,6 @@
     }
   }
 
-  let commentInputEl = $state<HTMLInputElement | null>(null);
-
-  const mention = useMentionAutocomplete({
-    getText: () => commentText,
-    setText: (text) => void onCommentTextChange(text),
-    getEl: () => commentInputEl,
-  });
-
   let loadingAll = $state(false);
 
   /** Calls onLoadAllComments with a loading spinner, then clears the spinner. */
@@ -201,7 +192,6 @@
   }
 
   function handleInternalKeyDown(e: KeyboardEvent) {
-    if (mention.handleKeydown(e)) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmitComment();
@@ -494,12 +484,6 @@
 
 {#snippet commentInputRow(placeholder: string)}
   <div class="relative">
-    <MentionDropdown
-      open={mention.open}
-      suggestions={mention.suggestions}
-      selectedIdx={mention.selectedIdx}
-      onSelect={mention.select}
-    />
     {#if pendingPreviewUrl || uploadingMedia}
       <div class="flex items-center gap-2 mb-2 ml-[2.125rem]">
         <div
@@ -536,14 +520,15 @@
       <div
         class="flex-1 flex items-center bg-black/5 dark:bg-white/5 rounded-[1.25rem] px-3.5 py-1.5 border border-black/5 dark:border-white/10 focus-within:ring-2 focus-within:ring-amber-500/50 focus-within:bg-white dark:focus-within:bg-black/40 transition-all shadow-inner"
       >
-        <input
-          bind:this={commentInputEl}
-          type="text"
+        <MentionComposerInput
           value={commentText}
-          oninput={mention.handleInput}
-          onpaste={handleCommentPaste}
+          onchange={(text) => onCommentTextChange(text)}
           {placeholder}
-          class="flex-1 bg-transparent text-[0.9rem] font-medium text-text-main placeholder:text-text-muted/70 outline-none py-1"
+          singleLine
+          class="flex-1 min-w-0"
+          editorClass="flex-1 bg-transparent text-[0.9rem] font-medium text-text-main outline-none py-1 min-h-0"
+          minHeight="0"
+          onpaste={handleCommentPaste}
           onkeydown={handleInternalKeyDown}
         />
         <button

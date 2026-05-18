@@ -422,7 +422,8 @@ h6,
   background: rgba(255, 255, 255, 0.05);
 }
 
-.chat-composer-textarea {
+.chat-composer-textarea,
+.mention-composer-editor.chat-composer-textarea {
   flex: 1 1 auto;
   min-width: 0;
   max-height: 10rem;

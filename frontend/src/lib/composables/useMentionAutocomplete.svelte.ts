@@ -6,16 +6,18 @@ import { formatMentionToken } from '$lib/utils/mentions';
 export type MentionUser = { id: string; displayName: string | null };
 
 /**
- * Composable for @mention autocomplete in text inputs/textareas.
+ * Composable for @mention autocomplete in text inputs or mention editors.
  *
- * @param getText  - Returns the current text value (called on every select).
- * @param setText  - Updates the text value (called with the resolved text on select, and on each input event).
- * @param getEl    - Returns the input/textarea element for cursor positioning after selection.
+ * Provide either classic input/textarea callbacks (`getEl` + selection from event)
+ * or editor callbacks (`getCursor` / `setCursor`) for contenteditable surfaces.
  */
 export function useMentionAutocomplete(opts: {
   getText: () => string;
   setText: (text: string) => void;
   getEl?: () => HTMLTextAreaElement | HTMLInputElement | null;
+  getCursor?: () => number;
+  setCursor?: (pos: number) => void;
+  focus?: () => void;
 }) {
   let query = $state('');
   let suggestions = $state<MentionUser[]>([]);
@@ -23,6 +25,22 @@ export function useMentionAutocomplete(opts: {
   let start = $state(-1);
   let selectedIdx = $state(-1);
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function readCursor(fallbackLength: number): number {
+    return opts.getCursor?.() ?? fallbackLength;
+  }
+
+  function applyCursor(pos: number) {
+    if (opts.setCursor) {
+      opts.setCursor(pos);
+      return;
+    }
+    const el = opts.getEl?.();
+    if (el) {
+      el.focus();
+      el.setSelectionRange(pos, pos);
+    }
+  }
 
   async function search(q: string) {
     try {
@@ -39,13 +57,8 @@ export function useMentionAutocomplete(opts: {
     }
   }
 
-  /** Call from `oninput` on the text element. Updates the text via setText and triggers autocomplete. */
-  function handleInput(e: Event) {
-    const el = e.target as HTMLTextAreaElement | HTMLInputElement;
-    const val = el.value;
-    const cursor = el.selectionStart ?? val.length;
-    opts.setText(val);
-    const textBeforeCursor = val.slice(0, cursor);
+  function detectMentionAtCursor(text: string, cursor: number) {
+    const textBeforeCursor = text.slice(0, cursor);
     const m = textBeforeCursor.match(/@([\wÀ-ž]*)$/);
     if (m && m[1].length > 0) {
       start = cursor - m[0].length;
@@ -56,29 +69,41 @@ export function useMentionAutocomplete(opts: {
       open = false;
       suggestions = [];
       query = '';
+      start = -1;
     }
+  }
+
+  /** Call from `oninput` on a textarea/input. */
+  function handleInput(e: Event) {
+    const el = e.target as HTMLTextAreaElement | HTMLInputElement;
+    const val = el.value;
+    const cursor = el.selectionStart ?? val.length;
+    opts.setText(val);
+    detectMentionAtCursor(val, cursor);
+  }
+
+  /** Call after a contenteditable mention editor updates its plain-text value. */
+  function handleEditorInput(text: string, cursor: number) {
+    detectMentionAtCursor(text, cursor);
   }
 
   /** Replaces the @query token with a stable `@[userId]` mention token. */
   function select(user: MentionUser) {
+    if (start < 0) return;
     const token = formatMentionToken(user.id);
-    const savedStart = start;
     const text = opts.getText();
-    const before = text.slice(0, savedStart);
-    const after = text.slice(savedStart + 1 + query.length);
-    const newText = `${before}${token} ${after}`;
+    const before = text.slice(0, start);
+    const after = text.slice(start + 1 + query.length);
+    const newText = `${before}${token} `;
     const newCursor = before.length + token.length + 1;
-    opts.setText(newText);
+    opts.setText(newText + after);
     open = false;
     suggestions = [];
     query = '';
     start = -1;
     void tick().then(() => {
-      const el = opts.getEl?.();
-      if (el) {
-        el.focus();
-        el.setSelectionRange(newCursor, newCursor);
-      }
+      opts.focus?.();
+      applyCursor(newCursor);
     });
   }
 
@@ -122,6 +147,7 @@ export function useMentionAutocomplete(opts: {
       return selectedIdx;
     },
     handleInput,
+    handleEditorInput,
     select,
     handleKeydown,
   };

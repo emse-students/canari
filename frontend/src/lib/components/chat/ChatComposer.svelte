@@ -5,8 +5,7 @@
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import VoiceRecorder from './VoiceRecorder.svelte';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
-  import { useMentionAutocomplete } from '$lib/composables/useMentionAutocomplete.svelte';
-  import MentionDropdown from '$lib/components/shared/MentionDropdown.svelte';
+  import MentionComposerInput from '$lib/components/shared/MentionComposerInput.svelte';
   import type { PendingMediaFile } from '$lib/media';
   import { mediaAspectStyle } from '$lib/utils/mediaLayout';
 
@@ -52,7 +51,7 @@
     isUploading = false,
   }: Props = $props();
 
-  let textareaEl: HTMLTextAreaElement;
+  let mentionComposer = $state<MentionComposerInput | null>(null);
   let fileInput: HTMLInputElement | undefined = $state();
   let isDragOver = $state(false);
   let previewUrls = $state<Record<string, string>>({});
@@ -82,12 +81,6 @@
     }
   });
 
-  const mention = useMentionAutocomplete({
-    getText: () => messageText,
-    setText: (text) => onMessageChange(text),
-    getEl: () => textareaEl,
-  });
-
   let replySenderDisplayName = $state('');
 
   $effect(() => {
@@ -105,14 +98,12 @@
     });
   });
 
-  function handleKeydown(e: KeyboardEvent) {
-    if (mention.handleKeydown(e)) return;
+  function handleComposerKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       if (!isSendDisabled) {
         onSend();
-        // Keep keyboard open: refocus textarea after sending
-        tick().then(() => textareaEl?.focus());
+        tick().then(() => mentionComposer?.focusEditor());
       }
     }
     if (e.key === 'Escape' && replyingTo) {
@@ -212,10 +203,14 @@
   }
 
   $effect(() => {
-    if (textareaEl) {
-      textareaEl.style.height = '44px'; // Base height
-      textareaEl.style.height = `${Math.min(Math.max(textareaEl.scrollHeight, 44), 160)}px`; // Max height ~160px
-    }
+    const composer = mentionComposer;
+    void messageText;
+    tick().then(() => {
+      const el = composer?.getEditorElement();
+      if (!el) return;
+      el.style.height = '44px';
+      el.style.height = `${Math.min(Math.max(el.scrollHeight, 44), 160)}px`;
+    });
   });
 
   $effect(() => {
@@ -234,8 +229,8 @@
   });
 
   $effect(() => {
-    if (replyingTo && textareaEl) {
-      textareaEl.focus();
+    if (replyingTo) {
+      mentionComposer?.focusEditor();
     }
   });
 
@@ -425,26 +420,19 @@
       />
 
       <!-- Zone de Texte auto-extensible -->
-      <div class="relative flex-1 min-w-0">
-        <MentionDropdown
-          open={mention.open}
-          suggestions={mention.suggestions}
-          selectedIdx={mention.selectedIdx}
-          onSelect={mention.select}
-        />
-        <textarea
-          bind:this={textareaEl}
-          value={messageText}
-          oninput={mention.handleInput}
-          onfocus={() => onFocusChange?.(true)}
-          onblur={() => onFocusChange?.(false)}
-          onkeydown={handleKeydown}
-          onpaste={handlePaste}
-          placeholder="Écrivez un message..."
-          rows="1"
-          class="chat-composer-textarea chat-scrollbar w-full"
-        ></textarea>
-      </div>
+      <MentionComposerInput
+        bind:this={mentionComposer}
+        value={messageText}
+        onchange={onMessageChange}
+        class="flex-1 min-w-0"
+        editorClass="chat-composer-textarea"
+        placeholder="Écrivez un message..."
+        minHeight="44px"
+        onfocus={() => onFocusChange?.(true)}
+        onblur={() => onFocusChange?.(false)}
+        onkeydown={handleComposerKeydown}
+        onpaste={handlePaste}
+      />
 
       <!-- Bouton Envoyer Dynamique -->
       <div class="pb-[3px] shrink-0 pr-1">

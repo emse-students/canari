@@ -24,8 +24,7 @@
     type AssociationCalendarEvent,
   } from '$lib/associations/api';
   import { isGlobalAdmin } from '$lib/stores/user';
-  import { useMentionAutocomplete } from '$lib/composables/useMentionAutocomplete.svelte';
-  import MentionDropdown from '$lib/components/shared/MentionDropdown.svelte';
+  import MentionComposerInput from '$lib/components/shared/MentionComposerInput.svelte';
   import PollSection from './PollSection.svelte';
   import EventButtonSection from './EventButtonSection.svelte';
   import FormSection from './FormSection.svelte';
@@ -95,18 +94,11 @@
   let publishing = $state(false);
   let errorMessage = $state('');
   let authToken = $state('');
-  let textareaEl = $state<HTMLTextAreaElement | null>(null);
-
-  const mention = useMentionAutocomplete({
-    getText: () => markdown,
-    setText: (text) => { markdown = text; },
-    getEl: () => textareaEl,
-  });
+  let composerInput = $state<MentionComposerInput | null>(null);
 
   async function applyFormat(type: string) {
-    if (!textareaEl) return;
-    const selStart = textareaEl.selectionStart;
-    const selEnd = textareaEl.selectionEnd;
+    if (!composerInput) return;
+    const { start: selStart, end: selEnd } = composerInput.getSelectionRange();
     const selected = markdown.slice(selStart, selEnd);
     let newText = markdown;
     let newSelStart = selStart;
@@ -149,8 +141,8 @@
 
     markdown = newText;
     await tick();
-    textareaEl.focus();
-    textareaEl.setSelectionRange(newSelStart, newSelEnd);
+    composerInput.focusEditor();
+    composerInput.setSelectionRange(newSelStart, newSelEnd);
   }
 
   // --- Draft auto-save (full composer state; images are not persisted) ---
@@ -565,18 +557,14 @@
         <button type="button" title="Lien" onclick={() => applyFormat('link')} class="p-1.5 rounded-lg text-text-muted hover:bg-black/10 dark:hover:bg-white/10 hover:text-text-main transition-colors outline-none focus-visible:ring-1 focus-visible:ring-amber-500"><Link2 size={15} strokeWidth={2} /></button>
       </div>
 
-      <div class="relative">
-        <MentionDropdown open={mention.open} suggestions={mention.suggestions} selectedIdx={mention.selectedIdx} onSelect={mention.select} />
-        <textarea
-          bind:this={textareaEl}
-          bind:value={markdown}
-          oninput={mention.handleInput}
-          onkeydown={(e) => mention.handleKeydown(e)}
-          placeholder="Écrivez votre message ici..."
-          rows={5}
-          class="custom-scrollbar min-h-[120px] w-full resize-none rounded-xl bg-transparent px-4 py-3.5 text-[0.95rem] sm:text-[1rem] font-medium leading-relaxed text-text-main placeholder:text-text-muted/60 outline-none"
-        ></textarea>
-      </div>
+      <MentionComposerInput
+        bind:this={composerInput}
+        bind:value={markdown}
+        placeholder="Écrivez votre message ici..."
+        minHeight="120px"
+        class="w-full"
+        editorClass="custom-scrollbar min-h-[120px] w-full rounded-xl bg-transparent px-4 py-3.5 text-[0.95rem] sm:text-[1rem] font-medium leading-relaxed text-text-main"
+      />
 
       <!-- Aperçu des images & Légendes -->
       {#if filePreviews.length > 0}
