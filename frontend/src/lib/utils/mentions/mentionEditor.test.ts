@@ -5,7 +5,11 @@ vi.mock('$lib/utils/users/displayName', () => ({
   resolveUserDisplayName: vi.fn().mockResolvedValue(null),
 }));
 
-import { renderPlainTextToMentionEditor, serializeMentionEditor } from './mentionEditor';
+import {
+  needsMentionChipRender,
+  renderPlainTextToMentionEditor,
+  serializeMentionEditor,
+} from './mentionEditor';
 
 const USER_ID = '550e8400-e29b-41d4-a716-446655440000';
 
@@ -34,5 +38,12 @@ describe('mentionEditor', () => {
     const chip = root.querySelector('[data-mention-id]') as HTMLElement;
     expect(chip?.textContent).toMatch(/^@/);
     expect(chip?.dataset.mentionId).toBe(USER_ID);
+  });
+
+  it('detects raw @[uuid] text that still needs chip rendering', () => {
+    root.textContent = `Salut @[${USER_ID}]!`;
+    expect(needsMentionChipRender(root, `Salut @[${USER_ID}]!`)).toBe(true);
+    renderPlainTextToMentionEditor(root, `Salut @[${USER_ID}]!`);
+    expect(needsMentionChipRender(root, `Salut @[${USER_ID}]!`)).toBe(false);
   });
 });

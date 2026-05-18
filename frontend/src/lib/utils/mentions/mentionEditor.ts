@@ -1,4 +1,4 @@
-import { formatMentionToken } from '$lib/utils/mentions';
+import { formatMentionToken, MENTION_UUID_TOKEN_RE } from '$lib/utils/mentions';
 import { splitTextWithMentions } from '$lib/utils/mentions.parse';
 import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
 
@@ -66,6 +66,18 @@ function appendTextWithBreaks(parent: HTMLElement, text: string): void {
     if (lines[i]) parent.appendChild(document.createTextNode(lines[i]));
     if (i < lines.length - 1) parent.appendChild(document.createElement('br'));
   }
+}
+
+export function countMentionTokens(text: string): number {
+  const re = new RegExp(MENTION_UUID_TOKEN_RE.source, MENTION_UUID_TOKEN_RE.flags);
+  return [...text.matchAll(re)].length;
+}
+
+/** True when plain text has `@[uuid]` tokens not yet rendered as chips. */
+export function needsMentionChipRender(root: HTMLElement, plainText: string): boolean {
+  const expected = countMentionTokens(plainText);
+  if (expected === 0) return false;
+  return root.querySelectorAll(MENTION_CHIP_SELECTOR).length < expected;
 }
 
 /** Renders plain text (with `@[uuid]` tokens) into a mention editor element. */

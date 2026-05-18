@@ -5,6 +5,7 @@
   import {
     getMentionChipFromEventTarget,
     getPlainTextSelection,
+    needsMentionChipRender,
     removeMentionChipBeforeCursor,
     renderPlainTextToMentionEditor,
     serializeMentionEditor,
@@ -44,6 +45,8 @@
   let editorEl = $state<HTMLDivElement | null>(null);
   let lastRenderedValue = $state('');
   let isComposing = $state(false);
+  /** Skips one external `value` sync after we update the editor locally (avoids stale parent props). */
+  let pendingInternalSync = 0;
 
   const mention = useMentionAutocomplete({
     getText: () => value,
@@ -56,8 +59,10 @@
   });
 
   function syncFromPlainText(text: string, moveCursorTo?: number) {
+    pendingInternalSync++;
     value = text;
     lastRenderedValue = text;
+    onchange?.(text);
     if (editorEl) {
       renderPlainTextToMentionEditor(editorEl, text);
       if (moveCursorTo !== undefined) {
@@ -68,18 +73,40 @@
 
   function emitEditorChange() {
     if (!editorEl || isComposing) return;
-    const text = serializeMentionEditor(editorEl);
-    const { start } = getPlainTextSelection(editorEl);
+    let text = serializeMentionEditor(editorEl);
+    let { start } = getPlainTextSelection(editorEl);
+
+    if (needsMentionChipRender(editorEl, text)) {
+      pendingInternalSync++;
+      renderPlainTextToMentionEditor(editorEl, text);
+      lastRenderedValue = text;
+      setPlainTextSelection(editorEl, start, start);
+    }
+
     if (text !== value) {
+      pendingInternalSync++;
       value = text;
       lastRenderedValue = text;
       onchange?.(text);
     }
+
     mention.handleEditorInput(text, start);
   }
 
   $effect(() => {
-    if (!editorEl || value === lastRenderedValue) return;
+    if (!editorEl) return;
+    if (pendingInternalSync > 0) {
+      pendingInternalSync--;
+      return;
+    }
+    if (value === lastRenderedValue) return;
+
+    const domText = serializeMentionEditor(editorEl);
+    if (value === domText) {
+      lastRenderedValue = value;
+      return;
+    }
+
     renderPlainTextToMentionEditor(editorEl, value);
     lastRenderedValue = value;
   });
