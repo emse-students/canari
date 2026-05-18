@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatDateSafe, toValidDate } from './dates';
+import { formatTime24, isToday, isYesterday, toValidDate } from './dates';
 
 describe('toValidDate', () => {
   it('returns fallback for invalid Date', () => {
@@ -13,8 +13,25 @@ describe('toValidDate', () => {
   });
 });
 
-describe('formatDateSafe', () => {
+describe('formatTime24', () => {
   it('does not throw on invalid input', () => {
-    expect(() => formatDateSafe(undefined, 'HH:mm')).not.toThrow();
+    expect(() => formatTime24(undefined)).not.toThrow();
+  });
+
+  it('formats hours and minutes with zero padding', () => {
+    const d = new Date(2024, 2, 1, 9, 5);
+    expect(formatTime24(d)).toBe('09:05');
+  });
+});
+
+describe('isToday / isYesterday', () => {
+  it('detects today', () => {
+    expect(isToday(new Date())).toBe(true);
+  });
+
+  it('detects yesterday', () => {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    expect(isYesterday(yesterday)).toBe(true);
   });
 });

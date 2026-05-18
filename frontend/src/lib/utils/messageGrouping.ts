@@ -1,7 +1,11 @@
-import { format, isToday, isYesterday } from 'date-fns';
-import { fr } from 'date-fns/locale';
 import type { ChatMessage } from '$lib/types';
-import { formatDateSafe, toValidDate } from '$lib/utils/dates';
+import {
+  formatLongDateFr,
+  formatTime24,
+  isToday,
+  isYesterday,
+  toValidDate,
+} from '$lib/utils/dates';
 
 /**
  * A discriminated union representing one visual row in the message list.
@@ -17,7 +21,7 @@ export type MessageGroup =
 function formatDateSeparator(date: Date): string {
   if (isToday(date)) return "Aujourd'hui";
   if (isYesterday(date)) return 'Hier';
-  return format(date, 'EEEE d MMMM yyyy', { locale: fr });
+  return formatLongDateFr(date);
 }
 
 /**
@@ -33,10 +37,8 @@ export function groupMessages(messages: ChatMessage[]): MessageGroup[] {
   let lastTimestamp: number | null = null;
   const TIME_GAP_MS = 15 * 60 * 1000; // 15 minutes
 
-  // Performance optimization: Using numeric date parts avoids heavy date-fns format() calls in the loop
   for (const msg of messages) {
     const d = toValidDate(msg.timestamp);
-    // Format: YYYY-MM-DD
     const msgDate = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
     const msgTime = d.getTime();
 
@@ -54,7 +56,7 @@ export function groupMessages(messages: ChatMessage[]): MessageGroup[] {
     if (lastTimestamp !== null && !msg.isSystem && msgTime - lastTimestamp > TIME_GAP_MS) {
       groups.push({
         type: 'time_separator',
-        time: formatDateSafe(d, 'HH:mm'),
+        time: formatTime24(d),
       });
     }
 

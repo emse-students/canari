@@ -1,6 +1,6 @@
 <script lang="ts">
   import { LoaderCircle, TriangleAlert, CheckCheck, Check } from '@lucide/svelte';
-  import { formatDateSafe } from '$lib/utils/dates';
+  import { formatTime24 } from '$lib/utils/dates';
 
   interface Props {
     /** When true, shows an "(modifié)" label. */
@@ -35,7 +35,7 @@
   const readLabel = $derived(() => {
     let label = `Lu${readBy.length > 1 ? ` (${readBy.length})` : ''}`;
     if (readAt != null && Number.isFinite(readAt)) {
-      label += ` à ${formatDateSafe(readAt, 'HH:mm')}`;
+      label += ` à ${formatTime24(readAt)}`;
     }
     return label;
   });

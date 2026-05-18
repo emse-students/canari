@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { formatDateSafe } from '$lib/utils/dates';
+  import { formatTime24 } from '$lib/utils/dates';
   import { fly } from 'svelte/transition';
   import { SvelteSet } from 'svelte/reactivity';
   import { Clock, Pencil, CheckCheck } from '@lucide/svelte';
@@ -73,7 +73,7 @@
     <div class="flex items-center gap-1.5 opacity-90">
       <Clock size={12} class="text-text-muted shrink-0" />
       <span>
-        Envoyé à <span class="font-semibold">{formatDateSafe(timestamp, 'HH:mm')}</span>
+        Envoyé à <span class="font-semibold">{formatTime24(timestamp)}</span>
       </span>
     </div>
 
@@ -82,7 +82,7 @@
       <div class="flex items-center gap-1.5 opacity-90">
         <Pencil size={12} class="text-text-muted shrink-0" />
         <span>
-          Modifié {#if editedAt}à <span class="font-semibold">{formatDateSafe(editedAt, 'HH:mm')}</span
+          Modifié {#if editedAt}à <span class="font-semibold">{formatTime24(editedAt)}</span
             >{/if}
         </span>
       </div>
