@@ -571,6 +571,142 @@ export async function revokeAssociationTag(associationId: string, tagId: string)
   );
 }
 
+// ── Boutique products ───────────────────────────────────────────────────────
+
+export interface AssociationProduct {
+  id: string;
+  associationId: string;
+  name: string;
+  description: string | null;
+  /** Fixed price in cents; null when only custom amounts are allowed. */
+  amountCents: number | null;
+  currency: string;
+  type: 'membership' | 'balance_topup' | 'other';
+  grantedTagName: string | null;
+  tagExpiresAt: string | null;
+  allowCustomAmount: boolean;
+  customAmountMinCents: number | null;
+  customAmountMaxCents: number | null;
+  /** webhookUrl and webhookSecret are never returned by the API. */
+  isActive: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateProductPayload {
+  name: string;
+  description?: string;
+  amountCents?: number;
+  currency?: string;
+  type: 'membership' | 'balance_topup' | 'other';
+  grantedTagName?: string;
+  tagExpiresAt?: string;
+  allowCustomAmount?: boolean;
+  customAmountMinCents?: number;
+  customAmountMaxCents?: number;
+  webhookUrl?: string;
+  webhookSecret?: string;
+  isActive?: boolean;
+  sortOrder?: number;
+}
+
+export type UpdateProductPayload = Partial<CreateProductPayload>;
+
+/** Returns all active products across all associations (login required). */
+export async function listAllProducts(): Promise<AssociationProduct[]> {
+  return request<AssociationProduct[]>('/api/associations/products/all');
+}
+
+/** Returns active products for a single association (public). */
+export async function listAssociationProducts(
+  associationId: string
+): Promise<AssociationProduct[]> {
+  return request<AssociationProduct[]>(
+    `/api/associations/${encodeURIComponent(associationId)}/products`
+  );
+}
+
+/** Creates a new product in the association's boutique (requires MANAGE_PRODUCTS). */
+export async function createProduct(
+  associationId: string,
+  payload: CreateProductPayload
+): Promise<AssociationProduct> {
+  return request<AssociationProduct>(
+    `/api/associations/${encodeURIComponent(associationId)}/products`,
+    { method: 'POST', body: JSON.stringify(payload) }
+  );
+}
+
+/** Updates a product (requires MANAGE_PRODUCTS). */
+export async function updateProduct(
+  associationId: string,
+  productId: string,
+  payload: UpdateProductPayload
+): Promise<AssociationProduct> {
+  return request<AssociationProduct>(
+    `/api/associations/${encodeURIComponent(associationId)}/products/${encodeURIComponent(productId)}`,
+    { method: 'PATCH', body: JSON.stringify(payload) }
+  );
+}
+
+/** Deletes a product (requires MANAGE_PRODUCTS). */
+export async function deleteProduct(associationId: string, productId: string): Promise<void> {
+  await request<unknown>(
+    `/api/associations/${encodeURIComponent(associationId)}/products/${encodeURIComponent(productId)}`,
+    { method: 'DELETE' }
+  );
+}
+
+/**
+ * Creates a Stripe Checkout session for a product purchase.
+ * Returns the Stripe-hosted checkout URL to redirect the user to.
+ */
+export async function createProductCheckout(
+  associationId: string,
+  productId: string,
+  customAmountCents?: number
+): Promise<{ checkoutUrl: string }> {
+  return request<{ checkoutUrl: string }>(
+    `/api/associations/${encodeURIComponent(associationId)}/products/${encodeURIComponent(productId)}/checkout`,
+    {
+      method: 'POST',
+      body: JSON.stringify(customAmountCents !== undefined ? { customAmountCents } : {}),
+    }
+  );
+}
+
+export interface WebhookDelivery {
+  id: string;
+  productId: string;
+  userId: string;
+  amountCents: number;
+  paymentIntentId: string;
+  status: 'pending' | 'delivered' | 'failed';
+  attemptCount: number;
+  lastAttemptAt: string | null;
+  lastError: string | null;
+  createdAt: string;
+}
+
+/** Lists failed Cercle webhook deliveries (requires MANAGE_PRODUCTS). */
+export async function listWebhookFailures(associationId: string): Promise<WebhookDelivery[]> {
+  return request<WebhookDelivery[]>(
+    `/api/associations/${encodeURIComponent(associationId)}/webhook-failures`
+  );
+}
+
+/** Retries a failed Cercle webhook delivery (requires MANAGE_PRODUCTS). */
+export async function retryWebhookDelivery(
+  associationId: string,
+  deliveryId: string
+): Promise<void> {
+  await request<unknown>(
+    `/api/associations/${encodeURIComponent(associationId)}/webhook-failures/${encodeURIComponent(deliveryId)}/retry`,
+    { method: 'POST' }
+  );
+}
+
 // ── Stripe onboarding ───────────────────────────────────────────────────────
 
 export async function startStripeOnboarding(

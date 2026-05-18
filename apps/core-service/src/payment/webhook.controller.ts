@@ -67,6 +67,7 @@ export class PaymentWebhookController {
     if (event.type === 'checkout.session.completed') {
       const session = event.data.object;
       const submissionId = session.metadata?.submissionId;
+      const productId = session.metadata?.productId;
       const userId = session.metadata?.userId;
 
       // Save the Stripe customer ID back to the user if they just paid for the first time
@@ -138,9 +139,56 @@ export class PaymentWebhookController {
           );
           return res.status(500).send('Failed to notify form-service');
         }
+      } else if (productId && userId) {
+        // Boutique product purchase — notify social-service
+        if (
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(productId)
+        ) {
+          this.logger.error(`Invalid productId in webhook metadata: ${productId}`);
+          return res.status(400).send('Invalid productId');
+        }
+        try {
+          const socialBase =
+            this.config.get<string>('SOCIAL_SERVICE_URL') ||
+            'http://localhost:3014';
+          const parsedBase = parseSafeServiceOrigin(
+            socialBase,
+            'SOCIAL_SERVICE_URL',
+          );
+          const url = new URL(
+            `/api/associations/products/${encodeURIComponent(productId)}/purchase-completed`,
+            `${parsedBase.origin}/`,
+          ).href;
+          await axios.post(
+            url,
+            {
+              userId,
+              amountCents: session.amount_total ?? 0,
+              paymentIntentId:
+                typeof session.payment_intent === 'string'
+                  ? session.payment_intent
+                  : '',
+            },
+            {
+              maxRedirects: 0,
+              timeout: 15_000,
+              validateStatus: (s) => s >= 200 && s < 300,
+            },
+          );
+          this.logger.log(
+            `Product purchase completed: productId=${productId} userId=${userId}`,
+          );
+        } catch (err: unknown) {
+          const error = err as Error & { response?: { data?: unknown } };
+          this.logger.error(
+            'Failed to notify social-service about product purchase',
+            error?.response?.data || error?.message || error,
+          );
+          return res.status(500).send('Failed to notify social-service');
+        }
       } else {
         this.logger.warn(
-          'checkout.session.completed without submissionId metadata',
+          'checkout.session.completed without submissionId or productId metadata',
         );
       }
     }

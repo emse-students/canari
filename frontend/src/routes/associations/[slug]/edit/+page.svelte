@@ -16,9 +16,17 @@
     listAssociationTags,
     grantAssociationTag,
     revokeAssociationTag,
+    listAssociationProducts,
+    createProduct,
+    updateProduct,
+    deleteProduct,
+    listWebhookFailures,
+    retryWebhookDelivery,
     type Association,
     type AssociationMember,
+    type AssociationProduct,
     type UserTag,
+    type WebhookDelivery,
   } from '$lib/associations/api';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
@@ -33,6 +41,9 @@
     AlertTriangle,
     FolderLock,
     Tags,
+    ShoppingBag,
+    Plus,
+    RefreshCw,
   } from '@lucide/svelte';
   import AssociationDocumentManager from '$lib/components/associations/AssociationDocumentManager.svelte';
   import {
@@ -74,7 +85,9 @@
   let logoBusy = $state(false);
   let showCropper = $state(false);
 
-  let editSection = $state<'profile' | 'members' | 'documents' | 'cotisants' | 'payments' | 'danger'>('profile');
+  let editSection = $state<
+    'profile' | 'members' | 'documents' | 'cotisants' | 'boutique' | 'payments' | 'danger'
+  >('profile');
 
   let canManageDocuments = $derived(
     isGlobalAdminUser ||
@@ -87,6 +100,33 @@
       (!!myMembership &&
         hasPermissionFlag(myMembership.permissions ?? 0, AssociationPermissionFlag.MANAGE_MEMBERS))
   );
+
+  let canManageProducts = $derived(
+    isGlobalAdminUser ||
+      (!!myMembership &&
+        hasPermissionFlag(myMembership.permissions ?? 0, AssociationPermissionFlag.MANAGE_PRODUCTS))
+  );
+
+  // ── Boutique state ───────────────────────────────────────────────────────
+  let products = $state<AssociationProduct[]>([]);
+  let productsLoading = $state(false);
+  let productsError = $state('');
+  let webhookFailures = $state<WebhookDelivery[]>([]);
+  let showProductForm = $state(false);
+  let savingProduct = $state(false);
+  let retryingDelivery = $state<string | null>(null);
+
+  let newProductName = $state('');
+  let newProductDescription = $state('');
+  let newProductAmountCents = $state<number | ''>('');
+  let newProductType = $state<'membership' | 'balance_topup' | 'other'>('other');
+  let newProductGrantedTag = $state('');
+  let newProductTagExpires = $state('');
+  let newProductAllowCustom = $state(false);
+  let newProductMinCents = $state<number | ''>('');
+  let newProductMaxCents = $state<number | ''>('');
+  let newProductWebhookUrl = $state('');
+  let newProductWebhookSecret = $state('');
 
   let tags = $state<UserTag[]>([]);
   let tagsLoading = $state(false);
@@ -298,6 +338,107 @@
       tagsError = e instanceof Error ? e.message : 'Erreur';
     }
   }
+
+  async function loadProducts() {
+    if (!asso) return;
+    productsLoading = true;
+    productsError = '';
+    try {
+      const [prods, failures] = await Promise.all([
+        listAssociationProducts(asso.id),
+        listWebhookFailures(asso.id),
+      ]);
+      products = prods;
+      webhookFailures = failures;
+    } catch (e) {
+      productsError = e instanceof Error ? e.message : 'Erreur';
+    } finally {
+      productsLoading = false;
+    }
+  }
+
+  function resetProductForm() {
+    newProductName = '';
+    newProductDescription = '';
+    newProductAmountCents = '';
+    newProductType = 'other';
+    newProductGrantedTag = '';
+    newProductTagExpires = '';
+    newProductAllowCustom = false;
+    newProductMinCents = '';
+    newProductMaxCents = '';
+    newProductWebhookUrl = '';
+    newProductWebhookSecret = '';
+    showProductForm = false;
+  }
+
+  async function handleCreateProduct() {
+    if (!asso || !newProductName.trim()) return;
+    savingProduct = true;
+    productsError = '';
+    try {
+      await createProduct(asso.id, {
+        name: newProductName.trim(),
+        description: newProductDescription.trim() || undefined,
+        amountCents: newProductAmountCents !== '' ? Number(newProductAmountCents) * 100 : undefined,
+        type: newProductType,
+        grantedTagName: newProductGrantedTag.trim() || undefined,
+        tagExpiresAt: newProductTagExpires.trim() || undefined,
+        allowCustomAmount: newProductAllowCustom,
+        customAmountMinCents:
+          newProductMinCents !== '' ? Number(newProductMinCents) * 100 : undefined,
+        customAmountMaxCents:
+          newProductMaxCents !== '' ? Number(newProductMaxCents) * 100 : undefined,
+        webhookUrl: newProductWebhookUrl.trim() || undefined,
+        webhookSecret: newProductWebhookSecret.trim() || undefined,
+      });
+      resetProductForm();
+      await loadProducts();
+    } catch (e) {
+      productsError = e instanceof Error ? e.message : 'Erreur';
+    } finally {
+      savingProduct = false;
+    }
+  }
+
+  async function handleToggleProduct(product: AssociationProduct) {
+    if (!asso) return;
+    try {
+      await updateProduct(asso.id, product.id, { isActive: !product.isActive });
+      products = products.map((p) =>
+        p.id === product.id ? { ...p, isActive: !product.isActive } : p
+      );
+    } catch (e) {
+      productsError = e instanceof Error ? e.message : 'Erreur';
+    }
+  }
+
+  async function handleDeleteProduct(product: AssociationProduct) {
+    if (
+      !asso ||
+      !confirm(`Supprimer le produit "${product.name}" ? Cette action est irréversible.`)
+    )
+      return;
+    try {
+      await deleteProduct(asso.id, product.id);
+      products = products.filter((p) => p.id !== product.id);
+    } catch (e) {
+      productsError = e instanceof Error ? e.message : 'Erreur';
+    }
+  }
+
+  async function handleRetryDelivery(delivery: WebhookDelivery) {
+    if (!asso) return;
+    retryingDelivery = delivery.id;
+    try {
+      await retryWebhookDelivery(asso.id, delivery.id);
+      await loadProducts();
+    } catch (e) {
+      productsError = e instanceof Error ? e.message : 'Erreur';
+    } finally {
+      retryingDelivery = null;
+    }
+  }
 </script>
 
 <div class="px-4 py-6 sm:px-6 max-w-4xl mx-auto space-y-6">
@@ -392,6 +533,19 @@
           >
             <Tags size={17} />
             Cotisants
+          </button>
+        {/if}
+        {#if canManageProducts}
+          <button
+            type="button"
+            onclick={() => { editSection = 'boutique'; void loadProducts(); }}
+            class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+            {editSection === 'boutique'
+              ? 'bg-cn-yellow text-cn-dark shadow-sm'
+              : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
+          >
+            <ShoppingBag size={17} />
+            Boutique
           </button>
         {/if}
         {#if isGlobalAdminUser}
@@ -675,6 +829,285 @@
               </li>
             {/each}
           </ul>
+        {/if}
+      </div>
+    {/if}
+
+    {#if editSection === 'boutique' && canManageProducts && asso}
+      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-6 shadow-sm">
+        <div class="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <h2 class="text-lg font-bold text-text-main tracking-tight flex items-center gap-2">
+              <ShoppingBag size={20} />
+              Boutique
+            </h2>
+            <p class="text-sm text-text-muted mt-1">
+              Produits disponibles à l'achat sur la page /shop et la page publique de l'association.
+            </p>
+          </div>
+          <button
+            type="button"
+            onclick={() => (showProductForm = !showProductForm)}
+            class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover transition-colors"
+          >
+            <Plus size={16} />
+            Nouveau produit
+          </button>
+        </div>
+
+        {#if productsError}
+          <div class="rounded-xl border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm">
+            {productsError}
+          </div>
+        {/if}
+
+        {#if !asso.stripeOnboardingComplete}
+          <div class="rounded-xl border border-amber-200 bg-amber-50 text-amber-800 px-4 py-3 text-sm">
+            Stripe Connect non configuré. Les produits seront créés inactifs jusqu'à la complétion de l'onboarding.
+            <button
+              type="button"
+              onclick={() => { editSection = 'payments'; }}
+              class="ml-2 font-semibold underline hover:no-underline"
+            >Configurer</button>
+          </div>
+        {/if}
+
+        <!-- New product form -->
+        {#if showProductForm}
+          <form
+            class="rounded-xl border border-cn-border bg-cn-bg/40 p-5 space-y-4"
+            onsubmit={(e) => { e.preventDefault(); void handleCreateProduct(); }}
+          >
+            <h3 class="font-bold text-sm text-text-main">Nouveau produit</h3>
+
+            <div class="grid gap-4 sm:grid-cols-2">
+              <div class="space-y-1">
+                <label class="text-xs font-semibold text-text-muted">Nom *</label>
+                <input
+                  type="text"
+                  bind:value={newProductName}
+                  placeholder="Cotisation BDE 2026-2027"
+                  required
+                  class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                />
+              </div>
+              <div class="space-y-1">
+                <label class="text-xs font-semibold text-text-muted">Type *</label>
+                <select
+                  bind:value={newProductType}
+                  class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm"
+                >
+                  <option value="membership">Cotisation (membership)</option>
+                  <option value="balance_topup">Recharge Cercle</option>
+                  <option value="other">Autre</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="space-y-1">
+              <label class="text-xs font-semibold text-text-muted">Description</label>
+              <textarea
+                bind:value={newProductDescription}
+                rows={2}
+                placeholder="Description affichée dans la boutique"
+                class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm resize-none"
+              ></textarea>
+            </div>
+
+            <div class="grid gap-4 sm:grid-cols-2">
+              <div class="space-y-1">
+                <label class="text-xs font-semibold text-text-muted">Prix fixe (€) — vide = libre uniquement</label>
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  bind:value={newProductAmountCents}
+                  placeholder="10.00"
+                  class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                />
+              </div>
+              <div class="space-y-1 flex flex-col justify-end">
+                <label class="flex items-center gap-2 text-sm cursor-pointer">
+                  <input type="checkbox" bind:checked={newProductAllowCustom} class="rounded" />
+                  Permettre un montant libre
+                </label>
+              </div>
+            </div>
+
+            {#if newProductAllowCustom}
+              <div class="grid gap-4 sm:grid-cols-2">
+                <div class="space-y-1">
+                  <label class="text-xs font-semibold text-text-muted">Min (€)</label>
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    bind:value={newProductMinCents}
+                    placeholder="5.00"
+                    class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                  />
+                </div>
+                <div class="space-y-1">
+                  <label class="text-xs font-semibold text-text-muted">Max (€)</label>
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    bind:value={newProductMaxCents}
+                    placeholder="100.00"
+                    class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                  />
+                </div>
+              </div>
+            {/if}
+
+            {#if newProductType === 'membership'}
+              <div class="grid gap-4 sm:grid-cols-2">
+                <div class="space-y-1">
+                  <label class="text-xs font-semibold text-text-muted">Tag accordé à l'achat</label>
+                  <input
+                    type="text"
+                    bind:value={newProductGrantedTag}
+                    placeholder="cotisant:bde-2026-2027"
+                    class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                  />
+                </div>
+                <div class="space-y-1">
+                  <label class="text-xs font-semibold text-text-muted">Expiration du tag</label>
+                  <input
+                    type="date"
+                    bind:value={newProductTagExpires}
+                    class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                  />
+                </div>
+              </div>
+            {/if}
+
+            {#if newProductType === 'balance_topup'}
+              <div class="grid gap-4 sm:grid-cols-2">
+                <div class="space-y-1">
+                  <label class="text-xs font-semibold text-text-muted">URL webhook Cercle</label>
+                  <input
+                    type="url"
+                    bind:value={newProductWebhookUrl}
+                    placeholder="https://cercle.example.com/webhooks/canari"
+                    class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                  />
+                </div>
+                <div class="space-y-1">
+                  <label class="text-xs font-semibold text-text-muted">Secret HMAC</label>
+                  <input
+                    type="password"
+                    bind:value={newProductWebhookSecret}
+                    placeholder="Secret partagé avec Cercle"
+                    class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                  />
+                </div>
+              </div>
+            {/if}
+
+            <div class="flex items-center gap-3 pt-2">
+              <button
+                type="submit"
+                disabled={savingProduct || !newProductName.trim()}
+                class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover disabled:opacity-50"
+              >
+                {savingProduct ? 'Création…' : 'Créer le produit'}
+              </button>
+              <button
+                type="button"
+                onclick={resetProductForm}
+                class="text-sm text-text-muted hover:text-text-main"
+              >Annuler</button>
+            </div>
+          </form>
+        {/if}
+
+        <!-- Product list -->
+        {#if productsLoading}
+          <div class="flex justify-center py-6">
+            <div class="h-6 w-6 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"></div>
+          </div>
+        {:else if products.length === 0}
+          <p class="text-sm text-text-muted text-center py-6">Aucun produit pour le moment.</p>
+        {:else}
+          <ul class="space-y-3">
+            {#each products as product (product.id)}
+              <li class="flex items-center gap-3 rounded-xl border border-cn-border/70 bg-cn-bg/40 px-4 py-3">
+                <div class="min-w-0 flex-1">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <p class="font-semibold text-sm text-text-main">{product.name}</p>
+                    <span class="rounded-full px-2 py-0.5 text-xs font-semibold {product.isActive ? 'bg-emerald-100 text-emerald-700' : 'bg-cn-surface-alt text-text-muted'}">
+                      {product.isActive ? 'Actif' : 'Inactif'}
+                    </span>
+                    <span class="text-xs text-text-muted">{product.type}</span>
+                  </div>
+                  <p class="text-xs text-text-muted mt-0.5">
+                    {product.amountCents != null
+                      ? `${(product.amountCents / 100).toFixed(2)} €`
+                      : 'Montant libre'}
+                    {product.grantedTagName ? ` · Tag: ${product.grantedTagName}` : ''}
+                  </p>
+                </div>
+                <div class="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onclick={() => handleToggleProduct(product)}
+                    class="text-xs rounded-lg border border-cn-border px-3 py-1.5 font-semibold hover:bg-[var(--cn-surface)] transition-colors"
+                  >
+                    {product.isActive ? 'Désactiver' : 'Activer'}
+                  </button>
+                  <button
+                    type="button"
+                    onclick={() => handleDeleteProduct(product)}
+                    title="Supprimer"
+                    class="inline-flex items-center justify-center rounded-xl border border-red-200 bg-red-50/80 p-2 text-red-600 hover:bg-red-100 transition-colors"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+
+        <!-- Webhook failures -->
+        {#if webhookFailures.length > 0}
+          <div class="border-t border-cn-border pt-5 space-y-3">
+            <h3 class="text-sm font-bold text-text-main flex items-center gap-2 text-amber-700">
+              <AlertTriangle size={16} />
+              Livraisons Cercle échouées ({webhookFailures.length})
+            </h3>
+            <ul class="space-y-2">
+              {#each webhookFailures as delivery (delivery.id)}
+                <li class="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3">
+                  <div class="min-w-0 flex-1">
+                    <p class="text-xs font-semibold text-text-main">
+                      {(delivery.amountCents / 100).toFixed(2)} € — {delivery.paymentIntentId.slice(0, 20)}…
+                    </p>
+                    <p class="text-xs text-text-muted">
+                      Tentatives: {delivery.attemptCount} ·
+                      {delivery.lastAttemptAt
+                        ? new Date(delivery.lastAttemptAt).toLocaleString('fr-FR')
+                        : '—'}
+                    </p>
+                    {#if delivery.lastError}
+                      <p class="text-xs text-red-600 truncate">{delivery.lastError}</p>
+                    {/if}
+                  </div>
+                  <button
+                    type="button"
+                    disabled={retryingDelivery === delivery.id}
+                    onclick={() => handleRetryDelivery(delivery)}
+                    class="inline-flex items-center gap-1.5 rounded-xl border border-cn-border px-3 py-1.5 text-xs font-semibold hover:bg-[var(--cn-surface)] disabled:opacity-50"
+                  >
+                    <RefreshCw size={13} class={retryingDelivery === delivery.id ? 'animate-spin' : ''} />
+                    Réessayer
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          </div>
         {/if}
       </div>
     {/if}

@@ -24,27 +24,31 @@ import { PERM_FLAG_KEY } from './guards/association-role.guard';
 import { GlobalAdminOrAssociationRoleGuard } from './guards/global-admin-or-association-role.guard';
 import { AssociationPermissionFlag } from './entities/association-member.entity';
 import { AssociationsService } from './associations.service';
+import { ProductsService } from './products.service';
 import { FollowsService } from '../follows/follows.service';
 import {
   AddMemberDto,
   CreateAssociationDto,
   CreateAssociationDocumentDto,
   CreateAssociationCalendarEventDto,
+  CreateProductDto,
   GrantTagDto,
   UpdateAssociationDto,
   UpdateAssociationCalendarEventDto,
   UpdateMemberRoleDto,
+  UpdateProductDto,
 } from './dto/association.dto';
 import { UserTagService } from '../users/user-tag.service';
 import { buildAggregatedCalendarIcs } from './calendar-ics.util';
 
 const LOGO_UPLOAD_MB = 2;
 
-/** Manages association resources including membership, logo, Stripe onboarding, and follow relationships. */
+/** Manages association resources including membership, logo, Stripe onboarding, follow relationships, and boutique products. */
 @Controller('associations')
 export class AssociationsController {
   constructor(
     private readonly service: AssociationsService,
+    private readonly productsService: ProductsService,
     private readonly followsService: FollowsService,
     private readonly userTagService: UserTagService
   ) {}
@@ -237,7 +241,6 @@ export class AssociationsController {
   ) {
     const isGlobalAdmin = ga === 'true';
     if (!isGlobalAdmin) {
-      const canCreate = await this.service.isUserBdeAdmin(userId);
       // isUserBdeAdmin checks VALIDATE_EVENTS; CREATE_ASSO is a separate flag
       const canCreateAsso = await this.service.callerHasAnyBdeFlag(
         userId,
@@ -540,6 +543,88 @@ export class AssociationsController {
     return this.userTagService.revoke(tagId);
   }
 
+  // ── Boutique (products) ───────────────────────────────────────────────────
+
+  /** Returns all active products across all associations (requires login). Used on /shop. */
+  @UseGuards(NginxAuthGuard)
+  @Get('products/all')
+  listAllProducts() {
+    return this.productsService.listAllActive();
+  }
+
+  /** Returns active products for this association (shown on the public association page). */
+  @Get(':id/products')
+  listAssociationProducts(@Param('id') id: string) {
+    return this.productsService.listByAssoc(id);
+  }
+
+  /**
+   * Creates a new product in the association's boutique.
+   * Requires MANAGE_PRODUCTS flag. Product is inactive until Stripe Connect onboarding is complete.
+   */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Post(':id/products')
+  createProduct(@Param('id') id: string, @Body() dto: CreateProductDto) {
+    return this.productsService.create(id, dto);
+  }
+
+  /** Updates a product in the association's boutique. Requires MANAGE_PRODUCTS flag. */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Patch(':id/products/:productId')
+  updateProduct(
+    @Param('id') id: string,
+    @Param('productId') productId: string,
+    @Body() dto: UpdateProductDto
+  ) {
+    return this.productsService.update(id, productId, dto);
+  }
+
+  /** Removes a product from the association's boutique. Requires MANAGE_PRODUCTS flag. */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Delete(':id/products/:productId')
+  deleteProduct(@Param('id') id: string, @Param('productId') productId: string) {
+    return this.productsService.delete(id, productId);
+  }
+
+  /**
+   * Creates a Stripe Checkout session for a product purchase (login required).
+   * Optional body: `{ customAmountCents: number }` for products allowing custom amounts.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Post(':id/products/:productId/checkout')
+  checkout(
+    @Param('id') id: string,
+    @Param('productId') productId: string,
+    @Headers('x-user-id') userId: string,
+    @Body() body?: { customAmountCents?: number }
+  ) {
+    return this.productsService.createCheckoutSession(
+      id,
+      productId,
+      userId,
+      body?.customAmountCents
+    );
+  }
+
+  /** Lists failed Cercle webhook deliveries for admin retry. Requires MANAGE_PRODUCTS flag. */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Get(':id/webhook-failures')
+  listWebhookFailures(@Param('id') id: string) {
+    return this.productsService.listWebhookFailures(id);
+  }
+
+  /** Retries a failed Cercle webhook delivery. Requires MANAGE_PRODUCTS flag. */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Post(':id/webhook-failures/:deliveryId/retry')
+  retryWebhookDelivery(@Param('deliveryId') deliveryId: string) {
+    return this.productsService.retryWebhookDelivery(deliveryId);
+  }
+
   // ── Internal (called by core-service, bypass nginx auth in Docker network) ─
 
   /** Sets the Stripe account ID for an association; called internally by core-service. */
@@ -552,5 +637,22 @@ export class AssociationsController {
   @Post(':id/stripe-complete')
   markStripeComplete(@Param('id') id: string) {
     return this.service.markStripeOnboardingComplete(id);
+  }
+
+  /**
+   * Called by core-service Stripe webhook when a product purchase completes.
+   * No auth guard — only reachable from the internal Docker network.
+   */
+  @Post('products/:productId/purchase-completed')
+  purchaseCompleted(
+    @Param('productId') productId: string,
+    @Body() body: { userId: string; amountCents: number; paymentIntentId: string }
+  ) {
+    return this.productsService.handlePurchaseCompleted(
+      productId,
+      body.userId,
+      body.amountCents,
+      body.paymentIntentId
+    );
   }
 }
