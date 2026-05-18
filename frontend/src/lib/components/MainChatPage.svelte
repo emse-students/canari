@@ -154,8 +154,10 @@
       loadAndRestoreConversations: () => convs.loadAndRestoreConversations(convCtx()),
       addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
         messaging.addMessageToChat(sid, content, contactName, msgCtx(), options),
-      beginBulkMessageIngest: (bulk?: boolean) => messaging.beginBulkMessageIngest(bulk),
-      endBulkMessageIngest: () => messaging.endBulkMessageIngest(msgCtx()),
+      beginBulkMessageIngest: (bulk?: boolean, overlay?: boolean) =>
+        messaging.beginBulkMessageIngest(bulk, overlay),
+      endBulkMessageIngest: (bulk?: boolean, overlay?: boolean) =>
+        messaging.endBulkMessageIngest(msgCtx(), bulk, overlay),
       batchAddMessages: (msgs: Parameters<typeof messaging.batchAddMessages>[0], contactName: string) =>
         messaging.batchAddMessages(msgs, contactName, msgCtx()),
       saveConversation: (name: string) => convs.saveConversation(name, convCtx()),

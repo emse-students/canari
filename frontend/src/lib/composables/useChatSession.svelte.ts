@@ -54,8 +54,11 @@ export interface ChatSessionCallbacks {
     contactName: string,
     options?: AddMessageToChatOptions
   ) => Promise<void>;
-  beginBulkMessageIngest?: (enableBulkBuffer?: boolean) => void;
-  endBulkMessageIngest?: () => void | Promise<void>;
+  beginBulkMessageIngest?: (enableBulkBuffer?: boolean, showOverlay?: boolean) => void;
+  endBulkMessageIngest?: (
+    enableBulkBuffer?: boolean,
+    showOverlay?: boolean
+  ) => void | Promise<void>;
   batchAddMessages?: (
     messages: Array<{ senderId: string; content: string } & AddMessageToChatOptions>,
     contactName: string

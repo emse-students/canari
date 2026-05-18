@@ -2,6 +2,7 @@ import type { IMlsService } from '$lib/mlsService';
 import type { IStorage } from '$lib/db';
 import type { Conversation } from '$lib/types';
 import { saveMlsState } from '$lib/utils/hex';
+import { globalMessaging } from '$lib/stores/globalChatSingleton.svelte';
 import type { SvelteMap } from 'svelte/reactivity';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
 
@@ -177,9 +178,16 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
     await saveConversation(conversationKey);
     log(`[OK] Groupe "${groupDisplayName}" cree.`);
     console.log(`[GROUP] Group "${groupDisplayName}" created successfully (id=${groupId})`);
+    // MLS commits from group setup can leave the catch-up overlay stuck on mobile if begin/end desync.
+    queueMicrotask(() => {
+      if (globalMessaging.isMessageCatchupActive) {
+        globalMessaging.resetMessageCatchupState();
+      }
+    });
   } catch (e) {
     log(`Erreur création groupe: ${toUiDiscussionError(e)}`);
     console.error('[GROUP] createNewGroup failed:', e);
+    globalMessaging.resetMessageCatchupState();
     if (conversationKey) conversations.delete(conversationKey);
 
     // Best-effort: clean up the orphan remote group

@@ -65,8 +65,11 @@ export class WebMlsService implements IMlsService {
   // Message queue for sequential processing
   private messageQueue: QueuedMessage[] = [];
   private isProcessingQueue = false;
-  private bulkIngestStart?: (enableBulkBuffer?: boolean) => void;
-  private bulkIngestEnd?: () => void | Promise<void>;
+  private bulkIngestStart?: (enableBulkBuffer?: boolean, showOverlay?: boolean) => void;
+  private bulkIngestEnd?: (
+    enableBulkBuffer?: boolean,
+    showOverlay?: boolean
+  ) => void | Promise<void>;
   // Groups currently being joined (Welcome in progress) - buffer messages for these
   private pendingWelcomeGroups = new Map<string, QueuedMessage[]>();
   constructor() {
@@ -364,11 +367,13 @@ export class WebMlsService implements IMlsService {
     const useBulkCatchup = queuedAtStart >= BULK_CATCHUP_THRESHOLD;
     console.log(`[QUEUE] Démarrage traitement (${queuedAtStart} messages en file)`);
 
-    this.bulkIngestStart?.(useBulkCatchup);
-
     const ackIds: string[] = [];
 
     try {
+      if (queuedAtStart > 0) {
+        this.bulkIngestStart?.(useBulkCatchup, useBulkCatchup);
+      }
+
       while (this.messageQueue.length > 0) {
         const msg = this.messageQueue.shift()!;
         const groupId = msg.groupId;
@@ -469,7 +474,13 @@ export class WebMlsService implements IMlsService {
         });
       }
     } finally {
-      await this.bulkIngestEnd?.();
+      if (queuedAtStart > 0) {
+        try {
+          await this.bulkIngestEnd?.(useBulkCatchup, useBulkCatchup);
+        } catch (e) {
+          console.error('[QUEUE] bulkIngestEnd failed:', e);
+        }
+      }
       this.isProcessingQueue = false;
       console.log(`[QUEUE] Queue processing complete`);
     }
@@ -512,8 +523,8 @@ export class WebMlsService implements IMlsService {
   }
 
   setBulkIngestHooks(
-    onStart?: (enableBulkBuffer?: boolean) => void,
-    onEnd?: () => void | Promise<void>
+    onStart?: (enableBulkBuffer?: boolean, showOverlay?: boolean) => void,
+    onEnd?: (enableBulkBuffer?: boolean, showOverlay?: boolean) => void | Promise<void>
   ): void {
     this.bulkIngestStart = onStart;
     this.bulkIngestEnd = onEnd;

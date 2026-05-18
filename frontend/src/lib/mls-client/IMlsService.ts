@@ -247,8 +247,8 @@ export interface IMlsService {
    * (e.g. after reconnect). Implemented by WebMlsService / TauriMlsService.
    */
   setBulkIngestHooks?(
-    onStart?: (enableBulkBuffer?: boolean) => void,
-    onEnd?: () => void | Promise<void>
+    onStart?: (enableBulkBuffer?: boolean, showOverlay?: boolean) => void,
+    onEnd?: (enableBulkBuffer?: boolean, showOverlay?: boolean) => void | Promise<void>
   ): void;
 
   // Device sync notification

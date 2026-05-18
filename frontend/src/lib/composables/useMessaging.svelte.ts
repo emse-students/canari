@@ -134,12 +134,17 @@ export function useMessaging() {
   }
 
   /**
-   * Marks MLS message catch-up as active (loading overlay).
-   * @param enableBulkBuffer When true, buffers incoming messages for one UI flush per conversation.
+   * Marks MLS message catch-up (overlay and/or bulk buffer).
+   * @param enableBulkBuffer Buffer incoming messages for one UI flush per conversation.
+   * @param showOverlay Show the blocking sync overlay (only for large queues, e.g. reconnect).
    */
-  function beginBulkMessageIngest(enableBulkBuffer = false) {
-    messageCatchupDepth += 1;
-    isMessageCatchupActive = true;
+  function beginBulkMessageIngest(enableBulkBuffer = false, showOverlay = false) {
+    if (!enableBulkBuffer && !showOverlay) return;
+
+    if (showOverlay) {
+      messageCatchupDepth += 1;
+      isMessageCatchupActive = true;
+    }
     if (enableBulkBuffer) {
       bulkIngestActive = true;
       bulkIngestSeq = 0;
@@ -147,31 +152,54 @@ export function useMessaging() {
     }
   }
 
+  /** Clears catch-up UI state (safety net if begin/end ever desync). */
+  function resetMessageCatchupState() {
+    messageCatchupDepth = 0;
+    isMessageCatchupActive = false;
+    bulkIngestActive = false;
+    bulkIngestBuffer.clear();
+  }
+
   /** Ends catch-up: flushes bulk buffer when used, then hides the loading overlay. */
-  async function endBulkMessageIngest(ctx: MessagingContext) {
-    if (bulkIngestActive) {
-      bulkIngestActive = false;
-      const entries = [...bulkIngestBuffer.entries()].sort(([, a], [, b]) => {
-        const seqA = a[0]?.ingestSequence ?? Number.MAX_SAFE_INTEGER;
-        const seqB = b[0]?.ingestSequence ?? Number.MAX_SAFE_INTEGER;
-        return seqA - seqB;
-      });
-      bulkIngestBuffer.clear();
-      for (const [contactName, messages] of entries) {
-        if (messages.length > 0) {
-          await batchAddMessages(messages, contactName, ctx);
-          await yieldToMainThread();
+  async function endBulkMessageIngest(
+    ctx: MessagingContext,
+    enableBulkBuffer = false,
+    showOverlay = false
+  ) {
+    if (!enableBulkBuffer && !showOverlay) return;
+
+    try {
+      if (enableBulkBuffer && bulkIngestActive) {
+        const entries = [...bulkIngestBuffer.entries()].sort(([, a], [, b]) => {
+          const seqA = a[0]?.ingestSequence ?? Number.MAX_SAFE_INTEGER;
+          const seqB = b[0]?.ingestSequence ?? Number.MAX_SAFE_INTEGER;
+          return seqA - seqB;
+        });
+        bulkIngestBuffer.clear();
+        for (const [contactName, messages] of entries) {
+          if (messages.length > 0) {
+            await batchAddMessages(messages, contactName, ctx);
+            await yieldToMainThread();
+          }
+        }
+        tick().then(() => {
+          const chatContainer = ctx.getChatContainer();
+          if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
+        });
+      }
+    } catch (e) {
+      console.error('[CATCHUP] endBulkMessageIngest failed:', e);
+    } finally {
+      if (enableBulkBuffer) {
+        bulkIngestActive = false;
+        bulkIngestBuffer.clear();
+      }
+      if (showOverlay) {
+        messageCatchupDepth = Math.max(0, messageCatchupDepth - 1);
+        if (messageCatchupDepth === 0) {
+          isMessageCatchupActive = false;
         }
       }
-      tick().then(() => {
-        const chatContainer = ctx.getChatContainer();
-        if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
-      });
-    }
-
-    messageCatchupDepth = Math.max(0, messageCatchupDepth - 1);
-    if (messageCatchupDepth === 0) {
-      isMessageCatchupActive = false;
     }
   }
 
@@ -771,6 +799,8 @@ export function useMessaging() {
     beginBulkMessageIngest,
     /** Flushes buffered messages after MLS queue catch-up. */
     endBulkMessageIngest,
+    /** Resets overlay + bulk buffer (e.g. after a desynced catch-up on mobile). */
+    resetMessageCatchupState,
     /** Appends multiple messages in one reactive update and one batch DB write. */
     batchAddMessages,
     /** Main send handler: uploads pending media then sends a text message. */
