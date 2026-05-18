@@ -15,13 +15,17 @@ import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { CreateFormDto, SubmitFormDto } from './dto/form.dto';
 import { FormsService } from './forms.service';
 import { AssociationsService } from '../associations/associations.service';
+import { PurchaseRecordService } from '../users/purchase-record.service';
+import { UserTagService } from '../users/user-tag.service';
 
-/** Manages form resources including submissions, payment status, and XLSX exports. */
+/** Manages form resources including submissions, payment status, XLSX exports, and purchase history. */
 @Controller('forms')
 export class FormsController {
   constructor(
     private readonly service: FormsService,
-    private readonly associationsService: AssociationsService
+    private readonly associationsService: AssociationsService,
+    private readonly purchaseRecordService: PurchaseRecordService,
+    private readonly userTagService: UserTagService
   ) {}
 
   /** Creates a new form owned by the calling user. */
@@ -150,6 +154,24 @@ export class FormsController {
   @Get(':id/remind')
   checkReminder(@Param('id') id: string, @Headers('x-user-id') xUserId: string) {
     return this.service.checkReminder(id, xUserId);
+  }
+
+  /**
+   * Returns the calling user's full purchase history: paid form submissions,
+   * boutique product purchases, and active cotisation tags.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get('me/purchases')
+  async myPurchases(@Headers('x-user-id') userId: string) {
+    const [purchases, activeTags] = await Promise.all([
+      this.purchaseRecordService.listByUser(userId),
+      this.userTagService.listByUser(userId),
+    ]);
+    return {
+      purchases,
+      activeTags,
+      cercleTopups: purchases.filter((p) => p.source === 'product'),
+    };
   }
 
   /** Exports all submissions for a form as an XLSX file download. */
