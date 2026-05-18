@@ -52,6 +52,25 @@ export class Form {
   @Column('jsonb', { default: [] })
   items: any[];
 
+  /**
+   * When set, a paid submission grants (or renews) this tag to the submitter.
+   * Format: `"<category>:<issuer-slug>-<year>"`, e.g. `"cotisant:bde-2026-2027"`.
+   */
+  @Column({ length: 100, nullable: true })
+  grantedTagName: string | null;
+
+  /** When the granted tag expires (null = permanent). */
+  @Column({ type: 'timestamptz', nullable: true })
+  tagExpiresAt: Date | null;
+
+  /** Whether cash (physical) payment is accepted as an alternative to Stripe. */
+  @Column({ default: false })
+  allowCashPayment: boolean;
+
+  /** Days after submission before an unvalidated cash payment expires (null = never). */
+  @Column({ type: 'int', nullable: true })
+  cashPaymentExpiryDays: number | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

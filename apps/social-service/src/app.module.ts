@@ -7,6 +7,7 @@ import { PostsModule } from './posts/posts.module';
 import { FormsModule } from './forms/forms.module';
 import { AssociationsModule } from './associations/associations.module';
 import { FollowsModule } from './follows/follows.module';
+import { UserTagModule } from './users/user-tag.module';
 import { RedisModule } from './common/redis';
 
 /** Root NestJS module — wires up TypeORM, config, Redis, and all social feature modules. */
@@ -33,6 +34,7 @@ import { RedisModule } from './common/redis';
     FormsModule,
     AssociationsModule,
     FollowsModule,
+    UserTagModule,
   ],
   controllers: [],
 })

@@ -533,6 +533,44 @@ export async function deleteDocument(
   );
 }
 
+// ── Cotisation tags ─────────────────────────────────────────────────────────
+
+/** A membership/cotisation tag granted to a user by an association. */
+export interface UserTag {
+  id: string;
+  userId: string;
+  tagName: string;
+  issuingAssocId: string | null;
+  grantedBy: string;
+  expiresAt: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+/** Lists active tags issued by an association (requires MANAGE_MEMBERS). */
+export async function listAssociationTags(associationId: string): Promise<UserTag[]> {
+  return request<UserTag[]>(`/api/associations/${encodeURIComponent(associationId)}/tags`);
+}
+
+/** Manually grants a cotisation tag to a user (requires MANAGE_MEMBERS). */
+export async function grantAssociationTag(
+  associationId: string,
+  data: { userId: string; tagName: string; expiresAt?: string }
+): Promise<UserTag> {
+  return request<UserTag>(`/api/associations/${encodeURIComponent(associationId)}/tags`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+/** Revokes a cotisation tag (requires MANAGE_MEMBERS). */
+export async function revokeAssociationTag(associationId: string, tagId: string): Promise<void> {
+  await request<unknown>(
+    `/api/associations/${encodeURIComponent(associationId)}/tags/${encodeURIComponent(tagId)}`,
+    { method: 'DELETE' }
+  );
+}
+
 // ── Stripe onboarding ───────────────────────────────────────────────────────
 
 export async function startStripeOnboarding(

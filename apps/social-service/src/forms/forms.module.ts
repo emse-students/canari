@@ -10,6 +10,7 @@ import { AssociationsModule } from '../associations/associations.module';
 import { FormReminderScheduler } from './forms-reminder.scheduler';
 import { PushService } from '../push/push.service';
 import { PostsModule } from '../posts/posts.module';
+import { UserTagModule } from '../users/user-tag.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { PostsModule } from '../posts/posts.module';
     ConfigModule,
     AssociationsModule,
     PostsModule,
+    UserTagModule,
   ],
   controllers: [FormsController],
   providers: [FormsService, FormReminderScheduler, PushService],

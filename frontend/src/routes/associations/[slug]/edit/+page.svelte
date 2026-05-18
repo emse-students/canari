@@ -13,8 +13,12 @@
     startStripeOnboarding,
     uploadAssociationLogo,
     deleteAssociationLogo,
+    listAssociationTags,
+    grantAssociationTag,
+    revokeAssociationTag,
     type Association,
     type AssociationMember,
+    type UserTag,
   } from '$lib/associations/api';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
@@ -28,6 +32,7 @@
     Building2,
     AlertTriangle,
     FolderLock,
+    Tags,
   } from '@lucide/svelte';
   import AssociationDocumentManager from '$lib/components/associations/AssociationDocumentManager.svelte';
   import {
@@ -69,13 +74,27 @@
   let logoBusy = $state(false);
   let showCropper = $state(false);
 
-  let editSection = $state<'profile' | 'members' | 'documents' | 'payments' | 'danger'>('profile');
+  let editSection = $state<'profile' | 'members' | 'documents' | 'cotisants' | 'payments' | 'danger'>('profile');
 
   let canManageDocuments = $derived(
     isGlobalAdminUser ||
       (!!myMembership &&
         hasPermissionFlag(myMembership.permissions ?? 0, AssociationPermissionFlag.MANAGE_DOCUMENTS))
   );
+
+  let canManageMembers = $derived(
+    isGlobalAdminUser ||
+      (!!myMembership &&
+        hasPermissionFlag(myMembership.permissions ?? 0, AssociationPermissionFlag.MANAGE_MEMBERS))
+  );
+
+  let tags = $state<UserTag[]>([]);
+  let tagsLoading = $state(false);
+  let tagsError = $state('');
+  let newTagUserId = $state('');
+  let newTagName = $state('');
+  let newTagExpires = $state('');
+  let grantingTag = $state(false);
 
   const slug = $derived((page.params as Record<string, string>).slug);
 
@@ -235,6 +254,50 @@
       logoBusy = false;
     }
   }
+
+  async function loadTags() {
+    if (!asso) return;
+    tagsLoading = true;
+    tagsError = '';
+    try {
+      tags = await listAssociationTags(asso.id);
+    } catch (e) {
+      tagsError = e instanceof Error ? e.message : 'Erreur';
+    } finally {
+      tagsLoading = false;
+    }
+  }
+
+  async function handleGrantTag() {
+    if (!asso || !newTagUserId.trim() || !newTagName.trim()) return;
+    grantingTag = true;
+    tagsError = '';
+    try {
+      await grantAssociationTag(asso.id, {
+        userId: newTagUserId.trim(),
+        tagName: newTagName.trim(),
+        expiresAt: newTagExpires.trim() || undefined,
+      });
+      newTagUserId = '';
+      newTagName = '';
+      newTagExpires = '';
+      await loadTags();
+    } catch (e) {
+      tagsError = e instanceof Error ? e.message : 'Erreur';
+    } finally {
+      grantingTag = false;
+    }
+  }
+
+  async function handleRevokeTag(tag: UserTag) {
+    if (!asso || !confirm(`Révoquer le tag "${tag.tagName}" pour cet utilisateur ?`)) return;
+    try {
+      await revokeAssociationTag(asso.id, tag.id);
+      tags = tags.filter((t) => t.id !== tag.id);
+    } catch (e) {
+      tagsError = e instanceof Error ? e.message : 'Erreur';
+    }
+  }
 </script>
 
 <div class="px-4 py-6 sm:px-6 max-w-4xl mx-auto space-y-6">
@@ -316,6 +379,19 @@
           >
             <FolderLock size={17} />
             Documents
+          </button>
+        {/if}
+        {#if canManageMembers}
+          <button
+            type="button"
+            onclick={() => { editSection = 'cotisants'; void loadTags(); }}
+            class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+            {editSection === 'cotisants'
+              ? 'bg-cn-yellow text-cn-dark shadow-sm'
+              : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
+          >
+            <Tags size={17} />
+            Cotisants
           </button>
         {/if}
         {#if isGlobalAdminUser}
@@ -518,6 +594,88 @@
           </p>
         </div>
         <AssociationDocumentManager associationId={asso.id} />
+      </div>
+    {/if}
+
+    {#if editSection === 'cotisants' && canManageMembers && asso}
+      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-5 shadow-sm">
+        <div>
+          <h2 class="text-lg font-bold text-text-main tracking-tight flex items-center gap-2">
+            <Tags size={20} />
+            Cotisants
+          </h2>
+          <p class="text-sm text-text-muted mt-1">
+            Tags de cotisation actifs émis par cette association. Attribuez ou révoquez des tags manuellement.
+          </p>
+        </div>
+
+        <!-- Grant form -->
+        <form
+          class="flex flex-col sm:flex-row gap-3"
+          onsubmit={(e) => { e.preventDefault(); void handleGrantTag(); }}
+        >
+          <input
+            type="text"
+            bind:value={newTagUserId}
+            placeholder="ID utilisateur"
+            class="flex-1 rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2.5 text-sm"
+          />
+          <input
+            type="text"
+            bind:value={newTagName}
+            placeholder="Tag (ex: cotisant:bde-2026-2027)"
+            class="flex-1 rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2.5 text-sm"
+          />
+          <input
+            type="date"
+            bind:value={newTagExpires}
+            title="Date d'expiration (optionnel)"
+            class="rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2.5 text-sm w-auto"
+          />
+          <button
+            type="submit"
+            disabled={grantingTag || !newTagUserId.trim() || !newTagName.trim()}
+            class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover disabled:opacity-50"
+          >
+            {grantingTag ? '…' : 'Attribuer'}
+          </button>
+        </form>
+
+        {#if tagsError}
+          <div class="rounded-xl border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm">{tagsError}</div>
+        {/if}
+
+        {#if tagsLoading}
+          <div class="flex justify-center py-6">
+            <div class="h-6 w-6 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"></div>
+          </div>
+        {:else if tags.length === 0}
+          <p class="text-sm text-text-muted text-center py-6">Aucun tag actif.</p>
+        {:else}
+          <ul class="space-y-2">
+            {#each tags as tag (tag.id)}
+              <li class="flex items-center gap-3 rounded-xl border border-cn-border/70 bg-cn-bg/40 px-4 py-3">
+                <div class="min-w-0 flex-1">
+                  <p class="font-semibold text-sm text-text-main truncate">{tag.tagName}</p>
+                  <p class="text-xs text-text-muted">
+                    Utilisateur: {tag.userId}
+                    {#if tag.expiresAt}
+                      · Expire: {new Date(tag.expiresAt).toLocaleDateString('fr-FR')}
+                    {/if}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onclick={() => handleRevokeTag(tag)}
+                  title="Révoquer"
+                  class="inline-flex items-center justify-center rounded-xl border border-red-200 bg-red-50/80 p-2 text-red-600 hover:bg-red-100 transition-colors"
+                >
+                  <Trash2 size={15} />
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
       </div>
     {/if}
 

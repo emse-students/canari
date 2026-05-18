@@ -30,10 +30,12 @@ import {
   CreateAssociationDto,
   CreateAssociationDocumentDto,
   CreateAssociationCalendarEventDto,
+  GrantTagDto,
   UpdateAssociationDto,
   UpdateAssociationCalendarEventDto,
   UpdateMemberRoleDto,
 } from './dto/association.dto';
+import { UserTagService } from '../users/user-tag.service';
 import { buildAggregatedCalendarIcs } from './calendar-ics.util';
 
 const LOGO_UPLOAD_MB = 2;
@@ -43,7 +45,8 @@ const LOGO_UPLOAD_MB = 2;
 export class AssociationsController {
   constructor(
     private readonly service: AssociationsService,
-    private readonly followsService: FollowsService
+    private readonly followsService: FollowsService,
+    private readonly userTagService: UserTagService
   ) {}
 
   // ── Public ────────────────────────────────────────────────────────────────
@@ -496,6 +499,45 @@ export class AssociationsController {
     @Headers('authorization') authorization: string | undefined
   ) {
     return this.service.deleteDocument(id, docId, authorization);
+  }
+
+  // ── Cotisation tags (MANAGE_MEMBERS flag) ────────────────────────────────
+
+  /** Lists active tags issued by this association (admins with MANAGE_MEMBERS only). */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Get(':id/tags')
+  listTags(@Param('id') id: string) {
+    return this.userTagService.listByAssoc(id);
+  }
+
+  /**
+   * Manually grants a cotisation tag to a user (cash payment or admin override).
+   * Requires MANAGE_MEMBERS flag.
+   */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Post(':id/tags')
+  grantTag(
+    @Param('id') id: string,
+    @Headers('x-user-id') grantedBy: string,
+    @Body() dto: GrantTagDto
+  ) {
+    return this.userTagService.grantOrRenew({
+      userId: dto.userId,
+      tagName: dto.tagName,
+      issuingAssocId: id,
+      grantedBy,
+      expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
+    });
+  }
+
+  /** Revokes a cotisation tag. Requires MANAGE_MEMBERS flag. */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Delete(':id/tags/:tagId')
+  revokeTag(@Param('tagId') tagId: string) {
+    return this.userTagService.revoke(tagId);
   }
 
   // ── Internal (called by core-service, bypass nginx auth in Docker network) ─

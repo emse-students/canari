@@ -196,3 +196,19 @@ export class UpdateAssociationCalendarEventDto {
   @IsUUID()
   linkedFormId?: string | null;
 }
+
+/** DTO for manually granting a cotisation tag to a user. */
+export class GrantTagDto {
+  @IsString()
+  @IsNotEmpty()
+  userId: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  tagName: string;
+
+  @IsDateString()
+  @IsOptional()
+  expiresAt?: string;
+}

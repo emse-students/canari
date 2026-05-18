@@ -11,6 +11,7 @@ import axios from 'axios';
 import * as ExcelJS from 'exceljs';
 import { AssociationsService } from '../associations/associations.service';
 import { resolveStripeCallbackUrl } from '../common/stripe-callback-url';
+import { UserTagService } from '../users/user-tag.service';
 
 /** Generates a short random ID with the given prefix, e.g. "item_a3b9x1". */
 function makeId(prefix: string): string {
@@ -27,7 +28,8 @@ export class FormsService {
     @InjectRepository(Submission) private readonly submissionRepo: Repository<Submission>,
     @InjectRepository(FormReminder) private readonly reminderRepo: Repository<FormReminder>,
     private readonly configService: ConfigService,
-    private readonly associationsService: AssociationsService
+    private readonly associationsService: AssociationsService,
+    private readonly userTagService: UserTagService
   ) {}
 
   /** Creates a form and assigns stable IDs to all items and options that lack them. */
@@ -263,13 +265,36 @@ export class FormsService {
     };
   }
 
-  /** Marks a submission as paid (called from the Stripe webhook handler). Optionally stores the Stripe session ID. */
+  /**
+   * Marks a submission as paid (called from the Stripe webhook handler).
+   * If the parent form has a `grantedTagName`, grants or renews the tag for the submitter.
+   */
   async markPaid(submissionId: string, sessionId?: string) {
     const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
     if (!submission) throw new NotFoundException('Submission not found');
     submission.paymentStatus = 'paid';
     if (sessionId) submission.stripeSessionId = sessionId;
     await this.submissionRepo.save(submission);
+
+    // Grant cotisation tag if configured on the form
+    const form = await this.formRepo.findOne({
+      where: { id: submission.formId },
+      select: ['id', 'grantedTagName', 'tagExpiresAt', 'associationId'],
+    });
+    if (form?.grantedTagName) {
+      try {
+        await this.userTagService.grantOrRenew({
+          userId: submission.userId,
+          tagName: form.grantedTagName,
+          issuingAssocId: form.associationId ?? null,
+          grantedBy: 'system',
+          expiresAt: form.tagExpiresAt ?? null,
+          metadata: { submissionId, sessionId: sessionId ?? null },
+        });
+      } catch (e) {
+        this.logger.error(`[UserTag] Failed to grant tag for submission ${submissionId}`, e);
+      }
+    }
     return { ok: true };
   }
 

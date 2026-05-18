@@ -14,6 +14,7 @@ import { AssociationRoleGuard } from './guards/association-role.guard';
 import { GlobalAdminOrAssociationRoleGuard } from './guards/global-admin-or-association-role.guard';
 import { FollowsModule } from '../follows/follows.module';
 import { PushService } from '../push/push.service';
+import { UserTagModule } from '../users/user-tag.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { PushService } from '../push/push.service';
       PostNotification,
     ]),
     FollowsModule,
+    UserTagModule,
   ],
   providers: [
     AssociationsService,
