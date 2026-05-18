@@ -1,7 +1,15 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  PayloadTooLargeException,
+} from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Not, Repository } from 'typeorm';
+import { randomBytes } from 'crypto';
 import { firstValueFrom } from 'rxjs';
 import FormData from 'form-data';
 import { AxiosError } from 'axios';
@@ -10,6 +18,7 @@ import {
   AssociationMember,
   AssociationPermissionFlag,
 } from './entities/association-member.entity';
+import { AssociationDocument } from './entities/association-document.entity';
 import {
   AssociationCalendarEvent,
   AssociationCalendarEventStatus,
@@ -19,6 +28,7 @@ import { Form } from '../forms/entities/form.entity';
 import {
   AddMemberDto,
   CreateAssociationDto,
+  CreateAssociationDocumentDto,
   CreateAssociationCalendarEventDto,
   UpdateAssociationDto,
   UpdateAssociationCalendarEventDto,
@@ -43,6 +53,8 @@ export class AssociationsService {
     private readonly memberRepo: Repository<AssociationMember>,
     @InjectRepository(AssociationCalendarEvent)
     private readonly calendarRepo: Repository<AssociationCalendarEvent>,
+    @InjectRepository(AssociationDocument)
+    private readonly docRepo: Repository<AssociationDocument>,
     @InjectRepository(Post)
     private readonly postRepo: Repository<Post>,
     @InjectRepository(Form)
@@ -914,6 +926,146 @@ export class AssociationsService {
     await this.findById(associationId);
     const res = await this.calendarRepo.delete({ id: eventId, associationId });
     if (!res.affected) throw new NotFoundException('Event not found');
+    return { ok: true };
+  }
+
+  // ── Document vault ────────────────────────────────────────────────────────
+
+  /**
+   * Returns the hex-encoded 32-byte vault key for the association, generating
+   * and persisting it on first access. The key is the HKDF input key material
+   * from which per-document CEKs are derived client-side.
+   */
+  async getOrCreateVaultKey(associationId: string): Promise<string> {
+    const asso = await this.assoRepo.findOne({
+      where: { id: associationId },
+      select: ['id', 'documentVaultKey'],
+    });
+    if (!asso) throw new NotFoundException('Association not found');
+    if (asso.documentVaultKey) return asso.documentVaultKey;
+
+    const key = randomBytes(32).toString('hex');
+    await this.assoRepo.update(associationId, { documentVaultKey: key });
+    console.log(`[Vault] Generated new vault key for association ${associationId}`);
+    return key;
+  }
+
+  /** Lists documents in the vault with aggregated usage stats (no mediaId). */
+  async listDocuments(associationId: string) {
+    await this.findById(associationId);
+
+    const [docs, usedRaw] = await Promise.all([
+      this.docRepo.find({
+        where: { associationId },
+        order: { createdAt: 'DESC' },
+        select: ['id', 'associationId', 'name', 'description', 'mimeType', 'size', 'uploadedBy', 'createdAt', 'updatedAt'],
+      }),
+      this.docRepo
+        .createQueryBuilder('d')
+        .select('COALESCE(SUM(d.size), 0)', 'total')
+        .where('d.associationId = :associationId', { associationId })
+        .getRawOne<{ total: string }>(),
+    ]);
+
+    const asso = await this.assoRepo.findOne({
+      where: { id: associationId },
+      select: ['documentQuotaBytes'],
+    });
+    const quotaBytes = Number(asso?.documentQuotaBytes ?? 524288000);
+    const usedBytes = Number(usedRaw?.total ?? 0);
+
+    return {
+      documents: docs.map((d) => ({ ...d, size: Number(d.size) })),
+      usedBytes,
+      quotaBytes,
+    };
+  }
+
+  /**
+   * Registers a new document in the vault.
+   * Returns HTTP 409 if a document with the same name (case-insensitive) already exists.
+   * Returns HTTP 413 if the upload would exceed the quota.
+   */
+  async createDocument(
+    associationId: string,
+    dto: CreateAssociationDocumentDto,
+    userId: string
+  ) {
+    const asso = await this.assoRepo.findOne({
+      where: { id: associationId },
+      select: ['id', 'documentQuotaBytes'],
+    });
+    if (!asso) throw new NotFoundException('Association not found');
+
+    // Duplicate name check
+    const existing = await this.docRepo
+      .createQueryBuilder('d')
+      .where('d.associationId = :associationId', { associationId })
+      .andWhere('LOWER(d.name) = LOWER(:name)', { name: dto.name })
+      .getOne();
+
+    if (existing) {
+      throw new ConflictException({
+        conflict: true,
+        existingDocId: existing.id,
+        message: `A document named "${existing.name}" already exists in this vault`,
+      });
+    }
+
+    // Quota check
+    const usedRaw = await this.docRepo
+      .createQueryBuilder('d')
+      .select('COALESCE(SUM(d.size), 0)', 'total')
+      .where('d.associationId = :associationId', { associationId })
+      .getRawOne<{ total: string }>();
+    const usedBytes = Number(usedRaw?.total ?? 0);
+    const quotaBytes = Number(asso.documentQuotaBytes ?? 524288000);
+
+    if (usedBytes + dto.size > quotaBytes) {
+      throw new PayloadTooLargeException(
+        `Upload would exceed the vault quota (${quotaBytes} bytes). Currently used: ${usedBytes} bytes.`
+      );
+    }
+
+    const doc = this.docRepo.create({
+      associationId,
+      name: dto.name.trim(),
+      description: dto.description?.trim() || null,
+      mediaId: dto.mediaId,
+      mimeType: dto.mimeType,
+      size: dto.size,
+      uploadedBy: userId,
+    });
+    const saved = await this.docRepo.save(doc);
+    console.log(`[Vault] Document "${saved.name}" (${saved.id}) created for asso ${associationId}`);
+    return { ...saved, size: Number(saved.size) };
+  }
+
+  /** Returns full document detail including mediaId (for download). Requires MANAGE_DOCUMENTS. */
+  async getDocumentDetail(associationId: string, docId: string) {
+    await this.findById(associationId);
+    const doc = await this.docRepo.findOne({ where: { id: docId, associationId } });
+    if (!doc) throw new NotFoundException('Document not found');
+    return { ...doc, size: Number(doc.size) };
+  }
+
+  /** Deletes a document record and attempts to delete the media blob. */
+  async deleteDocument(
+    associationId: string,
+    docId: string,
+    authorization: string | undefined
+  ): Promise<{ ok: boolean }> {
+    await this.findById(associationId);
+    const doc = await this.docRepo.findOne({ where: { id: docId, associationId } });
+    if (!doc) throw new NotFoundException('Document not found');
+
+    await this.docRepo.delete(docId);
+    console.log(`[Vault] Document "${doc.name}" (${docId}) deleted from asso ${associationId}`);
+
+    const bearer = authorization?.trim();
+    if (bearer?.startsWith('Bearer ')) {
+      await this.deleteMediaBestEffort(doc.mediaId, bearer);
+    }
     return { ok: true };
   }
 

@@ -28,6 +28,7 @@ import { FollowsService } from '../follows/follows.service';
 import {
   AddMemberDto,
   CreateAssociationDto,
+  CreateAssociationDocumentDto,
   CreateAssociationCalendarEventDto,
   UpdateAssociationDto,
   UpdateAssociationCalendarEventDto,
@@ -388,6 +389,62 @@ export class AssociationsController {
       }
     }
     return this.service.validateCalendarEvent(id, eventId, userId);
+  }
+
+  // ── Document vault (MANAGE_DOCUMENTS flag) ───────────────────────────────
+
+  /**
+   * Returns the hex vault key for the association (generates it on first call).
+   * Client derives per-document CEK via HKDF(vaultKey, salt=docId, info="doc-vault").
+   */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_DOCUMENTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Get(':id/vault-key')
+  getVaultKey(@Param('id') id: string) {
+    return this.service.getOrCreateVaultKey(id).then((key) => ({ key }));
+  }
+
+  /** Lists documents in the vault with quota usage stats (no mediaId). */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_DOCUMENTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Get(':id/documents')
+  listDocuments(@Param('id') id: string) {
+    return this.service.listDocuments(id);
+  }
+
+  /**
+   * Registers a new document in the vault.
+   * Returns 409 if a document with the same name exists; 413 if quota exceeded.
+   */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_DOCUMENTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Post(':id/documents')
+  createDocument(
+    @Param('id') id: string,
+    @Headers('x-user-id') userId: string,
+    @Body() dto: CreateAssociationDocumentDto
+  ) {
+    return this.service.createDocument(id, dto, userId);
+  }
+
+  /** Returns full document detail including mediaId (for decryption + download). */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_DOCUMENTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Get(':id/documents/:docId')
+  getDocumentDetail(@Param('id') id: string, @Param('docId') docId: string) {
+    return this.service.getDocumentDetail(id, docId);
+  }
+
+  /** Deletes a document record and its media blob. */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_DOCUMENTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Delete(':id/documents/:docId')
+  deleteDocument(
+    @Param('id') id: string,
+    @Param('docId') docId: string,
+    @Headers('authorization') authorization: string | undefined
+  ) {
+    return this.service.deleteDocument(id, docId, authorization);
   }
 
   // ── Internal (called by core-service, bypass nginx auth in Docker network) ─

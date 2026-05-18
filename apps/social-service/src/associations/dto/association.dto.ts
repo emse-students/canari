@@ -113,6 +113,32 @@ export class AddMembersBatchDto {
   userIds: string[];
 }
 
+export class CreateAssociationDocumentDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  name: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(4000)
+  description?: string;
+
+  /** UUID returned by media-service after the encrypted blob upload. */
+  @IsUUID()
+  mediaId: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(255)
+  mimeType: string;
+
+  /** Original file size in bytes (before encryption overhead). */
+  @IsInt()
+  @Min(0)
+  size: number;
+}
+
 export class CreateAssociationCalendarEventDto {
   @IsString()
   @IsNotEmpty()

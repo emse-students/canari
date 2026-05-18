@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Association } from './entities/association.entity';
 import { AssociationMember } from './entities/association-member.entity';
 import { AssociationCalendarEvent } from './entities/association-calendar-event.entity';
+import { AssociationDocument } from './entities/association-document.entity';
 import { Post } from '../posts/entities/post.entity';
 import { Form } from '../forms/entities/form.entity';
 import { AssociationsService } from './associations.service';
@@ -19,6 +20,7 @@ import { FollowsModule } from '../follows/follows.module';
       Association,
       AssociationMember,
       AssociationCalendarEvent,
+      AssociationDocument,
       Post,
       Form,
     ]),

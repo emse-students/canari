@@ -446,6 +446,91 @@ export async function removeMember(
   );
 }
 
+// ── Document vault ────────────────────────────────────────────────────────
+
+export interface AssociationDocument {
+  id: string;
+  associationId: string;
+  name: string;
+  description: string | null;
+  /** Only present when fetched via `GET /documents/:docId` (detail endpoint). */
+  mediaId?: string;
+  mimeType: string;
+  size: number;
+  uploadedBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DocumentVaultStats {
+  documents: AssociationDocument[];
+  usedBytes: number;
+  quotaBytes: number;
+}
+
+export interface CreateDocumentPayload {
+  name: string;
+  description?: string;
+  mediaId: string;
+  mimeType: string;
+  size: number;
+}
+
+/**
+ * Returns the hex-encoded 32-byte vault key for the association.
+ * The client uses this with HKDF to derive per-document AES-256-GCM keys.
+ * Requires MANAGE_DOCUMENTS permission.
+ */
+export async function getVaultKey(associationId: string): Promise<string> {
+  const res = await request<{ key: string }>(
+    `/api/associations/${encodeURIComponent(associationId)}/vault-key`
+  );
+  return res.key;
+}
+
+/** Lists vault documents with quota usage stats. Requires MANAGE_DOCUMENTS. */
+export async function listDocuments(associationId: string): Promise<DocumentVaultStats> {
+  return request<DocumentVaultStats>(
+    `/api/associations/${encodeURIComponent(associationId)}/documents`
+  );
+}
+
+/**
+ * Registers a new document in the vault.
+ * Throws a 409 error object `{ conflict: true, existingDocId }` on name collision.
+ * Throws a 413 error on quota exceeded.
+ */
+export async function createDocument(
+  associationId: string,
+  payload: CreateDocumentPayload
+): Promise<AssociationDocument> {
+  return request<AssociationDocument>(
+    `/api/associations/${encodeURIComponent(associationId)}/documents`,
+    { method: 'POST', body: JSON.stringify(payload) }
+  );
+}
+
+/** Returns full document detail including mediaId for decryption. Requires MANAGE_DOCUMENTS. */
+export async function getDocumentDetail(
+  associationId: string,
+  docId: string
+): Promise<AssociationDocument> {
+  return request<AssociationDocument>(
+    `/api/associations/${encodeURIComponent(associationId)}/documents/${encodeURIComponent(docId)}`
+  );
+}
+
+/** Deletes a document and its media blob. Requires MANAGE_DOCUMENTS. */
+export async function deleteDocument(
+  associationId: string,
+  docId: string
+): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(
+    `/api/associations/${encodeURIComponent(associationId)}/documents/${encodeURIComponent(docId)}`,
+    { method: 'DELETE' }
+  );
+}
+
 // ── Stripe onboarding ───────────────────────────────────────────────────────
 
 export async function startStripeOnboarding(

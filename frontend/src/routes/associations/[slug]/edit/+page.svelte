@@ -27,7 +27,13 @@
     ArrowLeft,
     Building2,
     AlertTriangle,
+    FolderLock,
   } from '@lucide/svelte';
+  import AssociationDocumentManager from '$lib/components/associations/AssociationDocumentManager.svelte';
+  import {
+    hasPermissionFlag,
+    AssociationPermissionFlag,
+  } from '$lib/associations/api';
   import Input from '$lib/components/ui/Input.svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
   import UserAutocomplete from '$lib/components/shared/UserAutocomplete.svelte';
@@ -63,7 +69,13 @@
   let logoBusy = $state(false);
   let showCropper = $state(false);
 
-  let editSection = $state<'profile' | 'members' | 'payments' | 'danger'>('profile');
+  let editSection = $state<'profile' | 'members' | 'documents' | 'payments' | 'danger'>('profile');
+
+  let canManageDocuments = $derived(
+    isGlobalAdminUser ||
+      (!!myMembership &&
+        hasPermissionFlag(myMembership.permissions ?? 0, AssociationPermissionFlag.MANAGE_DOCUMENTS))
+  );
 
   const slug = $derived((page.params as Record<string, string>).slug);
 
@@ -293,6 +305,19 @@
             Paiements
           </button>
         {/if}
+        {#if canManageDocuments}
+          <button
+            type="button"
+            onclick={() => (editSection = 'documents')}
+            class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+            {editSection === 'documents'
+              ? 'bg-cn-yellow text-cn-dark shadow-sm'
+              : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
+          >
+            <FolderLock size={17} />
+            Documents
+          </button>
+        {/if}
         {#if isGlobalAdminUser}
           <button
             type="button"
@@ -475,6 +500,24 @@
             <p class="text-sm text-red-600 mt-3">{memberError}</p>
           {/if}
         </div>
+      </div>
+    {/if}
+
+    {#if editSection === 'documents' && canManageDocuments && asso}
+      <div
+        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-5 shadow-sm"
+      >
+        <div>
+          <h2 class="text-lg font-bold text-text-main tracking-tight flex items-center gap-2">
+            <FolderLock size={20} />
+            Coffre documentaire
+          </h2>
+          <p class="text-sm text-text-muted mt-1">
+            Documents chiffrés côté client (AES-256-GCM). Seuls les membres avec accès "Documents"
+            peuvent les télécharger. Le serveur ne voit jamais le contenu en clair.
+          </p>
+        </div>
+        <AssociationDocumentManager associationId={asso.id} />
       </div>
     {/if}
 
