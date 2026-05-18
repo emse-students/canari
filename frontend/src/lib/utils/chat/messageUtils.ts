@@ -7,12 +7,19 @@ import type { AddMessageToChatOptions, MessageReference } from '$lib/types';
  * Convert a decoded AppMessage to { content, options } ready for addMessageToChat.
  * Returns null for non-displayable types (reaction, system, call) which require
  * special handling at the call site.
+ *
+ * @param fallbackTimestamp Used when the message has no sentAt (e.g. history replay
+ *   where the Redis stream timestamp should serve as fallback).
  */
-export function appMsgToEnvelope(msg: IAppMessage): {
+export function appMsgToEnvelope(
+  msg: IAppMessage,
+  fallbackTimestamp?: Date
+): {
   content: string;
   options: Pick<AddMessageToChatOptions, 'messageId' | 'replyTo' | 'timestamp'>;
 } | null {
-  const timestamp = msg.sentAt && msg.sentAt > 0 ? new Date(msg.sentAt) : undefined;
+  const timestamp =
+    (msg.sentAt && msg.sentAt > 0 ? new Date(msg.sentAt) : undefined) ?? fallbackTimestamp;
 
   if (msg.text) {
     return {

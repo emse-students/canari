@@ -115,6 +115,8 @@ export interface CreateAssociationCalendarEventPayload {
   startsAt: string;
   endsAt?: string;
   linkedFormId?: string;
+  /** BDE / global admin only: create on behalf of another association. */
+  targetAssocId?: string;
 }
 
 export interface UpdateAssociationCalendarEventPayload {

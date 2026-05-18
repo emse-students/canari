@@ -335,36 +335,87 @@ export class AssociationsController {
 
   // ── Calendar (PROPOSE_EVENT flag) ─────────────────────────────────────────
 
-  /** Creates a calendar event proposal for the association (goes into pending queue). */
+  /**
+   * Creates a calendar event for the association.
+   * BDE admins and global admins: validated immediately, may target another association via `targetAssocId`.
+   * Regular admins with PROPOSE_EVENT: goes into pending queue.
+   */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.PROPOSE_EVENT)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Post(':id/events')
-  createCalendarEvent(
+  async createCalendarEvent(
     @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga: string | undefined,
     @Param('id') id: string,
     @Body() dto: CreateAssociationCalendarEventDto
   ) {
-    return this.service.createCalendarEvent(id, dto, userId);
+    const isGlobalAdmin = ga === 'true';
+    const isBde = isGlobalAdmin ? false : await this.service.isUserBdeAdmin(userId);
+    return this.service.createCalendarEvent(id, dto, userId, { isGlobalAdmin, isBde });
   }
 
-  /** Updates a calendar event. */
-  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.PROPOSE_EVENT)
-  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  /**
+   * Updates a calendar event.
+   * BDE admins and global admins may update events from any association.
+   */
+  @UseGuards(NginxAuthGuard)
   @Patch(':id/events/:eventId')
-  updateCalendarEvent(
+  async updateCalendarEvent(
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga: string | undefined,
     @Param('id') id: string,
     @Param('eventId') eventId: string,
     @Body() dto: UpdateAssociationCalendarEventDto
   ) {
-    return this.service.updateCalendarEvent(id, eventId, dto);
+    const isGlobalAdmin = ga === 'true';
+    const isBde = isGlobalAdmin ? false : await this.service.isUserBdeAdmin(userId);
+    if (!isGlobalAdmin && !isBde) {
+      // Regular admin must have PROPOSE_EVENT in this association
+      const hasPerm = await this.service.callerHasFlag(
+        userId,
+        id,
+        AssociationPermissionFlag.PROPOSE_EVENT
+      );
+      if (!hasPerm) {
+        throw new ForbiddenException('PROPOSE_EVENT flag or BDE admin required');
+      }
+    }
+    return this.service.updateCalendarEvent(id, eventId, dto, {
+      isGlobalAdmin,
+      isBde,
+      callerUserId: userId,
+    });
   }
 
-  /** Deletes a calendar event. */
-  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.PROPOSE_EVENT)
-  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  /**
+   * Deletes a calendar event.
+   * BDE admins and global admins may delete events from any association.
+   */
+  @UseGuards(NginxAuthGuard)
   @Delete(':id/events/:eventId')
-  deleteCalendarEvent(@Param('id') id: string, @Param('eventId') eventId: string) {
-    return this.service.deleteCalendarEvent(id, eventId);
+  async deleteCalendarEvent(
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga: string | undefined,
+    @Param('id') id: string,
+    @Param('eventId') eventId: string
+  ) {
+    const isGlobalAdmin = ga === 'true';
+    const isBde = isGlobalAdmin ? false : await this.service.isUserBdeAdmin(userId);
+    if (!isGlobalAdmin && !isBde) {
+      const hasPerm = await this.service.callerHasFlag(
+        userId,
+        id,
+        AssociationPermissionFlag.PROPOSE_EVENT
+      );
+      if (!hasPerm) {
+        throw new ForbiddenException('PROPOSE_EVENT flag or BDE admin required');
+      }
+    }
+    return this.service.deleteCalendarEvent(id, eventId, {
+      isGlobalAdmin,
+      isBde,
+      callerUserId: userId,
+    });
   }
 
   /**

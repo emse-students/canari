@@ -34,6 +34,8 @@ import {
   UpdateAssociationCalendarEventDto,
 } from './dto/association.dto';
 import { RedisService } from '../common/redis/redis.service';
+import { PostNotification } from '../posts/entities/post-notification.entity';
+import { PushService } from '../push/push.service';
 
 const LOGO_MAX_BYTES = 2 * 1024 * 1024;
 const ALLOWED_LOGO_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -59,8 +61,11 @@ export class AssociationsService {
     private readonly postRepo: Repository<Post>,
     @InjectRepository(Form)
     private readonly formRepo: Repository<Form>,
+    @InjectRepository(PostNotification)
+    private readonly notifRepo: Repository<PostNotification>,
     private readonly redis: RedisService,
-    private readonly httpService: HttpService
+    private readonly httpService: HttpService,
+    private readonly push: PushService
   ) {}
 
   /** Deletes all `posts:list:v2:*` Redis keys so the next request rebuilds the feed with updated association data. */
@@ -812,13 +817,70 @@ export class AssociationsService {
     });
   }
 
-  /** Creates a calendar row for the association (association admins only at controller level). */
+  /**
+   * Sends in-app + push notifications to all members with PROPOSE_EVENT flag in an association.
+   * Used when a BDE admin validates, modifies, or deletes an event on behalf of another asso.
+   */
+  private async notifyAssocAdminsOfEventAction(
+    associationId: string,
+    actorId: string,
+    eventTitle: string,
+    action: 'validated' | 'updated' | 'deleted'
+  ): Promise<void> {
+    const members = await this.memberRepo.find({
+      where: { associationId },
+      select: ['userId', 'permissions'],
+    });
+    const proposers = members.filter(
+      (m) => (m.permissions & AssociationPermissionFlag.PROPOSE_EVENT) !== 0
+    );
+    if (proposers.length === 0) return;
+
+    const actionLabel =
+      action === 'validated'
+        ? 'validé'
+        : action === 'updated'
+          ? 'modifié'
+          : 'supprimé';
+    const text = `L'événement "${eventTitle}" a été ${actionLabel} par le BDE.`;
+
+    await Promise.all(
+      proposers.map(async (m) => {
+        if (m.userId === actorId) return;
+        // In-app notification (reuses post_notifications table; postId = eventId placeholder)
+        const notif = this.notifRepo.create({
+          recipientId: m.userId,
+          type: 'event_action',
+          postId: associationId, // closest available context ID
+          actorId,
+          text,
+          read: false,
+        });
+        await this.notifRepo.save(notif);
+        // Push notification (fire-and-forget)
+        await this.push.notify(m.userId, 'Événement association', text, {
+          type: 'event_action',
+          associationId,
+          action,
+        });
+      })
+    );
+  }
+
+  /**
+   * Creates a calendar event for the association.
+   * BDE admins and global admins: event is immediately validated + may target another association.
+   */
   async createCalendarEvent(
     associationId: string,
     dto: CreateAssociationCalendarEventDto,
-    userId: string
+    userId: string,
+    callerOpts?: { isGlobalAdmin?: boolean; isBde?: boolean }
   ) {
-    await this.findById(associationId);
+    const canValidate = callerOpts?.isGlobalAdmin || callerOpts?.isBde;
+    // BDE / global admin may create on behalf of another association
+    const targetId = canValidate && dto.targetAssocId ? dto.targetAssocId : associationId;
+    await this.findById(targetId);
     const startsAt = new Date(dto.startsAt);
     const endsAt = dto.endsAt ? new Date(dto.endsAt) : null;
     if (Number.isNaN(startsAt.getTime())) {
@@ -832,34 +894,47 @@ export class AssociationsService {
     }
 
     const linkedFormId = dto.linkedFormId ?? null;
-    if (linkedFormId) await this.assertFormBelongsToAssociation(linkedFormId, associationId);
+    if (linkedFormId) await this.assertFormBelongsToAssociation(linkedFormId, targetId);
     await this.detachLinksBeforeCreate(linkedFormId);
 
+    const now = new Date();
     const row = this.calendarRepo.create({
-      associationId,
+      associationId: targetId,
       title: dto.title.trim(),
       description: dto.description?.trim() ? dto.description.trim() : null,
       startsAt,
       endsAt,
       createdBy: userId,
       linkedFormId,
-      status: AssociationCalendarEventStatus.Pending,
-      validatedAt: null,
-      validatedBy: null,
+      status: canValidate
+        ? AssociationCalendarEventStatus.Validated
+        : AssociationCalendarEventStatus.Pending,
+      validatedAt: canValidate ? now : null,
+      validatedBy: canValidate ? userId : null,
     });
     const saved = await this.calendarRepo.save(row);
+    console.log(`[Calendar] Event created: ${saved.id} for asso ${targetId} by ${userId} (status=${saved.status})`);
+    // Notify asso admins when BDE creates an event on their behalf
+    if (canValidate && targetId !== associationId) {
+      void this.notifyAssocAdminsOfEventAction(targetId, userId, saved.title, 'validated');
+    }
     return this.serializeCalendarEvent(saved);
   }
 
-  /** Updates an existing calendar event. */
+  /**
+   * Updates an existing calendar event.
+   * BDE admins and global admins may update events from any association.
+   */
   async updateCalendarEvent(
     associationId: string,
     eventId: string,
-    dto: UpdateAssociationCalendarEventDto
+    dto: UpdateAssociationCalendarEventDto,
+    callerOpts?: { isGlobalAdmin?: boolean; isBde?: boolean; callerUserId?: string }
   ) {
+    const canCrossAsso = callerOpts?.isGlobalAdmin || callerOpts?.isBde;
     await this.findById(associationId);
     const ev = await this.calendarRepo.findOne({
-      where: { id: eventId, associationId },
+      where: canCrossAsso ? { id: eventId } : { id: eventId, associationId },
     });
     if (!ev) throw new NotFoundException('Event not found');
 
@@ -901,6 +976,16 @@ export class AssociationsService {
     }
 
     const saved = await this.calendarRepo.save(ev);
+    console.log(`[Calendar] Event updated: ${saved.id} by ${callerOpts?.callerUserId ?? 'unknown'}`);
+    // Notify asso admins when BDE modifies an event from another asso
+    if (canCrossAsso && ev.associationId !== associationId && callerOpts?.callerUserId) {
+      void this.notifyAssocAdminsOfEventAction(
+        ev.associationId,
+        callerOpts.callerUserId,
+        saved.title,
+        'updated'
+      );
+    }
     return this.serializeCalendarEvent(saved);
   }
 
@@ -918,14 +1003,38 @@ export class AssociationsService {
     ev.validatedAt = new Date();
     ev.validatedBy = userId;
     const saved = await this.calendarRepo.save(ev);
+    console.log(`[Calendar] Event validated: ${saved.id} by ${userId}`);
+    // Notify asso admins that their event has been validated
+    void this.notifyAssocAdminsOfEventAction(ev.associationId, userId, ev.title, 'validated');
     return this.serializeCalendarEvent(saved);
   }
 
-  /** Deletes a calendar event. */
-  async deleteCalendarEvent(associationId: string, eventId: string) {
+  /**
+   * Deletes a calendar event.
+   * BDE admins and global admins may delete events from any association.
+   */
+  async deleteCalendarEvent(
+    associationId: string,
+    eventId: string,
+    callerOpts?: { isGlobalAdmin?: boolean; isBde?: boolean; callerUserId?: string }
+  ) {
+    const canCrossAsso = callerOpts?.isGlobalAdmin || callerOpts?.isBde;
     await this.findById(associationId);
-    const res = await this.calendarRepo.delete({ id: eventId, associationId });
-    if (!res.affected) throw new NotFoundException('Event not found');
+    // For BDE cross-asso, find the event first to get its associationId for notifications
+    if (canCrossAsso) {
+      const ev = await this.calendarRepo.findOne({ where: { id: eventId } });
+      if (!ev) throw new NotFoundException('Event not found');
+      const targetAssocId = ev.associationId;
+      const title = ev.title;
+      await this.calendarRepo.delete({ id: eventId });
+      console.log(`[Calendar] Event deleted: ${eventId} by ${callerOpts?.callerUserId ?? 'unknown'}`);
+      if (targetAssocId !== associationId && callerOpts?.callerUserId) {
+        void this.notifyAssocAdminsOfEventAction(targetAssocId, callerOpts.callerUserId, title, 'deleted');
+      }
+    } else {
+      const res = await this.calendarRepo.delete({ id: eventId, associationId });
+      if (!res.affected) throw new NotFoundException('Event not found');
+    }
     return { ok: true };
   }
 

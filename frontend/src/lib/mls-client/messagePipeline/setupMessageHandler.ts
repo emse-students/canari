@@ -397,7 +397,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               `[MLS] Type décodé: ${msgType}${msg?.messageId ? ` id=${msg.messageId}` : ''} pour "${convoKey}"`
             );
 
-            if (msg?.text || msg?.reply) {
+            if (msg?.text || msg?.reply || msg?.media) {
               const envelope = appMsgToEnvelope(msg);
               if (envelope) {
                 await addMessageToChat(senderNorm, envelope.content, convoKey, envelope.options);
@@ -446,14 +446,6 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               }
 
               log(`[REACTION] ${senderNorm} a reagi avec ${msg.reaction.emoji}`);
-              return true;
-            }
-
-            if (msg?.media) {
-              const envelope = appMsgToEnvelope(msg);
-              if (envelope) {
-                await addMessageToChat(senderNorm, envelope.content, convoKey, envelope.options);
-              }
               return true;
             }
 

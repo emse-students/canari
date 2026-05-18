@@ -162,6 +162,14 @@ export class CreateAssociationCalendarEventDto {
   @ValidateIf((_, v) => typeof v === 'string' && v.length > 0)
   @IsUUID()
   linkedFormId?: string;
+
+  /**
+   * BDE / global admin only: create the event on behalf of another association.
+   * When set, overrides the `:id` route param as the target association.
+   */
+  @IsOptional()
+  @IsUUID()
+  targetAssocId?: string;
 }
 
 export class UpdateAssociationCalendarEventDto {

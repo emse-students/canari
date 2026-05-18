@@ -7,11 +7,13 @@ import { AssociationCalendarEvent } from './entities/association-calendar-event.
 import { AssociationDocument } from './entities/association-document.entity';
 import { Post } from '../posts/entities/post.entity';
 import { Form } from '../forms/entities/form.entity';
+import { PostNotification } from '../posts/entities/post-notification.entity';
 import { AssociationsService } from './associations.service';
 import { AssociationsController } from './associations.controller';
 import { AssociationRoleGuard } from './guards/association-role.guard';
 import { GlobalAdminOrAssociationRoleGuard } from './guards/global-admin-or-association-role.guard';
 import { FollowsModule } from '../follows/follows.module';
+import { PushService } from '../push/push.service';
 
 @Module({
   imports: [
@@ -23,10 +25,16 @@ import { FollowsModule } from '../follows/follows.module';
       AssociationDocument,
       Post,
       Form,
+      PostNotification,
     ]),
     FollowsModule,
   ],
-  providers: [AssociationsService, AssociationRoleGuard, GlobalAdminOrAssociationRoleGuard],
+  providers: [
+    AssociationsService,
+    AssociationRoleGuard,
+    GlobalAdminOrAssociationRoleGuard,
+    PushService,
+  ],
   controllers: [AssociationsController],
   exports: [AssociationsService],
 })
