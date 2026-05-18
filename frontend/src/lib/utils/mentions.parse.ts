@@ -1,3 +1,4 @@
+import { MENTION_USER_ID_PATTERN, normalizeMentionUserId } from '$lib/utils/mentions';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 
 export type TextMentionPart =
@@ -5,8 +6,7 @@ export type TextMentionPart =
   | { type: 'mention'; userId: string; label: string }
   | { type: 'hashtag'; value: string };
 
-const MENTION_TOKEN_RE =
-  /@\[([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\]|#([\wÀ-ž]{2,50})/gi;
+const MENTION_TOKEN_RE = new RegExp(`@\\[(${MENTION_USER_ID_PATTERN})\\]|#([\\wÀ-ž]{2,50})`, 'gi');
 
 /** Splits plain text into `@[uuid]` mention and hashtag segments (chat bodies, previews). */
 export function splitTextWithMentions(text: string): TextMentionPart[] {
@@ -21,7 +21,7 @@ export function splitTextWithMentions(text: string): TextMentionPart[] {
     }
     const [token, uuid, hashtag] = match;
     if (uuid) {
-      const userId = uuid.toLowerCase();
+      const userId = normalizeMentionUserId(uuid);
       parts.push({
         type: 'mention',
         userId,

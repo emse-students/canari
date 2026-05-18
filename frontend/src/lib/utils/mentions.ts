@@ -1,26 +1,36 @@
-/** Canonical mention token inserted by autocomplete: `@[user-uuid]`. */
-export const MENTION_UUID_TOKEN_RE =
-  /@\[([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\]/gi;
+/** Compact user id inside `@[…]` — 32 lowercase hex chars, no dashes. */
+export const MENTION_USER_ID_PATTERN = '[0-9a-f]{32}';
 
-const UUID_ONLY_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+/** Canonical mention token inserted by autocomplete: `@[userId]`. */
+export const MENTION_UUID_TOKEN_RE = new RegExp(`@\\[(${MENTION_USER_ID_PATTERN})\\]`, 'gi');
 
-/** Internal markdown href prefix consumed by PostMentionLink (`#mention-{idOrLegacyName}`). */
+/** Internal markdown href prefix consumed by PostMentionLink (`#mention-{id}`). */
 export const MENTION_HREF_PREFIX = '#mention-';
 
-export function isUserUuid(value: string): boolean {
-  return UUID_ONLY_RE.test(value.trim());
+/** Normalizes a user id for mention tokens (lowercase, no dashes). */
+export function normalizeMentionUserId(userId: string): string {
+  return userId.trim().toLowerCase().replace(/-/g, '');
 }
 
-/** Extracts user IDs from `@[uuid]` tokens (deduplicated, lowercased). */
+export function isUserUuid(value: string): boolean {
+  return new RegExp(`^${MENTION_USER_ID_PATTERN}$`, 'i').test(normalizeMentionUserId(value));
+}
+
+/** Extracts user IDs from `@[id]` tokens (deduplicated, normalized). */
 export function extractMentionUserIds(text: string): string[] {
   const ids = new Set<string>();
   for (const match of text.matchAll(MENTION_UUID_TOKEN_RE)) {
-    ids.add(match[1].toLowerCase());
+    ids.add(normalizeMentionUserId(match[1]));
   }
   return [...ids];
 }
 
 /** Builds the stored mention token for a user id. */
 export function formatMentionToken(userId: string): string {
-  return `@[${userId}]`;
+  return `@[${normalizeMentionUserId(userId)}]`;
+}
+
+/** Regex for `@[id]` in post markdown (negative lookbehind, same id format). */
+export function mentionTokenInTextRegex(): RegExp {
+  return new RegExp(`(?<![[\\w@./&#(])@\\[(${MENTION_USER_ID_PATTERN})\\]`, 'gi');
 }

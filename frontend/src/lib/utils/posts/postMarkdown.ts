@@ -1,8 +1,9 @@
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
-import { MENTION_HREF_PREFIX } from '$lib/utils/mentions';
-
-const MENTION_UUID_IN_TEXT_RE =
-  /(?<![[\w@./&#(])@\[([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\]/gi;
+import {
+  MENTION_HREF_PREFIX,
+  mentionTokenInTextRegex,
+  normalizeMentionUserId,
+} from '$lib/utils/mentions';
 
 /**
  * Single newlines in markdown are normally collapsed; convert them to hard breaks
@@ -22,8 +23,8 @@ export function normalizePostLineBreaks(md: string): string {
  * - #word   → [#word](#hashtag-word)
  */
 export function preprocessPostMarkdown(md: string): string {
-  const withMentions = md.replace(MENTION_UUID_IN_TEXT_RE, (_, userId: string) => {
-    const id = userId.toLowerCase();
+  const withMentions = md.replace(mentionTokenInTextRegex(), (_, userId: string) => {
+    const id = normalizeMentionUserId(userId);
     const label = getUserDisplayNameSync(id, id);
     return `[@${label}](${MENTION_HREF_PREFIX}${id})`;
   });

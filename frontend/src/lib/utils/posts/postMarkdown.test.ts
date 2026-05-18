@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { normalizePostLineBreaks, preprocessPostMarkdown } from './postMarkdown';
 
-const USER_ID = '550e8400-e29b-41d4-a716-446655440000';
+const USER_ID = '550e8400e29b41d4a716446655440000';
 
 describe('normalizePostLineBreaks', () => {
   it('turns a single newline into a markdown hard break', () => {

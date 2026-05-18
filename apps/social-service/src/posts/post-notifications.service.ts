@@ -12,10 +12,10 @@ export class PostNotificationsService {
     @InjectRepository(Post) private readonly postRepo: Repository<Post>
   ) {}
 
-  private static readonly MENTION_UUID_RE =
-    /@\[([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\]/gi;
+  /** `@[32-hex]` — compact user id, no dashes. */
+  private static readonly MENTION_UUID_RE = /@\[([0-9a-f]{32})\]/gi;
 
-  /** Extracts `@[uuid]` mention targets from text. Returns deduplicated IDs (max 20). */
+  /** Extracts `@[id]` mention targets from text. Returns deduplicated IDs (max 20). */
   async resolveMentionedUserIds(text: string): Promise<string[]> {
     const ids = new Set<string>();
     for (const match of text.matchAll(PostNotificationsService.MENTION_UUID_RE)) {

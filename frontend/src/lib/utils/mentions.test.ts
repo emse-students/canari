@@ -3,7 +3,8 @@ import { extractMentionUserIds, formatMentionToken, isUserUuid } from './mention
 import { splitTextWithMentions } from './mentions.parse';
 import { preprocessPostMarkdown } from './posts/postMarkdown';
 
-const USER_ID = '550e8400-e29b-41d4-a716-446655440000';
+const USER_ID = '550e8400e29b41d4a716446655440000';
+const USER_ID_DASHED = '550e8400-e29b-41d4-a716-446655440000';
 
 describe('mentions', () => {
   it('formatMentionToken builds @[uuid]', () => {
@@ -21,7 +22,16 @@ describe('mentions', () => {
 
   it('isUserUuid validates canonical ids', () => {
     expect(isUserUuid(USER_ID)).toBe(true);
+    expect(isUserUuid(USER_ID_DASHED)).toBe(true);
     expect(isUserUuid('Jean Dupont')).toBe(false);
+  });
+
+  it('formatMentionToken strips dashes from dashed ids', () => {
+    expect(formatMentionToken(USER_ID_DASHED)).toBe(`@[${USER_ID}]`);
+  });
+
+  it('ignores legacy dashed tokens in text', () => {
+    expect(extractMentionUserIds(`@[${USER_ID_DASHED}]`)).toEqual([]);
   });
 });
 
