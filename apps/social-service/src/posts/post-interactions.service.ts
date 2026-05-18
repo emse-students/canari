@@ -190,7 +190,7 @@ export class PostInteractionsService {
 
         // Mention notifications
         if (data.text) {
-          const mentionedIds = await this.notifications.resolveMentionedUserIds(data.text);
+          const mentionedIds = this.notifications.resolveMentionedUserIds(data.text);
           for (const recipientId of mentionedIds) {
             if (alreadyNotified.has(recipientId)) continue;
             alreadyNotified.add(recipientId);

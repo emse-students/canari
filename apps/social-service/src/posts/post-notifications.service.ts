@@ -16,7 +16,7 @@ export class PostNotificationsService {
   private static readonly MENTION_UUID_RE = /@\[([0-9a-f]{32})\]/gi;
 
   /** Extracts `@[id]` mention targets from text. Returns deduplicated IDs (max 20). */
-  async resolveMentionedUserIds(text: string): Promise<string[]> {
+  resolveMentionedUserIds(text: string): string[] {
     const ids = new Set<string>();
     for (const match of text.matchAll(PostNotificationsService.MENTION_UUID_RE)) {
       ids.add(match[1].toLowerCase());

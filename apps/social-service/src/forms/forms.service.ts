@@ -201,12 +201,12 @@ export class FormsService {
           successUrl: resolveStripeCallbackUrl(
             input.successUrl,
             `${frontendUrl}/forms/success?session_id={CHECKOUT_SESSION_ID}`,
-            frontendUrl,
+            frontendUrl
           ),
           cancelUrl: resolveStripeCallbackUrl(
             input.cancelUrl,
             `${frontendUrl}/forms/cancel?session_id={CHECKOUT_SESSION_ID}`,
-            frontendUrl,
+            frontendUrl
           ),
           metadata: { submissionId: savedSubmission.id, formId: id, userId: input.userId ?? '' },
           stripeConnectAccountId,
@@ -386,8 +386,14 @@ export class FormsService {
       throw new BadRequestException('Form is already open or has no scheduled opening time');
     }
     await this.reminderRepo.upsert(
-      { formId, userId, opensAt: new Date(form.opensAt), notified5min: false, notifiedOnOpen: false },
-      ['formId', 'userId'],
+      {
+        formId,
+        userId,
+        opensAt: new Date(form.opensAt),
+        notified5min: false,
+        notifiedOnOpen: false,
+      },
+      ['formId', 'userId']
     );
     return { ok: true };
   }

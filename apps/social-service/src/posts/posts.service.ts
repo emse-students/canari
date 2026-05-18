@@ -143,7 +143,7 @@ export class PostsService {
     const markdown: string = typeof data.markdown === 'string' ? data.markdown : '';
     const authorId: string = typeof data.authorId === 'string' ? data.authorId : '';
     const mentionedIds = markdown
-      ? (await this.notifications.resolveMentionedUserIds(markdown)).filter((id) => id !== authorId)
+      ? this.notifications.resolveMentionedUserIds(markdown).filter((id) => id !== authorId)
       : [];
     if (mentionedIds.length > 0) {
       data.mentions = mentionedIds;
