@@ -228,7 +228,7 @@
           <div
             class="flex min-w-0 flex-col {msg.isOwn
               ? 'items-end'
-              : 'items-start'} max-w-[85%] md:max-w-[70%]"
+              : 'items-start'} max-w-[85%] md:max-w-[70%] lg:max-w-[65%]"
           >
             <!-- Nom de l'expéditeur -->
             {#if showSender && !msg.isSystem}

@@ -26,33 +26,23 @@
     "deep-link": {
       "mobile": [
         {
-          "scheme": [
-            "fr.emse.canari"
-          ],
+          "scheme": ["fr.emse.canari"],
           "host": "callback"
         },
         {
-          "scheme": [
-            "fr.emse.canari"
-          ],
+          "scheme": ["fr.emse.canari"],
           "host": "stripe"
         },
         {
-          "scheme": [
-            "fr.emse.canari"
-          ],
+          "scheme": ["fr.emse.canari"],
           "host": "chat"
         },
         {
-          "scheme": [
-            "fr.emse.canari"
-          ],
+          "scheme": ["fr.emse.canari"],
           "host": "post"
         },
         {
-          "scheme": [
-            "fr.emse.canari"
-          ],
+          "scheme": ["fr.emse.canari"],
           "host": "form"
         }
       ]

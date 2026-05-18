@@ -43,15 +43,12 @@
 
   function keyboardOpenThresholdPx(): number {
     const ua = navigator.userAgent.toLowerCase();
-    const isAndroid = ua.includes('android');
     const isIos = /iphone|ipad|ipod/.test(ua);
-
-    // iOS a souvent un delta plus petit (barres système + clavier flottant).
+    // iOS : clavier flottant ou split → delta plus petit.
     if (isIos) return 100;
-    // Android a généralement un delta plus important en mode portrait.
-    if (isAndroid) return 140;
-    // Fallback navigateurs mobiles/desktop.
-    return 120;
+    // Android (phone + tablette) : seuil conservateur pour éviter les faux positifs
+    // au changement d'orientation (qui réduit innerHeight temporairement).
+    return 160;
   }
 
   beforeNavigate(() => {
@@ -70,19 +67,43 @@
       showLogs = !showLogs;
     };
 
+    // Hauteur de référence pour la détection du clavier.
+    // Sur Android avec adjustResize (mode Tauri), window.innerHeight ET visualViewport.height
+    // diminuent ensemble quand le clavier s'ouvre → delta naïf = 0 → isKeyboardOpen = false.
+    // Solution : on mémorise la hauteur maximale observée en dehors du clavier (baseline)
+    // et on compare visualViewport.height à cette baseline.
+    let baselineHeight = window.innerHeight;
+
     const updateViewportHeight = () => {
-      const height = window.visualViewport?.height ?? window.innerHeight;
+      const vv = window.visualViewport;
+      const winH = window.innerHeight;
+      const height = vv?.height ?? winH;
+
       document.documentElement.style.setProperty('--app-viewport-height', `${height}px`);
 
-      // Sur mobile, le clavier virtuel réduit fortement visualViewport.height.
-      // On utilise ce signal pour retirer l'espace réservé à la BottomNav.
-      const keyboardDelta = window.innerHeight - height;
-      isKeyboardOpen = keyboardDelta > keyboardOpenThresholdPx();
+      // Fonctionne en adjustPan (winH stable, height drop) ET adjustResize (les deux drop
+      // depuis la baseline) : on prend le maximum des deux deltas.
+      const delta = Math.max(baselineHeight - height, winH - height);
+      isKeyboardOpen = delta > keyboardOpenThresholdPx();
+
+      // Mise à jour de la baseline uniquement quand le clavier n'est pas ouvert,
+      // pour qu'elle reflète toujours la vraie hauteur maximale disponible.
+      if (!isKeyboardOpen) baselineHeight = Math.max(baselineHeight, winH);
+    };
+
+    // Réinitialiser la baseline après un changement d'orientation, le temps que la nouvelle
+    // hauteur se stabilise (sinon l'ancienne baseline déclenche un faux positif clavier).
+    const handleOrientationChange = () => {
+      setTimeout(() => {
+        baselineHeight = window.innerHeight;
+        updateViewportHeight();
+      }, 400);
     };
 
     window.addEventListener('canari:toggle-logs', handler);
     updateViewportHeight();
     window.addEventListener('resize', updateViewportHeight);
+    window.addEventListener('orientationchange', handleOrientationChange);
     window.visualViewport?.addEventListener('resize', updateViewportHeight);
     window.visualViewport?.addEventListener('scroll', updateViewportHeight);
 
@@ -90,6 +111,7 @@
       teardownHistory();
       window.removeEventListener('canari:toggle-logs', handler);
       window.removeEventListener('resize', updateViewportHeight);
+      window.removeEventListener('orientationchange', handleOrientationChange);
       window.visualViewport?.removeEventListener('resize', updateViewportHeight);
       window.visualViewport?.removeEventListener('scroll', updateViewportHeight);
     };
@@ -159,7 +181,7 @@
 
   <div class="relative z-10 flex flex-1 flex-col overflow-hidden md:pl-[4.5rem]">
 
-    {#if !isLoginPage}
+    {#if !isLoginPage && !isKeyboardOpen}
       <Navbar />
     {/if}
 
