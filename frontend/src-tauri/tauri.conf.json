@@ -1,6 +1,6 @@
 {
   "productName": "Canari",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "identifier": "fr.emse.canari",
   "build": {
     "beforeDevCommand": "bun run dev",
@@ -26,23 +26,33 @@
     "deep-link": {
       "mobile": [
         {
-          "scheme": ["fr.emse.canari"],
+          "scheme": [
+            "fr.emse.canari"
+          ],
           "host": "callback"
         },
         {
-          "scheme": ["fr.emse.canari"],
+          "scheme": [
+            "fr.emse.canari"
+          ],
           "host": "stripe"
         },
         {
-          "scheme": ["fr.emse.canari"],
+          "scheme": [
+            "fr.emse.canari"
+          ],
           "host": "chat"
         },
         {
-          "scheme": ["fr.emse.canari"],
+          "scheme": [
+            "fr.emse.canari"
+          ],
           "host": "post"
         },
         {
-          "scheme": ["fr.emse.canari"],
+          "scheme": [
+            "fr.emse.canari"
+          ],
           "host": "form"
         }
       ]
