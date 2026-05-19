@@ -334,7 +334,7 @@ export class ProductsService {
         );
         return;
       } catch (err: unknown) {
-        lastError = err instanceof Error ? err.message : String(err);
+        lastError = err instanceof Error ? err.message : '[unknown error]';
         this.logger.warn(
           `[CERCLE] webhook attempt ${i + 1} failed: ${lastError}`
         );

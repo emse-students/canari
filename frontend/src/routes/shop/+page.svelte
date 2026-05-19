@@ -10,7 +10,7 @@
   } from '$lib/associations/api';
   import { currentUserId } from '$lib/stores/user';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
-  import { ShoppingBag } from 'lucide-svelte';
+  import { ShoppingBag } from '@lucide/svelte';
 
   let products = $state<AssociationProduct[]>([]);
   let associations = new SvelteMap<string, Association>();

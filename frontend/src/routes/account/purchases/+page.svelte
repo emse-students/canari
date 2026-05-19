@@ -3,7 +3,7 @@
   import { apiFetch } from '$lib/utils/apiFetch';
   import { socialUrl } from '$lib/utils/apiUrl';
   import { currentUserId } from '$lib/stores/user';
-  import { ShoppingBag, Tag, ArrowLeft } from 'lucide-svelte';
+  import { ShoppingBag, Tag, ArrowLeft } from '@lucide/svelte';
   import type { UserTag } from '$lib/associations/api';
 
   interface PurchaseRecord {
