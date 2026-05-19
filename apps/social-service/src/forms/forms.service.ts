@@ -12,6 +12,7 @@ import * as ExcelJS from 'exceljs';
 import { AssociationsService } from '../associations/associations.service';
 import { resolveStripeCallbackUrl } from '../common/stripe-callback-url';
 import { UserTagService } from '../users/user-tag.service';
+import { PurchaseRecordService } from '../users/purchase-record.service';
 
 /** Generates a short random ID with the given prefix, e.g. "item_a3b9x1". */
 function makeId(prefix: string): string {
@@ -29,7 +30,8 @@ export class FormsService {
     @InjectRepository(FormReminder) private readonly reminderRepo: Repository<FormReminder>,
     private readonly configService: ConfigService,
     private readonly associationsService: AssociationsService,
-    private readonly userTagService: UserTagService
+    private readonly userTagService: UserTagService,
+    private readonly purchaseRecordService: PurchaseRecordService
   ) {}
 
   /** Creates a form and assigns stable IDs to all items and options that lack them. */
@@ -292,10 +294,10 @@ export class FormsService {
     if (sessionId) submission.stripeSessionId = sessionId;
     await this.submissionRepo.save(submission);
 
-    // Grant cotisation tag if configured on the form
+    // Grant cotisation tag if configured on the form + log purchase record
     const form = await this.formRepo.findOne({
       where: { id: submission.formId },
-      select: ['id', 'grantedTagName', 'tagExpiresAt', 'associationId'],
+      select: ['id', 'title', 'grantedTagName', 'tagExpiresAt', 'associationId'],
     });
     if (form?.grantedTagName) {
       try {
@@ -309,6 +311,22 @@ export class FormsService {
         });
       } catch (e) {
         this.logger.error(`[UserTag] Failed to grant tag for submission ${submissionId}`, e);
+      }
+    }
+    if (form?.associationId && submission.totalPaid > 0) {
+      try {
+        await this.purchaseRecordService.create({
+          userId: submission.userId,
+          source: 'form',
+          formId: submission.formId,
+          amountCents: submission.totalPaid,
+          paymentMethod: 'stripe',
+          status: 'paid',
+          associationId: form.associationId,
+          productName: form.title ?? 'Formulaire',
+        });
+      } catch (e) {
+        this.logger.error(`[PurchaseRecord] Failed to record stripe purchase for submission ${submissionId}`, e);
       }
     }
     return { ok: true };
@@ -347,10 +365,10 @@ export class FormsService {
     await this.submissionRepo.save(submission);
     this.logger.log(`[Forms] Cash validated for submission ${submissionId} by ${validatedBy}`);
 
-    // Grant tag if form is configured
+    // Grant tag if form is configured + log purchase record
     const form = await this.formRepo.findOne({
       where: { id: formId },
-      select: ['id', 'grantedTagName', 'tagExpiresAt', 'associationId'],
+      select: ['id', 'title', 'grantedTagName', 'tagExpiresAt', 'associationId'],
     });
     if (form?.grantedTagName) {
       try {
@@ -364,6 +382,22 @@ export class FormsService {
         });
       } catch (e) {
         this.logger.error(`[UserTag] Failed to grant tag after cash validation for ${submissionId}`, e);
+      }
+    }
+    if (form?.associationId && submission.totalPaid > 0) {
+      try {
+        await this.purchaseRecordService.create({
+          userId: submission.userId,
+          source: 'form',
+          formId: submission.formId,
+          amountCents: submission.totalPaid,
+          paymentMethod: 'cash',
+          status: 'paid',
+          associationId: form.associationId,
+          productName: form.title ?? 'Formulaire',
+        });
+      } catch (e) {
+        this.logger.error(`[PurchaseRecord] Failed to record cash purchase for submission ${submissionId}`, e);
       }
     }
     return { ok: true };

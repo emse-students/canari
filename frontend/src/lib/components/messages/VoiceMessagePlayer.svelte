@@ -16,6 +16,8 @@
   let currentTime = $state(0);
   let speed = $state(1);
   let lastDurationToken = 0;
+  /** Set to true when the browser cannot decode the audio format (e.g. webm on iOS). */
+  let cannotPlay = $state(false);
 
   function formatTime(seconds: number): string {
     if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
@@ -86,6 +88,7 @@
     duration = 0;
     currentTime = 0;
     isPlaying = false;
+    cannotPlay = false;
     if (!source) return;
     void decodeDurationFromSource(source, token);
   });
@@ -97,7 +100,7 @@
   <audio
     bind:this={audioEl}
     {src}
-    preload="metadata"
+    preload="auto"
     onloadedmetadata={() => {
       const metadataDuration = audioEl?.duration ?? 0;
       if (Number.isFinite(metadataDuration) && metadataDuration > 0 && metadataDuration < 60 * 60) {
@@ -116,47 +119,66 @@
     onended={() => {
       isPlaying = false;
     }}
+    onerror={() => {
+      isPlaying = false;
+      cannotPlay = true;
+    }}
     class="hidden"
   ></audio>
 
-  <!-- Bouton Play/Pause -->
-  <button
-    type="button"
-    onclick={(e) => {
-      e.stopPropagation();
-      togglePlay();
-    }}
-    class="shrink-0 w-11 h-11 rounded-full bg-amber-500 text-[#151B2C] inline-flex items-center justify-center shadow-md hover:bg-amber-400 hover:scale-105 active:scale-95 transition-all outline-none focus-visible:ring-4 focus-visible:ring-amber-500/40"
-    aria-label={isPlaying ? 'Mettre en pause' : 'Lire le message vocal'}
-  >
-    {#if isPlaying}
-      <Pause size={18} strokeWidth={2.5} />
-    {:else}
-      <Play size={18} strokeWidth={2.5} class="ml-1" />
-    {/if}
-  </button>
-
-  <!-- Section de la Timeline (Slider) -->
-  <div class="flex-1 min-w-0 flex flex-col justify-center gap-1.5 pt-1">
-    <input
-      type="range"
-      min="0"
-      max={Math.max(duration, 1)}
-      step="0.01"
-      value={Math.min(currentTime, duration || 0)}
-      onclick={(e) => e.stopPropagation()}
-      oninput={(e) => seekTo((e.currentTarget as HTMLInputElement).value)}
-      class="w-full h-1.5 rounded-full accent-amber-500 bg-black/10 dark:bg-white/20 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50"
-      aria-label="Position de lecture"
-    />
-    <div class="text-[0.65rem] font-bold opacity-70 flex items-center justify-between">
-      <span>{formatTime(currentTime)}</span>
-      <span>{formatTime(duration)}</span>
+  {#if cannotPlay}
+    <!-- Format audio non supporté (ex : webm sur iOS) -->
+    <div class="flex-1 min-w-0 flex items-center gap-2 opacity-70">
+      <span class="text-xs font-medium">Format non supporté</span>
+      {#if onDownload}
+        <button
+          type="button"
+          onclick={(e) => { e.stopPropagation(); onDownload?.(); }}
+          class="text-xs font-bold underline"
+          aria-label="Télécharger le message vocal"
+        >Télécharger</button>
+      {/if}
     </div>
-  </div>
+  {:else}
+    <!-- Bouton Play/Pause -->
+    <button
+      type="button"
+      onclick={(e) => {
+        e.stopPropagation();
+        togglePlay();
+      }}
+      class="shrink-0 w-11 h-11 rounded-full bg-amber-500 text-[#151B2C] inline-flex items-center justify-center shadow-md hover:bg-amber-400 hover:scale-105 active:scale-95 transition-all outline-none focus-visible:ring-4 focus-visible:ring-amber-500/40"
+      aria-label={isPlaying ? 'Mettre en pause' : 'Lire le message vocal'}
+    >
+      {#if isPlaying}
+        <Pause size={18} strokeWidth={2.5} />
+      {:else}
+        <Play size={18} strokeWidth={2.5} class="ml-1" />
+      {/if}
+    </button>
 
-  <!-- Actions (Vitesse et Téléchargement) -->
-  <div class="flex items-center gap-0.5 shrink-0">
+    <!-- Section de la Timeline (Slider) -->
+    <div class="flex-1 min-w-0 flex flex-col justify-center gap-1.5 pt-1">
+      <input
+        type="range"
+        min="0"
+        max={Math.max(duration, 1)}
+        step="0.01"
+        value={Math.min(currentTime, duration || 0)}
+        onclick={(e) => e.stopPropagation()}
+        oninput={(e) => seekTo((e.currentTarget as HTMLInputElement).value)}
+        class="w-full h-1.5 rounded-full accent-amber-500 bg-black/10 dark:bg-white/20 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50"
+        aria-label="Position de lecture"
+      />
+      <div class="text-[0.65rem] font-bold opacity-70 flex items-center justify-between">
+        <span>{formatTime(currentTime)}</span>
+        <span>{formatTime(duration)}</span>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Actions (Vitesse et Téléchargement) — masquées si format non supporté -->
+  <div class="flex items-center gap-0.5 shrink-0" class:hidden={cannotPlay}>
     <button
       type="button"
       onclick={(e) => {

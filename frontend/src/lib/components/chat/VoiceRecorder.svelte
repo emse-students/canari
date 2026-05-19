@@ -18,10 +18,11 @@
   let intervalId: number | null = null;
   let isCancelling = false;
 
+  // audio/mp4 is supported on both Android WebView and iOS WKWebView (webm is iOS-incompatible).
   const MIME_CANDIDATES = [
+    'audio/mp4',
     'audio/webm;codecs=opus',
     'audio/webm',
-    'audio/mp4',
     'audio/ogg;codecs=opus',
     'audio/ogg',
   ];

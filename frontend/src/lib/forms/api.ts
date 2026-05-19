@@ -38,6 +38,7 @@ export interface Form extends CreateFormPayload {
   id: string;
   createdAt: string;
   updatedAt: string;
+  allowCashPayment?: boolean;
 }
 
 import { apiFetch } from '$lib/utils/apiFetch';
@@ -94,6 +95,7 @@ export async function submitForm(
     answers: any;
     successUrl?: string;
     cancelUrl?: string;
+    paymentMethod?: 'stripe' | 'cash';
   }
 ): Promise<any> {
   const res = await request(`${API_Base}/api/forms/${id}/submit`, {

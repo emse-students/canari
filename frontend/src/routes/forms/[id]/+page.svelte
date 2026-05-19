@@ -50,6 +50,7 @@
   let pendingSubmissionId = $state('');
   let linkedAgendaEvent = $state<AssociationCalendarEvent | null>(null);
   let agendaAssociationSlug = $state('');
+  let paymentMethodChoice = $state<'stripe' | 'cash'>('stripe');
 
   onMount(async () => {
     const savedUser = currentUserId();
@@ -214,10 +215,12 @@
     error = '';
     try {
       const { formCheckoutCallbacks } = await import('$lib/utils/stripeCallbacks');
+      const total = calculateTotal();
       const res = await submitFormService(form.id, {
         email: '',
         answers: selections,
         ...formCheckoutCallbacks(),
+        ...(total > 0 && form.allowCashPayment ? { paymentMethod: paymentMethodChoice } : {}),
       });
       if (res.checkoutUrl) {
         // Payment required — check if user has saved payment methods
@@ -595,6 +598,26 @@
               {/if}
             </div>
           {/each}
+
+          <!-- Payment method selector (cash vs Stripe) -->
+          {#if calculateTotal() > 0 && form.allowCashPayment && !submitted}
+            <div class="pt-2">
+              <p class="text-xs font-bold text-text-muted uppercase tracking-wide mb-2">Mode de paiement</p>
+              <div class="flex gap-3">
+                <label class="flex items-center gap-2 cursor-pointer p-3 rounded-xl border-2 flex-1 transition-all {paymentMethodChoice === 'stripe' ? 'border-cn-yellow bg-cn-yellow/5' : 'border-cn-border hover:border-cn-yellow/50'}">
+                  <input type="radio" bind:group={paymentMethodChoice} value="stripe" class="accent-cn-yellow" />
+                  <span class="text-sm font-medium">En ligne (carte)</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer p-3 rounded-xl border-2 flex-1 transition-all {paymentMethodChoice === 'cash' ? 'border-cn-yellow bg-cn-yellow/5' : 'border-cn-border hover:border-cn-yellow/50'}">
+                  <input type="radio" bind:group={paymentMethodChoice} value="cash" class="accent-cn-yellow" />
+                  <span class="text-sm font-medium">En physique (cash)</span>
+                </label>
+              </div>
+              {#if paymentMethodChoice === 'cash'}
+                <p class="text-xs text-text-muted mt-2">Un admin validera votre paiement manuellement après réception.</p>
+              {/if}
+            </div>
+          {/if}
 
           <!-- Error -->
           {#if error}

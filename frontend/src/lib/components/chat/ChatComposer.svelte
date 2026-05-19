@@ -387,7 +387,7 @@
       {/if}
 
       <!-- Bouton Pièce Jointe -->
-      <div class="pb-[3px] shrink-0">
+      <div class="shrink-0">
         <button
           onclick={() => fileInput?.click()}
           disabled={isUploading}
@@ -405,7 +405,7 @@
 
       <!-- Enregistreur Vocal (Mobile uniquement) -->
       {#if isVoiceRecordingSupported}
-        <div class="pb-[3px] shrink-0">
+        <div class="shrink-0">
           <VoiceRecorder onRecordingComplete={handleVoiceRecording} />
         </div>
       {/if}
@@ -435,7 +435,7 @@
       />
 
       <!-- Bouton Envoyer Dynamique -->
-      <div class="pb-[3px] shrink-0 pr-1">
+      <div class="shrink-0 pr-1">
         <button
           onmousedown={(e) => e.preventDefault()}
           onclick={onSend}
