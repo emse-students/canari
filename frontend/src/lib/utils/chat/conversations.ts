@@ -15,6 +15,7 @@ import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
+import { compareMessageOrder } from './messageOrder';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -541,7 +542,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
         ).length;
         ctx.conversations.set(meta.id, {
           ...current,
-          messages: refreshedMsgs,
+          messages: [...refreshedMsgs].sort(compareMessageOrder),
           unreadCount: newUnreadCount,
         });
         for (const m of refreshedMsgs) {

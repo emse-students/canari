@@ -472,6 +472,39 @@ export class MessagingService {
       this.logger.warn(`[SEND][${traceId}] No message queued after validation`);
     }
 
+    // 1b. Append to history stream so late-joining devices can replay.
+    // Only for regular application messages (proto path, not Welcome/Commit).
+    // Welcome and Commit messages are MLS epoch-transition frames that cannot
+    // be replayed out of order — only app-level payloads belong in history.
+    if (
+      body.proto &&
+      !body.isWelcome &&
+      !body.isCommit &&
+      body.groupId &&
+      body.senderId
+    ) {
+      try {
+        await this.redis.xadd(
+          `history:${body.groupId}`,
+          'MAXLEN',
+          '~',
+          '1000',
+          '*',
+          'sender_id',
+          body.senderId,
+          'content',
+          body.proto,
+          'timestamp',
+          new Date().toISOString(),
+        );
+        this.logger.log(`[HISTORY][${traceId}] XADD group=${body.groupId}`);
+      } catch (e) {
+        this.logger.warn(
+          `[HISTORY][${traceId}] XADD failed group=${body.groupId}: ${e}`,
+        );
+      }
+    }
+
     // 2. Best-effort real-time delivery for online recipients
     for (const queued of ops) {
       const redisKey = `user:online:${queued.recipientId}:${queued.deviceId}`;
@@ -907,7 +940,12 @@ export class MessagingService {
 
     // Wake up offline peers via FCM so they reconnect and drain the pending request
     // without waiting for an organic reconnection.
-    await this.sendFcmWelcomeRequestPending(groupId, members, senderKey, traceId);
+    await this.sendFcmWelcomeRequestPending(
+      groupId,
+      members,
+      senderKey,
+      traceId,
+    );
 
     this.logger.log(
       `[WELCOME_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} — stored in Redis, FCM sent to peers`,

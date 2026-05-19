@@ -317,7 +317,7 @@ export class IndexedDbStorage implements IStorage {
         console.warn('Failed to decrypt message', row.id);
       }
     }
-    return results.sort((a, b) => a.timestamp - b.timestamp);
+    return results.sort((a, b) => a.timestamp - b.timestamp || a.id.localeCompare(b.id));
   }
 
   // -- Backup helpers ------------------------------------------------------

@@ -496,6 +496,7 @@ export function useMessaging() {
                 : {}),
             }),
             messageId,
+            sentAt: Date.now(),
           });
           if (isChannel && channelSvc) {
             // Send media as channel message via REST

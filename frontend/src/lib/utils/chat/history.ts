@@ -144,6 +144,11 @@ export async function replayConversationHistory(params: {
     // the main message batch write (reactions reference messages from previous
     // sessions that are already in DB).
     const reactionUpdates = new Map<string, MessageReaction[]>(); // msgId → final state
+    // delete_message / edit_message events from history: collected here and persisted
+    // to DB after the main batch save so the DB reload in loadExistingConversations
+    // reflects the correct state without a second network round-trip.
+    const deletedMessageIds = new Set<string>();
+    const editedMessages = new Map<string, { content: string; editedAt: Date }>();
     // Read receipts from history update in-memory state but NOT the DB; the batch
     // save below writes regular messages without readBy (full replace via IndexedDB
     // put), which would overwrite any readBy already saved for those messages.
@@ -266,11 +271,14 @@ export async function replayConversationHistory(params: {
                   setConversation(contactName, { ...convo, messages: newMsgs });
                 }
               }
+              deletedMessageIds.add(data.messageId);
             } else if (
               parsed.system.event === 'edit_message' &&
               data.messageId &&
               data.newContent
             ) {
+              const editedAt =
+                typeof data.editedAt === 'number' ? new Date(data.editedAt) : new Date();
               const convo = getConversation(contactName);
               if (convo) {
                 const idx = convo.messages.findIndex((m) => m.id === data.messageId);
@@ -279,14 +287,14 @@ export async function replayConversationHistory(params: {
                   newMsgs[idx] = {
                     ...newMsgs[idx],
                     isEdited: true,
-                    editedAt:
-                      typeof data.editedAt === 'number' ? new Date(data.editedAt) : new Date(),
+                    editedAt,
                     content: data.newContent,
                     readBy: [],
                   };
                   setConversation(contactName, { ...convo, messages: newMsgs });
                 }
               }
+              editedMessages.set(data.messageId, { content: data.newContent, editedAt });
             } else if (parsed.system.event === 'remove_reaction' && data.messageId && data.emoji) {
               const senderReactNorm = msg.sender_id.toLowerCase();
               const cur = messageReactions.get(data.messageId) || [];
@@ -389,6 +397,28 @@ export async function replayConversationHistory(params: {
         for (const m of allMessages) {
           if (reactionUpdates.has(m.id)) {
             toUpdate.push({ ...m, reactions: reactionUpdates.get(m.id) });
+          }
+        }
+        if (toUpdate.length > 0) {
+          await storage.saveMessages(toUpdate, pin);
+        }
+      } catch {
+        // Non-blocking
+      }
+    }
+
+    // Persist delete/edit mutations from history to DB so they survive the DB reload
+    // that follows in loadExistingConversations (which overwrites in-memory state).
+    if (storage && (deletedMessageIds.size > 0 || editedMessages.size > 0)) {
+      try {
+        const allMessages = await storage.getMessages(id, pin);
+        const toUpdate: StoredMessage[] = [];
+        for (const m of allMessages) {
+          if (deletedMessageIds.has(m.id)) {
+            toUpdate.push({ ...m, isDeleted: true, content: 'Ce message a été supprimé.' });
+          } else if (editedMessages.has(m.id)) {
+            const edit = editedMessages.get(m.id)!;
+            toUpdate.push({ ...m, isEdited: true, content: edit.content });
           }
         }
         if (toUpdate.length > 0) {

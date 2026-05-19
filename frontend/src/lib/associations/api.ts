@@ -172,6 +172,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     }
     throw new Error(message);
   }
+  return res.json() as Promise<T>;
 }
 
 // ── Public ────────────────────────────────────────────────────────────────

@@ -6,6 +6,7 @@ import {
   isYesterday,
   toValidDate,
 } from '$lib/utils/dates';
+import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
 
 /**
  * A discriminated union representing one visual row in the message list.
@@ -25,19 +26,23 @@ function formatDateSeparator(date: Date): string {
 }
 
 /**
- * Group messages by date and time gaps
+ * Group messages by date and time gaps.
  * - Show date separator when day changes
  * - Show time separator when there's a 15+ minute gap
+ *
+ * Sorts the input chronologically before grouping so callers don't need to
+ * pre-sort — this is the last line of defence against upstream ordering bugs.
  */
 export function groupMessages(messages: ChatMessage[]): MessageGroup[] {
   if (messages.length === 0) return [];
 
+  const sorted = [...messages].sort(compareMessageOrder);
   const groups: MessageGroup[] = [];
   let lastDate: string | null = null;
   let lastTimestamp: number | null = null;
   const TIME_GAP_MS = 15 * 60 * 1000; // 15 minutes
 
-  for (const msg of messages) {
+  for (const msg of sorted) {
     const d = toValidDate(msg.timestamp);
     const msgDate = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
     const msgTime = d.getTime();
