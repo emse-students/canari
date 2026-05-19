@@ -159,13 +159,19 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     let message = raw || res.statusText;
     try {
       const parsed: unknown = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object' && 'message' in parsed && typeof (parsed as Record<string, unknown>).message === 'string') {
+      if (
+        parsed &&
+        typeof parsed === 'object' &&
+        'message' in parsed &&
+        typeof (parsed as Record<string, unknown>).message === 'string'
+      ) {
         message = (parsed as Record<string, string>).message;
       }
-    } catch {}
+    } catch {
+      // Commentaire à remplacer
+    }
     throw new Error(message);
   }
-  return (await res.json()) as T;
 }
 
 // ── Public ────────────────────────────────────────────────────────────────
