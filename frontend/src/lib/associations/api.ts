@@ -155,8 +155,15 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const base = socialUrl();
   const res = await apiFetch(`${base}${path}`, init as any);
   if (!res.ok) {
-    const details = await res.text().catch(() => '');
-    throw new Error(`associations ${res.status}: ${details || res.statusText}`);
+    const raw = await res.text().catch(() => '');
+    let message = raw || res.statusText;
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object' && 'message' in parsed && typeof (parsed as Record<string, unknown>).message === 'string') {
+        message = (parsed as Record<string, string>).message;
+      }
+    } catch {}
+    throw new Error(message);
   }
   return (await res.json()) as T;
 }

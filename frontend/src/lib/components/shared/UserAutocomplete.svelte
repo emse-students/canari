@@ -1,6 +1,7 @@
 <script lang="ts">
   import { apiFetch } from '$lib/utils/apiFetch';
   import { coreUrl } from '$lib/utils/apiUrl';
+  import { Search } from '@lucide/svelte';
 
   interface User {
     id: string;
@@ -142,6 +143,9 @@
 </script>
 
 <div class="relative">
+  <span class="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-text-muted">
+    <Search size={15} />
+  </span>
   <input
     id={inputId}
     type="text"
@@ -152,7 +156,7 @@
     onfocus={handleFocus}
     {placeholder}
     autocomplete="off"
-    class="w-full px-4 py-2.5 bg-white/65 dark:bg-black/30 border border-white/60 dark:border-white/10 rounded-xl text-sm outline-none focus:ring-2 focus:ring-amber-400/45"
+    class="w-full pl-9 pr-4 py-2.5 bg-[var(--cn-surface)] border border-cn-border rounded-xl text-sm outline-none focus:ring-2 focus:ring-amber-400/45 focus:border-amber-400/60"
   />
 
   {#if isLoading}

@@ -209,11 +209,13 @@ export class MessagingService {
             // Empty string when proto is too large; Kotlin falls back to
             // fetching it from the backend or showing a generic notification.
             proto: inlineProto,
-            // Kotlin processes the message (MLS state sync) but skips showNotification():
-            // – own-device copy (sender == recipient)
-            // – system messages like read_receipt flagged silent by the caller
+            // Kotlin skips showNotification() when true (own-device copy, read
+            // receipts, or welcome packets which are not user-visible messages).
             silent:
               silent || queued.recipientId === senderId ? 'true' : 'false',
+            // Tells Kotlin to skip tryDecrypt (welcome bytes ≠ app message) and
+            // go straight to MlsBackgroundWorker for pending-queue processing.
+            isWelcome: queued.isWelcome ? 'true' : 'false',
           },
           android: {
             priority: 'high',
@@ -500,23 +502,26 @@ export class MessagingService {
         // the app can no longer process WebSocket frames. If the queued message is
         // still unACKed after DEFERRED_PUSH_DELAY_MS, the WebSocket delivery failed
         // silently → fall back to FCM so the user still gets a notification.
-        if (!body.isWelcome && !body.isCommit) {
+        // Welcome packages use a silent push (no visible notification) so the
+        // app can process the MLS welcome without spamming the user.
+        if (!body.isCommit) {
           this.scheduleDeferredPush(
             queued,
             traceId,
             body.groupId ?? '',
             body.senderId ?? '',
-            body.silent ?? false,
+            body.isWelcome ? true : (body.silent ?? false),
           );
         }
-      } else if (!body.isWelcome && !body.isCommit) {
-        // Offline recipient: immediate FCM push notification
+      } else if (!body.isCommit) {
+        // Offline recipient: immediate FCM push.
+        // Welcome packages get a silent push so the app syncs without showing a notif.
         await this.sendFcmForQueued(
           queued,
           traceId,
           body.groupId ?? '',
           body.senderId ?? '',
-          body.silent ?? false,
+          body.isWelcome ? true : (body.silent ?? false),
         );
       }
     }
@@ -900,8 +905,12 @@ export class MessagingService {
     pipeline.expire(pendingSetKey, 86400); // 24 h TTL
     await pipeline.exec();
 
+    // Wake up offline peers via FCM so they reconnect and drain the pending request
+    // without waiting for an organic reconnection.
+    await this.sendFcmWelcomeRequestPending(groupId, members, senderKey, traceId);
+
     this.logger.log(
-      `[WELCOME_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} — stored in Redis for deferred delivery`,
+      `[WELCOME_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} — stored in Redis, FCM sent to peers`,
     );
     return { status: 'no_peer_online' };
   }
@@ -1214,6 +1223,69 @@ export class MessagingService {
     );
 
     return { status: 'deleted', count: result.affected || 0 };
+  }
+
+  /**
+   * Sends a silent FCM data push to every registered device of each group member
+   * (except the requester) to wake them up when a welcome_request is pending and
+   * no peer was online to handle it.
+   *
+   * On reception, the Kotlin service should reconnect the WebSocket; the normal
+   * reinvite-drain flow will then forward the pending welcome_request automatically.
+   */
+  private async sendFcmWelcomeRequestPending(
+    groupId: string,
+    members: string[],
+    requesterKey: string,
+    traceId: string,
+  ): Promise<void> {
+    if (admin.apps.length === 0) return;
+
+    const [requesterUserId, requesterDeviceId] = requesterKey.split(':');
+
+    const uniqueUserIds = [
+      ...new Set(
+        members
+          .filter((m) => m !== requesterKey)
+          .map((m) => m.split(':')[0])
+          .filter(Boolean),
+      ),
+    ];
+
+    for (const userId of uniqueUserIds) {
+      const tokens = await this.pushTokenRepo.find({ where: { userId } });
+      for (const pt of tokens) {
+        try {
+          await admin.messaging().send({
+            token: pt.token,
+            data: {
+              type: 'welcome_request_pending',
+              groupId,
+              requesterUserId: requesterUserId ?? '',
+              requesterDeviceId: requesterDeviceId ?? '',
+            },
+            android: { priority: 'high', ttl: 3_600_000 }, // 1 h < 24 h Redis TTL
+            apns: {
+              payload: { aps: { contentAvailable: true } },
+              headers: { 'apns-push-type': 'background', 'apns-priority': '5' },
+            },
+          });
+          this.logger.log(
+            `[WELCOME_REQ][${traceId}] FCM welcome_request_pending user=${userId} device=${pt.deviceId}`,
+          );
+        } catch (e) {
+          if (this.isTerminalPushTokenError(e)) {
+            await this.pushTokenRepo.delete({ id: pt.id });
+            this.logger.warn(
+              `[WELCOME_REQ][${traceId}] Deleted invalid push token user=${userId} device=${pt.deviceId}`,
+            );
+          }
+          this.logger.warn(
+            `[WELCOME_REQ][${traceId}] FCM failed user=${userId} device=${pt.deviceId} err=${e}`,
+          );
+        }
+      }
+    }
   }
 
   /**

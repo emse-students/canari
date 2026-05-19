@@ -332,19 +332,38 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           epochRecoveryGroups.delete(groupId!);
         } catch (welcomeErr) {
           const welcomeErrMsg = String(welcomeErr);
-          // Welcome pour un autre device, dupliqué, ou "CannotDecryptOwnMessage" → ACK silencieux.
-          // NoMatchingKeyPackage / GroupAlreadyExists : erreur irrécupérable (clés désync après
-          // réinstallation) — on purge le message pour débloquer la Queue.
+          // GroupAlreadyExists / "already" / "duplicate" / "exists" : le groupe est déjà
+          // dans le WASM (Welcome re-livré après un saveState raté). On persiste maintenant
+          // pour éviter de re-boucler indéfiniment sur SYNC après chaque reload, puis ACK.
           if (
+            welcomeErrMsg.includes('GroupAlreadyExists') ||
             welcomeErrMsg.includes('already') ||
             welcomeErrMsg.includes('duplicate') ||
-            welcomeErrMsg.includes('exists') ||
+            welcomeErrMsg.includes('exists')
+          ) {
+            log(`[WELCOME] Groupe ${convoKey} déjà rejoint — sauvegarde état MLS avant ACK`);
+            try {
+              const stBytes = await mlsService.saveState(pin);
+              await saveMlsState(userId, stBytes);
+              const staleConvo = conversations.get(convoKey);
+              if (staleConvo) {
+                conversations.set(convoKey, { ...staleConvo, isReady: true });
+                localStorage.removeItem(`discovery_pending:${groupId}`);
+                if (storage) await saveConversation(convoKey);
+              }
+            } catch {
+              /* non-bloquant */
+            }
+            return true;
+          }
+          // CannotDecryptOwnMessage / NoMatchingKeyPackage : Welcome destiné à un autre
+          // device → ACK silencieux pour débloquer la queue.
+          if (
             welcomeErrMsg.includes('CannotDecryptOwnMessage') ||
-            welcomeErrMsg.includes('NoMatchingKeyPackage') ||
-            welcomeErrMsg.includes('GroupAlreadyExists')
+            welcomeErrMsg.includes('NoMatchingKeyPackage')
           ) {
             console.warn(
-              `[MLS] Unrecoverable/redundant welcome error — skipping to unblock queue: ${welcomeErrMsg.slice(0, 200)}`
+              `[MLS] Redundant welcome (wrong device) — skipping: ${welcomeErrMsg.slice(0, 200)}`
             );
             return true;
           }

@@ -150,15 +150,16 @@
       members = await listMembers(a.id);
       const names: Record<string, string> = {};
       for (const m of members) {
-        names[m.userId] = m.displayName?.trim() || getUserDisplayNameSync(m.userId, m.userId);
+        // Prefer the module cache (warm on SPA navigation), then displayName from API
+        names[m.userId] =
+          getUserDisplayNameSync(m.userId) || m.displayName?.trim() || m.userId;
       }
       resolvedMemberNames = names;
+      // Always resolve asynchronously — API displayName may be stale or be the bare userId
       for (const m of members) {
-        if (!m.displayName?.trim()) {
-          resolveUserDisplayName(m.userId).then((resolved) => {
-            if (resolved) resolvedMemberNames = { ...resolvedMemberNames, [m.userId]: resolved };
-          });
-        }
+        resolveUserDisplayName(m.userId).then((resolved) => {
+          if (resolved) resolvedMemberNames = { ...resolvedMemberNames, [m.userId]: resolved };
+        });
       }
       editName = a.name;
       editDescription = a.description ?? '';
@@ -217,6 +218,14 @@
         newMemberPermissions
       );
       members = [...members, member];
+      resolvedMemberNames = {
+        ...resolvedMemberNames,
+        [member.userId]:
+          getUserDisplayNameSync(member.userId) || member.displayName?.trim() || member.userId,
+      };
+      resolveUserDisplayName(member.userId).then((resolved) => {
+        if (resolved) resolvedMemberNames = { ...resolvedMemberNames, [member.userId]: resolved };
+      });
       newMemberUserId = '';
       newMemberRole = 'Membre';
       newMemberPermissions = 0;

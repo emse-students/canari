@@ -42,7 +42,7 @@
   style="padding-bottom: env(safe-area-inset-bottom)"
 >
   <div class="flex items-stretch justify-around h-16">
-    {#each APP_PLACES as place (place.id)}
+    {#each APP_PLACES.filter((p) => p.mobileNav) as place (place.id)}
       {@const PlaceIcon = getIcon(place.icon)}
       {@const isActive = place.id === activePlaceId}
       {@const badge = placeBadge(place.id, isActive)}

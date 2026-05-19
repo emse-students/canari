@@ -19,3 +19,24 @@ export function socialUrl(): string {
   if (url?.trim()) return url.trim().replace(/\/$/, '');
   return '';
 }
+
+/**
+ * Returns the base URL for the chat-gateway (WebSocket, presence, admin routes).
+ * Must be an absolute URL in Tauri/mobile where `window.location.origin` is
+ * `tauri://localhost` and does not reach the nginx proxy.
+ */
+export function gatewayUrl(): string {
+  const url = (import.meta as any).env?.VITE_GATEWAY_URL as string | undefined;
+  if (url?.trim()) return url.trim().replace(/\/$/, '');
+  return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
+}
+
+/**
+ * Returns the base URL for the chat-delivery service (MLS HTTP API, push, history).
+ * Must be an absolute URL in Tauri/mobile — see {@link gatewayUrl}.
+ */
+export function deliveryUrl(): string {
+  const url = (import.meta as any).env?.VITE_DELIVERY_URL as string | undefined;
+  if (url?.trim()) return url.trim().replace(/\/$/, '');
+  return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3010';
+}

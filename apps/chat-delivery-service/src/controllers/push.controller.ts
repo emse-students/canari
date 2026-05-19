@@ -12,13 +12,16 @@ import {
   Headers,
   Res,
   Logger,
+  Inject,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as crypto from 'crypto';
 import * as admin from 'firebase-admin';
+import Redis from 'ioredis';
 import { PushToken } from '../entities/push-token.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
+import { KeyPackage } from '../entities/key-package.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import type { Response } from 'express';
@@ -26,6 +29,7 @@ import {
   sanitizeQueryValue,
   sanitizeOptionalQueryValue,
 } from '../utils/sanitize';
+import { MessagingService } from '../services/messaging.service';
 
 /** Push notification token management and Firebase Cloud Messaging dispatch. */
 @Controller()
@@ -37,7 +41,40 @@ export class PushController {
     private pushTokenRepo: Repository<PushToken>,
     @InjectRepository(QueuedMessage)
     private queuedMessageRepo: Repository<QueuedMessage>,
+    @InjectRepository(KeyPackage)
+    private keyPackageRepo: Repository<KeyPackage>,
+    @Inject('REDIS_CLIENT') private readonly redis: Redis,
+    private readonly messagingService: MessagingService,
   ) {}
+
+  /**
+   * Verifies the PushSecret auth header against the stored secret for the given device.
+   * Throws ForbiddenException on failure. Used by all background-service endpoints.
+   */
+  private async verifyPushSecretAuth(
+    authHeader: string,
+    userId: string,
+    deviceId: string,
+  ): Promise<void> {
+    const secret = authHeader?.startsWith('PushSecret ')
+      ? authHeader.slice('PushSecret '.length).trim()
+      : null;
+    if (!secret) throw new ForbiddenException('PushSecret header required');
+    const pt = await this.pushTokenRepo.findOne({
+      where: { userId, deviceId },
+    });
+    if (
+      !pt?.pushSecret ||
+      !crypto.timingSafeEqual(
+        Buffer.from(pt.pushSecret),
+        Buffer.from(
+          secret.slice(0, pt.pushSecret.length).padEnd(pt.pushSecret.length),
+        ),
+      )
+    ) {
+      throw new ForbiddenException('Invalid push secret');
+    }
+  }
 
   private isTerminalPushTokenError(error: unknown): boolean {
     const rawCode =
@@ -219,6 +256,175 @@ export class PushController {
     await this.pushTokenRepo.delete({ userId, deviceId });
     this.logger.log(`[PUSH_UNREGISTER] user=${userId} device=${deviceId}`);
     return { status: 'unregistered' };
+  }
+
+  // ── Background-service (PushSecret) endpoints ─────────────────────────────
+
+  /**
+   * Acquires the distributed add-lock for a group.
+   * Called by the Android background service before creating a Welcome package
+   * to prevent concurrent epoch forks when multiple devices race to add the same requester.
+   * Auth: PushSecret (no JWT — app may be killed).
+   */
+  @Post('mls/push/acquire-add-lock')
+  async acquireAddLockPush(
+    @Headers('authorization') authHeader: string,
+    @Body() body: { userId: string; deviceId: string; groupId: string },
+  ) {
+    const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
+    const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
+    const groupId = sanitizeQueryValue(body.groupId ?? '', 'groupId');
+    await this.verifyPushSecretAuth(authHeader, userId, deviceId);
+
+    const lockKey = `mls:addlock:${groupId}`;
+    const lockOwner = `${userId}:${deviceId}`;
+    const result = await this.redis.set(lockKey, lockOwner, 'EX', 15, 'NX');
+    this.logger.log(
+      `[ADD_LOCK_PUSH] group=${groupId} owner=${lockOwner} acquired=${result === 'OK'}`,
+    );
+    return { acquired: result === 'OK' };
+  }
+
+  /**
+   * Releases the distributed add-lock for a group.
+   * Uses a Lua script to atomically verify ownership before deleting.
+   * Auth: PushSecret (no JWT).
+   */
+  @Delete('mls/push/release-add-lock')
+  async releaseAddLockPush(
+    @Headers('authorization') authHeader: string,
+    @Body() body: { userId: string; deviceId: string; groupId: string },
+  ) {
+    const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
+    const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
+    const groupId = sanitizeQueryValue(body.groupId ?? '', 'groupId');
+    await this.verifyPushSecretAuth(authHeader, userId, deviceId);
+
+    const lockKey = `mls:addlock:${groupId}`;
+    const lockOwner = `${userId}:${deviceId}`;
+    const released = await this.redis.eval(
+      `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end`,
+      1,
+      lockKey,
+      lockOwner,
+    );
+    this.logger.log(
+      `[RELEASE_LOCK_PUSH] group=${groupId} owner=${lockOwner} released=${released === 1}`,
+    );
+    return { released: released === 1 };
+  }
+
+  /**
+   * Returns the stored MLS KeyPackage (base64) for a target device.
+   * Called by the background service to fetch the requester's key package
+   * before creating the Welcome package via Rust JNI.
+   * Auth: PushSecret (no JWT).
+   */
+  @Get('mls/push/key-package')
+  async getKeyPackagePush(
+    @Headers('authorization') authHeader: string,
+    @Query('requesterId') requesterIdRaw: string,
+    @Query('deviceId') deviceIdRaw: string,
+    @Query('targetUserId') targetUserIdRaw: string,
+    @Query('targetDeviceId') targetDeviceIdRaw: string,
+  ) {
+    const requesterId = sanitizeQueryValue(requesterIdRaw ?? '', 'requesterId');
+    const deviceId = sanitizeQueryValue(deviceIdRaw ?? '', 'deviceId');
+    await this.verifyPushSecretAuth(authHeader, requesterId, deviceId);
+
+    const targetUserId = sanitizeQueryValue(
+      targetUserIdRaw ?? '',
+      'targetUserId',
+    );
+    const targetDeviceId = sanitizeQueryValue(
+      targetDeviceIdRaw ?? '',
+      'targetDeviceId',
+    );
+    const kp = await this.keyPackageRepo.findOne({
+      where: { userId: targetUserId, deviceId: targetDeviceId },
+    });
+    if (!kp) {
+      this.logger.warn(
+        `[KEY_PACKAGE_PUSH] not found target=${targetUserId}:${targetDeviceId} requester=${requesterId}:${deviceId}`,
+      );
+      throw new BadRequestException(
+        `Key package not found for ${targetUserId}:${targetDeviceId}`,
+      );
+    }
+    this.logger.log(
+      `[KEY_PACKAGE_PUSH] found target=${targetUserId}:${targetDeviceId} requester=${requesterId}:${deviceId}`,
+    );
+    return { keyPackage: kp.keyPackage };
+  }
+
+  /**
+   * Sends a Welcome to the target device and broadcasts the accompanying commit
+   * to all current group members. Called by the background service after creating
+   * the Welcome package via Rust JNI (nativeCreateWelcomeBackground).
+   * Auth: PushSecret (no JWT).
+   */
+  @Post('mls/push/send-welcome-and-commit')
+  async sendWelcomeAndCommitPush(
+    @Headers('authorization') authHeader: string,
+    @Body()
+    body: {
+      userId: string;
+      deviceId: string;
+      groupId: string;
+      targetUserId: string;
+      targetDeviceId: string;
+      welcomePayload: string;
+      ratchetTreePayload?: string;
+      commitPayload: string;
+    },
+  ) {
+    const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
+    const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
+    await this.verifyPushSecretAuth(authHeader, userId, deviceId);
+
+    const groupId = sanitizeQueryValue(body.groupId ?? '', 'groupId');
+    const targetUserId = sanitizeQueryValue(
+      body.targetUserId ?? '',
+      'targetUserId',
+    );
+    const targetDeviceId = sanitizeQueryValue(
+      body.targetDeviceId ?? '',
+      'targetDeviceId',
+    );
+    if (typeof body.welcomePayload !== 'string' || !body.welcomePayload) {
+      throw new BadRequestException('welcomePayload required');
+    }
+    if (typeof body.commitPayload !== 'string' || !body.commitPayload) {
+      throw new BadRequestException('commitPayload required');
+    }
+
+    const traceId = `bg-wlc-${crypto.randomUUID().slice(0, 8)}`;
+    this.logger.log(
+      `[BG_WELCOME][${traceId}] START group=${groupId} sender=${userId}:${deviceId} target=${targetUserId}:${targetDeviceId}`,
+    );
+
+    // Send Welcome to target device (null authUserId skips membership check)
+    await this.messagingService.sendWelcome(undefined, {
+      targetDeviceId,
+      targetUserId,
+      senderUserId: userId,
+      welcomePayload: body.welcomePayload,
+      ratchetTreePayload: body.ratchetTreePayload,
+      groupId,
+    });
+
+    // Broadcast commit to all existing group members (sender + target excluded)
+    await this.messagingService.sendMessage({
+      proto: body.commitPayload,
+      groupId,
+      senderId: userId,
+      senderDeviceId: deviceId,
+      isCommit: true,
+      excludeDeviceIds: [`${targetUserId}:${targetDeviceId}`],
+    });
+
+    this.logger.log(`[BG_WELCOME][${traceId}] DONE`);
+    return { status: 'done' };
   }
 
   /**

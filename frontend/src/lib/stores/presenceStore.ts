@@ -1,5 +1,6 @@
 import { get, writable } from 'svelte/store';
 import { apiFetch } from '$lib/utils/apiFetch';
+import { gatewayUrl } from '$lib/utils/apiUrl';
 import { createPausableInterval } from '$lib/utils/backgroundPausableInterval';
 
 /**
@@ -9,15 +10,6 @@ import { createPausableInterval } from '$lib/utils/backgroundPausableInterval';
 export const presenceMap = writable<Record<string, boolean>>({});
 const peerIdsToPoll = new Set<string>();
 let _destroyInterval: (() => void) | null = null;
-
-/** Returns the base URL for the chat gateway, falling back to the current origin. */
-function getGatewayBase(): string {
-  const env = typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GATEWAY_URL;
-  if (typeof env === 'string' && env.trim()) {
-    return env.trim().replace(/\/$/, '');
-  }
-  return typeof window !== 'undefined' ? window.location.origin : '';
-}
 
 /**
  * Adds the given user IDs to the polling watchlist and starts the polling loop
@@ -46,7 +38,7 @@ export async function checkPresenceNow() {
   if (peerIdsToPoll.size === 0) return;
   const usersStr = Array.from(peerIdsToPoll).join(',');
   try {
-    const baseUrl = getGatewayBase();
+    const baseUrl = gatewayUrl();
     const res = await apiFetch(`${baseUrl}/api/presence?users=${usersStr}`);
     if (res.ok) {
       const contentType = res.headers.get('content-type')?.toLowerCase() ?? '';

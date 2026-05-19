@@ -1,16 +1,23 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { User } from './entities/user.entity';
 import { CreateUserDto, UpdateUserDto, PublicUserDto } from './dto/user.dto';
 
 /** Service managing user persistence and OIDC upsert logic. */
 @Injectable()
-export class UsersService {
+export class UsersService implements OnModuleInit {
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    private readonly dataSource: DataSource,
   ) {}
+
+  /** Enables the unaccent PostgreSQL extension used by the search query. */
+  async onModuleInit(): Promise<void> {
+    await this.dataSource.query('CREATE EXTENSION IF NOT EXISTS unaccent');
+    console.log('[UsersService] unaccent extension ready');
+  }
 
   /** Persists a new user entity and returns it. */
   async create(createUserDto: CreateUserDto): Promise<User> {
@@ -110,8 +117,9 @@ export class UsersService {
   }
 
   /**
-   * Search users by displayName (case-insensitive prefix match).
-   * Returns up to 10 results, excluding the current user.
+   * Search users by displayName — case-insensitive, accent-insensitive, and
+   * word-order-insensitive. All whitespace-delimited terms must match.
+   * Returns up to 10 results, excluding the current user if specified.
    */
   async search(
     query: string,
@@ -119,12 +127,20 @@ export class UsersService {
   ): Promise<Pick<User, 'id' | 'displayName'>[]> {
     if (!query || query.length < 1) return [];
 
+    const terms = query.trim().split(/\s+/).filter(Boolean);
+    console.log(`[UsersService] search terms: ${JSON.stringify(terms)}`);
+
     const qb = this.userRepository
       .createQueryBuilder('user')
-      .select(['user.id', 'user.displayName'])
-      .where('user.displayName ILIKE :q', {
-        q: `%${query}%`,
-      });
+      .select(['user.id', 'user.displayName']);
+
+    // Each term must appear somewhere in the name (AND logic across terms)
+    terms.forEach((term, i) => {
+      qb.andWhere(
+        `unaccent(LOWER(user.displayName)) LIKE unaccent(LOWER(:term${i}))`,
+        { [`term${i}`]: `%${term}%` },
+      );
+    });
 
     if (excludeUserId) {
       qb.andWhere('user.id != :excludeId', { excludeId: excludeUserId });

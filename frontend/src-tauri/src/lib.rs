@@ -1933,3 +1933,86 @@ pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroun
         0
     }
 }
+
+/// Crée un paquet Welcome MLS pour un nouveau device (background service, app tuée).
+///
+/// Appelé depuis `CanariFirebaseMessagingService` lors de la réception d'un
+/// `welcome_request_pending` FCM quand l'app n'est pas en premier plan.
+///
+/// - Charge l'état MLS depuis `state_bytes`.
+/// - Appelle `add_member` avec le `key_package_b64` du requester.
+/// - Sauvegarde l'état MLS mis à jour dans `{files_dir}/mls.bin`.
+/// - Retourne un JSON : `{"ok":true,"welcome":"<b64>","ratchetTree":"<b64>|null","commit":"<b64>"}`
+///   ou `{"ok":false,"error":"..."}` en cas d'échec.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeCreateWelcomeBackground(
+    mut env: jni::JNIEnv,
+    _service: jni::objects::JObject,
+    files_dir: jni::objects::JString,
+    state_bytes: jni::objects::JByteArray,
+    pin: jni::objects::JString,
+    user_id: jni::objects::JString,
+    device_id: jni::objects::JString,
+    group_id: jni::objects::JString,
+    key_package_b64: jni::objects::JString,
+) -> jni::objects::JString {
+    let result = (|| -> Result<serde_json::Value, String> {
+        let files_dir_str: String = env.get_string(&files_dir).map_err(|e| e.to_string())?.into();
+        let state_vec = env.convert_byte_array(&state_bytes).map_err(|e| e.to_string())?;
+        let pin_str: String = env.get_string(&pin).map_err(|e| e.to_string())?.into();
+        let user_id_str: String = env.get_string(&user_id).map_err(|e| e.to_string())?.into();
+        let device_id_str: String = env.get_string(&device_id).map_err(|e| e.to_string())?.into();
+        let group_id_str: String = env.get_string(&group_id).map_err(|e| e.to_string())?.into();
+        let kp_b64: String = env.get_string(&key_package_b64).map_err(|e| e.to_string())?.into();
+
+        let kp_bytes = STANDARD
+            .decode(&kp_b64)
+            .map_err(|e| format!("base64 decode key_package: {}", e))?;
+
+        let mut manager =
+            MlsManager::load_encrypted(&user_id_str, &device_id_str, Some(state_vec), &pin_str)
+                .map_err(|e| e.to_string())?;
+
+        log::debug!(
+            "[BG_WELCOME] add_member group={} kp_len={}",
+            group_id_str,
+            kp_bytes.len()
+        );
+        let (commit, welcome_opt, ratchet_tree_opt) = manager
+            .add_member(&group_id_str, &kp_bytes)
+            .map_err(|e| e.to_string())?;
+
+        let welcome = welcome_opt
+            .ok_or_else(|| "add_member returned no welcome bytes".to_string())?;
+
+        // Sauvegarde atomique de l'état MLS mis à jour.
+        let enc = manager.save_encrypted(&pin_str).map_err(|e| e.to_string())?;
+        let mls_path = std::path::Path::new(&files_dir_str).join("mls.bin");
+        std::fs::write(&mls_path, &enc)
+            .map_err(|e| format!("write mls.bin: {}", e))?;
+        log::info!(
+            "[BG_WELCOME] mls.bin mis à jour ({} octets) pour group={}",
+            enc.len(),
+            group_id_str
+        );
+
+        Ok(serde_json::json!({
+            "ok": true,
+            "welcome": STANDARD.encode(&welcome),
+            "ratchetTree": ratchet_tree_opt.as_deref().map(|rt| STANDARD.encode(rt)),
+            "commit": STANDARD.encode(&commit),
+        }))
+    })();
+
+    let json_str = match result {
+        Ok(v) => v.to_string(),
+        Err(e) => {
+            log::error!("[BG_WELCOME] nativeCreateWelcomeBackground failed: {}", e);
+            format!("{{\"ok\":false,\"error\":{:?}}}", e)
+        }
+    };
+
+    env.new_string(&json_str)
+        .unwrap_or_else(|_| env.new_string("{\"ok\":false}").unwrap())
+}

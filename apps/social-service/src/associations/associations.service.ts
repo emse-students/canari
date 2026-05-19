@@ -341,12 +341,13 @@ export class AssociationsService {
     return this.memberRepo.save(membership);
   }
 
-  /** Updates a member's role label and/or permission bitmask. Blocks removal of all flags from the last admin. */
+  /** Updates a member's role label and/or permission bitmask. Blocks removal of all flags from the last admin, unless bypassLastAdmin is true (global admin or BDE). */
   async updateMemberRole(
     associationId: string,
     targetUserId: string,
     role?: string,
-    permissions?: number
+    permissions?: number,
+    opts?: { bypassLastAdmin?: boolean }
   ) {
     const membership = await this.memberRepo.findOne({
       where: { associationId, userId: targetUserId },
@@ -354,8 +355,8 @@ export class AssociationsService {
     if (!membership) {
       throw new NotFoundException('Member not found');
     }
-    // Guard: demoting the only admin to a non-admin (permissions=0) is blocked.
-    if (permissions !== undefined && membership.permissions > 0 && permissions === 0) {
+    // Guard: demoting the only admin to a non-admin (permissions=0) is blocked, unless caller is global admin or BDE.
+    if (permissions !== undefined && membership.permissions > 0 && permissions === 0 && !opts?.bypassLastAdmin) {
       await this.assertNotLastAdminDemotion(associationId);
     }
     if (role !== undefined) membership.role = role;
@@ -363,15 +364,15 @@ export class AssociationsService {
     return this.memberRepo.save(membership);
   }
 
-  /** Removes a member from the association. Blocks removal of the last admin (permissions > 0). */
-  async removeMember(associationId: string, targetUserId: string) {
+  /** Removes a member from the association. Blocks removal of the last admin, unless bypassLastAdmin is true (global admin or BDE). */
+  async removeMember(associationId: string, targetUserId: string, opts?: { bypassLastAdmin?: boolean }) {
     const membership = await this.memberRepo.findOne({
       where: { associationId, userId: targetUserId },
     });
     if (!membership) {
       throw new NotFoundException('Member not found');
     }
-    if (membership.permissions > 0) {
+    if (membership.permissions > 0 && !opts?.bypassLastAdmin) {
       await this.assertNotLastAdminRemoval(associationId);
     }
 
@@ -392,7 +393,9 @@ export class AssociationsService {
   private async assertNotLastAdminRemoval(associationId: string): Promise<void> {
     const n = await this.adminMemberCount(associationId);
     if (n <= 1) {
-      throw new BadRequestException('Cannot remove the last administrator of this association');
+      throw new BadRequestException(
+        "Impossible de retirer le dernier administrateur de cette association"
+      );
     }
   }
 
@@ -400,7 +403,9 @@ export class AssociationsService {
   private async assertNotLastAdminDemotion(associationId: string): Promise<void> {
     const n = await this.adminMemberCount(associationId);
     if (n <= 1) {
-      throw new BadRequestException('Cannot demote the last administrator of this association');
+      throw new BadRequestException(
+        "Impossible de rétrograder le dernier administrateur de cette association"
+      );
     }
   }
 

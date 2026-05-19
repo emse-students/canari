@@ -11,24 +11,28 @@ export interface AppPlace {
     | 'calendar'
     | 'shopping-bag';
   href: string;
+  /** Whether this place appears in the mobile bottom navigation bar. */
+  mobileNav: boolean;
 }
 
-// Ordre : Communautés | Feed | Discussions | Notifs | Tableau de bord
-// (correspond à l'ordre de la bottom nav mobile et de la sidebar desktop)
+// Ordre mobile : Feed | Communautés | Discussions | Notifs | Tableau de bord
+// La sidebar desktop affiche toutes les places (mobileNav ignoré).
 export const APP_PLACES: AppPlace[] = [
-  {
-    id: 'communities',
-    label: 'Communautés',
-    description: "Espaces d'associations et canaux",
-    icon: 'users',
-    href: '/communities',
-  },
   {
     id: 'posts',
     label: 'Feed',
     description: 'Le fil social de la communauté',
     icon: 'newspaper',
     href: '/posts',
+    mobileNav: true,
+  },
+  {
+    id: 'communities',
+    label: 'Communautés',
+    description: "Espaces d'associations et canaux",
+    icon: 'users',
+    href: '/communities',
+    mobileNav: true,
   },
   {
     id: 'chat',
@@ -36,6 +40,7 @@ export const APP_PLACES: AppPlace[] = [
     description: 'Messages directs et petits groupes',
     icon: 'message-circle',
     href: '/chat',
+    mobileNav: true,
   },
   {
     id: 'notifications',
@@ -43,6 +48,7 @@ export const APP_PLACES: AppPlace[] = [
     description: 'Réactions, mentions et commentaires',
     icon: 'bell',
     href: '/notifications',
+    mobileNav: true,
   },
   {
     id: 'calendar',
@@ -50,6 +56,7 @@ export const APP_PLACES: AppPlace[] = [
     description: 'Événements et calendrier',
     icon: 'calendar',
     href: '/calendar',
+    mobileNav: false,
   },
   {
     id: 'shop',
@@ -57,6 +64,7 @@ export const APP_PLACES: AppPlace[] = [
     description: 'Produits et cotisations',
     icon: 'shopping-bag',
     href: '/shop',
+    mobileNav: false,
   },
   {
     id: 'dashboard',
@@ -64,6 +72,7 @@ export const APP_PLACES: AppPlace[] = [
     description: "Vue d'ensemble de l'application",
     icon: 'layout-dashboard',
     href: '/dashboard',
+    mobileNav: true,
   },
 ];
 

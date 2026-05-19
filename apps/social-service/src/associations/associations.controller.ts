@@ -323,20 +323,33 @@ export class AssociationsController {
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Patch(':id/members/:userId')
-  updateMemberRole(
+  async updateMemberRole(
     @Param('id') id: string,
     @Param('userId') targetUserId: string,
+    @Headers('x-user-id') callerId: string,
+    @Headers('x-global-admin') ga: string | undefined,
     @Body() dto: UpdateMemberRoleDto
   ) {
-    return this.service.updateMemberRole(id, targetUserId, dto.role, dto.permissions);
+    const isGlobalAdmin = ga === 'true';
+    const isBde = isGlobalAdmin ? false : await this.service.isUserBdeAdmin(callerId);
+    return this.service.updateMemberRole(id, targetUserId, dto.role, dto.permissions, {
+      bypassLastAdmin: isGlobalAdmin || isBde,
+    });
   }
 
   /** Removes a member from the association. */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Delete(':id/members/:userId')
-  removeMember(@Param('id') id: string, @Param('userId') targetUserId: string) {
-    return this.service.removeMember(id, targetUserId);
+  async removeMember(
+    @Param('id') id: string,
+    @Param('userId') targetUserId: string,
+    @Headers('x-user-id') callerId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    const isGlobalAdmin = ga === 'true';
+    const isBde = isGlobalAdmin ? false : await this.service.isUserBdeAdmin(callerId);
+    return this.service.removeMember(id, targetUserId, { bypassLastAdmin: isGlobalAdmin || isBde });
   }
 
   // ── Calendar (PROPOSE_EVENT flag) ─────────────────────────────────────────

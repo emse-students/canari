@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { apiFetch } from '$lib/utils/apiFetch';
+  import { gatewayUrl } from '$lib/utils/apiUrl';
   import { fetchUserProfile, type UserProfile } from '$lib/stores/user';
   import { RefreshCw, Wifi, WifiOff, TriangleAlert, Info } from '@lucide/svelte';
   import { SvelteMap } from 'svelte/reactivity';
@@ -34,7 +35,7 @@
 
   async function fetchPresence() {
     try {
-      const res = await apiFetch('/api/admin/presence');
+      const res = await apiFetch(`${gatewayUrl()}/api/admin/presence`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as PresenceResponse;
       devices = data.devices;

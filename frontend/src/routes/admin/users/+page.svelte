@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { Shield, RefreshCw, Users } from '@lucide/svelte';
   import { apiFetch } from '$lib/utils/apiFetch';
+  import { coreUrl } from '$lib/utils/apiUrl';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { goto } from '$app/navigation';
 
@@ -18,13 +19,24 @@
   let feedback = $state<Record<string, string>>({});
   let searchQuery = $state('');
 
+  /** Strips accents and lowercases for locale-insensitive comparison. */
+  function normalize(s: string): string {
+    return s
+      .normalize('NFD')
+      .replace(/\p{Diacritic}/gu, '')
+      .toLowerCase();
+  }
+
   let filtered = $derived(
     searchQuery.trim()
-      ? users.filter(
-          (u) =>
-            u.displayName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            u.id.toLowerCase().includes(searchQuery.toLowerCase())
-        )
+      ? (() => {
+          const terms = normalize(searchQuery).split(/\s+/).filter(Boolean);
+          return users.filter((u) => {
+            const name = normalize(u.displayName ?? '');
+            const id = normalize(u.id);
+            return terms.every((t) => name.includes(t) || id.includes(t));
+          });
+        })()
       : users
   );
 
@@ -32,7 +44,7 @@
     loading = true;
     error = '';
     try {
-      const res = await apiFetch('/api/users/admin/list');
+      const res = await apiFetch(`${coreUrl()}/api/users/admin/list`);
       if (!res.ok) throw new Error(`Erreur ${res.status}`);
       users = await res.json();
     } catch (e) {
@@ -47,7 +59,7 @@
     saving = { ...saving, [user.id]: true };
     feedback = { ...feedback, [user.id]: '' };
     try {
-      const res = await apiFetch(`/api/users/${encodeURIComponent(user.id)}/admin`, {
+      const res = await apiFetch(`${coreUrl()}/api/users/${encodeURIComponent(user.id)}/admin`, {
         method: 'PATCH',
         body: JSON.stringify({ admin: newVal }),
       });

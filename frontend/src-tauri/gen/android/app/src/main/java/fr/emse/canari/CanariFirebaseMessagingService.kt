@@ -74,6 +74,22 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         ciphertext: ByteArray
     ): String
 
+    /**
+     * Crée un paquet Welcome MLS pour [keyPackageB64] dans le groupe [groupId].
+     * Sauvegarde l'état MLS mis à jour dans {filesDir}/mls.bin.
+     * Retourne JSON : {"ok":true,"welcome":"<b64>","ratchetTree":"<b64>|null","commit":"<b64>"}
+     * ou {"ok":false,"error":"..."}.
+     */
+    external fun nativeCreateWelcomeBackground(
+        filesDir: String,
+        stateBytes: ByteArray,
+        pin: String,
+        userId: String,
+        deviceId: String,
+        groupId: String,
+        keyPackageB64: String,
+    ): String
+
     /** Résultat structuré du déchiffrement MLS, extrait depuis le JSON retourné par Rust. */
     data class DecryptedMessage(
         val text: String,
@@ -102,6 +118,36 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         Log.d(TAG, "onMessageReceived: type=${data["type"]} action=${data["action"]} groupId=${data["groupId"]} queuedMessageId=${data["queuedMessageId"]} hasInlineProto=${!data["proto"].isNullOrEmpty()}")
 
         val msgType = data["type"]
+
+        // Demande de bienvenue en attente : un pair hors-ligne a besoin d'être ajouté à un groupe.
+        // On traite directement en arrière-plan (JNI + HTTP PushSecret) sans ouvrir la WebView.
+        if (msgType == "welcome_request_pending") {
+            val groupId       = data["groupId"] ?: ""
+            val requesterUser = data["requesterUserId"] ?: ""
+            val requesterDev  = data["requesterDeviceId"] ?: ""
+            Log.d(TAG, "welcome_request_pending → groupId=$groupId requester=$requesterUser:$requesterDev — traitement background complet")
+            if (groupId.isEmpty() || requesterUser.isEmpty() || requesterDev.isEmpty()) {
+                Log.e(TAG, "welcome_request_pending: champs manquants → abandon")
+                return
+            }
+            Thread {
+                processWelcomeRequestBackground(groupId, requesterUser, requesterDev)
+            }.start()
+            return
+        }
+
+        // Paquet Welcome MLS : les bytes sont dans la file backend, pas déchiffrables via
+        // nativeDecryptMessage (format différent). On enqueue le worker silencieusement sans
+        // tenter un déchiffrement voué à l'échec.
+        if (data["isWelcome"] == "true") {
+            val groupId = data["groupId"] ?: ""
+            Log.d(TAG, "isWelcome=true → groupId=$groupId — enqueue worker, no notification")
+            val workRequest = OneTimeWorkRequestBuilder<MlsBackgroundWorker>()
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.MIN_BACKOFF_MILLIS, TimeUnit.MILLISECONDS)
+                .build()
+            WorkManager.getInstance(this).enqueue(workRequest)
+            return
+        }
 
         // Notifications sociales et rappels de formulaires : pas de déchiffrement MLS
         if (msgType == "social" || msgType == "form_reminder") {
@@ -183,6 +229,223 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Log.d(TAG, "showNotification: groupId=$groupId senderName=$senderName body=${body.take(60)} hasAvatar=${avatarBitmap != null}")
             showNotification(senderName, groupName, body, largeIcon, groupId)
         }.start()
+    }
+
+    // ── Traitement background Welcome request ────────────────────────────────
+
+    /**
+     * Traite une `welcome_request_pending` reçue via FCM quand l'app est tuée.
+     * Séquence : acquiert le verrou Redis → fetche le key package → crée le Welcome
+     * via JNI → envoie Welcome+commit au backend → libère le verrou.
+     * Tout se passe sous [MLS_LOCK] pour éviter les accès concurrents à mls.bin.
+     */
+    private fun processWelcomeRequestBackground(
+        groupId: String,
+        requesterUserId: String,
+        requesterDeviceId: String,
+    ) {
+        if (!MLS_LOCK.tryLock(10, java.util.concurrent.TimeUnit.SECONDS)) {
+            Log.w(TAG, "processWelcomeRequestBackground: MLS_LOCK non acquis → abandon")
+            return
+        }
+        try {
+            val ctx = loadPushContext()
+            if (ctx == null) {
+                Log.e(TAG, "processWelcomeRequestBackground: push_context.json absent → abandon")
+                return
+            }
+            val stateBytes = loadMlsState()
+            if (stateBytes == null) {
+                Log.e(TAG, "processWelcomeRequestBackground: mls.bin absent → abandon")
+                return
+            }
+            val secret = PushSecretKeystore.retrieve(this)
+            if (secret == null) {
+                Log.e(TAG, "processWelcomeRequestBackground: pushSecret absent → abandon")
+                return
+            }
+
+            // 1. Acquérir le verrou Redis add-lock (max 3 tentatives)
+            var lockAcquired = false
+            for (attempt in 0..2) {
+                lockAcquired = acquireAddLock(ctx, secret, groupId)
+                if (lockAcquired) break
+                Log.w(TAG, "processWelcomeRequestBackground: verrou non acquis (tentative ${attempt + 1}/3)")
+                if (attempt < 2) Thread.sleep(2_000)
+            }
+            if (!lockAcquired) {
+                Log.w(TAG, "processWelcomeRequestBackground: impossible d'acquérir le verrou pour group=$groupId → abandon")
+                return
+            }
+            Log.d(TAG, "processWelcomeRequestBackground: verrou acquis pour group=$groupId")
+
+            try {
+                // 2. Récupérer le key package du requester
+                val keyPackage = fetchKeyPackage(ctx, secret, requesterUserId, requesterDeviceId)
+                if (keyPackage == null) {
+                    Log.e(TAG, "processWelcomeRequestBackground: keyPackage introuvable pour $requesterUserId:$requesterDeviceId → abandon")
+                    return
+                }
+                Log.d(TAG, "processWelcomeRequestBackground: keyPackage fetched (${keyPackage.length} chars)")
+
+                // 3. Créer le Welcome via Rust JNI
+                val filesDir = this.filesDir.parentFile!!.absolutePath
+                val jsonStr = nativeCreateWelcomeBackground(
+                    filesDir, stateBytes, ctx.pin, ctx.userId, ctx.deviceId,
+                    groupId, keyPackage,
+                )
+                val result = JSONObject(jsonStr)
+                if (!result.optBoolean("ok", false)) {
+                    Log.e(TAG, "processWelcomeRequestBackground: nativeCreateWelcomeBackground échoué: ${result.optString("error")}")
+                    return
+                }
+                val welcomePayload  = result.getString("welcome")
+                val ratchetTree     = result.optString("ratchetTree").takeIf { it.isNotEmpty() && it != "null" }
+                val commitPayload   = result.getString("commit")
+                Log.d(TAG, "processWelcomeRequestBackground: Welcome créé, commit=${commitPayload.take(16)}…")
+
+                // 4. Envoyer Welcome + commit au backend
+                val sent = sendWelcomeAndCommit(
+                    ctx, secret, groupId,
+                    requesterUserId, requesterDeviceId,
+                    welcomePayload, ratchetTree, commitPayload,
+                )
+                if (sent) {
+                    Log.d(TAG, "processWelcomeRequestBackground: ✓ Welcome envoyé pour group=$groupId target=$requesterUserId:$requesterDeviceId")
+                } else {
+                    Log.e(TAG, "processWelcomeRequestBackground: sendWelcomeAndCommit échoué pour group=$groupId")
+                }
+            } finally {
+                // 5. Libérer le verrou dans tous les cas
+                releaseAddLock(ctx, secret, groupId)
+                Log.d(TAG, "processWelcomeRequestBackground: verrou libéré pour group=$groupId")
+            }
+        } finally {
+            MLS_LOCK.unlock()
+        }
+    }
+
+    /** Acquiert le verrou Redis add-lock via l'endpoint PushSecret. Retourne true si acquis. */
+    private fun acquireAddLock(ctx: PushContext, secret: String, groupId: String): Boolean {
+        return try {
+            val url = URL("${ctx.baseUrl}/api/mls/push/acquire-add-lock")
+            val body = """{"userId":"${ctx.userId}","deviceId":"${ctx.deviceId}","groupId":"$groupId"}"""
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                connectTimeout = 5_000
+                readTimeout    = 5_000
+                requestMethod  = "POST"
+                doOutput       = true
+                setRequestProperty("Authorization", "PushSecret $secret")
+                setRequestProperty("Content-Type", "application/json")
+            }
+            conn.outputStream.use { it.write(body.toByteArray()) }
+            val code = conn.responseCode
+            val text = conn.inputStream.bufferedReader().use { it.readText() }
+            conn.disconnect()
+            Log.d(TAG, "acquireAddLock: HTTP $code group=$groupId")
+            if (code == 201) JSONObject(text).optBoolean("acquired", false) else false
+        } catch (e: Exception) {
+            Log.e(TAG, "acquireAddLock: exception: ${e.message}")
+            false
+        }
+    }
+
+    /** Libère le verrou Redis add-lock via l'endpoint PushSecret. */
+    private fun releaseAddLock(ctx: PushContext, secret: String, groupId: String) {
+        try {
+            val url  = URL("${ctx.baseUrl}/api/mls/push/release-add-lock")
+            val body = """{"userId":"${ctx.userId}","deviceId":"${ctx.deviceId}","groupId":"$groupId"}"""
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                connectTimeout = 5_000
+                readTimeout    = 5_000
+                requestMethod  = "DELETE"
+                doOutput       = true
+                setRequestProperty("Authorization", "PushSecret $secret")
+                setRequestProperty("Content-Type", "application/json")
+            }
+            conn.outputStream.use { it.write(body.toByteArray()) }
+            val code = conn.responseCode
+            conn.disconnect()
+            Log.d(TAG, "releaseAddLock: HTTP $code group=$groupId")
+        } catch (e: Exception) {
+            Log.e(TAG, "releaseAddLock: exception: ${e.message}")
+        }
+    }
+
+    /**
+     * Récupère le KeyPackage MLS (base64) d'un device cible via l'endpoint PushSecret.
+     * Retourne null en cas d'échec.
+     */
+    private fun fetchKeyPackage(
+        ctx: PushContext,
+        secret: String,
+        targetUserId: String,
+        targetDeviceId: String,
+    ): String? {
+        return try {
+            val url = URL(
+                "${ctx.baseUrl}/api/mls/push/key-package" +
+                "?requesterId=${java.net.URLEncoder.encode(ctx.userId, "UTF-8")}" +
+                "&deviceId=${java.net.URLEncoder.encode(ctx.deviceId, "UTF-8")}" +
+                "&targetUserId=${java.net.URLEncoder.encode(targetUserId, "UTF-8")}" +
+                "&targetDeviceId=${java.net.URLEncoder.encode(targetDeviceId, "UTF-8")}"
+            )
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                connectTimeout = 5_000
+                readTimeout    = 5_000
+                requestMethod  = "GET"
+                setRequestProperty("Authorization", "PushSecret $secret")
+            }
+            val code = conn.responseCode
+            if (code != 200) {
+                Log.e(TAG, "fetchKeyPackage: HTTP $code target=$targetUserId:$targetDeviceId")
+                conn.disconnect()
+                return null
+            }
+            val text = conn.inputStream.bufferedReader().use { it.readText() }
+            conn.disconnect()
+            JSONObject(text).optString("keyPackage").takeIf { it.isNotEmpty() }
+        } catch (e: Exception) {
+            Log.e(TAG, "fetchKeyPackage: exception: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * Envoie le Welcome au device cible et diffuse le commit à tous les membres du groupe.
+     * Retourne true si l'appel HTTP a réussi (HTTP 201).
+     */
+    private fun sendWelcomeAndCommit(
+        ctx: PushContext,
+        secret: String,
+        groupId: String,
+        targetUserId: String,
+        targetDeviceId: String,
+        welcomePayload: String,
+        ratchetTree: String?,
+        commitPayload: String,
+    ): Boolean {
+        return try {
+            val url = URL("${ctx.baseUrl}/api/mls/push/send-welcome-and-commit")
+            val ratchetJson = if (ratchetTree != null) "\"$ratchetTree\"" else "null"
+            val body = """{"userId":"${ctx.userId}","deviceId":"${ctx.deviceId}","groupId":"$groupId","targetUserId":"$targetUserId","targetDeviceId":"$targetDeviceId","welcomePayload":"$welcomePayload","ratchetTreePayload":$ratchetJson,"commitPayload":"$commitPayload"}"""
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                connectTimeout = 10_000
+                readTimeout    = 10_000
+                requestMethod  = "POST"
+                doOutput       = true
+                setRequestProperty("Authorization", "PushSecret $secret")
+                setRequestProperty("Content-Type", "application/json")
+            }
+            conn.outputStream.use { it.write(body.toByteArray()) }
+            val code = conn.responseCode
+            conn.disconnect()
+            Log.d(TAG, "sendWelcomeAndCommit: HTTP $code group=$groupId target=$targetUserId:$targetDeviceId")
+            code == 201
+        } catch (e: Exception) {
+            Log.e(TAG, "sendWelcomeAndCommit: exception: ${e.message}")
+            false
+        }
     }
 
     // ── Déchiffrement MLS ─────────────────────────────────────────────────────

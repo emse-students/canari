@@ -6,6 +6,7 @@
     Newspaper,
     Users,
     CalendarDays,
+    ShoppingBag,
     FileText,
     Upload,
     Download,
@@ -41,67 +42,36 @@
     label: string;
     description: string;
     href: string;
-    icon: 'users' | 'newspaper' | 'message-circle' | 'calendar-days' | 'file-text' | 'shield';
-    group: 'principal' | 'outils' | 'admin';
+    icon: 'users' | 'newspaper' | 'message-circle' | 'calendar-days' | 'shopping-bag' | 'file-text' | 'shield';
   }
 
-  const sections: Section[] = [
+  /** Items accessible depuis la nav desktop mais absents de la nav mobile. */
+  const exploreItems: Section[] = [
     {
-      label: 'Communautés',
-      description: "Espaces d'associations et canaux",
-      href: '/communities',
-      icon: 'users',
-      group: 'principal',
+      label: 'Agenda',
+      description: 'Événements et calendrier',
+      href: '/calendar',
+      icon: 'calendar-days',
     },
     {
-      label: 'Feed',
-      description: 'Le fil social de la communauté',
-      href: '/posts',
-      icon: 'newspaper',
-      group: 'principal',
-    },
-    {
-      label: 'Discussions',
-      description: 'Messages directs et petits groupes',
-      href: '/chat',
-      icon: 'message-circle',
-      group: 'principal',
+      label: 'Boutique',
+      description: 'Produits et cotisations',
+      href: '/shop',
+      icon: 'shopping-bag',
     },
     {
       label: 'Associations',
       description: 'Les associations de la communauté',
       href: '/associations',
       icon: 'users',
-      group: 'outils',
-    },
-    {
-      label: 'Agenda global',
-      description: 'Calendrier des associations (événements validés)',
-      href: '/calendar',
-      icon: 'calendar-days',
-      group: 'outils',
     },
     {
       label: 'Formulaires',
       description: 'Sondages et inscriptions',
       href: '/forms',
       icon: 'file-text',
-      group: 'outils',
     },
   ];
-
-  const adminSections: Section[] = [
-    {
-      label: 'Administration',
-      description: 'Modération agenda, présence, outils globaux',
-      href: '/admin',
-      icon: 'shield',
-      group: 'admin',
-    },
-  ];
-
-  const principal = sections.filter((s) => s.group === 'principal');
-  const outils = sections.filter((s) => s.group === 'outils');
 
   let showAdminSection = $state(false);
 
@@ -264,6 +234,8 @@
           <MessageCircle size={20} class="text-text-muted" />
         {:else if s.icon === 'calendar-days'}
           <CalendarDays size={20} class="text-text-muted" />
+        {:else if s.icon === 'shopping-bag'}
+          <ShoppingBag size={20} class="text-text-muted" />
         {:else if s.icon === 'file-text'}
           <FileText size={20} class="text-text-muted" />
         {:else if s.icon === 'shield'}
@@ -277,7 +249,7 @@
     </a>
   {/snippet}
 
-  <!-- Sections principales -->
+  <!-- Compte (mobile uniquement) -->
   <section class="mb-8 md:hidden">
     <h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted mb-3">Compte</h2>
     <div class="grid grid-cols-3 gap-3">
@@ -317,47 +289,91 @@
     </div>
   </section>
 
+  <!-- Explorer (Agenda, Boutique, Associations, Formulaires) -->
   <section class="mb-8">
-    <h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted mb-3">Principal</h2>
-    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-      {#each principal as s (s.href)}
-        {@render card(s)}
-      {/each}
-    </div>
-  </section>
-
-  <!-- Outils & gestion -->
-  <section class="mb-8">
-    <h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted mb-3">
-      Outils & gestion
-    </h2>
+    <h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted mb-3">Explorer</h2>
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-      {#each outils as s (s.href)}
+      {#each exploreItems as s (s.href)}
         {@render card(s)}
       {/each}
     </div>
   </section>
 
-  {#if showAdminSection}
+  <!-- Administration (admins d'association et admins globaux) -->
+  {#if showAdminSection || isAdmin}
     <section class="mb-8">
       <h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted mb-3">
         Administration
       </h2>
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {#each adminSections as s (s.href)}
-          {@render card(s)}
-        {/each}
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {#if showAdminSection && !isAdmin}
+          <!-- Accès générique /admin pour les admins d'association non globaux -->
+          <a
+            href="/admin"
+            class="flex flex-col items-center gap-2 p-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] hover:border-cn-yellow hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))] transition-colors"
+            title="Administration"
+          >
+            <Shield size={22} class="text-text-muted" />
+            <span class="text-sm font-medium text-text-main">Administration</span>
+            <span class="text-xs text-text-muted text-center">Modération agenda, présence</span>
+          </a>
+        {/if}
+
+        {#if isAdmin}
+          <a
+            href="/admin/moderation"
+            class="flex flex-col items-center gap-2 p-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] hover:border-red-400 hover:bg-red-50/40 transition-colors"
+            title="Modération"
+          >
+            <ShieldAlert size={22} class="text-red-500" />
+            <span class="text-sm font-medium text-text-main">Modération</span>
+            <span class="text-xs text-text-muted text-center">Posts signalés</span>
+          </a>
+          <a
+            href="/admin/status"
+            class="flex flex-col items-center gap-2 p-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] hover:border-cn-yellow hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))] transition-colors"
+            title="Statut système"
+          >
+            <Activity size={22} class="text-text-muted" />
+            <span class="text-sm font-medium text-text-main">Statut</span>
+            <span class="text-xs text-text-muted text-center">Présence et appareils</span>
+          </a>
+          <a
+            href="/admin/users"
+            class="flex flex-col items-center gap-2 p-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] hover:border-amber-400 hover:bg-amber-50/40 dark:hover:bg-amber-900/10 transition-colors"
+            title="Gestion des admins"
+          >
+            <UserCog size={22} class="text-amber-500" />
+            <span class="text-sm font-medium text-text-main">Admins</span>
+            <span class="text-xs text-text-muted text-center">Droits d'administration</span>
+          </a>
+          <button
+            type="button"
+            onclick={() => void handleBroadcastPushTest()}
+            disabled={isPushTestRunning}
+            class="flex flex-col items-center gap-2 p-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] hover:border-cn-yellow hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))] transition-colors disabled:opacity-50"
+            title="Envoyer un test push global"
+          >
+            <Bell size={22} class="text-text-muted" />
+            <span class="text-sm font-medium text-text-main">
+              {isPushTestRunning ? 'Envoi...' : 'Test push'}
+            </span>
+            <span class="text-xs text-text-muted text-center">Tous les appareils avec token</span>
+          </button>
+        {/if}
       </div>
+      {#if pushTestResult}
+        <p class="mt-3 text-sm text-text-muted">{pushTestResult}</p>
+      {/if}
     </section>
   {/if}
 
-  <!-- Données & synchronisation -->
+  <!-- Appareils & données -->
   <section class="mb-8">
     <h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted mb-3">
-      Données & synchronisation
+      Appareils & données
     </h2>
     <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-      <!-- Import -->
       <button
         type="button"
         onclick={triggerImport}
@@ -370,7 +386,6 @@
         <span class="text-xs text-text-muted text-center">Restaurer une sauvegarde</span>
       </button>
 
-      <!-- Export -->
       <button
         type="button"
         onclick={() => session.handleExport(appendLog)}
@@ -383,7 +398,6 @@
         <span class="text-xs text-text-muted text-center">Sauvegarder les conversations</span>
       </button>
 
-      <!-- Démarrer synchronisation QR -->
       <button
         type="button"
         onclick={() => sync.handleStartSyncSession(syncCtx())}
@@ -396,7 +410,6 @@
         <span class="text-xs text-text-muted text-center">Afficher le QR de transfert</span>
       </button>
 
-      <!-- Rejoindre synchronisation QR -->
       <button
         type="button"
         onclick={() => sync.openJoinSyncModal()}
@@ -409,7 +422,6 @@
         <span class="text-xs text-text-muted text-center">Scanner le QR d'un autre appareil</span>
       </button>
 
-      <!-- Gérer les appareils -->
       <button
         type="button"
         onclick={() => (showDevicePanel = true)}
@@ -429,53 +441,7 @@
         <span class="text-sm font-medium text-text-main">Appareils</span>
         <span class="text-xs text-text-muted text-center">Gérer les appareils connectés</span>
       </button>
-
-      {#if isAdmin}
-        <a
-          href="/admin/moderation"
-          class="flex flex-col items-center gap-2 p-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] hover:border-red-400 hover:bg-red-50/40 transition-colors"
-          title="Modération"
-        >
-          <ShieldAlert size={22} class="text-red-500" />
-          <span class="text-sm font-medium text-text-main">Modération</span>
-          <span class="text-xs text-text-muted text-center">Posts signalés</span>
-        </a>
-        <a
-          href="/admin/status"
-          class="flex flex-col items-center gap-2 p-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] hover:border-cn-yellow hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))] transition-colors"
-          title="Statut système"
-        >
-          <Activity size={22} class="text-text-muted" />
-          <span class="text-sm font-medium text-text-main">Statut</span>
-          <span class="text-xs text-text-muted text-center">Présence et appareils</span>
-        </a>
-        <a
-          href="/admin/users"
-          class="flex flex-col items-center gap-2 p-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] hover:border-amber-400 hover:bg-amber-50/40 dark:hover:bg-amber-900/10 transition-colors"
-          title="Gestion des admins"
-        >
-          <UserCog size={22} class="text-amber-500" />
-          <span class="text-sm font-medium text-text-main">Admins</span>
-          <span class="text-xs text-text-muted text-center">Droits d'administration</span>
-        </a>
-        <button
-          type="button"
-          onclick={() => void handleBroadcastPushTest()}
-          disabled={isPushTestRunning}
-          class="flex flex-col items-center gap-2 p-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] hover:border-cn-yellow hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))] transition-colors disabled:opacity-50"
-          title="Envoyer un test push global"
-        >
-          <Bell size={22} class="text-text-muted" />
-          <span class="text-sm font-medium text-text-main">
-            {isPushTestRunning ? 'Envoi...' : 'Test push'}
-          </span>
-          <span class="text-xs text-text-muted text-center">Tous les appareils avec token</span>
-        </button>
-      {/if}
     </div>
-    {#if pushTestResult}
-      <p class="mt-3 text-sm text-text-muted">{pushTestResult}</p>
-    {/if}
   </section>
 </div>
 

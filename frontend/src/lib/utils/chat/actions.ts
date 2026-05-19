@@ -74,17 +74,48 @@ export async function processPendingInvitations(params: {
 
   let totalWelcomes = 0;
 
+  // Cooldown de 5 min par groupe pour éviter de spammer reinvite_request à chaque reconnexion.
+  const REINVITE_COOLDOWN_MS = 5 * 60_000;
+  const MAX_SUCCESSOR_HOPS = 5;
+
   for (const [origGroupId, invitations] of byGroup) {
-    // Only process groups where we have a ready local conversation.
-    // Si le groupe a un successeur connu, traiter via celui-ci.
     let groupId = origGroupId;
+
     if (!conversations.get(groupId)?.isReady) {
-      const meta = await mlsService.getGroupMeta(groupId).catch(() => null);
-      if (meta?.successorId && conversations.get(meta.successorId)?.isReady) {
-        log(`[PENDING] Groupe ${groupId} → successeur ${meta.successorId}`);
-        groupId = meta.successorId;
+      // Résoudre la chaîne de successeurs (groupe migré N fois).
+      let resolved = origGroupId;
+      for (let hop = 0; hop < MAX_SUCCESSOR_HOPS; hop++) {
+        const meta = await mlsService.getGroupMeta(resolved).catch(() => null);
+        if (!meta?.successorId) break;
+        resolved = meta.successorId;
+      }
+
+      if (conversations.get(resolved)?.isReady) {
+        if (resolved !== origGroupId) {
+          log(`[PENDING] Groupe ${origGroupId} → résolu via chaîne successeurs : ${resolved}`);
+        }
+        groupId = resolved;
       } else {
-        log(`[PENDING] Groupe ${groupId}: pas de conversation locale prête — skip`);
+        // Aucune conversation locale prête. Si le groupe est totalement absent (pas même
+        // un placeholder isReady:false), envoyer un reinvite_request à tout membre online
+        // pour récupérer un nouveau Welcome. Un placeholder indique que le Welcome est
+        // peut-être déjà en transit depuis la queue — on ne réenvoie pas.
+        const isAbsent = !conversations.has(origGroupId) && !conversations.has(resolved);
+        if (isAbsent) {
+          const tsKey = `reinvite_requested:${resolved}`;
+          const lastTs = Number(localStorage.getItem(tsKey) ?? 0);
+          if (Date.now() - lastTs > REINVITE_COOLDOWN_MS) {
+            localStorage.setItem(tsKey, String(Date.now()));
+            mlsService.sendReinviteRequest(resolved).catch(() => {});
+            log(
+              `[PENDING] Groupe ${origGroupId} absent localement → reinvite_request envoyé pour ${resolved}`
+            );
+          } else {
+            log(`[PENDING] Groupe ${origGroupId}: reinvite_request déjà envoyé récemment — skip`);
+          }
+        } else {
+          log(`[PENDING] Groupe ${groupId}: conversation locale non prête — skip`);
+        }
         continue;
       }
     }

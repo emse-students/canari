@@ -3,6 +3,7 @@
   import { isGlobalAdmin } from '$lib/stores/user';
   import { listPendingCalendarEvents } from '$lib/associations/api';
   import { apiFetch } from '$lib/utils/apiFetch';
+  import { deliveryUrl } from '$lib/utils/apiUrl';
   import {
     CalendarClock,
     Activity,
@@ -35,7 +36,7 @@
     isPushTestRunning = true;
     pushTestResult = '';
     try {
-      const response = await apiFetch('/api/mls/push/broadcast-test', {
+      const response = await apiFetch(`${deliveryUrl()}/api/mls/push/broadcast-test`, {
         method: 'POST',
         body: JSON.stringify({
           title: 'Canari - test push global',
