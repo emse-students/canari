@@ -1946,17 +1946,17 @@ pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroun
 ///   ou `{"ok":false,"error":"..."}` en cas d'échec.
 #[cfg(target_os = "android")]
 #[no_mangle]
-pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeCreateWelcomeBackground(
-    mut env: jni::JNIEnv,
-    _service: jni::objects::JObject,
-    files_dir: jni::objects::JString,
-    state_bytes: jni::objects::JByteArray,
-    pin: jni::objects::JString,
-    user_id: jni::objects::JString,
-    device_id: jni::objects::JString,
-    group_id: jni::objects::JString,
-    key_package_b64: jni::objects::JString,
-) -> jni::objects::JString {
+pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeCreateWelcomeBackground<'a>(
+    mut env: jni::JNIEnv<'a>,
+    _service: jni::objects::JObject<'a>,
+    files_dir: jni::objects::JString<'a>,
+    state_bytes: jni::objects::JByteArray<'a>,
+    pin: jni::objects::JString<'a>,
+    user_id: jni::objects::JString<'a>,
+    device_id: jni::objects::JString<'a>,
+    group_id: jni::objects::JString<'a>,
+    key_package_b64: jni::objects::JString<'a>,
+) -> jni::objects::JString<'a> {
     let result = (|| -> Result<serde_json::Value, String> {
         let files_dir_str: String = env.get_string(&files_dir).map_err(|e| e.to_string())?.into();
         let state_vec = env.convert_byte_array(&state_bytes).map_err(|e| e.to_string())?;
