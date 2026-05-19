@@ -65,6 +65,10 @@ export class WebMlsService implements IMlsService {
   // Message queue for sequential processing
   private messageQueue: QueuedMessage[] = [];
   private isProcessingQueue = false;
+  // Timer de retry in-session : si un message delivery-queue n'a pas été ACKé (return false),
+  // on reprogramme fetchPendingMessages après PENDING_RETRY_DELAY_MS plutôt d'attendre reconnect.
+  private pendingRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly PENDING_RETRY_DELAY_MS = 15_000;
   private bulkIngestStart?: (enableBulkBuffer?: boolean, showOverlay?: boolean) => void;
   private bulkIngestEnd?: (
     enableBulkBuffer?: boolean,
@@ -91,6 +95,10 @@ export class WebMlsService implements IMlsService {
     if (this.heartbeatTimer !== null) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
+    }
+    if (this.pendingRetryTimer !== null) {
+      clearTimeout(this.pendingRetryTimer);
+      this.pendingRetryTimer = null;
     }
   }
 
@@ -368,6 +376,7 @@ export class WebMlsService implements IMlsService {
     console.log(`[QUEUE] Démarrage traitement (${queuedAtStart} messages en file)`);
 
     const ackIds: string[] = [];
+    let hadFailedQueuedMessage = false;
 
     try {
       if (queuedAtStart > 0) {
@@ -402,6 +411,7 @@ export class WebMlsService implements IMlsService {
           if (shouldAckAfterSuccess(cbResult, flags) && msg.queuedMessageId) {
             ackIds.push(msg.queuedMessageId);
           } else if (flags.hasQueuedId && cbResult === false) {
+            hadFailedQueuedMessage = true;
             logMlsMetric({
               kind: 'queue_skip_ack',
               platform: 'web',
@@ -472,6 +482,19 @@ export class WebMlsService implements IMlsService {
           deviceId: this.deviceId,
           messageIds: ackIds,
         });
+      }
+
+      // Si un message de la delivery queue n'a pas été ACKé (return false), programmer un
+      // retry in-session plutôt d'attendre la prochaine reconnexion (backoff ≤ 30s).
+      if (hadFailedQueuedMessage && this.ws?.readyState === WebSocket.OPEN) {
+        if (this.pendingRetryTimer !== null) clearTimeout(this.pendingRetryTimer);
+        this.pendingRetryTimer = setTimeout(() => {
+          this.pendingRetryTimer = null;
+          if (this.ws?.readyState === WebSocket.OPEN) {
+            console.log('[QUEUE] Retry in-session: fetchPendingMessages (message non-ACKé)');
+            this.fetchPendingMessages();
+          }
+        }, WebMlsService.PENDING_RETRY_DELAY_MS);
       }
     } finally {
       if (queuedAtStart > 0) {

@@ -63,6 +63,11 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   const pendingGroupMessages = new Map<string, Array<{ sender: string; content: Uint8Array }>>();
   const BUFFER_MAX_PER_GROUP = 50;
 
+  // Groupes pour lesquels un welcome_request a déjà été envoyé en session courante
+  // (safety net : évite de spammer le serveur si syncConnectionAfterWsOpen n'a pas
+  // couvert ce groupe, par ex. groupe absent des memberships au démarrage).
+  const welcomeRequestedForUnknownGroups = new Set<string>();
+
   if ('onChannelEvent' in mlsService) {
     (mlsService as any).onChannelEvent = async (event: any) => {
       log(`[Channel Event] ${event.type}`);
@@ -368,6 +373,10 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             return true;
           }
           // Échec réel (réseau, corruption temporaire…) → laisser en queue pour retry.
+          // On retire convoKey de epochRecoveryGroups pour que la prochaine erreur
+          // sur ce groupe puisse re-déclencher sendReinviteRequest si nécessaire.
+          epochRecoveryGroups.delete(convoKey);
+          epochRecoveryGroups.delete(groupId!);
           log(`[MLS] Welcome processing failed (${welcomeErrMsg}) — kept in queue for retry`);
           console.error(
             `[MLS] processWelcome failed for known group ${convoKey}:`,
@@ -1044,6 +1053,18 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         // créant une divergence d'epoch permanente (AeadError).
         if (groupId) {
           const buf = pendingGroupMessages.get(groupId) ?? [];
+          // Safety net : si c'est le premier message pour ce groupe inconnu, envoyer un
+          // welcome_request pour réveiller un membre online — au cas où syncConnectionAfterWsOpen
+          // n'aurait pas couvert ce groupe (absent des memberships au démarrage).
+          if (
+            buf.length === 0 &&
+            !conversations.has(groupId) &&
+            !welcomeRequestedForUnknownGroups.has(groupId)
+          ) {
+            welcomeRequestedForUnknownGroups.add(groupId);
+            mlsService.sendWelcomeRequest(groupId).catch(() => {});
+            log(`[BUFFER] welcome_request envoyé (premier commit pour groupe inconnu ${groupId})`);
+          }
           if (buf.length < BUFFER_MAX_PER_GROUP) {
             buf.push({ sender, content });
             pendingGroupMessages.set(groupId, buf);
@@ -1301,11 +1322,16 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             });
           }
           // Retourner false pour que le caller ACK ce Welcome (il est définitivement inutile).
+          // On retire groupId de epochRecoveryGroups pour permettre à la prochaine erreur
+          // de re-déclencher sendReinviteRequest si besoin.
+          epochRecoveryGroups.delete(groupId!);
           return false;
         }
         // Erreur inattendue (corruption, mismatch de cipher suite…) : on ne retourne PAS false.
         // On relance l'exception pour que processQueue n'ACK PAS le message côté serveur.
         // Ainsi, le Welcome reste en file de livraison et sera retenté à la prochaine connexion.
+        // On retire groupId de epochRecoveryGroups pour la même raison que ci-dessus.
+        epochRecoveryGroups.delete(groupId!);
         log(
           `[WELCOME] Erreur irrécupérable processWelcome pour groupe ${groupId} — NE PAS ACK, retry à la prochaine connexion. Erreur: ${errStr.slice(0, 300)}`
         );

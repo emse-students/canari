@@ -78,9 +78,13 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
     /* silent */
   }
 
+  // Bloc 1 : réconciliation des memberships connus (pending/stale/welcome_received).
+  // Si getDeviceMemberships échoue, membershipGroupIds reste vide et le bloc 2 prend le relais.
+  let membershipGroupIds = new Set<string>();
   try {
     const memberships = await mlsService.getDeviceMemberships(userId, mlsService.getDeviceId());
     const localGroups = new Set(mlsService.getLocalGroups());
+    membershipGroupIds = new Set(memberships.map((m) => m.groupId));
     for (const m of memberships) {
       if (m.status === 'pending') {
         mlsService.sendWelcomeRequest(m.groupId);
@@ -97,8 +101,16 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
         log(`[SYNC] welcome_request envoyé (état local manquant pour ${m.groupId})`);
       }
     }
+  } catch (e) {
+    log(`[SYNC] Échec récupération memberships: ${e}`);
+    console.error('[SYNC] Failed to fetch device memberships:', e);
+  }
 
-    const membershipGroupIds = new Set(memberships.map((m) => m.groupId));
+  // Bloc 2 : groupes présents côté serveur mais absents du WASM local.
+  // Tourne indépendamment du bloc 1 — une erreur sur getDeviceMemberships ne doit pas
+  // empêcher d'envoyer les welcome_request pour les groupes sans entrée de membership.
+  try {
+    const localGroups = new Set(mlsService.getLocalGroups());
     const userGroups = await mlsService.getUserGroups(userId).catch(() => [] as UserGroupRow[]);
     for (const group of userGroups) {
       const targetGroupId = group.successorId ?? group.groupId;
@@ -112,8 +124,8 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
       }
     }
   } catch (e) {
-    log(`[SYNC] Échec récupération memberships: ${e}`);
-    console.error('[SYNC] Failed to fetch device memberships:', e);
+    log(`[SYNC] Échec récupération user groups: ${e}`);
+    console.error('[SYNC] Failed to fetch user groups:', e);
   }
 
   await new Promise((r) => setTimeout(r, 500));
