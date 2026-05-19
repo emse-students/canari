@@ -157,6 +157,16 @@
   export function getEditorElement(): HTMLDivElement | null {
     return editorEl;
   }
+
+  /** @public — Force-clears the editor immediately without waiting for reactive prop propagation. */
+  export function clearEditor() {
+    if (!editorEl) return;
+    pendingInternalSync = 0;
+    value = '';
+    lastRenderedValue = '';
+    renderPlainTextToMentionEditor(editorEl, '');
+    mention.handleEditorInput('', 0);
+  }
 </script>
 
 <div class="mention-composer relative {className}">

@@ -2,14 +2,26 @@
  * Reactive composable for audio tone, system (OS-level) notifications,
  * and the channel-membership banner notice.
  */
+import { SvelteMap } from 'svelte/reactivity';
 import { notifNav } from '$lib/stores/notifNav.svelte';
+
+/** Returns a stable positive integer ID derived from a conversation ID string, used to replace existing Tauri notifications for the same conversation. */
+function stableNotifId(conversationId: string): number {
+  let hash = 0;
+  for (let i = 0; i < conversationId.length; i++) {
+    hash = (Math.imul(31, hash) + conversationId.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash) || 1;
+}
 
 export function useNotifications() {
   let audioContext = $state<AudioContext | null>(null);
   let lastNotificationAt = $state(0);
   let lastSendToneAt = $state(0);
   let lastReadToneAt = $state(0);
-  let lastSystemNotificationAt = $state(0);
+  // Per-conversation rate limit: conversationId → last notification timestamp.
+  // Prevents notification spam on burst but lets different conversations notify independently.
+  const lastNotifAtByConv = new SvelteMap<string, number>();
   let browserPermissionRetryAbort: AbortController | null = null;
 
   // Channel membership notice banner
@@ -191,19 +203,25 @@ export function useNotifications() {
     }
   }
 
-  /** Shows an OS-level notification (via Tauri plugin or Web Notification API) rate-limited to one every 800 ms. Clicking the notification focuses the app and opens the given conversation. */
+  /** Shows an OS-level notification (via Tauri plugin or Web Notification API). Rate-limited per conversation to 800 ms to absorb bursts while allowing different conversations to notify independently. Uses a stable ID/tag per conversation so successive messages replace rather than stack. */
   async function sendSystemNotification(title: string, body: string, conversationId?: string) {
     if (typeof window === 'undefined') return;
+    const convKey = conversationId ?? '__default__';
     const now = Date.now();
-    if (now - lastSystemNotificationAt < 800) return;
-    lastSystemNotificationAt = now;
+    const lastAt = lastNotifAtByConv.get(convKey) ?? 0;
+    if (now - lastAt < 800) return;
+    lastNotifAtByConv.set(convKey, now);
 
     if ((window as any).__TAURI_INTERNALS__) {
       try {
         const { isPermissionGranted, sendNotification } =
           await import('@tauri-apps/plugin-notification');
         if (await isPermissionGranted()) {
-          await sendNotification({ title, body });
+          await sendNotification({
+            title,
+            body,
+            ...(conversationId ? { id: stableNotifId(conversationId) } : {}),
+          });
         }
         return;
       } catch {

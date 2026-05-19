@@ -103,6 +103,7 @@
       e.preventDefault();
       if (!isSendDisabled) {
         onSend();
+        mentionComposer?.clearEditor();
         tick().then(() => mentionComposer?.focusEditor());
       }
     }
@@ -438,7 +439,7 @@
       <div class="shrink-0 pr-1">
         <button
           onmousedown={(e) => e.preventDefault()}
-          onclick={onSend}
+          onclick={() => { onSend(); mentionComposer?.clearEditor(); }}
           disabled={isSendDisabled}
           aria-label="Envoyer le message"
           class="chat-composer-send-button {isSendDisabled ? 'is-disabled' : ''}"

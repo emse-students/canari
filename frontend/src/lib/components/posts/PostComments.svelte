@@ -9,6 +9,7 @@
     Trash2,
     ArrowUpDown,
     ImageIcon,
+    Flag,
   } from '@lucide/svelte';
   import { tick } from 'svelte';
   import type { PostComment, PostImageRef } from '$lib/posts/api';
@@ -60,6 +61,8 @@
     onEditComment: (commentId: string, text: string) => Promise<void>;
     /** Called when the user deletes a comment. */
     onDeleteComment: (commentId: string) => Promise<void>;
+    /** Called when the user reports a comment. */
+    onReport?: (commentId: string) => void;
     /** Bearer token forwarded to PostImage for decrypting comment media. */
     authToken?: string;
     /** If provided, a "Load all comments" button is shown when totalCommentCount >= 20. */
@@ -83,6 +86,7 @@
     onLikeComment,
     onEditComment,
     onDeleteComment,
+    onReport,
     onLoadAllComments,
     onKeyDown,
   }: Props = $props();
@@ -364,6 +368,16 @@
             aria-label="Supprimer"
           >
             <Trash2 size={12} strokeWidth={2.5} />
+          </button>
+        {:else if !isOwn && onReport}
+          <button
+            type="button"
+            onclick={() => onReport?.(comment.id)}
+            class="text-[0.7rem] font-extrabold text-text-muted hover:text-red-400 transition-colors outline-none"
+            aria-label="Signaler ce commentaire"
+            title="Signaler"
+          >
+            <Flag size={11} strokeWidth={2.5} />
           </button>
         {/if}
       </div>

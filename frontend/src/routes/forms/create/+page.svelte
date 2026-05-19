@@ -24,6 +24,10 @@
   let opensAt = $state('');
   let requiresPayment = $state(false);
   let associationId = $state('');
+  let allowCashPayment = $state(false);
+  let cashPaymentExpiryDays = $state<number | undefined>(undefined);
+  let grantedTagName = $state('');
+  let tagExpiresAt = $state('');
 
   const returnTo = $derived(page.url.searchParams.get('returnTo') || '/forms');
   const attachMode = $derived(page.url.searchParams.get('attach') as 'form' | 'event' | null);
@@ -93,6 +97,14 @@
         ...(opensAt ? { opensAt: new Date(opensAt).toISOString() } : {}),
         requiresPayment,
         associationId: requiresPayment && associationId ? associationId : undefined,
+        ...(requiresPayment ? { allowCashPayment } : {}),
+        ...(requiresPayment && allowCashPayment && cashPaymentExpiryDays != null
+          ? { cashPaymentExpiryDays }
+          : {}),
+        ...(grantedTagName.trim() ? { grantedTagName: grantedTagName.trim() } : {}),
+        ...(grantedTagName.trim() && tagExpiresAt
+          ? { tagExpiresAt: new Date(tagExpiresAt).toISOString() }
+          : {}),
       };
       const created = await createForm(payload);
       if (fromPostComposer && attachMode) {
@@ -340,7 +352,89 @@
           </div>
         </div>
       </div>
+
+      <!-- Cash payment option -->
+      <div class="mt-4 pt-4 border-t-2 border-cn-border space-y-3">
+        <label class="flex items-center gap-3 cursor-pointer select-none">
+          <div class="relative">
+            <input type="checkbox" bind:checked={allowCashPayment} class="peer sr-only" />
+            <div
+              class="w-11 h-6 bg-cn-border rounded-full peer-checked:bg-cn-yellow transition-colors"
+            ></div>
+            <div
+              class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"
+            ></div>
+          </div>
+          <span class="text-sm font-semibold text-text-main">Accepter le paiement en espèces</span>
+        </label>
+        {#if allowCashPayment}
+          <div>
+            <label for="cash-expiry" class="block text-sm font-bold text-text-main mb-2 ml-1">
+              Expiration du paiement en attente (jours)
+            </label>
+            <input
+              id="cash-expiry"
+              type="number"
+              bind:value={cashPaymentExpiryDays}
+              min="1"
+              placeholder="Jamais (laisser vide)"
+              class="w-full sm:w-48 px-4 py-3 border-2 border-cn-border rounded-2xl text-base text-text-main bg-[var(--cn-surface)] outline-none transition-all focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)]"
+            />
+            <p class="text-xs text-text-muted mt-1.5 ml-1">
+              Les paiements en espèces non validés après ce délai passent automatiquement à
+              "expiré". Laissez vide pour ne jamais expirer.
+            </p>
+          </div>
+        {/if}
+      </div>
     {/if}
+  </section>
+
+  <!-- Section: Statut cotisation -->
+  <section class="rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] p-4 sm:p-6 mb-4 sm:mb-5">
+    <div class="flex items-center gap-2.5 mb-4 sm:mb-5">
+      <div class="p-2 rounded-xl bg-cn-yellow/15 text-cn-dark">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+      </div>
+      <h2 class="text-lg font-bold text-text-main">Statut cotisation</h2>
+    </div>
+    <p class="text-sm text-text-muted mb-4">
+      Après un paiement réussi, un tag peut être automatiquement attribué à l'utilisateur (ex :
+      <code class="bg-cn-border/30 px-1.5 py-0.5 rounded-lg text-xs">cotisant:bde-2026</code>).
+    </p>
+    <div class="space-y-4">
+      <div>
+        <label for="granted-tag" class="block text-sm font-bold text-text-main mb-2 ml-1">
+          Tag à attribuer
+        </label>
+        <input
+          id="granted-tag"
+          type="text"
+          bind:value={grantedTagName}
+          placeholder="ex: cotisant:bde-2026"
+          class="w-full px-4 py-3 border-2 border-cn-border rounded-2xl text-base text-text-main bg-[var(--cn-surface)] outline-none transition-all focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)]"
+        />
+        <p class="text-xs text-text-muted mt-1.5 ml-1">
+          Laissez vide pour n'attribuer aucun tag.
+        </p>
+      </div>
+      {#if grantedTagName.trim()}
+        <div>
+          <label for="tag-expires-at" class="block text-sm font-bold text-text-main mb-2 ml-1">
+            Expiration du tag
+          </label>
+          <input
+            id="tag-expires-at"
+            type="date"
+            bind:value={tagExpiresAt}
+            class="w-full sm:w-56 px-4 py-3 border-2 border-cn-border rounded-2xl text-base text-text-main bg-[var(--cn-surface)] outline-none transition-all focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)]"
+          />
+          <p class="text-xs text-text-muted mt-1.5 ml-1">
+            Laissez vide pour un tag permanent.
+          </p>
+        </div>
+      {/if}
+    </div>
   </section>
 
   <!-- Section 3: Questions -->

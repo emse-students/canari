@@ -393,6 +393,16 @@
   let reportReason = $state('');
   let reportSubmitting = $state(false);
 
+  /** Reports a comment directly with reason 'inappropriate'. */
+  async function handleReportComment(commentId: string) {
+    try {
+      await createReport('comment', commentId, 'inappropriate');
+      actionMessage = 'Commentaire signalé. Merci !';
+    } catch {
+      // Ignore duplicate report errors silently.
+    }
+  }
+
   /** Submits the selected report reason via the moderation API. */
   async function submitReport() {
     if (!reportReason) return;
@@ -586,6 +596,7 @@
     onLikeComment={handleLikeComment}
     onEditComment={handleEditComment}
     onDeleteComment={handleDeleteComment}
+    onReport={handleReportComment}
     onLoadAllComments={loadAllComments}
     totalCommentCount={(localPost.comments ?? []).length}
   />

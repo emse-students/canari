@@ -32,13 +32,20 @@ export interface CreateFormPayload {
   requiresPayment?: boolean;
   associationId?: string;
   paymentMethods?: string[];
+  /** Whether cash (physical) payment is accepted as an alternative to Stripe. */
+  allowCashPayment?: boolean;
+  /** Days after submission before an unvalidated cash payment expires (null = never). */
+  cashPaymentExpiryDays?: number;
+  /** Tag name automatically granted upon successful payment (e.g. "cotisant:bde-2026"). */
+  grantedTagName?: string;
+  /** ISO 8601 — when the granted tag expires (omit for permanent). */
+  tagExpiresAt?: string;
 }
 
 export interface Form extends CreateFormPayload {
   id: string;
   createdAt: string;
   updatedAt: string;
-  allowCashPayment?: boolean;
 }
 
 import { apiFetch } from '$lib/utils/apiFetch';
