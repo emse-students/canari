@@ -7,8 +7,8 @@
     userReaction: string | null;
     /** Whether the emoji reaction picker popover is currently open. */
     showReactionPicker: boolean;
-    /** Full list of available reaction types with emoji and icon name. */
-    reactionList: Array<{ type: string; emoji: string; icon: string }>;
+    /** Full list of available reaction types with their emoji. */
+    reactionList: ReadonlyArray<{ type: string; emoji: string }>;
     /** Called when the user clicks the reaction button to open or close the picker. */
     onToggleReactionPicker: () => void;
     /** Called when the user selects an emoji from the picker. */

@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { MessageCircle, Newspaper, Users, LayoutDashboard } from '@lucide/svelte';
+  import { MessageCircle, Newspaper, Users, LayoutDashboard, Bell, Calendar, ShoppingBag } from '@lucide/svelte';
   import { APP_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
   import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
+  import { postNotifStore } from '$lib/stores/postNotifStore.svelte';
   import { page } from '$app/state';
-  import PostNotificationBell from './PostNotificationBell.svelte';
 
   const pathname = $derived(page.url.pathname);
   const activePlaceId = $derived(resolveActivePlaceId(pathname));
@@ -13,6 +13,9 @@
     newspaper: Newspaper,
     users: Users,
     'layout-dashboard': LayoutDashboard,
+    bell: Bell,
+    calendar: Calendar,
+    'shopping-bag': ShoppingBag,
   } as const;
 
   function getIcon(icon: keyof typeof ICONS) {
@@ -24,6 +27,14 @@
       ? [...globalConvs.conversations.values()].reduce((sum, c) => sum + (c.unreadCount ?? 0), 0)
       : 0
   );
+
+  /** Unread badge count for a given place. */
+  function placeBadge(placeId: string, isActive: boolean): number {
+    if (isActive) return 0;
+    if (placeId === 'chat') return totalUnread;
+    if (placeId === 'notifications' && globalSession.isLoggedIn) return postNotifStore.unread;
+    return 0;
+  }
 </script>
 
 <nav
@@ -31,13 +42,10 @@
   style="padding-bottom: env(safe-area-inset-bottom)"
 >
   <div class="flex items-stretch justify-around h-16">
-    {#if globalSession.isLoggedIn}
-      <PostNotificationBell mobile={true} />
-    {/if}
     {#each APP_PLACES as place (place.id)}
       {@const PlaceIcon = getIcon(place.icon)}
       {@const isActive = place.id === activePlaceId}
-      {@const unread = place.id === 'chat' && activePlaceId !== 'chat' ? totalUnread : 0}
+      {@const badge = placeBadge(place.id, isActive)}
 
       <a
         href={place.href}
@@ -47,7 +55,6 @@
           ? 'text-amber-600 dark:text-amber-400'
           : 'text-text-muted hover:text-text-main'}"
       >
-        <!-- Conteneur de l'icône avec léger soulèvement si actif -->
         <span
           class="relative transition-transform duration-300 {isActive
             ? '-translate-y-0.5'
@@ -55,16 +62,14 @@
         >
           <PlaceIcon size={24} strokeWidth={isActive ? 2.5 : 2} />
 
-          <!-- Badge rouge pour les messages non lus -->
-          {#if unread > 0}
+          {#if badge > 0}
             <span
               class="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-white dark:ring-[#151B2C] shadow-sm"
-              aria-label="{unread} messages non lus"
+              aria-label="{badge} non lus"
             ></span>
           {/if}
         </span>
 
-        <!-- Texte du label -->
         <span
           class="text-[10px] font-bold leading-none truncate max-w-full transition-opacity duration-200 {isActive
             ? 'opacity-100'
@@ -73,7 +78,6 @@
           {place.label}
         </span>
 
-        <!-- Barre indicatrice lumineuse en bas pour l'onglet actif -->
         {#if isActive}
           <span
             class="absolute bottom-0 left-1/2 -translate-x-1/2 h-1 w-8 rounded-t-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.6)]"

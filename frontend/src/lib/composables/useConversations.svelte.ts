@@ -31,6 +31,7 @@ import {
   repairDirectConversation,
 } from '$lib/utils/chat/groupCreation';
 import { loadExistingConversations } from '$lib/utils/chat/conversations';
+import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
 import {
   pushHistoryOverlay,
   closeHistoryOverlayFromUi,
@@ -205,7 +206,10 @@ export function useConversations() {
         );
         const current = conversations.get(contactName);
         if (current) {
-          conversations.set(contactName, { ...current, messages: msgs });
+          conversations.set(contactName, {
+            ...current,
+            messages: [...msgs].sort(compareMessageOrder),
+          });
           for (const m of msgs) {
             if (m.reactions && m.reactions.length > 0) {
               ctx.messageReactions.set(m.id, m.reactions);

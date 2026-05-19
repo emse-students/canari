@@ -179,7 +179,7 @@
 
   {#if !value && placeholder}
     <div
-      class="mention-composer-placeholder pointer-events-none absolute inset-0 px-[inherit] py-[inherit] text-text-muted/60 select-none"
+      class="mention-composer-placeholder pointer-events-none absolute inset-0 flex items-center px-[inherit] py-[inherit] text-text-muted/60 select-none"
       aria-hidden="true"
     >
       {placeholder}

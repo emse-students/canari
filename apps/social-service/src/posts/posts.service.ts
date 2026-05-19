@@ -521,7 +521,21 @@ export class PostsService {
   async getById(id: string) {
     const post = await this.postRepo.findOne({ where: { id } });
     if (!post) throw new NotFoundException('Post not found');
-    return this.toPublicPostFromEntity(post);
+    const shaped = await this.toPublicPostFromEntity(post);
+    // Attach author name fields (same source as listPosts — local users table).
+    if (!shaped.associationId && shaped.authorId) {
+      const rows: { displayName: string | null; firstName: string | null; lastName: string | null }[] =
+        await this.postRepo.manager.query(
+          `SELECT "displayName", "firstName", "lastName" FROM users WHERE id = $1`,
+          [shaped.authorId]
+        );
+      if (rows[0]) {
+        shaped.authorDisplayName = rows[0].displayName;
+        shaped.authorFirstName = rows[0].firstName;
+        shaped.authorLastName = rows[0].lastName;
+      }
+    }
+    return shaped;
   }
 
   /** Updates a post's markdown content. Only the original author may edit. */

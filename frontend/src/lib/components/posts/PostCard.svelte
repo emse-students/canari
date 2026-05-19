@@ -33,6 +33,7 @@
   import { isGlobalAdmin } from '$lib/stores/user';
   import { untrack } from 'svelte';
   import { FORM_CARD_PLACEHOLDER_MIN_HEIGHT } from '$lib/utils/mediaLayout';
+  import { REACTIONS } from '$lib/posts/reactions';
 
   /**
    * Props for the PostCard component.
@@ -53,17 +54,6 @@
     /** Called immediately after the post has been deleted so the parent can remove the card. */
     onDelete?: () => void;
   }
-
-  const REACTIONS = [
-    { type: "J'aime", emoji: '❤️', icon: 'heart' },
-    { type: "J'adore", emoji: '😍', icon: 'love' },
-    { type: 'Rire', emoji: '😂', icon: 'laugh' },
-    { type: 'Triste', emoji: '😢', icon: 'sad' },
-    { type: 'Joyeux', emoji: '😊', icon: 'smile' },
-    { type: 'Énervé', emoji: '😠', icon: 'angry' },
-    { type: 'Canari', emoji: '🐤', icon: 'bird' },
-    { type: 'Marteau', emoji: '🔨', icon: 'hammer' },
-  ];
 
   let { post: postProp, currentUserId, authToken = '', currentUserEmail, onRefresh: _onRefresh, onDelete }: Props = $props();
 

@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { MessageCircle, Newspaper, Users, LayoutDashboard } from '@lucide/svelte';
+  import { MessageCircle, Newspaper, Users, LayoutDashboard, Bell, Calendar, ShoppingBag } from '@lucide/svelte';
   import { afterNavigate } from '$app/navigation';
   import { APP_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
   import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
+  import { postNotifStore } from '$lib/stores/postNotifStore.svelte';
   import { page } from '$app/state';
   import { fade } from 'svelte/transition';
 
@@ -18,6 +19,9 @@
     newspaper: Newspaper,
     users: Users,
     'layout-dashboard': LayoutDashboard,
+    bell: Bell,
+    calendar: Calendar,
+    'shopping-bag': ShoppingBag,
   } as const;
 
   function getIcon(icon: keyof typeof ICONS) {
@@ -74,7 +78,12 @@
     {#each APP_PLACES as place (place.id)}
       {@const PlaceIcon = getIcon(place.icon)}
       {@const isActive = place.id === activePlaceId}
-      {@const unread = place.id === 'chat' && activePlaceId !== 'chat' ? totalUnread : 0}
+      {@const unread = (() => {
+        if (isActive) return 0;
+        if (place.id === 'chat') return totalUnread;
+        if (place.id === 'notifications' && globalSession.isLoggedIn) return postNotifStore.unread;
+        return 0;
+      })()}
 
       <a
         href={place.href}

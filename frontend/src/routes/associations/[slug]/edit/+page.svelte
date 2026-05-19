@@ -135,6 +135,7 @@
   let newTagName = $state('');
   let newTagExpires = $state('');
   let grantingTag = $state(false);
+  let tagUserNames = $state<Record<string, string>>({});
 
   const slug = $derived((page.params as Record<string, string>).slug);
 
@@ -301,6 +302,17 @@
     tagsError = '';
     try {
       tags = await listAssociationTags(asso.id);
+      // Seed sync cache first, then resolve async
+      const names: Record<string, string> = {};
+      for (const t of tags) {
+        names[t.userId] = getUserDisplayNameSync(t.userId, t.userId);
+      }
+      tagUserNames = names;
+      for (const t of tags) {
+        void resolveUserDisplayName(t.userId).then((n) => {
+          if (n) tagUserNames = { ...tagUserNames, [t.userId]: n };
+        });
+      }
     } catch (e) {
       tagsError = e instanceof Error ? e.message : 'Erreur';
     } finally {
@@ -812,7 +824,7 @@
                 <div class="min-w-0 flex-1">
                   <p class="font-semibold text-sm text-text-main truncate">{tag.tagName}</p>
                   <p class="text-xs text-text-muted">
-                    Utilisateur: {tag.userId}
+                    {tagUserNames[tag.userId] ?? tag.userId}
                     {#if tag.expiresAt}
                       · Expire: {new Date(tag.expiresAt).toLocaleDateString('fr-FR')}
                     {/if}

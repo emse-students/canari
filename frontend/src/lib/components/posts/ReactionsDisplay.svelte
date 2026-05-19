@@ -9,8 +9,8 @@
     reactions: Record<string, string>;
     /** The reaction type the current user has applied, or null if none. */
     userReaction: string | null;
-    /** Full catalogue of available reaction types with their display emoji and icon name. */
-    reactionList: Array<{ type: string; emoji: string; icon: string }>;
+    /** Full catalogue of available reaction types with their display emoji. */
+    reactionList: ReadonlyArray<{ type: string; emoji: string }>;
     /** Called when the user clicks a reaction badge to toggle their own reaction of the same type. */
     onReactionClick: (reactionType: string) => void;
   }

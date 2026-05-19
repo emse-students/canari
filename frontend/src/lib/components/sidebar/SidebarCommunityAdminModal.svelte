@@ -4,6 +4,7 @@
   import Modal from '../shared/Modal.svelte';
   import UserAutocomplete from '../shared/UserAutocomplete.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
+  import Avatar from '../shared/Avatar.svelte';
   import { MediaService } from '$lib/media';
   import { getToken } from '$lib/stores/auth';
   import { channelService, type ChannelMemberDto } from '$lib/services/ChannelService';
@@ -139,18 +140,30 @@
 
       if (loadToken !== membersLoadToken) return;
 
-      communityMembers = Array.from(aggregate.entries())
-        .map(([userId, role]) => ({ userId, role }))
-        .sort((a, b) => a.userId.localeCompare(b.userId));
+      const members = Array.from(aggregate.entries()).map(([userId, role]) => ({ userId, role }));
 
       const names: Record<string, string> = {};
-      for (const m of communityMembers) {
+      for (const m of members) {
         names[m.userId] = getUserDisplayNameSync(m.userId, m.userId);
       }
       resolvedMemberNames = names;
-      for (const m of communityMembers) {
-        resolveUserDisplayName(m.userId).then((resolved) => {
-          if (resolved) resolvedMemberNames = { ...resolvedMemberNames, [m.userId]: resolved };
+      communityMembers = members.sort((a, b) =>
+        (resolvedMemberNames[a.userId] ?? a.userId).localeCompare(
+          resolvedMemberNames[b.userId] ?? b.userId
+        )
+      );
+
+      for (const m of members) {
+        void resolveUserDisplayName(m.userId).then((resolved) => {
+          if (resolved) {
+            resolvedMemberNames = { ...resolvedMemberNames, [m.userId]: resolved };
+            // Re-sort once names are known
+            communityMembers = [...communityMembers].sort((a, b) =>
+              (resolvedMemberNames[a.userId] ?? a.userId).localeCompare(
+                resolvedMemberNames[b.userId] ?? b.userId
+              )
+            );
+          }
         });
       }
     } catch (e) {
@@ -388,9 +401,12 @@
               <div class="divide-y divide-cn-border/70">
                 {#each communityMembers as member (member.userId)}
                   <div class="px-4 py-3 flex items-center justify-between gap-3">
-                    <span class="font-medium text-text-main truncate"
-                      >{resolvedMemberNames[member.userId] ?? member.userId}</span
-                    >
+                    <div class="flex items-center gap-2.5 min-w-0">
+                      <Avatar userId={member.userId} size="sm" />
+                      <span class="font-medium text-text-main truncate">
+                        {resolvedMemberNames[member.userId] ?? member.userId}
+                      </span>
+                    </div>
                     <span
                       class={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ${roleBadgeClass(member.role)}`}
                     >

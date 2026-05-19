@@ -12,6 +12,8 @@
   } from '$lib/moderation/api';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { goto } from '$app/navigation';
+  import Avatar from '$lib/components/shared/Avatar.svelte';
+  import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
 
   type Tab = 'reports' | 'muted';
 
@@ -22,6 +24,7 @@
   let loadingMuted = $state(false);
   let error = $state('');
   let processingId = $state<string | null>(null);
+  let mutedNames = $state<Record<string, string>>({});
 
   onMount(() => {
     if (!isGlobalAdmin()) {
@@ -48,6 +51,20 @@
     error = '';
     try {
       mutedUsers = await listMutedUsers();
+      const names: Record<string, string> = {};
+      const ids = [
+        ...new Set([
+          ...mutedUsers.map((u) => u.userId),
+          ...mutedUsers.filter((u) => u.mutedBy).map((u) => u.mutedBy!),
+        ]),
+      ];
+      for (const id of ids) names[id] = getUserDisplayNameSync(id, id);
+      mutedNames = names;
+      for (const id of ids) {
+        void resolveUserDisplayName(id).then((n) => {
+          if (n) mutedNames = { ...mutedNames, [id]: n };
+        });
+      }
     } catch (e) {
       error = e instanceof Error ? e.message : 'Impossible de charger les utilisateurs mutés.';
     } finally {
@@ -299,8 +316,12 @@
           <div
             class="rounded-2xl border border-cn-border bg-white/70 backdrop-blur-sm p-4 shadow-sm flex items-start gap-3"
           >
+            <div class="shrink-0 mt-0.5"><Avatar userId={user.userId} size="sm" /></div>
             <div class="flex-1 min-w-0">
-              <p class="text-sm font-medium font-mono text-text-main">{user.userId}</p>
+              <p class="text-sm font-medium text-text-main">
+                {mutedNames[user.userId] ?? user.userId}
+              </p>
+              <p class="text-[11px] font-mono text-text-muted/50">{user.userId.slice(0, 16)}…</p>
               {#if user.mutedReason}
                 <p class="text-xs text-text-muted mt-0.5 italic">"{user.mutedReason}"</p>
               {/if}
@@ -308,7 +329,7 @@
                 <p class="text-[11px] text-text-muted/60 mt-1">
                   Muté le {formatDate(user.mutedAt)}
                   {#if user.mutedBy}
-                    par <code class="font-mono">{user.mutedBy.slice(0, 8)}…</code>
+                    par {mutedNames[user.mutedBy] ?? user.mutedBy.slice(0, 8) + '…'}
                   {/if}
                 </p>
               {/if}
