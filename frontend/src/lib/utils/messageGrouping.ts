@@ -25,6 +25,14 @@ function formatDateSeparator(date: Date): string {
   return formatLongDateFr(date);
 }
 
+/** Returns true if `msgs` is already in ascending message order. O(n) — avoids the O(n log n) sort in the common case where messages arrive in order. */
+function isAlreadySorted(msgs: ChatMessage[]): boolean {
+  for (let i = 1; i < msgs.length; i++) {
+    if (compareMessageOrder(msgs[i - 1], msgs[i]) > 0) return false;
+  }
+  return true;
+}
+
 /**
  * Group messages by date and time gaps.
  * - Show date separator when day changes
@@ -32,11 +40,13 @@ function formatDateSeparator(date: Date): string {
  *
  * Sorts the input chronologically before grouping so callers don't need to
  * pre-sort — this is the last line of defence against upstream ordering bugs.
+ * The sort is skipped when the array is already ordered (the common case),
+ * cutting O(n log n) work on every new message in long conversations.
  */
 export function groupMessages(messages: ChatMessage[]): MessageGroup[] {
   if (messages.length === 0) return [];
 
-  const sorted = [...messages].sort(compareMessageOrder);
+  const sorted = isAlreadySorted(messages) ? messages : [...messages].sort(compareMessageOrder);
   const groups: MessageGroup[] = [];
   let lastDate: string | null = null;
   let lastTimestamp: number | null = null;

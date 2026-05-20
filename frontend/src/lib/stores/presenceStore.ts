@@ -15,6 +15,9 @@ let _destroyInterval: (() => void) | null = null;
  * Adds the given user IDs to the polling watchlist and starts the polling loop
  * if it is not already running. The loop automatically pauses when the page is
  * hidden and resumes when visible.
+ *
+ * Call `unwatchUsers` with the same IDs when the component unmounts to prevent
+ * the watched set from growing unbounded across navigations.
  */
 export function watchUsers(userIds: string[]) {
   userIds.forEach((id) => {
@@ -22,6 +25,18 @@ export function watchUsers(userIds: string[]) {
   });
   if (!_destroyInterval) {
     _destroyInterval = createPausableInterval(checkPresenceNow, 10_000);
+  }
+}
+
+/**
+ * Removes the given user IDs from the polling watchlist. When the set becomes
+ * empty the interval is stopped entirely (saves battery when no presence is needed).
+ */
+export function unwatchUsers(userIds: string[]) {
+  userIds.forEach((id) => peerIdsToPoll.delete(id));
+  if (peerIdsToPoll.size === 0 && _destroyInterval) {
+    _destroyInterval();
+    _destroyInterval = null;
   }
 }
 
@@ -47,7 +62,12 @@ export async function checkPresenceNow() {
         return;
       }
       const data = await res.json();
-      presenceMap.update((prev) => ({ ...prev, ...data }));
+      // Only replace the map object when at least one value actually changed,
+      // preventing cascading re-renders on every poll when statuses are stable.
+      presenceMap.update((prev) => {
+        const hasChange = Object.keys(data).some((k) => prev[k] !== data[k]);
+        return hasChange ? { ...prev, ...data } : prev;
+      });
       return;
     }
     if (res.status !== 401) {

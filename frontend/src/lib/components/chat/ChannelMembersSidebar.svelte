@@ -2,7 +2,7 @@
   import { Users, X, ShieldAlert, User } from '@lucide/svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import UserName from '$lib/components/shared/UserName.svelte';
-  import { presenceMap, watchUsers } from '$lib/stores/presenceStore';
+  import { presenceMap, watchUsers, unwatchUsers } from '$lib/stores/presenceStore';
   import { channelService, type ChannelMemberDto } from '$lib/services/ChannelService';
 
   interface Props {
@@ -52,7 +52,9 @@
 
   $effect(() => {
     if (channelMembers.length > 0) {
-      watchUsers(channelMembers.map((m) => m.userId));
+      const ids = channelMembers.map((m) => m.userId);
+      watchUsers(ids);
+      return () => unwatchUsers(ids);
     }
   });
 

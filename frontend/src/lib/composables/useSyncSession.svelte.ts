@@ -86,6 +86,7 @@ export function useSyncSession() {
       syncStatusText = 'Session créée. En attente de jonction du second appareil...';
 
       const waitUntil = Date.now() + 180_000;
+      let pollInterval = 1200;
       while (Date.now() < waitUntil) {
         if (isCancelled) return;
         const state = await getSyncSessionState(ctx.historyBaseUrl, {
@@ -98,7 +99,9 @@ export function useSyncSession() {
           syncStatusText = 'Synchronisation terminée.';
           return;
         }
-        await new Promise((resolve) => setTimeout(resolve, 1200));
+        await new Promise((resolve) => setTimeout(resolve, pollInterval));
+        // Exponential backoff: 1.2s → 1.8s → 2.7s → 4s → 5s (max)
+        pollInterval = Math.min(Math.round(pollInterval * 1.5), 5000);
       }
 
       throw new Error("Timeout: aucun appareil n'a rejoint la session");

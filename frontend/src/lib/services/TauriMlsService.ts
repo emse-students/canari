@@ -77,7 +77,8 @@ export class TauriMlsService implements IMlsService {
   private freshStart = false;
   private appVersionCache: string | null | undefined = undefined;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-  private networkListenersRegistered = false;
+  private _visibilityHandler: (() => void) | null = null;
+  private _onlineHandler: (() => void) | null = null;
 
   // ── File de priorité à 3 niveaux ────────────────────────────────────────
   // Ordre de traitement garanti : control (group_reset…) > Welcome > messages.
@@ -147,18 +148,19 @@ export class TauriMlsService implements IMlsService {
       this.heartbeatTimer = null;
     }
 
-    if (!this.networkListenersRegistered && typeof document !== 'undefined') {
-      this.networkListenersRegistered = true;
-      document.addEventListener('visibilitychange', () => {
+    if (!this._visibilityHandler && typeof document !== 'undefined') {
+      this._visibilityHandler = () => {
         if (document.visibilityState === 'visible' && !this.ws) {
           this.disconnectCallback?.();
         }
-      });
-      window.addEventListener('online', () => {
+      };
+      this._onlineHandler = () => {
         if (!this.ws) {
           this.disconnectCallback?.();
         }
-      });
+      };
+      document.addEventListener('visibilitychange', this._visibilityHandler);
+      window.addEventListener('online', this._onlineHandler);
     }
 
     // On Tauri mobile the cookie is not sent cross-origin, so we pass the
@@ -687,6 +689,22 @@ export class TauriMlsService implements IMlsService {
     callback: (requesterUserId: string, requesterDeviceId: string, groupId: string) => void
   ): void {
     this.welcomeRequestCallback = callback;
+  }
+
+  /** Removes network event listeners and clears all timers. Must be called before discarding this instance (e.g. on logout + device wipe). */
+  destroy(): void {
+    if (this.heartbeatTimer !== null) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+    if (this._visibilityHandler) {
+      document.removeEventListener('visibilitychange', this._visibilityHandler);
+      this._visibilityHandler = null;
+    }
+    if (this._onlineHandler) {
+      window.removeEventListener('online', this._onlineHandler);
+      this._onlineHandler = null;
+    }
   }
 
   /** Sends a disconnect control frame over the native WebSocket so the gateway removes the presence key immediately. */

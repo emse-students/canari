@@ -3,7 +3,7 @@
   import Avatar from '../shared/Avatar.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
   import ChatGroupPanel from './ChatGroupPanel.svelte';
-  import { presenceMap, watchUsers } from '$lib/stores/presenceStore';
+  import { presenceMap, watchUsers, unwatchUsers } from '$lib/stores/presenceStore';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
 
   interface Props {
@@ -81,6 +81,7 @@
   $effect(() => {
     if (contactName && !isGroupConversation && !isChannel) {
       watchUsers([contactName]);
+      return () => unwatchUsers([contactName]);
     }
   });
 

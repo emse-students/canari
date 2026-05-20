@@ -2,7 +2,7 @@
   import Avatar from '../shared/Avatar.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
-  import { presenceMap, watchUsers } from '$lib/stores/presenceStore';
+  import { presenceMap, watchUsers, unwatchUsers } from '$lib/stores/presenceStore';
   import { onMount } from 'svelte';
   import { extractMentionUserIds } from '$lib/utils/mentions';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
@@ -59,7 +59,10 @@
 
   onMount(() => {
     // Only poll presence for real user IDs (direct conversations).
-    if (isDirect) watchUsers([contactName]);
+    if (isDirect) {
+      watchUsers([contactName]);
+      return () => unwatchUsers([contactName]);
+    }
   });
 
   $effect(() => {

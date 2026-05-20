@@ -278,4 +278,12 @@ export interface IMlsService {
    * No-op if the socket is not open.
    */
   sendDisconnect(): void;
+
+  /**
+   * Removes network event listeners (`visibilitychange`, `online`) and clears
+   * all internal timers. Must be called before the instance is discarded (e.g.
+   * on logout + device wipe) to prevent orphaned handlers keeping a stale
+   * reference to this object and blocking GC.
+   */
+  destroy?(): void;
 }

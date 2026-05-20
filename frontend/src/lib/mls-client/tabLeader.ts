@@ -17,7 +17,7 @@ const LEADER_KEY = 'canari_tab_leader';
 const HEARTBEAT_KEY = 'canari_tab_leader_heartbeat';
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 
-/** Writes a fresh timestamp to localStorage every 2 s so other tabs can detect a stale leader. */
+/** Writes a fresh timestamp to localStorage every 4 s so other tabs can detect a stale leader. The staleness threshold is 5 s, giving a 1 s margin. */
 function startHeartbeat(): void {
   if (heartbeatInterval) clearInterval(heartbeatInterval);
   heartbeatInterval = setInterval(() => {
@@ -30,7 +30,7 @@ function startHeartbeat(): void {
     } catch {
       /* quota */
     }
-  }, 2000);
+  }, 4000);
 }
 
 /**

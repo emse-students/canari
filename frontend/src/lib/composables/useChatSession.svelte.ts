@@ -188,6 +188,7 @@ export function useChatSession() {
       // Best-effort cleanup: continue even if local DB is not accessible.
     }
 
+    mls?.destroy?.();
     mls = null;
     storage = null;
     myDeviceId = '';
@@ -314,6 +315,7 @@ export function useChatSession() {
 
       const pinCheckData = pinCheckSettled.value;
       if (pinCheckData.resetRequired === true) {
+        mls?.destroy?.();
         mls = null; // Force fresh MlsService on next login after wipe
         await resetDeviceAsFresh(userId, cb);
         pin = '';

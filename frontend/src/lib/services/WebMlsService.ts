@@ -59,7 +59,8 @@ export class WebMlsService implements IMlsService {
   private initPromise: Promise<void> | null = null;
   /** True when initialized without existing state — triggers OTKP purge before new ones are published. */
   private freshStart = false;
-  private networkListenersRegistered = false;
+  private _visibilityHandler: (() => void) | null = null;
+  private _onlineHandler: (() => void) | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
   // Message queue for sequential processing
@@ -141,21 +142,22 @@ export class WebMlsService implements IMlsService {
 
     // Register visibility/online listeners once — trigger reconnect when the
     // tab becomes visible or the network comes back after a gap.
-    if (!this.networkListenersRegistered && typeof document !== 'undefined') {
-      this.networkListenersRegistered = true;
-      document.addEventListener('visibilitychange', () => {
+    if (!this._visibilityHandler && typeof document !== 'undefined') {
+      this._visibilityHandler = () => {
         if (
           document.visibilityState === 'visible' &&
           (!this.ws || this.ws.readyState !== WebSocket.OPEN)
         ) {
           this.disconnectCallback?.();
         }
-      });
-      window.addEventListener('online', () => {
+      };
+      this._onlineHandler = () => {
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
           this.disconnectCallback?.();
         }
-      });
+      };
+      document.addEventListener('visibilitychange', this._visibilityHandler);
+      window.addEventListener('online', this._onlineHandler);
     }
 
     // Same-origin cookie often works; passing JWT in the query matches Tauri and
@@ -551,6 +553,19 @@ export class WebMlsService implements IMlsService {
   ): void {
     this.bulkIngestStart = onStart;
     this.bulkIngestEnd = onEnd;
+  }
+
+  /** Removes network event listeners and clears all timers. Must be called before discarding this instance (e.g. on logout + device wipe). */
+  destroy(): void {
+    this.clearHeartbeat();
+    if (this._visibilityHandler) {
+      document.removeEventListener('visibilitychange', this._visibilityHandler);
+      this._visibilityHandler = null;
+    }
+    if (this._onlineHandler) {
+      window.removeEventListener('online', this._onlineHandler);
+      this._onlineHandler = null;
+    }
   }
 
   /** Sends a disconnect control frame over the browser WebSocket so the gateway removes the presence key immediately. */
