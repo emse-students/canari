@@ -4,6 +4,7 @@
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import { presenceMap, watchUsers } from '$lib/stores/presenceStore';
   import { onMount } from 'svelte';
+  import { extractMentionUserIds } from '$lib/utils/mentions';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { isCanonicalDirectKey } from '$lib/utils/chat/conversations';
 
@@ -44,7 +45,7 @@
   // display names, not user IDs, so we must not use them for presence or avatars.
   const isDirect = $derived(conversationType === 'direct');
 
-  let previewText = $derived(lastMessage ? getPreviewText(parseEnvelope(lastMessage)) : null);
+  let previewText = $state<string | null>(null);
   let isOnline = $derived(isDirect ? $presenceMap[contactName] || false : false);
   let resolvedDisplayName = $state('');
 
@@ -70,6 +71,26 @@
     } else {
       resolvedDisplayName = displayName || contactName;
     }
+  });
+
+  $effect(() => {
+    const raw = lastMessage;
+    if (!raw) {
+      previewText = null;
+      return;
+    }
+    const env = parseEnvelope(raw);
+    previewText = getPreviewText(env);
+
+    const source =
+      env.kind === 'text' ? env.text : env.kind === 'media' ? (env.caption ?? '') : '';
+    const mentionIds = extractMentionUserIds(source);
+    if (mentionIds.length === 0) return;
+
+    void Promise.all(mentionIds.map((id) => resolveUserDisplayName(id))).then(() => {
+      if (lastMessage !== raw) return;
+      previewText = getPreviewText(parseEnvelope(raw));
+    });
   });
 </script>
 

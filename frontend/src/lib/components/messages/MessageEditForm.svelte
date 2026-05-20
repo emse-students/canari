@@ -36,7 +36,7 @@
       value={editText}
       oninput={(e) => onEditChange?.(e.currentTarget.value)}
       rows="3"
-      class="w-full px-3 py-2.5 rounded-xl border border-black/10 bg-white/40 shadow-inner text-sm text-cn-dark resize-none focus:outline-none focus:ring-2 focus:ring-cn-dark/30 placeholder:text-cn-dark/50 transition-all backdrop-blur-sm"
+      class="w-full max-w-full px-3 py-2.5 rounded-xl border border-black/10 bg-white/40 shadow-inner text-sm text-cn-dark resize-none whitespace-pre-wrap break-words [overflow-wrap:anywhere] focus:outline-none focus:ring-2 focus:ring-cn-dark/30 placeholder:text-cn-dark/50 transition-all backdrop-blur-sm"
       placeholder="Modifier le message..."
       onkeydown={(e) => {
         if (e.key === 'Escape') {

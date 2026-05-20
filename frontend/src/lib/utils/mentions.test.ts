@@ -5,7 +5,7 @@ import {
   formatMentionToken,
   isMentionUserId,
 } from './mentions';
-import { splitTextWithMentions } from './mentions.parse';
+import { formatMentionsForPreview, splitTextWithMentions } from './mentions.parse';
 import { preprocessPostMarkdown } from './posts/postMarkdown';
 
 describe('mentions', () => {
@@ -38,6 +38,19 @@ describe('mentions', () => {
     expect(isMentionUserId(EXAMPLE_MENTION_USER_ID)).toBe(true);
     expect(isMentionUserId('Jean Dupont')).toBe(false);
     expect(isMentionUserId('abc')).toBe(false);
+  });
+});
+
+describe('formatMentionsForPreview', () => {
+  it('replaces @[id] with @label for previews', () => {
+    const text = `Salut @[${EXAMPLE_MENTION_USER_ID}]!`;
+    const out = formatMentionsForPreview(text);
+    expect(out).not.toContain('@[');
+    expect(out).toMatch(/^Salut @.+!$/);
+  });
+
+  it('leaves text without mentions unchanged', () => {
+    expect(formatMentionsForPreview('hello world')).toBe('hello world');
   });
 });
 

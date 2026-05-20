@@ -40,3 +40,17 @@ export function splitTextWithMentions(text: string): TextMentionPart[] {
   }
   return parts;
 }
+
+/** Replaces `@[id]` tokens with `@DisplayName` for conversation previews and reply quotes. */
+export function formatMentionsForPreview(text: string): string {
+  if (!text || !text.includes('@[')) return text;
+  const parts = splitTextWithMentions(text);
+  if (parts.every((p) => p.type === 'text')) return text;
+  return parts
+    .map((p) => {
+      if (p.type === 'mention') return `@${p.label}`;
+      if (p.type === 'hashtag') return `#${p.value}`;
+      return p.value;
+    })
+    .join('');
+}

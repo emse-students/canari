@@ -560,10 +560,11 @@
       <MentionComposerInput
         bind:this={composerInput}
         bind:value={markdown}
+        markdownPreview
         placeholder="Écrivez votre message ici..."
         minHeight="120px"
-        class="w-full"
-        editorClass="custom-scrollbar min-h-[120px] w-full rounded-xl bg-transparent px-4 py-3.5 text-[0.95rem] sm:text-[1rem] font-medium leading-relaxed text-text-main"
+        class="w-full min-w-0"
+        editorClass="custom-scrollbar min-h-[120px] w-full max-w-full rounded-xl bg-transparent px-4 py-3.5 text-[0.95rem] sm:text-[1rem] font-medium leading-relaxed text-text-main"
       />
 
       <!-- Aperçu des images & Légendes -->

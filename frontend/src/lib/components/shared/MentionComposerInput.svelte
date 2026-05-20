@@ -17,6 +17,9 @@
     placeholder?: string;
     disabled?: boolean;
     singleLine?: boolean;
+    /** Discord-style live markdown (*italic*, **bold**, escapes, muted delimiters). */
+    markdownPreview?: boolean;
+    maxlength?: number;
     minHeight?: string;
     class?: string;
     editorClass?: string;
@@ -32,6 +35,8 @@
     placeholder = '',
     disabled = false,
     singleLine = false,
+    markdownPreview = false,
+    maxlength,
     minHeight = '44px',
     class: className = '',
     editorClass = '',
@@ -58,13 +63,24 @@
     focus: () => editorEl?.focus(),
   });
 
+  const renderOptions = $derived({ markdownPreview });
+
+  function clampText(text: string): string {
+    if (maxlength === undefined || text.length <= maxlength) return text;
+    return text.slice(0, maxlength);
+  }
+
   function syncFromPlainText(text: string, moveCursorTo?: number) {
+    text = clampText(text);
+    if (moveCursorTo !== undefined && maxlength !== undefined) {
+      moveCursorTo = Math.min(moveCursorTo, maxlength);
+    }
     pendingInternalSync++;
     value = text;
     lastRenderedValue = text;
     onchange?.(text);
     if (editorEl) {
-      renderPlainTextToMentionEditor(editorEl, text);
+      renderPlainTextToMentionEditor(editorEl, text, renderOptions);
       if (moveCursorTo !== undefined) {
         setPlainTextSelection(editorEl, moveCursorTo, moveCursorTo);
       }
@@ -73,12 +89,13 @@
 
   function emitEditorChange() {
     if (!editorEl || isComposing) return;
-    let text = serializeMentionEditor(editorEl);
+    let text = clampText(serializeMentionEditor(editorEl));
     let { start } = getPlainTextSelection(editorEl);
+    if (maxlength !== undefined) start = Math.min(start, maxlength);
 
-    if (needsMentionChipRender(editorEl, text)) {
+    if (markdownPreview || needsMentionChipRender(editorEl, text)) {
       pendingInternalSync++;
-      renderPlainTextToMentionEditor(editorEl, text);
+      renderPlainTextToMentionEditor(editorEl, text, renderOptions);
       lastRenderedValue = text;
       setPlainTextSelection(editorEl, start, start);
     }
@@ -110,7 +127,7 @@
       return;
     }
 
-    renderPlainTextToMentionEditor(editorEl, value);
+    renderPlainTextToMentionEditor(editorEl, value, renderOptions);
     lastRenderedValue = value;
   });
 
@@ -169,7 +186,7 @@
   }
 </script>
 
-<div class="mention-composer relative {className}">
+<div class="mention-composer relative min-w-0 max-w-full w-full {className}">
   <MentionDropdown
     open={mention.open}
     suggestions={mention.suggestions}
@@ -215,15 +232,23 @@
   :global(.mention-composer-editor) {
     position: relative;
     z-index: 1;
+    display: block;
+    width: 100%;
+    max-width: 100%;
     white-space: pre-wrap;
     word-break: break-word;
     overflow-wrap: anywhere;
+    overflow-x: hidden;
   }
 
   :global(.mention-composer-editor--single) {
-    white-space: nowrap;
-    overflow-x: auto;
-    overflow-y: hidden;
+    max-height: 8rem;
+    overflow-y: auto;
+  }
+
+  :global(.mention-composer-editor :is(.md-composer-muted, .md-composer-italic, .md-composer-bold, .md-composer-bold-italic, .md-composer-strike, .md-composer-code, .mention-editor-chip)) {
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 
   :global(.mention-editor-chip) {
@@ -246,5 +271,43 @@
 
   :global(.mention-editor-chip:hover) {
     background: rgb(245 158 11 / 0.22);
+  }
+
+  :global(.md-composer-muted) {
+    color: rgb(120 130 150 / 0.55);
+  }
+
+  :global(:is(.dark) .md-composer-muted) {
+    color: rgb(180 190 210 / 0.4);
+  }
+
+  :global(.md-composer-italic) {
+    font-style: italic;
+  }
+
+  :global(.md-composer-bold) {
+    font-weight: 700;
+  }
+
+  :global(.md-composer-bold-italic) {
+    font-style: italic;
+    font-weight: 700;
+  }
+
+  :global(.md-composer-strike) {
+    text-decoration: line-through;
+    opacity: 0.85;
+  }
+
+  :global(.md-composer-code) {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.92em;
+    background: rgb(0 0 0 / 0.06);
+    border-radius: 0.25rem;
+    padding: 0 0.15rem;
+  }
+
+  :global(:is(.dark) .md-composer-code) {
+    background: rgb(255 255 255 / 0.08);
   }
 </style>

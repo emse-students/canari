@@ -4,10 +4,7 @@
   import LinkPreviewCard from './LinkPreviewCard.svelte';
   import MessageMentionChip from './MessageMentionChip.svelte';
 
-  interface TextSegment {
-    type: 'text' | 'link';
-    value: string;
-  }
+  import type { TextLinkSegment as TextSegment } from '$lib/utils/chat/messageDisplay';
 
   interface Props {
     /** Pre-split text+link segments produced by splitTextWithLinks. */
@@ -34,7 +31,7 @@
 >
   {#each textSegments as segment, index (`${segment.type}-${segment.value}-${index}`)}
     {#if segment.type === 'link'}
-      {#if isGifUrl(segment.value)}
+      {#if !segment.noEmbed && isGifUrl(segment.value)}
         <span class="block my-1.5">
           <img
             src={getGifEmbedUrl(segment.value)}

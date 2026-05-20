@@ -11,6 +11,7 @@
 
 import type { MediaRef } from '$lib/media';
 import type { MessageReference } from '$lib/types';
+import { formatMentionsForPreview } from '$lib/utils/mentions.parse';
 
 // ---------------------------------------------------------------------------
 // Variants
@@ -59,11 +60,11 @@ export function serializeEnvelope(env: MessageEnvelope): string {
 export function getPreviewText(env: MessageEnvelope): string {
   switch (env.kind) {
     case 'text':
-      return env.text;
+      return formatMentionsForPreview(env.text);
     case 'media':
-      return env.caption ? `[Media] ${env.caption}` : '[Media]';
+      return env.caption ? `[Media] ${formatMentionsForPreview(env.caption)}` : '[Media]';
     case 'system':
-      return `[Info] ${env.text}`;
+      return `[Info] ${formatMentionsForPreview(env.text)}`;
   }
 }
 

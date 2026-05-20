@@ -6,6 +6,7 @@
   import PostMentionLink from './PostMentionLink.svelte';
   import PostCodeBlock from './PostCodeBlock.svelte';
   import PostCodespan from './PostCodespan.svelte';
+  import { extractFirstUrl } from '$lib/utils/chat/messageDisplay';
   import { preprocessPostMarkdown } from '$lib/utils/posts/postMarkdown';
   import { ensureHljsTheme } from '$lib/utils/posts/hljsTheme';
   import { onMount } from 'svelte';
@@ -47,11 +48,6 @@
   function nextImage() {
     if (lightboxIndex === null || !post.images) return;
     lightboxIndex = (lightboxIndex + 1) % post.images.length;
-  }
-
-  function extractFirstUrl(text: string): string | null {
-    const match = text.match(/https?:\/\/[^\s)>\]"]+/i);
-    return match?.[0] ?? null;
   }
 
   const renderers = { link: PostMentionLink, code: PostCodeBlock, codespan: PostCodespan };

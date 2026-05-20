@@ -1,9 +1,24 @@
 import { formatMentionToken, MENTION_UUID_TOKEN_RE } from '$lib/utils/mentions';
 import { splitTextWithMentions } from '$lib/utils/mentions.parse';
+import {
+  parseInlineMarkdownPreview,
+  type InlinePreviewSegment,
+} from '$lib/utils/markdown/inlinePreview';
 import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
 
 export const MENTION_CHIP_CLASS = 'mention-editor-chip';
 export const MENTION_CHIP_SELECTOR = `[data-mention-id].${MENTION_CHIP_CLASS}`;
+
+export const MD_MUTED_CLASS = 'md-composer-muted';
+export const MD_ITALIC_CLASS = 'md-composer-italic';
+export const MD_BOLD_CLASS = 'md-composer-bold';
+export const MD_BOLD_ITALIC_CLASS = 'md-composer-bold-italic';
+export const MD_STRIKE_CLASS = 'md-composer-strike';
+export const MD_CODE_CLASS = 'md-composer-code';
+
+export type MentionEditorRenderOptions = {
+  markdownPreview?: boolean;
+};
 
 /** Serializes a mention editor DOM tree to plain text with `@[uuid]` tokens. */
 export function serializeMentionEditor(root: HTMLElement): string {
@@ -68,6 +83,70 @@ function appendTextWithBreaks(parent: HTMLElement, text: string): void {
   }
 }
 
+function appendMutedSpan(parent: HTMLElement, text: string): void {
+  const span = document.createElement('span');
+  span.className = MD_MUTED_CLASS;
+  span.appendChild(document.createTextNode(text));
+  parent.appendChild(span);
+}
+
+function appendFormattedSpan(parent: HTMLElement, className: string, text: string): void {
+  const span = document.createElement('span');
+  span.className = className;
+  appendTextWithBreaks(span, text);
+  parent.appendChild(span);
+}
+
+function appendInlinePreviewSegment(parent: HTMLElement, seg: InlinePreviewSegment): void {
+  switch (seg.kind) {
+    case 'text':
+      appendTextWithBreaks(parent, seg.value);
+      break;
+    case 'escape':
+      appendMutedSpan(parent, '\\');
+      parent.appendChild(document.createTextNode(seg.char));
+      break;
+    case 'delimiter':
+      appendMutedSpan(parent, seg.marker);
+      break;
+    case 'italic':
+      appendMutedSpan(parent, seg.marker);
+      appendFormattedSpan(parent, MD_ITALIC_CLASS, seg.content);
+      appendMutedSpan(parent, seg.marker);
+      break;
+    case 'bold':
+      appendMutedSpan(parent, seg.marker);
+      appendFormattedSpan(parent, MD_BOLD_CLASS, seg.content);
+      appendMutedSpan(parent, seg.marker);
+      break;
+    case 'boldItalic':
+      appendMutedSpan(parent, seg.marker);
+      appendFormattedSpan(parent, MD_BOLD_ITALIC_CLASS, seg.content);
+      appendMutedSpan(parent, seg.marker);
+      break;
+    case 'strike':
+      appendMutedSpan(parent, seg.marker);
+      appendFormattedSpan(parent, MD_STRIKE_CLASS, seg.content);
+      appendMutedSpan(parent, seg.marker);
+      break;
+    case 'code':
+      appendMutedSpan(parent, seg.marker);
+      appendFormattedSpan(parent, MD_CODE_CLASS, seg.content);
+      appendMutedSpan(parent, seg.marker);
+      break;
+  }
+}
+
+function appendComposerText(parent: HTMLElement, text: string, markdownPreview: boolean): void {
+  if (!markdownPreview) {
+    appendTextWithBreaks(parent, text);
+    return;
+  }
+  for (const seg of parseInlineMarkdownPreview(text)) {
+    appendInlinePreviewSegment(parent, seg);
+  }
+}
+
 export function countMentionTokens(text: string): number {
   const re = new RegExp(MENTION_UUID_TOKEN_RE.source, MENTION_UUID_TOKEN_RE.flags);
   return [...text.matchAll(re)].length;
@@ -80,15 +159,20 @@ export function needsMentionChipRender(root: HTMLElement, plainText: string): bo
   return root.querySelectorAll(MENTION_CHIP_SELECTOR).length < expected;
 }
 
-/** Renders plain text (with `@[uuid]` tokens) into a mention editor element. */
-export function renderPlainTextToMentionEditor(root: HTMLElement, text: string): void {
+/** Renders plain text (mentions + optional Discord-style markdown preview) into the editor. */
+export function renderPlainTextToMentionEditor(
+  root: HTMLElement,
+  text: string,
+  options: MentionEditorRenderOptions = {}
+): void {
+  const markdownPreview = options.markdownPreview ?? false;
   root.innerHTML = '';
   if (!text) return;
 
   const parts = splitTextWithMentions(text);
   for (const part of parts) {
     if (part.type === 'text') {
-      appendTextWithBreaks(root, part.value);
+      appendComposerText(root, part.value, markdownPreview);
     } else if (part.type === 'mention') {
       root.appendChild(createMentionChip(part.userId, part.label));
     } else if (part.type === 'hashtag') {

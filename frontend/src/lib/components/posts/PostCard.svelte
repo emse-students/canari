@@ -506,7 +506,7 @@
       <textarea
         bind:value={editMarkdown}
         rows={4}
-        class="w-full bg-black/5 dark:bg-white/5 rounded-xl px-3 py-2.5 text-[0.9rem] text-text-main border border-black/10 dark:border-white/10 focus:ring-2 focus:ring-amber-500/50 outline-none resize-none"
+        class="w-full max-w-full bg-black/5 dark:bg-white/5 rounded-xl px-3 py-2.5 text-[0.9rem] text-text-main border border-black/10 dark:border-white/10 focus:ring-2 focus:ring-amber-500/50 outline-none resize-none whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
       ></textarea>
       <div class="flex gap-2 justify-end">
         <button

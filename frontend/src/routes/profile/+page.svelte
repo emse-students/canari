@@ -26,6 +26,7 @@
   } from '@lucide/svelte';
   import { slide, fade } from 'svelte/transition';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
+  import MentionComposerInput from '$lib/components/shared/MentionComposerInput.svelte';
 
   let profile = $state<UserProfile | null>(null);
   let loading = $state(true);
@@ -224,13 +225,15 @@
 
       {#if editingBio}
         <div transition:slide={{ duration: 200 }} class="space-y-3">
-          <textarea
+          <MentionComposerInput
             bind:value={bioInput}
-            maxlength="500"
-            rows="4"
-            class="w-full rounded-[1.25rem] border border-black/10 dark:border-white/10 bg-white/80 dark:bg-black/40 px-4 py-3 text-[0.95rem] text-text-main shadow-inner focus:outline-none focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/30 resize-none transition-all placeholder:text-text-muted/60"
-            placeholder="Décris-toi en quelques mots… Markdown accepté (**gras**, listes, [liens](https://…))."
-          ></textarea>
+            markdownPreview
+            maxlength={500}
+            minHeight="100px"
+            class="w-full min-w-0 rounded-[1.25rem] border border-black/10 dark:border-white/10 bg-white/80 dark:bg-black/40 shadow-inner focus-within:border-amber-500/50 focus-within:ring-2 focus-within:ring-amber-500/30 transition-all"
+            editorClass="min-h-[100px] w-full max-w-full px-4 py-3 text-[0.95rem] text-text-main leading-relaxed"
+            placeholder="Décris-toi en quelques mots… *italique*, **gras**, ~~barré~~, `code`"
+          />
           <div class="flex items-center justify-between">
             <span
               class="text-xs font-semibold text-text-muted pl-1 {bioInput.length >= 490
