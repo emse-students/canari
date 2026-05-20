@@ -25,6 +25,16 @@ export function isUuidLike(value: string): boolean {
   return UUID_RE.test(value.trim());
 }
 
+const HEX_ID_RE = /^[0-9a-f]{40,}$/i;
+
+/**
+ * True when `value` looks like a raw technical ID that must never be shown in the UI —
+ * either a UUID or an MLS group ID (64-char lowercase hex hash).
+ */
+export function isRawId(value: string): boolean {
+  return isUuidLike(value) || HEX_ID_RE.test(value.trim());
+}
+
 /** True when `value` is the persisted direct-conversation key (`userId::peerId`). */
 export function isCanonicalDirectKey(value: string): boolean {
   return value.includes('::');
@@ -180,7 +190,7 @@ export function resolveConversationListPresentation(
       isCanonicalDirectKey(rawName) ||
       !rawName ||
       rawName.toLowerCase() === peerId ||
-      isUuidLike(rawName);
+      isRawId(rawName);
 
     const fallback =
       input.fallbackDisplayName &&
@@ -198,7 +208,7 @@ export function resolveConversationListPresentation(
 
   for (const candidate of [input.name, input.fallbackDisplayName, metaName]) {
     const trimmed = candidate?.trim();
-    if (trimmed && !isUuidLike(trimmed) && !isCanonicalDirectKey(trimmed)) {
+    if (trimmed && !isRawId(trimmed) && !isCanonicalDirectKey(trimmed)) {
       return {
         conversationType: 'group',
         contactId: input.id,
@@ -207,10 +217,11 @@ export function resolveConversationListPresentation(
     }
   }
 
+  const fb = input.name.trim();
   return {
     conversationType: 'group',
     contactId: input.id,
-    displayName: input.name.trim() || input.id,
+    displayName: fb && !isRawId(fb) ? fb : 'Groupe',
   };
 }
 

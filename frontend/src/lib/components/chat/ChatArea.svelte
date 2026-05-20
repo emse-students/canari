@@ -8,6 +8,7 @@
   import ChatComposer from './ChatComposer.svelte';
   import EmptyState from '../shared/EmptyState.svelte';
   import { groupMessages } from '$lib/utils/messageGrouping';
+  import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import type { ChatMessage, MessageReaction, Conversation } from '$lib/types';
   import type { PendingMediaFile } from '$lib/media';
@@ -368,10 +369,15 @@
     : ''}"
 >
   {#if conversation}
+    {@const resolvedName = resolveConversationListPresentation(
+      { id: conversation.id, name: conversation.name, contactName: conversation.contactName,
+        conversationType: conversation.conversationType, directPeerId: conversation.directPeerId },
+      currentUserId
+    ).displayName}
     <div>
       <ChatHeader
         contactName={conversation.contactName}
-        displayName={conversation.name}
+        displayName={resolvedName}
         isReady={conversation.isReady}
         {isChannel}
         isGroupConversation={(conversation.conversationType ?? 'group') === 'group'}

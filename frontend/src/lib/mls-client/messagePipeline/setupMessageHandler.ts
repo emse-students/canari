@@ -1,5 +1,5 @@
 import { saveMlsState } from '$lib/utils/hex';
-import { isUuidLike } from '$lib/utils/chat/conversations';
+import { isRawId } from '$lib/utils/chat/conversations';
 import { decodeAppMessage, encodeAppMessage, mkSystem } from '$lib/proto/codec';
 import { serializeEnvelope, mkTextEnvelope, mkChannelInviteEnvelope } from '$lib/envelope';
 import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
@@ -377,7 +377,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
 
           // Si le nom du groupe ressemble à un UUID, résoudre le vrai nom depuis l'API (non-bloquant).
           const renamedConvo = conversations.get(effectiveKey);
-          if (renamedConvo && isUuidLike(renamedConvo.name)) {
+          if (renamedConvo && isRawId(renamedConvo.name)) {
             (async () => {
               try {
                 let authHeader: Record<string, string> = {};
@@ -393,7 +393,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                 });
                 if (r.ok) {
                   const d = await r.json();
-                  if (d?.name && !isUuidLike(d.name)) {
+                  if (d?.name && !isRawId(d.name)) {
                     const c = conversations.get(effectiveKey);
                     if (c) {
                       conversations.set(effectiveKey, { ...c, name: d.name });

@@ -10,6 +10,7 @@
   import SidebarNewCommunityModal from './SidebarNewCommunityModal.svelte';
   import SidebarCommunityAdminModal from './SidebarCommunityAdminModal.svelte';
   import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
+  import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
 
   interface Conversation {
     id: string;
@@ -400,10 +401,15 @@
     <div class="flex-1 overflow-y-auto p-2.5">
       {#if activeSidebarTab === 'discussions'}
         {#each filteredConversationEntries as [name, convo] (name)}
+          {@const resolved = resolveConversationListPresentation(
+            { id: convo.id || name, name: convo.name, contactName: convo.contactName,
+              conversationType: convo.conversationType, directPeerId: convo.directPeerId },
+            currentUserId
+          )}
           <div class="relative">
             <ConversationTile
-              contactName={convo.contactName}
-              displayName={convo.name}
+              contactName={resolved.contactId}
+              displayName={resolved.displayName}
               conversationType={convo.conversationType}
               lastMessage={convo.messages.length > 0
                 ? convo.messages[convo.messages.length - 1].content

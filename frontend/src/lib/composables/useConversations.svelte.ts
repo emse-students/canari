@@ -31,6 +31,7 @@ import {
   repairDirectConversation,
 } from '$lib/utils/chat/groupCreation';
 import { loadExistingConversations } from '$lib/utils/chat/conversations';
+import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
 import {
   pushHistoryOverlay,
@@ -645,7 +646,7 @@ export function useConversations() {
       await saveConversation(selectedContact, ctx);
       await ctx.addMessageToChat(
         'system',
-        `${ctx.userId} a renomme le groupe en "${name}"`,
+        `${getUserDisplayNameSync(ctx.userId)} a renomme le groupe en "${name}"`,
         selectedContact,
         { isSystem: true }
       );
