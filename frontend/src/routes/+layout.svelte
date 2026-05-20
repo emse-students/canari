@@ -12,6 +12,8 @@
   import { page } from '$app/state';
   import { APP_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
   import { initHistoryOverlayStack, drainHistoryOverlayStack } from '$lib/utils/historyOverlayStack';
+  import { refreshAppVersionCheck } from '$lib/stores/appVersionCheck.svelte';
+  import AppUpdateModal from '$lib/components/shared/AppUpdateModal.svelte';
 
   // NOUVEAUX IMPORTS POUR LE PUSH :
   import { getStatusLog, globalSession, globalConvs } from '$lib/stores/globalChatSingleton.svelte';
@@ -63,6 +65,10 @@
       attachConsole().catch(() => {});
     }
 
+    void refreshAppVersionCheck();
+    const onFocus = () => void refreshAppVersionCheck();
+    window.addEventListener('focus', onFocus);
+
     const handler = () => {
       showLogs = !showLogs;
     };
@@ -109,6 +115,7 @@
 
     return () => {
       teardownHistory();
+      window.removeEventListener('focus', onFocus);
       window.removeEventListener('canari:toggle-logs', handler);
       window.removeEventListener('resize', updateViewportHeight);
       window.removeEventListener('orientationchange', handleOrientationChange);
@@ -165,6 +172,8 @@
     }
   }
 </script>
+
+<AppUpdateModal />
 
 <div
   role="presentation"

@@ -1,0 +1,56 @@
+name: Bump version on release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Semver without v prefix (e.g. 0.3.6)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  bump-version:
+    name: Sync version across manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve target version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${{ github.event.release.tag_name }}"
+          fi
+          VERSION="${VERSION#v}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Target version: ${VERSION}"
+
+      - name: Bump all package.json and Cargo.toml versions
+        run: bash scripts/bump-app-version.sh "${{ steps.version.outputs.version }}"
+
+      - name: Commit and push to main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add frontend/package.json frontend/src-tauri/tauri.conf.json
+          git add frontend/src-tauri/Cargo.toml frontend/mls-wasm/Cargo.toml frontend/mls-core/Cargo.toml
+          git add libs/shared-rust/Cargo.toml
+          shopt -s nullglob
+          git add libs/*/package.json
+          git add apps/*/package.json apps/*/Cargo.toml
+          shopt -u nullglob
+          if git diff --cached --quiet; then
+            echo "No version changes (already at ${{ steps.version.outputs.version }})"
+            exit 0
+          fi
+          git commit -m "chore: bump version to ${{ steps.version.outputs.version }}"
+          git push origin HEAD:main

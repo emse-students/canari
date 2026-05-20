@@ -9,12 +9,22 @@
     open?: boolean;
     title?: string;
     maxWidth?: string;
+    /** When false, backdrop click, Escape, and the header close button are disabled. */
+    dismissible?: boolean;
     onClose: () => void;
     children?: Snippet;
     footer?: Snippet;
   }
 
-  let { open = false, title, maxWidth = 'max-w-md', onClose, children, footer }: Props = $props();
+  let {
+    open = false,
+    title,
+    maxWidth = 'max-w-md',
+    dismissible = true,
+    onClose,
+    children,
+    footer,
+  }: Props = $props();
 
   let historyClose: (() => void) | null = null;
 
@@ -36,15 +46,17 @@
   }
 
   function handleBackdropClick(e: MouseEvent) {
+    if (!dismissible) return;
     if (e.target === e.currentTarget) dismiss();
   }
 
   function handleKeydown(e: KeyboardEvent) {
+    if (!dismissible) return;
     if (e.key === 'Escape') dismiss();
   }
 </script>
 
-<svelte:window onkeydown={open ? handleKeydown : undefined} />
+<svelte:window onkeydown={open && dismissible ? handleKeydown : undefined} />
 
 {#if open}
   <div use:portal>
@@ -70,13 +82,15 @@
             class="px-6 py-4 border-b border-cn-border flex items-center justify-between shrink-0"
           >
             <h2 class="text-base font-semibold text-cn-dark">{title}</h2>
-            <button
-              onclick={dismiss}
-              class="p-1.5 rounded-lg hover:bg-cn-bg transition-colors text-text-muted hover:text-cn-dark"
-              aria-label="Fermer"
-            >
-              <X size={16} />
-            </button>
+            {#if dismissible}
+              <button
+                onclick={dismiss}
+                class="p-1.5 rounded-lg hover:bg-cn-bg transition-colors text-text-muted hover:text-cn-dark"
+                aria-label="Fermer"
+              >
+                <X size={16} />
+              </button>
+            {/if}
           </div>
         {/if}
 

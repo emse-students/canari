@@ -1,0 +1,77 @@
+<script lang="ts">
+  import Modal from '$lib/components/shared/Modal.svelte';
+  import { Download } from '@lucide/svelte';
+  import {
+    dismissAppUpdatePrompt,
+    getAppVersionCheck,
+    isAppUpdateAvailable,
+  } from '$lib/stores/appVersionCheck.svelte';
+  import { openLatestAppUpdate } from '$lib/utils/appVersion';
+  import { isTauriRuntime } from '$lib/utils/openExternal';
+
+  const show = $derived(isAppUpdateAvailable());
+  const info = $derived(getAppVersionCheck());
+  const isNative = $derived(isTauriRuntime());
+
+  let updating = $state(false);
+
+  async function handleUpdate() {
+    if (!info?.serverVersion) return;
+    updating = true;
+    try {
+      await openLatestAppUpdate(info.serverVersion);
+    } finally {
+      updating = false;
+    }
+  }
+</script>
+
+<Modal
+  open={show && info !== null}
+  title="Mise à jour requise"
+  dismissible={false}
+  maxWidth="max-w-lg"
+  onClose={() => {}}
+>
+  <div class="space-y-4 text-sm text-text-muted leading-relaxed">
+    <p>
+      Une nouvelle version de Canari est disponible. Vous utilisez la version
+      <strong class="text-cn-dark">{info?.clientVersion}</strong>
+      {#if info?.serverVersion}
+        ; la version actuelle du serveur est
+        <strong class="text-cn-dark">{info.serverVersion}</strong>.
+      {/if}
+    </p>
+    {#if isNative && info?.serverVersion}
+      <p>
+        Téléchargez et installez la dernière version depuis la page de release GitHub.
+      </p>
+    {:else}
+      <p>Rechargez l’application pour utiliser la dernière version déployée.</p>
+    {/if}
+  </div>
+
+  {#snippet footer()}
+    <button
+      type="button"
+      class="rounded-lg px-4 py-2 text-sm text-text-muted hover:bg-cn-bg transition-colors"
+      disabled={updating}
+      onclick={dismissAppUpdatePrompt}
+    >
+      Plus tard
+    </button>
+    <button
+      type="button"
+      class="inline-flex items-center gap-2 rounded-lg bg-cn-primary px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-60"
+      disabled={updating || !info?.serverVersion}
+      onclick={() => void handleUpdate()}
+    >
+      <Download size={16} />
+      {updating
+        ? 'Ouverture…'
+        : isNative
+          ? 'Télécharger la mise à jour'
+          : 'Recharger l’application'}
+    </button>
+  {/snippet}
+</Modal>

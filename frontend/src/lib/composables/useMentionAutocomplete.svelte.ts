@@ -26,10 +26,6 @@ export function useMentionAutocomplete(opts: {
   let selectedIdx = $state(-1);
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-  function readCursor(fallbackLength: number): number {
-    return opts.getCursor?.() ?? fallbackLength;
-  }
-
   function applyCursor(pos: number) {
     if (opts.setCursor) {
       opts.setCursor(pos);

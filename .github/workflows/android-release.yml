@@ -1,43 +1,31 @@
 name: Android Release
 
+# Runs after "Bump version on release" syncs frontend/package.json on main.
 on:
-  release:
-    types: [created]
+  workflow_run:
+    workflows: ['Bump version on release']
+    types: [completed]
   workflow_dispatch:
 
 jobs:
   build-android:
     name: Build Android APK
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: main
 
-      - name: Set version from tag
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Resolve release tag
+        id: release_tag
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          IFS='.' read -ra PARTS <<< "$VERSION"
-          while [ "${#PARTS[@]}" -lt 3 ]; do PARTS+=("0"); done
-          VERSION="${PARTS[0]}.${PARTS[1]}.${PARTS[2]}"
-          jq --arg v "$VERSION" '.version = $v' frontend/package.json > tmp.json && mv tmp.json frontend/package.json
-          jq --arg v "$VERSION" '.version = $v' frontend/src-tauri/tauri.conf.json > tmp.json && mv tmp.json frontend/src-tauri/tauri.conf.json
-        env:
-          GITHUB_REF_NAME: ${{ github.ref_name }}
-
-      - name: Commit version bump
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add frontend/package.json frontend/src-tauri/tauri.conf.json
-          git diff --cached --quiet || git commit -m "chore: bump version to ${GITHUB_REF_NAME#v} [skip ci]"
-          git push origin HEAD:main
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_REF_NAME: ${{ github.ref_name }}
+          VERSION="$(bash scripts/read-app-version.sh)"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Building Canari v${VERSION}"
 
       - name: Setup Java
         uses: actions/setup-java@v5
@@ -146,8 +134,6 @@ jobs:
           AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
           AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
         run: |
-          # Use empty values for URLs to trigger fallback to window.location logic (or defaults)
-          # Or set specific production URLs here if desired.
           echo "VITE_GATEWAY_URL=${BASE_URL}" >> .env
           echo "VITE_DELIVERY_URL=${BASE_URL}" >> .env
           echo "VITE_MEDIA_URL=${BASE_URL}" >> .env
@@ -196,9 +182,9 @@ jobs:
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v3
-        if: github.event_name == 'release'
+        if: github.event_name == 'workflow_run'
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: v${{ steps.release_tag.outputs.version }}
           fail_on_unmatched_files: true
           files: |
             ${{ steps.outputs.outputs.aab }}

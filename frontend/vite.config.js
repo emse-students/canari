@@ -1,10 +1,13 @@
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import { sveltekit } from '@sveltejs/kit/vite';
 import tailwindcss from '@tailwindcss/vite';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const appPackage = JSON.parse(readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
+const appVersion = appPackage.version || '0.0.0';
 
 // eslint-disable-next-line no-undef
 const host = process.env.TAURI_DEV_HOST;
@@ -59,6 +62,9 @@ function protobufPatch() {
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
+  define: {
+    'import.meta.env.VITE_APP_VERSION': JSON.stringify(appVersion),
+  },
   plugins: [mlsWasmStub(), tailwindcss(), sveltekit(), protobufPatch()],
 
   // Pre-bundle Tauri/heavy deps at startup so Vite never re-optimizes them
@@ -126,6 +132,7 @@ export default defineConfig(async () => ({
       '/api/presence': { target: 'http://localhost:3000', changeOrigin: true },
 
       // Added proxies for other services:
+      '/api/version': { target: 'http://localhost:3012', changeOrigin: true },
       '/api/auth': { target: 'http://localhost:3012', changeOrigin: true },
       '/api/users': { target: 'http://localhost:3012', changeOrigin: true },
       '/api/media': { target: 'http://localhost:3011', changeOrigin: true },

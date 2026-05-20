@@ -5,6 +5,8 @@
   import {
     getMentionChipFromEventTarget,
     getPlainTextSelection,
+    caretAfterComposerRender,
+    composerMarkdownPreviewEnabled,
     needsMentionChipRender,
     removeMentionChipBeforeCursor,
     renderPlainTextToMentionEditor,
@@ -18,7 +20,7 @@
     placeholder?: string;
     disabled?: boolean;
     singleLine?: boolean;
-    /** Discord-style live markdown (*italic*, **bold**, escapes, muted delimiters). */
+    /** Discord-style live markdown (* / _ italic_, __underline__, **bold**, escapes, muted delimiters). */
     markdownPreview?: boolean;
     maxlength?: number;
     minHeight?: string;
@@ -77,9 +79,16 @@
     if (!editorEl) return;
     isApplyingDom = true;
     pendingInternalSync++;
-    renderPlainTextToMentionEditor(editorEl, text, renderOptions);
+    renderPlainTextToMentionEditor(editorEl, text, {
+      markdownPreview: composerMarkdownPreviewEnabled(text, renderOptions),
+    });
     lastRenderedValue = text;
-    const pos = cursor ?? getPlainTextSelection(editorEl).start;
+    const pos = caretAfterComposerRender(
+      text,
+      cursor ?? getPlainTextSelection(editorEl).start,
+      renderOptions,
+      lastRenderedValue
+    );
     queueMicrotask(() => {
       if (!editorEl) return;
       setPlainTextSelection(editorEl, pos, pos);
@@ -144,7 +153,9 @@
       return;
     }
 
-    renderPlainTextToMentionEditor(editorEl, value, renderOptions);
+    renderPlainTextToMentionEditor(editorEl, value, {
+      markdownPreview: composerMarkdownPreviewEnabled(value, renderOptions),
+    });
     lastRenderedValue = value;
   });
 
@@ -264,7 +275,7 @@
     overflow-y: auto;
   }
 
-  :global(.mention-composer-editor :is(.md-composer-muted, .md-composer-italic, .md-composer-bold, .md-composer-bold-italic, .md-composer-strike, .md-composer-code, .mention-editor-chip)) {
+  :global(.mention-composer-editor :is(.md-composer-muted, .md-composer-italic, .md-composer-underline, .md-composer-bold, .md-composer-bold-italic, .md-composer-strike, .md-composer-code, .mention-editor-chip)) {
     overflow-wrap: anywhere;
     word-break: break-word;
   }
@@ -301,6 +312,11 @@
 
   :global(.md-composer-italic) {
     font-style: italic;
+  }
+
+  :global(.md-composer-underline) {
+    text-decoration: underline;
+    text-underline-offset: 2px;
   }
 
   :global(.md-composer-bold) {

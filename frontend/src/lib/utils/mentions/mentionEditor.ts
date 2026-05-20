@@ -2,16 +2,18 @@ import { formatMentionToken, MENTION_UUID_TOKEN_RE } from '$lib/utils/mentions';
 import { splitTextWithMentions } from '$lib/utils/mentions.parse';
 import {
   hasFormattedMarkdownPreview,
+  markdownStructureKey,
   parseInlineMarkdownPreview,
   type InlinePreviewSegment,
 } from '$lib/utils/markdown/inlinePreview';
-import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
+import { resolveUserDisplayName } from '$lib/utils/users/displayName';
 
 export const MENTION_CHIP_CLASS = 'mention-editor-chip';
 export const MENTION_CHIP_SELECTOR = `[data-mention-id].${MENTION_CHIP_CLASS}`;
 
 export const MD_MUTED_CLASS = 'md-composer-muted';
 export const MD_ITALIC_CLASS = 'md-composer-italic';
+export const MD_UNDERLINE_CLASS = 'md-composer-underline';
 export const MD_BOLD_CLASS = 'md-composer-bold';
 export const MD_BOLD_ITALIC_CLASS = 'md-composer-bold-italic';
 export const MD_STRIKE_CLASS = 'md-composer-strike';
@@ -111,29 +113,22 @@ function appendInlinePreviewSegment(parent: HTMLElement, seg: InlinePreviewSegme
       appendMutedSpan(parent, seg.marker);
       break;
     case 'italic':
-      appendMutedSpan(parent, seg.marker);
       appendFormattedSpan(parent, MD_ITALIC_CLASS, seg.content);
-      appendMutedSpan(parent, seg.marker);
+      break;
+    case 'underline':
+      appendFormattedSpan(parent, MD_UNDERLINE_CLASS, seg.content);
       break;
     case 'bold':
-      appendMutedSpan(parent, seg.marker);
       appendFormattedSpan(parent, MD_BOLD_CLASS, seg.content);
-      appendMutedSpan(parent, seg.marker);
       break;
     case 'boldItalic':
-      appendMutedSpan(parent, seg.marker);
       appendFormattedSpan(parent, MD_BOLD_ITALIC_CLASS, seg.content);
-      appendMutedSpan(parent, seg.marker);
       break;
     case 'strike':
-      appendMutedSpan(parent, seg.marker);
       appendFormattedSpan(parent, MD_STRIKE_CLASS, seg.content);
-      appendMutedSpan(parent, seg.marker);
       break;
     case 'code':
-      appendMutedSpan(parent, seg.marker);
       appendFormattedSpan(parent, MD_CODE_CLASS, seg.content);
-      appendMutedSpan(parent, seg.marker);
       break;
   }
 }
@@ -154,8 +149,69 @@ export function countMentionTokens(text: string): number {
 }
 
 /**
- * Whether the composer DOM should be rebuilt (avoids re-render on every keystroke for plain `*`).
- * Re-renders when mention chips are missing or when markdown formatting appears/disappears.
+ * Whether styled markdown preview should be applied when rebuilding the DOM.
+ */
+export function composerMarkdownPreviewEnabled(
+  plainText: string,
+  options: MentionEditorRenderOptions = {}
+): boolean {
+  return (options.markdownPreview ?? false) && hasFormattedMarkdownPreview(plainText);
+}
+
+/**
+ * Plain-text caret offset after rebuilding styled markdown DOM.
+ * When inserting at the end of a closed span, places the caret before the closing delimiter.
+ * Skipped after deletions so Backspace at the end still removes the closing delimiter first.
+ */
+export function caretAfterComposerRender(
+  plainText: string,
+  requestedCursor: number,
+  options: MentionEditorRenderOptions = {},
+  previousPlainText?: string
+): number {
+  if (!composerMarkdownPreviewEnabled(plainText, options)) return requestedCursor;
+
+  if (previousPlainText !== undefined) {
+    if (plainText.length < previousPlainText.length) return requestedCursor;
+    if (
+      markdownStructureKey(plainText) !== markdownStructureKey(previousPlainText) &&
+      requestedCursor >= plainText.length
+    ) {
+      return plainText.length;
+    }
+  }
+
+  if (requestedCursor < plainText.length) return requestedCursor;
+
+  const last = parseInlineMarkdownPreview(plainText).at(-1);
+  if (last?.kind === 'delimiter') {
+    return Math.max(0, plainText.length - last.marker.length);
+  }
+  return requestedCursor;
+}
+
+/**
+ * Caret used when applying an insert keystroke to formatted plain text.
+ * Inserts before a trailing closing delimiter instead of after it.
+ */
+export function caretForComposerInsert(
+  plainText: string,
+  cursor: number,
+  options: MentionEditorRenderOptions = {}
+): number {
+  if (!composerMarkdownPreviewEnabled(plainText, options)) return cursor;
+  if (cursor < plainText.length) return cursor;
+  const last = parseInlineMarkdownPreview(plainText).at(-1);
+  if (last?.kind === 'delimiter') {
+    return Math.max(0, plainText.length - last.marker.length);
+  }
+  return cursor;
+}
+
+/**
+ * Whether the composer DOM should be rebuilt.
+ * Re-renders when markdown structure changes (delimiter opened/closed) or when editing inside
+ * closed formatted spans (keeps the caret in the content node, not after a muted delimiter).
  */
 export function shouldRerenderComposerDom(
   plainText: string,
@@ -163,7 +219,10 @@ export function shouldRerenderComposerDom(
   options: MentionEditorRenderOptions = {}
 ): boolean {
   if (!options.markdownPreview) return false;
-  return hasFormattedMarkdownPreview(plainText) || hasFormattedMarkdownPreview(lastRendered);
+  if (!plainText && !lastRendered) return false;
+  if (plainText === lastRendered) return false;
+  if (markdownStructureKey(plainText) !== markdownStructureKey(lastRendered)) return true;
+  return hasFormattedMarkdownPreview(plainText);
 }
 
 /** True when plain text has `@[uuid]` tokens not yet rendered as chips. */
