@@ -103,3 +103,9 @@ export function parseInlineMarkdownPreview(text: string): InlinePreviewSegment[]
 
   return segments;
 }
+
+/** True when the text contains at least one closed markdown span (italic, bold, etc.). */
+export function hasFormattedMarkdownPreview(text: string): boolean {
+  if (!text) return false;
+  return parseInlineMarkdownPreview(text).some((s) => s.kind !== 'text');
+}

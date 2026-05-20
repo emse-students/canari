@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseInlineMarkdownPreview } from './inlinePreview';
+import { hasFormattedMarkdownPreview, parseInlineMarkdownPreview } from './inlinePreview';
 
 function kinds(segments: ReturnType<typeof parseInlineMarkdownPreview>) {
   return segments.map((s) => s.kind);
@@ -34,6 +34,17 @@ describe('parseInlineMarkdownPreview', () => {
   it('leaves unclosed delimiters as plain text', () => {
     expect(parseInlineMarkdownPreview('*open')).toEqual([{ kind: 'text', value: '*open' }]);
     expect(parseInlineMarkdownPreview('**bold')).toEqual([{ kind: 'text', value: '**bold' }]);
+  });
+
+  it('hasFormattedMarkdownPreview is false for lone asterisks', () => {
+    expect(hasFormattedMarkdownPreview('*')).toBe(false);
+    expect(hasFormattedMarkdownPreview('**')).toBe(false);
+    expect(hasFormattedMarkdownPreview('*open')).toBe(false);
+  });
+
+  it('hasFormattedMarkdownPreview is true for closed spans', () => {
+    expect(hasFormattedMarkdownPreview('*closed*')).toBe(true);
+    expect(hasFormattedMarkdownPreview('**bold**')).toBe(true);
   });
 
   it('does not italicize after escaped opener', () => {

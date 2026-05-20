@@ -10,6 +10,7 @@
     renderPlainTextToMentionEditor,
     serializeMentionEditor,
     setPlainTextSelection,
+    shouldRerenderComposerDom,
   } from '$lib/utils/mentions/mentionEditor';
 
   interface Props {
@@ -50,6 +51,8 @@
   let editorEl = $state<HTMLDivElement | null>(null);
   let lastRenderedValue = $state('');
   let isComposing = $state(false);
+  /** Suppresses input handlers while we replace editor HTML (prevents duplicate characters). */
+  let isApplyingDom = false;
   /** Skips one external `value` sync after we update the editor locally (avoids stale parent props). */
   let pendingInternalSync = 0;
 
@@ -70,34 +73,46 @@
     return text.slice(0, maxlength);
   }
 
+  function applyDomFromPlainText(text: string, cursor?: number) {
+    if (!editorEl) return;
+    isApplyingDom = true;
+    pendingInternalSync++;
+    renderPlainTextToMentionEditor(editorEl, text, renderOptions);
+    lastRenderedValue = text;
+    const pos = cursor ?? getPlainTextSelection(editorEl).start;
+    queueMicrotask(() => {
+      if (!editorEl) return;
+      setPlainTextSelection(editorEl, pos, pos);
+      isApplyingDom = false;
+    });
+  }
+
   function syncFromPlainText(text: string, moveCursorTo?: number) {
     text = clampText(text);
     if (moveCursorTo !== undefined && maxlength !== undefined) {
       moveCursorTo = Math.min(moveCursorTo, maxlength);
     }
-    pendingInternalSync++;
     value = text;
     lastRenderedValue = text;
     onchange?.(text);
     if (editorEl) {
-      renderPlainTextToMentionEditor(editorEl, text, renderOptions);
-      if (moveCursorTo !== undefined) {
-        setPlainTextSelection(editorEl, moveCursorTo, moveCursorTo);
-      }
+      applyDomFromPlainText(text, moveCursorTo);
     }
   }
 
   function emitEditorChange() {
-    if (!editorEl || isComposing) return;
-    let text = clampText(serializeMentionEditor(editorEl));
+    if (!editorEl || isComposing || isApplyingDom) return;
+    const text = clampText(serializeMentionEditor(editorEl));
     let { start } = getPlainTextSelection(editorEl);
     if (maxlength !== undefined) start = Math.min(start, maxlength);
 
-    if (markdownPreview || needsMentionChipRender(editorEl, text)) {
-      pendingInternalSync++;
-      renderPlainTextToMentionEditor(editorEl, text, renderOptions);
-      lastRenderedValue = text;
-      setPlainTextSelection(editorEl, start, start);
+    const needsMentions = needsMentionChipRender(editorEl, text);
+    const needsDom =
+      needsMentions ||
+      shouldRerenderComposerDom(text, lastRenderedValue, renderOptions);
+
+    if (needsDom) {
+      applyDomFromPlainText(text, start);
     }
 
     if (text !== value) {
@@ -105,6 +120,8 @@
       value = text;
       lastRenderedValue = text;
       onchange?.(text);
+    } else if (!needsDom) {
+      lastRenderedValue = text;
     }
 
     mention.handleEditorInput(text, start);
@@ -132,6 +149,7 @@
   });
 
   function handleEditorInput() {
+    if (isApplyingDom) return;
     emitEditorChange();
   }
 

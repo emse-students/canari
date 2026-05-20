@@ -1,6 +1,7 @@
 import { formatMentionToken, MENTION_UUID_TOKEN_RE } from '$lib/utils/mentions';
 import { splitTextWithMentions } from '$lib/utils/mentions.parse';
 import {
+  hasFormattedMarkdownPreview,
   parseInlineMarkdownPreview,
   type InlinePreviewSegment,
 } from '$lib/utils/markdown/inlinePreview';
@@ -150,6 +151,19 @@ function appendComposerText(parent: HTMLElement, text: string, markdownPreview: 
 export function countMentionTokens(text: string): number {
   const re = new RegExp(MENTION_UUID_TOKEN_RE.source, MENTION_UUID_TOKEN_RE.flags);
   return [...text.matchAll(re)].length;
+}
+
+/**
+ * Whether the composer DOM should be rebuilt (avoids re-render on every keystroke for plain `*`).
+ * Re-renders when mention chips are missing or when markdown formatting appears/disappears.
+ */
+export function shouldRerenderComposerDom(
+  plainText: string,
+  lastRendered: string,
+  options: MentionEditorRenderOptions = {}
+): boolean {
+  if (!options.markdownPreview) return false;
+  return hasFormattedMarkdownPreview(plainText) || hasFormattedMarkdownPreview(lastRendered);
 }
 
 /** True when plain text has `@[uuid]` tokens not yet rendered as chips. */
