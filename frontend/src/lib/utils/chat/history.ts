@@ -9,7 +9,7 @@ import type {
 import type { IMlsService } from '$lib/mlsService';
 import { decodeAppMessage } from '$lib/proto/codec';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
-import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
+import { appMsgToEnvelope, isOwnMessage } from '$lib/utils/chat/messageUtils';
 import { toValidDate } from '$lib/utils/dates';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 import { toggleMessageReaction } from '$lib/utils/chat/messageReactions';
@@ -68,7 +68,7 @@ export function mapStoredMessagesToChatMessages(storedMessages: StoredMessage[],
       senderId: m.senderId,
       content: m.content,
       timestamp: toValidDate(m.timestamp),
-      isOwn: m.senderId.toLowerCase() === userId.toLowerCase(),
+      isOwn: isOwnMessage(m.senderId, userId),
       isSystem: m.senderId === 'system',
       readBy: m.readBy,
       reactions: m.reactions,

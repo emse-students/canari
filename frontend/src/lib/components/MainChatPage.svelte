@@ -3,6 +3,7 @@
   import { fade } from 'svelte/transition';
   import { sendReadReceipt } from '$lib/utils/chat/messaging';
   import { forceSyncReset } from '$lib/utils/chat/actions';
+  import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
   import { useSyncSession } from '$lib/composables/useSyncSession.svelte';
   import {
     globalSession as session,
@@ -26,6 +27,9 @@
   }
 
   let { routeMode = 'chat' }: Props = $props();
+
+  /** True when the currently selected conversation is a channel (not an MLS DM or group). */
+  const isSelectedChannel = $derived(isChannelConversationId(convs.selectedContact ?? ''));
 
   // ─── Notification click navigation ────────────────────────────────────────
   // When a system notification is clicked, notifNav.pending is set to the
@@ -219,7 +223,7 @@
         void channels.updateCurrentWorkspaceImage(workspaceDbId, mediaId, channelsCtx()),
       onLeaveWorkspace: (workspaceDbId: string) => {
         void channels.leaveCurrentWorkspace(workspaceDbId, channelsCtx());
-        if (convs.selectedContact?.startsWith('channel_')) {
+        if (isSelectedChannel) {
           const ws = channels.channelWorkspaces.find((w) => w.workspaceDbId === workspaceDbId);
           if (ws?.channels.some((c) => c.id === convs.selectedContact)) convs.selectedContact = null;
         }
@@ -394,14 +398,14 @@
         currentUserId={session.userId}
         conversation={convs.currentConvo}
         {messageText}
-        isChannel={convs.selectedContact?.startsWith('channel_') ?? false}
+        isChannel={isSelectedChannel ?? false}
         imageMediaId={convs.currentConvo?.imageMediaId ?? null}
         onMessageChange={(value) => (messageText = value)}
         onSend={handleSendChat}
         onInviteMembers={(ids) => void convs.inviteMembersToCurrentGroup(ids, convCtx())}
         onBack={convs.goBackToMenu}
         onOpenConversations={convs.openConversationDrawer}
-        onOpenSettings={convs.selectedContact?.startsWith('channel_')
+        onOpenSettings={isSelectedChannel
           ? () => (convs.isChannelSettingsModalOpen = true)
           : undefined}
         isHidden={convs.mobileView === 'list'}
@@ -416,13 +420,13 @@
         messageReactions={messaging.messageReactions}
         replyingTo={messaging.replyingTo}
         onReply={messaging.handleReply}
-        onReact={convs.selectedContact?.startsWith('channel_')
+        onReact={isSelectedChannel
           ? undefined
           : (msgId, emoji) => void messaging.handleAddReaction(msgId, emoji, msgCtx())}
-        onDelete={convs.selectedContact?.startsWith('channel_')
+        onDelete={isSelectedChannel
           ? undefined
           : (msgId) => void messaging.handleDeleteMessage(msgId, msgCtx())}
-        onEdit={convs.selectedContact?.startsWith('channel_')
+        onEdit={isSelectedChannel
           ? undefined
           : (msgId, text) => void messaging.handleEditMessage(msgId, text, msgCtx())}
         onCancelReply={messaging.cancelReply}
@@ -446,7 +450,7 @@
             }
           }
         }}
-        onOpenMembers={routeMode === 'communities' && convs.selectedContact?.startsWith('channel_')
+        onOpenMembers={routeMode === 'communities' && isSelectedChannel
           ? convs.openChannelMembersDrawer
           : undefined}
       />

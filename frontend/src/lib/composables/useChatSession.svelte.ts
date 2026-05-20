@@ -26,6 +26,7 @@ import {
   processPendingInvitations,
 } from '$lib/utils/chat/actions';
 import { checkGroupSuccessors } from '$lib/utils/chat/recovery';
+import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import {
   setupMessageHandler,
   initializeConnection,
@@ -364,7 +365,7 @@ export function useChatSession() {
         const missingKeys: string[] = [];
         for (const [key, c] of cb.conversations.entries()) {
           // Channels use AES-GCM, not MLS — never mark them as not-ready
-          if (c.id.startsWith('channel_')) continue;
+          if (isChannelConversationId(c.id)) continue;
           if (c.isReady && !localMlsGroups.has(c.id)) {
             cb.conversations.set(key, { ...c, isReady: false });
             missingKeys.push(key);

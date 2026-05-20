@@ -1,4 +1,5 @@
 import { saveMlsState } from '$lib/utils/hex';
+import { isUuidLike } from '$lib/utils/chat/conversations';
 import { decodeAppMessage, encodeAppMessage, mkSystem } from '$lib/proto/codec';
 import { serializeEnvelope, mkTextEnvelope, mkChannelInviteEnvelope } from '$lib/envelope';
 import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
@@ -8,6 +9,7 @@ import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
 import { toValidDate } from '$lib/utils/dates';
 import { toggleMessageReaction } from '$lib/utils/chat/messageReactions';
 import { recoverDeadGroup } from '$lib/utils/chat/recovery';
+import { compareMessageOrder, messageTime } from '$lib/utils/chat/messageOrder';
 import {
   installWasmDuplicateDeliveryLogInterceptor,
   consumeWasmDuplicateDeliveryFlag,
@@ -298,15 +300,16 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           `[WELCOME] Welcome pour groupe connu "${convoKey}" (groupId=${groupId}) wasReady=${wasReady}`
         );
         try {
-          await mlsService.processWelcome(content, ratchetTreeBytes);
+          const joinedGroupId = await mlsService.processWelcome(content, ratchetTreeBytes);
           const stBytes = await mlsService.saveState(pin);
           await saveMlsState(userId, stBytes);
 
           // registerMember et welcome_received sont idempotents côté serveur.
-          // On les appelle dans TOUS les cas (reset ou première jonction) pour
-          // garantir que le routing Redis (group:members:groupId) est à jour.
+          // On les appelle pour le vrai MLS group ID (joinedGroupId) ET pour l'ID de l'enveloppe
+          // WS (groupId), qui peuvent différer quand le Welcome est livré via un ancien channel migré.
+          const effectiveMlsId = joinedGroupId || groupId!;
           try {
-            await mlsService.registerMember(groupId!, userId);
+            await mlsService.registerMember(effectiveMlsId, userId);
           } catch {
             /* non-bloquant */
           }
@@ -314,27 +317,96 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             await mlsService.updateInvitationStatus(
               mlsService.getDeviceId(),
               userId,
-              groupId!,
+              effectiveMlsId,
               'welcome_received'
             );
           } catch {
             /* non-bloquant */
           }
-
-          if (!wasReady) {
-            // Placeholder → conversation activée pour la première fois.
-            conversations.set(convoKey, { ...convo, isReady: true });
-            localStorage.removeItem(`discovery_pending:${groupId}`);
-            if (storage) await saveConversation(convoKey);
-          } else {
-            // Re-bootstrap : la conversation était active. On force isReady=true
-            // (déjà vrai, mais on rafraîchit le store pour déclencher la réactivité).
-            conversations.set(convoKey, { ...convo, isReady: true });
+          if (groupId && groupId !== effectiveMlsId) {
+            try {
+              await mlsService.updateInvitationStatus(
+                mlsService.getDeviceId(),
+                userId,
+                groupId,
+                'welcome_received'
+              );
+            } catch {
+              /* non-bloquant */
+            }
           }
 
-          // Nettoyer le flag de récupération d'epoch si actif.
-          epochRecoveryGroups.delete(convoKey);
-          epochRecoveryGroups.delete(groupId!);
+          // Si le MLS group ID diffère de la clé de conversation (convoKey), re-keyer la map
+          // pour que les commits suivants soient routés vers le bon groupe WASM.
+          // Cas typique : Welcome livré via l'enveloppe de l'ancien groupe mort,
+          // mais la Welcome interne référence le successeur MLS réel.
+          const needsRekey = joinedGroupId && joinedGroupId !== convoKey;
+          const effectiveKey = needsRekey ? joinedGroupId : convoKey;
+
+          if (needsRekey) {
+            log(`[WELCOME] Re-clé "${convoKey}" → "${effectiveKey}" (MLS group ID mismatch)`);
+            const targetConvo = conversations.get(effectiveKey);
+            const rekeyed = targetConvo
+              ? { ...targetConvo, isReady: true }
+              : { ...convo, id: effectiveKey, isReady: true };
+            conversations.delete(convoKey);
+            if (storage) storage.deleteConversation(convoKey).catch(() => {});
+            if (getSelectedContact() === convoKey) setSelectedContact(effectiveKey);
+            epochRecoveryGroups.delete(convoKey);
+            epochRecoveryGroups.delete(effectiveKey);
+            // Empêcher les welcome_request futurs pour l'ancien groupId (groupe mort/migré).
+            welcomeRequestedForUnknownGroups.add(convoKey);
+            localStorage.removeItem(`discovery_pending:${groupId}`);
+            conversations.set(effectiveKey, rekeyed);
+            if (storage) await saveConversation(effectiveKey);
+          } else {
+            if (!wasReady) {
+              // Placeholder → conversation activée pour la première fois.
+              conversations.set(convoKey, { ...convo, isReady: true });
+              localStorage.removeItem(`discovery_pending:${groupId}`);
+              if (storage) await saveConversation(convoKey);
+            } else {
+              // Re-bootstrap : la conversation était active. On force isReady=true
+              // (déjà vrai, mais on rafraîchit le store pour déclencher la réactivité).
+              conversations.set(convoKey, { ...convo, isReady: true });
+            }
+            // Nettoyer le flag de récupération d'epoch si actif.
+            epochRecoveryGroups.delete(convoKey);
+            epochRecoveryGroups.delete(groupId!);
+          }
+
+          // Si le nom du groupe ressemble à un UUID, résoudre le vrai nom depuis l'API (non-bloquant).
+          const renamedConvo = conversations.get(effectiveKey);
+          if (renamedConvo && isUuidLike(renamedConvo.name)) {
+            (async () => {
+              try {
+                let authHeader: Record<string, string> = {};
+                try {
+                  const { getToken } = await import('$lib/stores/auth');
+                  const token = await getToken();
+                  if (token) authHeader = { Authorization: `Bearer ${token}` };
+                } catch {
+                  /* silent */
+                }
+                const r = await fetch(`${historyBaseUrl}/api/mls/groups/${effectiveKey}`, {
+                  headers: authHeader,
+                });
+                if (r.ok) {
+                  const d = await r.json();
+                  if (d?.name && !isUuidLike(d.name)) {
+                    const c = conversations.get(effectiveKey);
+                    if (c) {
+                      conversations.set(effectiveKey, { ...c, name: d.name });
+                      if (storage) saveConversation(effectiveKey).catch(() => {});
+                      log(`[WELCOME] Nom résolu pour "${effectiveKey}": "${d.name}"`);
+                    }
+                  }
+                }
+              } catch {
+                /* non-blocking */
+              }
+            })();
+          }
         } catch (welcomeErr) {
           const welcomeErrMsg = String(welcomeErr);
           // GroupAlreadyExists / "already" / "duplicate" / "exists" : le groupe est déjà
@@ -665,10 +737,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                                 conversationId: convoKey,
                                 senderId: m.senderId,
                                 content: m.content,
-                                timestamp:
-                                  m.timestamp instanceof Date
-                                    ? m.timestamp.getTime()
-                                    : new Date(m.timestamp as any).getTime(),
+                                timestamp: messageTime(m),
                                 readBy: m.readBy,
                                 reactions: messageReactions.get(m.id),
                               },
@@ -712,10 +781,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                             conversationId: convoKey,
                             senderId: deletedMsg.senderId,
                             content: deletedMsg.content,
-                            timestamp:
-                              deletedMsg.timestamp instanceof Date
-                                ? deletedMsg.timestamp.getTime()
-                                : new Date(deletedMsg.timestamp as any).getTime(),
+                            timestamp: messageTime(deletedMsg),
                             readBy: deletedMsg.readBy,
                             reactions: messageReactions.get(deletedMsg.id),
                             isDeleted: true,
@@ -757,10 +823,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                             conversationId: convoKey,
                             senderId: editedMsg.senderId,
                             content: data.newContent,
-                            timestamp:
-                              editedMsg.timestamp instanceof Date
-                                ? editedMsg.timestamp.getTime()
-                                : new Date(editedMsg.timestamp as any).getTime(),
+                            timestamp: messageTime(editedMsg),
                             readBy: [],
                             reactions: messageReactions.get(editedMsg.id),
                             isEdited: true,
@@ -859,9 +922,9 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                 log(
                   `[SYNC] sync_reply reçu — ${data.messages.length} message(s) à injecter pour groupe=${convoKey}`
                 );
-                const sorted = [...data.messages].sort(
-                  (a: any, b: any) => a.timestamp - b.timestamp
-                );
+                const sorted = [...data.messages]
+                  .map((m: any) => ({ ...m, timestamp: new Date(m.timestamp) }))
+                  .sort(compareMessageOrder);
                 for (const m of sorted) {
                   if (m.id && m.senderId && m.content) {
                     await addMessageToChat(

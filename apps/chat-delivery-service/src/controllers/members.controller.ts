@@ -11,7 +11,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, MoreThanOrEqual, DataSource } from 'typeorm';
+import { Repository, MoreThanOrEqual, DataSource, In } from 'typeorm';
 import * as crypto from 'crypto';
 import Redis from 'ioredis';
 import { GroupMember } from '../entities/group-member.entity';
@@ -44,7 +44,10 @@ export class MembersController {
 
   @UseGuards(HeaderAuthGuard)
   @Get('mls/users/:userId/groups')
-  /** Lists all groups a user belongs to. */
+  /**
+   * Lists all groups a user belongs to, ordered by last update (most recent first).
+   * The client relies on this order to seed the conversation list before local DB is ready.
+   */
   async getUserGroups(
     @Param('userId') userId: string,
     @Headers('x-user-id') headerUserId?: string,
@@ -65,7 +68,10 @@ export class MembersController {
       this.logger.log(`[USER_GROUPS] user=${safeUserId} groups=0`);
       return [];
     }
-    const groups = await this.groupRepo.findByIds(groupIds);
+    const groups = await this.groupRepo.find({
+      where: { id: In(groupIds) },
+      order: { updatedAt: 'DESC' },
+    });
     this.logger.log(
       `[USER_GROUPS] user=${safeUserId} groups=${groups.length} ids=${groups.map((g) => g.id).join(',')}`,
     );

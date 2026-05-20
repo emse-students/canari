@@ -1,7 +1,7 @@
 import type { ChatMessage } from '$lib/types';
 
 /** Returns the message timestamp as a numeric ms-since-epoch value regardless of input type. */
-function messageTime(msg: ChatMessage): number {
+export function messageTime(msg: ChatMessage): number {
   return msg.timestamp instanceof Date
     ? msg.timestamp.getTime()
     : new Date(msg.timestamp).getTime();

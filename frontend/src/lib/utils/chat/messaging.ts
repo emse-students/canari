@@ -3,7 +3,10 @@ import type { ChatMessage, Conversation } from '$lib/types';
 import { saveMlsState } from '$lib/utils/hex';
 import { encodeAppMessage, mkText, mkReply, mkReaction, mkSystem } from '$lib/proto/codec';
 import { serializeEnvelope, mkTextEnvelope, parseEnvelope } from '$lib/envelope';
-import { sendEncryptedChannelMessage } from '$lib/utils/chat/channelCrypto';
+import {
+  sendEncryptedChannelMessage,
+  isChannelConversationId,
+} from '$lib/utils/chat/channelCrypto';
 
 /**
  * Dependencies required by message-sending helpers.
@@ -98,7 +101,7 @@ export async function sendChatMessage(
       payload = encodeAppMessage({ ...mkText(text), messageId, sentAt });
     }
 
-    if (contactName.startsWith('channel_')) {
+    if (isChannelConversationId(contactName)) {
       const rawChannelId = contactName.replace(/^channel_/, '');
       await sendEncryptedChannelMessage(rawChannelId, payload, messageId);
       // No optimistic add: the backend echoes channel.message.created to all members

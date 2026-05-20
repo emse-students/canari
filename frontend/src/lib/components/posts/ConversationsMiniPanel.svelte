@@ -12,6 +12,7 @@
   import { MessageCircle, ChevronRight, LoaderCircle } from '@lucide/svelte';
   import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import { SvelteMap } from 'svelte/reactivity';
+  import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 
   interface ConvItem {
     meta: ConversationMeta;
@@ -26,10 +27,6 @@
 
   let idbItems = $state<ConvItem[]>([]);
   let idbLoading = $state(true);
-
-  function isCommunityChannelId(id: string | undefined): boolean {
-    return String(id ?? '').startsWith('channel_');
-  }
 
   function buildItemFromMeta(meta: ConversationMeta, uid: string): ConvItem {
     const identity = deriveConversationIdentity(meta.name, uid, meta.id);
@@ -73,20 +70,12 @@
       },
       uid
     );
-    const msgs = conv.messages;
-    const lastTs =
-      msgs.length > 0
-        ? msgs[msgs.length - 1].timestamp instanceof Date
-          ? msgs[msgs.length - 1].timestamp.getTime()
-          : new Date(msgs[msgs.length - 1].timestamp as Date).getTime()
-        : 0;
-
     return {
       meta: {
         id: key,
         name: conv.name,
         isReady: conv.isReady,
-        updatedAt: Math.max(baseline?.meta.updatedAt ?? 0, lastTs),
+        updatedAt: Math.max(baseline?.meta.updatedAt ?? 0, conv.lastMessageAt ?? 0),
       },
       contactId: pres.contactId,
       displayName: pres.displayName,
@@ -95,7 +84,9 @@
       unreadCount: conv.unreadCount ?? baseline?.unreadCount ?? 0,
       imageMediaId: conv.imageMediaId ?? baseline?.imageMediaId ?? null,
       lastMessageContent:
-        msgs.length > 0 ? msgs[msgs.length - 1].content : baseline?.lastMessageContent,
+        conv.messages?.length > 0
+          ? conv.messages[conv.messages.length - 1].content
+          : baseline?.lastMessageContent,
     };
   }
 
@@ -111,7 +102,7 @@
 
     if (globalSession.isLoggedIn) {
       for (const [key, conv] of globalConvs.conversations.entries()) {
-        if (isCommunityChannelId(key) || isCommunityChannelId(conv.id)) continue;
+        if (isChannelConversationId(key) || isChannelConversationId(conv.id)) continue;
         const baseline = byId.get(key);
         byId.set(key, buildItemFromLive(key, conv, uid, baseline));
       }
@@ -133,7 +124,7 @@
       await storage.init();
       const convos = await storage.getConversations();
       idbItems = convos
-        .filter((meta) => !isCommunityChannelId(meta.id))
+        .filter((meta) => !isChannelConversationId(meta.id))
         .sort((a, b) => b.updatedAt - a.updatedAt)
         .slice(0, 20)
         .map((meta) => buildItemFromMeta(meta, uid));

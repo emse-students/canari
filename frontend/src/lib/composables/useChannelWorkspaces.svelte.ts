@@ -4,7 +4,7 @@ import type { WorkspaceDto, ChannelDto } from '$lib/services/ChannelService';
 import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
-import { hydrateChannelBootstrap } from '$lib/utils/chat/channelCrypto';
+import { hydrateChannelBootstrap, isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 
 /** One channel entry shown in the sidebar under its workspace. */
 export interface ChannelSidebarItem {
@@ -239,12 +239,12 @@ export function useChannelWorkspaces() {
       }
 
       const selectedChannel = ctx.getSelectedConversationId?.();
-      if (selectedChannel?.startsWith('channel_') && ctx.reloadChannelHistory) {
+      if (selectedChannel && isChannelConversationId(selectedChannel) && ctx.reloadChannelHistory) {
         await ctx.reloadChannelHistory(selectedChannel);
       }
 
       const staleLocalChannelIds = Array.from(ctx.conversations.keys()).filter(
-        (id) => id.startsWith('channel_') && !validChannelConversationIds.includes(id)
+        (id) => isChannelConversationId(id) && !validChannelConversationIds.includes(id)
       );
       for (const staleId of staleLocalChannelIds) {
         ctx.invalidateChannelHistoryCache?.(staleId);

@@ -168,7 +168,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
         message = (parsed as Record<string, string>).message;
       }
     } catch {
-      // Commentaire à remplacer
+      // Ignore JSON parse failure: message is the raw error text
     }
     throw new Error(message);
   }
@@ -311,26 +311,18 @@ export async function listAssociationLinkCandidates(
 export async function getCalendarEventLinkedToPost(postId: string): Promise<{
   linkedEvent: AssociationCalendarEvent | null;
 }> {
-  const base = socialUrl();
-  const res = await apiFetch(`${base}/api/posts/${encodeURIComponent(postId)}/calendar-link`);
-  if (!res.ok) {
-    const details = await res.text().catch(() => '');
-    throw new Error(`posts ${res.status}: ${details || res.statusText}`);
-  }
-  return (await res.json()) as { linkedEvent: AssociationCalendarEvent | null };
+  return request<{ linkedEvent: AssociationCalendarEvent | null }>(
+    `/api/posts/${encodeURIComponent(postId)}/calendar-link`
+  );
 }
 
 /** Public — événement d’agenda pointant vers ce formulaire. */
 export async function getCalendarEventLinkedToForm(formId: string): Promise<{
   linkedEvent: AssociationCalendarEvent | null;
 }> {
-  const base = socialUrl();
-  const res = await apiFetch(`${base}/api/forms/${encodeURIComponent(formId)}/calendar-link`);
-  if (!res.ok) {
-    const details = await res.text().catch(() => '');
-    throw new Error(`forms ${res.status}: ${details || res.statusText}`);
-  }
-  return (await res.json()) as { linkedEvent: AssociationCalendarEvent | null };
+  return request<{ linkedEvent: AssociationCalendarEvent | null }>(
+    `/api/forms/${encodeURIComponent(formId)}/calendar-link`
+  );
 }
 
 // ── Authenticated ─────────────────────────────────────────────────────────

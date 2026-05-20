@@ -17,7 +17,12 @@ import {
   editMessage,
   deleteMessage,
 } from '$lib/utils/chat/messaging';
-import { insertMessageOrdered, mergeMessagesInInputOrder } from '$lib/utils/chat/messageOrder';
+import {
+  insertMessageOrdered,
+  mergeMessagesInInputOrder,
+  messageTime,
+} from '$lib/utils/chat/messageOrder';
+import { isOwnMessage } from '$lib/utils/chat/messageUtils';
 import {
   MAX_DISTINCT_MESSAGE_REACTIONS,
   toggleMessageReaction,
@@ -203,6 +208,11 @@ export function useMessaging() {
     }
   }
 
+  /**
+   * Appends a single message to the conversation, updates `lastMessageAt`, persists to
+   * IndexedDB, and scrolls to bottom. Deduplicates by id. No-op if the conversation is
+   * not in the map.
+   */
   async function addMessageToChat(
     senderId: string,
     content: string,
@@ -240,7 +250,7 @@ export function useMessaging() {
       return;
     }
 
-    const isOwn = senderId.toLowerCase() === ctx.userId.toLowerCase();
+    const isOwn = isOwnMessage(senderId, ctx.userId);
     const newMsg: ChatMessage = {
       id: options.messageId || crypto.randomUUID(),
       senderId: senderId.toLowerCase(),
@@ -269,6 +279,7 @@ export function useMessaging() {
       ...convo,
       unreadCount: nextUnreadCount,
       messages: insertMessageOrdered(convo.messages, newMsg),
+      lastMessageAt: Math.max(convo.lastMessageAt ?? 0, newMsg.timestamp.getTime()),
     });
     console.log(`[ADD_MSG] ✓ Message ajouté: id=${newMsg.id}...`);
 
@@ -320,7 +331,11 @@ export function useMessaging() {
     });
   }
 
-  /** Appends multiple messages in a single reactive update and one batch IndexedDB write. Used by history replay to avoid O(n) individual updates that would cause UI jank. */
+  /**
+   * Appends multiple messages in a single reactive update and one batch IndexedDB write.
+   * Used by history replay and bulk catch-up to avoid O(n) individual updates that would
+   * cause UI jank. Updates `lastMessageAt` to the max timestamp in the batch.
+   */
   async function batchAddMessages(
     messages: Array<{ senderId: string; content: string } & AddMessageToChatOptions>,
     contactName: string,
@@ -340,7 +355,7 @@ export function useMessaging() {
       if (existingIds.has(id)) continue;
       existingIds.add(id);
 
-      const isOwn = pm.senderId.toLowerCase() === ctx.userId.toLowerCase();
+      const isOwn = isOwnMessage(pm.senderId, ctx.userId);
       const newMsg: ChatMessage = {
         id,
         senderId: pm.senderId.toLowerCase(),
@@ -376,11 +391,13 @@ export function useMessaging() {
 
     // Merge in MLS / replay input order (timestamps + ingestSequence), single reactive update
     const merged = mergeMessagesInInputOrder(convo.messages, newMessages);
+    const batchMaxTs = newMessages.reduce((max, m) => Math.max(max, messageTime(m)), 0);
 
     ctx.conversations.set(normalized, {
       ...convo,
       unreadCount: nextUnreadCount,
       messages: merged,
+      lastMessageAt: Math.max(convo.lastMessageAt ?? 0, batchMaxTs),
     });
 
     // Single batch DB write (community channels are server-authoritative)
@@ -427,7 +444,7 @@ export function useMessaging() {
       return;
     }
 
-    const isChannel = ctx.selectedContact.startsWith('channel_');
+    const isChannel = isChannelConversationId(ctx.selectedContact);
     ctx.log(`[SEND] convo: groupId="${convo.id}" isReady=${convo.isReady} isChannel=${isChannel}`);
 
     // Channels don't use MLS — skip MLS membership verification
@@ -698,7 +715,7 @@ export function useMessaging() {
 
     // Ownership check: only the sender can delete their own message
     const target = convo.messages.find((m) => m.id === messageId);
-    if (!target || target.senderId.toLowerCase() !== ctx.userId.toLowerCase()) return;
+    if (!target || !isOwnMessage(target.senderId, ctx.userId)) return;
 
     await deleteMessage(messageId, {
       mlsService: ctx.ensureMls(),
@@ -722,7 +739,7 @@ export function useMessaging() {
 
     // Ownership check: only the sender can edit their own message
     const target = convo.messages.find((m) => m.id === messageId);
-    if (!target || target.senderId.toLowerCase() !== ctx.userId.toLowerCase()) return;
+    if (!target || !isOwnMessage(target.senderId, ctx.userId)) return;
 
     await editMessage(messageId, text, {
       mlsService: ctx.ensureMls(),

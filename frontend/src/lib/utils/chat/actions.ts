@@ -4,6 +4,7 @@ import type { IStorage } from '$lib/db';
 import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
 import { downloadDir } from '@tauri-apps/api/path';
+import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 
 /**
  * Extracts the other user's ID from a DM group name formatted as "userA::userB".
@@ -350,7 +351,7 @@ export async function discoverMissingGroups(params: {
     // the orphan grace-period logic — checkGroupSuccessors handles their cleanup.
     const serverGroupIds = new Set(uniqueServerGroups.map((g) => g.groupId));
     for (const [key, convo] of conversations.entries()) {
-      if (key.startsWith('channel_')) continue;
+      if (isChannelConversationId(key)) continue;
 
       // Belt-and-suspenders: if this group was already migrated (successor exists locally),
       // clean up the stale entry here rather than waiting for checkGroupSuccessors.

@@ -16,6 +16,7 @@ import type { Conversation } from '$lib/types';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 import { compareMessageOrder } from './messageOrder';
+import { isChannelConversationId } from './channelCrypto';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -417,6 +418,8 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
       conversationType: prev?.conversationType ?? identity.conversationType,
       directPeerId: prev?.directPeerId ?? identity.directPeerId,
       imageMediaId: prev?.imageMediaId ?? null,
+      // Seed from DB so the sidebar can sort before messages are loaded.
+      lastMessageAt: meta.updatedAt,
     });
   }
 
@@ -424,7 +427,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
   // Serialised (not parallel) because replayConversationHistory calls the shared
   // WASM MLS client which is not safe to invoke concurrently.
   for (const meta of mergedConvMetas) {
-    if (meta.id.startsWith('channel_')) {
+    if (isChannelConversationId(meta.id)) {
       await ctx.storage.deleteMessagesForConversation(meta.id).catch(() => {});
       continue;
     }
@@ -433,7 +436,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
       if (
         existingConvo &&
         (existingConvo.conversationType ?? 'group') === 'group' &&
-        !meta.id.startsWith('channel_')
+        !isChannelConversationId(meta.id)
       ) {
         try {
           // First check the explicit isGroup flag from the backend — this is

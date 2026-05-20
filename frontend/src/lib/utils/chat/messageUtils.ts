@@ -1,4 +1,9 @@
 import { serializeEnvelope, mkTextEnvelope, mkMediaEnvelope } from '$lib/envelope';
+
+/** Returns true if the message was sent by the current user (case-insensitive). */
+export function isOwnMessage(senderId: string, userId: string): boolean {
+  return senderId.toLowerCase() === userId.toLowerCase();
+}
 import { mediaKindToType, type IAppMessage } from '$lib/proto/codec';
 import { bytesToHex } from '$lib/utils/hex';
 import type { AddMessageToChatOptions, MessageReference } from '$lib/types';

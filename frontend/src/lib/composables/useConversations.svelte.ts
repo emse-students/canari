@@ -169,7 +169,7 @@ export function useConversations() {
     options?: { force?: boolean }
   ) {
     // Channel conversations: load via REST API instead of MLS replay
-    if (contactName.startsWith('channel_')) {
+    if (isChannelConversationId(contactName)) {
       await loadChannelHistory(contactName, ctx, options?.force);
       return;
     }
@@ -313,17 +313,7 @@ export function useConversations() {
         }
       }
 
-      loaded.sort((a, b) => {
-        const ta =
-          a.timestamp instanceof Date
-            ? a.timestamp.getTime()
-            : new SvelteDate(a.timestamp as Date).getTime();
-        const tb =
-          b.timestamp instanceof Date
-            ? b.timestamp.getTime()
-            : new SvelteDate(b.timestamp as Date).getTime();
-        return ta !== tb ? ta - tb : a.id.localeCompare(b.id);
-      });
+      loaded.sort(compareMessageOrder);
 
       const current = conversations.get(channelConversationId);
       if (current) {
@@ -399,17 +389,7 @@ export function useConversations() {
 
     const existingIds = new SvelteSet(current.messages.map((m) => m.id));
     const merged = [...mapped.filter((m) => !existingIds.has(m.id)), ...current.messages].sort(
-      (a, b) => {
-        const ta =
-          a.timestamp instanceof Date
-            ? a.timestamp.getTime()
-            : new SvelteDate(a.timestamp as any).getTime();
-        const tb =
-          b.timestamp instanceof Date
-            ? b.timestamp.getTime()
-            : new SvelteDate(b.timestamp as any).getTime();
-        return ta !== tb ? ta - tb : a.id.localeCompare(b.id);
-      }
+      compareMessageOrder
     );
 
     conversations.set(contactName, { ...current, messages: merged });
@@ -494,7 +474,7 @@ export function useConversations() {
   /** Fetches the deduplicated list of member userIds for an MLS group and stores them in groupMembers. No-op for channel conversations. */
   async function loadGroupMembers(id: string, ctx: ConversationContext | null) {
     if (!ctx) return;
-    if (id.startsWith('channel_')) {
+    if (isChannelConversationId(id)) {
       groupMembers = [];
       return;
     }
@@ -513,7 +493,7 @@ export function useConversations() {
   ): Promise<boolean> {
     const convo = conversations.get(contactName);
     if (!convo) return false;
-    if (convo.id.startsWith('channel_')) return true;
+    if (isChannelConversationId(convo.id)) return true;
 
     const cached = membershipCache.get(convo.id);
     if (cached && cached.expiresAt > Date.now()) return cached.isMember;

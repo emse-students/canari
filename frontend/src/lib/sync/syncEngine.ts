@@ -1,4 +1,5 @@
 import type { ConversationMeta, EncryptedMessageRow, IStorage, StoredMessage } from '$lib/db';
+import { fromBase64, toBase64 } from '$lib/utils/hex';
 import type {
   SyncDiffResponse,
   SyncJoinSessionRequest,
@@ -21,21 +22,6 @@ function normalizeConversationId(id: string): string {
 function byTimestampThenId(a: StoredMessage, b: StoredMessage): number {
   if (a.timestamp === b.timestamp) return a.id.localeCompare(b.id);
   return a.timestamp - b.timestamp;
-}
-
-/** Encodes a Uint8Array as a standard base64 string. */
-function toBase64(bytes: Uint8Array): string {
-  let binary = '';
-  for (const b of bytes) binary += String.fromCharCode(b);
-  return btoa(binary);
-}
-
-/** Decodes a standard base64 string back to a Uint8Array. */
-function fromBase64(b64: string): Uint8Array {
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
 }
 
 /**

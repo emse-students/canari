@@ -45,6 +45,14 @@ export interface ChatMessage {
   ingestSequence?: number;
 }
 
+/**
+ * Runtime representation of a conversation (DM, group, or channel).
+ *
+ * `messages` is loaded lazily — it can be empty while the conversation is still
+ * visible in the sidebar. `lastMessageAt` provides a stable sort key even before
+ * messages are loaded; it is initialised from `ConversationMeta.updatedAt` on
+ * startup and kept up-to-date by `addMessageToChat` / `batchAddMessages`.
+ */
 export interface Conversation {
   /** Primary key — the MLS groupId UUID (same as ConversationMeta.id). */
   id: string;
@@ -60,4 +68,10 @@ export interface Conversation {
   directPeerId?: string;
   /** Media-service ID of the group/channel image (unencrypted avatar). */
   imageMediaId?: string | null;
+  /**
+   * Unix-ms timestamp of the most recent message in this conversation.
+   * Updated on every addMessageToChat / batchAddMessages call so the sidebar
+   * can sort correctly even when `messages[]` is still empty (startup stubs).
+   */
+  lastMessageAt?: number;
 }

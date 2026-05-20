@@ -49,15 +49,14 @@ export interface Form extends CreateFormPayload {
 }
 
 import { apiFetch } from '$lib/utils/apiFetch';
-
-const API_Base = import.meta.env.VITE_SOCIAL_URL || '';
+import { socialUrl } from '$lib/utils/apiUrl';
 
 async function request(url: string, init: RequestInit = {}) {
   return apiFetch(url, init as any);
 }
 
 export async function createForm(payload: CreateFormPayload): Promise<Form> {
-  const res = await request(`${API_Base}/api/forms`, {
+  const res = await request(`${socialUrl()}/api/forms`, {
     method: 'POST',
     body: JSON.stringify(payload),
   });
@@ -66,32 +65,32 @@ export async function createForm(payload: CreateFormPayload): Promise<Form> {
 }
 
 export async function getForms(): Promise<Form[]> {
-  const url = `${API_Base}/api/forms`;
+  const url = `${socialUrl()}/api/forms`;
   const res = await request(url);
   if (!res.ok) throw new Error('Failed to fetch forms');
   return res.json();
 }
 
 export async function getForm(id: string): Promise<Form> {
-  const res = await request(`${API_Base}/api/forms/${id}`);
+  const res = await request(`${socialUrl()}/api/forms/${id}`);
   if (!res.ok) throw new Error('Failed to fetch form');
   return res.json();
 }
 
 export async function getSubmission(formId: string): Promise<any> {
-  const res = await request(`${API_Base}/api/forms/${formId}/submission`);
+  const res = await request(`${socialUrl()}/api/forms/${formId}/submission`);
   if (!res.ok) throw new Error('Failed to fetch submission');
   return res.json();
 }
 
 export async function checkSubmission(formId: string): Promise<{ hasSubmitted: boolean }> {
-  const res = await request(`${API_Base}/api/forms/${formId}/check`);
+  const res = await request(`${socialUrl()}/api/forms/${formId}/check`);
   if (!res.ok) throw new Error('Failed to check submission status');
   return res.json();
 }
 
 export async function exportSubmissions(id: string): Promise<Blob> {
-  const res = await request(`${API_Base}/api/forms/${id}/export`);
+  const res = await request(`${socialUrl()}/api/forms/${id}/export`);
   if (!res.ok) throw new Error('Failed to export submissions');
   return res.blob();
 }
@@ -105,7 +104,7 @@ export async function submitForm(
     paymentMethod?: 'stripe' | 'cash';
   }
 ): Promise<any> {
-  const res = await request(`${API_Base}/api/forms/${id}/submit`, {
+  const res = await request(`${socialUrl()}/api/forms/${id}/submit`, {
     method: 'POST',
     body: JSON.stringify(payload),
   });

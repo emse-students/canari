@@ -1,13 +1,14 @@
 import { apiFetch } from '$lib/utils/apiFetch';
 import { socialUrl } from '$lib/utils/apiUrl';
 import type { MediaRef } from '$lib/media';
+import type { FormItem } from '$lib/forms/api';
 
 export type PostImageRef = Omit<MediaRef, 'type'> & { caption?: string };
 
 export interface PollOption {
   id: string;
   label: string;
-  votes: string[] | number;
+  votes: string[];
 }
 
 export interface Poll {
@@ -30,22 +31,6 @@ export interface EventButton {
   capacity?: number;
   registrants: string[];
   formId?: string;
-}
-
-export interface FormOption {
-  id: string;
-  label: string;
-  priceModifier: number; // Amount in cents
-}
-
-export interface FormItem {
-  id: string;
-  label: string;
-  required: boolean;
-  type: string;
-  options?: FormOption[];
-  rows?: string[];
-  scale?: { min: number; max: number; minLabel?: string; maxLabel?: string };
 }
 
 export interface PostForm {
