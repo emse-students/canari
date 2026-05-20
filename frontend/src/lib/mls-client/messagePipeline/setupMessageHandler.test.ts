@@ -23,10 +23,12 @@ vi.mock('$lib/crypto/ChannelKeyVault', () => ({
 }));
 
 vi.mock('$lib/services/ChannelService', () => ({
-  ChannelService: vi.fn().mockImplementation(() => ({
-    markKeyDistributionReceived: vi.fn().mockResolvedValue(undefined),
-    ackKeyDistribution: vi.fn().mockResolvedValue(undefined),
-  })),
+  ChannelService: class MockChannelService {
+    markKeyDistributionReceived = vi.fn().mockResolvedValue(undefined);
+    ackKeyDistribution = vi.fn().mockResolvedValue(undefined);
+    getChannelKeyBootstrap = vi.fn();
+    sendMessage = vi.fn().mockResolvedValue(undefined);
+  },
 }));
 
 vi.mock('$lib/utils/users/displayName', () => ({
