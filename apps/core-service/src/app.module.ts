@@ -7,8 +7,9 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { User } from './users/entities/user.entity';
 import { PaymentModule } from './payment/payment.module';
+import { VersionModule } from './version/version.module';
 
-/** Root NestJS module — wires up TypeORM, config, auth, users, and payments. */
+/** Root NestJS module — wires up TypeORM, config, auth, users, payments, and version. */
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
@@ -29,6 +30,7 @@ import { PaymentModule } from './payment/payment.module';
     UsersModule,
     AuthModule,
     PaymentModule,
+    VersionModule,
   ],
   controllers: [AppController],
   providers: [AppService],
