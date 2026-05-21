@@ -113,6 +113,26 @@ jobs:
                   ;;
               esac
             done <<< "$CHANGED_FILES"
+
+            # Version-only commits still need core-service (/api/version) and frontend rebuilds.
+            if [ -n "$CHANGED_FILES" ]; then
+              version_only=true
+              while IFS= read -r file; do
+                [ -z "$file" ] && continue
+                case "$file" in
+                  */package.json|*/Cargo.toml|frontend/src-tauri/tauri.conf.json) ;;
+                  *)
+                    version_only=false
+                    break
+                    ;;
+                esac
+              done <<< "$CHANGED_FILES"
+              if [ "$version_only" = true ]; then
+                echo "Version manifest bump — forcing core-service and frontend image rebuild."
+                add_service core-service
+                add_service frontend
+              fi
+            fi
           fi
 
           if [ ${#CHANGED_SERVICES[@]} -eq 0 ]; then

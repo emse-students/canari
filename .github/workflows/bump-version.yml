@@ -52,5 +52,7 @@ jobs:
             echo "No version changes (already at ${{ steps.version.outputs.version }})"
             exit 0
           fi
+          # Never add [skip ci] here — CD must rebuild and redeploy so /api/version and the
+          # web bundle reflect the new semver (otherwise running containers keep the old one).
           git commit -m "chore: bump version to ${{ steps.version.outputs.version }}"
           git push origin HEAD:main
