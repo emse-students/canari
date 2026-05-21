@@ -309,6 +309,31 @@ impl MlsManager {
         );
     }
 
+    /// Purge définitive de tout état local d'un groupe : mémoire vive, stockage OpenMLS,
+    /// et verrou d'epoch mis à `u64::MAX` pour rejeter tout Welcome futur.
+    /// Contrairement à `forget_group`, aucun retour n'est possible après cet appel.
+    /// Réserver à la politique "Poison Pill" (groupe irrécupérable).
+    pub fn drop_group(&mut self, group_id: &str) {
+        let group_id_key = GroupId::from_slice(group_id.as_bytes());
+        self.groups.remove(group_id);
+        // u64::MAX : aucun Welcome ne sera jamais accepté pour ce groupId.
+        self.forgotten_group_min_epochs
+            .insert(group_id.to_string(), u64::MAX);
+        match MlsGroup::load(self.provider.storage(), &group_id_key) {
+            Ok(Some(mut orphan)) => {
+                if let Err(e) = orphan.delete(self.provider.storage()) {
+                    log::warn!(
+                        "drop_group: suppression storage {} échouée: {:?}",
+                        group_id,
+                        e
+                    );
+                }
+            }
+            _ => {}
+        }
+        log::info!("[POISON_PILL] drop_group: {} purgé définitivement", group_id);
+    }
+
     // --- C0. SUPPRESSION DE MEMBRE(S) ---
 
     /// Remove all leaf nodes whose credential identity matches any of the provided user IDs.

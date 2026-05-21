@@ -61,12 +61,12 @@ export async function recoverDeadGroup(deadGroupId: string, deps: RecoveryDeps):
       await saveMlsState(userId, st);
     } catch (e) {
       log(`[RECOVER] Échec création candidat : ${String(e)}`);
-      // Clean up partial state before aborting
+      // Clean up partial state before re-throwing so the caller can escalate (Poison Pill).
       if (ourCandidateId) {
         await mlsService.deleteGroupOnServer(ourCandidateId).catch(() => {});
         mlsService.forgetGroup(ourCandidateId, 0);
       }
-      return;
+      throw e;
     }
 
     // Step 3 — Atomic CAS: first writer wins
@@ -213,6 +213,16 @@ export async function migrateConversation(
   const oldConvo = conversations.get(fromGroupId);
   if (!oldConvo) {
     log(`[MIGRATE] Conversation source ${fromGroupId} introuvable — skip`);
+    return;
+  }
+
+  // Court-circuit : si le groupe source a été purgé via drop_group (Poison Pill),
+  // getEpoch lève une exception car le groupe n'est plus dans l'état WASM.
+  // Dans ce cas la migration n'a plus de sens — on abandonne sans erreur.
+  try {
+    mlsService.getEpoch(fromGroupId);
+  } catch {
+    log(`[MIGRATE] Court-circuit : état MLS ${fromGroupId} purgé (drop_group) — migration annulée`);
     return;
   }
 

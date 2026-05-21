@@ -289,6 +289,40 @@ export class InvitationsController {
   }
 
   /**
+   * Force la sortie de l'appareil appelant d'un groupe dont il ne peut plus traiter
+   * les messages (état MLS irrécupérable). Supprime le DeviceGroupMembership et retire
+   * l'appareil du set Redis de routage afin que le serveur arrête de lui envoyer des
+   * messages pour ce groupe. Utilisé par la politique "Poison Pill" côté client.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Post('mls/groups/:groupId/force_leave')
+  async forceLeave(
+    @Param('groupId') groupId: string,
+    @Body() body: { deviceId: string },
+    @Headers('x-user-id') headerUserId?: string,
+  ) {
+    const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
+    const safeUserId = sanitizeQueryValue(headerUserId ?? '', 'userId');
+    const safeDeviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
+
+    const result = await this.deviceGroupRepo.delete({
+      userId: safeUserId,
+      deviceId: safeDeviceId,
+      groupId: safeGroupId,
+    });
+
+    await this.redis.srem(
+      `group:members:${safeGroupId}`,
+      `${safeUserId}:${safeDeviceId}`,
+    );
+
+    this.logger.log(
+      `[FORCE_LEAVE] user=${safeUserId} device=${safeDeviceId} group=${safeGroupId} affected=${result.affected ?? 0}`,
+    );
+    return { ok: true, affected: result.affected ?? 0 };
+  }
+
+  /**
    * Delete ALL device-group memberships for a specific device.
    */
   @UseGuards(HeaderAuthGuard)

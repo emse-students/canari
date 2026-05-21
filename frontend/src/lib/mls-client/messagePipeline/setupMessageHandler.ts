@@ -63,12 +63,39 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   // Buffer pour les messages (commits) qui arrivent AVANT leur Welcome.
   // Clé = groupId, Valeur = messages en attente de replay.
   const pendingGroupMessages = new Map<string, Array<{ sender: string; content: Uint8Array }>>();
-  const BUFFER_MAX_PER_GROUP = 50;
+  // Seuil agressif : 3 messages sans Welcome → Poison Pill immédiat.
+  const BUFFER_MAX_PER_GROUP = 3;
 
   // Groupes pour lesquels un welcome_request a déjà été envoyé en session courante
   // (safety net : évite de spammer le serveur si syncConnectionAfterWsOpen n'a pas
   // couvert ce groupe, par ex. groupe absent des memberships au démarrage).
   const welcomeRequestedForUnknownGroups = new Set<string>();
+
+  // Groupes définitivement empoisonnés (Poison Pill) : tout message futur est ACK'd
+  // immédiatement sans traitement. Aucun retry, aucune récupération possible.
+  const poisonedGroups = new Set<string>();
+
+  // Groupes pour lesquels une récupération est déjà en cours.
+  // Limite à 1 tentative par session — escalade vers Poison Pill en cas d'échec.
+  const recoveryInProgress = new Set<string>();
+
+  /**
+   * Poison Pill : purge définitive d'un groupe irrécupérable.
+   * 1. Bloque tout message futur (ACK immédiat).
+   * 2. Vide le buffer en attente.
+   * 3. Détruit l'état MLS local (mémoire + stockage, min_epoch=MAX).
+   * 4. Notifie le serveur pour purger le membership et le routage Redis.
+   */
+  async function poisonPill(groupId: string): Promise<void> {
+    if (poisonedGroups.has(groupId)) return;
+    poisonedGroups.add(groupId);
+    pendingGroupMessages.delete(groupId);
+    recoveryInProgress.delete(groupId);
+    mlsService.dropGroup(groupId);
+    mlsService.forceLeaveGroup(groupId).catch(() => {});
+    log(`[POISON_PILL] Groupe ${groupId} purgé définitivement — aucun retry`);
+    console.warn(`[POISON_PILL] Group ${groupId} permanently dropped`);
+  }
 
   if ('onChannelEvent' in mlsService) {
     (mlsService as any).onChannelEvent = async (event: any) => {
@@ -250,6 +277,12 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         );
       }
       const senderNorm = sender.toLowerCase();
+
+      // Poison Pill guard : groupe définitivement purgé → ACK immédiat, aucun traitement.
+      if (groupId && poisonedGroups.has(groupId)) {
+        log(`[POISON_PILL] Message ignoré pour groupe empoisonné ${groupId}`);
+        return true;
+      }
 
       // Find conversation by groupId — the map is now keyed by id = groupId, so O(1) lookup.
       let convoKey: string | undefined;
@@ -1083,13 +1116,21 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               `[MLS] Phantom group suspected: "${convoKey}" (failure ${failures}/${PHANTOM_THRESHOLD})`
             );
             if (failures >= PHANTOM_THRESHOLD) {
-              log(
-                `[RECOVER] Groupe fantôme "${convoKey}" après ${failures} échecs — lancement récupération`
-              );
               groupMlsFailures.delete(convoKey);
               groupNullAppFailures.delete(convoKey);
+              // Une seule tentative de récupération par session — si déjà en cours,
+              // escalade immédiate vers Poison Pill.
+              if (recoveryInProgress.has(convo.id)) {
+                log(`[POISON_PILL] Récupération déjà tentée pour "${convoKey}" — Poison Pill`);
+                await poisonPill(convo.id);
+                return true;
+              }
+              log(
+                `[RECOVER] Groupe fantôme "${convoKey}" après ${failures} échecs — lancement récupération (1 seule tentative)`
+              );
               const convoForRecovery = conversations.get(convoKey);
               if (convoForRecovery) {
+                recoveryInProgress.add(convo.id);
                 recoverDeadGroup(convoForRecovery.id, {
                   mlsService,
                   storage,
@@ -1101,7 +1142,13 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                   saveConversation,
                   deleteConversation,
                   log,
-                }).catch((e) => log(`[RECOVER] ${String(e)}`));
+                }).catch(async (e) => {
+                  log(
+                    `[POISON_PILL] Récupération échouée pour "${convoKey}": ${String(e)} — Poison Pill`
+                  );
+                  console.warn(`[POISON_PILL] recoverDeadGroup failed for ${convoKey}:`, e);
+                  await poisonPill(convo.id);
+                });
               }
             }
           }
@@ -1128,11 +1175,21 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             mlsService.sendWelcomeRequest(groupId).catch(() => {});
             log(`[BUFFER] welcome_request envoyé (premier commit pour groupe inconnu ${groupId})`);
           }
-          if (buf.length < BUFFER_MAX_PER_GROUP) {
-            buf.push({ sender, content });
-            pendingGroupMessages.set(groupId, buf);
-            log(`[BUFFER] Message bufferise pour groupe ${groupId} (${buf.length} en attente)`);
+          if (buf.length >= BUFFER_MAX_PER_GROUP) {
+            log(
+              `[POISON_PILL] Buffer saturé (${buf.length}/${BUFFER_MAX_PER_GROUP}) pour ${groupId} — Poison Pill`
+            );
+            console.warn(
+              `[POISON_PILL] Buffer overflow for group ${groupId} — dropping permanently`
+            );
+            await poisonPill(groupId);
+            return true; // ACK le message saturant
           }
+          buf.push({ sender, content });
+          pendingGroupMessages.set(groupId, buf);
+          log(
+            `[BUFFER] Message bufferise pour groupe ${groupId} (${buf.length}/${BUFFER_MAX_PER_GROUP} en attente)`
+          );
           return false; // Keep in queue: Welcome may also be queued and will be retried
         }
         log(`Ignoré: message sans groupe ni conversation`);

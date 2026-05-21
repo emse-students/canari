@@ -122,6 +122,12 @@ export interface IMlsService {
   /** Oublie l'état MLS local d'un groupe pour forcer une re-synchronisation via Welcome.
    *  `minEpoch` : l'époch minimale que le nouveau Welcome doit atteindre (0 = pas de restriction). */
   forgetGroup(groupId: string, minEpoch?: number): void;
+  /** Purge définitive d'un groupe (Poison Pill) : mémoire, stockage OpenMLS et verrou d'epoch
+   *  à MAX. Aucun Welcome ne sera jamais accepté pour ce groupId après cet appel. */
+  dropGroup(groupId: string): void;
+  /** Signale au serveur que ce device quitte un groupe de manière irrécupérable.
+   *  Supprime le DeviceGroupMembership et retire l'appareil du routage Redis. */
+  forceLeaveGroup(groupId: string): Promise<void>;
   /** Updates the display name of a group on the delivery service. */
   renameGroup(groupId: string, name: string): Promise<void>;
   /** Deletes a group and all its messages from the delivery service. */

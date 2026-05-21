@@ -124,6 +124,14 @@ impl WasmMlsClient {
         self.manager.forget_group(&group_id, min_epoch as u64);
     }
 
+    /// Purge définitive d'un groupe (Poison Pill) : mémoire, stockage OpenMLS et
+    /// verrou d'epoch à MAX. Aucun Welcome ne sera jamais accepté pour ce groupId.
+    #[wasm_bindgen]
+    pub fn drop_group(&mut self, group_id: String) {
+        log::info!("drop_group (poison pill): {}", group_id);
+        self.manager.drop_group(&group_id);
+    }
+
     /// Returns the current MLS epoch for a group (capped to u32 for WASM boundary).
     #[wasm_bindgen]
     pub fn get_epoch(&self, group_id: String) -> Result<u32, JsValue> {

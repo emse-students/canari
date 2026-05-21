@@ -992,6 +992,27 @@ export class WebMlsService implements IMlsService {
     }
   }
 
+  /** Poison Pill — purge définitive : mémoire WASM, stockage OpenMLS et verrou d'epoch à MAX. */
+  dropGroup(groupId: string): void {
+    if (!this.client) return;
+    try {
+      this.client.drop_group(groupId);
+    } catch (e) {
+      console.warn('[MLS] dropGroup error:', e);
+    }
+  }
+
+  /** Signale au serveur que ce device quitte un groupe de manière irrécupérable (Poison Pill). */
+  async forceLeaveGroup(groupId: string): Promise<void> {
+    try {
+      await this.delivery.deliveryPost(`mls/groups/${groupId}/force_leave`, {
+        deviceId: this.deviceId,
+      });
+    } catch (e) {
+      console.warn('[MLS] forceLeaveGroup error (non-fatal):', e);
+    }
+  }
+
   /** WASM client wrapper — PATCHes the group name on the delivery service. */
   async renameGroup(groupId: string, name: string): Promise<void> {
     return this.delivery.renameGroup(groupId, name);
