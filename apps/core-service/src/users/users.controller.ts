@@ -9,6 +9,8 @@ import {
   Req,
   Query,
   Post,
+  Delete,
+  HttpCode,
   Res,
 } from '@nestjs/common';
 import type { Response } from 'express';
@@ -79,6 +81,18 @@ export class UsersController {
     }
     const user = await this.usersService.findOne(id);
     return this.usersService.toPublicDto(user);
+  }
+
+  /**
+   * Permanently deletes the authenticated user's account and all associated data
+   * across all services (MLS keys, messages, posts, memberships, Stripe customer).
+   * Returns 204 No Content on success.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Delete('me')
+  @HttpCode(204)
+  async deleteMe(@Headers('x-user-id') userId: string): Promise<void> {
+    await this.usersService.deleteUser(userId);
   }
 
   /** Updates the authenticated user's profile and returns the updated public DTO. */

@@ -164,6 +164,18 @@ export async function listPaymentMethods(): Promise<PaymentMethod[]> {
   return (await res.json()) as PaymentMethod[];
 }
 
+/**
+ * Permanently deletes the authenticated user's account and all associated data.
+ * Throws if the server returns a non-204 response.
+ * The caller is responsible for clearing local auth state and redirecting to /login.
+ */
+export async function deleteMyAccount(): Promise<void> {
+  const res = await apiFetch(`${coreUrl()}/api/users/me`, { method: 'DELETE' });
+  if (res.status !== 204) {
+    throw new Error(`Account deletion failed (${res.status})`);
+  }
+}
+
 /** Deletes a saved Stripe payment method by its ID. */
 export async function deletePaymentMethod(id: string): Promise<void> {
   const res = await apiFetch(

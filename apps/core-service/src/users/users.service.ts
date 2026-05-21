@@ -1,12 +1,26 @@
-import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  OnModuleInit,
+  Logger,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
+import axios from 'axios';
 import { User } from './entities/user.entity';
 import { CreateUserDto, UpdateUserDto, PublicUserDto } from './dto/user.dto';
 
 /** Service managing user persistence and OIDC upsert logic. */
 @Injectable()
 export class UsersService implements OnModuleInit {
+  private readonly logger = new Logger(UsersService.name);
+
+  private readonly internalSecret = process.env.INTERNAL_SECRET ?? '';
+  private readonly chatDeliveryUrl =
+    process.env.CHAT_DELIVERY_URL ?? 'http://chat-delivery-service:3010';
+  private readonly socialUrl =
+    process.env.SOCIAL_URL ?? 'http://social-service:3014';
+
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
@@ -147,5 +161,65 @@ export class UsersService implements OnModuleInit {
     }
 
     return qb.take(10).getMany();
+  }
+
+  /**
+   * Permanently deletes a user account and all associated data across services.
+   * Order: Stripe customer → chat-delivery data → social data → user row.
+   * Downstream failures are logged but do not abort the deletion — the user row
+   * is always removed so the account is inaccessible even if a service is down.
+   */
+  async deleteUser(userId: string): Promise<void> {
+    this.logger.log(`[deleteUser] starting userId=${userId}`);
+
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+
+    // Best-effort Stripe customer deletion — skip if not configured or no customer
+    if (user?.stripeCustomerId) {
+      try {
+        const { default: Stripe } = await import('stripe');
+        const stripe = new Stripe(process.env.STRIPE_SECRET_KEY ?? '', {
+          apiVersion: '2026-03-25.dahlia',
+        });
+        await stripe.customers.del(user.stripeCustomerId);
+        this.logger.log(
+          `[deleteUser] stripe customer deleted userId=${userId}`,
+        );
+      } catch (err) {
+        this.logger.warn(
+          `[deleteUser] stripe deletion failed userId=${userId}: ${String(err)}`,
+        );
+      }
+    }
+
+    const headers = { 'x-internal-secret': this.internalSecret };
+
+    // Best-effort: delete chat-delivery data (MLS keys, devices, messages)
+    await axios
+      .delete(
+        `${this.chatDeliveryUrl}/internal/users/${encodeURIComponent(userId)}`,
+        { headers },
+      )
+      .catch((err) =>
+        this.logger.warn(
+          `[deleteUser] chat-delivery failed userId=${userId}: ${String(err)}`,
+        ),
+      );
+
+    // Best-effort: delete/anonymise social data (posts, follows, memberships)
+    await axios
+      .delete(
+        `${this.socialUrl}/internal/users/${encodeURIComponent(userId)}`,
+        { headers },
+      )
+      .catch((err) =>
+        this.logger.warn(
+          `[deleteUser] social failed userId=${userId}: ${String(err)}`,
+        ),
+      );
+
+    // Hard-delete the user row last so login becomes impossible immediately after
+    await this.userRepository.delete({ id: userId });
+    this.logger.log(`[deleteUser] done userId=${userId}`);
   }
 }
