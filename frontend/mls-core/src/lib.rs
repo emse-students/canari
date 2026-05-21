@@ -331,7 +331,10 @@ impl MlsManager {
             }
             _ => {}
         }
-        log::info!("[POISON_PILL] drop_group: {} purgé définitivement", group_id);
+        log::info!(
+            "[POISON_PILL] drop_group: {} purgé définitivement",
+            group_id
+        );
     }
 
     // --- C0. SUPPRESSION DE MEMBRE(S) ---
