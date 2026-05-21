@@ -1,8 +1,11 @@
 import { coreUrl } from '$lib/utils/apiUrl';
-import { openExternal } from '$lib/utils/openExternal';
+import { isTauriRuntime, openExternal } from '$lib/utils/openExternal';
 
 /** GitHub repository where release artifacts (AppImage, APK) are published. */
 export const CANARI_RELEASES_REPO = 'emse-students/canari';
+
+/** Universal APK asset name on GitHub Releases (Android). */
+export const CANARI_RELEASE_APK_FILENAME = 'app-universal-release.apk';
 
 export type ServerVersionInfo = {
   version: string;
@@ -72,6 +75,25 @@ export async function checkAppVersion(
   };
 }
 
+/** Normalizes a semver string to a GitHub release tag (`vX.Y.Z`). */
+export function releaseTag(version: string): string {
+  const trimmed = version.trim();
+  return trimmed.startsWith('v') ? trimmed : `v${trimmed}`;
+}
+
+/**
+ * Direct APK download URL for a release (`/releases/download/vX.Y.Z/app-universal-release.apk`).
+ * Falls back to `/releases/latest/download/...` when version is unknown.
+ */
+export function getReleaseApkDownloadUrl(version: string | null): string {
+  const base = `https://github.com/${CANARI_RELEASES_REPO}/releases`;
+  const trimmed = version?.trim();
+  if (!trimmed) {
+    return `${base}/latest/download/${CANARI_RELEASE_APK_FILENAME}`;
+  }
+  return `${base}/download/${releaseTag(trimmed)}/${CANARI_RELEASE_APK_FILENAME}`;
+}
+
 /**
  * URL of the GitHub release page for a given semver (tag `vX.Y.Z`).
  * Falls back to `/releases/latest` when version is unknown.
@@ -80,20 +102,36 @@ export function getReleasePageUrl(version: string | null): string {
   const base = `https://github.com/${CANARI_RELEASES_REPO}/releases`;
   const trimmed = version?.trim();
   if (!trimmed) return `${base}/latest`;
-  const tag = trimmed.startsWith('v') ? trimmed : `v${trimmed}`;
-  return `${base}/tag/${tag}`;
+  return `${base}/tag/${releaseTag(trimmed)}`;
+}
+
+/** True on Tauri Android builds (universal APK update flow). */
+export function isAndroidTauriRuntime(): boolean {
+  return (
+    isTauriRuntime() && typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent)
+  );
 }
 
 /**
- * Opens the latest release download page (Tauri / mobile) or reloads the web app
- * so the browser fetches the deployed bundle matching the server version.
+ * URL opened when the user accepts an app update prompt.
+ * Android Tauri: direct APK download; other native: release tag page; web: n/a (reload).
+ */
+export function getAppUpdateUrl(serverVersion: string | null): string {
+  if (isAndroidTauriRuntime()) {
+    return getReleaseApkDownloadUrl(serverVersion);
+  }
+  return getReleasePageUrl(serverVersion);
+}
+
+/**
+ * Opens the update target (APK download on Android, release page on desktop Tauri)
+ * or reloads the web app so the browser fetches the deployed bundle.
  */
 export async function openLatestAppUpdate(serverVersion: string | null): Promise<void> {
-  const url = getReleasePageUrl(serverVersion);
   try {
     const { isTauri } = await import('@tauri-apps/api/core');
     if (isTauri()) {
-      await openExternal(url);
+      await openExternal(getAppUpdateUrl(serverVersion));
       return;
     }
   } catch {

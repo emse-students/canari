@@ -4,6 +4,7 @@ import {
   hasFormattedMarkdownPreview,
   markdownStructureKey,
   parseInlineMarkdownPreview,
+  type InlineMarkdownStyle,
   type InlinePreviewSegment,
 } from '$lib/utils/markdown/inlinePreview';
 import { resolveUserDisplayName } from '$lib/utils/users/displayName';
@@ -93,11 +94,47 @@ function appendMutedSpan(parent: HTMLElement, text: string): void {
   parent.appendChild(span);
 }
 
+const MD_STYLE_CLASS: Record<InlineMarkdownStyle, string> = {
+  italic: MD_ITALIC_CLASS,
+  bold: MD_BOLD_CLASS,
+  underline: MD_UNDERLINE_CLASS,
+  strike: MD_STRIKE_CLASS,
+};
+
 function appendFormattedSpan(parent: HTMLElement, className: string, text: string): void {
   const span = document.createElement('span');
   span.className = className;
   appendTextWithBreaks(span, text);
   parent.appendChild(span);
+}
+
+/** Nests style spans so underline + strike (etc.) all apply without CSS overrides. */
+function appendCombinedFormattedSpan(
+  parent: HTMLElement,
+  styles: readonly InlineMarkdownStyle[],
+  text: string
+): void {
+  if (styles.length === 0) {
+    appendTextWithBreaks(parent, text);
+    return;
+  }
+  const set = new Set(styles);
+  if (set.size === 2 && set.has('bold') && set.has('italic')) {
+    appendFormattedSpan(parent, MD_BOLD_ITALIC_CLASS, text);
+    return;
+  }
+  if (styles.length === 1) {
+    appendFormattedSpan(parent, MD_STYLE_CLASS[styles[0]], text);
+    return;
+  }
+  let node: HTMLElement = parent;
+  for (const style of styles) {
+    const span = document.createElement('span');
+    span.className = MD_STYLE_CLASS[style];
+    node.appendChild(span);
+    node = span;
+  }
+  appendTextWithBreaks(node, text);
 }
 
 function appendInlinePreviewSegment(parent: HTMLElement, seg: InlinePreviewSegment): void {
@@ -112,20 +149,8 @@ function appendInlinePreviewSegment(parent: HTMLElement, seg: InlinePreviewSegme
     case 'delimiter':
       appendMutedSpan(parent, seg.marker);
       break;
-    case 'italic':
-      appendFormattedSpan(parent, MD_ITALIC_CLASS, seg.content);
-      break;
-    case 'underline':
-      appendFormattedSpan(parent, MD_UNDERLINE_CLASS, seg.content);
-      break;
-    case 'bold':
-      appendFormattedSpan(parent, MD_BOLD_CLASS, seg.content);
-      break;
-    case 'boldItalic':
-      appendFormattedSpan(parent, MD_BOLD_ITALIC_CLASS, seg.content);
-      break;
-    case 'strike':
-      appendFormattedSpan(parent, MD_STRIKE_CLASS, seg.content);
+    case 'formatted':
+      appendCombinedFormattedSpan(parent, seg.styles, seg.content);
       break;
     case 'code':
       appendFormattedSpan(parent, MD_CODE_CLASS, seg.content);

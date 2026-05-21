@@ -1,22 +1,25 @@
 /**
  * Discord-style inline markdown preview segments for composer contenteditable.
  * Delimiters are shown muted; closed spans render formatted. `\` escapes the next character.
+ *
+ * Text styles (italic, bold, underline, strike) combine. Inline code does not combine with
+ * other styles; delimiters inside a code span are not parsed.
  */
+
+export type InlineMarkdownStyle = 'italic' | 'bold' | 'underline' | 'strike';
 
 export type InlinePreviewSegment =
   | { kind: 'text'; value: string }
   | { kind: 'escape'; char: string }
   | { kind: 'delimiter'; marker: string }
-  | { kind: 'italic'; marker: string; content: string }
-  | { kind: 'underline'; marker: string; content: string }
-  | { kind: 'bold'; marker: string; content: string }
-  | { kind: 'boldItalic'; marker: string; content: string }
-  | { kind: 'strike'; marker: string; content: string }
+  | { kind: 'formatted'; styles: readonly InlineMarkdownStyle[]; marker: string; content: string }
   | { kind: 'code'; marker: string; content: string };
+
+type DelimiterKind = 'italic' | 'underline' | 'bold' | 'boldItalic' | 'strike' | 'code';
 
 type DelimiterSpec = {
   marker: string;
-  kind: 'italic' | 'underline' | 'bold' | 'boldItalic' | 'strike' | 'code';
+  kind: DelimiterKind;
 };
 
 const DELIMITERS: DelimiterSpec[] = [
@@ -28,6 +31,14 @@ const DELIMITERS: DelimiterSpec[] = [
   { marker: '*', kind: 'italic' },
   { marker: '_', kind: 'italic' },
 ];
+
+const STYLES_BY_KIND: Record<Exclude<DelimiterKind, 'code'>, InlineMarkdownStyle[]> = {
+  italic: ['italic'],
+  bold: ['bold'],
+  boldItalic: ['bold', 'italic'],
+  underline: ['underline'],
+  strike: ['strike'],
+};
 
 /** True when `index` is preceded by an odd number of backslashes. */
 export function isEscapedAt(text: string, index: number): boolean {
@@ -46,52 +57,15 @@ function findUnescapedMarker(text: string, marker: string, from: number): number
   return -1;
 }
 
-/**
- * When a delimiter's content contains other closed spans (e.g. `** a *b* c **`),
- * flattens to: outer delimiters + alternating outer-style chunks and inner span segments.
- */
-function segmentsFromNestedContent(
-  spec: DelimiterSpec,
-  content: string
-): InlinePreviewSegment[] | null {
-  const inner = parseInlineMarkdownPreview(content);
-  if (!inner.some((s) => s.kind !== 'text' && s.kind !== 'escape')) return null;
-
-  type TextChunk = { text: string };
-  type FormattedChunk = { segments: InlinePreviewSegment[] };
-  const chunks: Array<TextChunk | FormattedChunk> = [];
-
-  let i = 0;
-  while (i < inner.length) {
-    const seg = inner[i];
-    if (seg.kind === 'text') {
-      if (seg.value) chunks.push({ text: seg.value });
-      i++;
-      continue;
-    }
-    const run: InlinePreviewSegment[] = [];
-    while (i < inner.length && inner[i].kind !== 'text' && inner[i].kind !== 'escape') {
-      run.push(inner[i]);
-      i++;
-    }
-    if (run.length > 0) chunks.push({ segments: run });
-  }
-
-  const out: InlinePreviewSegment[] = [{ kind: 'delimiter', marker: spec.marker }];
-  for (const chunk of chunks) {
-    if ('text' in chunk) {
-      out.push({ kind: spec.kind, marker: spec.marker, content: chunk.text });
-    } else {
-      out.push(...chunk.segments);
-    }
-  }
-  out.push({ kind: 'delimiter', marker: spec.marker });
-  return out;
+function stylesForKind(kind: Exclude<DelimiterKind, 'code'>): InlineMarkdownStyle[] {
+  return STYLES_BY_KIND[kind];
 }
 
 function tryDelimiter(
   text: string,
-  start: number
+  start: number,
+  inheritedStyles: readonly InlineMarkdownStyle[],
+  inheritedMarkers: readonly string[]
 ): { end: number; segments: InlinePreviewSegment[] } | null {
   for (const spec of DELIMITERS) {
     if (!text.startsWith(spec.marker, start) || isEscapedAt(text, start)) continue;
@@ -105,16 +79,29 @@ function tryDelimiter(
     if (content.length === 0) continue;
     if (spec.kind === 'code' && content.includes('\n')) continue;
 
-    const nested = segmentsFromNestedContent(spec, content);
-    if (nested) {
-      return { end: closeIdx + spec.marker.length, segments: nested };
+    if (spec.kind === 'code') {
+      return {
+        end: closeIdx + spec.marker.length,
+        segments: [
+          { kind: 'delimiter', marker: spec.marker },
+          { kind: 'code', marker: spec.marker, content },
+          { kind: 'delimiter', marker: spec.marker },
+        ],
+      };
     }
+
+    const added = stylesForKind(spec.kind);
+    const inner = parseInlineMarkdownPreview(
+      content,
+      [...inheritedStyles, ...added],
+      [...inheritedMarkers, spec.marker]
+    );
 
     return {
       end: closeIdx + spec.marker.length,
       segments: [
         { kind: 'delimiter', marker: spec.marker },
-        { kind: spec.kind, marker: spec.marker, content },
+        ...inner,
         { kind: 'delimiter', marker: spec.marker },
       ],
     };
@@ -125,32 +112,51 @@ function tryDelimiter(
 /**
  * Parses a plain-text chunk (no mention tokens) into preview segments.
  */
-export function parseInlineMarkdownPreview(text: string): InlinePreviewSegment[] {
+export function parseInlineMarkdownPreview(
+  text: string,
+  inheritedStyles: readonly InlineMarkdownStyle[] = [],
+  inheritedMarkers: readonly string[] = []
+): InlinePreviewSegment[] {
   const segments: InlinePreviewSegment[] = [];
   let i = 0;
+  let textBuf = '';
+
+  const flushText = () => {
+    if (!textBuf) return;
+    if (inheritedStyles.length > 0) {
+      segments.push({
+        kind: 'formatted',
+        styles: inheritedStyles,
+        marker: inheritedMarkers[inheritedMarkers.length - 1] ?? '',
+        content: textBuf,
+      });
+    } else {
+      segments.push({ kind: 'text', value: textBuf });
+    }
+    textBuf = '';
+  };
 
   while (i < text.length) {
     if (text[i] === '\\' && i + 1 < text.length && !isEscapedAt(text, i)) {
+      flushText();
       segments.push({ kind: 'escape', char: text[i + 1] });
       i += 2;
       continue;
     }
 
-    const del = tryDelimiter(text, i);
+    const del = tryDelimiter(text, i, inheritedStyles, inheritedMarkers);
     if (del) {
+      flushText();
       segments.push(...del.segments);
       i = del.end;
       continue;
     }
 
-    let end = i + 1;
-    while (end < text.length && tryDelimiter(text, end) === null) {
-      end++;
-    }
-    segments.push({ kind: 'text', value: text.slice(i, end) });
-    i = end;
+    textBuf += text[i];
+    i++;
   }
 
+  flushText();
   return segments;
 }
 
@@ -174,13 +180,10 @@ export function markdownStructureKey(text: string): string {
           return 'e';
         case 'delimiter':
           return `d:${s.marker}`;
-        case 'italic':
-        case 'underline':
-        case 'bold':
-        case 'boldItalic':
-        case 'strike':
+        case 'formatted':
+          return `fmt:${[...s.styles].sort().join(',')}:${s.marker}`;
         case 'code':
-          return `${s.kind}:${s.marker}`;
+          return `code:${s.marker}`;
       }
     })
     .join('|');

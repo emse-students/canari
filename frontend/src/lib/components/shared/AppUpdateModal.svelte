@@ -6,12 +6,13 @@
     getAppVersionCheck,
     isAppUpdateAvailable,
   } from '$lib/stores/appVersionCheck.svelte';
-  import { openLatestAppUpdate } from '$lib/utils/appVersion';
+  import { isAndroidTauriRuntime, openLatestAppUpdate } from '$lib/utils/appVersion';
   import { isTauriRuntime } from '$lib/utils/openExternal';
 
   const show = $derived(isAppUpdateAvailable());
   const info = $derived(getAppVersionCheck());
   const isNative = $derived(isTauriRuntime());
+  const isAndroid = $derived(isAndroidTauriRuntime());
 
   let updating = $state(false);
 
@@ -42,7 +43,12 @@
         <strong class="text-cn-dark">{info.serverVersion}</strong>.
       {/if}
     </p>
-    {#if isNative && info?.serverVersion}
+    {#if isAndroid && info?.serverVersion}
+      <p>
+        Le téléchargement de l’APK s’ouvrira dans votre navigateur ; installez-le ensuite pour
+        mettre à jour l’application.
+      </p>
+    {:else if isNative && info?.serverVersion}
       <p>
         Téléchargez et installez la dernière version depuis la page de release GitHub.
       </p>

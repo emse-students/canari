@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { compareSemver, getClientAppVersion, getReleasePageUrl } from './appVersion';
+import {
+  compareSemver,
+  getClientAppVersion,
+  getReleaseApkDownloadUrl,
+  getReleasePageUrl,
+  releaseTag,
+} from './appVersion';
 
 describe('compareSemver', () => {
   it('orders versions correctly', () => {
@@ -12,6 +18,33 @@ describe('compareSemver', () => {
 describe('getClientAppVersion', () => {
   it('returns a non-empty semver string', () => {
     expect(getClientAppVersion()).toMatch(/^\d+\.\d+\.\d+/);
+  });
+});
+
+describe('releaseTag', () => {
+  it('prefixes semver with v', () => {
+    expect(releaseTag('0.3.7')).toBe('v0.3.7');
+    expect(releaseTag('v1.0.0')).toBe('v1.0.0');
+  });
+});
+
+describe('getReleaseApkDownloadUrl', () => {
+  it('builds a direct download URL for a tagged release', () => {
+    expect(getReleaseApkDownloadUrl('0.3.7')).toBe(
+      'https://github.com/emse-students/canari/releases/download/v0.3.7/app-universal-release.apk'
+    );
+  });
+
+  it('accepts a leading v', () => {
+    expect(getReleaseApkDownloadUrl('v1.0.0')).toBe(
+      'https://github.com/emse-students/canari/releases/download/v1.0.0/app-universal-release.apk'
+    );
+  });
+
+  it('falls back to latest when version is missing', () => {
+    expect(getReleaseApkDownloadUrl(null)).toBe(
+      'https://github.com/emse-students/canari/releases/latest/download/app-universal-release.apk'
+    );
   });
 });
 
