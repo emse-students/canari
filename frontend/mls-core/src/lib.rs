@@ -319,15 +319,16 @@ impl MlsManager {
         // u64::MAX : aucun Welcome ne sera jamais accepté pour ce groupId.
         self.forgotten_group_min_epochs
             .insert(group_id.to_string(), u64::MAX);
-        if let Ok(Some(mut orphan)) = MlsGroup::load(self.provider.storage(), &group_id_key) {
-            if let Err(e) = orphan.delete(self.provider.storage()) {
-                log::warn!(
-                    "drop_group: suppression storage {} échouée: {:?}",
-                    group_id,
-                    e
-                );
-            }
+        if let Ok(Some(mut orphan)) = MlsGroup::load(self.provider.storage(), &group_id_key)
+            && let Err(e) = orphan.delete(self.provider.storage())
+        {
+            log::warn!(
+                "drop_group: suppression storage {} échouée: {:?}",
+                group_id,
+                e
+            );
         }
+
         log::info!(
             "[POISON_PILL] drop_group: {} purgé définitivement",
             group_id
