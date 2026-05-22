@@ -1,6 +1,10 @@
 <script lang="ts">
   import { getInitials } from '$lib/utils/avatar';
   import { associationLogoSrc } from '$lib/associations/api';
+  import {
+    releaseAssociationLogoDisplayUrl,
+    resolveAssociationLogoDisplayUrl,
+  } from '$lib/utils/associationLogoCache';
 
   interface Props {
     /** Association display name, used for initials fallback. */
@@ -18,17 +22,28 @@
   let { name, logoUrl, size = 'md', fill = false, shape = 'soft' }: Props = $props();
 
   let imageFailed = $state(false);
-  let lastSrc = $state<string | null>(null);
+  let displaySrc = $state<string | null>(null);
 
   const src = $derived(associationLogoSrc(logoUrl ?? undefined));
   const initials = $derived(getInitials(name));
 
-  // Reset error state when the logo URL changes (e.g., after an upload).
+  // Resolve logo via Cache API (kept across sessions) when the URL changes.
   $effect(() => {
-    if (src !== lastSrc) {
-      lastSrc = src;
+    const httpUrl = src;
+    if (!httpUrl) {
+      displaySrc = null;
       imageFailed = false;
+      return;
     }
+    imageFailed = false;
+    let cancelled = false;
+    void resolveAssociationLogoDisplayUrl(httpUrl).then((resolved) => {
+      if (!cancelled) displaySrc = resolved;
+    });
+    return () => {
+      cancelled = true;
+      releaseAssociationLogoDisplayUrl(httpUrl);
+    };
   });
 
   const sizeClasses = $derived(
@@ -43,9 +58,9 @@
   const shapeClasses = $derived(shape === 'circle' ? 'rounded-full' : 'rounded-2xl');
 </script>
 
-{#if !imageFailed && src}
+{#if !imageFailed && displaySrc}
   <img
-    {src}
+    src={displaySrc}
     alt={name}
     class="{shapeClasses} object-cover shadow-sm ring-1 ring-white/20 flex-shrink-0 select-none {sizeClasses}"
     title={name}

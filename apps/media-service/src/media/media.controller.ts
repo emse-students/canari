@@ -50,6 +50,8 @@ const CHUNK_MAX_BYTES = 50 * 1024 * 1024;
 
 /** Public branding images (association logos); JWT required for upload only. */
 const PUBLIC_LOGO_MAX_BYTES = 2 * 1024 * 1024;
+/** Browser cache for versioned logo URLs (`?v=` busts on re-upload); server retention is indefinite. */
+const PUBLIC_ASSET_CACHE_MAX_AGE_SEC = 365 * 24 * 60 * 60;
 const ALLOWED_PUBLIC_LOGO_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
 @Controller('media')
@@ -110,7 +112,6 @@ export class MediaController {
     })
   )
   async upload(
-    //@ts-expect-error - There are conflicting namespaces
     @UploadedFile() file: Express.Multer.File,
     @Req() req: Request
   ): Promise<{ mediaId: string }> {
@@ -138,7 +139,6 @@ export class MediaController {
     })
   )
   async uploadPublic(
-    //@ts-expect-error - There are conflicting namespaces
     @UploadedFile() file: Express.Multer.File,
     @Req() req: Request
   ): Promise<{ mediaId: string }> {
@@ -189,7 +189,6 @@ export class MediaController {
   )
   async appendChunk(
     @Param('id') id: string,
-    //@ts-expect-error - There are conflicting namespaces
     @UploadedFile() file: Express.Multer.File,
     @Req() req: Request
   ): Promise<{ ok: boolean }> {
@@ -226,7 +225,7 @@ export class MediaController {
     }
     res.setHeader('Content-Type', result.contentType);
     res.setHeader('Content-Length', result.data.length);
-    res.setHeader('Cache-Control', 'public, max-age=86400, immutable');
+    res.setHeader('Cache-Control', `public, max-age=${PUBLIC_ASSET_CACHE_MAX_AGE_SEC}, immutable`);
     res.send(result.data);
   }
 

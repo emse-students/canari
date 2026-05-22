@@ -79,7 +79,7 @@ services:
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/chat-gateway:${TAG:-latest}
     restart: always
     build:
-      context: ../../
+      context: ..
       dockerfile: infrastructure/local/Dockerfile.chat-gateway
     expose:
       - "3000"
@@ -105,7 +105,7 @@ services:
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/chat-delivery-service:${TAG:-latest}
     restart: always
     build:
-      context: ../../
+      context: ..
       dockerfile: infrastructure/local/Dockerfile.chat-delivery-service
     expose:
       - "3010"
@@ -166,7 +166,7 @@ services:
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/media-service:${TAG:-latest}
     restart: always
     build:
-      context: ../../
+      context: ..
       dockerfile: infrastructure/local/Dockerfile.media-service
     expose:
       - "3011"
@@ -194,7 +194,7 @@ services:
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/core-service:${TAG:-latest}
     restart: always
     build:
-      context: ../../
+      context: ..
       dockerfile: infrastructure/local/Dockerfile.core-service
     expose:
       - "3012"
@@ -228,7 +228,7 @@ services:
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/social-service:${TAG:-latest}
     restart: always
     build:
-      context: ../../
+      context: ..
       dockerfile: infrastructure/local/Dockerfile.social-service
     expose:
       - "3014"

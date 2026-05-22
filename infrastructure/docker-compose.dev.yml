@@ -69,7 +69,7 @@ services:
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/chat-gateway:${TAG:-dev}
     restart: always
     build:
-      context: ../../
+      context: ..
       dockerfile: infrastructure/local/Dockerfile.chat-gateway
     ports:
       - "3100:3000"
@@ -95,7 +95,7 @@ services:
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/chat-delivery-service:${TAG:-dev}
     restart: always
     build:
-      context: ../../
+      context: ..
       dockerfile: infrastructure/local/Dockerfile.chat-delivery-service
     ports:
       - "3110:3010"
@@ -153,7 +153,7 @@ services:
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/media-service:${TAG:-dev}
     restart: always
     build:
-      context: ../../
+      context: ..
       dockerfile: infrastructure/local/Dockerfile.media-service
     ports:
       - "3111:3011"
@@ -179,7 +179,7 @@ services:
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/core-service:${TAG:-dev}
     restart: always
     build:
-      context: ../../
+      context: ..
       dockerfile: infrastructure/local/Dockerfile.core-service
     ports:
       - "3112:3012"
@@ -210,7 +210,7 @@ services:
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/social-service:${TAG:-dev}
     restart: always
     build:
-      context: ../../
+      context: ..
       dockerfile: infrastructure/local/Dockerfile.social-service
     ports:
       - "3114:3014"
