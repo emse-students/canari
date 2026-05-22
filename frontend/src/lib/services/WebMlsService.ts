@@ -11,6 +11,8 @@ import {
 import { getToken } from '$lib/stores/auth';
 import { saveMlsState } from '$lib/utils/hex';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
+import { parseQueuedCreatedAt } from '$lib/mls-client/incomingDelivery';
+import type { IncomingDeliveryMeta } from '$lib/mls-client/IMlsService';
 
 /** Message pending in the processing queue */
 interface QueuedMessage {
@@ -22,6 +24,8 @@ interface QueuedMessage {
   ratchetTreeBytes?: Uint8Array;
   /** ID from the delivery service queue — used for at-least-once ACK */
   queuedMessageId?: string;
+  /** Server queue enqueue time (ms) — used as timestamp fallback when `sentAt` is absent. */
+  queuedCreatedAt?: number;
 }
 
 /** Queue depth above which incoming messages are batched into one UI update per conversation. */
@@ -39,7 +43,8 @@ export class WebMlsService implements IMlsService {
         groupId?: string,
         isWelcome?: boolean,
         ratchetTreeBytes?: Uint8Array,
-        isCommit?: boolean
+        isCommit?: boolean,
+        deliveryMeta?: IncomingDeliveryMeta
       ) => Promise<boolean>)
     | null = null;
   private disconnectCallback: (() => void) | null = null;
@@ -318,7 +323,8 @@ export class WebMlsService implements IMlsService {
       groupId?: string,
       isWelcome?: boolean,
       ratchetTreeBytes?: Uint8Array,
-      isCommit?: boolean
+      isCommit?: boolean,
+      deliveryMeta?: IncomingDeliveryMeta
     ) => Promise<boolean>
   ) {
     this.messageCallback = callback;
@@ -393,13 +399,18 @@ export class WebMlsService implements IMlsService {
           console.log(
             `[QUEUE] Traitement ${msg.isWelcome ? 'Welcome' : msg.isCommit ? 'Commit' : 'message'} groupe=${groupId ?? 'inconnu'} sender=${msg.senderId}${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`
           );
+          const deliveryMeta: IncomingDeliveryMeta | undefined =
+            msg.queuedCreatedAt !== undefined
+              ? { queuedCreatedAt: msg.queuedCreatedAt }
+              : undefined;
           const cbResult = await this.messageCallback(
             msg.senderId,
             msg.ciphertext,
             msg.groupId,
             msg.isWelcome,
             msg.ratchetTreeBytes,
-            msg.isCommit
+            msg.isCommit,
+            deliveryMeta
           );
           console.log(
             `[QUEUE] messageCallback → ${cbResult} (groupe=${groupId ?? 'inconnu'})${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`
@@ -601,6 +612,7 @@ export class WebMlsService implements IMlsService {
           // never race with live WebSocket messages calling messageCallback.
           for (const msg of messages as Record<string, unknown>[]) {
             const msgId = (msg.id || msg._id) as string | undefined;
+            const queuedCreatedAt = parseQueuedCreatedAt(msg.createdAt);
             const proto: string | undefined = typeof msg.proto === 'string' ? msg.proto : undefined;
             const content: string | undefined =
               typeof msg.content === 'string' ? msg.content : undefined;
@@ -620,6 +632,7 @@ export class WebMlsService implements IMlsService {
                         ? Uint8Array.from(atob(msg.ratchetTree as string), (c) => c.charCodeAt(0))
                         : undefined,
                     queuedMessageId: msgId,
+                    queuedCreatedAt,
                   });
                 }
               } catch (e) {
@@ -641,6 +654,7 @@ export class WebMlsService implements IMlsService {
                         ? Uint8Array.from(atob(msg.ratchetTree as string), (c) => c.charCodeAt(0))
                         : undefined,
                     queuedMessageId: msgId,
+                    queuedCreatedAt,
                   });
                 }
               } catch (e) {

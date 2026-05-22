@@ -6,7 +6,40 @@ export function isOwnMessage(senderId: string, userId: string): boolean {
 }
 import { mediaKindToType, type IAppMessage } from '$lib/proto/codec';
 import { bytesToHex } from '$lib/utils/hex';
-import type { AddMessageToChatOptions, MessageReference } from '$lib/types';
+import type { AddMessageToChatOptions, ChatMessage, MessageReference } from '$lib/types';
+
+/** Inbound messages older than this are not treated as a live receive (no tone). */
+export const STALE_INBOUND_MS = 2 * 60 * 1000;
+
+/**
+ * Resolves the timestamp for a message being inserted into a conversation.
+ * Prefers explicit options, then an existing in-memory copy, then queue/history fallback.
+ */
+export function resolveMessageTimestamp(
+  options: Pick<AddMessageToChatOptions, 'timestamp' | 'messageId'>,
+  existingMessages: readonly ChatMessage[],
+  isOwn: boolean,
+  fallbackMs?: number
+): Date {
+  if (options.timestamp instanceof Date && Number.isFinite(options.timestamp.getTime())) {
+    return options.timestamp;
+  }
+  if (options.messageId) {
+    const existing = existingMessages.find((m) => m.id === options.messageId);
+    if (existing) {
+      return existing.timestamp instanceof Date ? existing.timestamp : new Date(existing.timestamp);
+    }
+  }
+  if (fallbackMs !== undefined && Number.isFinite(fallbackMs)) {
+    return new Date(fallbackMs);
+  }
+  return new Date();
+}
+
+/** True when an inbound message should not trigger receive tone / "just arrived" UX. */
+export function isStaleInboundMessage(timestamp: Date, now = Date.now()): boolean {
+  return now - timestamp.getTime() > STALE_INBOUND_MS;
+}
 
 /**
  * Convert a decoded AppMessage to { content, options } ready for addMessageToChat.

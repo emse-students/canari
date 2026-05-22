@@ -141,7 +141,9 @@
   let lastMessageCount = $state(0);
   /** First index (inclusive) of the sliding render window inside messageGroups. */
   let windowStart = $state(0);
+  /** Messages at or before this time do not play the "just received" animation. */
   let switchTime = $state(Date.now());
+  let catchupWasActive = $state(false);
   let stickyDateLabel = $state('');
   let showStickyDate = $state(false);
   let stickyDateTimer: ReturnType<typeof setTimeout> | null = null;
@@ -296,13 +298,20 @@
   $effect(() => {
     const convoKey = conversation ? `${conversation.id}-${conversation.contactName}` : '';
     const messageCount = conversation?.messages.length ?? 0;
+    const catchupActive = isLoadingHistory || isCatchingUpMessages;
 
     untrack(() => {
       if (!conversation) {
         lastConversationKey = '';
         lastMessageCount = 0;
+        catchupWasActive = false;
         return;
       }
+
+      if (catchupWasActive && !catchupActive) {
+        switchTime = Date.now();
+      }
+      catchupWasActive = catchupActive;
 
       const hasConversationChanged = convoKey !== lastConversationKey;
       const hasNewMessage = messageCount > lastMessageCount;
@@ -313,7 +322,7 @@
         hasMoreInDb = !isChannel;
         tick().then(() => requestAnimationFrame(() => scrollToBottom(false)));
         isNearBottom = true;
-      } else if (hasNewMessage && isNearBottom) {
+      } else if (hasNewMessage && isNearBottom && !catchupActive) {
         tick().then(() => scrollToBottom(true));
       }
 

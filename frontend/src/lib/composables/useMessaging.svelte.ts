@@ -17,6 +17,7 @@ import {
   editMessage,
   deleteMessage,
 } from '$lib/utils/chat/messaging';
+import { isStaleInboundMessage, resolveMessageTimestamp } from '$lib/utils/chat/messageUtils';
 import {
   insertMessageOrdered,
   mergeMessagesInInputOrder,
@@ -251,11 +252,12 @@ export function useMessaging() {
     }
 
     const isOwn = isOwnMessage(senderId, ctx.userId);
+    const resolvedTimestamp = resolveMessageTimestamp(options, convo.messages, isOwn);
     const newMsg: ChatMessage = {
       id: options.messageId || crypto.randomUUID(),
       senderId: senderId.toLowerCase(),
       content,
-      timestamp: options.timestamp ?? new SvelteDate(),
+      timestamp: new SvelteDate(resolvedTimestamp),
       isOwn,
       replyTo: options.replyTo,
       isSystem: options.isSystem ?? false,
@@ -283,7 +285,7 @@ export function useMessaging() {
     });
     console.log(`[ADD_MSG] ✓ Message ajouté: id=${newMsg.id}...`);
 
-    if (!isOwn && !options.isSystem) {
+    if (!isOwn && !options.isSystem && !isStaleInboundMessage(resolvedTimestamp)) {
       (ctx.playReceiveTone ?? ctx.playNotificationTone)();
     }
 
@@ -356,11 +358,12 @@ export function useMessaging() {
       existingIds.add(id);
 
       const isOwn = isOwnMessage(pm.senderId, ctx.userId);
+      const resolvedTimestamp = resolveMessageTimestamp(pm, convo.messages, isOwn);
       const newMsg: ChatMessage = {
         id,
         senderId: pm.senderId.toLowerCase(),
         content: pm.content,
-        timestamp: pm.timestamp ?? new SvelteDate(),
+        timestamp: new SvelteDate(resolvedTimestamp),
         isOwn,
         replyTo: pm.replyTo,
         isSystem: pm.isSystem,
