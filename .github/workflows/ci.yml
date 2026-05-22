@@ -4,6 +4,12 @@ on:
   pull_request:
     branches: [main, dev]
   workflow_call:
+    inputs:
+      git_ref:
+        description: 'Explicit ref to checkout (e.g. main after automated version bump)'
+        type: string
+        required: false
+        default: ''
 
 env:
   CARGO_TERM_COLOR: always
@@ -23,6 +29,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.git_ref != '' && inputs.git_ref || github.sha }}
           fetch-depth: 0
 
       - name: Build test matrices
@@ -156,6 +163,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.git_ref != '' && inputs.git_ref || github.sha }}
 
       - name: Cache Cargo registry
         uses: actions/cache@v5
@@ -218,6 +227,8 @@ jobs:
         service: ${{ fromJSON(needs.changes.outputs.ts-matrix) }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.git_ref != '' && inputs.git_ref || github.sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -280,6 +291,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.git_ref != '' && inputs.git_ref || github.sha }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
