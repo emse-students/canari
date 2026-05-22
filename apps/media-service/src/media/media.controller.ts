@@ -42,7 +42,7 @@ const MAX_BYTES =
     Number.isFinite(CONFIGURED_MAX_MB) && CONFIGURED_MAX_MB > 0
       ? CONFIGURED_MAX_MB
       : POLICY_MAX_MEDIA_MB,
-    POLICY_MAX_MEDIA_MB,
+    POLICY_MAX_MEDIA_MB
   ) *
   1024 *
   1024;
@@ -90,9 +90,7 @@ export class MediaController {
       throw new UnauthorizedException('Invalid JWT signature');
     }
 
-    const payload = JSON.parse(
-      Buffer.from(payloadB64, 'base64').toString('utf8'),
-    );
+    const payload = JSON.parse(Buffer.from(payloadB64, 'base64').toString('utf8'));
     if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) {
       throw new UnauthorizedException('JWT expired');
     }
@@ -109,18 +107,18 @@ export class MediaController {
       limits: { fileSize: MAX_BYTES },
       // Store entirely in memory – we pass raw bytes to MinIO
       storage: undefined,
-    }),
+    })
   )
   async upload(
     //@ts-expect-error - There are conflicting namespaces
     @UploadedFile() file: Express.Multer.File,
-    @Req() req: Request,
+    @Req() req: Request
   ): Promise<{ mediaId: string }> {
     this.verifyToken(req);
 
     if (!file) {
       throw new PayloadTooLargeException(
-        `No file provided or file exceeds size limit (${POLICY_MAX_MEDIA_MB} MB max)`,
+        `No file provided or file exceeds size limit (${POLICY_MAX_MEDIA_MB} MB max)`
       );
     }
 
@@ -137,18 +135,18 @@ export class MediaController {
     FileInterceptor('file', {
       limits: { fileSize: PUBLIC_LOGO_MAX_BYTES },
       storage: undefined,
-    }),
+    })
   )
   async uploadPublic(
     //@ts-expect-error - There are conflicting namespaces
     @UploadedFile() file: Express.Multer.File,
-    @Req() req: Request,
+    @Req() req: Request
   ): Promise<{ mediaId: string }> {
     this.verifyToken(req);
 
     if (!file) {
       throw new PayloadTooLargeException(
-        `No file provided or file exceeds ${PUBLIC_LOGO_MAX_BYTES} bytes`,
+        `No file provided or file exceeds ${PUBLIC_LOGO_MAX_BYTES} bytes`
       );
     }
     const mime = file.mimetype?.toLowerCase() ?? '';
@@ -163,7 +161,9 @@ export class MediaController {
       .toBuffer();
 
     const mediaId = await this.mediaService.uploadPublicAsset(compressed, 'image/webp');
-    this.logger.log(`Stored public asset: ${mediaId} (${file.size} → ${compressed.length} bytes, webp)`);
+    this.logger.log(
+      `Stored public asset: ${mediaId} (${file.size} → ${compressed.length} bytes, webp)`
+    );
     return { mediaId };
   }
 
@@ -185,13 +185,13 @@ export class MediaController {
     FileInterceptor('chunk', {
       limits: { fileSize: CHUNK_MAX_BYTES }, // Max 50 MB per chunk
       storage: undefined,
-    }),
+    })
   )
   async appendChunk(
     @Param('id') id: string,
     //@ts-expect-error - There are conflicting namespaces
     @UploadedFile() file: Express.Multer.File,
-    @Req() req: Request,
+    @Req() req: Request
   ): Promise<{ ok: boolean }> {
     this.verifyToken(req);
     if (!file) {
@@ -207,7 +207,7 @@ export class MediaController {
   @Post('upload/chunk/:id/complete')
   async completeChunkedUpload(
     @Param('id') id: string,
-    @Req() req: Request,
+    @Req() req: Request
   ): Promise<{ mediaId: string }> {
     this.verifyToken(req);
     const mediaId = await this.mediaService.completeChunkedUpload(id, MAX_BYTES);
@@ -236,14 +236,14 @@ export class MediaController {
   async download(
     @Param('id') id: string,
     @Req() req: Request,
-    @Res() res: Response,
+    @Res() res: Response
   ): Promise<void> {
     this.verifyToken(req);
 
     const result = await this.mediaService.download(id);
     if (result.status === 'purged') {
       throw new GoneException(
-        'Media supprime apres expiration de retention. Merci de demander un renvoi.',
+        'Media supprime apres expiration de retention. Merci de demander un renvoi.'
       );
     }
     if (result.status !== 'ok' || !result.data) {
@@ -254,10 +254,7 @@ export class MediaController {
     res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Length', data.length);
     // Prevent any caching of sensitive encrypted content
-    res.setHeader(
-      'Cache-Control',
-      'no-store, no-cache, must-revalidate, private',
-    );
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
     res.send(data);
   }
 
@@ -265,10 +262,7 @@ export class MediaController {
   // DELETE /media/:id
   // ---------------------------------------------------------------------------
   @Delete(':id')
-  async remove(
-    @Param('id') id: string,
-    @Req() req: Request,
-  ): Promise<{ ok: boolean }> {
+  async remove(@Param('id') id: string, @Req() req: Request): Promise<{ ok: boolean }> {
     this.verifyToken(req);
     await this.mediaService.remove(id);
     return { ok: true };

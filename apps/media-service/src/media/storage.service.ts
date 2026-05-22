@@ -58,7 +58,7 @@ export class StorageService implements OnModuleInit {
   /**
    * Store an opaque encrypted blob from a local file.
    */
-  async putFileStream(objectId: string, filePath: string, size: number): Promise<void> {
+  async putFileStream(objectId: string, filePath: string, _size: number): Promise<void> {
     await this.client.fPutObject(this.bucket, objectId, filePath, {
       'Content-Type': 'application/octet-stream',
       'x-amz-meta-encrypted': 'true',

@@ -29,6 +29,6 @@ export function encodeInboundMsgEnvelope(
     groupId: payload.groupId,
     isWelcome: payload.isWelcome,
     ratchetTree: payload.ratchetTree,
-    proto: base64.fromByteArray(payload.ciphertext as Uint8Array),
+    proto: base64.fromByteArray(payload.ciphertext),
   });
 }

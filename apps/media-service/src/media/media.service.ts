@@ -268,30 +268,24 @@ export class MediaService {
       if (!fs.existsSync(MEDIA_META_FILE)) return;
       const raw = fs.readJsonSync(MEDIA_META_FILE) as Partial<MediaMetadataStore>;
       const items = Object.create(null) as Record<string, MediaMetaEntry>;
-      if (
-        raw?.items &&
-        typeof raw.items === 'object' &&
-        !Array.isArray(raw.items)
-      ) {
+      if (raw?.items && typeof raw.items === 'object' && !Array.isArray(raw.items)) {
         for (const key of Object.keys(raw.items)) {
           if (!UUID_REGEX.test(key)) continue;
-          const entry = (raw.items as Record<string, MediaMetaEntry>)[key];
+          const entry = raw.items[key];
           if (!entry || typeof entry !== 'object') continue;
           items[key] = entry;
         }
       }
       this.meta.items = items;
     } catch (error) {
-      this.logger.warn(`Unable to read media metadata index: ${String(error)}`);
+      this.logger.warn(
+        `Unable to read media metadata index: ${error instanceof Error ? error.message : String(error)}`
+      );
     }
   }
 
   private async persistMetadata() {
-    await fs.writeJson(
-      MEDIA_META_FILE,
-      { items: { ...this.meta.items } },
-      { spaces: 2 },
-    );
+    await fs.writeJson(MEDIA_META_FILE, { items: { ...this.meta.items } }, { spaces: 2 });
   }
 
   private setAccess(mediaId: string, now: number) {

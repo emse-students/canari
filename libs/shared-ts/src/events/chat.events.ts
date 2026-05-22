@@ -1,8 +1,8 @@
 // Event Topics
 export const KAFKA_TOPICS = {
-    CHAT_MESSAGES: 'chat_messages',
-    MESSAGE_READ: 'message_read',
-    POST_CREATED: 'post_created',
+  CHAT_MESSAGES: 'chat_messages',
+  MESSAGE_READ: 'message_read',
+  POST_CREATED: 'post_created',
 };
 
 // Payload Definitions
