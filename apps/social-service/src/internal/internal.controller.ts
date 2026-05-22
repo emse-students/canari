@@ -1,11 +1,4 @@
-import {
-  Controller,
-  Delete,
-  Param,
-  Headers,
-  ForbiddenException,
-  Logger,
-} from '@nestjs/common';
+import { Controller, Delete, Param, Headers, ForbiddenException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as crypto from 'crypto';
@@ -50,7 +43,7 @@ export class InternalController {
     @InjectRepository(UserModeration)
     private readonly moderationRepo: Repository<UserModeration>,
     @InjectRepository(ContentReport)
-    private readonly reportRepo: Repository<ContentReport>,
+    private readonly reportRepo: Repository<ContentReport>
   ) {}
 
   /**
@@ -62,7 +55,7 @@ export class InternalController {
   @Delete('users/:userId')
   async deleteUserData(
     @Param('userId') userId: string,
-    @Headers('x-internal-secret') headerSecret: string,
+    @Headers('x-internal-secret') headerSecret: string
   ) {
     const expected = Buffer.from(this.secret);
     const received = Buffer.from(headerSecret ?? '');

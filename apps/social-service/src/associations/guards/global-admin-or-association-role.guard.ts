@@ -2,7 +2,10 @@ import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@
 import { Reflector } from '@nestjs/core';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { AssociationMember, AssociationPermissionFlag } from '../entities/association-member.entity';
+import {
+  AssociationMember,
+  AssociationPermissionFlag,
+} from '../entities/association-member.entity';
 import { PERM_FLAG_KEY } from './association-role.guard';
 
 /**

@@ -48,7 +48,8 @@ export class PostsController {
   /** Throws 403 if the given user is currently muted. */
   private async assertNotMuted(userId: string): Promise<void> {
     const muted = await this.moderationService.isUserMuted(userId);
-    if (muted) throw new ForbiddenException('Your account has been restricted. You cannot post or react.');
+    if (muted)
+      throw new ForbiddenException('Your account has been restricted. You cannot post or react.');
   }
 
   /** Returns the health status of the post service. */

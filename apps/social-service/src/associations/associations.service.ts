@@ -14,10 +14,7 @@ import { firstValueFrom } from 'rxjs';
 import FormData from 'form-data';
 import { AxiosError } from 'axios';
 import { Association } from './entities/association.entity';
-import {
-  AssociationMember,
-  AssociationPermissionFlag,
-} from './entities/association-member.entity';
+import { AssociationMember, AssociationPermissionFlag } from './entities/association-member.entity';
 import { AssociationDocument } from './entities/association-document.entity';
 import {
   AssociationCalendarEvent,
@@ -356,7 +353,12 @@ export class AssociationsService {
       throw new NotFoundException('Member not found');
     }
     // Guard: demoting the only admin to a non-admin (permissions=0) is blocked, unless caller is global admin or BDE.
-    if (permissions !== undefined && membership.permissions > 0 && permissions === 0 && !opts?.bypassLastAdmin) {
+    if (
+      permissions !== undefined &&
+      membership.permissions > 0 &&
+      permissions === 0 &&
+      !opts?.bypassLastAdmin
+    ) {
       await this.assertNotLastAdminDemotion(associationId);
     }
     if (role !== undefined) membership.role = role;
@@ -365,7 +367,11 @@ export class AssociationsService {
   }
 
   /** Removes a member from the association. Blocks removal of the last admin, unless bypassLastAdmin is true (global admin or BDE). */
-  async removeMember(associationId: string, targetUserId: string, opts?: { bypassLastAdmin?: boolean }) {
+  async removeMember(
+    associationId: string,
+    targetUserId: string,
+    opts?: { bypassLastAdmin?: boolean }
+  ) {
     const membership = await this.memberRepo.findOne({
       where: { associationId, userId: targetUserId },
     });
@@ -394,7 +400,7 @@ export class AssociationsService {
     const n = await this.adminMemberCount(associationId);
     if (n <= 1) {
       throw new BadRequestException(
-        "Impossible de retirer le dernier administrateur de cette association"
+        'Impossible de retirer le dernier administrateur de cette association'
       );
     }
   }
@@ -404,7 +410,7 @@ export class AssociationsService {
     const n = await this.adminMemberCount(associationId);
     if (n <= 1) {
       throw new BadRequestException(
-        "Impossible de rétrograder le dernier administrateur de cette association"
+        'Impossible de rétrograder le dernier administrateur de cette association'
       );
     }
   }
@@ -842,11 +848,7 @@ export class AssociationsService {
     if (proposers.length === 0) return;
 
     const actionLabel =
-      action === 'validated'
-        ? 'validé'
-        : action === 'updated'
-          ? 'modifié'
-          : 'supprimé';
+      action === 'validated' ? 'validé' : action === 'updated' ? 'modifié' : 'supprimé';
     const text = `L'événement "${eventTitle}" a été ${actionLabel} par le BDE.`;
 
     await Promise.all(
@@ -918,7 +920,9 @@ export class AssociationsService {
       validatedBy: canValidate ? userId : null,
     });
     const saved = await this.calendarRepo.save(row);
-    console.log(`[Calendar] Event created: ${saved.id} for asso ${targetId} by ${userId} (status=${saved.status})`);
+    console.log(
+      `[Calendar] Event created: ${saved.id} for asso ${targetId} by ${userId} (status=${saved.status})`
+    );
     // Notify asso admins when BDE creates an event on their behalf
     if (canValidate && targetId !== associationId) {
       void this.notifyAssocAdminsOfEventAction(targetId, userId, saved.title, 'validated');
@@ -981,7 +985,9 @@ export class AssociationsService {
     }
 
     const saved = await this.calendarRepo.save(ev);
-    console.log(`[Calendar] Event updated: ${saved.id} by ${callerOpts?.callerUserId ?? 'unknown'}`);
+    console.log(
+      `[Calendar] Event updated: ${saved.id} by ${callerOpts?.callerUserId ?? 'unknown'}`
+    );
     // Notify asso admins when BDE modifies an event from another asso
     if (canCrossAsso && ev.associationId !== associationId && callerOpts?.callerUserId) {
       void this.notifyAssocAdminsOfEventAction(
@@ -1032,9 +1038,16 @@ export class AssociationsService {
       const targetAssocId = ev.associationId;
       const title = ev.title;
       await this.calendarRepo.delete({ id: eventId });
-      console.log(`[Calendar] Event deleted: ${eventId} by ${callerOpts?.callerUserId ?? 'unknown'}`);
+      console.log(
+        `[Calendar] Event deleted: ${eventId} by ${callerOpts?.callerUserId ?? 'unknown'}`
+      );
       if (targetAssocId !== associationId && callerOpts?.callerUserId) {
-        void this.notifyAssocAdminsOfEventAction(targetAssocId, callerOpts.callerUserId, title, 'deleted');
+        void this.notifyAssocAdminsOfEventAction(
+          targetAssocId,
+          callerOpts.callerUserId,
+          title,
+          'deleted'
+        );
       }
     } else {
       const res = await this.calendarRepo.delete({ id: eventId, associationId });
@@ -1072,7 +1085,17 @@ export class AssociationsService {
       this.docRepo.find({
         where: { associationId },
         order: { createdAt: 'DESC' },
-        select: ['id', 'associationId', 'name', 'description', 'mimeType', 'size', 'uploadedBy', 'createdAt', 'updatedAt'],
+        select: [
+          'id',
+          'associationId',
+          'name',
+          'description',
+          'mimeType',
+          'size',
+          'uploadedBy',
+          'createdAt',
+          'updatedAt',
+        ],
       }),
       this.docRepo
         .createQueryBuilder('d')
@@ -1100,11 +1123,7 @@ export class AssociationsService {
    * Returns HTTP 409 if a document with the same name (case-insensitive) already exists.
    * Returns HTTP 413 if the upload would exceed the quota.
    */
-  async createDocument(
-    associationId: string,
-    dto: CreateAssociationDocumentDto,
-    userId: string
-  ) {
+  async createDocument(associationId: string, dto: CreateAssociationDocumentDto, userId: string) {
     const asso = await this.assoRepo.findOne({
       where: { id: associationId },
       select: ['id', 'documentQuotaBytes'],

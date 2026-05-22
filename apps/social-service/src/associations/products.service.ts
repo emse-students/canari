@@ -1,9 +1,4 @@
-import {
-  BadRequestException,
-  Injectable,
-  Logger,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -61,10 +56,7 @@ export class ProductsService {
    * Creates a product for an association.
    * If Stripe Connect onboarding is incomplete the product is created but forced inactive.
    */
-  async create(
-    associationId: string,
-    dto: CreateProductDto
-  ): Promise<AssociationProduct> {
+  async create(associationId: string, dto: CreateProductDto): Promise<AssociationProduct> {
     const asso = await this.assoRepo.findOne({ where: { id: associationId } });
     if (!asso) throw new NotFoundException('Association not found');
 
@@ -136,9 +128,7 @@ export class ProductsService {
       const min = product.customAmountMinCents ?? 0;
       const max = product.customAmountMaxCents ?? Infinity;
       if (customAmountCents < min || customAmountCents > max) {
-        throw new BadRequestException(
-          `Custom amount must be between ${min} and ${max} cents`
-        );
+        throw new BadRequestException(`Custom amount must be between ${min} and ${max} cents`);
       }
       amountCents = customAmountCents;
     } else {
@@ -301,9 +291,7 @@ export class ProductsService {
       timestamp: new Date().toISOString(),
     });
 
-    const signature = createHmac('sha256', product.webhookSecret!)
-      .update(payload)
-      .digest('hex');
+    const signature = createHmac('sha256', product.webhookSecret).update(payload).digest('hex');
 
     let lastError = '';
     for (let i = 0; i < CERCLE_RETRY_DELAYS.length; i++) {
@@ -315,7 +303,7 @@ export class ProductsService {
 
       try {
         await firstValueFrom(
-          this.httpService.post(product.webhookUrl!, payload, {
+          this.httpService.post(product.webhookUrl, payload, {
             headers: {
               'Content-Type': 'application/json',
               'X-Canari-Signature': `sha256=${signature}`,
@@ -335,9 +323,7 @@ export class ProductsService {
         return;
       } catch (err: unknown) {
         lastError = err instanceof Error ? err.message : '[unknown error]';
-        this.logger.warn(
-          `[CERCLE] webhook attempt ${i + 1} failed: ${lastError}`
-        );
+        this.logger.warn(`[CERCLE] webhook attempt ${i + 1} failed: ${lastError}`);
       }
     }
 

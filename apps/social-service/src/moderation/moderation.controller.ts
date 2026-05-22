@@ -58,10 +58,7 @@ export class ModerationController {
   /** Lists all content reports (pending first). Requires MODERATE or global admin. */
   @UseGuards(NginxAuthGuard)
   @Get('reports')
-  async listReports(
-    @Headers('x-user-id') userId: string,
-    @Headers('x-global-admin') ga?: string
-  ) {
+  async listReports(@Headers('x-user-id') userId: string, @Headers('x-global-admin') ga?: string) {
     await this.assertModerator(userId, ga === 'true');
     return this.service.listAllReports();
   }

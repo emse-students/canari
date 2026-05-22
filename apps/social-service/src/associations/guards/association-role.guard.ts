@@ -2,7 +2,10 @@ import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@
 import { Reflector } from '@nestjs/core';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { AssociationMember, AssociationPermissionFlag } from '../entities/association-member.entity';
+import {
+  AssociationMember,
+  AssociationPermissionFlag,
+} from '../entities/association-member.entity';
 
 /** Metadata key used with `@SetMetadata` to declare the required permission flag. */
 export const PERM_FLAG_KEY = 'association_perm_flag';

@@ -11,11 +11,15 @@ echo "$STAGED_FILES" | grep -Eq '^(\.github/workflows/|\.husky/|Makefile|libs/sh
 echo "$STAGED_FILES" | grep -Eq '^frontend/' && RUN_FRONTEND=1 || RUN_FRONTEND=0
 echo "$STAGED_FILES" | grep -Eq '^apps/chat-delivery-service/' && RUN_DELIVERY=1 || RUN_DELIVERY=0
 echo "$STAGED_FILES" | grep -Eq '^apps/chat-gateway/' && RUN_GATEWAY=1 || RUN_GATEWAY=0
+echo "$STAGED_FILES" | grep -Eq '^apps/social-service/' && RUN_SOCIAL=1 || RUN_SOCIAL=0
+echo "$STAGED_FILES" | grep -Eq '^apps/core-service/' && RUN_CORE=1 || RUN_CORE=0
 
 if [ "$RUN_ALL" -eq 1 ]; then
   RUN_FRONTEND=1
   RUN_DELIVERY=1
   RUN_GATEWAY=1
+  RUN_SOCIAL=1
+  RUN_CORE=1
 fi
 
 if [ "$RUN_FRONTEND" -eq 1 ]; then
@@ -45,5 +49,22 @@ if [ "$RUN_GATEWAY" -eq 1 ]; then
   }
   git diff --name-only -- apps/chat-gateway/ | xargs -r git add
 fi
+
+if [ "$RUN_SOCIAL" -eq 1 ]; then
+  (cd apps/social-service && npm run lint) || {
+    echo "❌ social-service lint échoué."
+    exit 1
+  }
+  git diff --name-only -- apps/social-service/ | xargs -r git add
+fi
+
+if [ "$RUN_CORE" -eq 1 ]; then
+  (cd apps/core-service && npm run lint) || {
+    echo "❌ core-service lint échoué."
+    exit 1
+  }
+  git diff --name-only -- apps/core-service/ | xargs -r git add
+fi
+
 
 exit 0

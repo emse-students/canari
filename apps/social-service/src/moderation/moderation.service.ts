@@ -80,11 +80,7 @@ export class ModerationService {
   // ── User mute/unmute ──────────────────────────────────────────────────────
 
   /** Mutes a user: they can still read but cannot post, react, or comment. */
-  async muteUser(
-    userId: string,
-    mutedBy: string,
-    reason?: string
-  ): Promise<UserModeration> {
+  async muteUser(userId: string, mutedBy: string, reason?: string): Promise<UserModeration> {
     let record = await this.muteRepo.findOne({ where: { userId } });
     if (record) {
       record.isMuted = true;

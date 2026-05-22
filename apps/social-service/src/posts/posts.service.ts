@@ -524,11 +524,14 @@ export class PostsService {
     const shaped = await this.toPublicPostFromEntity(post);
     // Attach author name fields (same source as listPosts — local users table).
     if (!shaped.associationId && shaped.authorId) {
-      const rows: { displayName: string | null; firstName: string | null; lastName: string | null }[] =
-        await this.postRepo.manager.query(
-          `SELECT "displayName", "firstName", "lastName" FROM users WHERE id = $1`,
-          [shaped.authorId]
-        );
+      const rows: {
+        displayName: string | null;
+        firstName: string | null;
+        lastName: string | null;
+      }[] = await this.postRepo.manager.query(
+        `SELECT "displayName", "firstName", "lastName" FROM users WHERE id = $1`,
+        [shaped.authorId]
+      );
       if (rows[0]) {
         shaped.authorDisplayName = rows[0].displayName;
         shaped.authorFirstName = rows[0].firstName;

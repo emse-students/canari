@@ -36,7 +36,9 @@ export class UserTagService {
       existing.expiresAt = data.expiresAt !== undefined ? data.expiresAt : existing.expiresAt;
       if (data.metadata) existing.metadata = { ...existing.metadata, ...data.metadata };
       const saved = await this.repo.save(existing);
-      this.logger.log(`[UserTag] Renewed ${data.tagName} for ${data.userId} (expiresAt=${saved.expiresAt?.toISOString() ?? 'never'})`);
+      this.logger.log(
+        `[UserTag] Renewed ${data.tagName} for ${data.userId} (expiresAt=${saved.expiresAt?.toISOString() ?? 'never'})`
+      );
       return saved;
     }
     const tag = this.repo.create({

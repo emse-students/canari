@@ -373,7 +373,7 @@ export class PostInteractionsService {
   async submitForm(
     postId: string,
     formId: string,
-    data: { userId?: string; email?: string; selections: Record<string, any> }
+    _data: { userId?: string; email?: string; selections: Record<string, any> }
   ) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException();

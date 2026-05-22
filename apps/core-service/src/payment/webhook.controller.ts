@@ -142,9 +142,13 @@ export class PaymentWebhookController {
       } else if (productId && userId) {
         // Boutique product purchase — notify social-service
         if (
-          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(productId)
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+            productId,
+          )
         ) {
-          this.logger.error(`Invalid productId in webhook metadata: ${productId}`);
+          this.logger.error(
+            `Invalid productId in webhook metadata: ${productId}`,
+          );
           return res.status(400).send('Invalid productId');
         }
         try {
