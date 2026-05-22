@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Send, Paperclip, X, FileText, UploadCloud, Loader2 } from '@lucide/svelte';
-  import { untrack, tick } from 'svelte';
+  import { untrack, tick, onMount } from 'svelte';
   import { slide, fade, scale } from 'svelte/transition';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import VoiceRecorder from './VoiceRecorder.svelte';
@@ -52,6 +52,7 @@
   }: Props = $props();
 
   let mentionComposer = $state<MentionComposerInput | null>(null);
+  let composerFooter = $state<HTMLElement | null>(null);
   let fileInput: HTMLInputElement | undefined = $state();
   let isDragOver = $state(false);
   let previewUrls = $state<Record<string, string>>({});
@@ -235,6 +236,27 @@
     }
   });
 
+  /** Publishes composer stack height for message list padding (--chat-composer-height). */
+  onMount(() => {
+    const footer = composerFooter;
+    if (!footer || typeof document === 'undefined') return;
+
+    const publishHeight = () => {
+      document.documentElement.style.setProperty(
+        '--chat-composer-height',
+        `${Math.ceil(footer.offsetHeight)}px`
+      );
+    };
+
+    publishHeight();
+    const ro = new ResizeObserver(publishHeight);
+    ro.observe(footer);
+    return () => {
+      ro.disconnect();
+      document.documentElement.style.removeProperty('--chat-composer-height');
+    };
+  });
+
   $effect(() => {
     const files = pendingFiles;
     untrack(() => {
@@ -258,7 +280,7 @@
 </script>
 
 <!-- Footer Container -->
-<footer class="chat-composer-footer">
+<footer class="chat-composer-footer" bind:this={composerFooter}>
   <!-- Zone de Réponse (Reply) -->
   {#if replyingTo}
     <div transition:slide={{ duration: 200, axis: 'y' }} class="pointer-events-auto">

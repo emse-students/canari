@@ -453,6 +453,9 @@
         onOpenMembers={routeMode === 'communities' && isSelectedChannel
           ? convs.openChannelMembersDrawer
           : undefined}
+        onMessagesScrollEl={(el) => {
+          convs.chatContainer = el ?? undefined;
+        }}
       />
 
       {#if routeMode === 'communities'}

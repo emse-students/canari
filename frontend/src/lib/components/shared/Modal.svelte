@@ -4,6 +4,7 @@
   import { fly } from 'svelte/transition';
   import { portal } from '$lib/actions/portal';
   import { pushHistoryOverlay, closeHistoryOverlayFromUi } from '$lib/utils/historyOverlayStack';
+  import { keyboardAwareOverlayPadding } from '$lib/stores/keyboardViewport.svelte';
 
   interface Props {
     open?: boolean;
@@ -62,8 +63,9 @@
   <div use:portal>
     <div
       role="presentation"
+      data-keyboard-aware-overlay
       class="fixed inset-0 z-[280] flex items-end justify-center bg-black/40 backdrop-blur-sm sm:items-center"
-      style="padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)"
+      style="padding: {keyboardAwareOverlayPadding}"
       onclick={handleBackdropClick}
       in:fly={{ duration: 200, y: 0, opacity: 0 }}
     >
@@ -72,7 +74,7 @@
         aria-modal="true"
         aria-label={title}
         tabindex="-1"
-        class="bg-[var(--cn-surface)] border border-cn-border rounded-t-3xl sm:rounded-2xl shadow-2xl w-full {maxWidth} sm:mx-4 text-text-main flex flex-col max-h-[92dvh]"
+        class="keyboard-aware-modal-panel bg-[var(--cn-surface)] border border-cn-border rounded-t-3xl sm:rounded-2xl shadow-2xl w-full {maxWidth} sm:mx-4 text-text-main flex flex-col max-h-[92dvh]"
         in:fly={{ duration: 220, y: 24 }}
         onclick={(e) => e.stopPropagation()}
         onkeydown={(e) => e.stopPropagation()}

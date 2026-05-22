@@ -12,6 +12,7 @@
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import type { ChatMessage, MessageReaction, Conversation } from '$lib/types';
   import type { PendingMediaFile } from '$lib/media';
+  import { getKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
 
   interface Props {
     /** The active conversation to display, or null when nothing is selected. */
@@ -88,6 +89,8 @@
     isCatchingUpMessages?: boolean;
     /** Called when in-memory groups are exhausted; should load older messages from DB. Returns true if more may be available. */
     onLoadOlderMessages?: () => Promise<boolean>;
+    /** Exposes the scrollable messages element (for programmatic scroll from messaging). */
+    onMessagesScrollEl?: (el: HTMLDivElement | null) => void;
   }
 
   let {
@@ -127,6 +130,7 @@
     isLoadingHistory = false,
     isCatchingUpMessages = false,
     onLoadOlderMessages,
+    onMessagesScrollEl,
   }: Props = $props();
 
   const INITIAL_RENDER_GROUPS = 180;
@@ -342,23 +346,32 @@
     return () => mq.removeEventListener('change', apply);
   });
 
-  // Quand le clavier virtuel se ferme (viewport height augmente), si on était en bas,
-  // scroller de nouveau en bas pour éviter l'espace vide sous le dernier message.
   $effect(() => {
-    if (typeof window === 'undefined') return;
-    const vv = window.visualViewport;
-    if (!vv) return;
-    let prevHeight = vv.height;
-    const onResize = () => {
-      const newHeight = vv.height;
-      const keyboardClosed = newHeight > prevHeight;
-      prevHeight = newHeight;
-      if (keyboardClosed && isNearBottom) {
-        tick().then(() => scrollToBottom(false));
-      }
-    };
-    vv.addEventListener('resize', onResize);
-    return () => vv.removeEventListener('resize', onResize);
+    onMessagesScrollEl?.(chatContainer ?? null);
+    return () => onMessagesScrollEl?.(null);
+  });
+
+  $effect(() => {
+    if (!_composerFocused || !chatContainer) return;
+    untrack(() => {
+      tick().then(() => requestAnimationFrame(() => scrollToBottom(false)));
+    });
+  });
+
+  let keyboardWasOpen = false;
+  $effect(() => {
+    const kbOpen = getKeyboardViewport().isOpen;
+    if (!chatContainer) {
+      keyboardWasOpen = kbOpen;
+      return;
+    }
+    if (!keyboardWasOpen && kbOpen && _composerFocused && isNearBottom) {
+      tick().then(() => requestAnimationFrame(() => scrollToBottom(false)));
+    }
+    if (keyboardWasOpen && !kbOpen && isNearBottom) {
+      tick().then(() => requestAnimationFrame(() => scrollToBottom(false)));
+    }
+    keyboardWasOpen = kbOpen;
   });
 
   $effect(() => {

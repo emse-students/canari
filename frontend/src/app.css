@@ -109,6 +109,62 @@ h6,
   animation: riseIn 260ms ease;
 }
 
+/* Mobile swipe between main tabs (+layout.svelte) */
+.page-scroll-wrap {
+  touch-action: pan-y pinch-zoom;
+  will-change: transform;
+}
+
+.page-scroll-wrap.swipe-nav-dragging {
+  touch-action: none;
+  transition: none;
+}
+
+.page-scroll-wrap.swipe-nav-exit-left {
+  transition: transform 220ms ease-out;
+  transform: translateX(-100%);
+}
+
+.page-scroll-wrap.swipe-nav-exit-right {
+  transition: transform 220ms ease-out;
+  transform: translateX(100%);
+}
+
+.page-scroll-wrap.swipe-nav-enter-left {
+  animation: swipeNavEnterFromLeft 220ms ease-out;
+}
+
+.page-scroll-wrap.swipe-nav-enter-right {
+  animation: swipeNavEnterFromRight 220ms ease-out;
+}
+
+@keyframes swipeNavEnterFromLeft {
+  from {
+    opacity: 0.92;
+    transform: translateX(-28%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.message-swipe-reply-active {
+  transition: none !important;
+  z-index: 5;
+}
+
+@keyframes swipeNavEnterFromRight {
+  from {
+    opacity: 0.92;
+    transform: translateX(28%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
 @keyframes panelIn {
   from {
     opacity: 0;
@@ -193,17 +249,22 @@ h6,
 }
 
 .chat-messages-scroll {
-  padding-bottom: calc(7.5rem + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(var(--chat-composer-height, 7.5rem) + env(safe-area-inset-bottom, 0px));
+  scroll-padding-bottom: calc(
+    var(--chat-composer-height, 7.5rem) + env(safe-area-inset-bottom, 0px)
+  );
 }
 
 @media (min-width: 768px) {
   .chat-messages-scroll {
-    padding-bottom: 6.5rem;
+    padding-bottom: calc(var(--chat-composer-height, 6.5rem));
+    scroll-padding-bottom: calc(var(--chat-composer-height, 6.5rem));
   }
 }
 
 .mobile-convo-open .chat-messages-scroll {
-  padding-bottom: calc(6rem + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(var(--chat-composer-height, 6rem) + env(safe-area-inset-bottom, 0px));
+  scroll-padding-bottom: calc(var(--chat-composer-height, 6rem) + env(safe-area-inset-bottom, 0px));
 }
 
 .chat-composer-footer {
@@ -216,6 +277,7 @@ h6,
   padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
   pointer-events: none;
   z-index: 40;
+  transition: bottom 180ms ease;
 }
 
 /* On mobile the BottomNav (h-16 = 4rem) sits above the composer — push it up */
@@ -225,12 +287,21 @@ h6,
   }
 }
 
-/* When virtual keyboard is open the BottomNav is hidden — remove ALL padding
-   so the composer sits flush against the keyboard top edge.
-   NOTE: must be a plain descendant selector (.keyboard-open is on <html>);
-   :global() is a Svelte-only construct that browsers reject in plain .css files. */
+/* Keyboard open: lift composer above IME and extend message scroll padding. */
 .keyboard-open .chat-composer-footer {
-  padding-bottom: 0 !important;
+  bottom: var(--keyboard-inset-bottom, 0px);
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom)) !important;
+}
+
+.keyboard-open .chat-messages-scroll {
+  padding-bottom: calc(
+    var(--chat-composer-height, 6rem) + var(--keyboard-inset-bottom, 0px) +
+      max(0.5rem, env(safe-area-inset-bottom, 0px))
+  );
+  scroll-padding-bottom: calc(
+    var(--chat-composer-height, 6rem) + var(--keyboard-inset-bottom, 0px) +
+      max(0.5rem, env(safe-area-inset-bottom, 0px))
+  );
 }
 
 /* When a conversation is open on mobile the BottomNav is unmounted — drop its
@@ -239,10 +310,84 @@ h6,
   padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
 }
 
-/* Chat layout fills the full viewport — neutralise the BottomNav dead-zone
-   created by .page-scroll-wrap's pb-16 (only scrollable pages need that space). */
+.mobile-convo-open.keyboard-open .chat-composer-footer {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom)) !important;
+}
+
+/* Chat layout fills the full viewport — no page scroll behind the chat shell. */
 .page-scroll-wrap:has(.app-layout) {
   padding-bottom: 0;
+  overflow: hidden;
+}
+
+html.keyboard-open .page-scroll-wrap {
+  overflow: hidden;
+}
+
+/* Fixed bottom bars on non-chat pages (forms, etc.) */
+.keyboard-aware-bottom {
+  transition: bottom 180ms ease;
+}
+
+.keyboard-open .keyboard-aware-bottom {
+  bottom: var(--keyboard-inset-bottom, 0px);
+}
+
+/* Fullscreen overlays: modals, PIN, sync, payment, calendar pickers… */
+[data-keyboard-aware-overlay] {
+  padding-top: max(1rem, env(safe-area-inset-top, 0px));
+  padding-right: max(1rem, env(safe-area-inset-right, 0px));
+  padding-left: max(1rem, env(safe-area-inset-left, 0px));
+  padding-bottom: calc(
+    max(1rem, env(safe-area-inset-bottom, 0px)) + var(--keyboard-inset-bottom, 0px)
+  );
+  transition: padding-bottom 180ms ease;
+}
+
+.keyboard-aware-modal-panel {
+  max-height: min(92dvh, var(--app-viewport-height, 100dvh)) !important;
+}
+
+/* Message action wheel (long-press menu) — above composer / bottom nav */
+[data-keyboard-aware-actions] {
+  bottom: calc(
+    max(4.5rem, env(safe-area-inset-bottom, 0px) + 3rem) + var(--keyboard-inset-bottom, 0px)
+  );
+  transition: bottom 180ms ease;
+}
+
+.mobile-convo-open [data-keyboard-aware-actions] {
+  bottom: calc(
+    max(1rem, env(safe-area-inset-bottom, 0px) + 1rem) + var(--keyboard-inset-bottom, 0px)
+  );
+}
+
+.keyboard-open [data-keyboard-aware-toast] {
+  bottom: calc(
+    env(safe-area-inset-bottom, 0px) + 1rem + var(--keyboard-inset-bottom, 0px)
+  ) !important;
+}
+
+/* Side panels (group settings, channel members) with bottom actions */
+.keyboard-aware-panel-scroll {
+  padding-bottom: max(1.25rem, env(safe-area-inset-bottom, 0px));
+}
+
+.keyboard-open .keyboard-aware-panel-scroll {
+  padding-bottom: calc(
+    max(1.25rem, env(safe-area-inset-bottom, 0px)) + var(--keyboard-inset-bottom, 0px)
+  ) !important;
+}
+
+.keyboard-aware-panel-footer {
+  padding-bottom: max(1.25rem, env(safe-area-inset-bottom, 0px));
+  transition: padding-bottom 180ms ease;
+}
+
+.keyboard-open .keyboard-aware-panel-footer {
+  padding-bottom: calc(
+    max(1.25rem, env(safe-area-inset-bottom, 0px)) + var(--keyboard-inset-bottom, 0px)
+  ) !important;
 }
 
 [data-theme='dark'] .chat-composer-footer {

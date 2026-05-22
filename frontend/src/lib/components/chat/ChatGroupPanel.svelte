@@ -159,10 +159,7 @@
 
       <!-- Contenu scrollable -->
       <div
-        class="flex-1 min-h-0 overflow-y-auto p-5 md:p-6 flex flex-col gap-6"
-        style="padding-bottom: {onGroupDelete
-          ? '1.25rem'
-          : 'max(1.25rem, env(safe-area-inset-bottom))'}"
+        class="keyboard-aware-panel-scroll flex-1 min-h-0 overflow-y-auto p-5 md:p-6 flex flex-col gap-6"
       >
         <!-- Carte d'identité du groupe/contact -->
         <div
@@ -301,8 +298,7 @@
       <!-- Section Quitter / Supprimer (Pied du panneau) -->
       {#if onGroupLeave || onGroupDelete}
         <div
-          class="mt-auto border-t border-black/5 dark:border-white/10 p-5 md:p-6 bg-white/40 dark:bg-black/30 backdrop-blur-md flex flex-col gap-3"
-          style="padding-bottom: max(1.25rem, env(safe-area-inset-bottom))"
+          class="keyboard-aware-panel-footer mt-auto border-t border-black/5 dark:border-white/10 p-5 md:p-6 bg-white/40 dark:bg-black/30 backdrop-blur-md flex flex-col gap-3"
         >
           {#if onGroupLeave && !confirmLeave && !confirmDelete}
             <button
