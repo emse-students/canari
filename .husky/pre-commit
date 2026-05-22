@@ -13,6 +13,8 @@ echo "$STAGED_FILES" | grep -Eq '^apps/chat-delivery-service/' && RUN_DELIVERY=1
 echo "$STAGED_FILES" | grep -Eq '^apps/chat-gateway/' && RUN_GATEWAY=1 || RUN_GATEWAY=0
 echo "$STAGED_FILES" | grep -Eq '^apps/social-service/' && RUN_SOCIAL=1 || RUN_SOCIAL=0
 echo "$STAGED_FILES" | grep -Eq '^apps/core-service/' && RUN_CORE=1 || RUN_CORE=0
+echo "$STAGED_FILES" | grep -Eq '^apps/media-service/' && RUN_MEDIA=1 || RUN_MEDIA=0
+echo "$STAGED_FILES" | grep -Eq '^libs/shared-ts/' && RUN_SHARED_TS=1 || RUN_SHARED_TS=0
 
 if [ "$RUN_ALL" -eq 1 ]; then
   RUN_FRONTEND=1
@@ -20,6 +22,8 @@ if [ "$RUN_ALL" -eq 1 ]; then
   RUN_GATEWAY=1
   RUN_SOCIAL=1
   RUN_CORE=1
+  RUN_MEDIA=1
+  RUN_SHARED_TS=1
 fi
 
 if [ "$RUN_FRONTEND" -eq 1 ]; then
@@ -66,5 +70,20 @@ if [ "$RUN_CORE" -eq 1 ]; then
   git diff --name-only -- apps/core-service/ | xargs -r git add
 fi
 
+if [ "$RUN_MEDIA" -eq 1 ]; then
+  (cd apps/media-service && npm run lint) || {
+    echo "❌ media-service lint échoué."
+    exit 1
+  }
+  git diff --name-only -- apps/media-service/ | xargs -r git add
+fi
+
+if [ "$RUN_SHARED_TS" -eq 1 ]; then
+  (cd libs/shared-ts && npm run lint) || {
+    echo "❌ shared-ts lint échoué."
+    exit 1
+  }
+  git diff --name-only -- libs/shared-ts/ | xargs -r git add
+fi
 
 exit 0
