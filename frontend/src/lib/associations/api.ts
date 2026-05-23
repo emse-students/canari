@@ -60,6 +60,8 @@ export interface Association {
   permissions?: number;
   /** True if the calling user has at least one permission in this association. */
   isAdmin?: boolean;
+  /** Hex color for calendar display (e.g. "#e83e8c"). Null → frontend uses generateAvatarColor fallback. */
+  color?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -81,6 +83,8 @@ export interface UpdateAssociationPayload {
   isBDE?: boolean;
   /** Global admin only — sets the document vault quota in bytes. */
   documentQuotaBytes?: number;
+  /** Hex color for calendar display. Pass `""` or `null` to revert to auto-generated color. */
+  color?: string | null;
 }
 
 export type AssociationCalendarEventStatus = 'pending' | 'validated';
@@ -105,6 +109,8 @@ export interface AssociationCalendarEvent {
 export interface AssociationCalendarFeedEvent extends AssociationCalendarEvent {
   associationName: string;
   associationSlug: string;
+  /** Hex color set on the association, or null (frontend falls back to generateAvatarColor). */
+  associationColor: string | null;
 }
 
 export interface AssociationLinkCandidates {

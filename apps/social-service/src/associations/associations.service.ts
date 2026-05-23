@@ -148,6 +148,9 @@ export class AssociationsService {
     if (dto.bioMarkdown !== undefined && dto.bioMarkdown.trim() === '') {
       patch.bioMarkdown = null;
     }
+    if (dto.color !== undefined && (dto.color === null || dto.color.trim() === '')) {
+      patch.color = null;
+    }
     // documentQuotaBytes comes in as bigint but must stay a number in TypeORM
     if (patch.documentQuotaBytes !== undefined) {
       patch.documentQuotaBytes = Number(patch.documentQuotaBytes);
@@ -822,6 +825,7 @@ export class AssociationsService {
       .addSelect('e.validatedBy', 'validatedBy')
       .addSelect('a.name', 'associationName')
       .addSelect('a.slug', 'associationSlug')
+      .addSelect('a.color', 'associationColor')
       .getRawMany();
 
     return rows.map((r: Record<string, unknown>) => {
@@ -844,6 +848,7 @@ export class AssociationsService {
         ...base,
         associationName: this.rawQueryString(r.associationName),
         associationSlug: this.rawQueryString(r.associationSlug),
+        associationColor: (r.associationColor as string | null) ?? null,
       };
     });
   }

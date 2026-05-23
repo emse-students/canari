@@ -62,6 +62,10 @@ export class Association {
   @Column({ type: 'bigint', default: 524288000 })
   documentQuotaBytes: number;
 
+  /** Hex color for calendar display (e.g. "#e83e8c"). Null → frontend falls back to generateAvatarColor. */
+  @Column({ type: 'varchar', length: 7, nullable: true })
+  color: string | null;
+
   @Column({ type: 'varchar', length: 255 })
   @Index()
   createdBy: string;

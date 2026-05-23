@@ -83,6 +83,12 @@ export class UpdateAssociationDto {
   @Min(0)
   @IsOptional()
   documentQuotaBytes?: number;
+
+  /** Hex color for calendar display. Pass `""` or `null` to clear (reverts to auto-generated color). */
+  @IsOptional()
+  @IsString()
+  @Matches(/^(#[0-9A-Fa-f]{6})?$/)
+  color?: string | null;
 }
 
 export class AddMemberDto {

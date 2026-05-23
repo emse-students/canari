@@ -84,6 +84,8 @@
   let editName = $state('');
   let editDescription = $state('');
   let editBioMarkdown = $state('');
+  /** Hex color for calendar display, or "" to use auto-generated color. */
+  let editColor = $state('');
   let saving = $state(false);
   let saveSuccess = $state(false);
   let settingsError = $state('');
@@ -197,6 +199,7 @@
       editName = a.name;
       editDescription = a.description ?? '';
       editBioMarkdown = a.bioMarkdown ?? '';
+      editColor = a.color ?? '';
 
       const uid = currentUserId();
       const mine = members.find((m) => m.userId === uid);
@@ -222,9 +225,11 @@
         name: editName.trim() || undefined,
         description: editDescription.trim(),
         bioMarkdown: editBioMarkdown.trim(),
+        color: editColor.trim() || null,
       });
       editDescription = asso.description ?? '';
       editBioMarkdown = asso.bioMarkdown ?? '';
+      editColor = asso.color ?? '';
       saveSuccess = true;
       setTimeout(() => (saveSuccess = false), 3500);
     } catch (err) {
@@ -775,6 +780,27 @@
             placeholder="Présentation complète, liens, listes…"
           />
         </div>
+        <div class="flex flex-col gap-1.5">
+          <span class="block text-sm font-bold text-text-main ml-1">Couleur de l'agenda</span>
+          <div class="flex items-center gap-3">
+            <input
+              type="color"
+              bind:value={editColor}
+              class="h-9 w-16 cursor-pointer rounded-lg border border-cn-border bg-[var(--cn-surface)] p-0.5"
+            />
+            <button
+              type="button"
+              onclick={() => (editColor = '')}
+              class="text-xs text-text-muted hover:text-text-main transition-colors"
+            >
+              Réinitialiser (couleur auto)
+            </button>
+          </div>
+          <p class="text-[11px] text-text-muted ml-1">
+            Couleur utilisée dans l'agenda global. Laissez vide pour la couleur générée automatiquement.
+          </p>
+        </div>
+
         <div class="rounded-xl border border-cn-border/70 bg-cn-bg/40 p-3 text-xs text-text-muted space-y-3">
           <p class="font-semibold text-text-main">Aperçu</p>
           {#if editDescription.trim()}

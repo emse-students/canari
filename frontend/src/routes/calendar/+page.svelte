@@ -12,7 +12,8 @@
   } from '$lib/associations/api';
   import { isGlobalAdmin } from '$lib/stores/user';
   import Card from '$lib/components/ui/Card.svelte';
-  import MonthCalendarGrid from '$lib/components/calendar/MonthCalendarGrid.svelte';
+  import MonthCalendarGridRich from '$lib/components/calendar/MonthCalendarGridRich.svelte';
+  import { exportCalendarMonth } from '$lib/utils/calendarExport';
   import {
     ChevronLeft,
     ChevronRight,
@@ -21,6 +22,7 @@
     ExternalLink,
     ClipboardList,
     ShieldAlert,
+    FileDown,
   } from '@lucide/svelte';
   import {
     buildIcsCalendar,
@@ -203,6 +205,17 @@
   let canModerateAgenda = $state(false);
   let pendingCount = $state(0);
   let selectedDay = $state<number | null>(null);
+  let exportingPdf = $state(false);
+
+  async function handleExportPdf() {
+    if (exportingPdf) return;
+    exportingPdf = true;
+    try {
+      await exportCalendarMonth(sortedEvents, focusDate);
+    } finally {
+      exportingPdf = false;
+    }
+  }
 
   function sameDay(a: Date, b: Date): boolean {
     return (
@@ -288,7 +301,17 @@
       </label>
     </div>
 
-    <div class="flex justify-end border-t border-cn-border/60 pt-4">
+    <div class="flex flex-wrap justify-end gap-2 border-t border-cn-border/60 pt-4">
+      <button
+        type="button"
+        onclick={handleExportPdf}
+        disabled={loading || sortedEvents.length === 0 || exportingPdf}
+        class="inline-flex items-center justify-center gap-2 shrink-0 rounded-xl border border-cn-border bg-[var(--cn-surface)] px-4 py-2.5 text-sm font-bold text-text-main hover:bg-cn-bg transition-colors disabled:opacity-40 disabled:pointer-events-none"
+        title="Télécharger la grille du mois en PDF"
+      >
+        <FileDown size={18} />
+        {exportingPdf ? 'Génération…' : 'PDF'}
+      </button>
       <button
         type="button"
         onclick={exportMonthIcs}
@@ -302,7 +325,7 @@
     </div>
   </Card>
 
-  <MonthCalendarGrid
+  <MonthCalendarGridRich
     {focusDate}
     events={sortedEvents}
     {loading}
