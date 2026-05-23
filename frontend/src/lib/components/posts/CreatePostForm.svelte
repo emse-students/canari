@@ -11,7 +11,6 @@
     clearPostComposerDraft,
     emptyPostComposerDraft,
     loadPostComposerDraft,
-    POST_NEW_FORM_ATTACH_KEY,
     POST_NEW_FORM_ID_KEY,
     savePostComposerDraft,
     type PostComposerDraft,
@@ -26,7 +25,6 @@
   import { isGlobalAdmin } from '$lib/stores/user';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import PollSection from './PollSection.svelte';
-  import EventButtonSection from './EventButtonSection.svelte';
   import FormSection from './FormSection.svelte';
   import Button from '$lib/components/ui/Button.svelte';
 
@@ -56,15 +54,6 @@
   let pollQuestion = $state('');
   let pollOptionsRaw = $state('Oui\nNon');
   let pollMultipleChoice = $state(false);
-
-  let includeEventButton = $state(false);
-  let eventLabel = $state("S'inscrire");
-  let eventId = $state('');
-  let eventRequiresPayment = $state(false);
-  let eventAmount = $state<number>(25);
-  let eventCurrency = $state('eur');
-  let eventCapacity = $state<number>(100);
-  let eventFormId = $state('');
 
   let includeForm = $state(false);
   let selectedFormId = $state('');
@@ -108,14 +97,6 @@
       pollQuestion,
       pollOptionsRaw,
       pollMultipleChoice,
-      includeEventButton,
-      eventLabel,
-      eventId,
-      eventRequiresPayment,
-      eventAmount,
-      eventCurrency,
-      eventCapacity,
-      eventFormId,
       includeForm,
       selectedFormId,
       scheduledAt,
@@ -132,14 +113,6 @@
     pollQuestion = draft.pollQuestion;
     pollOptionsRaw = draft.pollOptionsRaw;
     pollMultipleChoice = draft.pollMultipleChoice;
-    includeEventButton = draft.includeEventButton;
-    eventLabel = draft.eventLabel;
-    eventId = draft.eventId;
-    eventRequiresPayment = draft.eventRequiresPayment;
-    eventAmount = draft.eventAmount;
-    eventCurrency = draft.eventCurrency;
-    eventCapacity = draft.eventCapacity;
-    eventFormId = draft.eventFormId;
     includeForm = draft.includeForm;
     selectedFormId = draft.selectedFormId;
     scheduledAt = draft.scheduledAt;
@@ -158,7 +131,7 @@
     if (draftSaveTimer) clearTimeout(draftSaveTimer);
     draftSaveTimer = setTimeout(() => {
       const snap = snapshotComposerDraft();
-      if (snap.markdown.trim() || snap.includePoll || snap.includeEventButton || snap.includeForm) {
+      if (snap.markdown.trim() || snap.includePoll || snap.includeForm) {
         savePostComposerDraft(snap);
         draftSaved = true;
         setTimeout(() => { draftSaved = false; }, 1800);
@@ -216,24 +189,15 @@
     try { availableForms = await getForms(); } catch (e) { console.error('Failed to load forms', e); }
 
     const newFormId = sessionStorage.getItem(POST_NEW_FORM_ID_KEY);
-    const attach = sessionStorage.getItem(POST_NEW_FORM_ATTACH_KEY);
     if (newFormId) {
       sessionStorage.removeItem(POST_NEW_FORM_ID_KEY);
-      sessionStorage.removeItem(POST_NEW_FORM_ATTACH_KEY);
       try {
         availableForms = await getForms();
       } catch {
         /* keep previous list */
       }
-      if (attach === 'event') {
-        includeEventButton = true;
-        includeForm = false;
-        eventFormId = newFormId;
-      } else {
-        includeForm = true;
-        includeEventButton = false;
-        selectedFormId = newFormId;
-      }
+      includeForm = true;
+      selectedFormId = newFormId;
     }
 
     try {
@@ -299,22 +263,7 @@
         payload.polls = [{ question: pollQuestion.trim(), options, multipleChoice: pollMultipleChoice }];
       }
 
-      if (includeEventButton) {
-        if (!eventLabel.trim() || !eventId.trim()) {
-          throw new Error("Le libellé et l'identifiant de l'événement sont requis.");
-        }
-        payload.eventButtons = [{
-          label: eventLabel.trim(),
-          eventId: eventId.trim(),
-          requiresPayment: eventRequiresPayment,
-          amountCents: eventRequiresPayment ? Math.round(Number(eventAmount) * 100) : undefined,
-          currency: eventRequiresPayment ? eventCurrency.toLowerCase() : undefined,
-          capacity: Number(eventCapacity),
-          formId: eventFormId || undefined,
-        }];
-      }
-
-      if (includeForm && !includeEventButton) {
+      if (includeForm) {
         if (!selectedFormId) throw new Error('Veuillez sélectionner un formulaire.');
         payload.attachedFormId = selectedFormId;
       }
@@ -334,7 +283,6 @@
       filePreviews.forEach((url) => URL.revokeObjectURL(url));
       selectedFiles = []; filePreviews = []; imageCaptions = [];
       includePoll = false; pollQuestion = ''; pollOptionsRaw = 'Oui\nNon';
-      includeEventButton = false;
       includeForm = false;
       scheduledAt = '';
       selectedAssociationId = '';
@@ -552,32 +500,13 @@
       </div>
     {/if}
 
-    <!-- Événement -->
-    {#if includeEventButton}
-      <div transition:slide={{ duration: 300, easing: (t) => t * (2 - t) }}>
-        <EventButtonSection
-          bind:label={eventLabel}
-          bind:eventId={eventId}
-          bind:requiresPayment={eventRequiresPayment}
-          bind:amount={eventAmount}
-          bind:currency={eventCurrency}
-          bind:capacity={eventCapacity}
-          bind:formId={eventFormId}
-          {availableForms}
-          createFormHref={buildCreateFormHref('event')}
-          onBeforeCreateForm={persistComposerDraft}
-          onRemove={() => (includeEventButton = false)}
-        />
-      </div>
-    {/if}
-
-    <!-- Formulaire (Exclusif avec l'Événement) -->
-    {#if includeForm && !includeEventButton}
+    <!-- Formulaire attaché -->
+    {#if includeForm}
       <div transition:slide={{ duration: 300, easing: (t) => t * (2 - t) }}>
         <FormSection
           bind:selectedFormId
           {availableForms}
-          createFormHref={buildCreateFormHref('form')}
+          createFormHref={buildCreateFormHref()}
           onBeforeCreateForm={persistComposerDraft}
           onRemove={() => (includeForm = false)}
         />
@@ -624,29 +553,16 @@
           <span class="hidden text-xs sm:inline">Sondage</span>
         </button>
 
-        <!-- Ajouter un événement -->
+        <!-- Ajouter un formulaire -->
         <button
-          type="button" title="Événement"
-          onclick={() => { includeEventButton = !includeEventButton; if (includeEventButton) includeForm = false; }}
+          type="button" title="Formulaire"
+          onclick={() => (includeForm = !includeForm)}
           class="flex items-center gap-2 rounded-xl px-3 py-2 text-text-muted transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 shrink-0
-          {includeEventButton ? 'bg-amber-500/15 font-bold text-amber-600 dark:text-amber-400 shadow-sm' : 'hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main'}"
+          {includeForm ? 'bg-amber-500/15 font-bold text-amber-600 dark:text-amber-400 shadow-sm' : 'hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main'}"
         >
-          <CalendarCheck size={18} strokeWidth={includeEventButton ? 2.5 : 2} />
-          <span class="hidden text-xs sm:inline">Événement</span>
+          <ClipboardList size={18} strokeWidth={includeForm ? 2.5 : 2} />
+          <span class="hidden text-xs sm:inline">Formulaire</span>
         </button>
-
-        <!-- Ajouter un formulaire (si pas d'événement) -->
-        {#if !includeEventButton}
-          <button
-            type="button" title="Formulaire"
-            onclick={() => (includeForm = !includeForm)}
-            class="flex items-center gap-2 rounded-xl px-3 py-2 text-text-muted transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 shrink-0
-            {includeForm ? 'bg-amber-500/15 font-bold text-amber-600 dark:text-amber-400 shadow-sm' : 'hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main'}"
-          >
-            <ClipboardList size={18} strokeWidth={includeForm ? 2.5 : 2} />
-            <span class="hidden text-xs sm:inline">Formulaire</span>
-          </button>
-        {/if}
 
         <!-- Séparateur vertical visuel -->
         <div class="h-6 w-px bg-black/10 dark:bg-white/10 mx-0.5 shrink-0 hidden sm:block"></div>

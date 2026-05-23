@@ -109,7 +109,7 @@ export class PostsService {
   }
 
   /**
-   * Creates a new post. Normalises polls and event buttons (assigns UUIDs, default values),
+   * Creates a new post. Normalises polls (assigns UUIDs, default values),
    * saves to DB, invalidates the Redis list cache, and returns the public-shaped entity.
    */
   async createPost(data: any) {
@@ -118,13 +118,6 @@ export class PostsService {
         data.associationId,
         data.linkedCalendarEventId
       );
-    }
-    if (Array.isArray(data.eventButtons)) {
-      data.eventButtons = data.eventButtons.map((btn: any) => ({
-        ...btn,
-        id: btn.id || crypto.randomUUID(),
-        registrants: btn.registrants ?? [],
-      }));
     }
     if (Array.isArray(data.polls)) {
       data.polls = data.polls.map((poll: any) => ({
@@ -190,7 +183,7 @@ export class PostsService {
     const selectBody = `posts.id,
          posts."authorId", posts.markdown, posts."createdAt", posts."updatedAt",
          posts.mentions, posts.links, posts."attachedFormId", posts."associationId", posts."paymentAssociationId",
-         posts.images, posts.polls, posts."eventButtons", posts.forms, posts.reactions, posts.pinned, posts."scheduledAt",
+         posts.images, posts.polls, posts.forms, posts.reactions, posts.pinned, posts."scheduledAt",
          (jsonb_array_length(COALESCE(posts.comments, '[]'::jsonb))::integer) AS "commentCount",
          (
            SELECT COALESCE(jsonb_agg(elem ORDER BY ord), '[]'::jsonb)
@@ -342,7 +335,7 @@ export class PostsService {
     const selectBody = `posts.id,
          posts."authorId", posts.markdown, posts."createdAt", posts."updatedAt",
          posts.mentions, posts.links, posts."attachedFormId", posts."associationId", posts."paymentAssociationId",
-         posts.images, posts.polls, posts."eventButtons", posts.forms, posts.reactions, posts.pinned, posts."scheduledAt",
+         posts.images, posts.polls, posts.forms, posts.reactions, posts.pinned, posts."scheduledAt",
          (jsonb_array_length(COALESCE(posts.comments, '[]'::jsonb))::integer) AS "commentCount",
          (
            SELECT COALESCE(jsonb_agg(elem ORDER BY ord), '[]'::jsonb)
@@ -425,11 +418,6 @@ export class PostsService {
         post.mentions = post.mentions ?? [];
       }
       post.commentCount = Number(post.commentCount) || 0;
-      if (Array.isArray(post.eventButtons)) {
-        for (const btn of post.eventButtons) {
-          if (!Array.isArray(btn.registrants)) btn.registrants = [];
-        }
-      }
     }
 
     const authorIds = [

@@ -1,6 +1,5 @@
 <script lang="ts">
   import {
-    registerEvent,
     votePoll,
     addReaction,
     removeReaction,
@@ -24,7 +23,6 @@
   import PostActions from './PostActions.svelte';
   import ReactionsDisplay from './ReactionsDisplay.svelte';
   import PostPolls from './PostPolls.svelte';
-  import PostEventButtons from './PostEventButtons.svelte';
   import PostForms from './PostForms.svelte';
   import PostComments from './PostComments.svelte';
   import PostOverlayControls from './PostOverlayControls.svelte';
@@ -47,15 +45,13 @@
     currentUserId: string;
     /** Bearer token forwarded to media URLs that require auth. */
     authToken?: string;
-    /** User's email, pre-filled in event registration payloads. */
-    currentUserEmail?: string;
     /** Called after a full list refresh is needed (e.g. after delete from the parent). */
     onRefresh?: () => void;
     /** Called immediately after the post has been deleted so the parent can remove the card. */
     onDelete?: () => void;
   }
 
-  let { post: postProp, currentUserId, authToken = '', currentUserEmail, onRefresh: _onRefresh, onDelete }: Props = $props();
+  let { post: postProp, currentUserId, authToken = '', onRefresh: _onRefresh, onDelete }: Props = $props();
 
   // Local mutable copy — updated directly after interactions to avoid a full list reload.
   // Re-syncs from postProp whenever the parent explicitly refreshes.
@@ -111,10 +107,6 @@
   const pendingAttachedFormIds = $derived(
     expectedAttachedFormIds.filter((id) => !formInfos.some((fi) => fi.id === id))
   );
-  let btnFormInfos = $state<Record<string, { formId: string; title: string; submitted: boolean }>>(
-    {}
-  );
-
   // Auto-clear des messages d'erreur après 4 secondes
   $effect(() => {
     if (errorMessage) {
@@ -132,30 +124,6 @@
         actionMessage = '';
       }, 4000);
       return () => clearTimeout(timer);
-    }
-  });
-
-  $effect(() => {
-    for (const btn of localPost.eventButtons ?? []) {
-      if (btn.formId && !btnFormInfos[btn.id]) {
-        getForm(btn.formId)
-          .then((f) => {
-            checkSubmission(f.id)
-              .then(({ hasSubmitted }) => {
-                btnFormInfos = {
-                  ...btnFormInfos,
-                  [btn.id]: { formId: f.id, title: f.title, submitted: hasSubmitted },
-                };
-              })
-              .catch(() => {
-                btnFormInfos = {
-                  ...btnFormInfos,
-                  [btn.id]: { formId: f.id, title: f.title, submitted: false },
-                };
-              });
-          })
-          .catch((e) => console.error('Failed to load event button form', e));
-      }
     }
   });
 
@@ -414,39 +382,6 @@
     }
   }
 
-  /** Registers the current user for an event button. Redirects to Stripe Checkout if payment is required. */
-  async function registerForEvent(buttonId: string) {
-    if (!currentUserId.trim()) {
-      errorMessage = 'Identifiez-vous avant de vous inscrire.';
-      return;
-    }
-    try {
-      const { eventCheckoutCallbacks } = await import('$lib/utils/stripeCallbacks');
-      const response = await registerEvent(localPost.id, buttonId, {
-        email: currentUserEmail?.trim() || undefined,
-        ...eventCheckoutCallbacks(localPost.id, buttonId),
-      });
-      if (response.checkoutUrl) {
-        const { navigateExternal } = await import('$lib/utils/openExternal');
-        await navigateExternal(response.checkoutUrl);
-      }
-      actionMessage =
-        response.message ||
-        (response.checkoutUrl ? 'Redirection vers le paiement...' : 'Inscription confirmée !');
-      if (response.registered) {
-        localPost = {
-          ...localPost,
-          eventButtons: (localPost.eventButtons ?? []).map((btn) =>
-            btn.id === buttonId
-              ? { ...btn, registrants: [...(btn.registrants ?? []), currentUserId] }
-              : btn
-          ),
-        };
-      }
-    } catch (err) {
-      errorMessage = err instanceof Error ? err.message : 'Impossible de s\u2019inscrire';
-    }
-  }
 </script>
 
 <div class="relative mb-6">
@@ -548,13 +483,6 @@
     {selectedOptions}
     onVoteClick={handleVoteClick}
     onSubmitVote={submitVote}
-  />
-
-  <PostEventButtons
-    eventButtons={localPost.eventButtons}
-    {currentUserId}
-    {btnFormInfos}
-    onRegisterEvent={registerForEvent}
   />
 
   {#if pendingAttachedFormIds.length > 0}

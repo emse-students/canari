@@ -35,7 +35,6 @@
   } = $props();
 
   const userId = $derived(currentUserId() ?? '');
-  let email = $state('');
   let authToken = $state('');
 
   let postsOverride = $state<PostEntity[] | null>(null);
@@ -377,7 +376,6 @@
                   <PostCard
                     {post}
                     currentUserId={userId}
-                    currentUserEmail={email}
                     {authToken}
                     onRefresh={refreshPosts}
                     onDelete={() => {
@@ -446,7 +444,6 @@
                     <PostCard
                       {post}
                       currentUserId={userId}
-                      currentUserEmail={email}
                       {authToken}
                       onRefresh={refreshPosts}
                       onDelete={() => {

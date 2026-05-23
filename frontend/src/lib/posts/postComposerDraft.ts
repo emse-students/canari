@@ -7,14 +7,6 @@ export interface PostComposerDraft {
   pollQuestion: string;
   pollOptionsRaw: string;
   pollMultipleChoice: boolean;
-  includeEventButton: boolean;
-  eventLabel: string;
-  eventId: string;
-  eventRequiresPayment: boolean;
-  eventAmount: number;
-  eventCurrency: string;
-  eventCapacity: number;
-  eventFormId: string;
   includeForm: boolean;
   selectedFormId: string;
   scheduledAt: string;
@@ -28,10 +20,10 @@ export const POST_COMPOSER_DRAFT_KEY = 'canari_post_composer_draft';
 const LEGACY_MARKDOWN_DRAFT_KEY = 'canari_post_draft';
 
 export const POST_NEW_FORM_ID_KEY = 'canari_post_new_form_id';
-export const POST_NEW_FORM_ATTACH_KEY = 'canari_post_new_form_attach';
 
-export function buildCreateFormHref(attach: 'form' | 'event', returnTo = '/posts'): string {
-  const params = new URLSearchParams({ returnTo, attach });
+/** URL to create a form and return to the post composer with it attached. */
+export function buildCreateFormHref(returnTo = '/posts'): string {
+  const params = new URLSearchParams({ returnTo, attach: 'form' });
   return `/forms/create?${params.toString()}`;
 }
 
@@ -46,8 +38,34 @@ export function loadPostComposerDraft(): PostComposerDraft | null {
   const raw = localStorage.getItem(POST_COMPOSER_DRAFT_KEY);
   if (raw) {
     try {
-      const parsed = JSON.parse(raw) as PostComposerDraft;
-      if (parsed?.version === 1) return parsed;
+      const parsed = JSON.parse(raw) as PostComposerDraft & Record<string, unknown>;
+      if (parsed?.version === 1) {
+        return {
+          version: 1,
+          markdown: typeof parsed.markdown === 'string' ? parsed.markdown : '',
+          imageCaptions: Array.isArray(parsed.imageCaptions)
+            ? parsed.imageCaptions.map(String)
+            : [],
+          includePoll: !!parsed.includePoll,
+          pollQuestion: typeof parsed.pollQuestion === 'string' ? parsed.pollQuestion : '',
+          pollOptionsRaw:
+            typeof parsed.pollOptionsRaw === 'string' ? parsed.pollOptionsRaw : 'Oui\nNon',
+          pollMultipleChoice: !!parsed.pollMultipleChoice,
+          includeForm: !!parsed.includeForm,
+          selectedFormId: typeof parsed.selectedFormId === 'string' ? parsed.selectedFormId : '',
+          scheduledAt: typeof parsed.scheduledAt === 'string' ? parsed.scheduledAt : '',
+          selectedAssociationId:
+            typeof parsed.selectedAssociationId === 'string' ? parsed.selectedAssociationId : '',
+          selectedPaymentAssociationId:
+            typeof parsed.selectedPaymentAssociationId === 'string'
+              ? parsed.selectedPaymentAssociationId
+              : '',
+          selectedLinkedCalendarEventId:
+            typeof parsed.selectedLinkedCalendarEventId === 'string'
+              ? parsed.selectedLinkedCalendarEventId
+              : '',
+        };
+      }
     } catch {
       /* fall through */
     }
@@ -74,14 +92,6 @@ export function emptyPostComposerDraft(markdown = ''): PostComposerDraft {
     pollQuestion: '',
     pollOptionsRaw: 'Oui\nNon',
     pollMultipleChoice: false,
-    includeEventButton: false,
-    eventLabel: "S'inscrire",
-    eventId: '',
-    eventRequiresPayment: false,
-    eventAmount: 25,
-    eventCurrency: 'eur',
-    eventCapacity: 100,
-    eventFormId: '',
     includeForm: false,
     selectedFormId: '',
     scheduledAt: '',

@@ -6,24 +6,18 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { ConfigService } from '@nestjs/config';
-import { HttpService } from '@nestjs/axios';
-import { lastValueFrom } from 'rxjs';
 import { Repository } from 'typeorm';
 import { Post } from './entities/post.entity';
 import { PostNotificationsService } from './post-notifications.service';
 import { PushService } from '../push/push.service';
-import { resolveStripeCallbackUrl } from '../common/stripe-callback-url';
 
-/** Handles reactions, comments, polls, and event registrations on posts. */
+/** Handles reactions, comments, polls, and form submissions on posts. */
 @Injectable()
 export class PostInteractionsService {
   constructor(
     @InjectRepository(Post) private readonly postRepo: Repository<Post>,
     private readonly notifications: PostNotificationsService,
-    private readonly push: PushService,
-    private readonly httpService: HttpService,
-    private readonly configService: ConfigService
+    private readonly push: PushService
   ) {}
 
   /**
@@ -298,73 +292,6 @@ export class PostInteractionsService {
   }
 
   /**
-   * Registers a user for an event button on a post. Enforces capacity limits.
-   * If the button requires payment, creates a Stripe checkout session and returns
-   * a redirect URL instead of completing registration directly.
-   */
-  async registerEvent(
-    postId: string,
-    buttonId: string,
-    data: { userId: string; email?: string; successUrl?: string; cancelUrl?: string }
-  ) {
-    const post = await this.postRepo.findOne({ where: { id: postId } });
-    if (!post) throw new NotFoundException('Post not found');
-
-    const buttons: any[] = post.eventButtons ?? [];
-    const btnIndex = buttons.findIndex((b: any) => b.id === buttonId);
-    if (btnIndex === -1) throw new NotFoundException('Event button not found');
-
-    const btn = { ...buttons[btnIndex] };
-    if (!Array.isArray(btn.registrants)) btn.registrants = [];
-    if (btn.capacity && btn.registrants.length >= btn.capacity)
-      throw new BadRequestException('Event is full');
-    if (btn.registrants.includes(data.userId))
-      return { alreadyRegistered: true, requiresPayment: false };
-
-    if (btn.requiresPayment && btn.amountCents > 0) {
-      const paymentBase =
-        this.configService.get<string>('PAYMENT_SERVICE_URL') || 'http://core-service:3012';
-      const frontendUrl = this.configService.get<string>('FRONTEND_URL') || 'http://localhost';
-      const defaultSuccess = `${frontendUrl}/posts?registered=${encodeURIComponent(buttonId)}&post_id=${encodeURIComponent(postId)}`;
-      const defaultCancel = `${frontendUrl}/posts`;
-      try {
-        const res = await lastValueFrom(
-          this.httpService.post(
-            `${paymentBase.replace(/\/$/, '')}/api/payments/create-checkout-session`,
-            {
-              lineItems: [
-                {
-                  price_data: {
-                    currency: (btn.currency || 'eur').toLowerCase(),
-                    product_data: { name: btn.label },
-                    unit_amount: btn.amountCents,
-                  },
-                  quantity: 1,
-                },
-              ],
-              successUrl: resolveStripeCallbackUrl(data.successUrl, defaultSuccess, frontendUrl),
-              cancelUrl: resolveStripeCallbackUrl(data.cancelUrl, defaultCancel, frontendUrl),
-              metadata: { postId, buttonId, userId: data.userId },
-            }
-          )
-        );
-        const checkoutUrl = res.data?.url;
-        if (checkoutUrl) return { requiresPayment: true, checkoutUrl };
-      } catch {
-        /* payment service unavailable */
-      }
-      return { requiresPayment: true, message: 'Payment service unavailable' };
-    }
-
-    btn.registrants = [...btn.registrants, data.userId];
-    const updated = [...buttons];
-    updated[btnIndex] = btn;
-    post.eventButtons = updated;
-    await this.postRepo.save(post);
-    return { registered: true, requiresPayment: false };
-  }
-
-  /**
    * Submits an embedded form on a post. Validates the post exists and that the
    * form is actually attached, then returns a stub success response. Full
    * submission logic lives in FormsService — cross-module wiring requires
@@ -379,7 +306,7 @@ export class PostInteractionsService {
     if (!post) throw new NotFoundException();
     const hasForm =
       post.attachedFormId === formId ||
-      (post.eventButtons ?? []).some((b: any) => b.formId === formId);
+      (post.forms ?? []).some((f: { id?: string }) => f.id === formId);
     if (!hasForm) throw new NotFoundException('Form not attached to this post');
     return { ok: true, requiresPayment: false, message: 'Formulaire envoyé.' };
   }

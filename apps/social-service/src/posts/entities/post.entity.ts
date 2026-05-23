@@ -36,9 +36,6 @@ export class Post {
   polls: any[];
 
   @Column('jsonb', { default: [] })
-  eventButtons: any[];
-
-  @Column('jsonb', { default: [] })
   forms: any[];
 
   @Column({ type: 'uuid', nullable: true })

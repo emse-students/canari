@@ -1,7 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { HttpModule } from '@nestjs/axios';
 import { PostsController } from './posts.controller';
 import { PostsService } from './posts.service';
 import { PostInteractionsService } from './post-interactions.service';
@@ -16,7 +15,6 @@ import { ModerationModule } from '../moderation/moderation.module';
 @Module({
   imports: [
     TypeOrmModule.forFeature([Post, PostNotification]),
-    HttpModule,
     ConfigModule,
     AssociationsModule,
     FollowsModule,

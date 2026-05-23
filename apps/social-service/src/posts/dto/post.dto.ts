@@ -83,46 +83,6 @@ export class PollInputDto {
   endsAt?: string;
 }
 
-export class EventButtonInputDto {
-  @IsString()
-  @IsOptional()
-  id?: string;
-
-  @IsString()
-  @IsNotEmpty()
-  label: string;
-
-  @IsString()
-  @IsNotEmpty()
-  eventId: string;
-
-  @IsBoolean()
-  @IsOptional()
-  requiresPayment?: boolean = false;
-
-  @IsNumber()
-  @Min(0)
-  @IsOptional()
-  amountCents?: number;
-
-  @IsString()
-  @IsOptional()
-  currency?: string;
-
-  @IsString()
-  @IsOptional()
-  stripePriceId?: string;
-
-  @IsNumber()
-  @Min(1)
-  @IsOptional()
-  capacity?: number;
-
-  @IsString()
-  @IsOptional()
-  formId?: string;
-}
-
 export class FormOptionInputDto {
   @IsString()
   @IsOptional()
@@ -230,11 +190,6 @@ export class CreatePostDto {
   @IsArray()
   @IsOptional()
   @ValidateNested({ each: true })
-  @Type(() => EventButtonInputDto)
-  eventButtons?: EventButtonInputDto[];
-  @IsArray()
-  @IsOptional()
-  @ValidateNested({ each: true })
   @Type(() => FormInputDto)
   forms?: FormInputDto[];
 
@@ -295,24 +250,6 @@ export class VotePollDto {
   @IsString({ each: true })
   @IsNotEmpty({ each: true })
   optionIds: string[];
-}
-
-export class RegisterEventDto {
-  @IsString()
-  @IsOptional()
-  userId?: string;
-
-  @IsString()
-  @IsOptional()
-  email?: string;
-
-  @IsString()
-  @IsOptional()
-  successUrl?: string;
-
-  @IsString()
-  @IsOptional()
-  cancelUrl?: string;
 }
 
 export class SubmitFormDto {

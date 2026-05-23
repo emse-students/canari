@@ -4,7 +4,6 @@
   import { page } from '$app/state';
   import { createForm, type CreateFormPayload } from '$lib/forms/api';
   import {
-    POST_NEW_FORM_ATTACH_KEY,
     POST_NEW_FORM_ID_KEY,
     loadPostComposerDraft,
   } from '$lib/posts/postComposerDraft';
@@ -30,8 +29,9 @@
   let tagExpiresAt = $state('');
 
   const returnTo = $derived(page.url.searchParams.get('returnTo') || '/forms');
-  const attachMode = $derived(page.url.searchParams.get('attach') as 'form' | 'event' | null);
-  const fromPostComposer = $derived(returnTo === '/posts' && !!attachMode);
+  const fromPostComposer = $derived(
+    returnTo === '/posts' && page.url.searchParams.get('attach') === 'form'
+  );
   const contentMaxWidth = $derived(fromPostComposer ? 'max-w-xl' : 'max-w-3xl');
 
   // Associations with Stripe account (eligible as recipients)
@@ -107,9 +107,8 @@
           : {}),
       };
       const created = await createForm(payload);
-      if (fromPostComposer && attachMode) {
+      if (fromPostComposer) {
         sessionStorage.setItem(POST_NEW_FORM_ID_KEY, created.id);
-        sessionStorage.setItem(POST_NEW_FORM_ATTACH_KEY, attachMode);
         goto('/posts');
       } else {
         goto(returnTo);

@@ -23,7 +23,6 @@ import { ModerationService } from '../moderation/moderation.service';
 import {
   CreatePostDto,
   ListPostsQueryDto,
-  RegisterEventDto,
   VotePollDto,
   AddCommentDto,
   AddReactionDto,
@@ -220,18 +219,6 @@ export class PostsController {
     @Body() body: VotePollDto
   ) {
     return this.interactions.votePoll(postId, pollId, { ...body, userId: xUserId });
-  }
-
-  /** Registers the calling user for an event button on a post. */
-  @UseGuards(NginxAuthGuard)
-  @HttpPost(':postId/events/:buttonId/register')
-  registerEvent(
-    @Headers('x-user-id') xUserId: string,
-    @Param('postId') postId: string,
-    @Param('buttonId') buttonId: string,
-    @Body() body: RegisterEventDto
-  ) {
-    return this.interactions.registerEvent(postId, buttonId, { ...body, userId: xUserId });
   }
 
   /** Submits the embedded form on a post. */

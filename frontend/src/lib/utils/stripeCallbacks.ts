@@ -32,24 +32,6 @@ export function formCheckoutCallbacks(): { successUrl: string; cancelUrl: string
   };
 }
 
-/** Stripe Checkout callbacks for paid event registration on a post. */
-export function eventCheckoutCallbacks(
-  postId: string,
-  buttonId: string
-): { successUrl: string; cancelUrl: string } {
-  const q = `registered=${encodeURIComponent(buttonId)}&post_id=${encodeURIComponent(postId)}`;
-  if (isMobileTauri()) {
-    return {
-      successUrl: stripeDeepLink('success', q),
-      cancelUrl: stripeDeepLink('cancel', `post_id=${encodeURIComponent(postId)}`),
-    };
-  }
-  return {
-    successUrl: webUrl(`/posts?${q}`),
-    cancelUrl: webUrl('/posts'),
-  };
-}
-
 /** Stripe Setup Checkout callbacks for saving a card on the profile page. */
 export function profileSetupCallbacks(): { successUrl: string; cancelUrl: string } {
   if (isMobileTauri()) {

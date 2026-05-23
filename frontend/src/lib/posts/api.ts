@@ -20,19 +20,6 @@ export interface Poll {
   votesByUser: Record<string, string[]>;
 }
 
-export interface EventButton {
-  id: string;
-  label: string;
-  eventId: string;
-  requiresPayment: boolean;
-  amountCents?: number;
-  currency?: string;
-  stripePriceId?: string;
-  capacity?: number;
-  registrants: string[];
-  formId?: string;
-}
-
 export interface PostForm {
   id: string;
   title: string;
@@ -86,7 +73,6 @@ export interface PostEntity {
   links: Array<{ url: string }>;
   images: PostImageRef[];
   polls: Poll[];
-  eventButtons: EventButton[];
   forms?: PostForm[];
   attachedFormId?: string;
   associationId?: string;
@@ -133,16 +119,6 @@ export interface CreatePostPayload {
     options: Array<{ label: string }>;
     multipleChoice?: boolean;
     endsAt?: string;
-  }>;
-  eventButtons?: Array<{
-    label: string;
-    eventId: string;
-    requiresPayment: boolean;
-    amountCents?: number;
-    currency?: string;
-    stripePriceId?: string;
-    capacity?: number;
-    formId?: string;
   }>;
   attachedFormId?: string;
   associationId?: string;
@@ -219,25 +195,6 @@ export async function votePoll(
   payload: { optionIds: string[] }
 ): Promise<PostEntity> {
   return request<PostEntity>(`/api/posts/${postId}/polls/${pollId}/vote`, {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-}
-
-export async function registerEvent(
-  postId: string,
-  buttonId: string,
-  payload: { email?: string; successUrl?: string; cancelUrl?: string }
-): Promise<{
-  ok: boolean;
-  registered?: boolean;
-  alreadyRegistered?: boolean;
-  requiresPayment: boolean;
-  paymentPending?: boolean;
-  checkoutUrl?: string;
-  message?: string;
-}> {
-  return request(`/api/posts/${postId}/events/${buttonId}/register`, {
     method: 'POST',
     body: JSON.stringify(payload),
   });
