@@ -291,7 +291,7 @@
       >
         <h2 class="text-lg font-bold text-text-main tracking-tight">À propos</h2>
         {#if asso.description?.trim()}
-          <p class="text-sm text-text-muted whitespace-pre-wrap">{asso.description}</p>
+          <ProfileBioMarkdown source={asso.description} class="text-sm" />
         {/if}
         {#if asso.bioMarkdown?.trim()}
           <ProfileBioMarkdown source={asso.bioMarkdown} />

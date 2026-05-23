@@ -138,10 +138,13 @@ export class AssociationsService {
     return { ...asso, memberCount };
   }
 
-  /** Partially updates an association (blank bioMarkdown is normalised to null) and invalidates post-list caches. */
+  /** Partially updates an association (blank text fields normalised to null) and invalidates post-list caches. */
   async update(id: string, dto: UpdateAssociationDto) {
     await this.findById(id);
     const patch = { ...dto } as Partial<Association>;
+    if (dto.description !== undefined && dto.description.trim() === '') {
+      patch.description = null;
+    }
     if (dto.bioMarkdown !== undefined && dto.bioMarkdown.trim() === '') {
       patch.bioMarkdown = null;
     }

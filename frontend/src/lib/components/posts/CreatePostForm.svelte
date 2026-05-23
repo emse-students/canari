@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { Image, ChartColumn, CalendarCheck, ClipboardList, Clock, X, CircleAlert, Building2, User, ChevronDown, Bold, Italic, Strikethrough, Heading2, Quote, Code, List, Link2 } from '@lucide/svelte';
+  import { Image, ChartColumn, CalendarCheck, ClipboardList, Clock, X, CircleAlert, Building2, User, ChevronDown } from '@lucide/svelte';
   import { slide, fade } from 'svelte/transition';
-  import { onMount, tick } from 'svelte';
+  import { onMount } from 'svelte';
   import { MediaService, compressImage, IMAGE_COMPRESS_PRESETS } from '$lib/media';
   import { getToken } from '$lib/stores/auth';
   import { createPost, type CreatePostPayload } from '$lib/posts/api';
@@ -24,7 +24,7 @@
     type AssociationCalendarEvent,
   } from '$lib/associations/api';
   import { isGlobalAdmin } from '$lib/stores/user';
-  import MentionComposerInput from '$lib/components/shared/MentionComposerInput.svelte';
+  import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import PollSection from './PollSection.svelte';
   import EventButtonSection from './EventButtonSection.svelte';
   import FormSection from './FormSection.svelte';
@@ -94,57 +94,6 @@
   let publishing = $state(false);
   let errorMessage = $state('');
   let authToken = $state('');
-  let composerInput = $state<MentionComposerInput | null>(null);
-
-  async function applyFormat(type: string) {
-    if (!composerInput) return;
-    const { start: selStart, end: selEnd } = composerInput.getSelectionRange();
-    const selected = markdown.slice(selStart, selEnd);
-    let newText = markdown;
-    let newSelStart = selStart;
-    let newSelEnd = selStart;
-
-    const doWrap = (pre: string, suf: string, ph: string) => {
-      const inner = selected || ph;
-      newText = markdown.slice(0, selStart) + pre + inner + suf + markdown.slice(selEnd);
-      newSelStart = selStart + pre.length;
-      newSelEnd = newSelStart + inner.length;
-    };
-    const doPrefix = (pre: string, ph: string) => {
-      const inner = selected || ph;
-      newText = markdown.slice(0, selStart) + pre + inner + markdown.slice(selEnd);
-      newSelStart = selStart + pre.length;
-      newSelEnd = newSelStart + inner.length;
-    };
-
-    switch (type) {
-      case 'bold': doWrap('**', '**', 'texte en gras'); break;
-      case 'italic': doWrap('*', '*', 'texte en italique'); break;
-      case 'strikethrough': doWrap('~~', '~~', 'texte barré'); break;
-      case 'heading': doPrefix('## ', 'Titre'); break;
-      case 'quote': doPrefix('> ', 'citation'); break;
-      case 'code': doWrap('`', '`', 'code'); break;
-      case 'list': doPrefix('- ', 'élément'); break;
-      case 'link':
-        if (selected) {
-          newText = markdown.slice(0, selStart) + `[${selected}](url)` + markdown.slice(selEnd);
-          newSelStart = selStart + selected.length + 3;
-          newSelEnd = newSelStart + 3;
-        } else {
-          newText = markdown.slice(0, selStart) + '[texte](url)' + markdown.slice(selEnd);
-          newSelStart = selStart + 1;
-          newSelEnd = selStart + 6;
-        }
-        break;
-      default: return;
-    }
-
-    markdown = newText;
-    await tick();
-    composerInput.focusEditor();
-    composerInput.setSelectionRange(newSelStart, newSelEnd);
-  }
-
   // --- Draft auto-save (full composer state; images are not persisted) ---
   let draftRestored = $state(false);
   let draftSaved = $state(false);
@@ -543,27 +492,11 @@
         </span>
       {/if}
 
-      <!-- Barre d'outils Markdown -->
-      <div class="flex items-center gap-0.5 px-2 pt-1.5 pb-1.5 flex-wrap border-b border-black/5 dark:border-white/5 mb-1">
-        <button type="button" title="Gras" onclick={() => applyFormat('bold')} class="p-1.5 rounded-lg text-text-muted hover:bg-black/10 dark:hover:bg-white/10 hover:text-text-main transition-colors outline-none focus-visible:ring-1 focus-visible:ring-amber-500"><Bold size={15} strokeWidth={2} /></button>
-        <button type="button" title="Italique" onclick={() => applyFormat('italic')} class="p-1.5 rounded-lg text-text-muted hover:bg-black/10 dark:hover:bg-white/10 hover:text-text-main transition-colors outline-none focus-visible:ring-1 focus-visible:ring-amber-500"><Italic size={15} strokeWidth={2} /></button>
-        <button type="button" title="Barré" onclick={() => applyFormat('strikethrough')} class="p-1.5 rounded-lg text-text-muted hover:bg-black/10 dark:hover:bg-white/10 hover:text-text-main transition-colors outline-none focus-visible:ring-1 focus-visible:ring-amber-500"><Strikethrough size={15} strokeWidth={2} /></button>
-        <div class="h-4 w-px bg-black/10 dark:bg-white/10 mx-1 shrink-0"></div>
-        <button type="button" title="Titre" onclick={() => applyFormat('heading')} class="p-1.5 rounded-lg text-text-muted hover:bg-black/10 dark:hover:bg-white/10 hover:text-text-main transition-colors outline-none focus-visible:ring-1 focus-visible:ring-amber-500"><Heading2 size={15} strokeWidth={2} /></button>
-        <button type="button" title="Citation" onclick={() => applyFormat('quote')} class="p-1.5 rounded-lg text-text-muted hover:bg-black/10 dark:hover:bg-white/10 hover:text-text-main transition-colors outline-none focus-visible:ring-1 focus-visible:ring-amber-500"><Quote size={15} strokeWidth={2} /></button>
-        <button type="button" title="Code" onclick={() => applyFormat('code')} class="p-1.5 rounded-lg text-text-muted hover:bg-black/10 dark:hover:bg-white/10 hover:text-text-main transition-colors outline-none focus-visible:ring-1 focus-visible:ring-amber-500"><Code size={15} strokeWidth={2} /></button>
-        <div class="h-4 w-px bg-black/10 dark:bg-white/10 mx-1 shrink-0"></div>
-        <button type="button" title="Liste" onclick={() => applyFormat('list')} class="p-1.5 rounded-lg text-text-muted hover:bg-black/10 dark:hover:bg-white/10 hover:text-text-main transition-colors outline-none focus-visible:ring-1 focus-visible:ring-amber-500"><List size={15} strokeWidth={2} /></button>
-        <button type="button" title="Lien" onclick={() => applyFormat('link')} class="p-1.5 rounded-lg text-text-muted hover:bg-black/10 dark:hover:bg-white/10 hover:text-text-main transition-colors outline-none focus-visible:ring-1 focus-visible:ring-amber-500"><Link2 size={15} strokeWidth={2} /></button>
-      </div>
-
-      <MentionComposerInput
-        bind:this={composerInput}
+      <MarkdownComposerField
         bind:value={markdown}
-        markdownPreview
         placeholder="Écrivez votre message ici..."
         minHeight="120px"
-        class="w-full min-w-0"
+        toolbarClass="mb-1"
         editorClass="custom-scrollbar min-h-[120px] w-full max-w-full rounded-xl bg-transparent px-4 py-3.5 text-[0.95rem] sm:text-[1rem] font-medium leading-relaxed text-text-main"
       />
 

@@ -63,7 +63,7 @@
     AssociationPermissionFlag,
   } from '$lib/associations/api';
   import Input from '$lib/components/ui/Input.svelte';
-  import Textarea from '$lib/components/ui/Textarea.svelte';
+  import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import UserAutocomplete from '$lib/components/shared/UserAutocomplete.svelte';
   import AssociationLogoCropper from '$lib/components/associations/AssociationLogoCropper.svelte';
   import AssociationMemberRow from '$lib/components/associations/AssociationMemberRow.svelte';
@@ -218,9 +218,11 @@
     try {
       asso = await updateAssociation(asso.id, {
         name: editName.trim() || undefined,
-        description: editDescription.trim() || undefined,
-        bioMarkdown: editBioMarkdown.trim() || undefined,
+        description: editDescription.trim(),
+        bioMarkdown: editBioMarkdown.trim(),
       });
+      editDescription = asso.description ?? '';
+      editBioMarkdown = asso.bioMarkdown ?? '';
       saveSuccess = true;
       setTimeout(() => (saveSuccess = false), 3500);
     } catch (err) {
@@ -751,17 +753,42 @@
         {/if}
 
         <Input label="Nom" bind:value={editName} />
-        <Textarea
-          label="Description courte (texte brut, sous le titre)"
-          bind:value={editDescription}
-          rows={2}
-        />
-        <Textarea label="Bio (markdown)" bind:value={editBioMarkdown} rows={10} />
-        <div class="rounded-xl border border-cn-border/70 bg-cn-bg/40 p-3 text-xs text-text-muted">
-          <p class="font-semibold text-text-main mb-1">Aperçu markdown</p>
+        <div class="space-y-2">
+          <span class="block text-sm font-bold text-text-main ml-1">Description (sous le titre)</span>
+          <MarkdownComposerField
+            bind:value={editDescription}
+            maxlength={2000}
+            minHeight="72px"
+            class="rounded-xl border border-cn-border bg-cn-bg/30 overflow-hidden"
+            editorClass="min-h-[72px] w-full px-4 py-3 text-sm text-text-main leading-relaxed"
+            placeholder="Courte présentation de l'association…"
+          />
+        </div>
+        <div class="space-y-2">
+          <span class="block text-sm font-bold text-text-main ml-1">Bio détaillée</span>
+          <MarkdownComposerField
+            bind:value={editBioMarkdown}
+            maxlength={16000}
+            minHeight="160px"
+            class="rounded-xl border border-cn-border bg-cn-bg/30 overflow-hidden"
+            editorClass="min-h-[160px] w-full px-4 py-3 text-sm text-text-main leading-relaxed"
+            placeholder="Présentation complète, liens, listes…"
+          />
+        </div>
+        <div class="rounded-xl border border-cn-border/70 bg-cn-bg/40 p-3 text-xs text-text-muted space-y-3">
+          <p class="font-semibold text-text-main">Aperçu</p>
+          {#if editDescription.trim()}
+            <div>
+              <p class="font-medium text-text-main mb-1">Description</p>
+              <ProfileBioMarkdown source={editDescription} class="text-sm" />
+            </div>
+          {/if}
           {#if editBioMarkdown.trim()}
-            <ProfileBioMarkdown source={editBioMarkdown} />
-          {:else}
+            <div>
+              <p class="font-medium text-text-main mb-1">Bio</p>
+              <ProfileBioMarkdown source={editBioMarkdown} />
+            </div>
+          {:else if !editDescription.trim()}
             <p>(vide)</p>
           {/if}
         </div>

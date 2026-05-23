@@ -72,8 +72,8 @@ export interface CreateAssociationPayload {
 
 export interface UpdateAssociationPayload {
   name?: string;
-  description?: string;
-  bioMarkdown?: string;
+  description?: string | null;
+  bioMarkdown?: string | null;
   logoUrl?: string;
   /** Global admin only — marks this association as the BDE. */
   isBDE?: boolean;

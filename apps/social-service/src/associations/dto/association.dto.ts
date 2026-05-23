@@ -51,15 +51,16 @@ export class UpdateAssociationDto {
   @MaxLength(100)
   name?: string;
 
+  /** Pass `""` to clear; stored as null when blank. */
   @IsString()
   @IsOptional()
   @MaxLength(2000)
-  description?: string;
+  description?: string | null;
 
   @IsString()
   @IsOptional()
   @MaxLength(16000)
-  bioMarkdown?: string;
+  bioMarkdown?: string | null;
 
   @IsString()
   @IsOptional()

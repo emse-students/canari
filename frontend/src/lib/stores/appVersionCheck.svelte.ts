@@ -7,7 +7,6 @@ import {
 const CACHED_SERVER_VERSION_KEY = 'canari:last_server_version';
 
 let lastCheck = $state<AppVersionCheckResult | null>(null);
-let checking = $state(false);
 let updatePromptDismissed = $state(false);
 let inflight: Promise<AppVersionCheckResult> | null = null;
 
@@ -63,7 +62,6 @@ export async function refreshAppVersionCheck(): Promise<AppVersionCheckResult> {
   if (inflight) return inflight;
 
   const previousServer = lastCheck?.serverVersion ?? null;
-  checking = true;
 
   inflight = (async () => {
     try {
@@ -90,7 +88,6 @@ export async function refreshAppVersionCheck(): Promise<AppVersionCheckResult> {
       }
       return lastCheck ?? fallback;
     } finally {
-      checking = false;
       inflight = null;
     }
   })();
