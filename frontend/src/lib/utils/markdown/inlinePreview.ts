@@ -15,6 +15,16 @@ export type InlinePreviewSegment =
   | { kind: 'formatted'; styles: readonly InlineMarkdownStyle[]; marker: string; content: string }
   | { kind: 'code'; marker: string; content: string };
 
+export type HeadingLevel = 1 | 2 | 3;
+
+export type ParsedHeadingLine = {
+  level: HeadingLevel;
+  /** Muted prefix in the editor (`# `, `## `, or lone `#` while typing). */
+  marker: string;
+  /** Remainder of the line; parsed with inline markdown. */
+  content: string;
+};
+
 type DelimiterKind = 'italic' | 'underline' | 'bold' | 'boldItalic' | 'strike' | 'code';
 
 type DelimiterSpec = {
@@ -160,18 +170,34 @@ export function parseInlineMarkdownPreview(
   return segments;
 }
 
-/** True when the text contains at least one closed markdown span (italic, bold, etc.). */
-export function hasFormattedMarkdownPreview(text: string): boolean {
-  if (!text) return false;
-  return parseInlineMarkdownPreview(text).some((s) => s.kind !== 'text');
-}
+const HEADING_LINE_RE = /^(#{1,3})(\s+)(.*)$/;
 
 /**
- * Stable key for markdown preview *structure* (delimiters / span kinds), not inner text.
- * Used to avoid re-rendering the composer DOM on every keystroke inside `*italic*`.
+ * ATX heading at line start: `# title`, `## title`, `### title`.
+ * Also matches incomplete lines `##` or `## ` while typing.
  */
-export function markdownStructureKey(text: string): string {
-  return parseInlineMarkdownPreview(text)
+export function parseHeadingLine(line: string): ParsedHeadingLine | null {
+  const hashesOnly = line.match(/^(#{1,3})$/);
+  if (hashesOnly) {
+    return {
+      level: hashesOnly[1].length as HeadingLevel,
+      marker: hashesOnly[1],
+      content: '',
+    };
+  }
+
+  const m = line.match(HEADING_LINE_RE);
+  if (!m) return null;
+
+  return {
+    level: m[1].length as HeadingLevel,
+    marker: m[1] + m[2],
+    content: m[3],
+  };
+}
+
+function inlineStructureKey(line: string): string {
+  return parseInlineMarkdownPreview(line)
     .map((s) => {
       switch (s.kind) {
         case 'text':
@@ -187,4 +213,29 @@ export function markdownStructureKey(text: string): string {
       }
     })
     .join('|');
+}
+
+/** True when the text contains headings and/or closed inline markdown spans. */
+export function hasFormattedMarkdownPreview(text: string): boolean {
+  if (!text) return false;
+  for (const line of text.split('\n')) {
+    if (parseHeadingLine(line)) return true;
+    if (parseInlineMarkdownPreview(line).some((s) => s.kind !== 'text')) return true;
+  }
+  return false;
+}
+
+/**
+ * Stable key for markdown preview *structure* (delimiters / span kinds), not inner text.
+ * Used to avoid re-rendering the composer DOM on every keystroke inside `*italic*`.
+ */
+export function markdownStructureKey(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => {
+      const heading = parseHeadingLine(line);
+      if (heading) return `h${heading.level}|${inlineStructureKey(heading.content)}`;
+      return inlineStructureKey(line);
+    })
+    .join('\n');
 }

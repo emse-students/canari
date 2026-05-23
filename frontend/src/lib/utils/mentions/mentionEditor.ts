@@ -3,6 +3,7 @@ import { splitTextWithMentions } from '$lib/utils/mentions.parse';
 import {
   hasFormattedMarkdownPreview,
   markdownStructureKey,
+  parseHeadingLine,
   parseInlineMarkdownPreview,
   type InlineMarkdownStyle,
   type InlinePreviewSegment,
@@ -19,6 +20,15 @@ export const MD_BOLD_CLASS = 'md-composer-bold';
 export const MD_BOLD_ITALIC_CLASS = 'md-composer-bold-italic';
 export const MD_STRIKE_CLASS = 'md-composer-strike';
 export const MD_CODE_CLASS = 'md-composer-code';
+export const MD_H1_CLASS = 'md-composer-h1';
+export const MD_H2_CLASS = 'md-composer-h2';
+export const MD_H3_CLASS = 'md-composer-h3';
+
+const MD_HEADING_CLASS: Record<1 | 2 | 3, string> = {
+  1: MD_H1_CLASS,
+  2: MD_H2_CLASS,
+  3: MD_H3_CLASS,
+};
 
 export type MentionEditorRenderOptions = {
   markdownPreview?: boolean;
@@ -158,13 +168,32 @@ function appendInlinePreviewSegment(parent: HTMLElement, seg: InlinePreviewSegme
   }
 }
 
+function appendComposerLine(parent: HTMLElement, line: string): void {
+  const heading = parseHeadingLine(line);
+  if (heading) {
+    const block = document.createElement('span');
+    block.className = MD_HEADING_CLASS[heading.level];
+    appendMutedSpan(block, heading.marker);
+    for (const seg of parseInlineMarkdownPreview(heading.content)) {
+      appendInlinePreviewSegment(block, seg);
+    }
+    parent.appendChild(block);
+    return;
+  }
+  for (const seg of parseInlineMarkdownPreview(line)) {
+    appendInlinePreviewSegment(parent, seg);
+  }
+}
+
 function appendComposerText(parent: HTMLElement, text: string, markdownPreview: boolean): void {
   if (!markdownPreview) {
     appendTextWithBreaks(parent, text);
     return;
   }
-  for (const seg of parseInlineMarkdownPreview(text)) {
-    appendInlinePreviewSegment(parent, seg);
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    if (i > 0) parent.appendChild(document.createElement('br'));
+    appendComposerLine(parent, lines[i]);
   }
 }
 

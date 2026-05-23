@@ -64,7 +64,9 @@
 {#if post.markdown}
   <div class="px-5 pb-3">
     <div class="text-[0.95rem] text-text-main leading-relaxed break-words">
-      <div class="post-markdown max-w-none opacity-90 [&_br]:block [&_p+p]:mt-3 [&_p:first-child]:mt-0">
+      <div
+        class="post-markdown max-w-none opacity-90 [&_br]:block [&_p+p]:mt-3 [&_p:first-child]:mt-0 [&_h1]:text-[1.45rem] [&_h1]:font-extrabold [&_h1]:leading-tight [&_h1]:tracking-tight [&_h1]:mt-1 [&_h1]:mb-0.5 [&_h2]:text-[1.25rem] [&_h2]:font-bold [&_h2]:leading-snug [&_h2]:mt-1 [&_h2]:mb-0.5 [&_h3]:text-[1.1rem] [&_h3]:font-bold [&_h3]:leading-snug [&_h3]:mt-0.5 [&_h3]:mb-0 [&_h1+_p]:mt-2 [&_h2+_p]:mt-2 [&_h3+_p]:mt-1.5"
+      >
         <SvelteMarkdown source={displayedMarkdown} {renderers} options={{ gfm: true, breaks: true }} />
       </div>
       {#if isTruncatable}

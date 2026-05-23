@@ -273,7 +273,7 @@
     overflow-y: auto;
   }
 
-  :global(.mention-composer-editor :is(.md-composer-muted, .md-composer-italic, .md-composer-underline, .md-composer-bold, .md-composer-bold-italic, .md-composer-strike, .md-composer-code, .mention-editor-chip)) {
+  :global(.mention-composer-editor :is(.md-composer-muted, .md-composer-italic, .md-composer-underline, .md-composer-bold, .md-composer-bold-italic, .md-composer-strike, .md-composer-code, .md-composer-h1, .md-composer-h2, .md-composer-h3, .mention-editor-chip)) {
     overflow-wrap: anywhere;
     word-break: break-word;
   }
@@ -341,5 +341,32 @@
 
   :global(:is(.dark) .md-composer-code) {
     background: rgb(255 255 255 / 0.08);
+  }
+
+  :global(.md-composer-h1),
+  :global(.md-composer-h2),
+  :global(.md-composer-h3) {
+    display: block;
+    width: 100%;
+    line-height: 1.3;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+  }
+
+  :global(.md-composer-h1) {
+    font-size: 1.45em;
+    margin: 0.15em 0 0.05em;
+  }
+
+  :global(.md-composer-h2) {
+    font-size: 1.25em;
+    font-weight: 700;
+    margin: 0.1em 0 0.05em;
+  }
+
+  :global(.md-composer-h3) {
+    font-size: 1.1em;
+    font-weight: 700;
+    margin: 0.05em 0;
   }
 </style>

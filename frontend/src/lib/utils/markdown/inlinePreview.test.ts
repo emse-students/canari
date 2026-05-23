@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   hasFormattedMarkdownPreview,
   markdownStructureKey,
+  parseHeadingLine,
   parseInlineMarkdownPreview,
   type InlinePreviewSegment,
 } from './inlinePreview';
@@ -185,5 +186,42 @@ describe('parseInlineMarkdownPreview', () => {
       { kind: 'escape', char: '*' },
       { kind: 'text', value: 'still*' },
     ]);
+  });
+});
+
+describe('parseHeadingLine', () => {
+  it('parses ATX headings with space after hashes', () => {
+    expect(parseHeadingLine('# One')).toEqual({
+      level: 1,
+      marker: '# ',
+      content: 'One',
+    });
+    expect(parseHeadingLine('## Two')).toEqual({
+      level: 2,
+      marker: '## ',
+      content: 'Two',
+    });
+    expect(parseHeadingLine('### Three')).toEqual({
+      level: 3,
+      marker: '### ',
+      content: 'Three',
+    });
+  });
+
+  it('matches incomplete heading lines while typing', () => {
+    expect(parseHeadingLine('##')).toEqual({ level: 2, marker: '##', content: '' });
+    expect(parseHeadingLine('## ')).toEqual({ level: 2, marker: '## ', content: '' });
+  });
+
+  it('does not treat mid-line hashes as headings', () => {
+    expect(parseHeadingLine('text ## nope')).toBeNull();
+    expect(parseHeadingLine('#no-space')).toBeNull();
+  });
+
+  it('enables preview for headings and inline inside heading content', () => {
+    expect(hasFormattedMarkdownPreview('## Title')).toBe(true);
+    expect(hasFormattedMarkdownPreview('## **bold**')).toBe(true);
+    expect(markdownStructureKey('## Title')).toBe(markdownStructureKey('## Titles'));
+    expect(markdownStructureKey('## Title')).not.toBe(markdownStructureKey('### Title'));
   });
 });

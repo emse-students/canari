@@ -25,7 +25,7 @@
 </script>
 
 <div
-  class="post-markdown max-w-none text-[0.95rem] text-text-main leading-relaxed opacity-90 [&_br]:block [&_p+p]:mt-3 [&_p:first-child]:mt-0 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_a]:break-words {className}"
+  class="post-markdown max-w-none text-[0.95rem] text-text-main leading-relaxed opacity-90 [&_br]:block [&_p+p]:mt-3 [&_p:first-child]:mt-0 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_a]:break-words [&_h1]:text-[1.45rem] [&_h1]:font-extrabold [&_h1]:leading-tight [&_h2]:text-[1.25rem] [&_h2]:font-bold [&_h3]:text-[1.1rem] [&_h3]:font-bold {className}"
 >
   <SvelteMarkdown source={rendered} {renderers} options={{ gfm: true, breaks: true }} />
 </div>
