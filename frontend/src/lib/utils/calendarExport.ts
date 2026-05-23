@@ -160,36 +160,39 @@ export async function exportCalendarMonth(
             ? (logoMap.get(ev.associationLogoUrl) ?? null)
             : null;
 
-          // Circular watermark centred — wrapped in a flex div to avoid transform dependency
           const logoSize = Math.max(Math.round(slotH * 0.62), 14);
           const watermark = logoDataUrl
             ? `<div style="position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;pointer-events:none;"><img src="${logoDataUrl}" style="height:${logoSize}px;width:${logoSize}px;border-radius:50%;object-fit:cover;opacity:0.18;" /></div>`
             : '';
 
-          // Canari yellow day-number badge on the first slot
-          const dayBadge =
+          // Same style as empty cells: plain number top-left, no badge
+          const dayNum =
             idx === 0
-              ? `<span style="position:absolute;top:3px;left:3px;background:#f5c518;color:#122035;font-size:9px;font-weight:900;min-width:18px;height:16px;border-radius:3px;display:inline-flex;align-items:center;justify-content:center;padding:0 3px;box-sizing:border-box;line-height:1;">${day}</span>`
+              ? `<span style="position:absolute;top:6px;left:7px;font-size:12px;font-weight:700;color:${fg};z-index:1;">${day}</span>`
               : '';
 
           const fontSize = slotH >= 60 ? 13 : slotH >= 45 ? 12 : slotH >= 35 ? 11 : 10;
-          // Allow text wrap for tall slots; single-line truncation for short ones.
-          // min-width:0 is critical for truncation inside a flex container.
-          const textStyle =
-            slotH >= 48
-              ? `position:relative;font-size:${fontSize}px;font-weight:700;color:${fg};text-align:center;padding:0 10px;overflow:hidden;word-break:break-word;min-width:0;max-width:100%;box-sizing:border-box;line-height:1.3;`
-              : `position:relative;font-size:${fontSize}px;font-weight:700;color:${fg};text-align:center;padding:0 6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;max-width:100%;box-sizing:border-box;`;
 
-          return `<div style="height:${slotH}px;position:relative;display:flex;align-items:center;justify-content:center;background:${bg};overflow:hidden;">${watermark}${dayBadge}<span style="${textStyle}">${safe(ev.title)}</span></div>`;
+          // Vertical centering via padding-top (reliable in html2canvas, no flexbox dependency).
+          // For tall slots allow wrapping; for short slots enforce single line via line-height.
+          let textHtml: string;
+          if (slotH >= 48) {
+            const paddingTop = Math.max(4, Math.floor((slotH - fontSize * 1.3) / 2));
+            textHtml = `<div style="position:absolute;top:0;left:0;width:100%;padding-top:${paddingTop}px;text-align:center;box-sizing:border-box;overflow:hidden;max-height:${slotH}px;"><span style="display:block;font-size:${fontSize}px;font-weight:700;color:${fg};word-break:break-word;line-height:1.3;padding:0 10px;box-sizing:border-box;">${safe(ev.title)}</span></div>`;
+          } else {
+            textHtml = `<div style="position:absolute;top:0;left:0;width:100%;height:${slotH}px;text-align:center;overflow:hidden;"><span style="display:block;font-size:${fontSize}px;font-weight:700;color:${fg};line-height:${slotH}px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 6px;box-sizing:border-box;">${safe(ev.title)}</span></div>`;
+          }
+
+          return `<div style="height:${slotH}px;position:relative;background:${bg};overflow:hidden;">${watermark}${dayNum}${textHtml}</div>`;
         }),
         ...(overflowCount > 0
           ? [
-              `<div style="height:${slotH}px;display:flex;align-items:center;justify-content:center;background:#f0f4f8;"><span style="font-size:9px;font-weight:800;color:#607188;">+${overflowCount} autre${overflowCount > 1 ? 's' : ''}</span></div>`,
+              `<div style="height:${slotH}px;background:#f0f4f8;text-align:center;overflow:hidden;"><span style="display:block;font-size:9px;font-weight:800;color:#607188;line-height:${slotH}px;">+${overflowCount} autre${overflowCount > 1 ? 's' : ''}</span></div>`,
             ]
           : []),
       ];
 
-      return `<div style="height:${CELL_H}px;overflow:hidden;border-right:1px solid #dde3ec;border-bottom:1px solid #dde3ec;box-sizing:border-box;display:flex;flex-direction:column;">${rows.join('')}</div>`;
+      return `<div style="height:${CELL_H}px;overflow:hidden;border-right:1px solid #dde3ec;border-bottom:1px solid #dde3ec;box-sizing:border-box;">${rows.join('')}</div>`;
     })
     .join('');
 
@@ -214,9 +217,9 @@ export async function exportCalendarMonth(
 
   container.innerHTML = `
     <!-- Canari yellow header with centred month title -->
-    <div style="background:#f5c518;position:relative;overflow:hidden;height:84px;display:flex;align-items:center;justify-content:center;">
+    <div style="background:#f5c518;position:relative;overflow:hidden;height:84px;text-align:center;">
       ${headerImgHtml}
-      <h1 style="position:relative;font-family:'Fredoka','Segoe UI',sans-serif;font-size:34px;font-weight:700;color:#122035;margin:0;text-align:center;letter-spacing:.01em;">${safe(monthLabel)}</h1>
+      <h1 style="position:relative;font-family:'Fredoka','Segoe UI',sans-serif;font-size:34px;font-weight:700;color:#122035;margin:0;line-height:84px;text-align:center;letter-spacing:.01em;">${safe(monthLabel)}</h1>
     </div>
     <!-- Calendar grid -->
     <div style="padding:0 20px 20px;">
