@@ -111,6 +111,13 @@
         hasPermissionFlag(myMembership.permissions ?? 0, AssociationPermissionFlag.MANAGE_PRODUCTS))
   );
 
+  /** Stripe onboarding — backend checks POST_AS_ASSO via manage-permission endpoint. */
+  let canManagePayments = $derived(
+    isGlobalAdminUser ||
+      (!!myMembership &&
+        hasPermissionFlag(myMembership.permissions ?? 0, AssociationPermissionFlag.POST_AS_ASSO))
+  );
+
   // ── Boutique state ───────────────────────────────────────────────────────
   let products = $state<AssociationProduct[]>([]);
   let productsLoading = $state(false);
@@ -565,7 +572,7 @@
           <Building2 size={17} />
           Profil
         </button>
-        {#if isAdmin || isGlobalAdminUser}
+        {#if canManageMembers}
           <button
             type="button"
             onclick={() => (editSection = 'members')}
@@ -577,6 +584,8 @@
             <Users size={17} />
             Membres
           </button>
+        {/if}
+        {#if canManagePayments}
           <button
             type="button"
             onclick={() => (editSection = 'payments')}
@@ -651,26 +660,28 @@
         <h2 class="text-lg font-bold text-text-main tracking-tight">Profil et logo</h2>
         <div class="flex flex-wrap items-start gap-4">
           <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="lg" />
-          <div class="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onclick={() => (showCropper = !showCropper)}
-              disabled={logoBusy}
-              class="rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold hover:bg-cn-bg disabled:opacity-50"
-            >
-              {showCropper ? 'Fermer le recadrage' : 'Changer le logo'}
-            </button>
-            {#if asso.logoUrl}
+          {#if canManageMembers}
+            <div class="flex flex-wrap gap-2">
               <button
                 type="button"
-                onclick={handleRemoveLogo}
+                onclick={() => (showCropper = !showCropper)}
                 disabled={logoBusy}
-                class="rounded-xl px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
+                class="rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold hover:bg-cn-bg disabled:opacity-50"
               >
-                Retirer le logo
+                {showCropper ? 'Fermer le recadrage' : 'Changer le logo'}
               </button>
-            {/if}
-          </div>
+              {#if asso.logoUrl}
+                <button
+                  type="button"
+                  onclick={handleRemoveLogo}
+                  disabled={logoBusy}
+                  class="rounded-xl px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
+                >
+                  Retirer le logo
+                </button>
+              {/if}
+            </div>
+          {/if}
         </div>
 
         {#if showCropper}
@@ -698,26 +709,30 @@
         {#if settingsError}
           <div class="text-sm text-red-600">{settingsError}</div>
         {/if}
-        <div class="flex items-center gap-3 flex-wrap">
-          <button
-            type="button"
-            onclick={handleSaveProfile}
-            disabled={saving}
-            class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover disabled:opacity-50"
-          >
-            {saving ? 'Enregistrement…' : 'Enregistrer le profil'}
-          </button>
-          {#if saveSuccess}
-            <span class="inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-600">
-              <Check size={15} />
-              Modifications enregistrées
-            </span>
-          {/if}
-        </div>
+        {#if canManageMembers}
+          <div class="flex items-center gap-3 flex-wrap">
+            <button
+              type="button"
+              onclick={handleSaveProfile}
+              disabled={saving}
+              class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover disabled:opacity-50"
+            >
+              {saving ? 'Enregistrement…' : 'Enregistrer le profil'}
+            </button>
+            {#if saveSuccess}
+              <span class="inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-600">
+                <Check size={15} />
+                Modifications enregistrées
+              </span>
+            {/if}
+          </div>
+        {:else}
+          <p class="text-sm text-text-muted">Vous n'avez pas le droit de modifier le profil (flag MANAGE_MEMBERS requis).</p>
+        {/if}
       </div>
     {/if}
 
-    {#if editSection === 'payments' && (isAdmin || isGlobalAdminUser)}
+    {#if editSection === 'payments' && canManagePayments}
       <div
         class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-4 shadow-sm"
       >
@@ -748,7 +763,7 @@
       </div>
     {/if}
 
-    {#if editSection === 'members' && (isAdmin || isGlobalAdminUser)}
+    {#if editSection === 'members' && canManageMembers}
       <div
         class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-5 shadow-sm"
       >

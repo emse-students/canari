@@ -154,7 +154,7 @@ export class AssociationsController {
         AssociationPermissionFlag.MANAGE_MEMBERS
       );
     }
-    return this.service.listMembers(id, { includePermissions });
+    return this.service.listMembers(id, { includePermissions, callerId: userId });
   }
 
   /** Returns scheduled events for the association (optional `from` / `to` ISO date bounds). */

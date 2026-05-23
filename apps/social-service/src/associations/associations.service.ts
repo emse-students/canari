@@ -294,9 +294,13 @@ export class AssociationsService {
   /**
    * Lists all members of an association.
    * Returns `isAdmin` (permissions > 0) for public callers; the raw `permissions`
-   * bitmask is only included when `includePermissions` is true (MANAGE_MEMBERS flag required).
+   * bitmask is included for every member when `includePermissions` is true (caller has
+   * MANAGE_MEMBERS), and always for the caller's own row so the client can gate UI correctly.
    */
-  async listMembers(associationId: string, opts?: { includePermissions?: boolean }) {
+  async listMembers(
+    associationId: string,
+    opts?: { includePermissions?: boolean; callerId?: string }
+  ) {
     const rows = await this.memberRepo
       .createQueryBuilder('m')
       .select(['m.id', 'm.associationId', 'm.userId', 'm.role', 'm.permissions', 'm.createdAt'])
@@ -317,7 +321,8 @@ export class AssociationsService {
         createdAt: r.m_createdAt,
         displayName: r.displayName || null,
       };
-      if (opts?.includePermissions) {
+      // Always expose the caller's own bitmask so the frontend can gate by specific flag.
+      if (opts?.includePermissions || r.m_userId === opts?.callerId) {
         return { ...base, permissions };
       }
       return base;

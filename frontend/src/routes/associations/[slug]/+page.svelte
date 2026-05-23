@@ -7,6 +7,8 @@
     followAssociation,
     unfollowAssociation,
     getAssociationFollowStatus,
+    hasPermissionFlag,
+    AssociationPermissionFlag,
     type Association,
     type AssociationMember,
   } from '$lib/associations/api';
@@ -28,6 +30,12 @@
   let userId = $derived(currentUserId());
   let myMembership = $derived(members.find((m) => m.userId === userId));
   let canManage = $derived(isGlobalAdmin() || (!!myMembership && myMembership.isAdmin));
+  /** Whether the current user can propose / edit events (PROPOSE_EVENT flag or global admin). */
+  let canProposeEvent = $derived(
+    isGlobalAdmin() ||
+      (!!myMembership &&
+        hasPermissionFlag(myMembership.permissions ?? 0, AssociationPermissionFlag.PROPOSE_EVENT))
+  );
 
   let following = $state(false);
   let followLoading = $state(false);
@@ -237,7 +245,7 @@
         <AssociationCalendarSection
           associationId={asso.id}
           associationSlug={asso.slug}
-          canEdit={canManage}
+          canEdit={canProposeEvent}
         />
       </div>
     {:else if activeSection === 'members'}
