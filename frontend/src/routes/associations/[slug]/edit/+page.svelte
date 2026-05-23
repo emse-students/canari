@@ -68,7 +68,6 @@
 
   let userId = $derived(currentUserId());
   let myMembership = $derived(members.find((m) => m.userId === userId));
-  let isAdmin = $derived(!!myMembership && myMembership.isAdmin);
   let isGlobalAdminUser = $derived(isGlobalAdmin());
 
   let editName = $state('');
