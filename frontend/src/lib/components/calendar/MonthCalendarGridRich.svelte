@@ -56,7 +56,7 @@
       );
   }
 
-  /** Effective hex/HSL background color for an event block. */
+  /** Effective background color for an event block. */
   function eventBg(ev: AssociationCalendarFeedEvent): string {
     return ev.associationColor ?? generateAvatarColor(ev.associationId);
   }
@@ -112,80 +112,89 @@
       {#each calendarCells as cell, i (i)}
         {#if cell.day === null}
           <div
-            class="min-h-[100px] p-1.5 border-r border-b border-cn-border/40
+            class="min-h-[100px] border-r border-b border-cn-border/40
                    {isWeekend(i) ? 'bg-cn-bg/40' : 'bg-[var(--cn-surface)]/30'}"
             role="gridcell"
             aria-hidden="true"
           ></div>
         {:else}
           {@const dayEvents = eventsOnDay(cell.day)}
-          {@const visible = dayEvents.slice(0, MAX_VISIBLE)}
-          {@const extra = dayEvents.length - MAX_VISIBLE}
+          {@const nVisible = dayEvents.length > MAX_VISIBLE ? MAX_VISIBLE - 1 : dayEvents.length}
+          {@const visible = dayEvents.slice(0, nVisible)}
+          {@const overflowCount = dayEvents.length - nVisible}
           {@const selected = selectedDay === cell.day}
           {@const today = isToday(cell.day)}
-          {@const firstBg = dayEvents.length > 0 ? eventBg(dayEvents[0]) : null}
           <button
             type="button"
             role="gridcell"
             aria-label="{cell.day}{dayEvents.length > 0 ? `, ${dayEvents.length} événement${dayEvents.length > 1 ? 's' : ''}` : ''}"
             aria-selected={selected}
             onclick={() => { selectedDay = selectedDay === cell.day ? null : cell.day; }}
-            class="relative min-h-[100px] p-1.5 text-left flex flex-col gap-1 transition-all border-r border-b border-cn-border/40
+            class="relative min-h-[100px] text-left transition-all border-r border-b border-cn-border/40 overflow-hidden
               {isWeekend(i) ? 'bg-cn-bg/40' : 'bg-[var(--cn-surface)]/60'}
-              {selected ? 'ring-inset ring-2 ring-cn-yellow/70 bg-cn-yellow/8' : 'hover:bg-cn-bg/60'}"
+              {selected ? '' : 'hover:brightness-95'}"
           >
-            <!-- Day number — top left, yellow circle if today -->
-            <span
-              class="inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold leading-none self-start
-                {today
-                  ? 'bg-cn-yellow text-cn-dark shadow-sm'
-                  : selected
-                    ? 'text-cn-dark font-extrabold'
-                    : dayEvents.length > 0
-                      ? 'text-text-main'
-                      : 'text-text-muted/70'}"
-            >
-              {cell.day}
-            </span>
-
-            <!-- Event blocks -->
-            {#each visible as ev (ev.id)}
-              {@const bg = eventBg(ev)}
-              {@const fg = contrastColor(bg)}
+            {#if dayEvents.length === 0}
+              <!-- Empty cell: day number only -->
               <span
-                class="flex items-center gap-1 w-full overflow-hidden rounded-md text-[10px] font-bold leading-none"
-                style="background:{bg};color:{fg};padding:3px 5px;"
-                title="{ev.title} — {ev.associationName}"
-              >
-                {#if ev.associationLogoUrl}
-                  <img
-                    src={ev.associationLogoUrl}
-                    alt=""
-                    aria-hidden="true"
-                    class="h-3.5 w-3.5 rounded-full object-cover shrink-0 opacity-90"
-                  />
-                {:else}
-                  <span
-                    class="h-3.5 w-3.5 rounded-full shrink-0 flex items-center justify-center text-[7px] font-black"
-                    style="background:rgba(255,255,255,0.25);color:{fg};"
-                  >{getInitials(ev.associationName)}</span>
-                {/if}
-                <span class="truncate">{ev.title}</span>
-              </span>
-            {/each}
+                class="absolute top-1.5 left-2 text-xs font-bold leading-none
+                  {today ? 'text-cn-yellow' : 'text-text-muted/50'}"
+              >{cell.day}</span>
+            {:else}
+              <!-- Events fill the entire cell, split equally -->
+              <div class="absolute inset-0 flex flex-col">
+                {#each visible as ev, ei (ev.id)}
+                  {@const bg = eventBg(ev)}
+                  {@const fg = contrastColor(bg)}
+                  <div
+                    class="relative flex-1 flex items-center justify-center overflow-hidden"
+                    style="background:{bg}; color:{fg};"
+                  >
+                    <!-- Day number on the first slot -->
+                    {#if ei === 0}
+                      <span
+                        class="absolute top-1 left-1.5 text-[10px] font-extrabold leading-none z-10
+                          {today ? 'underline decoration-2' : ''}"
+                        style="color:{fg};"
+                      >{cell.day}</span>
+                    {/if}
+                    <!-- Circular logo watermark centred in the slot -->
+                    {#if ev.associationLogoUrl}
+                      <img
+                        src={ev.associationLogoUrl}
+                        alt=""
+                        aria-hidden="true"
+                        class="absolute rounded-full object-cover"
+                        style="width:62%;height:62%;max-width:52px;max-height:52px;opacity:0.18;left:50%;top:50%;transform:translate(-50%,-50%);"
+                      />
+                    {:else}
+                      <span
+                        class="absolute rounded-full flex items-center justify-center text-[11px] font-black opacity-15"
+                        style="width:52px;height:52px;background:rgba(255,255,255,0.2);color:{fg};left:50%;top:50%;transform:translate(-50%,-50%);"
+                      >{getInitials(ev.associationName)}</span>
+                    {/if}
+                    <!-- Event title, centred and always on top of watermark -->
+                    <span
+                      class="relative z-10 text-[10px] font-bold text-center leading-tight px-3 line-clamp-2"
+                      title="{ev.title} — {ev.associationName}"
+                      style="color:{fg};"
+                    >{ev.title}</span>
+                  </div>
+                {/each}
 
-            {#if extra > 0}
-              <span class="text-[9px] font-semibold text-text-muted pl-1">
-                +{extra} autre{extra > 1 ? 's' : ''}
-              </span>
+                {#if overflowCount > 0}
+                  <div
+                    class="flex-1 flex items-center justify-center text-[9px] font-bold text-text-muted bg-cn-bg/80"
+                  >
+                    +{overflowCount} autre{overflowCount > 1 ? 's' : ''}
+                  </div>
+                {/if}
+              </div>
             {/if}
 
-            <!-- Subtle color accent bar at bottom for days with events -->
-            {#if firstBg && dayEvents.length > 0 && !selected}
-              <span
-                class="absolute bottom-0 left-0 right-0 h-0.5 opacity-40"
-                style="background:{firstBg};"
-              ></span>
+            <!-- Selected ring overlay (always on top) -->
+            {#if selected}
+              <div class="absolute inset-0 ring-inset ring-2 ring-cn-yellow/70 pointer-events-none z-20"></div>
             {/if}
           </button>
         {/if}
@@ -233,7 +242,6 @@
               {@const bg = eventBg(ev)}
               {@const fg = contrastColor(bg)}
               <li class="flex items-center gap-3 px-4 py-3">
-                <!-- Color + logo indicator -->
                 <span
                   class="h-8 w-8 rounded-full shrink-0 overflow-hidden flex items-center justify-center"
                   style="background:{bg};"
