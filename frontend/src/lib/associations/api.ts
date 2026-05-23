@@ -111,6 +111,8 @@ export interface AssociationCalendarFeedEvent extends AssociationCalendarEvent {
   associationSlug: string;
   /** Hex color set on the association, or null (frontend falls back to generateAvatarColor). */
   associationColor: string | null;
+  /** Logo URL of the association (same-origin `/api/media/public/:id` path), or null. */
+  associationLogoUrl: string | null;
 }
 
 export interface AssociationLinkCandidates {

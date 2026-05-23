@@ -59,6 +59,7 @@
     GripVertical,
   } from '@lucide/svelte';
   import { exportTrombinoscope } from '$lib/utils/trombinoscope';
+  import { generateAvatarColor } from '$lib/utils/avatar';
   import AssociationDocumentManager from '$lib/components/associations/AssociationDocumentManager.svelte';
   import {
     hasPermissionFlag,
@@ -86,6 +87,13 @@
   let editBioMarkdown = $state('');
   /** Hex color for calendar display, or "" to use auto-generated color. */
   let editColor = $state('');
+
+  const PRESET_COLORS = [
+    '#ef4444', '#f97316', '#f59e0b', '#eab308',
+    '#84cc16', '#22c55e', '#10b981', '#14b8a6',
+    '#06b6d4', '#3b82f6', '#6366f1', '#8b5cf6',
+    '#a855f7', '#d946ef', '#ec4899', '#f43f5e',
+  ] as const;
   let saving = $state(false);
   let saveSuccess = $state(false);
   let settingsError = $state('');
@@ -780,25 +788,37 @@
             placeholder="Présentation complète, liens, listes…"
           />
         </div>
-        <div class="flex flex-col gap-1.5">
+        <div class="flex flex-col gap-2">
           <span class="block text-sm font-bold text-text-main ml-1">Couleur de l'agenda</span>
-          <div class="flex items-center gap-3">
-            <input
-              type="color"
-              bind:value={editColor}
-              class="h-9 w-16 cursor-pointer rounded-lg border border-cn-border bg-[var(--cn-surface)] p-0.5"
-            />
+          <div class="flex flex-wrap gap-1.5 items-center">
+            {#each PRESET_COLORS as c (c)}
+              <button
+                type="button"
+                onclick={() => (editColor = c)}
+                title={c}
+                class="h-7 w-7 rounded-full border-2 transition-all hover:scale-110 focus:outline-none shrink-0
+                       {editColor === c ? 'border-cn-dark ring-2 ring-offset-1 ring-cn-yellow/70 scale-110' : 'border-transparent hover:border-white/60'}"
+                style="background:{c};"
+              ></button>
+            {/each}
             <button
               type="button"
               onclick={() => (editColor = '')}
-              class="text-xs text-text-muted hover:text-text-main transition-colors"
+              class="h-7 px-2.5 rounded-full text-[10px] font-bold border-2 transition-all shrink-0
+                     {editColor === '' ? 'border-cn-dark bg-cn-dark text-white' : 'border-cn-border text-text-muted hover:border-cn-dark hover:text-text-main'}"
             >
-              Réinitialiser (couleur auto)
+              Auto
             </button>
           </div>
-          <p class="text-[11px] text-text-muted ml-1">
-            Couleur utilisée dans l'agenda global. Laissez vide pour la couleur générée automatiquement.
-          </p>
+          <div class="flex items-center gap-2 ml-1">
+            <span
+              class="h-5 w-5 rounded-full border border-cn-border/40 shrink-0"
+              style="background:{editColor || (asso ? generateAvatarColor(asso.id) : '#888')}"
+            ></span>
+            <span class="text-[11px] text-text-muted">
+              {editColor ? editColor : 'Couleur générée automatiquement'}
+            </span>
+          </div>
         </div>
 
         <div class="rounded-xl border border-cn-border/70 bg-cn-bg/40 p-3 text-xs text-text-muted space-y-3">
