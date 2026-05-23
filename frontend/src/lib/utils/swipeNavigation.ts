@@ -123,7 +123,7 @@ export function updateSwipeNavGesture(
     if (Math.abs(dx) < GESTURE_LOCK_PX && Math.abs(dy) < GESTURE_LOCK_PX) {
       return { ...state, dragPx: dx };
     }
-    if (Math.abs(dy) > Math.abs(dx)) {
+    if (Math.abs(dy) > Math.abs(dx) * 1.15) {
       return { ...state, phase: 'vertical', dragPx: 0 };
     }
     return { ...state, phase: 'horizontal', dragPx: dx };

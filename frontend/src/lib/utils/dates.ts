@@ -1,5 +1,18 @@
 type DateInput = Date | number | string | null | undefined;
 
+/**
+ * Parses a persisted Unix-ms timestamp from local storage.
+ * On Android/Tauri SQL, INTEGER columns may be returned as strings.
+ */
+export function readStoredTimestampMs(raw: unknown): number | undefined {
+  if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) return raw;
+  if (typeof raw === 'string' && raw.trim() !== '') {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return undefined;
+}
+
 /** Coerces arbitrary values to a valid `Date`, or returns `fallback` (default: now). */
 export function toValidDate(value: DateInput, fallback: Date = new Date()): Date {
   if (value instanceof Date) {

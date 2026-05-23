@@ -11,6 +11,11 @@ export type KeyboardViewportSnapshot = {
   offsetTop: number;
   /** Space occupied by the keyboard from the bottom of the layout viewport. */
   insetBottom: number;
+  /**
+   * Extra bottom offset for `position: fixed` UI when the layout viewport did not shrink
+   * (adjustPan). Zero when adjustResize already resized the window.
+   */
+  layoutInsetBottom: number;
 };
 
 function keyboardOpenThresholdPx(): number {
@@ -28,8 +33,12 @@ function readSnapshot(baselineHeight: number): KeyboardViewportSnapshot {
   const insetBottom = Math.max(0, winH - viewportHeight - offsetTop);
   const delta = Math.max(baselineHeight - viewportHeight, winH - viewportHeight);
   const isOpen = delta > keyboardOpenThresholdPx();
+  const layoutShrunk =
+    baselineHeight - winH > keyboardOpenThresholdPx() * 0.35 ||
+    winH - viewportHeight > keyboardOpenThresholdPx() * 0.35;
+  const layoutInsetBottom = isOpen && !layoutShrunk ? insetBottom : 0;
 
-  return { isOpen, viewportHeight, offsetTop, insetBottom };
+  return { isOpen, viewportHeight, offsetTop, insetBottom, layoutInsetBottom };
 }
 
 function applyCssVars(snapshot: KeyboardViewportSnapshot, baselineHeight: number): void {
@@ -40,6 +49,10 @@ function applyCssVars(snapshot: KeyboardViewportSnapshot, baselineHeight: number
   document.documentElement.style.setProperty(
     '--keyboard-inset-bottom',
     `${snapshot.insetBottom}px`
+  );
+  document.documentElement.style.setProperty(
+    '--keyboard-layout-inset-bottom',
+    `${snapshot.layoutInsetBottom}px`
   );
   document.documentElement.style.setProperty(
     '--visual-viewport-offset-top',
@@ -53,6 +66,7 @@ let snapshot = $state<KeyboardViewportSnapshot>({
   viewportHeight: 0,
   offsetTop: 0,
   insetBottom: 0,
+  layoutInsetBottom: 0,
 });
 
 /** Reactive keyboard / viewport snapshot for components. */
@@ -60,9 +74,12 @@ export function getKeyboardViewport(): KeyboardViewportSnapshot {
   return snapshot;
 }
 
-/** Inline padding for fixed fullscreen overlays (modals, PIN, sync, payment…). */
+/**
+ * Padding for portaled overlays aligned to the visual viewport (see Modal overlay styles).
+ * Does not add `--keyboard-inset-bottom` — the overlay box already matches `--app-viewport-height`.
+ */
 export const keyboardAwareOverlayPadding =
-  'max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) calc(max(1rem, env(safe-area-inset-bottom, 0px)) + var(--keyboard-inset-bottom, 0px)) max(1rem, env(safe-area-inset-left)';
+  'max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left)';
 
 function isFocusableField(el: HTMLElement): boolean {
   return el.matches(
@@ -74,8 +91,9 @@ function isFocusableField(el: HTMLElement): boolean {
 export function scrollFocusedFieldIntoView(behavior: ScrollBehavior = 'smooth'): void {
   const el = document.activeElement;
   if (!(el instanceof HTMLElement) || !isFocusableField(el)) return;
+  if (el.closest('.chat-composer-footer, .app-layout')) return;
   requestAnimationFrame(() => {
-    el.scrollIntoView({ block: 'center', inline: 'nearest', behavior });
+    el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior });
   });
 }
 
@@ -135,6 +153,7 @@ export function initKeyboardViewport(): () => void {
     window.visualViewport?.removeEventListener('resize', update);
     window.visualViewport?.removeEventListener('scroll', update);
     document.documentElement.style.removeProperty('--keyboard-inset-bottom');
+    document.documentElement.style.removeProperty('--keyboard-layout-inset-bottom');
     document.documentElement.style.removeProperty('--visual-viewport-offset-top');
     document.documentElement.style.removeProperty('--keyboard-baseline-height');
   };

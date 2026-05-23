@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { formatTime24, isToday, isYesterday, toValidDate } from './dates';
+import { formatTime24, isToday, isYesterday, readStoredTimestampMs, toValidDate } from './dates';
+
+describe('readStoredTimestampMs', () => {
+  it('parses numeric and string epoch ms from SQLite', () => {
+    expect(readStoredTimestampMs(1_700_000_000_000)).toBe(1_700_000_000_000);
+    expect(readStoredTimestampMs('1700000000000')).toBe(1_700_000_000_000);
+  });
+
+  it('returns undefined for invalid values', () => {
+    expect(readStoredTimestampMs(null)).toBeUndefined();
+    expect(readStoredTimestampMs('')).toBeUndefined();
+  });
+});
 
 describe('toValidDate', () => {
   it('returns fallback for invalid Date', () => {

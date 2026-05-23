@@ -17,7 +17,11 @@ import {
   editMessage,
   deleteMessage,
 } from '$lib/utils/chat/messaging';
-import { isStaleInboundMessage, resolveMessageTimestamp } from '$lib/utils/chat/messageUtils';
+import {
+  isStaleInboundMessage,
+  normalizeMessageId,
+  resolveMessageTimestamp,
+} from '$lib/utils/chat/messageUtils';
 import {
   insertMessageOrdered,
   mergeMessagesInInputOrder,
@@ -229,7 +233,7 @@ export function useMessaging() {
         console.warn(`[ADD_MSG] conversation "${normalized}" introuvable (bulk)...`);
         return;
       }
-      const id = options.messageId || crypto.randomUUID();
+      const id = normalizeMessageId(options.messageId) ?? crypto.randomUUID();
       const existing = bulkIngestBuffer.get(normalized) ?? [];
       if (existing.some((m) => m.messageId === id) || convo.messages.some((m) => m.id === id)) {
         return;
@@ -254,7 +258,7 @@ export function useMessaging() {
     const isOwn = isOwnMessage(senderId, ctx.userId);
     const resolvedTimestamp = resolveMessageTimestamp(options, convo.messages, isOwn);
     const newMsg: ChatMessage = {
-      id: options.messageId || crypto.randomUUID(),
+      id: normalizeMessageId(options.messageId) ?? crypto.randomUUID(),
       senderId: senderId.toLowerCase(),
       content,
       timestamp: new SvelteDate(resolvedTimestamp),
@@ -353,7 +357,7 @@ export function useMessaging() {
     const newMessages: ChatMessage[] = [];
 
     for (const pm of messages) {
-      const id = pm.messageId || crypto.randomUUID();
+      const id = normalizeMessageId(pm.messageId) ?? crypto.randomUUID();
       if (existingIds.has(id)) continue;
       existingIds.add(id);
 

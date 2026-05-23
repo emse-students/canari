@@ -10,7 +10,8 @@ import type { IMlsService } from '$lib/mlsService';
 import { decodeAppMessage } from '$lib/proto/codec';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { appMsgToEnvelope, isOwnMessage } from '$lib/utils/chat/messageUtils';
-import { toValidDate } from '$lib/utils/dates';
+import { readStoredTimestampMs, toValidDate } from '$lib/utils/dates';
+import { normalizeMessageId } from '$lib/utils/chat/messageUtils';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 import { toggleMessageReaction } from '$lib/utils/chat/messageReactions';
 
@@ -67,7 +68,7 @@ export function mapStoredMessagesToChatMessages(storedMessages: StoredMessage[],
       id: m.id,
       senderId: m.senderId,
       content: m.content,
-      timestamp: toValidDate(m.timestamp),
+      timestamp: toValidDate(readStoredTimestampMs(m.timestamp) ?? 0, new Date(0)),
       isOwn: isOwnMessage(m.senderId, userId),
       isSystem: m.senderId === 'system',
       readBy: m.readBy,
@@ -353,7 +354,7 @@ export async function replayConversationHistory(params: {
     // Flush all decoded messages in a single batch DB write.
     if (pendingMessages.length > 0 && storage) {
       const toStore: StoredMessage[] = pendingMessages.map((pm) => ({
-        id: pm.messageId || crypto.randomUUID(),
+        id: normalizeMessageId(pm.messageId) ?? crypto.randomUUID(),
         conversationId: id,
         senderId: pm.senderId.toLowerCase(),
         content: pm.content,

@@ -8,6 +8,7 @@
   import ChatComposer from './ChatComposer.svelte';
   import EmptyState from '../shared/EmptyState.svelte';
   import { groupMessages } from '$lib/utils/messageGrouping';
+  import { computeMessageListSwitchTime } from '$lib/utils/chat/messageUtils';
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import type { ChatMessage, MessageReaction, Conversation } from '$lib/types';
@@ -313,7 +314,7 @@
       }
 
       if (catchupWasActive && !catchupActive) {
-        switchTime = Date.now();
+        switchTime = computeMessageListSwitchTime(conversation.messages);
       }
       catchupWasActive = catchupActive;
 
@@ -321,7 +322,7 @@
       const hasNewMessage = messageCount > lastMessageCount;
 
       if (hasConversationChanged) {
-        switchTime = Date.now();
+        switchTime = computeMessageListSwitchTime(conversation.messages);
         windowStart = Math.max(0, messageGroups.length - INITIAL_RENDER_GROUPS);
         hasMoreInDb = !isChannel;
         tick().then(() => requestAnimationFrame(() => scrollToBottom(false)));

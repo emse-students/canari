@@ -287,19 +287,19 @@ h6,
   }
 }
 
-/* Keyboard open: lift composer above IME and extend message scroll padding. */
+/* Keyboard open: shell height follows visual viewport; only lift composer when layout did not resize (adjustPan). */
 .keyboard-open .chat-composer-footer {
-  bottom: var(--keyboard-inset-bottom, 0px);
+  bottom: var(--keyboard-layout-inset-bottom, 0px);
   padding-bottom: max(0.5rem, env(safe-area-inset-bottom)) !important;
 }
 
 .keyboard-open .chat-messages-scroll {
   padding-bottom: calc(
-    var(--chat-composer-height, 6rem) + var(--keyboard-inset-bottom, 0px) +
+    var(--chat-composer-height, 6rem) + var(--keyboard-layout-inset-bottom, 0px) +
       max(0.5rem, env(safe-area-inset-bottom, 0px))
   );
   scroll-padding-bottom: calc(
-    var(--chat-composer-height, 6rem) + var(--keyboard-inset-bottom, 0px) +
+    var(--chat-composer-height, 6rem) + var(--keyboard-layout-inset-bottom, 0px) +
       max(0.5rem, env(safe-area-inset-bottom, 0px))
   );
 }
@@ -322,6 +322,9 @@ h6,
 
 html.keyboard-open .page-scroll-wrap {
   overflow: hidden;
+  scroll-padding-bottom: calc(
+    4rem + env(safe-area-inset-bottom, 0px) + var(--keyboard-layout-inset-bottom, 0px)
+  );
 }
 
 /* Fixed bottom bars on non-chat pages (forms, etc.) */
@@ -330,18 +333,25 @@ html.keyboard-open .page-scroll-wrap {
 }
 
 .keyboard-open .keyboard-aware-bottom {
-  bottom: var(--keyboard-inset-bottom, 0px);
+  bottom: var(--keyboard-layout-inset-bottom, 0px);
 }
 
 /* Fullscreen overlays: modals, PIN, sync, payment, calendar pickers… */
 [data-keyboard-aware-overlay] {
+  position: fixed;
+  top: var(--visual-viewport-offset-top, 0px);
+  right: 0;
+  bottom: auto;
+  left: 0;
+  height: var(--app-viewport-height, 100dvh);
   padding-top: max(1rem, env(safe-area-inset-top, 0px));
   padding-right: max(1rem, env(safe-area-inset-right, 0px));
   padding-left: max(1rem, env(safe-area-inset-left, 0px));
-  padding-bottom: calc(
-    max(1rem, env(safe-area-inset-bottom, 0px)) + var(--keyboard-inset-bottom, 0px)
-  );
-  transition: padding-bottom 180ms ease;
+  padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+  transition:
+    height 180ms ease,
+    top 180ms ease,
+    padding-bottom 180ms ease;
 }
 
 .keyboard-aware-modal-panel {
@@ -351,20 +361,20 @@ html.keyboard-open .page-scroll-wrap {
 /* Message action wheel (long-press menu) — above composer / bottom nav */
 [data-keyboard-aware-actions] {
   bottom: calc(
-    max(4.5rem, env(safe-area-inset-bottom, 0px) + 3rem) + var(--keyboard-inset-bottom, 0px)
+    max(4.5rem, env(safe-area-inset-bottom, 0px) + 3rem) + var(--keyboard-layout-inset-bottom, 0px)
   );
   transition: bottom 180ms ease;
 }
 
 .mobile-convo-open [data-keyboard-aware-actions] {
   bottom: calc(
-    max(1rem, env(safe-area-inset-bottom, 0px) + 1rem) + var(--keyboard-inset-bottom, 0px)
+    max(1rem, env(safe-area-inset-bottom, 0px) + 1rem) + var(--keyboard-layout-inset-bottom, 0px)
   );
 }
 
 .keyboard-open [data-keyboard-aware-toast] {
   bottom: calc(
-    env(safe-area-inset-bottom, 0px) + 1rem + var(--keyboard-inset-bottom, 0px)
+    env(safe-area-inset-bottom, 0px) + 1rem + var(--keyboard-layout-inset-bottom, 0px)
   ) !important;
 }
 
@@ -375,7 +385,7 @@ html.keyboard-open .page-scroll-wrap {
 
 .keyboard-open .keyboard-aware-panel-scroll {
   padding-bottom: calc(
-    max(1.25rem, env(safe-area-inset-bottom, 0px)) + var(--keyboard-inset-bottom, 0px)
+    max(1.25rem, env(safe-area-inset-bottom, 0px)) + var(--keyboard-layout-inset-bottom, 0px)
   ) !important;
 }
 
@@ -386,7 +396,7 @@ html.keyboard-open .page-scroll-wrap {
 
 .keyboard-open .keyboard-aware-panel-footer {
   padding-bottom: calc(
-    max(1.25rem, env(safe-area-inset-bottom, 0px)) + var(--keyboard-inset-bottom, 0px)
+    max(1.25rem, env(safe-area-inset-bottom, 0px)) + var(--keyboard-layout-inset-bottom, 0px)
   ) !important;
 }
 

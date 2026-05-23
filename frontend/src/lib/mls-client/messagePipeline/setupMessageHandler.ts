@@ -5,7 +5,7 @@ import { serializeEnvelope, mkTextEnvelope, mkChannelInviteEnvelope } from '$lib
 import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
 import { ChannelService } from '$lib/services/ChannelService';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
-import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
+import { appMsgToEnvelope, normalizeMessageId } from '$lib/utils/chat/messageUtils';
 import { toValidDate } from '$lib/utils/dates';
 import { toggleMessageReaction } from '$lib/utils/chat/messageReactions';
 import { recoverDeadGroup } from '$lib/utils/chat/recovery';
@@ -545,6 +545,10 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                   : undefined;
               const envelope = appMsgToEnvelope(msg, fallbackTs);
               if (envelope) {
+                const stableId =
+                  normalizeMessageId(msg.messageId) ??
+                  normalizeMessageId(deliveryMeta?.queuedMessageId);
+                if (stableId) envelope.options.messageId = stableId;
                 await addMessageToChat(senderNorm, envelope.content, convoKey, envelope.options);
               }
               return true;

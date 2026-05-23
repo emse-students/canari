@@ -32,6 +32,11 @@ describe('swipeNavTargetHref', () => {
     expect(swipeNavTargetHref('/posts', 'prev')).toBeNull();
     expect(swipeNavTargetHref('/dashboard', 'next')).toBeNull();
   });
+
+  it('reaches dashboard after notifications', () => {
+    expect(swipeNavTargetHref('/notifications', 'next')).toBe('/dashboard');
+    expect(swipeNavTargetHref('/notifications', 'prev')).toBe('/chat');
+  });
 });
 
 describe('shouldIgnoreSwipeTarget', () => {

@@ -1,6 +1,11 @@
 import { encryptData, decryptData } from '../encryption';
+import { readStoredTimestampMs } from '$lib/utils/dates';
 import { getOrCreateEncryptionSalt } from './salt';
 import type { ConversationMeta, EncryptedMessageRow, IStorage, StoredMessage } from './types';
+
+function rowTimestampMs(raw: unknown): number {
+  return readStoredTimestampMs(raw) ?? 0;
+}
 
 // ---------------------------------------------------------------------------
 // SQLite implementation (Tauri desktop / mobile)
@@ -220,7 +225,7 @@ export class SqliteStorage implements IStorage {
         results.push({
           id: row.id,
           conversationId: row.conversation_id,
-          timestamp: row.timestamp,
+          timestamp: rowTimestampMs(row.timestamp),
           senderId: payload.senderId,
           content: payload.content,
           readBy: Array.isArray(payload.readBy) ? payload.readBy : undefined,
@@ -270,7 +275,7 @@ export class SqliteStorage implements IStorage {
         results.push({
           id: row.id,
           conversationId: row.conversation_id,
-          timestamp: row.timestamp,
+          timestamp: rowTimestampMs(row.timestamp),
           senderId: payload.senderId,
           content: payload.content,
           readBy: Array.isArray(payload.readBy) ? payload.readBy : undefined,

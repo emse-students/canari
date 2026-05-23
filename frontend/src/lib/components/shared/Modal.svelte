@@ -64,7 +64,7 @@
     <div
       role="presentation"
       data-keyboard-aware-overlay
-      class="fixed inset-0 z-[280] flex items-end justify-center bg-black/40 backdrop-blur-sm sm:items-center"
+      class="fixed z-[280] flex items-end justify-center bg-black/40 backdrop-blur-sm sm:items-center"
       style="padding: {keyboardAwareOverlayPadding}"
       onclick={handleBackdropClick}
       in:fly={{ duration: 200, y: 0, opacity: 0 }}

@@ -596,7 +596,7 @@
 {#if modalOpen}
   <div
     data-keyboard-aware-overlay
-    class="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40"
+    class="z-50 flex items-end sm:items-center justify-center bg-black/40"
     role="presentation"
     onclick={(e) => e.target === e.currentTarget && closeModal()}
   >

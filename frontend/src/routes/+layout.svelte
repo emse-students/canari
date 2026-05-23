@@ -180,17 +180,20 @@
       return;
     }
 
-    const exitClass = direction === 'next' ? 'swipe-nav-exit-left' : 'swipe-nav-exit-right';
-    swipeEnterClass = direction === 'next' ? 'swipe-nav-enter-right' : 'swipe-nav-enter-left';
+    const width = pageScrollWrap.offsetWidth || window.innerWidth;
+    const exitX = direction === 'next' ? -width : width;
 
     pageScrollWrap.classList.remove('swipe-nav-dragging');
-    pageScrollWrap.style.removeProperty('transform');
-    pageScrollWrap.style.removeProperty('transition');
-    pageScrollWrap.classList.add(exitClass);
+    pageScrollWrap.style.transition = `transform ${swipeNavTransitionMs}ms ease-out`;
+    pageScrollWrap.style.transform = `translate3d(${exitX}px, 0, 0)`;
 
     await new Promise((r) => setTimeout(r, swipeNavTransitionMs));
+
+    await goto(href);
+
+    if (!pageScrollWrap) return;
     clearSwipeTransform(pageScrollWrap);
-    void goto(href);
+    swipeEnterClass = direction === 'next' ? 'swipe-nav-enter-right' : 'swipe-nav-enter-left';
   }
 
   function handleTouchEnd(e: TouchEvent) {

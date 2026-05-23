@@ -102,7 +102,7 @@
 <!-- Backdrop -->
 <div
   data-keyboard-aware-overlay
-  class="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm"
+  class="z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm"
   role="dialog"
   aria-modal="true"
   aria-label="Paiement"

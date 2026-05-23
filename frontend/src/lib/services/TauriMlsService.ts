@@ -530,8 +530,13 @@ export class TauriMlsService implements IMlsService {
           );
 
           const deliveryMeta: IncomingDeliveryMeta | undefined =
-            msg.queuedCreatedAt !== undefined
-              ? { queuedCreatedAt: msg.queuedCreatedAt }
+            msg.queuedCreatedAt !== undefined || msg.queuedMessageId
+              ? {
+                  ...(msg.queuedCreatedAt !== undefined
+                    ? { queuedCreatedAt: msg.queuedCreatedAt }
+                    : {}),
+                  ...(msg.queuedMessageId ? { queuedMessageId: msg.queuedMessageId } : {}),
+                }
               : undefined;
           const cbResult = await this.messageCallback(
             msg.senderId,

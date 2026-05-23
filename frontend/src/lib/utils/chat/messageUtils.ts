@@ -1,3 +1,4 @@
+import { messageTime } from '$lib/utils/chat/messageOrder';
 import { serializeEnvelope, mkTextEnvelope, mkMediaEnvelope } from '$lib/envelope';
 
 /** Returns true if the message was sent by the current user (case-insensitive). */
@@ -15,6 +16,21 @@ export const STALE_INBOUND_MS = 2 * 60 * 1000;
  * Resolves the timestamp for a message being inserted into a conversation.
  * Prefers explicit options, then an existing in-memory copy, then queue/history fallback.
  */
+/** Normalizes a message id for dedup / timestamp reuse (empty strings treated as absent). */
+export function normalizeMessageId(messageId: string | undefined | null): string | undefined {
+  const id = messageId?.trim();
+  return id ? id : undefined;
+}
+
+/**
+ * Cutoff for "just received" bubble animation: messages at or before this time are static.
+ * Uses the newest stored timestamp (or now when empty) so startup catch-up does not re-animate history.
+ */
+export function computeMessageListSwitchTime(messages: readonly ChatMessage[]): number {
+  if (messages.length === 0) return Date.now();
+  return messages.reduce((max, m) => Math.max(max, messageTime(m)), 0);
+}
+
 export function resolveMessageTimestamp(
   options: Pick<AddMessageToChatOptions, 'timestamp' | 'messageId'>,
   existingMessages: readonly ChatMessage[],
@@ -24,8 +40,9 @@ export function resolveMessageTimestamp(
   if (options.timestamp instanceof Date && Number.isFinite(options.timestamp.getTime())) {
     return options.timestamp;
   }
-  if (options.messageId) {
-    const existing = existingMessages.find((m) => m.id === options.messageId);
+  const messageId = normalizeMessageId(options.messageId);
+  if (messageId) {
+    const existing = existingMessages.find((m) => m.id === messageId);
     if (existing) {
       return existing.timestamp instanceof Date ? existing.timestamp : new Date(existing.timestamp);
     }

@@ -2,6 +2,8 @@
 export type IncomingDeliveryMeta = {
   /** Server `queued_message.createdAt` in ms — when the message was enqueued for this device. */
   queuedCreatedAt?: number;
+  /** Server queue row id — stable dedup key when the MLS payload has no `messageId`. */
+  queuedMessageId?: string;
 };
 
 /** Parses `createdAt` from a pending-queue API row (ISO string or epoch ms). */

@@ -235,7 +235,7 @@
   <div
     use:portal
     data-keyboard-aware-overlay
-    class="fixed inset-0 z-[190] pointer-events-none flex items-end sm:items-center justify-center"
+    class="z-[190] pointer-events-none flex items-end sm:items-center justify-center"
   >
     <!-- Overlay Assombri -->
     <button
