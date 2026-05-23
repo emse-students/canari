@@ -58,7 +58,6 @@
     ClipboardList,
     GripVertical,
   } from '@lucide/svelte';
-  import { getInitials, generateAvatarColor } from '$lib/utils/avatar';
   import { exportTrombinoscope } from '$lib/utils/trombinoscope';
   import AssociationDocumentManager from '$lib/components/associations/AssociationDocumentManager.svelte';
   import {
