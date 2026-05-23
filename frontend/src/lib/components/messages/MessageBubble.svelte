@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { EllipsisVertical, Info, Hash } from '@lucide/svelte';
+  import { CornerDownRight, EllipsisVertical, Info, Hash } from '@lucide/svelte';
   import { MediaService } from '$lib/media';
   import type { MediaRef } from '$lib/media';
   import { parseEnvelope } from '$lib/envelope';
@@ -22,6 +22,14 @@
     extractFirstUrl,
     getBubbleShapeClass,
   } from '$lib/utils/chat/messageDisplay';
+  import {
+    createReplySwipeGesture,
+    replySwipeDragOffset,
+    replySwipeProgress,
+    shouldTriggerReplySwipe,
+    updateReplySwipeGesture,
+    type ReplySwipeGestureState,
+  } from '$lib/utils/messageSwipeReply';
 
   interface MessageReaction {
     emoji: string;
@@ -134,6 +142,8 @@
   let pointerStartX = $state(0);
   let pointerStartY = $state(0);
   let swipeHandled = $state(false);
+  let replyGesture = $state<ReplySwipeGestureState | null>(null);
+  let replyDragPx = $state(0);
 
   let envelope = $derived(parseEnvelope(content));
   let effectiveSystem = $derived(isSystem || envelope.kind === 'system');
@@ -231,14 +241,38 @@
     showMobileActions = false;
   }
 
-  function beginLongPress(e: PointerEvent) {
-    pointerStartX = e.clientX;
-    pointerStartY = e.clientY;
-    swipeHandled = false;
+  function canSwipeReply(pointerType?: string): boolean {
+    if (supportsHover || pointerType === 'mouse') return false;
+    if (isDeleted || effectiveSystem || !onReply) return false;
+    return true;
+  }
 
-    if (supportsHover || e.pointerType === 'mouse') return;
+  function pointerCoords(e: PointerEvent | TouchEvent): { x: number; y: number } {
+    if ('touches' in e && e.touches.length > 0) {
+      return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    }
+    if ('changedTouches' in e && e.changedTouches.length > 0) {
+      return { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY };
+    }
+    const pe = e as PointerEvent;
+    return { x: pe.clientX, y: pe.clientY };
+  }
+
+  function beginLongPress(e: PointerEvent | TouchEvent) {
+    const { x, y } = pointerCoords(e);
+    pointerStartX = x;
+    pointerStartY = y;
+    swipeHandled = false;
+    replyDragPx = 0;
+
+    const pointerType = 'pointerType' in e ? e.pointerType : 'touch';
+    if (!canSwipeReply(pointerType)) return;
+
+    replyGesture = createReplySwipeGesture(x, y);
+
     if (longPressTimer) clearTimeout(longPressTimer);
     longPressTimer = setTimeout(() => {
+      if (replyGesture?.phase === 'horizontal') return;
       showMobileActions = true;
       showEmojiPicker = false;
       showInfo = false;
@@ -248,23 +282,64 @@
     }, 420);
   }
 
-  function handleSwipeReply(e: PointerEvent) {
-    if (supportsHover || e.pointerType === 'mouse' || swipeHandled) return;
-    if (isDeleted || !onReply) return;
+  function handleSwipeReply(e: PointerEvent | TouchEvent) {
+    const pointerType = 'pointerType' in e ? e.pointerType : 'touch';
+    if (!canSwipeReply(pointerType) || swipeHandled || !replyGesture) return;
 
-    const deltaX = e.clientX - pointerStartX;
-    const deltaY = Math.abs(e.clientY - pointerStartY);
-    const towardCenter = isOwn ? deltaX < -72 : deltaX > 72;
+    const { x, y } = pointerCoords(e);
+    const updated = updateReplySwipeGesture(replyGesture, x, y);
+    replyGesture = updated;
 
-    if (towardCenter && deltaY < 42) {
-      swipeHandled = true;
-      onReply(messageId);
-      if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
-        navigator.vibrate(12);
-      }
+    if (updated.phase === 'horizontal') {
+      if ('touches' in e) e.stopPropagation();
+      const dx = x - updated.startX;
+      const offset = replySwipeDragOffset(dx, isOwn);
+      replyDragPx = offset ?? 0;
+      cancelLongPress();
+      return;
+    }
+
+    if (Math.abs(x - pointerStartX) > 12 || Math.abs(y - pointerStartY) > 12) {
       cancelLongPress();
     }
   }
+
+  function endSwipeReply(e: PointerEvent | TouchEvent) {
+    cancelLongPress();
+    if (!replyGesture || swipeHandled) {
+      replyGesture = null;
+      replyDragPx = 0;
+      return;
+    }
+
+    const { x, y } = pointerCoords(e);
+    const dx = x - replyGesture.startX;
+    const dy = y - replyGesture.startY;
+
+    if (shouldTriggerReplySwipe(dx, dy, isOwn, replyGesture.phase)) {
+      swipeHandled = true;
+      onReply?.(messageId);
+      if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+        navigator.vibrate(12);
+      }
+    }
+
+    replyGesture = null;
+    replyDragPx = 0;
+  }
+
+  /** Non-passive `touchmove` so horizontal reply swipes do not bubble to tab navigation. */
+  function replySwipeTouchMove(node: HTMLElement) {
+    const onMove = (e: TouchEvent) => handleSwipeReply(e);
+    node.addEventListener('touchmove', onMove, { passive: false });
+    return {
+      destroy() {
+        node.removeEventListener('touchmove', onMove);
+      },
+    };
+  }
+
+  let replyHintOpacity = $derived(replySwipeProgress(replyDragPx, isOwn));
 
   function cancelLongPress() {
     if (longPressTimer) {
@@ -384,39 +459,59 @@
     </button>
 
     <div class="relative w-fit max-w-full">
+      {#if replyDragPx !== 0 && onReply}
+        <div
+          class="pointer-events-none absolute top-1/2 z-20 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-amber-400/90 text-cn-dark shadow-md transition-opacity
+          {isOwn ? 'right-full mr-1.5' : 'left-full ml-1.5'}"
+          style:opacity={replyHintOpacity}
+          aria-hidden="true"
+        >
+          <CornerDownRight size={18} class={isOwn ? 'rotate-180' : ''} />
+        </div>
+      {/if}
+
       <!-- Bulle de message principale -->
       <div
         role="button"
-      tabindex="0"
-      onclick={handleBubbleClick}
-      onpointerdown={beginLongPress}
-      onpointermove={handleSwipeReply}
-      onpointerup={cancelLongPress}
-      onpointerleave={cancelLongPress}
-      onpointercancel={cancelLongPress}
-      oncontextmenu={(e) => {
-        e.preventDefault();
-        showMobileActions = true;
-      }}
-      onkeydown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
+        tabindex="0"
+        data-swipe-reply
+        data-swipe-nav-ignore
+        use:replySwipeTouchMove
+        onclick={handleBubbleClick}
+        onpointerdown={beginLongPress}
+        onpointermove={handleSwipeReply}
+        onpointerup={endSwipeReply}
+        onpointerleave={endSwipeReply}
+        onpointercancel={endSwipeReply}
+        ontouchstart={beginLongPress}
+        ontouchend={endSwipeReply}
+        ontouchcancel={endSwipeReply}
+        oncontextmenu={(e) => {
           e.preventDefault();
-          toggleInfo(e as unknown as MouseEvent);
-        }
-      }}
-      class="{isMediaOnly ? 'p-0' : 'px-4 py-2.5'} w-fit max-w-full cursor-pointer {isMediaOnly
-        ? ''
-        : getBubbleShapeClass(groupPosition, isOwn)} transition-shadow duration-200
-      {isMediaOnly
-        ? ''
-        : isOwn
-          ? 'bg-gradient-to-br from-amber-400 to-amber-500 text-cn-dark shadow-md shadow-amber-500/20 hover:shadow-lg hover:shadow-amber-500/30'
-          : 'bg-white/70 dark:bg-black/40 backdrop-blur-xl border border-black/5 dark:border-white/10 text-text-main shadow-sm hover:shadow-md'}
-      {isHighlighted
-        ? 'ring-2 ring-amber-500/80 ring-offset-2 ring-offset-transparent animate-pulse'
-        : ''}
-      {shouldAnimate ? 'animate-rise-in' : ''}"
-    >
+          showMobileActions = true;
+        }}
+        onkeydown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            toggleInfo(e as unknown as MouseEvent);
+          }
+        }}
+        style:transform={replyDragPx !== 0 ? `translate3d(${replyDragPx}px, 0, 0)` : undefined}
+        class="{isMediaOnly ? 'p-0' : 'px-4 py-2.5'} w-fit max-w-full cursor-pointer touch-pan-y {isMediaOnly
+          ? ''
+          : getBubbleShapeClass(groupPosition, isOwn)} {replyDragPx !== 0
+          ? 'message-swipe-reply-active'
+          : 'transition-shadow duration-200'}
+        {isMediaOnly
+          ? ''
+          : isOwn
+            ? 'bg-gradient-to-br from-amber-400 to-amber-500 text-cn-dark shadow-md shadow-amber-500/20 hover:shadow-lg hover:shadow-amber-500/30'
+            : 'bg-white/70 dark:bg-black/40 backdrop-blur-xl border border-black/5 dark:border-white/10 text-text-main shadow-sm hover:shadow-md'}
+        {isHighlighted
+          ? 'ring-2 ring-amber-500/80 ring-offset-2 ring-offset-transparent animate-pulse'
+          : ''}
+        {shouldAnimate ? 'animate-rise-in' : ''}"
+      >
       {#if effectiveReplyTo}
         <MessageReplyQuote
           replyId={effectiveReplyTo.id}

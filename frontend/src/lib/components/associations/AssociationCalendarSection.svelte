@@ -595,12 +595,13 @@
 
 {#if modalOpen}
   <div
-    class="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-4"
+    data-keyboard-aware-overlay
+    class="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40"
     role="presentation"
     onclick={(e) => e.target === e.currentTarget && closeModal()}
   >
     <div
-      class="w-full max-w-lg rounded-2xl border border-cn-border bg-[var(--cn-surface)] shadow-xl p-6 space-y-4 max-h-[90vh] overflow-y-auto"
+      class="keyboard-aware-modal-panel w-full max-w-lg rounded-t-3xl sm:rounded-2xl border border-cn-border bg-[var(--cn-surface)] shadow-xl p-6 space-y-4 max-h-[90vh] overflow-y-auto"
       role="dialog"
       aria-modal="true"
       aria-labelledby="cal-modal-title"

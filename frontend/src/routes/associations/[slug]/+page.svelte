@@ -159,7 +159,7 @@
       class="sticky top-0 z-30 -mx-4 px-4 py-3 bg-[var(--cn-bg)]/95 backdrop-blur-md border-y border-cn-border/80 sm:border sm:rounded-2xl sm:mx-0"
       aria-label="Sections de l'association"
     >
-      <div class="flex gap-2 overflow-x-auto pb-1">
+      <div class="flex gap-2 overflow-x-auto pb-1" data-swipe-nav-ignore>
         <button
           type="button"
           onclick={() => (activeSection = 'about')}

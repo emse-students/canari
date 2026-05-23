@@ -1,3 +1,7 @@
+import type { IncomingDeliveryMeta } from './incomingDelivery';
+
+export type { IncomingDeliveryMeta };
+
 /** Row from `GET /api/mls/users/:id/groups` (includes successor routing when soft-deleted). */
 export type UserGroupRow = {
   groupId: string;
@@ -240,7 +244,8 @@ export interface IMlsService {
       groupId?: string,
       isWelcome?: boolean,
       ratchetTreeBytes?: Uint8Array,
-      isCommit?: boolean
+      isCommit?: boolean,
+      deliveryMeta?: IncomingDeliveryMeta
     ) => Promise<boolean>
   ): void;
   /** Registers a callback invoked when the WebSocket connection is lost. */

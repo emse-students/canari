@@ -9,6 +9,7 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9
 
 const CHUNK_DIR = path.join(process.cwd(), 'chunks_temp');
 const MEDIA_META_FILE = path.join(process.cwd(), 'media_metadata.json');
+/** Encrypted chat media blobs are purged after this idle period. Public assets are never purged. */
 const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const DEFAULT_SWEEP_MS = 60 * 60 * 1000;
 
@@ -121,7 +122,7 @@ export class MediaService {
     await this.purgeExpiredMedia();
 
     const entry = this.meta.items[mediaId];
-    if (!entry?.publicAsset || !entry.contentType) {
+    if (!this.isPublicAssetEntry(entry) || !entry.contentType) {
       return { status: 'not_found' };
     }
     if (entry.purgedAt && entry.purgeReason === 'retention_expired') {
@@ -277,6 +278,9 @@ export class MediaService {
         }
       }
       this.meta.items = items;
+      if (this.backfillPublicAssetFlags()) {
+        void this.persistMetadata();
+      }
     } catch (error) {
       this.logger.warn(
         `Unable to read media metadata index: ${error instanceof Error ? error.message : String(error)}`
@@ -286,6 +290,35 @@ export class MediaService {
 
   private async persistMetadata() {
     await fs.writeJson(MEDIA_META_FILE, { items: { ...this.meta.items } }, { spaces: 2 });
+  }
+
+  /** True for association logos and other plaintext images exempt from the 30-day retention sweep. */
+  private isPublicAssetEntry(entry: MediaMetaEntry | undefined): boolean {
+    if (!entry) return false;
+    if (entry.publicAsset) return true;
+    const ct = entry.contentType?.toLowerCase() ?? '';
+    return ct.startsWith('image/');
+  }
+
+  /**
+   * Marks legacy image rows as public (e.g. uploaded before `publicAsset` was persisted).
+   * Prevents association logos from being deleted by the retention job.
+   */
+  private backfillPublicAssetFlags(): boolean {
+    let changed = false;
+    for (const [mediaId, entry] of Object.entries(this.meta.items)) {
+      if (entry.purgedAt || entry.publicAsset) continue;
+      if (!this.isLikelyPublicImageEntry(entry)) continue;
+      entry.publicAsset = true;
+      changed = true;
+      this.logger.log(`Backfilled publicAsset flag for ${mediaId}`);
+    }
+    return changed;
+  }
+
+  private isLikelyPublicImageEntry(entry: MediaMetaEntry): boolean {
+    const ct = entry.contentType?.toLowerCase() ?? '';
+    return ct.startsWith('image/');
   }
 
   private setAccess(mediaId: string, now: number) {
@@ -304,7 +337,7 @@ export class MediaService {
 
     for (const [mediaId, entry] of Object.entries(this.meta.items)) {
       if (entry.purgedAt) continue;
-      if (entry.publicAsset) continue;
+      if (this.isPublicAssetEntry(entry)) continue;
       if (entry.lastAccessAt >= cutoff) continue;
 
       try {

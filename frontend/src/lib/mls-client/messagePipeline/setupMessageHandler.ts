@@ -267,7 +267,15 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   }
 
   mlsService.onMessage(
-    async (sender, content, groupId, isWelcome, ratchetTreeBytes, isCommit): Promise<boolean> => {
+    async (
+      sender,
+      content,
+      groupId,
+      isWelcome,
+      ratchetTreeBytes,
+      isCommit,
+      deliveryMeta
+    ): Promise<boolean> => {
       log(
         `Message de ${sender} (${content.length} octets) - Grp: ${groupId} (isWelcome: ${!!isWelcome}, isCommit: ${!!isCommit})`
       );
@@ -531,7 +539,11 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             );
 
             if (msg?.text || msg?.reply || msg?.media) {
-              const envelope = appMsgToEnvelope(msg);
+              const fallbackTs =
+                deliveryMeta?.queuedCreatedAt !== undefined
+                  ? new Date(deliveryMeta.queuedCreatedAt)
+                  : undefined;
+              const envelope = appMsgToEnvelope(msg, fallbackTs);
               if (envelope) {
                 await addMessageToChat(senderNorm, envelope.content, convoKey, envelope.options);
               }

@@ -526,7 +526,7 @@
 
   <!-- Floating Save Bar -->
   <div
-    class="fixed bottom-0 inset-x-0 md:left-[4.5rem] z-50 pointer-events-none pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-5"
+    class="keyboard-aware-bottom fixed bottom-0 inset-x-0 md:left-[4.5rem] z-50 pointer-events-none pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-5"
   >
     <div class="{contentMaxWidth} mx-auto px-3 sm:px-6">
       <div

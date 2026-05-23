@@ -59,7 +59,8 @@
     ></button>
 
     <div
-      class="absolute inset-x-0 bottom-[max(4.5rem,env(safe-area-inset-bottom)+3rem)] flex items-center justify-center"
+      data-keyboard-aware-actions
+      class="absolute inset-x-0 flex items-center justify-center"
       transition:fly={{ y: 24, duration: 220 }}
     >
       <div class="relative w-56 h-56">

@@ -12,6 +12,7 @@
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import type { ChatMessage, MessageReaction, Conversation } from '$lib/types';
   import type { PendingMediaFile } from '$lib/media';
+  import { getKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
 
   interface Props {
     /** The active conversation to display, or null when nothing is selected. */
@@ -88,6 +89,8 @@
     isCatchingUpMessages?: boolean;
     /** Called when in-memory groups are exhausted; should load older messages from DB. Returns true if more may be available. */
     onLoadOlderMessages?: () => Promise<boolean>;
+    /** Exposes the scrollable messages element (for programmatic scroll from messaging). */
+    onMessagesScrollEl?: (el: HTMLDivElement | null) => void;
   }
 
   let {
@@ -127,6 +130,7 @@
     isLoadingHistory = false,
     isCatchingUpMessages = false,
     onLoadOlderMessages,
+    onMessagesScrollEl,
   }: Props = $props();
 
   const INITIAL_RENDER_GROUPS = 180;
@@ -141,7 +145,9 @@
   let lastMessageCount = $state(0);
   /** First index (inclusive) of the sliding render window inside messageGroups. */
   let windowStart = $state(0);
+  /** Messages at or before this time do not play the "just received" animation. */
   let switchTime = $state(Date.now());
+  let catchupWasActive = $state(false);
   let stickyDateLabel = $state('');
   let showStickyDate = $state(false);
   let stickyDateTimer: ReturnType<typeof setTimeout> | null = null;
@@ -296,13 +302,20 @@
   $effect(() => {
     const convoKey = conversation ? `${conversation.id}-${conversation.contactName}` : '';
     const messageCount = conversation?.messages.length ?? 0;
+    const catchupActive = isLoadingHistory || isCatchingUpMessages;
 
     untrack(() => {
       if (!conversation) {
         lastConversationKey = '';
         lastMessageCount = 0;
+        catchupWasActive = false;
         return;
       }
+
+      if (catchupWasActive && !catchupActive) {
+        switchTime = Date.now();
+      }
+      catchupWasActive = catchupActive;
 
       const hasConversationChanged = convoKey !== lastConversationKey;
       const hasNewMessage = messageCount > lastMessageCount;
@@ -313,7 +326,7 @@
         hasMoreInDb = !isChannel;
         tick().then(() => requestAnimationFrame(() => scrollToBottom(false)));
         isNearBottom = true;
-      } else if (hasNewMessage && isNearBottom) {
+      } else if (hasNewMessage && isNearBottom && !catchupActive) {
         tick().then(() => scrollToBottom(true));
       }
 
@@ -333,23 +346,32 @@
     return () => mq.removeEventListener('change', apply);
   });
 
-  // Quand le clavier virtuel se ferme (viewport height augmente), si on était en bas,
-  // scroller de nouveau en bas pour éviter l'espace vide sous le dernier message.
   $effect(() => {
-    if (typeof window === 'undefined') return;
-    const vv = window.visualViewport;
-    if (!vv) return;
-    let prevHeight = vv.height;
-    const onResize = () => {
-      const newHeight = vv.height;
-      const keyboardClosed = newHeight > prevHeight;
-      prevHeight = newHeight;
-      if (keyboardClosed && isNearBottom) {
-        tick().then(() => scrollToBottom(false));
-      }
-    };
-    vv.addEventListener('resize', onResize);
-    return () => vv.removeEventListener('resize', onResize);
+    onMessagesScrollEl?.(chatContainer ?? null);
+    return () => onMessagesScrollEl?.(null);
+  });
+
+  $effect(() => {
+    if (!_composerFocused || !chatContainer) return;
+    untrack(() => {
+      tick().then(() => requestAnimationFrame(() => scrollToBottom(false)));
+    });
+  });
+
+  let keyboardWasOpen = false;
+  $effect(() => {
+    const kbOpen = getKeyboardViewport().isOpen;
+    if (!chatContainer) {
+      keyboardWasOpen = kbOpen;
+      return;
+    }
+    if (!keyboardWasOpen && kbOpen && _composerFocused && isNearBottom) {
+      tick().then(() => requestAnimationFrame(() => scrollToBottom(false)));
+    }
+    if (keyboardWasOpen && !kbOpen && isNearBottom) {
+      tick().then(() => requestAnimationFrame(() => scrollToBottom(false)));
+    }
+    keyboardWasOpen = kbOpen;
   });
 
   $effect(() => {

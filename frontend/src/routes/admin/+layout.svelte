@@ -79,7 +79,7 @@
       </div>
     </header>
 
-    <nav class="flex gap-2 overflow-x-auto pb-1" aria-label="Administration">
+    <nav class="flex gap-2 overflow-x-auto pb-1" aria-label="Administration" data-swipe-nav-ignore>
       <a
         href="/admin"
         class="shrink-0 rounded-xl px-4 py-2 text-sm font-bold transition-colors

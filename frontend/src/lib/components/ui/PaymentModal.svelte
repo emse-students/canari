@@ -101,13 +101,15 @@
 
 <!-- Backdrop -->
 <div
-  class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
-  style="padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left))"
+  data-keyboard-aware-overlay
+  class="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm"
   role="dialog"
   aria-modal="true"
   aria-label="Paiement"
 >
-  <div class="w-full max-w-md rounded-2xl border border-cn-border bg-white shadow-2xl">
+  <div
+    class="keyboard-aware-modal-panel w-full max-w-md rounded-t-3xl sm:rounded-2xl border border-cn-border bg-white shadow-2xl max-h-[min(92dvh,var(--app-viewport-height,100dvh))] overflow-y-auto"
+  >
     <!-- Header -->
     <div class="flex items-center justify-between px-6 pt-5 pb-4 border-b border-cn-border">
       <div class="flex items-center gap-2.5">

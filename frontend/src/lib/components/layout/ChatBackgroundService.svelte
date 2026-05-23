@@ -521,7 +521,8 @@
 <!-- Prompt d'enrôlement biométrique (toutes routes) -->
 {#if globalSession.showBiometricEnrollPrompt}
   <div
-    class="fixed bottom-[calc(env(safe-area-inset-bottom,0px)+1rem)] left-4 right-4 md:left-auto md:right-6 md:w-fit max-w-[90vw] z-50 p-4 rounded-[1.25rem] border border-black/5 dark:border-white/10 bg-white/95 dark:bg-black/80 backdrop-blur-2xl shadow-2xl flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4 transition-all duration-300"
+    data-keyboard-aware-toast
+    class="keyboard-aware-bottom fixed bottom-[calc(env(safe-area-inset-bottom,0px)+1rem)] left-4 right-4 md:left-auto md:right-6 md:w-fit max-w-[90vw] z-50 p-4 rounded-[1.25rem] border border-black/5 dark:border-white/10 bg-white/95 dark:bg-black/80 backdrop-blur-2xl shadow-2xl flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4 transition-all duration-300"
   >
     <div class="flex items-center gap-3 w-full sm:w-auto">
       <div

@@ -15,6 +15,8 @@ import {
 } from '$lib/mls-client';
 import { getToken } from '$lib/stores/auth';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
+import { parseQueuedCreatedAt } from '$lib/mls-client/incomingDelivery';
+import type { IncomingDeliveryMeta } from '$lib/mls-client/IMlsService';
 
 /** Queue depth above which incoming messages are batched into one UI update per conversation. */
 const BULK_CATCHUP_THRESHOLD = 3;
@@ -29,6 +31,8 @@ interface QueuedMessage {
   ratchetTreeBytes?: Uint8Array;
   /** ID from the delivery service queue — used for at-least-once ACK */
   queuedMessageId?: string;
+  /** Server queue enqueue time (ms) — timestamp fallback when `sentAt` is absent. */
+  queuedCreatedAt?: number;
   /**
    * Type discriminant for control messages persisted by the server.
    * 'group_reset' : signal hors-bande indiquant que l'arbre MLS du groupe
@@ -49,7 +53,8 @@ export class TauriMlsService implements IMlsService {
         groupId?: string,
         isWelcome?: boolean,
         ratchetTreeBytes?: Uint8Array,
-        isCommit?: boolean
+        isCommit?: boolean,
+        deliveryMeta?: IncomingDeliveryMeta
       ) => Promise<boolean>)
     | null = null;
   private disconnectCallback: (() => void) | null = null;
@@ -316,6 +321,7 @@ export class TauriMlsService implements IMlsService {
           // never race with live WebSocket messages calling messageCallback.
           for (const msg of messages as Record<string, unknown>[]) {
             const msgId = (msg.id || msg._id) as string | undefined;
+            const queuedCreatedAt = parseQueuedCreatedAt(msg.createdAt);
             const proto: string | undefined = typeof msg.proto === 'string' ? msg.proto : undefined;
             const content: string | undefined =
               typeof msg.content === 'string' ? msg.content : undefined;
@@ -332,6 +338,7 @@ export class TauriMlsService implements IMlsService {
                 isCommit: false,
                 queuedMessageId: msgId,
                 type: 'group_reset',
+                queuedCreatedAt,
               });
               continue;
             }
@@ -351,6 +358,7 @@ export class TauriMlsService implements IMlsService {
                         ? Uint8Array.from(atob(msg.ratchetTree as string), (c) => c.charCodeAt(0))
                         : undefined,
                     queuedMessageId: msgId,
+                    queuedCreatedAt,
                   });
                 }
               } catch (e) {
@@ -372,6 +380,7 @@ export class TauriMlsService implements IMlsService {
                         ? Uint8Array.from(atob(msg.ratchetTree as string), (c) => c.charCodeAt(0))
                         : undefined,
                     queuedMessageId: msgId,
+                    queuedCreatedAt,
                   });
                 }
               } catch (e) {
@@ -402,7 +411,8 @@ export class TauriMlsService implements IMlsService {
       groupId?: string,
       isWelcome?: boolean,
       ratchetTreeBytes?: Uint8Array,
-      isCommit?: boolean
+      isCommit?: boolean,
+      deliveryMeta?: IncomingDeliveryMeta
     ) => Promise<boolean>
   ) {
     this.messageCallback = callback;
@@ -519,13 +529,18 @@ export class TauriMlsService implements IMlsService {
             `[QUEUE] ${msg.isWelcome ? 'Welcome' : msg.isCommit ? 'Commit' : 'Msg'} groupe=${groupId ?? '?'} sender=${msg.senderId}${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`
           );
 
+          const deliveryMeta: IncomingDeliveryMeta | undefined =
+            msg.queuedCreatedAt !== undefined
+              ? { queuedCreatedAt: msg.queuedCreatedAt }
+              : undefined;
           const cbResult = await this.messageCallback(
             msg.senderId,
             msg.ciphertext,
             msg.groupId,
             msg.isWelcome,
             msg.ratchetTreeBytes,
-            msg.isCommit
+            msg.isCommit,
+            deliveryMeta
           );
           console.log(
             `[QUEUE] → ${cbResult} (groupe=${groupId ?? '?'})${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`

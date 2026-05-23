@@ -9,6 +9,7 @@ target
 **/.kotlin
 src/lib/proto
 src/lib/wasm
+src-tauri/tauri.conf.json
 *.tsbuildinfo
 .env
 .env.local

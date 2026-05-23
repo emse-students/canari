@@ -4,20 +4,31 @@ on:
   push:
     branches: [main]
   workflow_dispatch: # Permet déclenchement manuel
+  # GITHUB_TOKEN pushes from "Bump version on release" do not trigger `on: push` workflows.
+  workflow_run:
+    workflows: ['Bump version on release']
+    types: [completed]
+    branches: [main]
 
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ${{ github.repository }}
   DOMAIN: canari-emse.fr
   DEPLOY_PATH: /home/canari/canari
+  # After a version-bump push, checkout `main` tip (workflow_run SHA is the pre-push commit).
+  CHECKOUT_REF: ${{ github.event_name == 'workflow_run' && 'main' || github.sha }}
 
 jobs:
   run-ci:
     name: Run CI Checks
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     uses: ./.github/workflows/ci.yml
+    with:
+      git_ref: ${{ github.event_name == 'workflow_run' && 'main' || '' }}
 
   detect-changed-services:
     name: Detect Changed Services
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.detect.outputs.matrix }}
@@ -28,6 +39,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ env.CHECKOUT_REF }}
           fetch-depth: 0
 
       - name: Detect modified services
@@ -68,6 +80,15 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "Manual dispatch detected: building all services."
             CHANGED_SERVICES=("${ALL_SERVICES[@]}")
+          elif [ "${{ github.event_name }}" = "workflow_run" ]; then
+            echo "Version bump workflow completed — redeploying core-service and frontend."
+            LAST_MSG="$(git log -1 --pretty=%s)"
+            if echo "$LAST_MSG" | grep -qE '^chore: bump version to '; then
+              add_service core-service
+              add_service frontend
+            else
+              echo "Latest main commit is not a version bump (${LAST_MSG}); skipping rebuild."
+            fi
           else
             BEFORE_SHA="${{ github.event.before }}"
             HEAD_SHA="${{ github.sha }}"
@@ -171,10 +192,14 @@ jobs:
   build-frontend:
     name: Build Frontend
     needs: detect-changed-services
-    if: needs.detect-changed-services.outputs.frontend_changed == 'true'
+    if: |
+      (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') &&
+      needs.detect-changed-services.outputs.frontend_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -273,6 +298,7 @@ jobs:
     needs: [detect-changed-services, build-frontend]
     if: |
       always() &&
+      (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') &&
       needs.detect-changed-services.result == 'success' &&
       needs.detect-changed-services.outputs.any_changed == 'true' &&
       (needs.build-frontend.result == 'success' || needs.build-frontend.result == 'skipped')
@@ -283,6 +309,8 @@ jobs:
       matrix: ${{ fromJson(needs.detect-changed-services.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
 
       - name: Download frontend build artifact
         if: matrix.name == 'frontend'
@@ -331,7 +359,8 @@ jobs:
     needs: [run-ci, detect-changed-services, build-docker-images]
     if: |
       always() &&
-      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_run' || github.ref == 'refs/heads/main') &&
+      (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') &&
       needs.run-ci.result == 'success' &&
       needs.detect-changed-services.result == 'success' &&
       (needs.build-docker-images.result == 'success' || needs.build-docker-images.result == 'skipped')
@@ -343,6 +372,8 @@ jobs:
       url: https://${{ env.DOMAIN }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
 
       - name: Log deployment start
         run: |

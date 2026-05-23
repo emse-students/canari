@@ -234,8 +234,8 @@
 {#if isOpen}
   <div
     use:portal
-    class="fixed inset-0 z-[190] pointer-events-none flex items-center justify-center"
-    style="padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left))"
+    data-keyboard-aware-overlay
+    class="fixed inset-0 z-[190] pointer-events-none flex items-end sm:items-center justify-center"
   >
     <!-- Overlay Assombri -->
     <button
@@ -247,7 +247,7 @@
 
     <!-- Fenêtre Modale -->
     <section
-      class="relative pointer-events-auto w-full md:w-[36rem] max-h-[92dvh] overflow-y-auto bg-white/90 dark:bg-[#151B2C]/95 backdrop-blur-2xl border border-black/5 dark:border-white/10 rounded-3xl shadow-2xl p-6 md:p-8 flex flex-col gap-6"
+      class="keyboard-aware-modal-panel relative pointer-events-auto w-full md:w-[36rem] max-h-[92dvh] overflow-y-auto bg-white/90 dark:bg-[#151B2C]/95 backdrop-blur-2xl border border-black/5 dark:border-white/10 rounded-t-3xl sm:rounded-3xl shadow-2xl p-6 md:p-8 flex flex-col gap-6"
       transition:fly={{ y: 20, duration: 300, easing: (t) => t * (2 - t) }}
     >
       <!-- En-tête -->

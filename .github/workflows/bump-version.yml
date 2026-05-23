@@ -1,3 +1,5 @@
+# Pushes to main use GITHUB_TOKEN and do not trigger other workflows on `push`.
+# Production CD is started via `workflow_run` in cd.yml after this workflow completes.
 name: Bump version on release
 
 on:
@@ -38,6 +40,7 @@ jobs:
         run: bash scripts/bump-app-version.sh "${{ steps.version.outputs.version }}"
 
       - name: Commit and push to main
+        id: push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -50,9 +53,10 @@ jobs:
           shopt -u nullglob
           if git diff --cached --quiet; then
             echo "No version changes (already at ${{ steps.version.outputs.version }})"
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # Never add [skip ci] here — CD must rebuild and redeploy so /api/version and the
-          # web bundle reflect the new semver (otherwise running containers keep the old one).
           git commit -m "chore: bump version to ${{ steps.version.outputs.version }}"
           git push origin HEAD:main
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
+          echo "Pushed version bump; CD will run via workflow_run trigger."

@@ -10,10 +10,22 @@
   import BottomNav from '$lib/components/navigation/BottomNav.svelte';
   import LogsPanel from '$lib/components/dev/LogsPanel.svelte';
   import { page } from '$app/state';
-  import { APP_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
   import { initHistoryOverlayStack, drainHistoryOverlayStack } from '$lib/utils/historyOverlayStack';
   import { refreshAppVersionCheck } from '$lib/stores/appVersionCheck.svelte';
   import AppUpdateModal from '$lib/components/shared/AppUpdateModal.svelte';
+  import { getKeyboardViewport, initKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
+  import {
+    classifySwipeRelease,
+    createSwipeNavGestureState,
+    isSwipeNavActive,
+    shouldIgnoreSwipeTarget,
+    swipeDragResistancePx,
+    swipeNavTargetHref,
+    swipeNavTransitionMs,
+    updateSwipeNavGesture,
+    type SwipeNavDirection,
+    type SwipeNavGestureState,
+  } from '$lib/utils/swipeNavigation';
 
   // NOUVEAUX IMPORTS POUR LE PUSH :
   import { getStatusLog, globalSession, globalConvs } from '$lib/stores/globalChatSingleton.svelte';
@@ -22,8 +34,6 @@
   let { children } = $props();
 
   const pathname = $derived(page.url.pathname);
-  const activePlaceId = $derived(resolveActivePlaceId(pathname));
-
   const isLoginPage = $derived(pathname === '/login' || pathname.startsWith('/legal'));
 
   // Hide BottomNav and remove its padding from the composer when a conversation
@@ -40,18 +50,9 @@
 
   // ── Logs panel (global — fonctionne sur toutes les routes) ──────────────────
   let showLogs = $state(false);
-  let isKeyboardOpen = $state(false);
+  const keyboardViewport = $derived(getKeyboardViewport());
+  const isKeyboardOpen = $derived(keyboardViewport.isOpen);
   const statusLog = $derived(getStatusLog());
-
-  function keyboardOpenThresholdPx(): number {
-    const ua = navigator.userAgent.toLowerCase();
-    const isIos = /iphone|ipad|ipod/.test(ua);
-    // iOS : clavier flottant ou split → delta plus petit.
-    if (isIos) return 100;
-    // Android (phone + tablette) : seuil conservateur pour éviter les faux positifs
-    // au changement d'orientation (qui réduit innerHeight temporairement).
-    return 160;
-  }
 
   beforeNavigate(() => {
     drainHistoryOverlayStack();
@@ -59,6 +60,7 @@
 
   onMount(() => {
     const teardownHistory = initHistoryOverlayStack();
+    const teardownKeyboard = initKeyboardViewport();
 
     // Redirige console.log/warn/error vers tauri-plugin-log → adb logcat sur Android.
     if (typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__) {
@@ -73,54 +75,13 @@
       showLogs = !showLogs;
     };
 
-    // Hauteur de référence pour la détection du clavier.
-    // Sur Android avec adjustResize (mode Tauri), window.innerHeight ET visualViewport.height
-    // diminuent ensemble quand le clavier s'ouvre → delta naïf = 0 → isKeyboardOpen = false.
-    // Solution : on mémorise la hauteur maximale observée en dehors du clavier (baseline)
-    // et on compare visualViewport.height à cette baseline.
-    let baselineHeight = window.innerHeight;
-
-    const updateViewportHeight = () => {
-      const vv = window.visualViewport;
-      const winH = window.innerHeight;
-      const height = vv?.height ?? winH;
-
-      document.documentElement.style.setProperty('--app-viewport-height', `${height}px`);
-
-      // Fonctionne en adjustPan (winH stable, height drop) ET adjustResize (les deux drop
-      // depuis la baseline) : on prend le maximum des deux deltas.
-      const delta = Math.max(baselineHeight - height, winH - height);
-      isKeyboardOpen = delta > keyboardOpenThresholdPx();
-
-      // Mise à jour de la baseline uniquement quand le clavier n'est pas ouvert,
-      // pour qu'elle reflète toujours la vraie hauteur maximale disponible.
-      if (!isKeyboardOpen) baselineHeight = Math.max(baselineHeight, winH);
-    };
-
-    // Réinitialiser la baseline après un changement d'orientation, le temps que la nouvelle
-    // hauteur se stabilise (sinon l'ancienne baseline déclenche un faux positif clavier).
-    const handleOrientationChange = () => {
-      setTimeout(() => {
-        baselineHeight = window.innerHeight;
-        updateViewportHeight();
-      }, 400);
-    };
-
     window.addEventListener('canari:toggle-logs', handler);
-    updateViewportHeight();
-    window.addEventListener('resize', updateViewportHeight);
-    window.addEventListener('orientationchange', handleOrientationChange);
-    window.visualViewport?.addEventListener('resize', updateViewportHeight);
-    window.visualViewport?.addEventListener('scroll', updateViewportHeight);
 
     return () => {
       teardownHistory();
+      teardownKeyboard();
       window.removeEventListener('focus', onFocus);
       window.removeEventListener('canari:toggle-logs', handler);
-      window.removeEventListener('resize', updateViewportHeight);
-      window.removeEventListener('orientationchange', handleOrientationChange);
-      window.visualViewport?.removeEventListener('resize', updateViewportHeight);
-      window.visualViewport?.removeEventListener('scroll', updateViewportHeight);
     };
   });
 
@@ -150,26 +111,136 @@
 
 
   // ── Swipe navigation (mobile uniquement) ───────────────────────────────────
-  let touchStartX = 0;
-  let touchStartY = 0;
+  let pageScrollWrap = $state<HTMLDivElement | null>(null);
+  let swipeGesture = $state<SwipeNavGestureState | null>(null);
+  let swipeEnterClass = $state('');
+
+  function swipeNavContext() {
+    return {
+      pathname,
+      mobileConvoOpen: isMobileConvoOpen,
+      keyboardOpen: isKeyboardOpen,
+    };
+  }
+
+  function clearSwipeTransform(el: HTMLDivElement | null) {
+    if (!el) return;
+    el.style.removeProperty('transform');
+    el.style.removeProperty('transition');
+    el.classList.remove(
+      'swipe-nav-dragging',
+      'swipe-nav-exit-left',
+      'swipe-nav-exit-right',
+      'swipe-nav-enter-left',
+      'swipe-nav-enter-right'
+    );
+  }
 
   function handleTouchStart(e: TouchEvent) {
-    touchStartX = e.touches[0].clientX;
-    touchStartY = e.touches[0].clientY;
+    if (!isSwipeNavActive(swipeNavContext())) return;
+    if (shouldIgnoreSwipeTarget(e.target)) {
+      swipeGesture = { startX: 0, startY: 0, phase: 'ignored', dragPx: 0 };
+      return;
+    }
+    swipeGesture = createSwipeNavGestureState(e.touches[0].clientX, e.touches[0].clientY);
+  }
+
+  function handleTouchMove(e: TouchEvent) {
+    if (!swipeGesture || swipeGesture.phase === 'ignored' || !pageScrollWrap) return;
+    if (!isSwipeNavActive(swipeNavContext())) return;
+
+    const updated = updateSwipeNavGesture(
+      swipeGesture,
+      e.touches[0].clientX,
+      e.touches[0].clientY
+    );
+    swipeGesture = updated;
+
+    if (updated.phase !== 'horizontal') return;
+
+    e.preventDefault();
+    const canNext = swipeNavTargetHref(pathname, 'next') !== null;
+    const canPrev = swipeNavTargetHref(pathname, 'prev') !== null;
+    const offset = swipeDragResistancePx(updated.dragPx, null, canNext, canPrev);
+    pageScrollWrap.classList.add('swipe-nav-dragging');
+    pageScrollWrap.style.transform = `translate3d(${offset}px, 0, 0)`;
+  }
+
+  function snapSwipeBack() {
+    if (!pageScrollWrap) return;
+    pageScrollWrap.style.transition = `transform ${swipeNavTransitionMs}ms ease-out`;
+    pageScrollWrap.style.transform = 'translate3d(0, 0, 0)';
+    window.setTimeout(() => clearSwipeTransform(pageScrollWrap), swipeNavTransitionMs);
+  }
+
+  async function commitSwipeNav(direction: SwipeNavDirection) {
+    const href = swipeNavTargetHref(pathname, direction);
+    if (!href || !pageScrollWrap) {
+      snapSwipeBack();
+      return;
+    }
+
+    const exitClass = direction === 'next' ? 'swipe-nav-exit-left' : 'swipe-nav-exit-right';
+    swipeEnterClass = direction === 'next' ? 'swipe-nav-enter-right' : 'swipe-nav-enter-left';
+
+    pageScrollWrap.classList.remove('swipe-nav-dragging');
+    pageScrollWrap.style.removeProperty('transform');
+    pageScrollWrap.style.removeProperty('transition');
+    pageScrollWrap.classList.add(exitClass);
+
+    await new Promise((r) => setTimeout(r, swipeNavTransitionMs));
+    clearSwipeTransform(pageScrollWrap);
+    void goto(href);
   }
 
   function handleTouchEnd(e: TouchEvent) {
-    const dx = e.changedTouches[0].clientX - touchStartX;
-    const dy = e.changedTouches[0].clientY - touchStartY;
-    // Seuil : 60px minimum, et plus horizontal que vertical
-    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
-    const currentIndex = APP_PLACES.findIndex((p) => p.id === activePlaceId);
-    if (currentIndex === -1) return;
-    if (dx < 0 && currentIndex < APP_PLACES.length - 1) {
-      void goto(APP_PLACES[currentIndex + 1].href);
-    } else if (dx > 0 && currentIndex > 0) {
-      void goto(APP_PLACES[currentIndex - 1].href);
+    if (!swipeGesture || swipeGesture.phase === 'ignored') {
+      swipeGesture = null;
+      return;
     }
+
+    const dx = e.changedTouches[0].clientX - swipeGesture.startX;
+    const dy = e.changedTouches[0].clientY - swipeGesture.startY;
+    const direction = classifySwipeRelease(dx, dy, swipeGesture.phase);
+    swipeGesture = null;
+
+    if (!pageScrollWrap) return;
+    pageScrollWrap.classList.remove('swipe-nav-dragging');
+
+    if (!isSwipeNavActive(swipeNavContext()) || !direction) {
+      snapSwipeBack();
+      return;
+    }
+
+    void commitSwipeNav(direction);
+  }
+
+  function handleTouchCancel() {
+    swipeGesture = null;
+    snapSwipeBack();
+  }
+
+  $effect(() => {
+    void pathname;
+    if (!swipeEnterClass || !pageScrollWrap) return;
+    const cls = swipeEnterClass;
+    pageScrollWrap.classList.add(cls);
+    const timer = window.setTimeout(() => {
+      pageScrollWrap?.classList.remove(cls);
+      swipeEnterClass = '';
+    }, swipeNavTransitionMs);
+    return () => window.clearTimeout(timer);
+  });
+
+  /** `touchmove` must be non-passive so horizontal lock can call `preventDefault`. */
+  function swipeNavTouchMove(node: HTMLElement) {
+    const onMove = (e: TouchEvent) => handleTouchMove(e);
+    node.addEventListener('touchmove', onMove, { passive: false });
+    return {
+      destroy() {
+        node.removeEventListener('touchmove', onMove);
+      },
+    };
   }
 </script>
 
@@ -177,8 +248,10 @@
 
 <div
   role="presentation"
+  use:swipeNavTouchMove
   ontouchstart={handleTouchStart}
   ontouchend={handleTouchEnd}
+  ontouchcancel={handleTouchCancel}
   class="flex h-[var(--app-viewport-height,100dvh)] w-screen overflow-hidden pt-[env(safe-area-inset-top)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]"
 >
   <ChatBackgroundService />
@@ -197,6 +270,7 @@
     <main class="relative flex-1 overflow-hidden">
       <BackgroundBlobs />
       <div
+        bind:this={pageScrollWrap}
         class="page-scroll-wrap absolute inset-0 overflow-y-auto pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-0"
       >
         {@render children?.()}

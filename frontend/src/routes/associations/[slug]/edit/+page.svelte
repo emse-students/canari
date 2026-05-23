@@ -491,6 +491,7 @@
 
     <!-- Section tabs -->
     <nav
+      data-swipe-nav-ignore
       class="sticky top-0 z-30 -mx-4 px-4 py-3 bg-[var(--cn-bg)]/95 backdrop-blur-md border-y border-cn-border/80 sm:border sm:rounded-2xl sm:mx-0"
       aria-label="Sections édition"
     >
