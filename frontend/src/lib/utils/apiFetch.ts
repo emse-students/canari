@@ -27,8 +27,13 @@ export async function apiFetch(url: string, init: ApiFetchOptions = {}): Promise
     console.warn(`[API] getToken failed for ${method} ${logUrl} — proceeding without auth`);
   }
 
+  // Do not set a default Content-Type for FormData/Blob bodies — the browser must
+  // generate the correct multipart boundary (or octet-stream) automatically.
+  // Forcing application/json on those requests causes the NestJS JSON body-parser
+  // to intercept the binary payload and reject it with 413.
+  const needsJsonContentType = !(init.body instanceof FormData) && !(init.body instanceof Blob);
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    ...(needsJsonContentType && { 'Content-Type': 'application/json' }),
     ...init.headers,
   };
 
