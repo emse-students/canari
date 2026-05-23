@@ -94,6 +94,53 @@ export async function exportSubmissions(id: string): Promise<Blob> {
   if (!res.ok) throw new Error('Failed to export submissions');
   return res.blob();
 }
+/** A submission awaiting cash payment validation. */
+export interface PendingCashSubmission {
+  id: string;
+  formId: string;
+  userId: string;
+  email: string | null;
+  answers: Record<string, unknown>;
+  totalPaid: number;
+  paymentStatus: string;
+  createdAt: string;
+}
+
+/** Lists submissions awaiting cash validation for a form (requires form owner or MANAGE_FORMS). */
+export async function listPendingCashSubmissions(formId: string): Promise<PendingCashSubmission[]> {
+  const res = await request(
+    `${socialUrl()}/api/forms/${encodeURIComponent(formId)}/submissions/pending-cash`
+  );
+  if (!res.ok) throw new Error('Failed to fetch pending cash submissions');
+  return res.json();
+}
+
+/** Validates a cash payment for a submission (requires form owner or MANAGE_FORMS). */
+export async function validateCashSubmission(
+  formId: string,
+  submissionId: string
+): Promise<{ ok: boolean }> {
+  const res = await request(
+    `${socialUrl()}/api/forms/${encodeURIComponent(formId)}/submissions/${encodeURIComponent(submissionId)}/validate-cash`,
+    { method: 'POST' }
+  );
+  if (!res.ok) throw new Error('Validation failed');
+  return res.json();
+}
+
+/** Cancels a pending cash submission (requires form owner or MANAGE_FORMS). */
+export async function cancelCashSubmission(
+  formId: string,
+  submissionId: string
+): Promise<{ ok: boolean }> {
+  const res = await request(
+    `${socialUrl()}/api/forms/${encodeURIComponent(formId)}/submissions/${encodeURIComponent(submissionId)}/cancel-cash`,
+    { method: 'POST' }
+  );
+  if (!res.ok) throw new Error('Cancellation failed');
+  return res.json();
+}
+
 export async function submitForm(
   id: string,
   payload: {

@@ -81,58 +81,88 @@ export class FormsController {
     return this.service.submit(id, { ...dto, userId: xUserId });
   }
 
-  /** Returns all submissions for the specified form. */
+  /** Returns all submissions for the specified form. Requires form owner or MANAGE_FORMS flag. */
+  @UseGuards(NginxAuthGuard)
   @Get(':id/submissions')
-  getSubmissions(@Param('id') id: string) {
+  async getSubmissions(
+    @Param('id') id: string,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    await this.service.assertFormManager(id, xUserId, ga === 'true');
     return this.service.getSubmissions(id);
   }
 
-  /** Returns a single submission by its ID. */
+  /** Returns a single submission by its ID. Requires the submitter or a form manager. */
+  @UseGuards(NginxAuthGuard)
   @Get('submissions/:submissionId')
-  getSubmissionById(@Param('submissionId') submissionId: string) {
+  async getSubmissionById(
+    @Param('submissionId') submissionId: string,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    await this.service.assertSubmissionAccess(submissionId, xUserId, ga === 'true');
     return this.service.getSubmissionById(submissionId);
   }
 
-  /** Marks a submission as paid, optionally linking a Stripe session ID. */
+  /** Marks a submission as paid after Stripe redirect. Requires the submitter or a form manager. */
+  @UseGuards(NginxAuthGuard)
   @Post('submissions/:submissionId/mark-paid')
-  markPaid(@Param('submissionId') submissionId: string, @Body() body: { sessionId?: string }) {
-    return this.service.markPaid(submissionId, body.sessionId);
+  markPaid(
+    @Param('submissionId') submissionId: string,
+    @Body() body: { sessionId?: string },
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    return this.service.markPaid(submissionId, body.sessionId, xUserId, ga === 'true');
   }
 
-  /** Cancels a pending submission. */
+  /** Cancels a pending submission. Requires the submitter or a form manager. */
+  @UseGuards(NginxAuthGuard)
   @Post('submissions/:submissionId/cancel')
-  cancelSubmission(@Param('submissionId') submissionId: string) {
-    return this.service.cancelSubmission(submissionId);
+  cancelSubmission(
+    @Param('submissionId') submissionId: string,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    return this.service.cancelSubmission(submissionId, xUserId, ga === 'true');
   }
 
   // ── Cash payment admin endpoints ─────────────────────────────────────────
 
-  /**
-   * Lists submissions awaiting cash validation.
-   * Access is controlled at the caller level (asso admin with MANAGE_FORMS).
-   */
+  /** Lists submissions awaiting cash validation. Requires form owner or MANAGE_FORMS flag. */
   @UseGuards(NginxAuthGuard)
   @Get(':id/submissions/pending-cash')
-  listPendingCash(@Param('id') id: string) {
-    return this.service.listPendingCash(id);
+  listPendingCash(
+    @Param('id') id: string,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    return this.service.listPendingCash(id, xUserId, ga === 'true');
   }
 
-  /** Validates a cash payment, marking it as paid and granting any configured tag. */
+  /** Validates a cash payment. Requires form owner or MANAGE_FORMS flag. */
   @UseGuards(NginxAuthGuard)
   @Post(':id/submissions/:submissionId/validate-cash')
   validateCash(
     @Param('id') id: string,
     @Param('submissionId') submissionId: string,
-    @Headers('x-user-id') userId: string
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga?: string
   ) {
-    return this.service.validateCashPayment(id, submissionId, userId);
+    return this.service.validateCashPayment(id, submissionId, userId, ga === 'true');
   }
 
-  /** Cancels a pending cash submission. */
+  /** Cancels a pending cash submission. Requires form owner or MANAGE_FORMS flag. */
   @UseGuards(NginxAuthGuard)
   @Post(':id/submissions/:submissionId/cancel-cash')
-  cancelCash(@Param('id') id: string, @Param('submissionId') submissionId: string) {
-    return this.service.cancelCashPayment(id, submissionId);
+  cancelCash(
+    @Param('id') id: string,
+    @Param('submissionId') submissionId: string,
+    @Headers('x-user-id') callerId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    return this.service.cancelCashPayment(id, submissionId, callerId, ga === 'true');
   }
 
   /** Subscribes the calling user to open-time reminders for a form. */
@@ -174,9 +204,16 @@ export class FormsController {
     };
   }
 
-  /** Exports all submissions for a form as an XLSX file download. */
+  /** Exports all submissions for a form as an XLSX file download. Requires form owner or MANAGE_FORMS flag. */
+  @UseGuards(NginxAuthGuard)
   @Get(':id/export')
-  async export(@Param('id') id: string, @Res() res: Response) {
+  async export(
+    @Param('id') id: string,
+    @Res() res: Response,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    await this.service.assertFormManager(id, xUserId, ga === 'true');
     const buffer = await this.service.exportSubmissions(id);
 
     const form = await this.service.get(id);

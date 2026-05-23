@@ -1,5 +1,5 @@
 /* eslint-disable */
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
@@ -10,6 +10,7 @@ import { CreateFormDto, SubmitFormDto } from './dto/form.dto';
 import axios from 'axios';
 import * as ExcelJS from 'exceljs';
 import { AssociationsService } from '../associations/associations.service';
+import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { resolveStripeCallbackUrl } from '../common/stripe-callback-url';
 import { UserTagService } from '../users/user-tag.service';
 import { PurchaseRecordService } from '../users/purchase-record.service';
@@ -61,6 +62,37 @@ export class FormsService {
   /** Returns a single form by ID, or null if not found. */
   async get(id: string) {
     return this.formRepo.findOne({ where: { id } });
+  }
+
+  /**
+   * Throws ForbiddenException unless the caller is the form owner, a global admin,
+   * or a member with MANAGE_FORMS flag in the form's linked association.
+   * Returns the form so callers can reuse it without a second query.
+   */
+  async assertFormManager(formId: string, userId: string, isGlobalAdmin: boolean): Promise<Form> {
+    const form = await this.formRepo.findOne({ where: { id: formId } });
+    if (!form) throw new NotFoundException('Form not found');
+    if (isGlobalAdmin || form.ownerId === userId) return form;
+    if (form.associationId) {
+      const hasFlag = await this.associationsService.callerHasFlag(
+        userId,
+        form.associationId,
+        AssociationPermissionFlag.MANAGE_FORMS,
+      );
+      if (hasFlag) return form;
+    }
+    throw new ForbiddenException('You are not allowed to manage this form');
+  }
+
+  /**
+   * Throws ForbiddenException unless the caller is the submitter
+   * or passes assertFormManager checks on the parent form.
+   */
+  async assertSubmissionAccess(submissionId: string, callerId: string, isGlobalAdmin: boolean): Promise<void> {
+    const sub = await this.submissionRepo.findOne({ where: { id: submissionId } });
+    if (!sub) throw new NotFoundException('Submission not found');
+    if (sub.userId === callerId) return;
+    await this.assertFormManager(sub.formId, callerId, isGlobalAdmin);
   }
 
   /** Returns the most recent completed (paid or free) submission for a given user on a form. */
@@ -284,10 +316,14 @@ export class FormsService {
   }
 
   /**
-   * Marks a submission as paid (called from the Stripe webhook handler).
+   * Marks a submission as paid (called from the frontend after Stripe redirect).
+   * Requires the caller to be the submitter or a form manager.
    * If the parent form has a `grantedTagName`, grants or renews the tag for the submitter.
    */
-  async markPaid(submissionId: string, sessionId?: string) {
+  async markPaid(submissionId: string, sessionId?: string, callerId?: string, isGlobalAdmin?: boolean) {
+    if (callerId) {
+      await this.assertSubmissionAccess(submissionId, callerId, isGlobalAdmin ?? false);
+    }
     const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
     if (!submission) throw new NotFoundException('Submission not found');
     submission.paymentStatus = 'paid';
@@ -332,10 +368,17 @@ export class FormsService {
     return { ok: true };
   }
 
-  /** Marks a pending submission as cancelled (called when the user abandons checkout). Never touches paid submissions. */
-  async cancelSubmission(submissionId: string) {
+  /**
+   * Marks a pending submission as cancelled.
+   * The submitter may cancel their own pending submission; form managers may cancel any.
+   * Never touches paid submissions.
+   */
+  async cancelSubmission(submissionId: string, callerId: string, isGlobalAdmin: boolean) {
     const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
     if (!submission) throw new NotFoundException('Submission not found');
+    if (submission.userId !== callerId) {
+      await this.assertFormManager(submission.formId, callerId, isGlobalAdmin);
+    }
     // Only cancel pending submissions — never touch paid ones
     if (submission.paymentStatus !== 'pending') return { ok: true };
     submission.paymentStatus = 'cancelled';
@@ -343,8 +386,9 @@ export class FormsService {
     return { ok: true };
   }
 
-  /** Lists submissions waiting for cash validation on a given form. */
-  async listPendingCash(formId: string) {
+  /** Lists submissions waiting for cash validation on a given form. Requires form manager rights. */
+  async listPendingCash(formId: string, callerId: string, isGlobalAdmin: boolean) {
+    await this.assertFormManager(formId, callerId, isGlobalAdmin);
     return this.submissionRepo.find({
       where: { formId, paymentStatus: 'pending_cash' },
       order: { createdAt: 'ASC' },
@@ -353,9 +397,10 @@ export class FormsService {
 
   /**
    * Validates a cash submission — marks as paid and grants the tag if configured.
-   * Must be called by an admin with MANAGE_FORMS permission.
+   * Requires form manager rights (form owner or MANAGE_FORMS flag).
    */
-  async validateCashPayment(formId: string, submissionId: string, validatedBy: string) {
+  async validateCashPayment(formId: string, submissionId: string, validatedBy: string, isGlobalAdmin: boolean) {
+    await this.assertFormManager(formId, validatedBy, isGlobalAdmin);
     const submission = await this.submissionRepo.findOne({ where: { id: submissionId, formId } });
     if (!submission) throw new NotFoundException('Submission not found');
     if (submission.paymentStatus !== 'pending_cash') {
@@ -403,8 +448,9 @@ export class FormsService {
     return { ok: true };
   }
 
-  /** Cancels a cash submission awaiting validation. */
-  async cancelCashPayment(formId: string, submissionId: string) {
+  /** Cancels a cash submission awaiting validation. Requires form manager rights. */
+  async cancelCashPayment(formId: string, submissionId: string, callerId: string, isGlobalAdmin: boolean) {
+    await this.assertFormManager(formId, callerId, isGlobalAdmin);
     const submission = await this.submissionRepo.findOne({ where: { id: submissionId, formId } });
     if (!submission) throw new NotFoundException('Submission not found');
     if (submission.paymentStatus !== 'pending_cash') return { ok: true };

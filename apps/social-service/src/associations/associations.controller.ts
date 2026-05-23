@@ -517,6 +517,16 @@ export class AssociationsController {
     return this.service.deleteDocument(id, docId, authorization);
   }
 
+  // ── Forms (MANAGE_FORMS flag) ────────────────────────────────────────────
+
+  /** Returns all forms linked to this association (admins with MANAGE_FORMS only). */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_FORMS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Get(':id/forms')
+  listAssociationForms(@Param('id') id: string) {
+    return this.service.listFormsByAssociation(id);
+  }
+
   // ── Cotisation tags (MANAGE_MEMBERS flag) ────────────────────────────────
 
   /** Lists active tags issued by this association (admins with MANAGE_MEMBERS only). */

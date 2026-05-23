@@ -1207,6 +1207,26 @@ export class AssociationsService {
     return { ok: true };
   }
 
+  // ── Forms ─────────────────────────────────────────────────────────────────
+
+  /** Returns all forms linked to this association, newest first (for the MANAGE_FORMS tab). */
+  async listFormsByAssociation(associationId: string) {
+    await this.findById(associationId);
+    return this.formRepo.find({
+      where: { associationId },
+      order: { createdAt: 'DESC' },
+      select: [
+        'id',
+        'title',
+        'description',
+        'basePrice',
+        'currency',
+        'allowCashPayment',
+        'createdAt',
+      ],
+    });
+  }
+
   // ── Stripe helpers ────────────────────────────────────────────────────────
 
   /** Stores the Stripe connected-account ID for an association and invalidates post-list caches. */

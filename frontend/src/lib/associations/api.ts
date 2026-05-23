@@ -713,6 +713,24 @@ export async function retryWebhookDelivery(
   );
 }
 
+// ── Forms (MANAGE_FORMS) ────────────────────────────────────────────────────
+
+/** Lean form summary returned by GET /associations/:id/forms. */
+export interface AssociationForm {
+  id: string;
+  title: string;
+  description: string | null;
+  basePrice: number;
+  currency: string;
+  allowCashPayment: boolean;
+  createdAt: string;
+}
+
+/** Returns all forms linked to an association (requires MANAGE_FORMS flag). */
+export async function listAssociationForms(associationId: string): Promise<AssociationForm[]> {
+  return request<AssociationForm[]>(`/api/associations/${encodeURIComponent(associationId)}/forms`);
+}
+
 // ── Stripe onboarding ───────────────────────────────────────────────────────
 
 export async function startStripeOnboarding(
