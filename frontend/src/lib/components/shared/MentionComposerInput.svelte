@@ -5,6 +5,7 @@
   import {
     getMentionChipFromEventTarget,
     getPlainTextSelection,
+    insertPlainTextNewline,
     composerMarkdownPreviewEnabled,
     needsMentionChipRender,
     removeMentionChipBeforeCursor,
@@ -171,6 +172,18 @@
     if (e.key === 'Backspace' && removeMentionChipBeforeCursor(editorEl!)) {
       e.preventDefault();
       emitEditorChange();
+      return;
+    }
+    if (
+      e.key === 'Enter' &&
+      !singleLine &&
+      markdownPreview &&
+      editorEl &&
+      !e.isComposing
+    ) {
+      e.preventDefault();
+      const { text, cursor } = insertPlainTextNewline(editorEl);
+      syncFromPlainText(text, cursor);
       return;
     }
     if (mention.handleKeydown(e)) return;

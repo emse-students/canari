@@ -34,11 +34,21 @@ export type MentionEditorRenderOptions = {
   markdownPreview?: boolean;
 };
 
+/** True for block-level composer nodes (headings, div/paragraph splits from the browser). */
+function isComposerBlockElement(el: HTMLElement): boolean {
+  if (el.tagName === 'DIV' || el.tagName === 'P') return true;
+  return (
+    el.classList.contains(MD_H1_CLASS) ||
+    el.classList.contains(MD_H2_CLASS) ||
+    el.classList.contains(MD_H3_CLASS)
+  );
+}
+
 /** Serializes a mention editor DOM tree to plain text with `@[uuid]` tokens. */
 export function serializeMentionEditor(root: HTMLElement): string {
   let out = '';
 
-  function walk(node: Node, isBlockChild = false): void {
+  function walkNode(node: Node): void {
     if (node.nodeType === Node.TEXT_NODE) {
       out += node.textContent ?? '';
       return;
@@ -57,20 +67,41 @@ export function serializeMentionEditor(root: HTMLElement): string {
       return;
     }
 
-    const isBlock = el.tagName === 'DIV' || el.tagName === 'P';
-    if (isBlock && isBlockChild && out.length > 0 && !out.endsWith('\n')) {
-      out += '\n';
-    }
-
     for (const child of el.childNodes) {
-      walk(child, isBlock);
+      walkNode(child);
     }
   }
 
-  for (const child of root.childNodes) {
-    walk(child, false);
+  function walkChildren(parent: Node): void {
+    const children = [...parent.childNodes];
+    for (let i = 0; i < children.length; i++) {
+      walkNode(children[i]);
+      const el = children[i];
+      const next = children[i + 1];
+      if (
+        i < children.length - 1 &&
+        el.nodeType === Node.ELEMENT_NODE &&
+        isComposerBlockElement(el as HTMLElement) &&
+        !out.endsWith('\n') &&
+        !(next.nodeType === Node.ELEMENT_NODE && (next as HTMLElement).tagName === 'BR')
+      ) {
+        out += '\n';
+      }
+    }
   }
+
+  walkChildren(root);
   return out;
+}
+
+/**
+ * Inserts a newline at the plain-text caret and returns the updated text + cursor offset.
+ */
+export function insertPlainTextNewline(root: HTMLElement): { text: string; cursor: number } {
+  const text = serializeMentionEditor(root);
+  const { start, end } = getPlainTextSelection(root);
+  const next = text.slice(0, start) + '\n' + text.slice(end);
+  return { text: next, cursor: start + 1 };
 }
 
 function createMentionChip(userId: string, label: string): HTMLSpanElement {
@@ -311,9 +342,13 @@ function locatePlainTextOffset(root: HTMLElement, target: number): { node: Node;
     }
 
     if (el.tagName === 'BR') {
-      if (remaining <= 1) {
-        const parent = el.parentNode ?? root;
-        const index = Array.from(parent.childNodes).indexOf(el);
+      const parent = el.parentNode ?? root;
+      const index = Array.from(parent.childNodes).indexOf(el);
+      if (remaining <= 0) {
+        found = { node: parent, offset: index + 1 };
+        return true;
+      }
+      if (remaining === 1) {
         found = { node: parent, offset: index };
         return true;
       }

@@ -2,8 +2,10 @@ import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { markdownStructureKey } from '$lib/utils/markdown/inlinePreview';
 import {
   composerMarkdownPreviewEnabled,
+  insertPlainTextNewline,
   renderPlainTextToMentionEditor,
   serializeMentionEditor,
+  setPlainTextSelection,
   shouldRerenderComposerDom,
 } from './mentionEditor';
 import {
@@ -61,6 +63,14 @@ describe('styled markdown DOM', () => {
   it('round-trips closed italic without duplicating delimiters', () => {
     renderPlainTextToMentionEditor(root, '*test*', { markdownPreview: true });
     expect(serializeMentionEditor(root)).toBe('*test*');
+  });
+
+  it('serializes a newline between a heading block and a sibling div', () => {
+    renderPlainTextToMentionEditor(root, '## Title', { markdownPreview: true });
+    const div = document.createElement('div');
+    div.appendChild(document.createTextNode('next'));
+    root.appendChild(div);
+    expect(serializeMentionEditor(root)).toBe('## Title\nnext');
   });
 });
 
@@ -125,6 +135,23 @@ describe('simulateComposerKeystrokes (markdown preview)', () => {
     expect(last).toBe('***a***');
     expect(last.match(/\*{4,}/)).toBeNull();
     results.forEach((r) => expect(r.serialized).toBe(r.value));
+  });
+
+  it('types on the line after a heading when Enter inserts a newline', () => {
+    let state: ComposerSimState = { ...composerSimInitialState };
+    for (const key of '## Title') {
+      ({ state } = runComposerInputCycle(root, state, key, MD));
+    }
+
+    renderPlainTextToMentionEditor(root, state.value, MD);
+    setPlainTextSelection(root, state.value.length);
+    const { text, cursor } = insertPlainTextNewline(root);
+    expect(text).toBe('## Title\n');
+    expect(cursor).toBe('## Title\n'.length);
+
+    ({ state } = runComposerInputCycle(root, { value: text, lastRendered: text, cursor }, 'a', MD));
+    expect(state.value).toBe('## Title\na');
+    expect(state.cursor).toBe('## Title\na'.length);
   });
 
   it('handles backspace removing closing delimiter', () => {
