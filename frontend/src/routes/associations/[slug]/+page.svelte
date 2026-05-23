@@ -15,7 +15,8 @@
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
-  import { Bell, BellOff, Pencil, Building2, CalendarDays, Users, ShoppingBag } from '@lucide/svelte';
+  import { Bell, BellOff, Pencil, Building2, CalendarDays, Users, ShoppingBag, Download } from '@lucide/svelte';
+  import { getInitials, generateAvatarColor } from '$lib/utils/avatar';
   import { listAssociationProducts, type AssociationProduct } from '$lib/associations/api';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import AssociationMemberRow from '$lib/components/associations/AssociationMemberRow.svelte';
@@ -80,6 +81,73 @@
     } finally {
       loading = false;
     }
+  }
+
+  /** Opens a print-ready trombinoscope PDF with association logo, name, and member photos. */
+  function handleExportTrombinoscope() {
+    if (!asso) return;
+    const win = window.open('', '_blank');
+    if (!win) return;
+
+    const logoHtml = asso.logoUrl
+      ? `<img src="${asso.logoUrl}" alt="${asso.name}" style="width:80px;height:80px;border-radius:50%;object-fit:cover;">`
+      : (() => {
+          const bg = generateAvatarColor(asso.id);
+          const initials = getInitials(asso.name);
+          return `<div style="width:80px;height:80px;border-radius:50%;background:${bg};display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:700;color:#fff;">${initials}</div>`;
+        })();
+
+    const cards = members
+      .map((m) => {
+        const name = resolvedMemberNames[m.userId] ?? m.displayName ?? m.userId;
+        const role = m.role ?? 'Membre';
+        const safeName = name.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const safeRole = role.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const bg = generateAvatarColor(m.userId);
+        const initials = getInitials(name);
+        return `<div class="card">
+  <div class="avatar-wrap">
+    <img src="/api/users/${encodeURIComponent(m.userId)}/avatar"
+         alt="${safeName}"
+         onerror="this.style.display='none';this.nextElementSibling.style.display='flex';"
+         style="width:72px;height:72px;border-radius:50%;object-fit:cover;display:block;">
+    <div class="fallback" style="display:none;width:72px;height:72px;border-radius:50%;background:${bg};align-items:center;justify-content:center;font-size:24px;font-weight:700;color:#fff;">${initials}</div>
+  </div>
+  <p class="name">${safeName}</p>
+  <p class="role">${safeRole}</p>
+</div>`;
+      })
+      .join('\n');
+
+    win.document.write(`<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>${asso.name}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; padding: 32px; background: #fff; color: #111; }
+  .header { display: flex; align-items: center; gap: 16px; margin-bottom: 32px; padding-bottom: 20px; border-bottom: 2px solid #e5e7eb; }
+  .header h1 { font-size: 26px; font-weight: 800; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 20px; }
+  .card { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; }
+  .avatar-wrap { position: relative; }
+  .name { font-size: 13px; font-weight: 600; word-break: break-word; }
+  .role { font-size: 11px; color: #6b7280; }
+  @media print { body { padding: 16px; } }
+</style>
+</head>
+<body onload="window.print()">
+  <div class="header">
+    ${logoHtml}
+    <h1>${asso.name.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</h1>
+  </div>
+  <div class="grid">
+    ${cards}
+  </div>
+</body>
+</html>`);
+    win.document.close();
   }
 
   async function toggleFollow() {
@@ -252,7 +320,19 @@
       <div
         class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-6 space-y-4 shadow-sm"
       >
-        <h2 class="text-lg font-bold text-text-main tracking-tight">Membres</h2>
+        <div class="flex items-center justify-between gap-2">
+          <h2 class="text-lg font-bold text-text-main tracking-tight">Membres</h2>
+          {#if members.length > 0}
+            <button
+              type="button"
+              onclick={handleExportTrombinoscope}
+              class="inline-flex items-center gap-1.5 rounded-xl border border-cn-border px-3 py-2 text-xs font-semibold text-text-muted hover:text-text-main hover:bg-[var(--cn-surface)] transition-colors"
+            >
+              <Download size={14} />
+              Trombinoscope
+            </button>
+          {/if}
+        </div>
         <p class="text-sm text-text-muted">
           {members.length} personne{members.length !== 1 ? 's' : ''} dans cette association.
         </p>
