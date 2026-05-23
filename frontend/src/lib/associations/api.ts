@@ -139,16 +139,21 @@ export async function listLinkableValidatedCalendarEvents(
   return listAssociationCalendarEvents(associationId, { from, to });
 }
 
-/** Resolve association logo URL for `<img src>` (handles relative `/api/...` paths).
- *  On Tauri/mobile, window.location.origin is `tauri://localhost` — use VITE_MEDIA_URL instead. */
+/** Media API base for resolving `/api/media/...` paths (Tauri needs an absolute URL). */
+export function mediaPublicBaseUrl(): string {
+  const fromEnv =
+    typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_MEDIA_URL?.trim();
+  if (fromEnv) return fromEnv.replace(/\/$/, '');
+  if (typeof window !== 'undefined') return window.location.origin.replace(/\/$/, '');
+  return 'http://localhost:3011';
+}
+
+/** Resolve association logo URL for `<img src>` (handles relative `/api/...` paths). */
 export function associationLogoSrc(logoUrl: string | null | undefined): string | null {
   if (!logoUrl?.trim()) return null;
   const u = logoUrl.trim();
   if (u.startsWith('/')) {
-    const mediaBase =
-      (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_MEDIA_URL?.trim()) ||
-      (typeof window !== 'undefined' ? window.location.origin : '');
-    return `${mediaBase}${u}`;
+    return `${mediaPublicBaseUrl()}${u}`;
   }
   return u;
 }

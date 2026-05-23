@@ -23,6 +23,7 @@
 
   let imageFailed = $state(false);
   let displaySrc = $state<string | null>(null);
+  let triedDirectFallback = $state(false);
 
   const src = $derived(associationLogoSrc(logoUrl ?? undefined));
   const initials = $derived(getInitials(name));
@@ -36,6 +37,7 @@
       return;
     }
     imageFailed = false;
+    triedDirectFallback = false;
     let cancelled = false;
     void resolveAssociationLogoDisplayUrl(httpUrl).then((resolved) => {
       if (!cancelled) displaySrc = resolved;
@@ -64,7 +66,14 @@
     alt={name}
     class="{shapeClasses} object-cover bg-white shadow-sm ring-1 ring-white/20 flex-shrink-0 select-none {sizeClasses}"
     title={name}
-    onerror={() => { imageFailed = true; }}
+    onerror={() => {
+      if (!triedDirectFallback && src && displaySrc !== src) {
+        triedDirectFallback = true;
+        displaySrc = src;
+        return;
+      }
+      imageFailed = true;
+    }}
   />
 {:else}
   <div

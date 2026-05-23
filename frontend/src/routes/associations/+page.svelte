@@ -7,6 +7,7 @@
   } from '$lib/associations/api';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
+  import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
 
   let associations = $state<Association[]>([]);
   let myAssociations = $state<Association[]>([]);
@@ -118,8 +119,12 @@
                 <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="lg" />
                 <div class="min-w-0 flex-1">
                   <h3 class="font-bold text-text-main truncate">{asso.name}</h3>
-                  {#if asso.description}
-                    <p class="text-sm text-text-muted line-clamp-2 mt-0.5">{asso.description}</p>
+                  {#if asso.description?.trim()}
+                    <div
+                      class="mt-0.5 max-h-[2.75rem] overflow-hidden text-text-muted [&_.post-markdown]:text-sm [&_.post-markdown]:leading-snug [&_.post-markdown_p]:m-0 [&_.post-markdown_p+p]:mt-0"
+                    >
+                      <ProfileBioMarkdown source={asso.description} />
+                    </div>
                   {/if}
                   <p class="text-xs text-text-muted mt-1">
                     {asso.memberCount ?? 0} membre{(asso.memberCount ?? 0) !== 1 ? 's' : ''}
