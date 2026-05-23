@@ -25,7 +25,7 @@
       </div>
       <h1 class="text-3xl font-bold text-text-main">Conditions Générales d'Utilisation</h1>
       <p class="mt-2 text-sm text-text-muted">Canari — Messagerie sécurisée EMSE</p>
-      <p class="mt-1 text-xs text-text-muted">Dernière mise à jour : 21/05/2026</p>
+      <p class="mt-1 text-xs text-text-muted">Dernière mise à jour : 23/05/2026</p>
     </div>
 
     <!-- Navigation rapide -->
@@ -266,33 +266,42 @@
       <!-- 9 -->
       <section id="suppression">
         <h2 class="mb-3 text-lg font-bold text-text-main">9. Suppression de compte</h2>
-        <div class="rounded-xl border border-cn-yellow/30 bg-cn-yellow/5 p-4">
-          <p class="font-semibold text-cn-yellow mb-2">Demande de suppression de compte</p>
-          <p class="text-text-muted mb-2">
-            Vous pouvez demander la suppression de votre compte Canari et de toutes les données
-            associées à tout moment, y compris après désinstallation de l'application, en envoyant
-            un e-mail à :
-          </p>
-          <p class="font-medium">
-            <a href="mailto:bureau@rootz-emse.fr" class="text-cn-yellow hover:underline">bureau@rootz-emse.fr</a>
-          </p>
-          <p class="mt-2 text-text-muted text-xs">
-            Objet : <em>« Suppression compte Canari »</em> — depuis l'adresse e-mail liée à votre
-            compte EMSE. Nous traiterons votre demande dans un délai maximum de 30 jours.
+
+        <h3 class="mb-2 font-semibold text-text-main">Suppression depuis l'application</h3>
+        <div class="rounded-xl border border-cn-yellow/30 bg-cn-yellow/5 p-4 mb-3">
+          <p class="font-semibold text-cn-yellow mb-2">Méthode principale — directement dans Canari</p>
+          <p class="text-text-muted">
+            Vous pouvez supprimer votre compte à tout moment depuis
+            <strong>Profil → Supprimer mon compte</strong>.
+            La suppression est immédiate et irréversible : profil, messages privés,
+            publications, réactions et jetons de notification sont effacés définitivement.
           </p>
         </div>
 
-        <p class="mt-3 text-text-muted">
-          La suppression entraîne l'effacement de votre profil, de vos messages, publications,
-          réactions et jetons de notification. Certaines données peuvent être conservées au-delà
-          du délai légal si la loi l'exige (ex. données comptables liées à des transactions,
-          logs de sécurité en cas d'incident actif). Ces exceptions et leur durée sont détaillées
-          dans la <a href="/legal/privacy#retention" class="text-cn-yellow hover:underline">Politique de confidentialité §5</a>.
+        <h3 class="mb-2 font-semibold text-text-main">Suppression par e-mail (accès à l'app impossible)</h3>
+        <p class="mb-2 text-text-muted">
+          Si vous ne pouvez plus accéder à l'application (ex. après désinstallation), envoyez
+          votre demande à :
+        </p>
+        <div class="rounded-xl border border-white/20 bg-white/10 p-3 dark:bg-white/5 mb-3">
+          <p class="font-medium">
+            <a href="mailto:bureau@rootz-emse.fr" class="text-cn-yellow hover:underline">bureau@rootz-emse.fr</a>
+          </p>
+          <p class="mt-1 text-text-muted text-xs">
+            Objet : <em>« Suppression compte Canari »</em> — depuis l'adresse e-mail liée à votre
+            compte EMSE. Délai de traitement : 30 jours maximum.
+          </p>
+        </div>
+
+        <p class="text-text-muted">
+          Certaines données peuvent être conservées au-delà si la loi l'exige (ex. données
+          comptables liées à des transactions). Ces exceptions sont détaillées dans la
+          <a href="/legal/privacy#retention" class="text-cn-yellow hover:underline">Politique de confidentialité §5</a>.
         </p>
 
         <p class="mt-3 text-text-muted">
-          La désinstallation de l'application seule ne supprime pas votre compte ni vos données
-          côté serveur. Une demande explicite est nécessaire.
+          <strong>La désinstallation seule ne supprime pas votre compte.</strong>
+          Une action explicite (in-app ou par e-mail) est nécessaire.
         </p>
       </section>
 
