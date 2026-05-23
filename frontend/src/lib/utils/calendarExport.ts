@@ -2,10 +2,7 @@ import { generateAvatarColor, getInitials } from './avatar';
 import { contrastColor, toHex } from './color';
 import type { AssociationCalendarFeedEvent } from '$lib/associations/api';
 
-/**
- * Returns a guaranteed hex background color for an event.
- * html2canvas does not reliably render CSS `hsl()` backgrounds, so we always convert to hex.
- */
+/** Returns a guaranteed hex background color (html2canvas does not render hsl() reliably). */
 function eventBgHex(ev: AssociationCalendarFeedEvent): string {
   return toHex(ev.associationColor ?? generateAvatarColor(ev.associationId));
 }
@@ -43,7 +40,12 @@ function eventsOnDay(
 }
 
 const WEEKDAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
-const MAX_VISIBLE = 4;
+
+// Cell layout constants (px)
+const CELL_H = 100; // total cell height
+const DAY_ROW_H = 24; // day-number row height (top)
+const CELL_PAD = 5; // padding top/bottom/sides
+const MAX_SHOW = 3; // max visible event blocks per cell
 
 function safe(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -51,7 +53,8 @@ function safe(s: string): string {
 
 /**
  * Renders the monthly calendar grid to a landscape A4 PDF and triggers a direct download.
- * Uses html2canvas + jsPDF with PNG encoding for crisp text rendering.
+ * Each cell's event blocks fill the available height proportionally (1 event = full height,
+ * 2 events = half each, etc.). Uses PNG for crisp text.
  */
 export async function exportCalendarMonth(
   events: AssociationCalendarFeedEvent[],
@@ -72,42 +75,59 @@ export async function exportCalendarMonth(
 
   const headerRow = WEEKDAYS.map(
     (w, i) =>
-      `<div style="padding:8px 6px;text-align:center;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:${i >= 5 ? '#9ca3af' : '#607188'};border-bottom:2px solid #d9e0ea;background:#f8fafc;">${w}</div>`
+      `<div style="padding:7px 6px;text-align:center;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:${i >= 5 ? '#9ca3af' : '#607188'};border-bottom:2px solid #d9e0ea;background:#f8fafc;">${w}</div>`
   ).join('');
 
   const cellHtml = cells
     .map((day, i) => {
       const isWeekend = i % 7 >= 5;
+      const cellBg = isWeekend ? '#f1f5f9' : '#fff';
+
       if (day === null) {
-        return `<div style="min-height:88px;background:${isWeekend ? '#f1f5f9' : '#f8fafc'};border-right:1px solid #e5e9ef;border-bottom:1px solid #e5e9ef;"></div>`;
+        return `<div style="height:${CELL_H}px;background:${isWeekend ? '#f1f5f9' : '#f8fafc'};border-right:1px solid #e5e9ef;border-bottom:1px solid #e5e9ef;box-sizing:border-box;"></div>`;
       }
+
       const dayEvents = eventsOnDay(events, year, month, day);
-      const visible = dayEvents.slice(0, MAX_VISIBLE);
-      const extra = dayEvents.length - MAX_VISIBLE;
       const today = sameDay(new Date(year, month, day), new Date());
+
+      // Determine how many blocks to show vs. how many go in the "+N" overflow line
+      const extra = Math.max(0, dayEvents.length - MAX_SHOW);
+      // If there is overflow, sacrifice the last visible slot for a "+N" mini-row
+      const nVisible = dayEvents.length > MAX_SHOW ? MAX_SHOW - 1 : dayEvents.length;
+      const visible = dayEvents.slice(0, nVisible);
+      const overflowCount = dayEvents.length - nVisible;
+
+      // Events area: full cell height minus day-number row and padding
+      const eventsAreaH = CELL_H - DAY_ROW_H - CELL_PAD * 2;
+      const MORE_ROW_H = overflowCount > 0 ? 14 : 0;
+      const gapSum = nVisible > 1 ? (nVisible - 1) * 2 : 0;
+      const eventH = nVisible > 0 ? Math.floor((eventsAreaH - MORE_ROW_H - gapSum) / nVisible) : 0;
+
+      const dayNumStyle = today
+        ? `display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:#f5c518;font-weight:900;font-size:12px;color:#111;`
+        : `font-size:12px;font-weight:700;color:${dayEvents.length > 0 ? '#1e293b' : '#94a3b8'};display:inline-block;`;
 
       const eventBlocks = visible
         .map((ev) => {
           const bg = eventBgHex(ev);
           const fg = contrastColor(bg);
-          // Logo or initials circle
           const logoHtml = ev.associationLogoUrl
-            ? `<img src="${ev.associationLogoUrl}" style="width:14px;height:14px;border-radius:50%;object-fit:cover;flex-shrink:0;vertical-align:middle;" />`
-            : `<span style="display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;background:rgba(255,255,255,0.25);font-size:7px;font-weight:900;color:${fg};flex-shrink:0;">${safe(getInitials(ev.associationName))}</span>`;
-          return `<div style="display:flex;align-items:center;gap:4px;background:${bg};color:${fg};font-size:10px;font-weight:700;border-radius:4px;padding:3px 5px;margin-bottom:3px;overflow:hidden;white-space:nowrap;">${logoHtml}<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${safe(ev.title)}</span></div>`;
+            ? `<img src="${ev.associationLogoUrl}" style="width:${Math.min(eventH - 4, 18)}px;height:${Math.min(eventH - 4, 18)}px;border-radius:50%;object-fit:cover;flex-shrink:0;" />`
+            : `<span style="display:inline-flex;align-items:center;justify-content:center;width:${Math.min(eventH - 4, 18)}px;height:${Math.min(eventH - 4, 18)}px;border-radius:50%;background:rgba(255,255,255,0.28);font-size:${Math.max(6, Math.min(eventH - 10, 9))}px;font-weight:900;color:${fg};flex-shrink:0;">${safe(getInitials(ev.associationName))}</span>`;
+          const fontSize = eventH >= 28 ? 11 : eventH >= 20 ? 10 : 9;
+          return `<div style="height:${eventH}px;display:flex;align-items:center;gap:4px;background:${bg};color:${fg};font-size:${fontSize}px;font-weight:700;border-radius:4px;padding:0 6px;overflow:hidden;white-space:nowrap;box-sizing:border-box;">${logoHtml}<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">${safe(ev.title)}</span></div>`;
         })
-        .join('');
+        .join('<div style="height:2px;"></div>');
 
-      const extraHtml =
-        extra > 0
-          ? `<div style="font-size:9px;color:#607188;font-weight:600;padding-left:2px;">+${extra} autre${extra > 1 ? 's' : ''}</div>`
+      const moreHtml =
+        overflowCount > 0
+          ? `<div style="height:2px;"></div><div style="height:${MORE_ROW_H}px;display:flex;align-items:center;padding:0 4px;font-size:9px;font-weight:700;color:#607188;">+${overflowCount} autre${overflowCount > 1 ? 's' : ''}</div>`
           : '';
 
-      const dayNumStyle = today
-        ? 'display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:#f5c518;font-weight:900;font-size:12px;color:#111;margin-bottom:3px;'
-        : `font-size:12px;font-weight:700;color:${dayEvents.length > 0 ? '#1e293b' : '#94a3b8'};margin-bottom:3px;display:inline-block;`;
-
-      return `<div style="min-height:88px;padding:5px 6px;background:${isWeekend ? '#f8fafc' : '#fff'};border-right:1px solid #e5e9ef;border-bottom:1px solid #e5e9ef;display:flex;flex-direction:column;"><span style="${dayNumStyle}">${day}</span>${eventBlocks}${extraHtml}</div>`;
+      return `<div style="height:${CELL_H}px;padding:${CELL_PAD}px;background:${cellBg};border-right:1px solid #e5e9ef;border-bottom:1px solid #e5e9ef;box-sizing:border-box;display:flex;flex-direction:column;gap:0;overflow:hidden;">
+  <div style="height:${DAY_ROW_H}px;display:flex;align-items:center;flex-shrink:0;"><span style="${dayNumStyle}">${day}</span></div>
+  <div style="flex:1;display:flex;flex-direction:column;min-height:0;">${eventBlocks}${moreHtml}</div>
+</div>`;
     })
     .join('');
 
@@ -115,9 +135,8 @@ export async function exportCalendarMonth(
   Object.assign(container.style, {
     position: 'absolute',
     top: '0',
-    // Landscape A4 at 96 DPI: 297mm × (96 / 25.4) ≈ 1122px
     left: '-9999px',
-    width: '1080px',
+    width: '1080px', // landscape A4 ≈ 1122px at 96dpi; 1080px leaves a small margin
     background: '#ffffff',
     padding: '28px 32px',
     color: '#111111',
@@ -134,7 +153,6 @@ export async function exportCalendarMonth(
   document.body.appendChild(container);
 
   try {
-    // Wait for all logo images to load before capturing
     await Promise.all(
       Array.from(container.querySelectorAll<HTMLImageElement>('img')).map(
         (img) =>
@@ -157,7 +175,6 @@ export async function exportCalendarMonth(
       logging: false,
     });
 
-    // PNG for crisp text (no JPEG block artifacts on small text)
     const imgData = canvas.toDataURL('image/png');
     const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
     const pageW = pdf.internal.pageSize.getWidth();
@@ -175,8 +192,7 @@ export async function exportCalendarMonth(
       }
     }
 
-    const filename = `canari-agenda-${year}-${String(month + 1).padStart(2, '0')}`;
-    pdf.save(`${filename}.pdf`);
+    pdf.save(`canari-agenda-${year}-${String(month + 1).padStart(2, '0')}.pdf`);
   } finally {
     document.body.removeChild(container);
   }
