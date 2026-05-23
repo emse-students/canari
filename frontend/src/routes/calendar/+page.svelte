@@ -18,8 +18,8 @@
     ChevronLeft,
     ChevronRight,
     CalendarDays,
-    Download,
-    ExternalLink,
+    CalendarPlus,
+    CalendarCheck,
     ClipboardList,
     ShieldAlert,
     FileDown,
@@ -41,10 +41,6 @@
   const titleMonth = $derived(
     new Intl.DateTimeFormat('fr-FR', { month: 'long', year: 'numeric' }).format(focusDate)
   );
-
-  function pad(n: number) {
-    return n < 10 ? `0${n}` : `${n}`;
-  }
 
   function monthRangeISO(d: Date): { from: string; to: string } {
     const start = new Date(d.getFullYear(), d.getMonth(), 1, 0, 0, 0, 0);
@@ -161,16 +157,15 @@
     };
   }
 
-  function exportMonthIcs() {
-    if (events.length === 0) return;
-    const body = buildIcsCalendar(events.map(toAgendaExport));
-    const y = focusDate.getFullYear();
-    const m = pad(focusDate.getMonth() + 1);
-    const tag = filterAssociationId ? '-asso' : '';
-    downloadTextFile(`canari-agenda-${y}-${m}${tag}.ics`, body, 'text/calendar;charset=utf-8');
+  /** webcal:// URL pointing to the public ICS feed — calendar apps subscribe and auto-refresh. */
+  function calendarSubscribeUrl(): string {
+    if (typeof window === 'undefined') return '';
+    const query = filterAssociationId ? `?associationId=${encodeURIComponent(filterAssociationId)}` : '';
+    return `webcal://${window.location.host}/api/associations/calendar/feed.ics${query}`;
   }
 
-  function exportOneIcs(ev: AssociationCalendarFeedEvent) {
+  /** Silently downloads a single-event ICS — the OS calendar app opens it automatically. */
+  function addEventToCalendar(ev: AssociationCalendarFeedEvent) {
     downloadTextFile(
       `canari-event-${ev.id}.ics`,
       buildIcsCalendar([toAgendaExport(ev)]),
@@ -312,16 +307,14 @@
         <FileDown size={18} />
         {exportingPdf ? 'Génération…' : 'PDF'}
       </button>
-      <button
-        type="button"
-        onclick={exportMonthIcs}
-        disabled={loading || events.length === 0}
-        class="inline-flex items-center justify-center gap-2 shrink-0 rounded-xl bg-cn-yellow px-4 py-2.5 text-sm font-bold text-cn-dark shadow-sm hover:bg-cn-yellow-hover transition-colors disabled:opacity-40 disabled:pointer-events-none"
-        title="Télécharger les événements du mois au format .ics"
+      <a
+        href={calendarSubscribeUrl()}
+        class="inline-flex items-center justify-center gap-2 shrink-0 rounded-xl bg-cn-yellow px-4 py-2.5 text-sm font-bold text-cn-dark shadow-sm hover:bg-cn-yellow-hover transition-colors"
+        title="Abonner votre appli calendrier à ce feed (Apple Calendar, Google Calendar, Outlook…)"
       >
-        <Download size={18} />
-        Exporter (.ics)
-      </button>
+        <CalendarCheck size={18} />
+        S'abonner au calendrier
+      </a>
     </div>
   </Card>
 
@@ -399,21 +392,22 @@
               <div class="flex flex-wrap gap-2 shrink-0">
                 <button
                   type="button"
-                  onclick={() => exportOneIcs(ev)}
-                  class="inline-flex items-center justify-center gap-1.5 rounded-xl border border-cn-border px-3 py-2 text-xs font-bold text-text-main hover:bg-[var(--cn-surface)] transition-colors"
-                  title="Télécharger un fichier .ics pour ce créneau"
+                  onclick={() => addEventToCalendar(ev)}
+                  class="inline-flex items-center justify-center gap-1.5 rounded-xl bg-cn-yellow px-3 py-2 text-xs font-bold text-cn-dark hover:bg-cn-yellow-hover transition-colors"
+                  title="Ajouter à Apple Calendar, Outlook ou tout autre agenda"
                 >
-                  <Download size={14} />
-                  .ics
+                  <CalendarPlus size={14} />
+                  Ajouter à l'agenda
                 </button>
                 <a
                   href={googleCalendarTemplateUrl(toAgendaExport(ev))}
                   target="_blank"
                   rel="noopener noreferrer"
                   class="inline-flex items-center justify-center gap-1.5 rounded-xl border border-cn-border px-3 py-2 text-xs font-bold text-text-main hover:bg-[var(--cn-surface)] transition-colors"
+                  title="Ouvrir dans Google Calendar"
                 >
-                  <ExternalLink size={14} />
-                  Google
+                  <CalendarPlus size={14} />
+                  Google Calendar
                 </a>
               </div>
             </div>

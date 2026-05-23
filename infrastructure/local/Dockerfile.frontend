@@ -215,6 +215,15 @@ RUN printf 'server {\n\
     proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
     }\n\
     \n\
+    location = /api/associations/calendar/feed.ics {\n\
+    set $upstream_asso social-service:3014;\n\
+    proxy_pass http://$upstream_asso;\n\
+    proxy_set_header Host $host;\n\
+    proxy_set_header X-Real-IP $remote_addr;\n\
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
+    proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
+    }\n\
+    \n\
     location /api/associations {\n\
     auth_request /internal/auth/verify;\n\
     auth_request_set $user_id $upstream_http_x_user_id;\n\
