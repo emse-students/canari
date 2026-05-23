@@ -1,5 +1,5 @@
-import { generateAvatarColor, getInitials } from './avatar';
 import { contrastColor, toHex } from './color';
+import { generateAvatarColor } from './avatar';
 import type { AssociationCalendarFeedEvent } from '$lib/associations/api';
 
 /** Returns a guaranteed hex background color (html2canvas does not render hsl() reliably). */
@@ -52,9 +52,47 @@ function safe(s: string): string {
 }
 
 /**
+ * Seasonal Unsplash background images by 0-indexed month.
+ * Pre-fetched as base64 data: URLs so html2canvas never encounters cross-origin images.
+ */
+const MONTH_BG_URLS: Record<number, string> = {
+  0: 'https://images.unsplash.com/photo-1516912481808-3406841bd33c?w=1200&q=70&auto=format&fit=crop',
+  1: 'https://images.unsplash.com/photo-1484589065579-a8f8a2adf0b4?w=1200&q=70&auto=format&fit=crop',
+  2: 'https://images.unsplash.com/photo-1490750967868-88df5691cc53?w=1200&q=70&auto=format&fit=crop',
+  3: 'https://images.unsplash.com/photo-1462275646964-a0e3386b89fa?w=1200&q=70&auto=format&fit=crop',
+  4: 'https://images.unsplash.com/photo-1508739773434-c26b3d09e071?w=1200&q=70&auto=format&fit=crop',
+  5: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=1200&q=70&auto=format&fit=crop',
+  6: 'https://images.unsplash.com/photo-1530053969600-caed2596d242?w=1200&q=70&auto=format&fit=crop',
+  7: 'https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?w=1200&q=70&auto=format&fit=crop',
+  8: 'https://images.unsplash.com/photo-1508193638397-1c4234db14d8?w=1200&q=70&auto=format&fit=crop',
+  9: 'https://images.unsplash.com/photo-1508084699793-bb8ce8ce37b3?w=1200&q=70&auto=format&fit=crop',
+  10: 'https://images.unsplash.com/photo-1472289065668-ce650ac443d2?w=1200&q=70&auto=format&fit=crop',
+  11: 'https://images.unsplash.com/photo-1543589077-47d81606c1bf?w=1200&q=70&auto=format&fit=crop',
+};
+
+/** Fetches a URL and returns a base64 data: string, or null on any failure. */
+async function toDataUrl(url: string | null): Promise<string | null> {
+  if (!url) return null;
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) return null;
+    const blob = await resp.blob();
+    return new Promise<string | null>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Renders the monthly calendar grid to a landscape A4 PDF and triggers a direct download.
  * Each cell's event blocks fill the available height proportionally (1 event = full height,
- * 2 events = half each, etc.). Uses PNG for crisp text.
+ * 2 events = half each, etc.). Association logos appear as large transparent watermarks inside
+ * event blocks. A seasonal background image decorates the month header.
  */
 export async function exportCalendarMonth(
   events: AssociationCalendarFeedEvent[],
@@ -70,6 +108,18 @@ export async function exportCalendarMonth(
   const monthLabel = new Intl.DateTimeFormat('fr-FR', { month: 'long', year: 'numeric' })
     .format(focusDate)
     .replace(/^\w/, (c) => c.toUpperCase());
+
+  // Pre-fetch all images as data: URLs to avoid html2canvas cross-origin issues
+  const uniqueLogoUrls = [
+    ...new Set(events.map((ev) => ev.associationLogoUrl).filter(Boolean) as string[]),
+  ];
+  const [bgDataUrl, ...resolvedLogos] = await Promise.all([
+    toDataUrl(MONTH_BG_URLS[month] ?? null),
+    ...uniqueLogoUrls.map(toDataUrl),
+  ]);
+  const logoMap = new Map<string, string | null>(
+    uniqueLogoUrls.map((url, i) => [url, resolvedLogos[i]])
+  );
 
   const cells = buildCalendarCells(year, month);
 
@@ -88,7 +138,6 @@ export async function exportCalendarMonth(
       }
 
       const dayEvents = eventsOnDay(events, year, month, day);
-      const today = sameDay(new Date(year, month, day), new Date());
 
       // If there is overflow, sacrifice the last visible slot for a "+N" mini-row
       const nVisible = dayEvents.length > MAX_SHOW ? MAX_SHOW - 1 : dayEvents.length;
@@ -101,19 +150,23 @@ export async function exportCalendarMonth(
       const gapSum = nVisible > 1 ? (nVisible - 1) * 2 : 0;
       const eventH = nVisible > 0 ? Math.floor((eventsAreaH - MORE_ROW_H - gapSum) / nVisible) : 0;
 
-      const dayNumStyle = today
-        ? `display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:#f5c518;font-weight:900;font-size:12px;color:#111;`
-        : `font-size:12px;font-weight:700;color:${dayEvents.length > 0 ? '#1e293b' : '#94a3b8'};display:inline-block;`;
+      const dayNumStyle = `font-size:12px;font-weight:700;color:${dayEvents.length > 0 ? '#1e293b' : '#94a3b8'};display:inline-block;`;
 
       const eventBlocks = visible
         .map((ev) => {
           const bg = eventBgHex(ev);
           const fg = contrastColor(bg);
-          const logoHtml = ev.associationLogoUrl
-            ? `<img src="${ev.associationLogoUrl}" style="width:${Math.min(eventH - 4, 18)}px;height:${Math.min(eventH - 4, 18)}px;border-radius:50%;object-fit:cover;flex-shrink:0;" />`
-            : `<span style="display:inline-flex;align-items:center;justify-content:center;width:${Math.min(eventH - 4, 18)}px;height:${Math.min(eventH - 4, 18)}px;border-radius:50%;background:rgba(255,255,255,0.28);font-size:${Math.max(6, Math.min(eventH - 10, 9))}px;font-weight:900;color:${fg};flex-shrink:0;">${safe(getInitials(ev.associationName))}</span>`;
+          const logoDataUrl = ev.associationLogoUrl
+            ? (logoMap.get(ev.associationLogoUrl) ?? null)
+            : null;
+          // Logo as large transparent watermark on the right of the block
+          const logoSize = Math.max(eventH - 2, 16);
+          const logoTop = Math.max(Math.floor((eventH - logoSize) / 2), 0);
+          const watermarkHtml = logoDataUrl
+            ? `<img src="${logoDataUrl}" style="position:absolute;right:2px;top:${logoTop}px;height:${logoSize}px;width:${logoSize}px;object-fit:contain;opacity:0.18;" />`
+            : '';
           const fontSize = eventH >= 28 ? 11 : eventH >= 20 ? 10 : 9;
-          return `<div style="height:${eventH}px;display:flex;align-items:center;gap:4px;background:${bg};color:${fg};font-size:${fontSize}px;font-weight:700;border-radius:4px;padding:0 6px;overflow:hidden;white-space:nowrap;box-sizing:border-box;">${logoHtml}<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">${safe(ev.title)}</span></div>`;
+          return `<div style="height:${eventH}px;position:relative;display:flex;align-items:center;background:${bg};color:${fg};font-size:${fontSize}px;font-weight:700;border-radius:4px;padding:0 6px;overflow:hidden;white-space:nowrap;box-sizing:border-box;">${watermarkHtml}<span style="position:relative;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">${safe(ev.title)}</span></div>`;
         })
         .join('<div style="height:2px;"></div>');
 
@@ -129,6 +182,11 @@ export async function exportCalendarMonth(
     })
     .join('');
 
+  // Header: seasonal background image (right half visible, white tint for readability)
+  const headerBgHtml = bgDataUrl
+    ? `<img src="${bgDataUrl}" style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;opacity:0.3;" /><div style="position:absolute;top:0;left:0;width:65%;height:100%;background:rgba(255,255,255,0.85);"></div>`
+    : '';
+
   const container = document.createElement('div');
   Object.assign(container.style, {
     position: 'absolute',
@@ -143,8 +201,11 @@ export async function exportCalendarMonth(
   });
 
   container.innerHTML = `
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;padding-bottom:12px;border-bottom:2.5px solid #d9e0ea;">
-      <h1 style="font-family:'Fredoka','Segoe UI',sans-serif;font-size:26px;font-weight:700;color:#122035;margin:0;">${safe(monthLabel)}</h1>
+    <div style="position:relative;height:72px;margin-bottom:16px;border-bottom:2.5px solid #d9e0ea;overflow:hidden;border-radius:10px;">
+      ${headerBgHtml}
+      <div style="position:relative;display:flex;align-items:center;height:100%;padding:0 16px;">
+        <h1 style="font-family:'Fredoka','Segoe UI',sans-serif;font-size:28px;font-weight:700;color:#122035;margin:0;">${safe(monthLabel)}</h1>
+      </div>
     </div>
     <div style="display:grid;grid-template-columns:repeat(7,1fr);">${headerRow}${cellHtml}</div>`;
 
