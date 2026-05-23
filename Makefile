@@ -341,8 +341,9 @@ reset-services-prod: production-check
 		docker compose -f infrastructure/docker-compose.prod.yml --env-file infrastructure/.env up -d --remove-orphans
 	@echo "${GREEN}✅ Services reset${RESET}"
 
-reload-services-prod: production-check
-	@echo "${BLUE}🔄 Reloading services...${RESET}"
+update-services-prod: production-check
+	@echo "${BLUE}🔄 Updating services...${RESET}"
+	@docker compose -f infrastructure/docker-compose.prod.yml --env-file infrastructure/.env pull
 	@docker compose -f infrastructure/docker-compose.prod.yml --env-file infrastructure/.env down --remove-orphans && \
 		docker compose -f infrastructure/docker-compose.prod.yml --env-file infrastructure/.env up -d --build --remove-orphans
 	@echo "${GREEN}✅ Services rechargés${RESET}"
