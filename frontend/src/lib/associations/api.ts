@@ -33,6 +33,8 @@ export interface AssociationMember {
   isAdmin: boolean;
   /** Full bitmask — only present when the caller holds MANAGE_MEMBERS. */
   permissions?: number;
+  /** Display position — lower values appear first. */
+  sortOrder?: number;
   createdAt: string;
 }
 
@@ -452,6 +454,14 @@ export async function removeMember(
     `/api/associations/${encodeURIComponent(associationId)}/members/${encodeURIComponent(userId)}`,
     { method: 'DELETE' }
   );
+}
+
+/** Updates the display order of members. Requires MANAGE_MEMBERS. `userIds` must be the full ordered list. */
+export async function reorderMembers(associationId: string, userIds: string[]): Promise<void> {
+  await request<void>(`/api/associations/${encodeURIComponent(associationId)}/members/reorder`, {
+    method: 'PATCH',
+    body: JSON.stringify({ userIds }),
+  });
 }
 
 // ── Document vault ────────────────────────────────────────────────────────

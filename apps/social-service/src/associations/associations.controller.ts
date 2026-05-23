@@ -33,6 +33,7 @@ import {
   CreateAssociationCalendarEventDto,
   CreateProductDto,
   GrantTagDto,
+  ReorderMembersDto,
   UpdateAssociationDto,
   UpdateAssociationCalendarEventDto,
   UpdateMemberRoleDto,
@@ -155,6 +156,14 @@ export class AssociationsController {
       );
     }
     return this.service.listMembers(id, { includePermissions, callerId: userId });
+  }
+
+  /** Updates the display order of members. Requires MANAGE_MEMBERS. */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Patch(':id/members/reorder')
+  reorderMembers(@Param('id') id: string, @Body() dto: ReorderMembersDto) {
+    return this.service.reorderMembers(id, dto.userIds);
   }
 
   /** Returns scheduled events for the association (optional `from` / `to` ISO date bounds). */

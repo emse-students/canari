@@ -310,7 +310,8 @@ export class AssociationsService {
       .addSelect('u."displayName"', 'displayName')
       .leftJoin('users', 'u', 'u.id = m."userId"')
       .where('m."associationId" = :associationId', { associationId })
-      .orderBy('m."createdAt"', 'ASC')
+      .orderBy('m."sortOrder"', 'ASC')
+      .addOrderBy('m."createdAt"', 'ASC')
       .getRawMany();
 
     return rows.map((r) => {
@@ -344,6 +345,17 @@ export class AssociationsService {
 
     const membership = this.memberRepo.create({ associationId, userId, role, permissions });
     return this.memberRepo.save(membership);
+  }
+
+  /** Updates `sortOrder` for each member in the list, preserving the given array order. */
+  async reorderMembers(associationId: string, userIds: string[]): Promise<void> {
+    await this.findById(associationId);
+    await Promise.all(
+      userIds.map((userId, index) =>
+        this.memberRepo.update({ associationId, userId }, { sortOrder: index })
+      )
+    );
+    this.logger.debug(`reorderMembers: ${userIds.length} members reordered in ${associationId}`);
   }
 
   /** Updates a member's role label and/or permission bitmask. Blocks removal of all flags from the last admin, unless bypassLastAdmin is true (global admin or BDE). */

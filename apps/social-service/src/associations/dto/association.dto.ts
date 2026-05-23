@@ -16,6 +16,13 @@ import {
   ValidateIf,
 } from 'class-validator';
 
+export class ReorderMembersDto {
+  /** Ordered list of member user IDs — position in the array becomes the new sortOrder. */
+  @IsArray()
+  @IsString({ each: true })
+  userIds: string[];
+}
+
 export class CreateAssociationDto {
   @IsString()
   @IsNotEmpty()

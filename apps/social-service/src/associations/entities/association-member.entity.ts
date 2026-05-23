@@ -63,6 +63,10 @@ export class AssociationMember {
   @Column({ type: 'integer', default: 0 })
   permissions: number;
 
+  /** Display position in the public members list. Lower values appear first. */
+  @Column({ type: 'integer', default: 0 })
+  sortOrder: number;
+
   @CreateDateColumn()
   createdAt: Date;
 }

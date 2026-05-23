@@ -23,6 +23,7 @@
     listWebhookFailures,
     retryWebhookDelivery,
     listAssociationForms,
+    reorderMembers,
     type Association,
     type AssociationMember,
     type AssociationProduct,
@@ -55,8 +56,10 @@
     Check,
     Download,
     ClipboardList,
+    GripVertical,
   } from '@lucide/svelte';
   import { getInitials, generateAvatarColor } from '$lib/utils/avatar';
+  import { exportTrombinoscope } from '$lib/utils/trombinoscope';
   import AssociationDocumentManager from '$lib/components/associations/AssociationDocumentManager.svelte';
   import {
     hasPermissionFlag,
@@ -523,55 +526,53 @@
     }
   }
 
-  /** Ouvre un onglet imprimable avec la grille trombinoscope de l'association et déclenche l'impression. */
-  function handleExportTrombinoscope() {
-    if (!asso) return;
-    const win = window.open('', '_blank');
-    if (!win) return;
+  let exportingPdf = $state(false);
 
-    const cards = members
-      .map((m) => {
-        const name = resolvedMemberNames[m.userId] ?? m.displayName ?? m.userId;
-        const role = m.role ?? 'Membre';
-        const bg = generateAvatarColor(m.userId);
-        const initials = getInitials(name);
-        const safeName = name.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        const safeRole = role.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        return `<div class="card">
-  <div class="avatar" style="background:${bg}">${initials}</div>
-  <p class="name">${safeName}</p>
-  <p class="role">${safeRole}</p>
-</div>`;
-      })
-      .join('\n');
+  async function handleExportTrombinoscope() {
+    if (!asso || exportingPdf) return;
+    exportingPdf = true;
+    try {
+      await exportTrombinoscope(asso, members, resolvedMemberNames);
+    } finally {
+      exportingPdf = false;
+    }
+  }
 
-    win.document.write(`<!DOCTYPE html>
-<html lang="fr">
-<head>
-<meta charset="UTF-8">
-<title>Trombinoscope — ${asso.name.replace(/</g, '&lt;')}</title>
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: "Segoe UI", Inter, sans-serif; padding: 24px; background: #fff; color: #111; }
-  h1 { text-align: center; font-size: 22px; font-weight: 800; margin-bottom: 6px; }
-  .subtitle { text-align: center; color: #666; font-size: 13px; margin-bottom: 24px; }
-  .grid { display: flex; flex-wrap: wrap; gap: 16px; justify-content: center; }
-  .card { width: 110px; text-align: center; }
-  .avatar { width: 72px; height: 72px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-            font-size: 22px; font-weight: 700; color: #fff; margin: 0 auto 8px; letter-spacing: 1px; }
-  .name { font-size: 12px; font-weight: 600; line-height: 1.3; word-break: break-word; }
-  .role { font-size: 11px; color: #555; margin-top: 2px; }
-  @media print { body { padding: 12px; } }
-</style>
-</head>
-<body>
-<h1>${asso.name.replace(/</g, '&lt;')}</h1>
-<p class="subtitle">Trombinoscope — ${members.length} membre${members.length > 1 ? 's' : ''}</p>
-<div class="grid">${cards}</div>
-</body>
-</html>`);
-    win.document.close();
-    win.print();
+  // ── Member drag-and-drop reorder ──────────────────────────────────────────
+
+  let draggedIdx = $state(-1);
+  let dragOverIdx = $state(-1);
+
+  function onDragStart(idx: number) {
+    draggedIdx = idx;
+  }
+
+  function onDragOver(e: DragEvent, idx: number) {
+    e.preventDefault();
+    dragOverIdx = idx;
+  }
+
+  async function onDrop(targetIdx: number) {
+    if (draggedIdx < 0 || draggedIdx === targetIdx || !asso) return;
+    const reordered = [...members];
+    const [moved] = reordered.splice(draggedIdx, 1);
+    reordered.splice(targetIdx, 0, moved);
+    members = reordered;
+    draggedIdx = -1;
+    dragOverIdx = -1;
+    try {
+      await reorderMembers(
+        asso.id,
+        reordered.map((m) => m.userId)
+      );
+    } catch {
+      // Non-fatal: local order already updated; backend will reflect on next load
+    }
+  }
+
+  function onDragEnd() {
+    draggedIdx = -1;
+    dragOverIdx = -1;
   }
 </script>
 
@@ -863,23 +864,43 @@
           <button
             type="button"
             onclick={handleExportTrombinoscope}
-            class="inline-flex items-center gap-2 rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold text-text-muted hover:text-text-main hover:bg-cn-bg transition-colors shrink-0"
+            disabled={exportingPdf}
+            class="inline-flex items-center gap-2 rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold text-text-muted hover:text-text-main hover:bg-cn-bg transition-colors shrink-0 disabled:opacity-50"
           >
             <Download size={15} />
-            Trombinoscope PDF
+            {exportingPdf ? 'Génération…' : 'Trombinoscope PDF'}
           </button>
         </div>
-        <div class="space-y-3">
-          {#each members as member (member.id)}
-            <AssociationMemberRow
-              {member}
-              displayName={resolvedMemberNames[member.userId] ??
-                member.displayName ??
-                member.userId}
-              manage={true}
-              onRoleChange={handleChangeRole}
-              onRemove={handleRemoveMember}
-            />
+        <div class="space-y-2">
+          {#each members as member, idx (member.id)}
+            <div
+              role="listitem"
+              draggable={true}
+              ondragstart={() => onDragStart(idx)}
+              ondragover={(e) => onDragOver(e, idx)}
+              ondrop={() => onDrop(idx)}
+              ondragend={onDragEnd}
+              class="flex items-start gap-2 rounded-2xl transition-opacity {draggedIdx === idx ? 'opacity-40' : ''} {dragOverIdx === idx && draggedIdx !== idx ? 'ring-2 ring-cn-yellow/60' : ''}"
+            >
+              <button
+                type="button"
+                aria-label="Déplacer ce membre"
+                class="mt-3.5 cursor-grab touch-none text-text-muted hover:text-text-main transition-colors shrink-0"
+              >
+                <GripVertical size={18} />
+              </button>
+              <div class="flex-1 min-w-0">
+                <AssociationMemberRow
+                  {member}
+                  displayName={resolvedMemberNames[member.userId] ??
+                    member.displayName ??
+                    member.userId}
+                  manage={true}
+                  onRoleChange={handleChangeRole}
+                  onRemove={handleRemoveMember}
+                />
+              </div>
+            </div>
           {/each}
         </div>
 
