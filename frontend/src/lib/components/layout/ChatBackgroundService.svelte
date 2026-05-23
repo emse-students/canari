@@ -411,7 +411,7 @@
   // `/chat`, this `afterNavigate` hook re-tries the login flow.
   afterNavigate(async ({ to }) => {
     const path = to?.url.pathname ?? window.location.pathname;
-    const isAuthRoute = path === '/login' || path.startsWith('/login') || path.startsWith('/auth/');
+    const isAuthRoute = path === '/login' || path.startsWith('/login') || path.startsWith('/auth/') || path.startsWith('/legal');
     if (isAuthRoute) return;
     if (globalSession.isLoggedIn || _loginInProgress) return;
 

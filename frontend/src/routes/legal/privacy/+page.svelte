@@ -61,7 +61,7 @@
         </p>
         <div class="rounded-xl border border-white/20 bg-white/10 p-4 dark:bg-white/5 space-y-1">
           <p><strong>Responsable du traitement :</strong> Association Rootz — EMSE</p>
-          <p class="text-text-muted">Maison des Élèves, 158 Cours Fauriel, 42100 Saint-Étienne, France</p>
+          <p class="text-text-muted">Maison des Élèves de l'École des Mines, 20 Boulevard Alexandre de Fraissinette, 42100 Saint-Étienne, France</p>
           <p><strong>Contact :</strong> <a href="mailto:bureau@rootz-emse.fr" class="text-cn-yellow hover:underline">bureau@rootz-emse.fr</a></p>
         </div>
         <p class="mt-3 text-text-muted">
@@ -293,7 +293,7 @@
         <h2 class="mb-3 text-lg font-bold text-text-main">11. Contact</h2>
         <div class="rounded-xl border border-white/20 bg-white/10 p-4 dark:bg-white/5">
           <p><strong>Association Rootz</strong></p>
-          <p class="text-text-muted">Maison des Élèves, 158 Cours Fauriel, 42100 Saint-Étienne</p>
+          <p class="text-text-muted">Maison des Élèves de l'École des Mines, 20 Boulevard Alexandre de Fraissinette, 42100 Saint-Étienne</p>
           <p class="mt-2">
             <a href="mailto:bureau@rootz-emse.fr" class="text-cn-yellow hover:underline">bureau@rootz-emse.fr</a>
           </p>

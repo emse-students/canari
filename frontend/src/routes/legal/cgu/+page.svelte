@@ -99,7 +99,7 @@
         <h3 class="mb-2 font-semibold text-text-main">Hébergement</h3>
         <p class="mb-4 text-text-muted">
           Les données sont hébergées sur des serveurs privés gérés par l'association Rootz, situés
-          physiquement à la Maison des Élèves, 158 Cours Fauriel, 42100 Saint-Étienne. Aucune donnée
+          physiquement à la Maison des Élèves de l'École des Mines, 20 Boulevard Alexandre de Fraissinette, 42100 Saint-Étienne. Aucune donnée
           principale n'est transmise à des clouds publics (voir la
           <a href="/legal/privacy#tiers" class="text-cn-yellow hover:underline">Politique de confidentialité §3</a>
           pour les sous-traitants).
@@ -383,7 +383,7 @@
         <div class="rounded-xl border border-white/20 bg-white/10 p-4 dark:bg-white/5">
           <p><strong>Éditeur</strong></p>
           <p class="text-text-muted">Association Rootz — EMSE</p>
-          <p class="text-text-muted">Maison des Élèves, 158 Cours Fauriel, 42100 Saint-Étienne</p>
+          <p class="text-text-muted">Maison des Élèves de l'École des Mines, 20 Boulevard Alexandre de Fraissinette, 42100 Saint-Étienne</p>
           <p class="mt-2">
             <strong>Contact RGPD, signalement et support :</strong>
             <a href="mailto:bureau@rootz-emse.fr" class="text-cn-yellow hover:underline ml-1">bureau@rootz-emse.fr</a>
