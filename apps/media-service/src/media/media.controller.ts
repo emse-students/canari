@@ -34,6 +34,7 @@ import { Request, Response } from 'express';
 import * as crypto from 'crypto';
 import sharp from 'sharp';
 import { MediaService } from './media.service';
+import { requireUploadedFile, uploadedFileBuffer, uploadedFileMime } from './uploaded-file';
 
 const POLICY_MAX_MEDIA_MB = 100;
 const CONFIGURED_MAX_MB = parseInt(process.env.MEDIA_MAX_SIZE_MB ?? '100', 10);
@@ -111,21 +112,20 @@ export class MediaController {
       storage: undefined,
     })
   )
-  async upload(
-    //@ts-expect-error - There are conflicting namespaces
-    @UploadedFile() file: Express.Multer.File,
-    @Req() req: Request
-  ): Promise<{ mediaId: string }> {
+  async upload(@UploadedFile() file: unknown, @Req() req: Request): Promise<{ mediaId: string }> {
     this.verifyToken(req);
 
-    if (!file) {
+    let upload: ReturnType<typeof requireUploadedFile>;
+    try {
+      upload = requireUploadedFile(file);
+    } catch {
       throw new PayloadTooLargeException(
         `No file provided or file exceeds size limit (${POLICY_MAX_MEDIA_MB} MB max)`
       );
     }
 
-    const mediaId = await this.mediaService.upload(file.buffer);
-    this.logger.log(`Stored encrypted blob: ${mediaId} (${file.size} bytes)`);
+    const mediaId = await this.mediaService.upload(upload.buffer);
+    this.logger.log(`Stored encrypted blob: ${mediaId} (${upload.size} bytes)`);
     return { mediaId };
   }
 
@@ -140,31 +140,33 @@ export class MediaController {
     })
   )
   async uploadPublic(
-    //@ts-expect-error - There are conflicting namespaces
-    @UploadedFile() file: Express.Multer.File,
+    @UploadedFile() file: unknown,
     @Req() req: Request
   ): Promise<{ mediaId: string }> {
     this.verifyToken(req);
 
-    if (!file) {
+    let upload: ReturnType<typeof requireUploadedFile>;
+    try {
+      upload = requireUploadedFile(file);
+    } catch {
       throw new PayloadTooLargeException(
         `No file provided or file exceeds ${PUBLIC_LOGO_MAX_BYTES} bytes`
       );
     }
-    const mime = file.mimetype?.toLowerCase() ?? '';
+    const mime = uploadedFileMime(upload);
     if (!ALLOWED_PUBLIC_LOGO_MIMES.has(mime)) {
       throw new BadRequestException('Logo must be JPEG, PNG, or WebP');
     }
 
     // Resize to max 512×512, convert to WebP 90% — logos are always public/unencrypted.
-    const compressed = await sharp(file.buffer)
+    const compressed = await sharp(upload.buffer)
       .resize(512, 512, { fit: 'inside', withoutEnlargement: true })
       .webp({ quality: 90 })
       .toBuffer();
 
     const mediaId = await this.mediaService.uploadPublicAsset(compressed, 'image/webp');
     this.logger.log(
-      `Stored public asset: ${mediaId} (${file.size} → ${compressed.length} bytes, webp)`
+      `Stored public asset: ${mediaId} (${upload.size} → ${compressed.length} bytes, webp)`
     );
     return { mediaId };
   }
@@ -191,15 +193,12 @@ export class MediaController {
   )
   async appendChunk(
     @Param('id') id: string,
-    //@ts-expect-error - There are conflicting namespaces
-    @UploadedFile() file: Express.Multer.File,
+    @UploadedFile() file: unknown,
     @Req() req: Request
   ): Promise<{ ok: boolean }> {
     this.verifyToken(req);
-    if (!file) {
-      throw new PayloadTooLargeException('No chunk provided');
-    }
-    await this.mediaService.appendChunk(id, file.buffer, MAX_BYTES);
+    const buffer = uploadedFileBuffer(file);
+    await this.mediaService.appendChunk(id, buffer, MAX_BYTES);
     return { ok: true };
   }
 

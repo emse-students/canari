@@ -3,6 +3,7 @@ import { StorageService } from './storage.service';
 import { v4 as uuidv4 } from 'uuid';
 import * as fs from 'fs-extra';
 import * as path from 'path';
+import { Readable } from 'stream';
 
 /** UUID v4 pattern — used to validate user-supplied IDs before path joins and property accesses. */
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -105,14 +106,10 @@ export class MediaService {
       return { status: 'not_found' };
     }
 
-    const chunks: Buffer[] = [];
-    for await (const chunk of stream) {
-      chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
-    }
-
+    const data = await this.readStreamToBuffer(stream);
     this.setAccess(mediaId, Date.now());
     await this.persistMetadata();
-    return { status: 'ok', data: Buffer.concat(chunks) };
+    return { status: 'ok', data };
   }
 
   async downloadPublic(mediaId: string): Promise<PublicDownloadResult> {
@@ -134,14 +131,9 @@ export class MediaService {
       return { status: 'not_found' };
     }
 
-    const chunks: Buffer[] = [];
-    for await (const chunk of stream) {
-      chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
-    }
-
     return {
       status: 'ok',
-      data: Buffer.concat(chunks),
+      data: await this.readStreamToBuffer(stream),
       contentType: entry.contentType,
     };
   }
@@ -290,6 +282,15 @@ export class MediaService {
 
   private async persistMetadata() {
     await fs.writeJson(MEDIA_META_FILE, { items: { ...this.meta.items } }, { spaces: 2 });
+  }
+
+  /** Reads a MinIO object stream into a single buffer. */
+  private async readStreamToBuffer(stream: Readable): Promise<Buffer> {
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream as AsyncIterable<Buffer | string>) {
+      chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+    }
+    return Buffer.concat(chunks);
   }
 
   /** True for association logos and other plaintext images exempt from the 30-day retention sweep. */

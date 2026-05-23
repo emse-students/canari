@@ -35,9 +35,13 @@ vi.mock('$lib/utils/users/displayName', () => ({
   getUserDisplayNameSync: vi.fn((id: string) => `Name(${id})`),
 }));
 
-vi.mock('$lib/utils/chat/messageUtils', () => ({
-  appMsgToEnvelope: vi.fn(() => ({ content: 'rendered', options: {} })),
-}));
+vi.mock('$lib/utils/chat/messageUtils', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('$lib/utils/chat/messageUtils')>();
+  return {
+    ...actual,
+    appMsgToEnvelope: vi.fn(() => ({ content: 'rendered', options: { messageId: 'mid-1' } })),
+  };
+});
 
 vi.mock('$lib/utils/chat/recovery', () => ({
   recoverDeadGroup: vi.fn().mockResolvedValue(undefined),
