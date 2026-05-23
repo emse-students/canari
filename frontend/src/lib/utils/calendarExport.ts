@@ -90,8 +90,6 @@ export async function exportCalendarMonth(
       const dayEvents = eventsOnDay(events, year, month, day);
       const today = sameDay(new Date(year, month, day), new Date());
 
-      // Determine how many blocks to show vs. how many go in the "+N" overflow line
-      const extra = Math.max(0, dayEvents.length - MAX_SHOW);
       // If there is overflow, sacrifice the last visible slot for a "+N" mini-row
       const nVisible = dayEvents.length > MAX_SHOW ? MAX_SHOW - 1 : dayEvents.length;
       const visible = dayEvents.slice(0, nVisible);
