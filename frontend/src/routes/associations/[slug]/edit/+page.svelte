@@ -44,7 +44,10 @@
     ShoppingBag,
     Plus,
     RefreshCw,
+    Check,
+    Download,
   } from '@lucide/svelte';
+  import { getInitials, generateAvatarColor } from '$lib/utils/avatar';
   import AssociationDocumentManager from '$lib/components/associations/AssociationDocumentManager.svelte';
   import {
     hasPermissionFlag,
@@ -72,6 +75,7 @@
   let editDescription = $state('');
   let editBioMarkdown = $state('');
   let saving = $state(false);
+  let saveSuccess = $state(false);
   let settingsError = $state('');
 
   let newMemberUserId = $state('');
@@ -183,12 +187,15 @@
     if (!asso) return;
     saving = true;
     settingsError = '';
+    saveSuccess = false;
     try {
       asso = await updateAssociation(asso.id, {
         name: editName.trim() || undefined,
         description: editDescription.trim() || undefined,
         bioMarkdown: editBioMarkdown.trim() || undefined,
       });
+      saveSuccess = true;
+      setTimeout(() => (saveSuccess = false), 3500);
     } catch (err) {
       settingsError = err instanceof Error ? err.message : 'Erreur lors de la sauvegarde';
     } finally {
@@ -460,6 +467,57 @@
       retryingDelivery = null;
     }
   }
+
+  /** Ouvre un onglet imprimable avec la grille trombinoscope de l'association et déclenche l'impression. */
+  function handleExportTrombinoscope() {
+    if (!asso) return;
+    const win = window.open('', '_blank');
+    if (!win) return;
+
+    const cards = members
+      .map((m) => {
+        const name = resolvedMemberNames[m.userId] ?? m.displayName ?? m.userId;
+        const role = m.role ?? 'Membre';
+        const bg = generateAvatarColor(m.userId);
+        const initials = getInitials(name);
+        const safeName = name.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const safeRole = role.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        return `<div class="card">
+  <div class="avatar" style="background:${bg}">${initials}</div>
+  <p class="name">${safeName}</p>
+  <p class="role">${safeRole}</p>
+</div>`;
+      })
+      .join('\n');
+
+    win.document.write(`<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Trombinoscope — ${asso.name.replace(/</g, '&lt;')}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Segoe UI", Inter, sans-serif; padding: 24px; background: #fff; color: #111; }
+  h1 { text-align: center; font-size: 22px; font-weight: 800; margin-bottom: 6px; }
+  .subtitle { text-align: center; color: #666; font-size: 13px; margin-bottom: 24px; }
+  .grid { display: flex; flex-wrap: wrap; gap: 16px; justify-content: center; }
+  .card { width: 110px; text-align: center; }
+  .avatar { width: 72px; height: 72px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+            font-size: 22px; font-weight: 700; color: #fff; margin: 0 auto 8px; letter-spacing: 1px; }
+  .name { font-size: 12px; font-weight: 600; line-height: 1.3; word-break: break-word; }
+  .role { font-size: 11px; color: #555; margin-top: 2px; }
+  @media print { body { padding: 12px; } }
+</style>
+</head>
+<body>
+<h1>${asso.name.replace(/</g, '&lt;')}</h1>
+<p class="subtitle">Trombinoscope — ${members.length} membre${members.length > 1 ? 's' : ''}</p>
+<div class="grid">${cards}</div>
+</body>
+</html>`);
+    win.document.close();
+    win.print();
+  }
 </script>
 
 <div class="px-4 py-6 sm:px-6 max-w-4xl mx-auto space-y-6">
@@ -495,7 +553,7 @@
       class="sticky top-0 z-30 -mx-4 px-4 py-3 bg-[var(--cn-bg)]/95 backdrop-blur-md border-y border-cn-border/80 sm:border sm:rounded-2xl sm:mx-0"
       aria-label="Sections édition"
     >
-      <div class="flex gap-2 overflow-x-auto pb-1">
+      <div class="flex flex-wrap gap-2">
         <button
           type="button"
           onclick={() => (editSection = 'profile')}
@@ -640,14 +698,22 @@
         {#if settingsError}
           <div class="text-sm text-red-600">{settingsError}</div>
         {/if}
-        <button
-          type="button"
-          onclick={handleSaveProfile}
-          disabled={saving}
-          class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover disabled:opacity-50"
-        >
-          {saving ? 'Enregistrement…' : 'Enregistrer le profil'}
-        </button>
+        <div class="flex items-center gap-3 flex-wrap">
+          <button
+            type="button"
+            onclick={handleSaveProfile}
+            disabled={saving}
+            class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover disabled:opacity-50"
+          >
+            {saving ? 'Enregistrement…' : 'Enregistrer le profil'}
+          </button>
+          {#if saveSuccess}
+            <span class="inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-600">
+              <Check size={15} />
+              Modifications enregistrées
+            </span>
+          {/if}
+        </div>
       </div>
     {/if}
 
@@ -686,11 +752,21 @@
       <div
         class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-5 shadow-sm"
       >
-        <div>
-          <h2 class="text-lg font-bold text-text-main tracking-tight">Membres</h2>
-          <p class="text-sm text-text-muted mt-1">
-            Rôles affichés sur la page publique. Les admins peuvent gérer l’agenda et les paiements.
-          </p>
+        <div class="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <h2 class="text-lg font-bold text-text-main tracking-tight">Membres</h2>
+            <p class="text-sm text-text-muted mt-1">
+              Rôles affichés sur la page publique. Les admins peuvent gérer l’agenda et les paiements.
+            </p>
+          </div>
+          <button
+            type="button"
+            onclick={handleExportTrombinoscope}
+            class="inline-flex items-center gap-2 rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold text-text-muted hover:text-text-main hover:bg-cn-bg transition-colors shrink-0"
+          >
+            <Download size={15} />
+            Trombinoscope PDF
+          </button>
         </div>
         <div class="space-y-3">
           {#each members as member (member.id)}

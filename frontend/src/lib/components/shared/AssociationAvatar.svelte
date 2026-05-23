@@ -62,7 +62,7 @@
   <img
     src={displaySrc}
     alt={name}
-    class="{shapeClasses} object-cover shadow-sm ring-1 ring-white/20 flex-shrink-0 select-none {sizeClasses}"
+    class="{shapeClasses} object-cover bg-white shadow-sm ring-1 ring-white/20 flex-shrink-0 select-none {sizeClasses}"
     title={name}
     onerror={() => { imageFailed = true; }}
   />
