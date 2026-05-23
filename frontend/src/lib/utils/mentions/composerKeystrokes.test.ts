@@ -90,11 +90,18 @@ describe('simulateComposerKeystrokes (markdown preview)', () => {
     expect(results.at(-1)?.domRerendered).toBe(true);
   });
 
-  it('rerenders when editing inside closed italic without duplicating delimiters', () => {
+  it('keeps caret after closing delimiters when finishing a span', () => {
     let state: ComposerSimState = { ...composerSimInitialState };
-    for (const key of '*test*') {
+    for (const key of '**test**') {
       ({ state } = runComposerInputCycle(root, state, key, MD));
     }
+    expect(state.value).toBe('**test**');
+    expect(state.cursor).toBe('**test**'.length);
+  });
+
+  it('rerenders when editing inside closed italic without duplicating delimiters', () => {
+    renderPlainTextToMentionEditor(root, '*test*', { markdownPreview: true });
+    const state: ComposerSimState = { value: '*test*', lastRendered: '*test*', cursor: 5 };
 
     const { state: afterS, domRerendered } = runComposerInputCycle(root, state, 's', MD);
     expect(domRerendered).toBe(true);

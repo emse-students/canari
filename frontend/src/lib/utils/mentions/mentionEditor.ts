@@ -184,56 +184,6 @@ export function composerMarkdownPreviewEnabled(
 }
 
 /**
- * Plain-text caret offset after rebuilding styled markdown DOM.
- * When inserting at the end of a closed span, places the caret before the closing delimiter.
- * Skipped after deletions so Backspace at the end still removes the closing delimiter first.
- */
-export function caretAfterComposerRender(
-  plainText: string,
-  requestedCursor: number,
-  options: MentionEditorRenderOptions = {},
-  previousPlainText?: string
-): number {
-  if (!composerMarkdownPreviewEnabled(plainText, options)) return requestedCursor;
-
-  if (previousPlainText !== undefined) {
-    if (plainText.length < previousPlainText.length) return requestedCursor;
-    if (
-      markdownStructureKey(plainText) !== markdownStructureKey(previousPlainText) &&
-      requestedCursor >= plainText.length
-    ) {
-      return plainText.length;
-    }
-  }
-
-  if (requestedCursor < plainText.length) return requestedCursor;
-
-  const last = parseInlineMarkdownPreview(plainText).at(-1);
-  if (last?.kind === 'delimiter') {
-    return Math.max(0, plainText.length - last.marker.length);
-  }
-  return requestedCursor;
-}
-
-/**
- * Caret used when applying an insert keystroke to formatted plain text.
- * Inserts before a trailing closing delimiter instead of after it.
- */
-export function caretForComposerInsert(
-  plainText: string,
-  cursor: number,
-  options: MentionEditorRenderOptions = {}
-): number {
-  if (!composerMarkdownPreviewEnabled(plainText, options)) return cursor;
-  if (cursor < plainText.length) return cursor;
-  const last = parseInlineMarkdownPreview(plainText).at(-1);
-  if (last?.kind === 'delimiter') {
-    return Math.max(0, plainText.length - last.marker.length);
-  }
-  return cursor;
-}
-
-/**
  * Whether the composer DOM should be rebuilt.
  * Re-renders when markdown structure changes (delimiter opened/closed) or when editing inside
  * closed formatted spans (keeps the caret in the content node, not after a muted delimiter).

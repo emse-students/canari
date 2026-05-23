@@ -5,8 +5,6 @@ import {
   setPlainTextSelection,
   shouldRerenderComposerDom,
   composerMarkdownPreviewEnabled,
-  caretAfterComposerRender,
-  caretForComposerInsert,
   type MentionEditorRenderOptions,
 } from './mentionEditor';
 
@@ -74,9 +72,7 @@ export function runComposerInputCycle(
   key: string,
   options: MentionEditorRenderOptions = {}
 ): { state: ComposerSimState; domRerendered: boolean } {
-  const insertAt =
-    key === 'Backspace' ? state.cursor : caretForComposerInsert(state.value, state.cursor, options);
-  const { text, cursor } = applyPlainKeystroke(state.value, insertAt, key);
+  const { text, cursor } = applyPlainKeystroke(state.value, state.cursor, key);
   const needsMentions = needsMentionChipRender(root, text);
   const needsDom = needsMentions || shouldRerenderComposerDom(text, state.lastRendered, options);
 
@@ -85,7 +81,7 @@ export function runComposerInputCycle(
     renderPlainTextToMentionEditor(root, text, {
       markdownPreview: composerMarkdownPreviewEnabled(text, options),
     });
-    nextCursor = caretAfterComposerRender(text, cursor, options, state.lastRendered);
+    nextCursor = cursor;
     setPlainTextSelection(root, nextCursor, nextCursor);
   } else {
     nextCursor = mutateDomAtPlainOffset(root, state.cursor, key);

@@ -5,7 +5,6 @@
   import {
     getMentionChipFromEventTarget,
     getPlainTextSelection,
-    caretAfterComposerRender,
     composerMarkdownPreviewEnabled,
     needsMentionChipRender,
     removeMentionChipBeforeCursor,
@@ -83,12 +82,7 @@
       markdownPreview: composerMarkdownPreviewEnabled(text, renderOptions),
     });
     lastRenderedValue = text;
-    const pos = caretAfterComposerRender(
-      text,
-      cursor ?? getPlainTextSelection(editorEl).start,
-      renderOptions,
-      lastRenderedValue
-    );
+    const pos = cursor ?? getPlainTextSelection(editorEl).start;
     queueMicrotask(() => {
       if (!editorEl) return;
       setPlainTextSelection(editorEl, pos, pos);
@@ -225,7 +219,7 @@
 
   {#if !value && placeholder}
     <div
-      class="mention-composer-placeholder pointer-events-none absolute inset-0 flex items-center px-[inherit] py-[inherit] text-text-muted/60 select-none"
+      class="mention-composer-placeholder pointer-events-none absolute inset-0 block whitespace-pre-wrap text-text-muted/60 select-none {editorClass}"
       aria-hidden="true"
     >
       {placeholder}
@@ -258,6 +252,10 @@
 </div>
 
 <style>
+  :global(.mention-composer-placeholder) {
+    z-index: 0;
+  }
+
   :global(.mention-composer-editor) {
     position: relative;
     z-index: 1;
