@@ -17,10 +17,9 @@
   let updating = $state(false);
 
   async function handleUpdate() {
-    if (!info?.serverVersion) return;
     updating = true;
     try {
-      await openLatestAppUpdate(info.serverVersion);
+      await openLatestAppUpdate(info?.serverVersion ?? null);
     } finally {
       updating = false;
     }
@@ -43,12 +42,12 @@
         <strong class="text-cn-dark">{info.serverVersion}</strong>.
       {/if}
     </p>
-    {#if isAndroid && info?.serverVersion}
+    {#if isAndroid}
       <p>
         Le téléchargement de l’APK s’ouvrira dans votre navigateur ; installez-le ensuite pour
         mettre à jour l’application.
       </p>
-    {:else if isNative && info?.serverVersion}
+    {:else if isNative}
       <p>
         Téléchargez et installez la dernière version depuis la page de release GitHub.
       </p>
@@ -69,7 +68,7 @@
     <button
       type="button"
       class="inline-flex items-center gap-2 rounded-lg bg-cn-primary px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-60"
-      disabled={updating || !info?.serverVersion}
+      disabled={updating}
       onclick={() => void handleUpdate()}
     >
       <Download size={16} />

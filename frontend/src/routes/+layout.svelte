@@ -67,9 +67,13 @@
       attachConsole().catch(() => {});
     }
 
+    const onVersionCheckTrigger = () => void refreshAppVersionCheck();
     void refreshAppVersionCheck();
-    const onFocus = () => void refreshAppVersionCheck();
-    window.addEventListener('focus', onFocus);
+    window.addEventListener('focus', onVersionCheckTrigger);
+    window.addEventListener('online', onVersionCheckTrigger);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') void refreshAppVersionCheck();
+    });
 
     const handler = () => {
       showLogs = !showLogs;
@@ -80,7 +84,8 @@
     return () => {
       teardownHistory();
       teardownKeyboard();
-      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('focus', onVersionCheckTrigger);
+      window.removeEventListener('online', onVersionCheckTrigger);
       window.removeEventListener('canari:toggle-logs', handler);
     };
   });

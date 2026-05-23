@@ -38,14 +38,20 @@ export function compareSemver(a: string, b: string): number {
   return 0;
 }
 
+const VERSION_FETCH_TIMEOUT_MS = 8_000;
+const VERSION_FETCH_RETRIES = 3;
+const VERSION_RETRY_DELAY_MS = 1_200;
+
 /** Fetches `GET /api/version` (no auth). */
 export async function fetchServerAppVersion(
-  fetchFn: typeof fetch = fetch
+  fetchFn: typeof fetch = fetch,
+  signal?: AbortSignal
 ): Promise<ServerVersionInfo | null> {
   try {
     const res = await fetchFn(`${coreUrl()}/api/version`, {
       method: 'GET',
       cache: 'no-store',
+      signal,
     });
     if (!res.ok) return null;
     const data = (await res.json()) as ServerVersionInfo;
@@ -56,6 +62,35 @@ export async function fetchServerAppVersion(
   }
 }
 
+/** Retries `/api/version` with per-attempt timeout (mobile cold start / slow networks). */
+export async function fetchServerAppVersionReliable(
+  fetchFn: typeof fetch = fetch
+): Promise<ServerVersionInfo | null> {
+  for (let attempt = 0; attempt < VERSION_FETCH_RETRIES; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), VERSION_FETCH_TIMEOUT_MS);
+    try {
+      const info = await fetchServerAppVersion(fetchFn, controller.signal);
+      if (info) return info;
+    } catch {
+      /* timeout or network — retry */
+    } finally {
+      clearTimeout(timer);
+    }
+    if (attempt < VERSION_FETCH_RETRIES - 1) {
+      await new Promise((resolve) => setTimeout(resolve, VERSION_RETRY_DELAY_MS));
+    }
+  }
+  return null;
+}
+
+/** Builds a version check result from a known server semver (or null when unknown). */
+export function buildAppVersionCheckResult(serverVersion: string | null): AppVersionCheckResult {
+  const clientVersion = getClientAppVersion();
+  const upToDate = serverVersion === null || compareSemver(clientVersion, serverVersion) >= 0;
+  return { clientVersion, serverVersion, upToDate };
+}
+
 /**
  * Returns whether the running client is at least as new as the server deployment.
  * `upToDate` is true when the server version is unknown (offline) or client >= server.
@@ -63,16 +98,8 @@ export async function fetchServerAppVersion(
 export async function checkAppVersion(
   fetchFn: typeof fetch = fetch
 ): Promise<AppVersionCheckResult> {
-  const clientVersion = getClientAppVersion();
-  const server = await fetchServerAppVersion(fetchFn);
-  const serverVersion = server?.version ?? null;
-  const upToDate = serverVersion === null || compareSemver(clientVersion, serverVersion) >= 0;
-
-  return {
-    clientVersion,
-    serverVersion,
-    upToDate,
-  };
+  const server = await fetchServerAppVersionReliable(fetchFn);
+  return buildAppVersionCheckResult(server?.version ?? null);
 }
 
 /** Normalizes a semver string to a GitHub release tag (`vX.Y.Z`). */

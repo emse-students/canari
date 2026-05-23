@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi, afterEach } from 'vitest';
 import {
+  buildAppVersionCheckResult,
   compareSemver,
+  fetchServerAppVersionReliable,
   getClientAppVersion,
   getReleaseApkDownloadUrl,
   getReleasePageUrl,
@@ -18,6 +20,38 @@ describe('compareSemver', () => {
 describe('getClientAppVersion', () => {
   it('returns a non-empty semver string', () => {
     expect(getClientAppVersion()).toMatch(/^\d+\.\d+\.\d+/);
+  });
+});
+
+describe('buildAppVersionCheckResult', () => {
+  it('marks client as outdated when server semver is newer', () => {
+    const client = getClientAppVersion();
+    const result = buildAppVersionCheckResult('99.99.99');
+    expect(result.clientVersion).toBe(client);
+    expect(result.serverVersion).toBe('99.99.99');
+    expect(result.upToDate).toBe(false);
+  });
+});
+
+describe('fetchServerAppVersionReliable', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('retries until a successful response', async () => {
+    vi.useFakeTimers();
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('', { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ version: '1.2.3' }), { status: 200 }));
+
+    const promise = fetchServerAppVersionReliable(fetchFn);
+    await vi.runAllTimersAsync();
+    const info = await promise;
+
+    expect(info).toEqual({ version: '1.2.3' });
+    expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 });
 
