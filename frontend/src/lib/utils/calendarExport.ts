@@ -41,7 +41,7 @@ function eventsOnDay(
 
 const WEEKDAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
 
-const CELL_H = 110; // total cell height px
+const CELL_H = 130; // cell height px — taller for comfortable text
 const MAX_SHOW = 3; // max visible event slots per cell
 
 function safe(s: string): string {
@@ -50,7 +50,7 @@ function safe(s: string): string {
 
 /**
  * Seasonal Unsplash background images by 0-indexed month.
- * Pre-fetched as base64 data: URLs, then composited behind the calendar via Canvas API.
+ * Used as header background (data: URL, pre-fetched to avoid CORS).
  */
 export const MONTH_BG_URLS: Record<number, string> = {
   0: 'https://images.unsplash.com/photo-1516912481808-3406841bd33c?w=1200&q=70&auto=format&fit=crop',
@@ -86,35 +86,14 @@ async function fetchDataUrl(url: string | null): Promise<string | null> {
 }
 
 /**
- * Draws a background image (cover crop) at low opacity on a canvas context.
- * Used to composite the seasonal image behind the calendar grid.
- */
-function drawBgCover(
-  ctx: CanvasRenderingContext2D,
-  img: HTMLImageElement,
-  w: number,
-  h: number,
-  opacity: number
-) {
-  const scale = Math.max(w / img.naturalWidth, h / img.naturalHeight);
-  const sw = img.naturalWidth * scale;
-  const sh = img.naturalHeight * scale;
-  ctx.save();
-  ctx.globalAlpha = opacity;
-  ctx.drawImage(img, (w - sw) / 2, (h - sh) / 2, sw, sh);
-  ctx.restore();
-}
-
-/**
  * Renders the monthly calendar grid to a landscape A4 PDF and triggers a direct download.
  *
- * Design:
+ * Design language:
+ * - Canari yellow (#f5c518) header with Fredoka font and seasonal background image.
+ * - Dark navy (#122035) weekday header row with yellow weekend labels.
  * - Events fill the entire cell height, split equally across all visible slots.
- * - Day number overlays the first event slot (or the empty cell), coloured for contrast.
- * - Association logos appear as large circular watermarks centred in each event slot.
- * - A seasonal background image is composited behind the calendar via the Canvas API
- *   (no html2canvas background-image dependency; cells with events are opaque,
- *   empty cells use rgba(255,255,255,0.85) so the image shows subtly through them).
+ * - Day number is a small yellow badge overlaid on the first slot.
+ * - Association logos appear as circular watermarks centred in each event slot.
  */
 export async function exportCalendarMonth(
   events: AssociationCalendarFeedEvent[],
@@ -131,7 +110,7 @@ export async function exportCalendarMonth(
     .format(focusDate)
     .replace(/^\w/, (c) => c.toUpperCase());
 
-  // Pre-fetch all images as data: URLs to avoid html2canvas cross-origin issues
+  // Pre-fetch all images as data: URLs (cross-origin safe for html2canvas)
   const uniqueLogoUrls = [
     ...new Set(events.map((ev) => ev.associationLogoUrl).filter(Boolean) as string[]),
   ];
@@ -145,9 +124,10 @@ export async function exportCalendarMonth(
 
   const cells = buildCalendarCells(year, month);
 
+  // Dark navy weekday header: yellow labels for weekends, white for weekdays
   const headerRow = WEEKDAYS.map(
     (w, i) =>
-      `<div style="padding:7px 6px;text-align:center;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:${i >= 5 ? '#9ca3af' : '#607188'};border-bottom:2px solid #d9e0ea;background:rgba(248,250,252,0.92);">${w}</div>`
+      `<div style="padding:9px 6px;text-align:center;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:${i >= 5 ? '#f5c518' : '#e2eaf4'};background:#122035;">${w}</div>`
   ).join('');
 
   const cellHtml = cells
@@ -155,17 +135,17 @@ export async function exportCalendarMonth(
       const isWeekend = i % 7 >= 5;
 
       if (day === null) {
-        return `<div style="height:${CELL_H}px;background:${isWeekend ? 'rgba(241,245,249,0.7)' : 'rgba(248,250,252,0.7)'};border-right:1px solid rgba(229,233,239,0.8);border-bottom:1px solid rgba(229,233,239,0.8);box-sizing:border-box;"></div>`;
+        return `<div style="height:${CELL_H}px;background:${isWeekend ? '#f1f5f9' : '#f8fafc'};border-right:1px solid #dde3ec;border-bottom:1px solid #dde3ec;box-sizing:border-box;"></div>`;
       }
 
       const dayEvents = eventsOnDay(events, year, month, day);
 
       if (dayEvents.length === 0) {
-        const cellBg = isWeekend ? 'rgba(241,245,249,0.85)' : 'rgba(255,255,255,0.85)';
-        return `<div style="height:${CELL_H}px;background:${cellBg};border-right:1px solid rgba(229,233,239,0.8);border-bottom:1px solid rgba(229,233,239,0.8);box-sizing:border-box;padding:5px 7px;"><span style="font-size:12px;font-weight:700;color:#94a3b8;">${day}</span></div>`;
+        const bg = isWeekend ? '#f1f5f9' : '#ffffff';
+        return `<div style="height:${CELL_H}px;background:${bg};border-right:1px solid #dde3ec;border-bottom:1px solid #dde3ec;box-sizing:border-box;padding:6px 7px;"><span style="font-size:12px;font-weight:700;color:#b8c4d0;">${day}</span></div>`;
       }
 
-      // Events fill the entire cell, each slot gets an equal share of CELL_H
+      // Events fill the entire cell, each slot an equal share of CELL_H
       const nVisible = dayEvents.length > MAX_SHOW ? MAX_SHOW - 1 : dayEvents.length;
       const visible = dayEvents.slice(0, nVisible);
       const overflowCount = dayEvents.length - nVisible;
@@ -180,51 +160,69 @@ export async function exportCalendarMonth(
             ? (logoMap.get(ev.associationLogoUrl) ?? null)
             : null;
 
-          // Circular logo watermark centred in the slot
-          const logoSize = Math.max(Math.round(slotH * 0.64), 14);
+          // Circular watermark centred — wrapped in a flex div to avoid transform dependency
+          const logoSize = Math.max(Math.round(slotH * 0.62), 14);
           const watermark = logoDataUrl
-            ? `<div style="position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;"><img src="${logoDataUrl}" style="height:${logoSize}px;width:${logoSize}px;border-radius:50%;object-fit:cover;opacity:0.18;" /></div>`
+            ? `<div style="position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;pointer-events:none;"><img src="${logoDataUrl}" style="height:${logoSize}px;width:${logoSize}px;border-radius:50%;object-fit:cover;opacity:0.18;" /></div>`
             : '';
 
-          // Day number overlaid on the first slot only
-          const dayNum =
+          // Canari yellow day-number badge on the first slot
+          const dayBadge =
             idx === 0
-              ? `<span style="position:absolute;top:3px;left:5px;font-size:10px;font-weight:900;line-height:1;color:${fg};">${day}</span>`
+              ? `<span style="position:absolute;top:3px;left:3px;background:#f5c518;color:#122035;font-size:9px;font-weight:900;min-width:18px;height:16px;border-radius:3px;display:inline-flex;align-items:center;justify-content:center;padding:0 3px;box-sizing:border-box;line-height:1;">${day}</span>`
               : '';
 
-          const fontSize = slotH >= 40 ? 12 : slotH >= 28 ? 11 : slotH >= 20 ? 10 : 9;
-          return `<div style="height:${slotH}px;position:relative;display:flex;align-items:center;justify-content:center;background:${bg};overflow:hidden;">${watermark}${dayNum}<span style="position:relative;font-size:${fontSize}px;font-weight:700;color:${fg};text-align:center;padding:0 12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;box-sizing:border-box;">${safe(ev.title)}</span></div>`;
+          const fontSize = slotH >= 60 ? 13 : slotH >= 45 ? 12 : slotH >= 35 ? 11 : 10;
+          // Allow text wrap for tall slots; single-line truncation for short ones.
+          // min-width:0 is critical for truncation inside a flex container.
+          const textStyle =
+            slotH >= 48
+              ? `position:relative;font-size:${fontSize}px;font-weight:700;color:${fg};text-align:center;padding:0 10px;overflow:hidden;word-break:break-word;min-width:0;max-width:100%;box-sizing:border-box;line-height:1.3;`
+              : `position:relative;font-size:${fontSize}px;font-weight:700;color:${fg};text-align:center;padding:0 6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;max-width:100%;box-sizing:border-box;`;
+
+          return `<div style="height:${slotH}px;position:relative;display:flex;align-items:center;justify-content:center;background:${bg};overflow:hidden;">${watermark}${dayBadge}<span style="${textStyle}">${safe(ev.title)}</span></div>`;
         }),
         ...(overflowCount > 0
           ? [
-              `<div style="height:${slotH}px;display:flex;align-items:center;justify-content:center;background:rgba(241,245,249,0.9);"><span style="font-size:9px;font-weight:700;color:#607188;">+${overflowCount} autre${overflowCount > 1 ? 's' : ''}</span></div>`,
+              `<div style="height:${slotH}px;display:flex;align-items:center;justify-content:center;background:#f0f4f8;"><span style="font-size:9px;font-weight:800;color:#607188;">+${overflowCount} autre${overflowCount > 1 ? 's' : ''}</span></div>`,
             ]
           : []),
       ];
 
-      return `<div style="height:${CELL_H}px;overflow:hidden;border-right:1px solid rgba(229,233,239,0.8);border-bottom:1px solid rgba(229,233,239,0.8);box-sizing:border-box;display:flex;flex-direction:column;">${rows.join('')}</div>`;
+      return `<div style="height:${CELL_H}px;overflow:hidden;border-right:1px solid #dde3ec;border-bottom:1px solid #dde3ec;box-sizing:border-box;display:flex;flex-direction:column;">${rows.join('')}</div>`;
     })
     .join('');
 
   const container = document.createElement('div');
-  // No background on the container — we composite the bg image via Canvas API after rendering.
-  // Cells use rgba backgrounds so they appear semi-transparent over the bg image.
   Object.assign(container.style, {
     position: 'absolute',
     top: '0',
     left: '-9999px',
     width: '1080px',
+    background: '#f5f7fa',
     color: '#111111',
     fontFamily: '"Nunito", "Segoe UI", sans-serif',
     boxSizing: 'border-box',
+    borderRadius: '12px',
+    overflow: 'hidden',
   });
 
+  // Seasonal image in the yellow header at 25% opacity (data: URL, no CORS issues)
+  const headerImgHtml = bgDataUrl
+    ? `<img src="${bgDataUrl}" style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;opacity:0.25;" />`
+    : '';
+
   container.innerHTML = `
-    <div style="padding:28px 32px;">
-      <div style="margin-bottom:16px;padding-bottom:12px;border-bottom:2.5px solid rgba(217,224,234,0.9);">
-        <h1 style="font-family:'Fredoka','Segoe UI',sans-serif;font-size:28px;font-weight:700;color:#122035;margin:0;display:inline-block;background:rgba(255,255,255,0.82);padding:4px 12px;border-radius:8px;">${safe(monthLabel)}</h1>
+    <!-- Canari yellow header with centred month title -->
+    <div style="background:#f5c518;position:relative;overflow:hidden;height:84px;display:flex;align-items:center;justify-content:center;">
+      ${headerImgHtml}
+      <h1 style="position:relative;font-family:'Fredoka','Segoe UI',sans-serif;font-size:34px;font-weight:700;color:#122035;margin:0;text-align:center;letter-spacing:.01em;">${safe(monthLabel)}</h1>
+    </div>
+    <!-- Calendar grid -->
+    <div style="padding:0 20px 20px;">
+      <div style="display:grid;grid-template-columns:repeat(7,1fr);border:1.5px solid #122035;border-top:none;border-radius:0 0 8px 8px;overflow:hidden;">
+        ${headerRow}${cellHtml}
       </div>
-      <div style="display:grid;grid-template-columns:repeat(7,1fr);">${headerRow}${cellHtml}</div>
     </div>`;
 
   document.body.appendChild(container);
@@ -245,44 +243,18 @@ export async function exportCalendarMonth(
 
     await document.fonts.ready;
 
-    // Render calendar to canvas with transparent background so rgba cells show through later
-    const calCanvas = await html2canvas(container, {
+    const canvas = await html2canvas(container, {
       scale: 2,
       useCORS: false,
-      backgroundColor: null,
+      backgroundColor: '#f5f7fa',
       logging: false,
     });
 
-    // Composite: bg image (cover, low opacity) → calendar grid on top
-    const finalCanvas = document.createElement('canvas');
-    finalCanvas.width = calCanvas.width;
-    finalCanvas.height = calCanvas.height;
-    const ctx = finalCanvas.getContext('2d')!;
-
-    // Fill a light neutral base so empty-cell transparency looks clean
-    ctx.fillStyle = '#eef2f7';
-    ctx.fillRect(0, 0, finalCanvas.width, finalCanvas.height);
-
-    if (bgDataUrl) {
-      const bgImg = new Image();
-      await new Promise<void>((resolve) => {
-        bgImg.onload = () => resolve();
-        bgImg.onerror = () => resolve(); // graceful
-        bgImg.src = bgDataUrl;
-      });
-      if (bgImg.naturalWidth > 0) {
-        drawBgCover(ctx, bgImg, finalCanvas.width, finalCanvas.height, 0.45);
-      }
-    }
-
-    // Draw calendar (cells with rgba backgrounds blend naturally with the bg image)
-    ctx.drawImage(calCanvas, 0, 0);
-
-    const imgData = finalCanvas.toDataURL('image/png');
+    const imgData = canvas.toDataURL('image/png');
     const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
     const pageW = pdf.internal.pageSize.getWidth();
     const pageH = pdf.internal.pageSize.getHeight();
-    const imgH = (finalCanvas.height * pageW) / finalCanvas.width;
+    const imgH = (canvas.height * pageW) / canvas.width;
 
     if (imgH <= pageH) {
       pdf.addImage(imgData, 'PNG', 0, 0, pageW, imgH);
