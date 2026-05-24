@@ -41,9 +41,15 @@ function eventsOnDay(
 
 const WEEKDAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
 
-// Landscape A4 = 297×210mm. At 1080px wide, max container height ≈ 210×(1080/297) ≈ 763px.
-// For a 6-row month: 68 (header) + 39 (weekday row) + 6×CELL_H + 20 (padding) ≤ 763 → CELL_H ≤ 106.
-const CELL_H = 100; // cell height px — keeps 6-row months on a single A4 landscape page
+// CELL_H is computed per-export from the number of calendar rows (see exportCalendarMonth).
+// These constants describe the non-cell vertical space in the container (px):
+const HEADER_H = 68; // fixed top header
+const WEEKDAY_ROW_H = 40; // weekday label row (11px pad × 2 + ~18px line-height, +1 safety)
+const GRID_PAD_BOTTOM = 20; // padding:0 20px 20px on the grid wrapper
+// A4 landscape at 1080px logical width: max container height before the image overflows the page.
+// 210 × (1080/297) = 763px; subtract 5px safety margin for sub-pixel rounding.
+const A4_MAX_CONTAINER_H = Math.floor((210 * 1080) / 297) - 5; // ≈ 758px
+const MAX_CELL_H = 130; // aesthetic upper bound — prevents cells becoming too tall on short months
 const MAX_SHOW = 3; // max visible event slots per cell
 
 function safe(s: string): string {
@@ -129,6 +135,12 @@ export async function exportCalendarMonth(
   );
 
   const cells = buildCalendarCells(year, month);
+  // Compute the tallest cell height that keeps the calendar on a single A4 landscape page.
+  const nRows = cells.length / 7;
+  const CELL_H = Math.min(
+    MAX_CELL_H,
+    Math.floor((A4_MAX_CONTAINER_H - HEADER_H - WEEKDAY_ROW_H - GRID_PAD_BOTTOM) / nRows)
+  );
 
   // Dark navy weekday header row
   const headerRow = WEEKDAYS.map(
@@ -285,10 +297,8 @@ export async function exportCalendarMonth(
     const pageW = pdf.internal.pageSize.getWidth();
     const pageH = pdf.internal.pageSize.getHeight();
 
-    // Scale to fill width; fall back to scale-by-height if the calendar is still too tall
-    // (edge cases: mis-estimated container height). Always one page.
-    const scale = Math.min(pageW / canvas.width, pageH / canvas.height);
-    pdf.addImage(imgData, 'PNG', 0, 0, canvas.width * scale, canvas.height * scale);
+    // Scale to fill the full page width; CELL_H was sized to guarantee the image fits the height.
+    pdf.addImage(imgData, 'PNG', 0, 0, pageW, (canvas.height * pageW) / canvas.width);
 
     pdf.save(`canari-agenda-${year}-${String(month + 1).padStart(2, '0')}.pdf`);
   } finally {
