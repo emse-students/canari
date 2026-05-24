@@ -167,6 +167,8 @@ services:
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-${MINIO_ROOT_PASSWORD:-minioadmin}}
       MINIO_BUCKET: ${MINIO_BUCKET:-canari-media}
       MEDIA_MAX_SIZE_MB: "${MEDIA_MAX_SIZE_MB:-50}"
+    volumes:
+      - media_meta:/app/media_meta
     depends_on:
       minio:
         condition: service_healthy
@@ -253,3 +255,4 @@ volumes:
   mongo_data:
   postgres_data:
   minio_data:
+  media_meta:
