@@ -3,16 +3,22 @@
   import {
     listPendingCalendarEvents,
     validateAssociationCalendarEvent,
+    rejectAssociationCalendarEvent,
     deleteAssociationCalendarEvent,
     type AssociationCalendarFeedEvent,
   } from '$lib/associations/api';
-  import { Check, Trash2, ExternalLink, Clock } from '@lucide/svelte';
+  import { Check, X, Trash2, ExternalLink, Clock } from '@lucide/svelte';
 
   let events = $state<AssociationCalendarFeedEvent[]>([]);
   let canValidate = $state(false);
   let loading = $state(true);
   let error = $state('');
   let actingId = $state<string | null>(null);
+
+  /** Event currently being rejected — drives the reject modal. */
+  let rejectTarget = $state<AssociationCalendarFeedEvent | null>(null);
+  let rejectReason = $state('');
+  let rejecting = $state(false);
 
   async function load() {
     loading = true;
@@ -54,6 +60,25 @@
       error = e instanceof Error ? e.message : 'Erreur';
     } finally {
       actingId = null;
+    }
+  }
+
+  function openRejectModal(ev: AssociationCalendarFeedEvent) {
+    rejectTarget = ev;
+    rejectReason = '';
+  }
+
+  async function confirmReject() {
+    if (!rejectTarget) return;
+    rejecting = true;
+    try {
+      await rejectAssociationCalendarEvent(rejectTarget.associationId, rejectTarget.id, rejectReason);
+      rejectTarget = null;
+      await load();
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Erreur';
+    } finally {
+      rejecting = false;
     }
   }
 
@@ -135,6 +160,15 @@
                 <Check size={14} />
                 Valider
               </button>
+              <button
+                type="button"
+                onclick={() => openRejectModal(ev)}
+                disabled={actingId === ev.id}
+                class="inline-flex items-center gap-1.5 rounded-xl border border-orange-300 px-3 py-2 text-xs font-semibold text-orange-700 hover:bg-orange-50 disabled:opacity-50"
+              >
+                <X size={14} />
+                Refuser
+              </button>
             {/if}
             <a
               href="/associations/{encodeURIComponent(ev.associationSlug)}"
@@ -158,3 +192,48 @@
     </ul>
   {/if}
 </div>
+
+<!-- Reject modal -->
+{#if rejectTarget}
+  <div
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+    role="dialog"
+    aria-modal="true"
+  >
+    <div class="w-full max-w-md rounded-2xl bg-white dark:bg-cn-surface shadow-xl p-6 space-y-4">
+      <h3 class="text-base font-bold text-text-main">Refuser « {rejectTarget.title} »</h3>
+      <p class="text-sm text-text-muted">
+        L'événement sera marqué comme refusé. L'association recevra une notification et pourra voir
+        le motif dans sa page.
+      </p>
+      <label class="block space-y-1.5">
+        <span class="text-xs font-semibold text-text-muted uppercase tracking-wide">Motif (optionnel)</span>
+        <textarea
+          bind:value={rejectReason}
+          rows={3}
+          maxlength={1000}
+          placeholder="Ex : dates non conformes au règlement, contenu incomplet…"
+          class="w-full rounded-xl border border-cn-border bg-cn-bg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-cn-yellow"
+        ></textarea>
+      </label>
+      <div class="flex gap-2 justify-end">
+        <button
+          type="button"
+          onclick={() => { rejectTarget = null; }}
+          class="rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold hover:bg-cn-bg"
+        >
+          Annuler
+        </button>
+        <button
+          type="button"
+          onclick={confirmReject}
+          disabled={rejecting}
+          class="inline-flex items-center gap-1.5 rounded-xl border border-orange-300 px-4 py-2 text-sm font-bold text-orange-700 hover:bg-orange-50 disabled:opacity-50"
+        >
+          <X size={14} />
+          {rejecting ? 'En cours…' : 'Confirmer le refus'}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}

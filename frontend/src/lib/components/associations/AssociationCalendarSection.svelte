@@ -210,6 +210,7 @@
 
   const validatedEvents = $derived(events.filter((e) => (e.status ?? 'validated') === 'validated'));
   const pendingEvents = $derived(events.filter((e) => e.status === 'pending'));
+  const rejectedEvents = $derived(events.filter((e) => e.status === 'rejected'));
 
   function hasValidatedEventOnDay(day: number): boolean {
     const d = new Date(focusDate.getFullYear(), focusDate.getMonth(), day);
@@ -249,6 +250,12 @@
   const sortedPendingEvents = $derived(
     [...pendingEvents].sort(
       (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime()
+    )
+  );
+
+  const sortedRejectedEvents = $derived(
+    [...rejectedEvents].sort(
+      (a, b) => new Date(b.rejectedAt ?? b.createdAt).getTime() - new Date(a.rejectedAt ?? a.createdAt).getTime()
     )
   );
 
@@ -549,6 +556,44 @@
             >
               <Pencil size={16} />
             </button>
+            <button
+              type="button"
+              onclick={() => removeEvent(ev.id)}
+              class="rounded-xl border border-red-200 p-2 text-red-600 hover:bg-red-50"
+              title="Supprimer"
+            >
+              <Trash2 size={16} />
+            </button>
+          </div>
+        </div>
+      {/each}
+    </div>
+  {/if}
+
+  {#if canEdit && !loading && sortedRejectedEvents.length > 0}
+    <div class="space-y-3">
+      <h3 class="text-sm font-bold text-red-700 uppercase tracking-wide">
+        Refusés par le BDE ({sortedRejectedEvents.length})
+      </h3>
+      {#each sortedRejectedEvents as ev (ev.id)}
+        <div
+          class="rounded-2xl border border-red-200 bg-red-50/60 dark:bg-red-950/20 px-4 py-3 flex flex-col sm:flex-row sm:items-start gap-3"
+        >
+          <div class="min-w-0 flex-1">
+            <p class="font-bold text-text-main flex items-center gap-2 flex-wrap">
+              {ev.title}
+              <span
+                class="text-[10px] font-bold uppercase tracking-wide text-red-700 bg-red-200/80 px-2 py-0.5 rounded-full"
+              >
+                Refusé
+              </span>
+            </p>
+            <p class="text-xs text-text-muted mt-0.5">{formatEventRange(ev)}</p>
+            {#if ev.rejectionReason?.trim()}
+              <p class="text-xs text-red-600 mt-1">Motif : {ev.rejectionReason}</p>
+            {/if}
+          </div>
+          <div class="flex items-center gap-1 shrink-0">
             <button
               type="button"
               onclick={() => removeEvent(ev.id)}

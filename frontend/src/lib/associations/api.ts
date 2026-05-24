@@ -87,7 +87,7 @@ export interface UpdateAssociationPayload {
   color?: string | null;
 }
 
-export type AssociationCalendarEventStatus = 'pending' | 'validated';
+export type AssociationCalendarEventStatus = 'pending' | 'validated' | 'rejected';
 
 export interface AssociationCalendarEvent {
   id: string;
@@ -101,6 +101,10 @@ export interface AssociationCalendarEvent {
   status: AssociationCalendarEventStatus;
   validatedAt: string | null;
   validatedBy: string | null;
+  rejectedAt: string | null;
+  rejectedBy: string | null;
+  /** Optional message from the BDE explaining the rejection. */
+  rejectionReason: string | null;
   /** Same-association form (optional). */
   linkedFormId: string | null;
   /** Poster/banner image URL (public, served via media-service). */
@@ -307,6 +311,18 @@ export async function validateAssociationCalendarEvent(
   return request<AssociationCalendarEvent>(
     `/api/associations/${encodeURIComponent(associationId)}/events/${encodeURIComponent(eventId)}/validate`,
     { method: 'POST' }
+  );
+}
+
+/** Rejects a pending calendar event with an optional reason (BDE or global admin only). */
+export async function rejectAssociationCalendarEvent(
+  associationId: string,
+  eventId: string,
+  reason?: string
+): Promise<AssociationCalendarEvent> {
+  return request<AssociationCalendarEvent>(
+    `/api/associations/${encodeURIComponent(associationId)}/events/${encodeURIComponent(eventId)}/reject`,
+    { method: 'POST', body: JSON.stringify({ reason: reason?.trim() || undefined }) }
   );
 }
 

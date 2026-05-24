@@ -9,7 +9,10 @@ import { Readable } from 'stream';
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const CHUNK_DIR = path.join(process.cwd(), 'chunks_temp');
-const MEDIA_META_FILE = path.join(process.cwd(), 'media_metadata.json');
+// Stored in a dedicated directory so it can be mounted as a named Docker volume
+// and survive container restarts / redeployments.
+const MEDIA_DATA_DIR = path.join(process.cwd(), 'media_meta');
+const MEDIA_META_FILE = path.join(MEDIA_DATA_DIR, 'media_metadata.json');
 /** Encrypted chat media blobs are purged after this idle period. Public assets are never purged. */
 const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const DEFAULT_SWEEP_MS = 60 * 60 * 1000;
@@ -53,6 +56,7 @@ export class MediaService {
 
   constructor(private readonly storage: StorageService) {
     fs.ensureDirSync(CHUNK_DIR);
+    fs.ensureDirSync(MEDIA_DATA_DIR);
     this.loadMetadata();
     void this.purgeExpiredMedia();
 
@@ -119,23 +123,40 @@ export class MediaService {
     await this.purgeExpiredMedia();
 
     const entry = this.meta.items[mediaId];
-    if (!this.isPublicAssetEntry(entry) || !entry.contentType) {
-      return { status: 'not_found' };
-    }
-    if (entry.purgedAt && entry.purgeReason === 'retention_expired') {
-      return { status: 'not_found' };
+
+    // Normal path: metadata present and valid.
+    if (this.isPublicAssetEntry(entry) && entry.contentType) {
+      if (entry.purgedAt) return { status: 'not_found' };
+      const stream = await this.storage.get(mediaId);
+      if (!stream) return { status: 'not_found' };
+      return {
+        status: 'ok',
+        data: await this.readStreamToBuffer(stream),
+        contentType: entry.contentType,
+      };
     }
 
-    const stream = await this.storage.get(mediaId);
-    if (!stream) {
-      return { status: 'not_found' };
+    // Fallback: metadata lost after a container restart (media_metadata.json not persisted).
+    // If the blob still exists in storage, serve it and backfill the metadata entry.
+    // All logos/event images are converted to WebP on upload, so content-type is safe to assume.
+    if (!entry?.purgedAt) {
+      const stream = await this.storage.get(mediaId);
+      if (stream) {
+        const data = await this.readStreamToBuffer(stream);
+        const now = Date.now();
+        this.meta.items[mediaId] = {
+          createdAt: now,
+          lastAccessAt: now,
+          publicAsset: true,
+          contentType: 'image/webp',
+        };
+        await this.persistMetadata();
+        this.logger.warn(`media ${mediaId}: metadata missing — backfilled from storage`);
+        return { status: 'ok', data, contentType: 'image/webp' };
+      }
     }
 
-    return {
-      status: 'ok',
-      data: await this.readStreamToBuffer(stream),
-      contentType: entry.contentType,
-    };
+    return { status: 'not_found' };
   }
 
   async remove(mediaId: string): Promise<void> {

@@ -213,6 +213,14 @@ export class UpdateAssociationCalendarEventDto {
   linkedFormId?: string | null;
 }
 
+/** Optional reason provided by the BDE when rejecting a pending calendar event. */
+export class RejectCalendarEventDto {
+  @IsString()
+  @IsOptional()
+  @MaxLength(1000)
+  reason?: string;
+}
+
 /** DTO for creating a boutique product. */
 export class CreateProductDto {
   @IsString()

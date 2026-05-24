@@ -33,6 +33,7 @@ import {
   CreateAssociationCalendarEventDto,
   CreateProductDto,
   GrantTagDto,
+  RejectCalendarEventDto,
   ReorderMembersDto,
   UpdateAssociationDto,
   UpdateAssociationCalendarEventDto,
@@ -117,7 +118,8 @@ export class AssociationsController {
 
   /**
    * Pending agenda events the caller may see.
-   * Global admin or BDE admin sees all; association admins see only their own.
+   * Global admin or BDE admin (VALIDATE_EVENTS) sees all; association admins (PROPOSE_EVENT) see only their own.
+   * Response includes `canValidate` so the frontend can conditionally show the validate button.
    */
   @UseGuards(NginxAuthGuard)
   @Get('calendar/pending')
@@ -126,13 +128,16 @@ export class AssociationsController {
     @Headers('x-global-admin') ga?: string
   ) {
     const isGlobalAdmin = ga === 'true';
+    let isBde = false;
     if (!isGlobalAdmin) {
-      const can = await this.service.canModerateAnyAssociationCalendar(userId);
+      isBde = await this.service.isUserBdeAdmin(userId);
+      const can = isBde || (await this.service.canViewPendingCalendarEvents(userId));
       if (!can) {
         throw new ForbiddenException('Association admin or global admin required');
       }
     }
-    return this.service.listPendingCalendarEvents(userId, { isGlobalAdmin });
+    const events = await this.service.listPendingCalendarEvents(userId, { isGlobalAdmin });
+    return { canValidate: isGlobalAdmin || isBde, events };
   }
 
   /**
@@ -468,6 +473,31 @@ export class AssociationsController {
       }
     }
     return this.service.validateCalendarEvent(id, eventId, userId);
+  }
+
+  /**
+   * Rejects a pending calendar event; keeps it visible to asso admins with an optional reason.
+   * Requires VALIDATE_EVENTS in a BDE association, or global admin.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Post(':id/events/:eventId/reject')
+  async rejectCalendarEvent(
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga: string | undefined,
+    @Param('id') id: string,
+    @Param('eventId') eventId: string,
+    @Body() dto: RejectCalendarEventDto
+  ) {
+    const isGlobalAdmin = ga === 'true';
+    if (!isGlobalAdmin) {
+      const isBde = await this.service.isUserBdeAdmin(userId);
+      if (!isBde) {
+        throw new ForbiddenException(
+          'Only BDE admins (VALIDATE_EVENTS flag) or global admins can reject events'
+        );
+      }
+    }
+    return this.service.rejectCalendarEvent(id, eventId, userId, dto.reason);
   }
 
   // ── Calendar event image ─────────────────────────────────────────────────

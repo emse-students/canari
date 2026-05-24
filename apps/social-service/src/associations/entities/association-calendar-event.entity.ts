@@ -3,6 +3,7 @@ import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, Index } from 
 export enum AssociationCalendarEventStatus {
   Pending = 'pending',
   Validated = 'validated',
+  Rejected = 'rejected',
 }
 
 /** Scheduled event displayed on an association public page (meetings, deadlines, etc.). */
@@ -43,6 +44,16 @@ export class AssociationCalendarEvent {
 
   @Column({ type: 'varchar', length: 255, nullable: true })
   validatedBy: string | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  rejectedAt: Date | null;
+
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  rejectedBy: string | null;
+
+  /** Optional message from the BDE explaining the rejection. */
+  @Column({ type: 'text', nullable: true })
+  rejectionReason: string | null;
 
   /** Optional association form (e.g. signup) tied to this date. */
   @Column({ type: 'uuid', nullable: true })

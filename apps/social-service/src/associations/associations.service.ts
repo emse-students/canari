@@ -556,6 +556,11 @@ export class AssociationsService {
         ? (e.validatedAt instanceof Date ? e.validatedAt : new Date(e.validatedAt)).toISOString()
         : null,
       validatedBy: e.validatedBy ?? null,
+      rejectedAt: e.rejectedAt
+        ? (e.rejectedAt instanceof Date ? e.rejectedAt : new Date(e.rejectedAt)).toISOString()
+        : null,
+      rejectedBy: e.rejectedBy ?? null,
+      rejectionReason: e.rejectionReason ?? null,
       imageUrl: e.imageUrl ?? null,
     };
   }
@@ -703,7 +708,7 @@ export class AssociationsService {
    * Returns true if the user has the PROPOSE_EVENT flag in at least one association.
    * Used to decide whether to show the pending-events queue link.
    */
-  async canModerateAnyAssociationCalendar(userId: string): Promise<boolean> {
+  async canViewPendingCalendarEvents(userId: string): Promise<boolean> {
     const n = await this.memberRepo
       .createQueryBuilder('m')
       .where('m.userId = :userId', { userId })
@@ -809,6 +814,11 @@ export class AssociationsService {
       .addSelect('e.status', 'status')
       .addSelect('e.validatedAt', 'validatedAt')
       .addSelect('e.validatedBy', 'validatedBy')
+      .addSelect('e.rejectedAt', 'rejectedAt')
+      .addSelect('e.rejectedBy', 'rejectedBy')
+      .addSelect('e.rejectionReason', 'rejectionReason')
+      .addSelect('e.imageUrl', 'imageUrl')
+      .addSelect('e.imageMediaId', 'imageMediaId')
       .addSelect('a.name', 'associationName')
       .addSelect('a.slug', 'associationSlug')
       .getRawMany();
@@ -824,9 +834,15 @@ export class AssociationsService {
         createdBy: r.createdBy as string,
         createdAt: r.createdAt as Date,
         linkedFormId: (r.linkedFormId as string | null) ?? null,
-        status: AssociationCalendarEventStatus.Pending,
+        status:
+          (r.status as AssociationCalendarEventStatus) ?? AssociationCalendarEventStatus.Pending,
         validatedAt: (r.validatedAt as Date | null) ?? null,
         validatedBy: (r.validatedBy as string | null) ?? null,
+        rejectedAt: (r.rejectedAt as Date | null) ?? null,
+        rejectedBy: (r.rejectedBy as string | null) ?? null,
+        rejectionReason: (r.rejectionReason as string | null) ?? null,
+        imageUrl: (r.imageUrl as string | null) ?? null,
+        imageMediaId: (r.imageMediaId as string | null) ?? null,
       });
       return {
         ...base,
@@ -883,6 +899,8 @@ export class AssociationsService {
       .addSelect('e.status', 'status')
       .addSelect('e.validatedAt', 'validatedAt')
       .addSelect('e.validatedBy', 'validatedBy')
+      .addSelect('e.imageUrl', 'imageUrl')
+      .addSelect('e.imageMediaId', 'imageMediaId')
       .addSelect('a.name', 'associationName')
       .addSelect('a.slug', 'associationSlug')
       .addSelect('a.color', 'associationColor')
@@ -904,6 +922,8 @@ export class AssociationsService {
           (r.status as AssociationCalendarEventStatus) ?? AssociationCalendarEventStatus.Validated,
         validatedAt: (r.validatedAt as Date | null) ?? null,
         validatedBy: (r.validatedBy as string | null) ?? null,
+        imageUrl: (r.imageUrl as string | null) ?? null,
+        imageMediaId: (r.imageMediaId as string | null) ?? null,
       });
       return {
         ...base,
@@ -923,7 +943,8 @@ export class AssociationsService {
     associationId: string,
     actorId: string,
     eventTitle: string,
-    action: 'validated' | 'updated' | 'deleted'
+    action: 'validated' | 'updated' | 'deleted' | 'rejected',
+    rejectionReason?: string
   ): Promise<void> {
     const members = await this.memberRepo.find({
       where: { associationId },
@@ -935,8 +956,16 @@ export class AssociationsService {
     if (proposers.length === 0) return;
 
     const actionLabel =
-      action === 'validated' ? 'validé' : action === 'updated' ? 'modifié' : 'supprimé';
-    const text = `L'événement "${eventTitle}" a été ${actionLabel} par le BDE.`;
+      action === 'validated'
+        ? 'validé'
+        : action === 'updated'
+          ? 'modifié'
+          : action === 'rejected'
+            ? 'refusé'
+            : 'supprimé';
+    const reasonSuffix =
+      action === 'rejected' && rejectionReason ? ` Motif : ${rejectionReason}` : '';
+    const text = `L'événement "${eventTitle}" a été ${actionLabel} par le BDE.${reasonSuffix}`;
 
     await Promise.all(
       proposers.map(async (m) => {
@@ -1104,6 +1133,35 @@ export class AssociationsService {
     console.log(`[Calendar] Event validated: ${saved.id} by ${userId}`);
     // Notify asso admins that their event has been validated
     void this.notifyAssocAdminsOfEventAction(ev.associationId, userId, ev.title, 'validated');
+    return this.serializeCalendarEvent(saved);
+  }
+
+  /** Rejects a pending calendar event; keeps it visible to asso admins with a reason. */
+  async rejectCalendarEvent(
+    associationId: string,
+    eventId: string,
+    userId: string,
+    reason?: string
+  ) {
+    await this.findById(associationId);
+    const ev = await this.calendarRepo.findOne({ where: { id: eventId, associationId } });
+    if (!ev) throw new NotFoundException('Event not found');
+    if (ev.status === AssociationCalendarEventStatus.Rejected) {
+      return this.serializeCalendarEvent(ev);
+    }
+    ev.status = AssociationCalendarEventStatus.Rejected;
+    ev.rejectedAt = new Date();
+    ev.rejectedBy = userId;
+    ev.rejectionReason = reason ?? null;
+    const saved = await this.calendarRepo.save(ev);
+    console.log(`[Calendar] Event rejected: ${saved.id} by ${userId}`);
+    void this.notifyAssocAdminsOfEventAction(
+      ev.associationId,
+      userId,
+      ev.title,
+      'rejected',
+      reason
+    );
     return this.serializeCalendarEvent(saved);
   }
 
