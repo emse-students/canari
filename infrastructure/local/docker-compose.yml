@@ -260,3 +260,4 @@ volumes:
   mongo_data:
   postgres_data:
   minio_data:
+  media_meta:
