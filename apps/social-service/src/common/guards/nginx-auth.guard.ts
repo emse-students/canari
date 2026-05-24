@@ -43,7 +43,7 @@ export class NginxAuthGuard implements CanActivate {
     if (userId) {
       return true;
     }
-    const authHeader = request.headers['authorization'] as string | undefined;
+    const authHeader = request.headers['authorization'];
     if (authHeader?.startsWith('Bearer ')) {
       const token = authHeader.slice(7);
       const parts = token.split('.');

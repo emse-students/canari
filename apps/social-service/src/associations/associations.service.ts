@@ -924,6 +924,9 @@ export class AssociationsService {
           (r.status as AssociationCalendarEventStatus) ?? AssociationCalendarEventStatus.Validated,
         validatedAt: (r.validatedAt as Date | null) ?? null,
         validatedBy: (r.validatedBy as string | null) ?? null,
+        rejectedAt: null,
+        rejectedBy: null,
+        rejectionReason: null,
         imageUrl: (r.imageUrl as string | null) ?? null,
         imageMediaId: (r.imageMediaId as string | null) ?? null,
       });
