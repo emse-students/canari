@@ -200,13 +200,7 @@
     loadMonth();
   }
 
-  function sameDay(a: Date, b: Date): boolean {
-    return (
-      a.getFullYear() === b.getFullYear() &&
-      a.getMonth() === b.getMonth() &&
-      a.getDate() === b.getDate()
-    );
-  }
+
 
   const validatedEvents = $derived(events.filter((e) => (e.status ?? 'validated') === 'validated'));
   const pendingEvents = $derived(events.filter((e) => e.status === 'pending'));

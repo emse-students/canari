@@ -19,14 +19,6 @@ function buildCalendarCells(year: number, month: number): (number | null)[] {
   return cells;
 }
 
-function sameDay(a: Date, b: Date): boolean {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  );
-}
-
 function eventsOnDay(
   events: AssociationCalendarFeedEvent[],
   year: number,
