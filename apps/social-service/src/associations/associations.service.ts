@@ -178,6 +178,14 @@ export class AssociationsService {
     return h;
   }
 
+  /** POSTs any image file to the media-service public upload endpoint and returns the assigned mediaId. */
+  async uploadPublicImage(
+    file: { buffer: Buffer; mimetype: string },
+    authorization: string
+  ): Promise<string> {
+    return this.uploadLogoToMedia(file, authorization);
+  }
+
   /** POSTs a logo file to the media-service public upload endpoint and returns the assigned mediaId. */
   private async uploadLogoToMedia(
     file: { buffer: Buffer; mimetype: string },
@@ -218,7 +226,7 @@ export class AssociationsService {
   }
 
   /** Tries to delete a media object; silently ignores errors (the object may already be gone). */
-  private async deleteMediaBestEffort(mediaId: string, authorization: string): Promise<void> {
+  async deleteMediaBestEffort(mediaId: string, authorization: string): Promise<void> {
     try {
       await firstValueFrom(
         this.httpService.delete(`${this.mediaBaseUrl}/api/media/${mediaId}`, {
@@ -293,6 +301,57 @@ export class AssociationsService {
 
     await this.invalidatePostListCaches();
     return this.findById(associationId);
+  }
+
+  // ── Calendar event image ─────────────────────────────────────────────────
+
+  /** Uploads an image file for a calendar event poster, stores it via media-service, and returns the updated event. */
+  async setEventImageFromUpload(
+    associationId: string,
+    eventId: string,
+    file: { buffer: Buffer; mimetype: string; size: number },
+    authorization: string | undefined
+  ) {
+    await this.findById(associationId);
+    const bearer = this.requireBearer(authorization);
+    if (file.size > LOGO_MAX_BYTES * 4) {
+      throw new BadRequestException('Event image must be at most 8 MB');
+    }
+    const mime = file.mimetype?.toLowerCase() ?? '';
+    if (!ALLOWED_LOGO_MIMES.has(mime)) {
+      throw new BadRequestException('Image must be JPEG, PNG, or WebP');
+    }
+
+    const ev = await this.calendarRepo.findOne({ where: { id: eventId, associationId } });
+    if (!ev) throw new NotFoundException('Event not found');
+    const oldMediaId = ev.imageMediaId;
+
+    const mediaId = await this.uploadLogoToMedia(file, bearer);
+    const imageUrl = `/api/media/public/${mediaId}`;
+    await this.calendarRepo.update(eventId, { imageMediaId: mediaId, imageUrl });
+
+    if (oldMediaId && oldMediaId !== mediaId) {
+      await this.deleteMediaBestEffort(oldMediaId, bearer);
+    }
+
+    const updated = await this.calendarRepo.findOne({ where: { id: eventId } });
+    return this.serializeCalendarEvent(updated);
+  }
+
+  /** Removes the poster image from a calendar event. */
+  async clearEventImage(associationId: string, eventId: string, authorization: string | undefined) {
+    const ev = await this.calendarRepo.findOne({ where: { id: eventId, associationId } });
+    if (!ev) throw new NotFoundException('Event not found');
+    const oldMediaId = ev.imageMediaId;
+    await this.calendarRepo.update(eventId, { imageMediaId: null, imageUrl: null });
+
+    const bearer = authorization?.trim();
+    if (oldMediaId && bearer?.startsWith('Bearer ')) {
+      await this.deleteMediaBestEffort(oldMediaId, bearer);
+    }
+
+    const updated = await this.calendarRepo.findOne({ where: { id: eventId } });
+    return this.serializeCalendarEvent(updated);
   }
 
   // ── Members ───────────────────────────────────────────────────────────────
@@ -497,6 +556,7 @@ export class AssociationsService {
         ? (e.validatedAt instanceof Date ? e.validatedAt : new Date(e.validatedAt)).toISOString()
         : null,
       validatedBy: e.validatedBy ?? null,
+      imageUrl: e.imageUrl ?? null,
     };
   }
 

@@ -27,7 +27,8 @@
   import Button from '$lib/components/ui/Button.svelte';
   import Card from '$lib/components/ui/Card.svelte';
   import PaymentModal from '$lib/components/ui/PaymentModal.svelte';
-  import { ArrowLeft, ClipboardList, Check, Send, CalendarDays, Bell, BellOff } from '@lucide/svelte';
+  import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
+  import { ArrowLeft, ClipboardList, Check, Send, CalendarDays, Bell, BellOff, CreditCard } from '@lucide/svelte';
 
   const formId = $derived(page.params.id);
   const redirectTo = $derived(page.url.searchParams.get('redirect') || '/posts');
@@ -331,15 +332,20 @@
         </a>
       {/if}
       <!-- Header -->
-      <Card class="mb-6">
+      <Card class="mb-6 overflow-hidden">
+        {#if form.imageUrl}
+          <img src={form.imageUrl} alt="" class="w-full max-h-64 object-cover" />
+        {/if}
         <div class="flex items-start gap-4 p-5">
           <div class="p-3 rounded-2xl bg-cn-yellow/15 text-cn-dark shrink-0">
             <ClipboardList size={24} />
           </div>
           <div class="flex-1">
             <h1 class="text-2xl font-bold text-text-main">{form.title}</h1>
-            {#if form.description}
-              <p class="text-text-muted mt-1">{form.description}</p>
+            {#if form.description?.trim()}
+              <div class="mt-2">
+                <ProfileBioMarkdown source={form.description} />
+              </div>
             {/if}
             {#if form.basePrice > 0}
               <span
@@ -646,9 +652,12 @@
               {#if submitted}
                 Envoyé
                 <Check size={16} class="ml-1" />
+              {:else if calculateTotal() > 0}
+                Valider et payer
+                <CreditCard size={16} class="ml-1" />
               {:else}
-                {form.submitLabel || 'Envoyer'}
-                <Send size={16} class="ml-1" />
+                Valider
+                <Check size={16} class="ml-1" />
               {/if}
             </Button>
           </div>

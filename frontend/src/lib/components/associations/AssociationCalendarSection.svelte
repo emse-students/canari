@@ -8,6 +8,8 @@
     deleteAssociationCalendarEvent,
     validateAssociationCalendarEvent,
     listAssociationLinkCandidates,
+    uploadCalendarEventImage,
+    deleteCalendarEventImage,
     aggregatedCalendarFeedIcsAbsoluteUrl,
     type AssociationCalendarEvent,
     type AssociationLinkCandidates,
@@ -30,9 +32,12 @@
     CalendarSync,
     Download,
     Check,
+    ImagePlus,
+    X,
   } from '@lucide/svelte';
   import Input from '$lib/components/ui/Input.svelte';
-  import Textarea from '$lib/components/ui/Textarea.svelte';
+  import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
+  import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import { SvelteDate } from 'svelte/reactivity';
   import { pushHistoryOverlay, closeHistoryOverlayFromUi } from '$lib/utils/historyOverlayStack';
 
@@ -77,6 +82,9 @@
   let linkCandidates = $state<AssociationLinkCandidates | null>(null);
   /** Selected form ID for modal (empty = none). */
   let formLinkedFormId = $state('');
+  /** Current poster image URL for the event being edited (null = none). */
+  let formImageUrl = $state<string | null>(null);
+  let uploadingImage = $state(false);
 
   let showSubscribeModal = $state(false);
   let isCopied = $state(false);
@@ -249,6 +257,7 @@
     formTitle = '';
     formDescription = '';
     formLinkedFormId = '';
+    formImageUrl = null;
     const now = new SvelteDate();
     now.setMinutes(0, 0, 0);
     formStart = toDatetimeLocalValue(now.toISOString());
@@ -265,9 +274,44 @@
     formStart = toDatetimeLocalValue(ev.startsAt);
     formEnd = ev.endsAt ? toDatetimeLocalValue(ev.endsAt) : '';
     formLinkedFormId = ev.linkedFormId ?? '';
+    formImageUrl = ev.imageUrl ?? null;
     formError = '';
     modalOpen = true;
     await ensureLinkCandidates();
+  }
+
+  async function handleImageUpload(e: Event) {
+    if (!editingId) return;
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    uploadingImage = true;
+    formError = '';
+    try {
+      const updated = await uploadCalendarEventImage(associationId, editingId, file);
+      formImageUrl = updated.imageUrl ?? null;
+      // Also refresh the list so the card shows the new image
+      await loadMonth();
+    } catch (err) {
+      formError = err instanceof Error ? err.message : 'Erreur lors de l\'envoi de l\'image';
+    } finally {
+      uploadingImage = false;
+      input.value = '';
+    }
+  }
+
+  async function handleImageRemove() {
+    if (!editingId) return;
+    uploadingImage = true;
+    try {
+      await deleteCalendarEventImage(associationId, editingId);
+      formImageUrl = null;
+      await loadMonth();
+    } catch (err) {
+      formError = err instanceof Error ? err.message : 'Erreur';
+    } finally {
+      uploadingImage = false;
+    }
   }
 
   function dismissEventModal(fromHistory = false) {
@@ -548,12 +592,17 @@
             {new Date(ev.startsAt).getDate()}
           </div>
           <div class="min-w-0 flex-1">
+            {#if ev.imageUrl}
+              <img src={ev.imageUrl} alt="" class="w-full rounded-xl object-cover max-h-40 mb-2 border border-cn-border/40" />
+            {/if}
             <p class="font-bold text-text-main">{ev.title}</p>
             <p class="text-xs text-text-muted mt-0.5 flex items-center gap-1">
               {formatEventRange(ev)}
             </p>
             {#if ev.description?.trim()}
-              <p class="text-sm text-text-muted mt-2 whitespace-pre-wrap">{ev.description}</p>
+              <div class="mt-2">
+                <ProfileBioMarkdown source={ev.description} />
+              </div>
             {/if}
             {#if ev.linkedFormId}
               <div class="mt-3">
@@ -639,7 +688,40 @@
           />
         </div>
       </div>
-      <Textarea label="Description (optionnel)" bind:value={formDescription} rows={4} />
+      <div>
+        <label class="block text-sm font-bold text-text-main mb-1 ml-1">Description (optionnel)</label>
+        <MarkdownComposerField bind:value={formDescription} placeholder="Décrivez l'événement… (markdown supporté)" minHeight="100px" />
+      </div>
+      <!-- Poster image — only available when editing an existing event -->
+      {#if editingId}
+        <div class="space-y-2">
+          <p class="text-sm font-bold text-text-main ml-1">Affiche / image (optionnel)</p>
+          {#if formImageUrl}
+            <div class="relative rounded-xl overflow-hidden border border-cn-border">
+              <img src={formImageUrl} alt="Affiche" class="w-full max-h-48 object-cover" />
+              <button
+                type="button"
+                onclick={handleImageRemove}
+                disabled={uploadingImage}
+                class="absolute top-2 right-2 rounded-full bg-black/60 p-1 text-white hover:bg-black/80"
+                title="Supprimer l'affiche"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          {:else}
+            <label
+              class="flex items-center gap-2 cursor-pointer rounded-xl border-2 border-dashed border-cn-border bg-cn-bg/40 px-4 py-3 text-sm text-text-muted hover:border-cn-yellow/50 transition-colors {uploadingImage ? 'opacity-50 pointer-events-none' : ''}"
+            >
+              <ImagePlus size={18} class="shrink-0 text-text-muted/60" />
+              {uploadingImage ? 'Envoi…' : 'Ajouter une affiche (JPEG / PNG / WebP)'}
+              <input type="file" accept="image/jpeg,image/png,image/webp" class="sr-only" onchange={handleImageUpload} />
+            </label>
+          {/if}
+        </div>
+      {:else}
+        <p class="text-xs text-text-muted">Vous pourrez ajouter une affiche après avoir créé l'événement.</p>
+      {/if}
       {#if canEdit && linkCandidates}
         <div class="space-y-3 rounded-xl border border-cn-border/70 bg-cn-bg/30 p-3">
           <p

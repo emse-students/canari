@@ -103,6 +103,8 @@ export interface AssociationCalendarEvent {
   validatedBy: string | null;
   /** Same-association form (optional). */
   linkedFormId: string | null;
+  /** Poster/banner image URL (public, served via media-service). */
+  imageUrl: string | null;
 }
 
 /** Row from `GET /api/associations/calendar/feed` (aggregated agenda). */
@@ -305,6 +307,43 @@ export async function validateAssociationCalendarEvent(
   return request<AssociationCalendarEvent>(
     `/api/associations/${encodeURIComponent(associationId)}/events/${encodeURIComponent(eventId)}/validate`,
     { method: 'POST' }
+  );
+}
+
+/**
+ * Uploads a poster image for a calendar event.
+ * Returns the updated event with the new `imageUrl`.
+ */
+export async function uploadCalendarEventImage(
+  associationId: string,
+  eventId: string,
+  file: File
+): Promise<AssociationCalendarEvent> {
+  const base = socialUrl();
+  const token = await getToken().catch(() => '');
+  const fd = new FormData();
+  fd.append('file', file);
+  const headers: Record<string, string> = {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(
+    `${base}/api/associations/${encodeURIComponent(associationId)}/events/${encodeURIComponent(eventId)}/image`,
+    { method: 'POST', headers, body: fd }
+  );
+  if (!res.ok) {
+    const details = await res.text().catch(() => '');
+    throw new Error(`upload ${res.status}: ${details || res.statusText}`);
+  }
+  return (await res.json()) as AssociationCalendarEvent;
+}
+
+/** Removes the poster image from a calendar event. */
+export async function deleteCalendarEventImage(
+  associationId: string,
+  eventId: string
+): Promise<AssociationCalendarEvent> {
+  return request<AssociationCalendarEvent>(
+    `/api/associations/${encodeURIComponent(associationId)}/events/${encodeURIComponent(eventId)}/image`,
+    { method: 'DELETE' }
   );
 }
 

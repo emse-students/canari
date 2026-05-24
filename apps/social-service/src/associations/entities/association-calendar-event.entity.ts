@@ -49,6 +49,14 @@ export class AssociationCalendarEvent {
   @Index()
   linkedFormId: string | null;
 
+  /** Public URL of the event poster/banner image (served via media-service). */
+  @Column({ type: 'varchar', length: 500, nullable: true })
+  imageUrl: string | null;
+
+  /** Internal media-service ID for the poster image (used for cleanup on update). */
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  imageMediaId: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 }

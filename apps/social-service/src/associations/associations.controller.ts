@@ -470,6 +470,33 @@ export class AssociationsController {
     return this.service.validateCalendarEvent(id, eventId, userId);
   }
 
+  // ── Calendar event image ─────────────────────────────────────────────────
+
+  /** Uploads a poster/banner image for a calendar event. Requires MANAGE_EVENTS or global admin. */
+  @UseGuards(NginxAuthGuard)
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 8 * 1024 * 1024 } }))
+  @Post(':id/events/:eventId/image')
+  uploadEventImage(
+    @Param('id') id: string,
+    @Param('eventId') eventId: string,
+    @UploadedFile() file: Express.Multer.File,
+    @Headers('authorization') authorization: string | undefined
+  ) {
+    if (!file) throw new BadRequestException('No file provided');
+    return this.service.setEventImageFromUpload(id, eventId, file, authorization);
+  }
+
+  /** Removes the poster image from a calendar event. Requires MANAGE_EVENTS or global admin. */
+  @UseGuards(NginxAuthGuard)
+  @Delete(':id/events/:eventId/image')
+  deleteEventImage(
+    @Param('id') id: string,
+    @Param('eventId') eventId: string,
+    @Headers('authorization') authorization: string | undefined
+  ) {
+    return this.service.clearEventImage(id, eventId, authorization);
+  }
+
   // ── Document vault (MANAGE_DOCUMENTS flag) ───────────────────────────────
 
   /**

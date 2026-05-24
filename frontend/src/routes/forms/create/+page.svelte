@@ -10,7 +10,7 @@
   import { listAssociations, type Association } from '$lib/associations/api';
   import FormBuilder from '$lib/components/forms/FormBuilder.svelte';
   import Input from '$lib/components/ui/Input.svelte';
-  import Textarea from '$lib/components/ui/Textarea.svelte';
+  import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import { ArrowLeft, Save, Plus, FileText, CreditCard, ListChecks } from '@lucide/svelte';
 
   // State
@@ -207,12 +207,10 @@
         required
       />
 
-      <Textarea
-        label="Description"
-        bind:value={description}
-        rows={3}
-        placeholder="Décrivez brièvement l'objet de ce formulaire…"
-      />
+      <div>
+        <label class="block text-sm font-bold text-text-main mb-1 ml-1">Description</label>
+        <MarkdownComposerField bind:value={description} placeholder="Décrivez l'objet de ce formulaire… (markdown supporté)" minHeight="80px" />
+      </div>
 
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Input label="Libellé du bouton" bind:value={submitLabel} placeholder="Envoyer" />

@@ -1,15 +1,20 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
   Get,
   Headers,
   Param,
+  Patch,
   Post,
   Res,
   NotFoundException,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { Response } from 'express';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { CreateFormDto, SubmitFormDto } from './dto/form.dto';
@@ -53,6 +58,68 @@ export class FormsController {
   @Get(':id')
   get(@Param('id') id: string) {
     return this.service.get(id);
+  }
+
+  /** Updates a form's metadata and items. Requires owner, co-owner, or MANAGE_FORMS flag. */
+  @UseGuards(NginxAuthGuard)
+  @Patch(':id')
+  update(
+    @Param('id') id: string,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string,
+    @Body() dto?: CreateFormDto
+  ) {
+    return this.service.update(id, dto, xUserId, ga === 'true');
+  }
+
+  /** Uploads a banner image for a form. Requires owner, co-owner, or MANAGE_FORMS flag. */
+  @UseGuards(NginxAuthGuard)
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 8 * 1024 * 1024 } }))
+  @Post(':id/image')
+  uploadImage(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string,
+    @Headers('authorization') authorization?: string
+  ) {
+    if (!file) throw new BadRequestException('No file provided');
+    return this.service.setImageFromUpload(id, file, xUserId, ga === 'true', authorization);
+  }
+
+  /** Removes the banner image from a form. Requires owner, co-owner, or MANAGE_FORMS flag. */
+  @UseGuards(NginxAuthGuard)
+  @Delete(':id/image')
+  deleteImage(
+    @Param('id') id: string,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    return this.service.clearImage(id, xUserId, ga === 'true');
+  }
+
+  /** Adds a co-owner to a form. Only the owner or global admin may call this. */
+  @UseGuards(NginxAuthGuard)
+  @Post(':id/co-owners')
+  addCoOwner(
+    @Param('id') id: string,
+    @Body() body: { userId: string },
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    return this.service.addCoOwner(id, body.userId, xUserId, ga === 'true');
+  }
+
+  /** Removes a co-owner from a form. Only the owner or global admin may call this. */
+  @UseGuards(NginxAuthGuard)
+  @Delete(':id/co-owners/:coUserId')
+  removeCoOwner(
+    @Param('id') id: string,
+    @Param('coUserId') coUserId: string,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    return this.service.removeCoOwner(id, coUserId, xUserId, ga === 'true');
   }
 
   /** Returns the calling user's submission for a specific form. */

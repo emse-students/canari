@@ -71,6 +71,18 @@ export class Form {
   @Column({ type: 'int', nullable: true })
   cashPaymentExpiryDays: number | null;
 
+  /** Public URL of the form header/banner image (served via media-service). */
+  @Column({ type: 'varchar', length: 500, nullable: true })
+  imageUrl: string | null;
+
+  /** Internal media-service ID for the banner image (used for cleanup on update). */
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  imageMediaId: string | null;
+
+  /** Additional user IDs that can manage this form and view submissions. */
+  @Column('simple-array', { default: '' })
+  coOwners: string[];
+
   @CreateDateColumn()
   createdAt: Date;
 

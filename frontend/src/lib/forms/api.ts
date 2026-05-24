@@ -46,9 +46,14 @@ export interface Form extends CreateFormPayload {
   id: string;
   createdAt: string;
   updatedAt: string;
+  /** Banner/header image URL (public, served via media-service). */
+  imageUrl?: string | null;
+  /** Additional user IDs that can manage this form and view submissions. */
+  coOwners?: string[];
 }
 
 import { apiFetch } from '$lib/utils/apiFetch';
+import { getToken } from '$lib/stores/auth';
 import { socialUrl } from '$lib/utils/apiUrl';
 
 async function request(url: string, init: RequestInit = {}) {
@@ -74,6 +79,61 @@ export async function getForms(): Promise<Form[]> {
 export async function getForm(id: string): Promise<Form> {
   const res = await request(`${socialUrl()}/api/forms/${id}`);
   if (!res.ok) throw new Error('Failed to fetch form');
+  return res.json();
+}
+
+/** Updates a form's metadata and questions. Requires owner, co-owner, or MANAGE_FORMS flag. */
+export async function updateForm(id: string, payload: CreateFormPayload): Promise<Form> {
+  const res = await request(`${socialUrl()}/api/forms/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error('Failed to update form');
+  return res.json();
+}
+
+/** Uploads a banner image for a form. Returns the updated form with `imageUrl`. */
+export async function uploadFormImage(id: string, file: File): Promise<Form> {
+  const token = await getToken().catch(() => '');
+  const fd = new FormData();
+  fd.append('file', file);
+  const headers: Record<string, string> = {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(`${socialUrl()}/api/forms/${id}/image`, {
+    method: 'POST',
+    headers,
+    body: fd,
+  });
+  if (!res.ok) {
+    const details = await res.text().catch(() => '');
+    throw new Error(`upload ${res.status}: ${details || res.statusText}`);
+  }
+  return (await res.json()) as Form;
+}
+
+/** Removes the banner image from a form. */
+export async function deleteFormImage(id: string): Promise<Form> {
+  const res = await request(`${socialUrl()}/api/forms/${id}/image`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Failed to delete form image');
+  return res.json();
+}
+
+/** Adds a co-owner to a form (owner/global-admin only). */
+export async function addFormCoOwner(formId: string, userId: string): Promise<{ ok: boolean }> {
+  const res = await request(`${socialUrl()}/api/forms/${formId}/co-owners`, {
+    method: 'POST',
+    body: JSON.stringify({ userId }),
+  });
+  if (!res.ok) throw new Error('Failed to add co-owner');
+  return res.json();
+}
+
+/** Removes a co-owner from a form (owner/global-admin only). */
+export async function removeFormCoOwner(formId: string, userId: string): Promise<{ ok: boolean }> {
+  const res = await request(`${socialUrl()}/api/forms/${formId}/co-owners/${userId}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) throw new Error('Failed to remove co-owner');
   return res.json();
 }
 

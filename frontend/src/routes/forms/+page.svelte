@@ -1,7 +1,16 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { exportSubmissions, getForms, type Form } from '$lib/forms/api';
-  import { Plus, Download, Copy, FileText } from '@lucide/svelte';
+  import { Plus, Download, Copy, FileText, Pencil, Link, Check } from '@lucide/svelte';
+
+  let copiedId = $state<string | null>(null);
+
+  function copyFormLink(id: string) {
+    if (typeof window === 'undefined') return;
+    void navigator.clipboard.writeText(`${window.location.origin}/forms/${id}`);
+    copiedId = id;
+    setTimeout(() => { copiedId = null; }, 2000);
+  }
 
   let forms = $state<Form[]>([]);
   let loading = $state(true);
@@ -89,20 +98,32 @@
             {/if}
             <p class="text-xs text-text-muted/60 font-mono mt-1.5 truncate">{form.id}</p>
           </div>
-          <div class="flex gap-2 flex-shrink-0">
+          <div class="flex flex-wrap gap-2 flex-shrink-0">
+            <a
+              href="/forms/{form.id}/edit"
+              class="inline-flex items-center gap-1.5 rounded-xl bg-cn-yellow px-3.5 py-2 text-xs font-bold text-cn-dark hover:bg-cn-yellow-hover transition-colors"
+            >
+              <Pencil size={14} />
+              Modifier
+            </a>
+            <button
+              onclick={() => copyFormLink(form.id)}
+              class="inline-flex items-center gap-1.5 rounded-xl border-2 border-cn-border bg-[var(--cn-surface)] px-3.5 py-2 text-xs font-bold text-text-main hover:border-cn-yellow/40 transition-colors"
+            >
+              {#if copiedId === form.id}
+                <Check size={14} class="text-green-600" />
+                Lien copié
+              {:else}
+                <Link size={14} />
+                Partager
+              {/if}
+            </button>
             <button
               onclick={() => handleExport(form.id)}
               class="inline-flex items-center gap-1.5 rounded-xl border-2 border-cn-border bg-[var(--cn-surface)] px-3.5 py-2 text-xs font-bold text-text-main hover:border-cn-yellow/40 transition-colors"
             >
               <Download size={14} />
               Exporter
-            </button>
-            <button
-              onclick={() => navigator.clipboard.writeText(form.id)}
-              class="inline-flex items-center gap-1.5 rounded-xl border-2 border-cn-border bg-[var(--cn-surface)] px-3.5 py-2 text-xs font-bold text-text-main hover:border-cn-yellow/40 transition-colors"
-            >
-              <Copy size={14} />
-              Copier ID
             </button>
           </div>
         </div>

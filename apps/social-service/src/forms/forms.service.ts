@@ -53,10 +53,23 @@ export class FormsService {
     return this.formRepo.save(form);
   }
 
-  /** Lists all forms, optionally filtered by ownerId, newest first. */
+  /** Lists all forms where the user is owner or co-owner, newest first. */
   async list(ownerId?: string) {
-    const where = ownerId ? { ownerId } : {};
-    return this.formRepo.find({ where, order: { createdAt: 'DESC' } });
+    if (!ownerId) {
+      return this.formRepo.find({ order: { createdAt: 'DESC' } });
+    }
+    // TypeORM simple-array can't be queried with LIKE efficiently; fetch both conditions
+    const [owned, all] = await Promise.all([
+      this.formRepo.find({ where: { ownerId }, order: { createdAt: 'DESC' } }),
+      this.formRepo.find({ order: { createdAt: 'DESC' } }),
+    ]);
+    const ownedIds = new Set(owned.map((f) => f.id));
+    const coOwned = all.filter(
+      (f) => !ownedIds.has(f.id) && Array.isArray(f.coOwners) && f.coOwners.includes(ownerId)
+    );
+    return [...owned, ...coOwned].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
   }
 
   /** Returns a single form by ID, or null if not found. */
@@ -66,13 +79,14 @@ export class FormsService {
 
   /**
    * Throws ForbiddenException unless the caller is the form owner, a global admin,
-   * or a member with MANAGE_FORMS flag in the form's linked association.
+   * a co-owner, or a member with MANAGE_FORMS flag in the form's linked association.
    * Returns the form so callers can reuse it without a second query.
    */
   async assertFormManager(formId: string, userId: string, isGlobalAdmin: boolean): Promise<Form> {
     const form = await this.formRepo.findOne({ where: { id: formId } });
     if (!form) throw new NotFoundException('Form not found');
     if (isGlobalAdmin || form.ownerId === userId) return form;
+    if (Array.isArray(form.coOwners) && form.coOwners.includes(userId)) return form;
     if (form.associationId) {
       const hasFlag = await this.associationsService.callerHasFlag(
         userId,
@@ -82,6 +96,54 @@ export class FormsService {
       if (hasFlag) return form;
     }
     throw new ForbiddenException('You are not allowed to manage this form');
+  }
+
+  /** Updates a form's metadata and items. Only owner, co-owner, global admin, or MANAGE_FORMS flag may update. */
+  async update(formId: string, input: CreateFormDto, userId: string, isGlobalAdmin: boolean) {
+    const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
+    const { opensAt: opensAtRaw, ownerId: _ownerId, ...rest } = input;
+    Object.assign(form, {
+      ...rest,
+      opensAt: opensAtRaw ? new Date(opensAtRaw) : null,
+      items: (input.items ?? form.items).map((item: any) => ({
+        ...item,
+        id: item.id || makeId('item'),
+        options: item.options?.map((opt: any) => ({
+          ...opt,
+          id: opt.id || makeId('opt'),
+        })),
+      })),
+    });
+    return this.formRepo.save(form);
+  }
+
+  /** Adds a co-owner to a form. Only the owner or global admin may do this. */
+  async addCoOwner(formId: string, coUserId: string, callerId: string, isGlobalAdmin: boolean) {
+    const form = await this.formRepo.findOne({ where: { id: formId } });
+    if (!form) throw new NotFoundException('Form not found');
+    if (!isGlobalAdmin && form.ownerId !== callerId) {
+      throw new ForbiddenException('Only the form owner can manage co-owners');
+    }
+    const coOwners = Array.isArray(form.coOwners) ? [...form.coOwners] : [];
+    if (!coOwners.includes(coUserId)) {
+      coOwners.push(coUserId);
+      await this.formRepo.update(formId, { coOwners });
+    }
+    return { ok: true };
+  }
+
+  /** Removes a co-owner from a form. Only the owner or global admin may do this. */
+  async removeCoOwner(formId: string, coUserId: string, callerId: string, isGlobalAdmin: boolean) {
+    const form = await this.formRepo.findOne({ where: { id: formId } });
+    if (!form) throw new NotFoundException('Form not found');
+    if (!isGlobalAdmin && form.ownerId !== callerId) {
+      throw new ForbiddenException('Only the form owner can manage co-owners');
+    }
+    const coOwners = (Array.isArray(form.coOwners) ? form.coOwners : []).filter(
+      (id) => id !== coUserId
+    );
+    await this.formRepo.update(formId, { coOwners });
+    return { ok: true };
   }
 
   /**
@@ -600,6 +662,35 @@ export class FormsService {
   async checkReminder(formId: string, userId: string) {
     const count = await this.reminderRepo.count({ where: { formId, userId } });
     return { subscribed: count > 0 };
+  }
+
+  /** Uploads a banner image for a form and updates imageUrl / imageMediaId. */
+  async setImageFromUpload(
+    formId: string,
+    file: { buffer: Buffer; mimetype: string; size: number },
+    callerId: string,
+    isGlobalAdmin: boolean,
+    authorization: string | undefined
+  ) {
+    const form = await this.assertFormManager(formId, callerId, isGlobalAdmin);
+    if (!authorization?.startsWith('Bearer ')) {
+      throw new BadRequestException('Missing authorization header');
+    }
+    const mediaId = await this.associationsService.uploadPublicImage(file, authorization);
+    const imageUrl = `/api/media/public/${mediaId}`;
+    const oldMediaId = form.imageMediaId;
+    await this.formRepo.update(formId, { imageMediaId: mediaId, imageUrl });
+    if (oldMediaId && oldMediaId !== mediaId) {
+      await this.associationsService.deleteMediaBestEffort(oldMediaId, authorization);
+    }
+    return this.formRepo.findOne({ where: { id: formId } });
+  }
+
+  /** Removes the banner image from a form. */
+  async clearImage(formId: string, callerId: string, isGlobalAdmin: boolean) {
+    await this.assertFormManager(formId, callerId, isGlobalAdmin);
+    await this.formRepo.update(formId, { imageMediaId: null, imageUrl: null });
+    return this.formRepo.findOne({ where: { id: formId } });
   }
 
   /** Converts a raw answer value to a human-readable string for the Excel export, resolving option IDs to their labels. */
