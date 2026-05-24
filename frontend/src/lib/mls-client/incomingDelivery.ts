@@ -6,13 +6,19 @@ export type IncomingDeliveryMeta = {
   queuedMessageId?: string;
 };
 
-/** Parses `createdAt` from a pending-queue API row (ISO string or epoch ms). */
-export function parseQueuedCreatedAt(raw: unknown): number | undefined {
+/**
+ * Parses a server-side timestamp (queue `createdAt`, Redis history, WS envelope).
+ * Accepts ISO strings or Unix epoch ms; rejects zero/invalid values.
+ */
+export function parseServerTimestampMs(raw: unknown): number | undefined {
   if (raw == null) return undefined;
-  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+  if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) return raw;
   if (typeof raw === 'string') {
     const t = Date.parse(raw);
-    return Number.isFinite(t) ? t : undefined;
+    return Number.isFinite(t) && t > 0 ? t : undefined;
   }
   return undefined;
 }
+
+/** @deprecated Prefer {@link parseServerTimestampMs}. */
+export const parseQueuedCreatedAt = parseServerTimestampMs;

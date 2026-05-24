@@ -37,7 +37,11 @@ export function resolveMessageTimestamp(
   isOwn: boolean,
   fallbackMs?: number
 ): Date {
-  if (options.timestamp instanceof Date && Number.isFinite(options.timestamp.getTime())) {
+  if (
+    options.timestamp instanceof Date &&
+    Number.isFinite(options.timestamp.getTime()) &&
+    options.timestamp.getTime() > 0
+  ) {
     return options.timestamp;
   }
   const messageId = normalizeMessageId(options.messageId);
@@ -58,23 +62,54 @@ export function isStaleInboundMessage(timestamp: Date, now = Date.now()): boolea
   return now - timestamp.getTime() > STALE_INBOUND_MS;
 }
 
+/** Extracts `AppMessage.sentAt` as Unix ms (handles protobufjs `Long` and plain numbers). */
+export function appMessageSentAtMs(sentAt: unknown): number | undefined {
+  if (sentAt == null) return undefined;
+  let n: number;
+  if (typeof sentAt === 'number') {
+    n = sentAt;
+  } else if (typeof sentAt === 'object' && sentAt !== null && 'toNumber' in sentAt) {
+    const converted = (sentAt as { toNumber: () => number }).toNumber();
+    if (!Number.isFinite(converted)) return undefined;
+    n = converted;
+  } else {
+    n = Number(sentAt);
+  }
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+/**
+ * Resolves display/storage time for a decrypted AppMessage.
+ * Prefers client `sentAt` from the MLS plaintext; otherwise uses server time (ms).
+ */
+export function resolveAppMessageTimestampMs(
+  msg: IAppMessage,
+  serverFallbackMs?: number
+): number | undefined {
+  const sentMs = appMessageSentAtMs(msg.sentAt);
+  if (sentMs !== undefined) return sentMs;
+  if (serverFallbackMs !== undefined && Number.isFinite(serverFallbackMs) && serverFallbackMs > 0) {
+    return serverFallbackMs;
+  }
+  return undefined;
+}
+
 /**
  * Convert a decoded AppMessage to { content, options } ready for addMessageToChat.
  * Returns null for non-displayable types (reaction, system, call) which require
  * special handling at the call site.
  *
- * @param fallbackTimestamp Used when the message has no sentAt (e.g. history replay
- *   where the Redis stream timestamp should serve as fallback).
+ * @param serverFallbackMs Server queue/history time (ms) when `sentAt` is absent in the payload.
  */
 export function appMsgToEnvelope(
   msg: IAppMessage,
-  fallbackTimestamp?: Date
+  serverFallbackMs?: number
 ): {
   content: string;
   options: Pick<AddMessageToChatOptions, 'messageId' | 'replyTo' | 'timestamp'>;
 } | null {
-  const timestamp =
-    (msg.sentAt && msg.sentAt > 0 ? new Date(msg.sentAt) : undefined) ?? fallbackTimestamp;
+  const ms = resolveAppMessageTimestampMs(msg, serverFallbackMs);
+  const timestamp = ms !== undefined ? new Date(ms) : undefined;
 
   if (msg.text) {
     return {

@@ -28,7 +28,15 @@
   import Card from '$lib/components/ui/Card.svelte';
   import PaymentModal from '$lib/components/ui/PaymentModal.svelte';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
-  import { ArrowLeft, ClipboardList, Check, Send, CalendarDays, Bell, BellOff, CreditCard } from '@lucide/svelte';
+  import {
+    ArrowLeft,
+    ClipboardList,
+    Check,
+    CalendarDays,
+    Bell,
+    BellOff,
+    CreditCard,
+  } from '@lucide/svelte';
 
   const formId = $derived(page.params.id);
   const redirectTo = $derived(page.url.searchParams.get('redirect') || '/posts');
@@ -267,8 +275,6 @@
     const { navigateExternal } = await import('$lib/utils/openExternal');
     await navigateExternal(pendingCheckoutUrl);
   }
-
-
 </script>
 
 <div class="min-h-screen bg-cn-dark/5">
@@ -373,7 +379,9 @@
               type="button"
               onclick={reminder.toggle}
               disabled={reminder.toggling}
-              class="flex items-center gap-1.5 text-xs font-semibold shrink-0 px-3 py-2 rounded-xl transition-colors {reminder.subscribed ? 'bg-amber-600 text-white hover:bg-amber-700' : 'bg-amber-500/20 text-amber-800 dark:text-amber-300 hover:bg-amber-500/30'}"
+              class="flex items-center gap-1.5 text-xs font-semibold shrink-0 px-3 py-2 rounded-xl transition-colors {reminder.subscribed
+                ? 'bg-amber-600 text-white hover:bg-amber-700'
+                : 'bg-amber-500/20 text-amber-800 dark:text-amber-300 hover:bg-amber-500/30'}"
             >
               {#if reminder.subscribed}
                 <BellOff size={13} strokeWidth={2} />
@@ -608,19 +616,43 @@
           <!-- Payment method selector (cash vs Stripe) -->
           {#if calculateTotal() > 0 && form.allowCashPayment && !submitted}
             <div class="pt-2">
-              <p class="text-xs font-bold text-text-muted uppercase tracking-wide mb-2">Mode de paiement</p>
+              <p class="text-xs font-bold text-text-muted uppercase tracking-wide mb-2">
+                Mode de paiement
+              </p>
               <div class="flex gap-3">
-                <label class="flex items-center gap-2 cursor-pointer p-3 rounded-xl border-2 flex-1 transition-all {paymentMethodChoice === 'stripe' ? 'border-cn-yellow bg-cn-yellow/5' : 'border-cn-border hover:border-cn-yellow/50'}">
-                  <input type="radio" bind:group={paymentMethodChoice} value="stripe" class="accent-cn-yellow" />
+                <label
+                  class="flex items-center gap-2 cursor-pointer p-3 rounded-xl border-2 flex-1 transition-all {paymentMethodChoice ===
+                  'stripe'
+                    ? 'border-cn-yellow bg-cn-yellow/5'
+                    : 'border-cn-border hover:border-cn-yellow/50'}"
+                >
+                  <input
+                    type="radio"
+                    bind:group={paymentMethodChoice}
+                    value="stripe"
+                    class="accent-cn-yellow"
+                  />
                   <span class="text-sm font-medium">En ligne (carte)</span>
                 </label>
-                <label class="flex items-center gap-2 cursor-pointer p-3 rounded-xl border-2 flex-1 transition-all {paymentMethodChoice === 'cash' ? 'border-cn-yellow bg-cn-yellow/5' : 'border-cn-border hover:border-cn-yellow/50'}">
-                  <input type="radio" bind:group={paymentMethodChoice} value="cash" class="accent-cn-yellow" />
+                <label
+                  class="flex items-center gap-2 cursor-pointer p-3 rounded-xl border-2 flex-1 transition-all {paymentMethodChoice ===
+                  'cash'
+                    ? 'border-cn-yellow bg-cn-yellow/5'
+                    : 'border-cn-border hover:border-cn-yellow/50'}"
+                >
+                  <input
+                    type="radio"
+                    bind:group={paymentMethodChoice}
+                    value="cash"
+                    class="accent-cn-yellow"
+                  />
                   <span class="text-sm font-medium">En physique (cash)</span>
                 </label>
               </div>
               {#if paymentMethodChoice === 'cash'}
-                <p class="text-xs text-text-muted mt-2">Un admin validera votre paiement manuellement après réception.</p>
+                <p class="text-xs text-text-muted mt-2">
+                  Un admin validera votre paiement manuellement après réception.
+                </p>
               {/if}
             </div>
           {/if}
@@ -648,7 +680,12 @@
                 {/if}
               </div>
             {/if}
-            <Button variant="primary" class="px-6" disabled={submitted || isNotOpenYet} onclick={handleSubmit}>
+            <Button
+              variant="primary"
+              class="px-6"
+              disabled={submitted || isNotOpenYet}
+              onclick={handleSubmit}
+            >
               {#if submitted}
                 Envoyé
                 <Check size={16} class="ml-1" />

@@ -523,6 +523,7 @@ export class MessagingService {
           isCommit: body.isCommit ?? false,
           proto: queued.proto ?? queued.content ?? '',
           queuedMessageId: queued.id,
+          createdAt: queued.createdAt.toISOString(),
         });
         await this.redis.publish('chat:messages', envelope);
         sentCount++;

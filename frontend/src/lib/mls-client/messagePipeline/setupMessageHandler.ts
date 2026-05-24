@@ -6,7 +6,7 @@ import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
 import { ChannelService } from '$lib/services/ChannelService';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { appMsgToEnvelope, normalizeMessageId } from '$lib/utils/chat/messageUtils';
-import { toValidDate } from '$lib/utils/dates';
+import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { toggleMessageReaction } from '$lib/utils/chat/messageReactions';
 import { recoverDeadGroup } from '$lib/utils/chat/recovery';
 import { compareMessageOrder, messageTime } from '$lib/utils/chat/messageOrder';
@@ -220,6 +220,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         if (convoKey) {
           let content: string | undefined;
           let appMessageId: string | undefined;
+          const channelServerMs = parseServerTimestampMs(data.createdAt);
           try {
             if (data.ciphertext) {
               let bytes: Uint8Array;
@@ -238,7 +239,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               const msg = decodeAppMessage(bytes);
               appMessageId = msg?.messageId || undefined;
               if (msg) {
-                const envelope = appMsgToEnvelope(msg);
+                const envelope = appMsgToEnvelope(msg, channelServerMs);
                 if (envelope) content = envelope.content;
               }
             } else if (data.plaintext) {
@@ -254,7 +255,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
 
           addMessageToChat(sender, content, convoKey, {
             messageId: appMessageId || data.messageId || data.id,
-            timestamp: toValidDate(data.createdAt),
+            timestamp: channelServerMs !== undefined ? new Date(channelServerMs) : undefined,
             skipDbSave: true,
           }).catch((e) => console.error(e));
         } else {
@@ -539,11 +540,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             );
 
             if (msg?.text || msg?.reply || msg?.media) {
-              const fallbackTs =
-                deliveryMeta?.queuedCreatedAt !== undefined
-                  ? new Date(deliveryMeta.queuedCreatedAt)
-                  : undefined;
-              const envelope = appMsgToEnvelope(msg, fallbackTs);
+              const envelope = appMsgToEnvelope(msg, deliveryMeta?.queuedCreatedAt);
               if (envelope) {
                 const stableId =
                   normalizeMessageId(msg.messageId) ??

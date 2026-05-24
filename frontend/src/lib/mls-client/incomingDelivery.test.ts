@@ -14,5 +14,6 @@ describe('parseQueuedCreatedAt', () => {
   it('returns undefined for invalid values', () => {
     expect(parseQueuedCreatedAt(null)).toBeUndefined();
     expect(parseQueuedCreatedAt('not-a-date')).toBeUndefined();
+    expect(parseQueuedCreatedAt(0)).toBeUndefined();
   });
 });

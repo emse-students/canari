@@ -11,7 +11,7 @@ import {
 import { getToken } from '$lib/stores/auth';
 import { saveMlsState } from '$lib/utils/hex';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
-import { parseQueuedCreatedAt } from '$lib/mls-client/incomingDelivery';
+import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import type { IncomingDeliveryMeta } from '$lib/mls-client/IMlsService';
 
 /** Message pending in the processing queue */
@@ -304,6 +304,7 @@ export class WebMlsService implements IMlsService {
                 isCommit: msg.isCommit === true,
                 ratchetTreeBytes,
                 queuedMessageId: (msg.queuedMessageId as string) || undefined,
+                queuedCreatedAt: parseServerTimestampMs(msg.createdAt),
               });
             }
           } else {
@@ -617,7 +618,7 @@ export class WebMlsService implements IMlsService {
           // never race with live WebSocket messages calling messageCallback.
           for (const msg of messages as Record<string, unknown>[]) {
             const msgId = (msg.id || msg._id) as string | undefined;
-            const queuedCreatedAt = parseQueuedCreatedAt(msg.createdAt);
+            const queuedCreatedAt = parseServerTimestampMs(msg.createdAt);
             const proto: string | undefined = typeof msg.proto === 'string' ? msg.proto : undefined;
             const content: string | undefined =
               typeof msg.content === 'string' ? msg.content : undefined;

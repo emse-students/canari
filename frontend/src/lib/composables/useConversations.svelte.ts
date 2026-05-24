@@ -16,7 +16,6 @@ import type {
   ChatMessage,
 } from '$lib/types';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
-import { toValidDate } from '$lib/utils/dates';
 import {
   fetchUniqueGroupMembers,
   removeMemberAndBroadcast,
@@ -233,6 +232,7 @@ export function useConversations() {
     const { channelKeyManager } = await import('$lib/crypto/ChannelKeyVault');
     const { decodeAppMessage } = await import('$lib/proto/codec');
     const { appMsgToEnvelope } = await import('$lib/utils/chat/messageUtils');
+    const { parseServerTimestampMs } = await import('$lib/mls-client/incomingDelivery');
 
     const rawId = channelConversationId.replace(/^channel_/, '');
     const convo = conversations.get(channelConversationId);
@@ -280,6 +280,8 @@ export function useConversations() {
       if (Array.isArray(rows)) {
         for (const msg of rows) {
           let content: string | undefined;
+          let messageTimestamp: Date | undefined;
+          const channelServerMs = parseServerTimestampMs(msg.createdAt);
           try {
             let bytes: Uint8Array | undefined;
             if (msg.ciphertext && msg.nonce && msg.keyVersion !== undefined) {
@@ -296,7 +298,13 @@ export function useConversations() {
             }
             if (bytes) {
               const decoded = decodeAppMessage(bytes);
-              if (decoded) content = appMsgToEnvelope(decoded)?.content;
+              if (decoded) {
+                const envelope = appMsgToEnvelope(decoded, channelServerMs);
+                if (envelope) {
+                  content = envelope.content;
+                  messageTimestamp = envelope.options.timestamp;
+                }
+              }
             }
           } catch (e) {
             ctx.log(`[CHANNEL] Message non lisible (clé indisponible) ${msg.id}: ${e}`);
@@ -308,7 +316,9 @@ export function useConversations() {
             id: msg.id,
             senderId,
             content,
-            timestamp: toValidDate(msg.createdAt),
+            timestamp:
+              messageTimestamp ??
+              (channelServerMs !== undefined ? new SvelteDate(channelServerMs) : new SvelteDate()),
             isOwn: senderId === ctx.userId.toLowerCase(),
           });
         }

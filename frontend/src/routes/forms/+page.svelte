@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { exportSubmissions, getForms, type Form } from '$lib/forms/api';
-  import { Plus, Download, Copy, FileText, Pencil, Link, Check } from '@lucide/svelte';
+  import { Plus, Download, FileText, Pencil, Link, Check } from '@lucide/svelte';
 
   let copiedId = $state<string | null>(null);
 
@@ -9,7 +9,9 @@
     if (typeof window === 'undefined') return;
     void navigator.clipboard.writeText(`${window.location.origin}/forms/${id}`);
     copiedId = id;
-    setTimeout(() => { copiedId = null; }, 2000);
+    setTimeout(() => {
+      copiedId = null;
+    }, 2000);
   }
 
   let forms = $state<Form[]>([]);

@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { encodeAppMessage, decodeAppMessage, mkText } from '$lib/proto/codec';
 import {
+  appMessageSentAtMs,
+  appMsgToEnvelope,
   computeMessageListSwitchTime,
   isStaleInboundMessage,
   normalizeMessageId,
+  resolveAppMessageTimestampMs,
   resolveMessageTimestamp,
   STALE_INBOUND_MS,
 } from './messageUtils';
@@ -64,6 +68,32 @@ describe('computeMessageListSwitchTime', () => {
       },
     ]);
     expect(t).toBe(Date.parse('2024-06-01T12:00:00Z'));
+  });
+});
+
+describe('appMessageSentAtMs / appMsgToEnvelope', () => {
+  it('reads sentAt from protobuf Long', () => {
+    const sentAt = Date.parse('2024-06-01T12:00:00Z');
+    const bytes = encodeAppMessage({ ...mkText('hi'), messageId: 'id-1', sentAt });
+    const decoded = decodeAppMessage(bytes)!;
+    expect(appMessageSentAtMs(decoded.sentAt)).toBe(sentAt);
+  });
+
+  it('prefers client sentAt over server fallback', () => {
+    const sentAt = Date.parse('2024-06-01T12:00:00Z');
+    const serverMs = Date.parse('2024-01-01T00:00:00Z');
+    const bytes = encodeAppMessage({ ...mkText('hi'), messageId: 'id-1', sentAt });
+    const decoded = decodeAppMessage(bytes)!;
+    expect(resolveAppMessageTimestampMs(decoded, serverMs)).toBe(sentAt);
+  });
+
+  it('uses server fallback when sentAt is absent on the wire', () => {
+    const serverMs = Date.parse('2024-03-01T08:00:00Z');
+    const bytes = encodeAppMessage({ ...mkText('hi'), messageId: 'id-1' });
+    const decoded = decodeAppMessage(bytes)!;
+    expect(resolveAppMessageTimestampMs(decoded, serverMs)).toBe(serverMs);
+    const envelope = appMsgToEnvelope(decoded, serverMs);
+    expect(envelope?.options.timestamp?.getTime()).toBe(serverMs);
   });
 });
 

@@ -9,7 +9,12 @@ import type {
 import type { IMlsService } from '$lib/mlsService';
 import { decodeAppMessage } from '$lib/proto/codec';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
-import { appMsgToEnvelope, isOwnMessage } from '$lib/utils/chat/messageUtils';
+import {
+  appMsgToEnvelope,
+  isOwnMessage,
+  resolveMessageTimestamp,
+} from '$lib/utils/chat/messageUtils';
+import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { readStoredTimestampMs, toValidDate } from '$lib/utils/dates';
 import { normalizeMessageId } from '$lib/utils/chat/messageUtils';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
@@ -68,7 +73,7 @@ export function mapStoredMessagesToChatMessages(storedMessages: StoredMessage[],
       id: m.id,
       senderId: m.senderId,
       content: m.content,
-      timestamp: toValidDate(readStoredTimestampMs(m.timestamp) ?? 0, new Date(0)),
+      timestamp: toValidDate(readStoredTimestampMs(m.timestamp)),
       isOwn: isOwnMessage(m.senderId, userId),
       isSystem: m.senderId === 'system',
       readBy: m.readBy,
@@ -184,7 +189,8 @@ export async function replayConversationHistory(params: {
 
         const parsed = decodeAppMessage(decryptedBytes);
 
-        const envelope = parsed ? appMsgToEnvelope(parsed, toValidDate(msg.timestamp)) : null;
+        const serverMs = parseServerTimestampMs(msg.timestamp);
+        const envelope = parsed ? appMsgToEnvelope(parsed, serverMs) : null;
         if (envelope) {
           pendingMessages.push({
             senderId: msg.sender_id,
@@ -310,12 +316,13 @@ export async function replayConversationHistory(params: {
           }
 
           if (systemText) {
+            const systemServerMs = parseServerTimestampMs(msg.timestamp);
             pendingMessages.push({
               senderId: 'system',
               content: systemText,
               isSystem: true,
               messageId: parsed.messageId || undefined,
-              timestamp: toValidDate(msg.timestamp),
+              timestamp: systemServerMs !== undefined ? new Date(systemServerMs) : undefined,
               ingestSequence: historyIngestSeq++,
             });
             addedMsg++;
@@ -358,7 +365,7 @@ export async function replayConversationHistory(params: {
         conversationId: id,
         senderId: pm.senderId.toLowerCase(),
         content: pm.content,
-        timestamp: (pm.timestamp ?? new Date()).getTime(),
+        timestamp: resolveMessageTimestamp(pm, [], isOwnMessage(pm.senderId, userId)).getTime(),
         ...(pm.isSystem ? { readBy: [] } : {}),
       }));
       await storage.saveMessages(toStore, pin);
