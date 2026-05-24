@@ -88,11 +88,11 @@
   /** Hex color for calendar display, or "" to use auto-generated color. */
   let editColor = $state('');
 
+  /** Material You–inspired tonal palette (tone ~60, moderate saturation). */
   const PRESET_COLORS = [
-    '#ef4444', '#f97316', '#f59e0b', '#eab308',
-    '#84cc16', '#22c55e', '#10b981', '#14b8a6',
-    '#06b6d4', '#3b82f6', '#6366f1', '#8b5cf6',
-    '#a855f7', '#d946ef', '#ec4899', '#f43f5e',
+    '#6B92D1', '#5BA8A0', '#5EA86C', '#8BAC5A',
+    '#ACA05A', '#AC7A5A', '#AC5E5E', '#AC5E8C',
+    '#8C5EAC', '#6E7EAC', '#5EA8A8', '#7CAC7C',
   ] as const;
   let saving = $state(false);
   let saveSuccess = $state(false);
@@ -788,9 +788,9 @@
             placeholder="Présentation complète, liens, listes…"
           />
         </div>
-        <div class="flex flex-col gap-2">
+        <div class="flex flex-col gap-3">
           <span class="block text-sm font-bold text-text-main ml-1">Couleur de l'agenda</span>
-          <div class="flex flex-wrap gap-1.5 items-center">
+          <div class="flex flex-wrap gap-1.5">
             {#each PRESET_COLORS as c (c)}
               <button
                 type="button"
@@ -801,23 +801,37 @@
                 style="background:{c};"
               ></button>
             {/each}
-            <button
-              type="button"
-              onclick={() => (editColor = '')}
-              class="h-7 px-2.5 rounded-full text-[10px] font-bold border-2 transition-all shrink-0
-                     {editColor === '' ? 'border-cn-dark bg-cn-dark text-white' : 'border-cn-border text-text-muted hover:border-cn-dark hover:text-text-main'}"
-            >
-              Auto
-            </button>
           </div>
-          <div class="flex items-center gap-2 ml-1">
-            <span
-              class="h-5 w-5 rounded-full border border-cn-border/40 shrink-0"
-              style="background:{editColor || (asso ? generateAvatarColor(asso.id) : '#888')}"
-            ></span>
-            <span class="text-[11px] text-text-muted">
-              {editColor ? editColor : 'Couleur générée automatiquement'}
-            </span>
+          <div class="flex items-center gap-2 ml-0.5">
+            <!-- Native color picker hidden behind a round swatch -->
+            <label class="relative cursor-pointer shrink-0" title="Ouvrir le sélecteur de couleur">
+              <input
+                type="color"
+                class="sr-only"
+                value={editColor || '#aaaaaa'}
+                oninput={(e) => (editColor = (e.target as HTMLInputElement).value)}
+              />
+              <span
+                class="h-6 w-6 rounded-full border-2 border-cn-border hover:border-cn-dark transition-colors block"
+                style="background:{editColor || '#aaaaaa'}"
+              ></span>
+            </label>
+            <span class="text-text-muted font-mono text-sm select-none">#</span>
+            <input
+              type="text"
+              maxlength="6"
+              placeholder="rrggbb"
+              class="w-24 bg-transparent font-mono text-sm text-text-main placeholder:text-text-muted/50 border-b border-cn-border/60 focus:border-cn-dark focus:outline-none transition-colors pb-0.5"
+              value={editColor.replace(/^#/, '')}
+              oninput={(e) => {
+                const v = (e.target as HTMLInputElement).value
+                  .replace(/[^0-9a-fA-F]/g, '')
+                  .slice(0, 6);
+                (e.target as HTMLInputElement).value = v;
+                if (v.length === 6) editColor = '#' + v;
+                else if (v.length === 0) editColor = '';
+              }}
+            />
           </div>
         </div>
 
