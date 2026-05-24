@@ -41,7 +41,9 @@ function eventsOnDay(
 
 const WEEKDAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
 
-const CELL_H = 130; // cell height px — taller for comfortable text
+// Landscape A4 = 297×210mm. At 1080px wide, max container height ≈ 210×(1080/297) ≈ 763px.
+// For a 6-row month: 68 (header) + 39 (weekday row) + 6×CELL_H + 20 (padding) ≤ 763 → CELL_H ≤ 106.
+const CELL_H = 100; // cell height px — keeps 6-row months on a single A4 landscape page
 const MAX_SHOW = 3; // max visible event slots per cell
 
 function safe(s: string): string {
@@ -282,18 +284,11 @@ export async function exportCalendarMonth(
     const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
     const pageW = pdf.internal.pageSize.getWidth();
     const pageH = pdf.internal.pageSize.getHeight();
-    const imgH = (canvas.height * pageW) / canvas.width;
 
-    if (imgH <= pageH) {
-      pdf.addImage(imgData, 'PNG', 0, 0, pageW, imgH);
-    } else {
-      let yMm = 0;
-      while (yMm < imgH) {
-        if (yMm > 0) pdf.addPage();
-        pdf.addImage(imgData, 'PNG', 0, -yMm, pageW, imgH);
-        yMm += pageH;
-      }
-    }
+    // Scale to fill width; fall back to scale-by-height if the calendar is still too tall
+    // (edge cases: mis-estimated container height). Always one page.
+    const scale = Math.min(pageW / canvas.width, pageH / canvas.height);
+    pdf.addImage(imgData, 'PNG', 0, 0, canvas.width * scale, canvas.height * scale);
 
     pdf.save(`canari-agenda-${year}-${String(month + 1).padStart(2, '0')}.pdf`);
   } finally {

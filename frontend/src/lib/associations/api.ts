@@ -347,9 +347,16 @@ export async function deleteCalendarEventImage(
   );
 }
 
-/** Pending events the caller may validate (global admin: all associations). */
-export async function listPendingCalendarEvents(): Promise<AssociationCalendarFeedEvent[]> {
-  return request<AssociationCalendarFeedEvent[]>('/api/associations/calendar/pending');
+/** Response shape for the pending-events queue. */
+export interface PendingCalendarEventsResponse {
+  /** True when the caller has VALIDATE_EVENTS in a BDE association, or is global admin. */
+  canValidate: boolean;
+  events: AssociationCalendarFeedEvent[];
+}
+
+/** Pending events the caller may see, plus a flag indicating whether they can validate them. */
+export async function listPendingCalendarEvents(): Promise<PendingCalendarEventsResponse> {
+  return request<PendingCalendarEventsResponse>('/api/associations/calendar/pending');
 }
 
 /** Association admins — publications et formulaires récents pour lier un événement d’agenda. */

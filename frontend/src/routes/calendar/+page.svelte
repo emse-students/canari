@@ -123,7 +123,7 @@
     if (canModerateAgenda) {
       try {
         const pending = await listPendingCalendarEvents();
-        pendingCount = pending.length;
+        pendingCount = pending.events.length;
       } catch {
         pendingCount = 0;
       }

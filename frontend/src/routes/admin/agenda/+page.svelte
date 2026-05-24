@@ -9,6 +9,7 @@
   import { Check, Trash2, ExternalLink, Clock } from '@lucide/svelte';
 
   let events = $state<AssociationCalendarFeedEvent[]>([]);
+  let canValidate = $state(false);
   let loading = $state(true);
   let error = $state('');
   let actingId = $state<string | null>(null);
@@ -17,7 +18,9 @@
     loading = true;
     error = '';
     try {
-      events = await listPendingCalendarEvents();
+      const res = await listPendingCalendarEvents();
+      events = res.events;
+      canValidate = res.canValidate;
     } catch (e) {
       error = e instanceof Error ? e.message : 'Erreur';
       events = [];
@@ -122,15 +125,17 @@
             {/if}
           </div>
           <div class="flex flex-wrap gap-2 shrink-0">
-            <button
-              type="button"
-              onclick={() => validate(ev)}
-              disabled={actingId === ev.id}
-              class="inline-flex items-center gap-1.5 rounded-xl bg-cn-yellow px-3 py-2 text-xs font-bold text-cn-dark hover:bg-cn-yellow-hover disabled:opacity-50"
-            >
-              <Check size={14} />
-              Valider
-            </button>
+            {#if canValidate}
+              <button
+                type="button"
+                onclick={() => validate(ev)}
+                disabled={actingId === ev.id}
+                class="inline-flex items-center gap-1.5 rounded-xl bg-cn-yellow px-3 py-2 text-xs font-bold text-cn-dark hover:bg-cn-yellow-hover disabled:opacity-50"
+              >
+                <Check size={14} />
+                Valider
+              </button>
+            {/if}
             <a
               href="/associations/{encodeURIComponent(ev.associationSlug)}"
               class="inline-flex items-center gap-1 rounded-xl border border-cn-border px-3 py-2 text-xs font-semibold hover:bg-cn-bg"

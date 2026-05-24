@@ -25,7 +25,7 @@
     isGlobalAdminUser = isGlobalAdmin();
     try {
       const pending = await listPendingCalendarEvents();
-      pendingCount = pending.length;
+      pendingCount = pending.events.length;
     } catch {
       pendingCount = null;
     }
