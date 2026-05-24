@@ -59,7 +59,6 @@
     GripVertical,
   } from '@lucide/svelte';
   import { exportTrombinoscope } from '$lib/utils/trombinoscope';
-  import { generateAvatarColor } from '$lib/utils/avatar';
   import AssociationDocumentManager from '$lib/components/associations/AssociationDocumentManager.svelte';
   import {
     hasPermissionFlag,
