@@ -89,10 +89,12 @@ async function fetchDataUrl(url: string | null): Promise<string | null> {
  * Renders the monthly calendar grid to a landscape A4 PDF and triggers a direct download.
  *
  * Design language:
- * - Canari yellow (#f5c518) header with Fredoka font and seasonal background image.
- * - Dark navy (#122035) weekday header row with yellow weekend labels.
+ * - Seasonal background image at 14% opacity behind the full calendar.
+ * - Minimal header: Canari favicon top-left, month title centred in Fredoka.
+ * - Dark navy (#122035) weekday row with yellow weekend labels.
  * - Events fill the entire cell height, split equally across all visible slots.
- * - Day number is a small yellow badge overlaid on the first slot.
+ * - Text centred via padding-top + natural line-height (no overflow:hidden on wrappers —
+ *   avoids html2canvas clipping descenders at the bottom of characters).
  * - Association logos appear as circular watermarks centred in each event slot.
  */
 export async function exportCalendarMonth(
@@ -114,8 +116,9 @@ export async function exportCalendarMonth(
   const uniqueLogoUrls = [
     ...new Set(events.map((ev) => ev.associationLogoUrl).filter(Boolean) as string[]),
   ];
-  const [bgDataUrl, ...resolvedLogos] = await Promise.all([
+  const [bgDataUrl, faviconDataUrl, ...resolvedLogos] = await Promise.all([
     fetchDataUrl(MONTH_BG_URLS[month] ?? null),
+    fetchDataUrl('/favicon.png'),
     ...uniqueLogoUrls.map(fetchDataUrl),
   ]);
   const logoMap = new Map<string, string | null>(
@@ -124,7 +127,7 @@ export async function exportCalendarMonth(
 
   const cells = buildCalendarCells(year, month);
 
-  // Dark navy weekday header: yellow labels for weekends, white for weekdays
+  // Dark navy weekday header row
   const headerRow = WEEKDAYS.map(
     (w, i) =>
       `<div style="padding:9px 6px;text-align:center;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:${i >= 5 ? '#f5c518' : '#e2eaf4'};background:#122035;">${w}</div>`
@@ -135,13 +138,14 @@ export async function exportCalendarMonth(
       const isWeekend = i % 7 >= 5;
 
       if (day === null) {
-        return `<div style="height:${CELL_H}px;background:${isWeekend ? '#f1f5f9' : '#f8fafc'};border-right:1px solid #dde3ec;border-bottom:1px solid #dde3ec;box-sizing:border-box;"></div>`;
+        // Semi-transparent so the background image shows through
+        return `<div style="height:${CELL_H}px;background:${isWeekend ? 'rgba(241,245,249,0.88)' : 'rgba(248,250,252,0.80)'};border-right:1px solid #dde3ec;border-bottom:1px solid #dde3ec;box-sizing:border-box;"></div>`;
       }
 
       const dayEvents = eventsOnDay(events, year, month, day);
 
       if (dayEvents.length === 0) {
-        const bg = isWeekend ? '#f1f5f9' : '#ffffff';
+        const bg = isWeekend ? 'rgba(241,245,249,0.92)' : 'rgba(255,255,255,0.92)';
         return `<div style="height:${CELL_H}px;background:${bg};border-right:1px solid #dde3ec;border-bottom:1px solid #dde3ec;box-sizing:border-box;padding:6px 7px;"><span style="font-size:12px;font-weight:700;color:#b8c4d0;">${day}</span></div>`;
       }
 
@@ -165,7 +169,6 @@ export async function exportCalendarMonth(
             ? `<div style="position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;pointer-events:none;"><img src="${logoDataUrl}" style="height:${logoSize}px;width:${logoSize}px;border-radius:50%;object-fit:cover;opacity:0.18;" /></div>`
             : '';
 
-          // Same style as empty cells: plain number top-left, no badge
           const dayNum =
             idx === 0
               ? `<span style="position:absolute;top:6px;left:7px;font-size:12px;font-weight:700;color:${fg};z-index:1;">${day}</span>`
@@ -173,22 +176,24 @@ export async function exportCalendarMonth(
 
           const fontSize = slotH >= 60 ? 13 : slotH >= 45 ? 12 : slotH >= 35 ? 11 : 10;
 
-          // Vertical centering via padding-top (reliable in html2canvas, no flexbox dependency).
-          // For tall slots allow wrapping; for short slots enforce single line via line-height.
-          let textHtml: string;
-          if (slotH >= 48) {
-            const paddingTop = Math.max(4, Math.floor((slotH - fontSize * 1.3) / 2));
-            textHtml = `<div style="position:absolute;top:0;left:0;width:100%;padding-top:${paddingTop}px;text-align:center;box-sizing:border-box;overflow:hidden;max-height:${slotH}px;"><span style="display:block;font-size:${fontSize}px;font-weight:700;color:${fg};word-break:break-word;line-height:1.3;padding:0 10px;box-sizing:border-box;">${safe(ev.title)}</span></div>`;
-          } else {
-            textHtml = `<div style="position:absolute;top:0;left:0;width:100%;height:${slotH}px;text-align:center;overflow:hidden;"><span style="display:block;font-size:${fontSize}px;font-weight:700;color:${fg};line-height:${slotH}px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 6px;box-sizing:border-box;">${safe(ev.title)}</span></div>`;
-          }
+          // Text centering: padding-top positions the text; line-height:1.4 gives enough room
+          // for ascenders AND descenders without relying on overflow:hidden inside the wrapper.
+          // Only the outer slot div (overflow:hidden;height:slotH) provides clipping.
+          const lineH = fontSize * 1.4;
+          const paddingTop = Math.max(6, Math.floor((slotH - lineH) / 2));
+          const wrap = slotH >= 48 ? 'word-break:break-word;' : 'white-space:nowrap;';
+          const ph = slotH >= 48 ? 10 : 6;
+          const textHtml = `<div style="position:absolute;top:0;left:0;width:100%;padding-top:${paddingTop}px;text-align:center;box-sizing:border-box;"><span style="display:block;font-size:${fontSize}px;font-weight:700;color:${fg};line-height:1.4;${wrap}padding:0 ${ph}px;box-sizing:border-box;">${safe(ev.title)}</span></div>`;
 
           return `<div style="height:${slotH}px;position:relative;background:${bg};overflow:hidden;">${watermark}${dayNum}${textHtml}</div>`;
         }),
         ...(overflowCount > 0
-          ? [
-              `<div style="height:${slotH}px;background:#f0f4f8;text-align:center;overflow:hidden;"><span style="display:block;font-size:9px;font-weight:800;color:#607188;line-height:${slotH}px;">+${overflowCount} autre${overflowCount > 1 ? 's' : ''}</span></div>`,
-            ]
+          ? (() => {
+              const pt = Math.max(4, Math.floor((slotH - 9 * 1.4) / 2));
+              return [
+                `<div style="height:${slotH}px;background:#f0f4f8;text-align:center;padding-top:${pt}px;box-sizing:border-box;overflow:hidden;"><span style="font-size:9px;font-weight:800;color:#607188;line-height:1.4;">+${overflowCount} autre${overflowCount > 1 ? 's' : ''}</span></div>`,
+              ];
+            })()
           : []),
       ];
 
@@ -202,7 +207,7 @@ export async function exportCalendarMonth(
     top: '0',
     left: '-9999px',
     width: '1080px',
-    background: '#f5f7fa',
+    background: '#f0f4f8',
     color: '#111111',
     fontFamily: '"Nunito", "Segoe UI", sans-serif',
     boxSizing: 'border-box',
@@ -210,21 +215,31 @@ export async function exportCalendarMonth(
     overflow: 'hidden',
   });
 
-  // Seasonal image in the yellow header at 25% opacity (data: URL, no CORS issues)
-  const headerImgHtml = bgDataUrl
-    ? `<img src="${bgDataUrl}" style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;opacity:0.25;" />`
+  // Full-page seasonal background image behind everything.
+  // position:absolute stretches to the container's content height via top:0/bottom:0.
+  const fullBgHtml = bgDataUrl
+    ? `<div style="position:absolute;top:0;left:0;right:0;bottom:0;pointer-events:none;"><img src="${bgDataUrl}" style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;opacity:0.14;" /></div>`
+    : '';
+
+  // Favicon logo top-left of the header; centred month title via line-height.
+  const logoHtml = faviconDataUrl
+    ? `<img src="${faviconDataUrl}" style="position:absolute;top:18px;left:18px;height:32px;width:32px;object-fit:contain;opacity:0.85;" />`
     : '';
 
   container.innerHTML = `
-    <!-- Canari yellow header with centred month title -->
-    <div style="background:#f5c518;position:relative;overflow:hidden;height:84px;text-align:center;">
-      ${headerImgHtml}
-      <h1 style="position:relative;font-family:'Fredoka','Segoe UI',sans-serif;font-size:34px;font-weight:700;color:#122035;margin:0;line-height:84px;text-align:center;letter-spacing:.01em;">${safe(monthLabel)}</h1>
-    </div>
-    <!-- Calendar grid -->
-    <div style="padding:0 20px 20px;">
-      <div style="display:grid;grid-template-columns:repeat(7,1fr);border:1.5px solid #122035;border-top:none;border-radius:0 0 8px 8px;overflow:hidden;">
-        ${headerRow}${cellHtml}
+    ${fullBgHtml}
+    <!-- Content wrapper sits above the full-page background image -->
+    <div style="position:relative;">
+      <!-- Minimal header: logo left, month title centred -->
+      <div style="height:68px;position:relative;border-bottom:1.5px solid #dde3ec;">
+        ${logoHtml}
+        <h1 style="position:relative;font-family:'Fredoka','Segoe UI',sans-serif;font-size:30px;font-weight:700;color:#122035;margin:0;line-height:68px;text-align:center;letter-spacing:.01em;">${safe(monthLabel)}</h1>
+      </div>
+      <!-- Calendar grid -->
+      <div style="padding:0 20px 20px;">
+        <div style="display:grid;grid-template-columns:repeat(7,1fr);border:1.5px solid #122035;border-top:none;border-radius:0 0 8px 8px;overflow:hidden;">
+          ${headerRow}${cellHtml}
+        </div>
       </div>
     </div>`;
 
