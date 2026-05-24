@@ -49,7 +49,14 @@
   function eventsOnDay(day: number): AssociationCalendarFeedEvent[] {
     const d = new Date(focusDate.getFullYear(), focusDate.getMonth(), day);
     return (events as AssociationCalendarFeedEvent[])
-      .filter((ev: AssociationCalendarFeedEvent) => sameDay(new Date(ev.startsAt), d))
+      .filter((ev: AssociationCalendarFeedEvent) => {
+        const start = new Date(ev.startsAt);
+        const startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+        if (!ev.endsAt) return d.getTime() === startDay.getTime();
+        const end = new Date(ev.endsAt);
+        const endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+        return d >= startDay && d <= endDay;
+      })
       .sort(
         (a: AssociationCalendarFeedEvent, b: AssociationCalendarFeedEvent) =>
           new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime()

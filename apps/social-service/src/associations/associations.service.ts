@@ -692,7 +692,8 @@ export class AssociationsService {
       });
     }
     if (fromIso?.trim()) {
-      qb.andWhere('e.startsAt >= :from', { from: new Date(fromIso) });
+      // Include multi-day events that started before `from` but end within or after the window.
+      qb.andWhere('COALESCE(e.endsAt, e.startsAt) >= :from', { from: new Date(fromIso) });
     }
     if (toIso?.trim()) {
       qb.andWhere('e.startsAt <= :to', { to: new Date(toIso) });
@@ -877,7 +878,8 @@ export class AssociationsService {
     const qb = this.calendarRepo
       .createQueryBuilder('e')
       .innerJoin(Association, 'a', 'a.id = e.associationId')
-      .where('e.startsAt >= :from AND e.startsAt <= :to', { from, to })
+      // Overlap condition: event starts before window end AND ends (or starts) within/after window.
+      .where('e.startsAt <= :to AND COALESCE(e.endsAt, e.startsAt) >= :from', { from, to })
       .andWhere('e.status = :validated', {
         validated: AssociationCalendarEventStatus.Validated,
       })

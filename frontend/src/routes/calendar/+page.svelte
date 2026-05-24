@@ -13,7 +13,7 @@
   import { isGlobalAdmin } from '$lib/stores/user';
   import Card from '$lib/components/ui/Card.svelte';
   import MonthCalendarGridRich from '$lib/components/calendar/MonthCalendarGridRich.svelte';
-  import { exportCalendarMonth } from '$lib/utils/calendarExport';
+  import { exportCalendarMonth, fileToDataUrl } from '$lib/utils/calendarExport';
   import {
     ChevronLeft,
     ChevronRight,
@@ -23,6 +23,8 @@
     ClipboardList,
     ShieldAlert,
     FileDown,
+    ImagePlus,
+    X,
   } from '@lucide/svelte';
   import {
     buildIcsCalendar,
@@ -194,19 +196,40 @@
   const displayedEvents = $derived.by(() => {
     if (selectedDay == null) return sortedEvents;
     const d = new Date(focusDate.getFullYear(), focusDate.getMonth(), selectedDay);
-    return sortedEvents.filter((ev) => sameDay(new Date(ev.startsAt), d));
+    return sortedEvents.filter((ev) => {
+      const start = new Date(ev.startsAt);
+      const startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+      if (!ev.endsAt) return d.getTime() === startDay.getTime();
+      const end = new Date(ev.endsAt);
+      const endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+      return d >= startDay && d <= endDay;
+    });
   });
 
   let canModerateAgenda = $state(false);
   let pendingCount = $state(0);
   let selectedDay = $state<number | null>(null);
   let exportingPdf = $state(false);
+  let pdfBgDataUrl = $state<string | null>(null);
+  let pdfBgFileName = $state<string | null>(null);
+
+  async function handlePdfBgChange(e: Event) {
+    const file = (e.target as HTMLInputElement).files?.[0] ?? null;
+    if (!file) return;
+    pdfBgDataUrl = await fileToDataUrl(file);
+    pdfBgFileName = file.name;
+  }
+
+  function clearPdfBg() {
+    pdfBgDataUrl = null;
+    pdfBgFileName = null;
+  }
 
   async function handleExportPdf() {
     if (exportingPdf) return;
     exportingPdf = true;
     try {
-      await exportCalendarMonth(sortedEvents, focusDate);
+      await exportCalendarMonth(sortedEvents, focusDate, pdfBgDataUrl);
     } finally {
       exportingPdf = false;
     }
@@ -297,6 +320,29 @@
     </div>
 
     <div class="flex flex-wrap justify-end gap-2 border-t border-cn-border/60 pt-4">
+      <!-- PDF background image picker -->
+      <div class="flex items-center gap-1.5 shrink-0">
+        {#if pdfBgFileName}
+          <span class="max-w-[10rem] truncate text-xs text-text-muted" title={pdfBgFileName}>{pdfBgFileName}</span>
+          <button
+            type="button"
+            onclick={clearPdfBg}
+            class="rounded-lg border border-cn-border p-1.5 text-text-muted hover:bg-cn-bg"
+            title="Supprimer l'image de fond"
+          >
+            <X size={14} />
+          </button>
+        {:else}
+          <label
+            class="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2.5 text-xs font-semibold text-text-muted hover:bg-cn-bg transition-colors"
+            title="Image de fond du PDF (optionnel)"
+          >
+            <ImagePlus size={15} />
+            Image de fond PDF
+            <input type="file" accept="image/*" class="sr-only" onchange={handlePdfBgChange} />
+          </label>
+        {/if}
+      </div>
       <button
         type="button"
         onclick={handleExportPdf}

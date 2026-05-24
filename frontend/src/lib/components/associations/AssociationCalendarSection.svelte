@@ -212,15 +212,24 @@
   const pendingEvents = $derived(events.filter((e) => e.status === 'pending'));
   const rejectedEvents = $derived(events.filter((e) => e.status === 'rejected'));
 
+  function eventCoversDay(ev: { startsAt: string; endsAt: string | null }, d: Date): boolean {
+    const start = new Date(ev.startsAt);
+    const startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+    if (!ev.endsAt) return d.getTime() === startDay.getTime();
+    const end = new Date(ev.endsAt);
+    const endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+    return d >= startDay && d <= endDay;
+  }
+
   function hasValidatedEventOnDay(day: number): boolean {
     const d = new Date(focusDate.getFullYear(), focusDate.getMonth(), day);
-    return validatedEvents.some((ev) => sameDay(new Date(ev.startsAt), d));
+    return validatedEvents.some((ev) => eventCoversDay(ev, d));
   }
 
   function hasPendingEventOnDay(day: number): boolean {
     if (!canEdit) return false;
     const d = new Date(focusDate.getFullYear(), focusDate.getMonth(), day);
-    return pendingEvents.some((ev) => sameDay(new Date(ev.startsAt), d));
+    return pendingEvents.some((ev) => eventCoversDay(ev, d));
   }
 
   /** Monday-first calendar cells for the visible month */
@@ -357,13 +366,19 @@
           linkedFormId: formLinkedFormId.trim() || null,
         });
       } else {
-        await createAssociationCalendarEvent(associationId, {
+        const created = await createAssociationCalendarEvent(associationId, {
           title: formTitle.trim(),
           description: formDescription.trim() || undefined,
           startsAt: startIso,
           endsAt: endIso,
           ...(formLinkedFormId.trim() ? { linkedFormId: formLinkedFormId.trim() } : {}),
         });
+        // Switch to edit mode so the user can immediately add a poster image.
+        editingId = created.id;
+        formImageUrl = created.imageUrl ?? null;
+        await loadMonth();
+        saving = false;
+        return;
       }
       dismissEventModal(false);
       await loadMonth();

@@ -35,7 +35,14 @@ function eventsOnDay(
 ): AssociationCalendarFeedEvent[] {
   const d = new Date(year, month, day);
   return events
-    .filter((ev) => sameDay(new Date(ev.startsAt), d))
+    .filter((ev) => {
+      const start = new Date(ev.startsAt);
+      const startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+      if (!ev.endsAt) return d.getTime() === startDay.getTime();
+      const end = new Date(ev.endsAt);
+      const endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+      return d >= startDay && d <= endDay;
+    })
     .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
 }
 
@@ -56,24 +63,15 @@ function safe(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-/**
- * Seasonal Unsplash background images by 0-indexed month.
- * Used as header background (data: URL, pre-fetched to avoid CORS).
- */
-export const MONTH_BG_URLS: Record<number, string> = {
-  0: 'https://images.unsplash.com/photo-1516912481808-3406841bd33c?w=1200&q=70&auto=format&fit=crop',
-  1: 'https://images.unsplash.com/photo-1484589065579-a8f8a2adf0b4?w=1200&q=70&auto=format&fit=crop',
-  2: 'https://images.unsplash.com/photo-1490750967868-88df5691cc53?w=1200&q=70&auto=format&fit=crop',
-  3: 'https://images.unsplash.com/photo-1462275646964-a0e3386b89fa?w=1200&q=70&auto=format&fit=crop',
-  4: 'https://images.unsplash.com/photo-1508739773434-c26b3d09e071?w=1200&q=70&auto=format&fit=crop',
-  5: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=1200&q=70&auto=format&fit=crop',
-  6: 'https://images.unsplash.com/photo-1530053969600-caed2596d242?w=1200&q=70&auto=format&fit=crop',
-  7: 'https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?w=1200&q=70&auto=format&fit=crop',
-  8: 'https://images.unsplash.com/photo-1508193638397-1c4234db14d8?w=1200&q=70&auto=format&fit=crop',
-  9: 'https://images.unsplash.com/photo-1508084699793-bb8ce8ce37b3?w=1200&q=70&auto=format&fit=crop',
-  10: 'https://images.unsplash.com/photo-1472289065668-ce650ac443d2?w=1200&q=70&auto=format&fit=crop',
-  11: 'https://images.unsplash.com/photo-1543589077-47d81606c1bf?w=1200&q=70&auto=format&fit=crop',
-};
+/** Reads a File and resolves to its base64 data: URL (no CORS, fully client-side). */
+export async function fileToDataUrl(file: File): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error('FileReader error'));
+    reader.readAsDataURL(file);
+  });
+}
 
 /** Fetches a URL and returns a base64 data: string, or null on any failure. */
 async function fetchDataUrl(url: string | null): Promise<string | null> {
@@ -97,8 +95,7 @@ async function fetchDataUrl(url: string | null): Promise<string | null> {
  * Renders the monthly calendar grid to a landscape A4 PDF and triggers a direct download.
  *
  * Design language:
- * - Seasonal background image at 14% opacity behind the full calendar (height patched in JS
- *   after DOM insertion — bottom:0 collapses on auto-height containers).
+ * - Optional background image at 14% opacity (caller-supplied base64 data URL, no CORS).
  * - Minimal header: Canari favicon top-left, month title centred in Fredoka.
  * - Dark navy (#122035) weekday row with yellow weekend labels.
  * - Events fill the entire cell height, split equally; subtle top border separates stacked slots.
@@ -108,7 +105,9 @@ async function fetchDataUrl(url: string | null): Promise<string | null> {
  */
 export async function exportCalendarMonth(
   events: AssociationCalendarFeedEvent[],
-  focusDate: Date
+  focusDate: Date,
+  /** Optional background image as a base64 data URL. Pass null for no background. */
+  bgDataUrl: string | null = null
 ): Promise<void> {
   const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
     import('html2canvas'),
@@ -121,12 +120,11 @@ export async function exportCalendarMonth(
     .format(focusDate)
     .replace(/^\w/, (c) => c.toUpperCase());
 
-  // Pre-fetch all images as data: URLs (cross-origin safe for html2canvas)
+  // Pre-fetch logos as data: URLs (cross-origin safe for html2canvas)
   const uniqueLogoUrls = [
     ...new Set(events.map((ev) => ev.associationLogoUrl).filter(Boolean) as string[]),
   ];
-  const [bgDataUrl, faviconDataUrl, ...resolvedLogos] = await Promise.all([
-    fetchDataUrl(MONTH_BG_URLS[month] ?? null),
+  const [faviconDataUrl, ...resolvedLogos] = await Promise.all([
     fetchDataUrl('/favicon.png'),
     ...uniqueLogoUrls.map(fetchDataUrl),
   ]);
