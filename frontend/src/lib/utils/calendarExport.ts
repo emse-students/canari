@@ -89,12 +89,13 @@ async function fetchDataUrl(url: string | null): Promise<string | null> {
  * Renders the monthly calendar grid to a landscape A4 PDF and triggers a direct download.
  *
  * Design language:
- * - Seasonal background image at 14% opacity behind the full calendar.
+ * - Seasonal background image at 14% opacity behind the full calendar (height patched in JS
+ *   after DOM insertion — bottom:0 collapses on auto-height containers).
  * - Minimal header: Canari favicon top-left, month title centred in Fredoka.
  * - Dark navy (#122035) weekday row with yellow weekend labels.
- * - Events fill the entire cell height, split equally across all visible slots.
- * - Text centred via padding-top + natural line-height (no overflow:hidden on wrappers —
- *   avoids html2canvas clipping descenders at the bottom of characters).
+ * - Events fill the entire cell height, split equally; subtle top border separates stacked slots.
+ * - Text centred via padding-top + natural line-height:1.4 (no overflow:hidden on wrappers —
+ *   avoids html2canvas clipping descenders; −2 px bias corrects apparent downward visual weight).
  * - Association logos appear as circular watermarks centred in each event slot.
  */
 export async function exportCalendarMonth(
@@ -130,7 +131,7 @@ export async function exportCalendarMonth(
   // Dark navy weekday header row
   const headerRow = WEEKDAYS.map(
     (w, i) =>
-      `<div style="padding:9px 6px;text-align:center;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:${i >= 5 ? '#f5c518' : '#e2eaf4'};background:#122035;">${w}</div>`
+      `<div style="padding:11px 6px;text-align:center;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.09em;color:${i >= 5 ? '#f5c518' : '#c8d8eb'};background:#122035;">${w}</div>`
   ).join('');
 
   const cellHtml = cells
@@ -179,13 +180,16 @@ export async function exportCalendarMonth(
           // Text centering: padding-top positions the text; line-height:1.4 gives enough room
           // for ascenders AND descenders without relying on overflow:hidden inside the wrapper.
           // Only the outer slot div (overflow:hidden;height:slotH) provides clipping.
+          // Subtract 2px to compensate for descender visual weight pushing the apparent centre down.
           const lineH = fontSize * 1.4;
-          const paddingTop = Math.max(6, Math.floor((slotH - lineH) / 2));
+          const paddingTop = Math.max(4, Math.floor((slotH - lineH) / 2) - 2);
           const wrap = slotH >= 48 ? 'word-break:break-word;' : 'white-space:nowrap;';
           const ph = slotH >= 48 ? 10 : 6;
           const textHtml = `<div style="position:absolute;top:0;left:0;width:100%;padding-top:${paddingTop}px;text-align:center;box-sizing:border-box;"><span style="display:block;font-size:${fontSize}px;font-weight:700;color:${fg};line-height:1.4;${wrap}padding:0 ${ph}px;box-sizing:border-box;">${safe(ev.title)}</span></div>`;
 
-          return `<div style="height:${slotH}px;position:relative;background:${bg};overflow:hidden;">${watermark}${dayNum}${textHtml}</div>`;
+          // Subtle top border between stacked events (not on first slot)
+          const sep = idx > 0 ? 'border-top:1px solid rgba(0,0,0,0.10);' : '';
+          return `<div style="height:${slotH}px;position:relative;background:${bg};overflow:hidden;${sep}">${watermark}${dayNum}${textHtml}</div>`;
         }),
         ...(overflowCount > 0
           ? (() => {
@@ -216,9 +220,9 @@ export async function exportCalendarMonth(
   });
 
   // Full-page seasonal background image behind everything.
-  // position:absolute stretches to the container's content height via top:0/bottom:0.
+  // bottom:0 does not stretch on auto-height containers — height is patched in JS after DOM insertion.
   const fullBgHtml = bgDataUrl
-    ? `<div style="position:absolute;top:0;left:0;right:0;bottom:0;pointer-events:none;"><img src="${bgDataUrl}" style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;opacity:0.14;" /></div>`
+    ? `<div data-full-bg style="position:absolute;top:0;left:0;width:100%;pointer-events:none;"><img src="${bgDataUrl}" style="width:100%;height:100%;object-fit:cover;opacity:0.14;" /></div>`
     : '';
 
   // Favicon logo top-left of the header; centred month title via line-height.
@@ -244,6 +248,12 @@ export async function exportCalendarMonth(
     </div>`;
 
   document.body.appendChild(container);
+
+  // Patch background div height now that the container has a real rendered height.
+  if (bgDataUrl) {
+    const bgEl = container.querySelector<HTMLElement>('[data-full-bg]');
+    if (bgEl) bgEl.style.height = container.offsetHeight + 'px';
+  }
 
   try {
     await Promise.all(
