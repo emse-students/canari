@@ -263,6 +263,10 @@
       const convo = globalConvs.conversations.get(msg.conversationId);
       if (!convo) continue; // conversation pas encore chargée en mémoire
       if (convo.messages.some((m) => m.id === msg.id)) continue; // déjà présent
+      // msg.content est le texte brut de la notification FCM, pas un MessageEnvelope JSON.
+      // Le pipeline MLS réécrit l'entrée avec les données complètes (replyTo, média…)
+      // dès que la delivery queue livre le même message. Pour les textes simples,
+      // l'affichage est identique ; pour les médias le placeholder est acceptable.
       const chatMsg = mapStoredMessagesToChatMessages([msg], globalSession.userId)[0];
       const messages = [...convo.messages, chatMsg].sort(compareMessageOrder);
       globalConvs.conversations.set(msg.conversationId, { ...convo, messages });
