@@ -3,6 +3,7 @@
   import { X } from '@lucide/svelte';
   import { fly } from 'svelte/transition';
   import { portal } from '$lib/actions/portal';
+  import { focusTrap } from '$lib/actions/focusTrap.svelte';
   import { pushHistoryOverlay, closeHistoryOverlayFromUi } from '$lib/utils/historyOverlayStack';
   import { keyboardAwareOverlayPadding } from '$lib/stores/keyboardViewport.svelte';
 
@@ -74,6 +75,7 @@
         aria-modal="true"
         aria-label={title}
         tabindex="-1"
+        use:focusTrap
         class="keyboard-aware-modal-panel bg-[var(--cn-surface)] border border-cn-border rounded-t-3xl sm:rounded-2xl shadow-2xl w-full {maxWidth} sm:mx-4 text-text-main flex flex-col max-h-[92dvh]"
         in:fly={{ duration: 220, y: 24 }}
         onclick={(e) => e.stopPropagation()}

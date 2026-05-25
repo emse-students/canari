@@ -216,6 +216,9 @@ export class MessagingService {
             // Tells Kotlin to skip tryDecrypt (welcome bytes ≠ app message) and
             // go straight to MlsBackgroundWorker for pending-queue processing.
             isWelcome: queued.isWelcome ? 'true' : 'false',
+            // Server queue time so the Android service can display the correct
+            // message timestamp on the notification even before decryption.
+            createdAt: queued.createdAt.toISOString(),
           },
           android: {
             priority: 'high',

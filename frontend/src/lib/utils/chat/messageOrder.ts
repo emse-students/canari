@@ -8,12 +8,19 @@ export function messageTime(msg: ChatMessage): number {
 }
 
 /**
- * Comparator for two messages: timestamp ascending, then ingestSequence (MLS / catch-up
- * arrival order), then message id for a stable tie-break.
+ * Comparator for two messages: timestamp ascending, then serverTimestamp (persistent server
+ * queue order), then ingestSequence (in-session catch-up order), then message id as final tie-break.
  */
 export function compareMessageOrder(a: ChatMessage, b: ChatMessage): number {
   const t = messageTime(a) - messageTime(b);
   if (t !== 0) return t;
+  // Secondary: server queue time — persisted, survives reload.
+  const stA = a.serverTimestamp;
+  const stB = b.serverTimestamp;
+  if (stA !== undefined && stB !== undefined && stA !== stB) {
+    return stA - stB;
+  }
+  // Tertiary: in-session ingest order (only valid during current catch-up session).
   const seqA = a.ingestSequence;
   const seqB = b.ingestSequence;
   if (seqA !== undefined && seqB !== undefined && seqA !== seqB) {

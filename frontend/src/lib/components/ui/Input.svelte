@@ -16,6 +16,10 @@
     required?: boolean;
     /** Additional CSS classes forwarded to the wrapper div. */
     class?: string;
+    /** Error message displayed below the input; also sets aria-invalid. */
+    error?: string;
+    /** Marks the input as invalid without an error message. */
+    invalid?: boolean;
     /** Called on every input event. */
     oninput?: (e: Event & { currentTarget: HTMLInputElement }) => void;
     /** Called on every keydown event. */
@@ -31,11 +35,15 @@
     label,
     disabled = false,
     required = false,
+    error,
+    invalid = false,
     class: className = '',
     oninput,
     onkeydown,
     ...rest
   }: Props = $props();
+
+  const isInvalid = $derived(invalid || !!error);
 
   const generatedId = `input-${Math.random().toString(36).slice(2)}`;
   const uniqueId = $derived(id || generatedId);
@@ -55,9 +63,16 @@
     bind:value
     {disabled}
     {required}
-    class="w-full px-4 py-3 border-2 border-cn-border rounded-2xl text-base text-text-main bg-[var(--cn-surface)] outline-none transition-all placeholder:text-text-muted/50 focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)] disabled:opacity-50 disabled:bg-cn-border/20"
+    aria-invalid={isInvalid || undefined}
+    aria-errormessage={error ? `${uniqueId}-error` : undefined}
+    class="w-full px-4 py-3 border-2 rounded-2xl text-base text-text-main bg-[var(--cn-surface)] outline-none transition-all placeholder:text-text-muted/50 focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)] disabled:opacity-50 disabled:bg-cn-border/20 {isInvalid ? 'border-red-err focus:border-red-err' : 'border-cn-border focus:border-cn-yellow'}"
     {oninput}
     {onkeydown}
     {...rest}
   />
+  {#if error}
+    <p id="{uniqueId}-error" role="alert" class="mt-1.5 ml-1 text-xs font-medium text-red-err">
+      {error}
+    </p>
+  {/if}
 </div>

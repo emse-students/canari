@@ -321,6 +321,7 @@ export function useMessaging() {
             senderId: newMsg.senderId,
             content,
             timestamp: newMsg.timestamp.getTime(),
+            serverTimestamp: options.serverTimestamp,
             ...(options.isSystem ? { readBy: [] } : {}),
           },
           ctx.pin
@@ -385,6 +386,7 @@ export function useMessaging() {
             ? newMsg.timestamp
             : new SvelteDate(newMsg.timestamp)
           ).getTime(),
+          serverTimestamp: pm.serverTimestamp,
           ...(pm.isSystem ? { readBy: [] } : {}),
         });
       }

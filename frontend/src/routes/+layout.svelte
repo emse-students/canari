@@ -252,6 +252,8 @@
   }
 </script>
 
+<a href="#main-content" class="skip-link">Aller au contenu principal</a>
+
 <AppUpdateModal />
 
 <div
@@ -275,7 +277,7 @@
       <Navbar />
     {/if}
 
-    <main class="relative flex-1 overflow-hidden">
+    <main id="main-content" class="relative flex-1 overflow-hidden">
       <BackgroundBlobs />
       <div
         bind:this={pageScrollWrap}

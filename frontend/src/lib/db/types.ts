@@ -29,6 +29,13 @@ export interface StoredMessage {
   /** User IDs that have acknowledged reading this message. */
   readBy?: string[];
   reactions?: Array<{ emoji: string; userId: string }>;
+  /** Unix ms when the first read receipt for this message was received locally. */
+  readAt?: number;
+  /**
+   * Server queue creation time (Unix ms) — stable secondary sort key when two messages share
+   * the same client `sentAt` timestamp.  Set from `queuedCreatedAt` in the delivery envelope.
+   */
+  serverTimestamp?: number;
   /** Set to true when the message has been deleted (content replaced server-side). */
   isDeleted?: boolean;
   /** Set to true when the message body has been edited by the sender. */

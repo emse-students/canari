@@ -2,6 +2,7 @@
   import type { Snippet } from 'svelte';
   import { ChevronLeft, ChevronRight, X } from '@lucide/svelte';
   import { portal } from '$lib/actions/portal';
+  import { focusTrap } from '$lib/actions/focusTrap.svelte';
 
   interface Props {
     open?: boolean;
@@ -64,6 +65,7 @@
       aria-modal="true"
       aria-label={ariaLabel}
       tabindex="-1"
+      use:focusTrap
       class="fixed inset-0 z-[300] flex flex-col bg-black/55 backdrop-blur-md text-white"
       style="padding: {safeAreaPadding}; height: 100dvh; width: 100vw;"
     >

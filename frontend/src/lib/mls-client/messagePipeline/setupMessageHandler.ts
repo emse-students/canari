@@ -546,7 +546,10 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                   normalizeMessageId(msg.messageId) ??
                   normalizeMessageId(deliveryMeta?.queuedMessageId);
                 if (stableId) envelope.options.messageId = stableId;
-                await addMessageToChat(senderNorm, envelope.content, convoKey, envelope.options);
+                await addMessageToChat(senderNorm, envelope.content, convoKey, {
+                  ...envelope.options,
+                  serverTimestamp: deliveryMeta?.queuedCreatedAt,
+                });
               }
               return true;
             }
@@ -785,7 +788,9 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                                 content: m.content,
                                 timestamp: messageTime(m),
                                 readBy: m.readBy,
+                                readAt: m.readAt,
                                 reactions: messageReactions.get(m.id),
+                                serverTimestamp: m.serverTimestamp,
                               },
                               pin
                             );

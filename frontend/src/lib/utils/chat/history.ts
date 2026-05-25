@@ -78,6 +78,8 @@ export function mapStoredMessagesToChatMessages(storedMessages: StoredMessage[],
       isSystem: m.senderId === 'system',
       readBy: m.readBy,
       reactions: m.reactions,
+      readAt: m.readAt,
+      serverTimestamp: m.serverTimestamp,
       ...(m.isDeleted ? { isDeleted: true } : {}),
       ...(m.isEdited ? { isEdited: true } : {}),
     } satisfies ChatMessage;

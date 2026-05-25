@@ -16,6 +16,10 @@
     rows?: number;
     /** Additional CSS classes forwarded to the wrapper div. */
     class?: string;
+    /** Error message displayed below the textarea; also sets aria-invalid. */
+    error?: string;
+    /** Marks the textarea as invalid without an error message. */
+    invalid?: boolean;
     /** Called on every input event. */
     oninput?: (e: Event & { currentTarget: HTMLTextAreaElement }) => void;
     [key: string]: any;
@@ -29,10 +33,14 @@
     disabled = false,
     required = false,
     rows = 4,
+    error,
+    invalid = false,
     class: className = '',
     oninput,
     ...rest
   }: Props = $props();
+
+  const isInvalid = $derived(invalid || !!error);
 
   const generatedId = `textarea-${Math.random().toString(36).slice(2)}`;
   const uniqueId = $derived(id || generatedId);
@@ -52,8 +60,15 @@
     {disabled}
     {required}
     {rows}
-    class="ui-textarea"
+    aria-invalid={isInvalid || undefined}
+    aria-errormessage={error ? `${uniqueId}-error` : undefined}
+    class="ui-textarea {isInvalid ? 'border-red-err! focus:border-red-err!' : ''}"
     {oninput}
     {...rest}
   ></textarea>
+  {#if error}
+    <p id="{uniqueId}-error" role="alert" class="mt-1.5 ml-1 text-xs font-medium text-red-err">
+      {error}
+    </p>
+  {/if}
 </div>

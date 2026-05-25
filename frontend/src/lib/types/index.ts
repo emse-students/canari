@@ -20,8 +20,14 @@ export interface AddMessageToChatOptions {
   status?: 'sending' | 'sent' | 'error';
   /** When true, keep the message in memory only (e.g. server-authoritative community channels). */
   skipDbSave?: boolean;
-  /** Monotonic catch-up index (MLS queue / history replay order); not persisted to DB. */
+  /** Monotonic catch-up index (MLS queue / history replay order); used for in-session ordering only. */
   ingestSequence?: number;
+  /**
+   * Server queue creation time (Unix ms).  Persisted to DB as a stable secondary sort key
+   * so messages with identical client `sentAt` values remain correctly ordered after reload.
+   * Set from `queuedCreatedAt` in the MLS delivery envelope.
+   */
+  serverTimestamp?: number;
 }
 
 export interface ChatMessage {
@@ -37,12 +43,17 @@ export interface ChatMessage {
   replyTo?: MessageReference;
   reactions?: MessageReaction[];
   readBy?: string[];
-  /** Timestamp (Date.now()) of when the first read receipt was received. */
+  /** Unix ms when the first read receipt for this message was received locally. Persisted to DB. */
   readAt?: number;
   isEdited?: boolean;
   isDeleted?: boolean;
-  /** In-memory only: preserves arrival order during bulk catch-up when timestamps tie. */
+  /** In-session ordering during bulk catch-up (not persisted); use serverTimestamp for stable reload ordering. */
   ingestSequence?: number;
+  /**
+   * Server queue creation time (Unix ms).  Persisted to DB and used as secondary sort key
+   * when two messages share the same client `sentAt` timestamp.
+   */
+  serverTimestamp?: number;
 }
 
 /**

@@ -105,6 +105,8 @@
 
       {#if loginError}
         <div
+          role="alert"
+          aria-live="assertive"
           class="bg-red-500/10 text-red-500 dark:text-red-400 px-4 py-3 rounded-xl text-sm font-medium border border-red-500/20 backdrop-blur-md mt-6"
           transition:slide
         >

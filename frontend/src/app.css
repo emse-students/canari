@@ -688,6 +688,44 @@ html.keyboard-open .page-scroll-wrap {
   }
 }
 
+/* ── Accessibilité : skip-to-content ────────────────────────────────────────
+   Lien visible uniquement au focus clavier, positionné avant le contenu
+   principal pour permettre de sauter la navigation répétitive (WCAG 2.4.1). */
+.skip-link {
+  position: absolute;
+  top: -100%;
+  left: 1rem;
+  z-index: 9999;
+  padding: 0.5rem 1rem;
+  border-radius: 0 0 0.5rem 0.5rem;
+  background: var(--cn-dark);
+  color: var(--cn-yellow);
+  font-size: 0.875rem;
+  font-weight: 700;
+  text-decoration: none;
+  transition: top 0.1s ease;
+}
+
+.skip-link:focus {
+  top: 0;
+  outline: 3px solid var(--cn-yellow);
+  outline-offset: 2px;
+}
+
+/* ── Accessibilité : prefers-reduced-motion ─────────────────────────────────
+   Coupe toutes les animations/transitions pour les utilisateurs ayant activé
+   la réduction de mouvement dans leur OS (WCAG 2.3.3). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 .chat-message-jump-highlight {
   animation: messageJumpHighlight 1.8s ease;
 }
