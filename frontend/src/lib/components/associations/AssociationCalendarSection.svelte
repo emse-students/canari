@@ -743,7 +743,7 @@
         </div>
       </div>
       <div>
-        <label class="block text-sm font-bold text-text-main mb-1 ml-1">Description (optionnel)</label>
+        <p class="block text-sm font-bold text-text-main mb-1 ml-1">Description (optionnel)</p>
         <MarkdownComposerField bind:value={formDescription} placeholder="Décrivez l'événement… (markdown supporté)" minHeight="100px" />
       </div>
       <!-- Poster image — only available when editing an existing event -->

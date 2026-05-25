@@ -767,7 +767,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                     return {
                       ...m,
                       readBy: [...readBy, senderNorm],
-                      readAt: m.readAt ?? Date.now(),
+                      readAt: m.readAt ?? deliveryMeta?.queuedCreatedAt ?? Date.now(),
                     };
                   });
                   if (updated) {

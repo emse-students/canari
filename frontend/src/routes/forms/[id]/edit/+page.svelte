@@ -303,7 +303,7 @@
           required
         />
         <div>
-          <label class="block text-sm font-bold text-text-main mb-1 ml-1">Description</label>
+          <p class="block text-sm font-bold text-text-main mb-1 ml-1">Description</p>
           <MarkdownComposerField
             bind:value={description}
             placeholder="Décrivez l'objet de ce formulaire… (markdown supporté)"
@@ -590,6 +590,7 @@
               <button
                 onclick={() => moveItem(i, 'up')}
                 disabled={i === 0}
+                aria-label="Monter"
                 class="p-1 text-text-muted hover:text-text-main disabled:opacity-20 transition-colors"
                 type="button"
               >
@@ -608,6 +609,7 @@
               <button
                 onclick={() => moveItem(i, 'down')}
                 disabled={i === items.length - 1}
+                aria-label="Descendre"
                 class="p-1 text-text-muted hover:text-text-main disabled:opacity-20 transition-colors"
                 type="button"
               >

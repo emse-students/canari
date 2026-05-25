@@ -1160,8 +1160,9 @@
 
             <div class="grid gap-4 sm:grid-cols-2">
               <div class="space-y-1">
-                <label class="text-xs font-semibold text-text-muted">Nom *</label>
+                <label for="new-product-name" class="text-xs font-semibold text-text-muted">Nom *</label>
                 <input
+                  id="new-product-name"
                   type="text"
                   bind:value={newProductName}
                   placeholder="Cotisation BDE 2026-2027"
@@ -1170,8 +1171,9 @@
                 />
               </div>
               <div class="space-y-1">
-                <label class="text-xs font-semibold text-text-muted">Type *</label>
+                <label for="new-product-type" class="text-xs font-semibold text-text-muted">Type *</label>
                 <select
+                  id="new-product-type"
                   bind:value={newProductType}
                   class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm"
                 >
@@ -1183,8 +1185,9 @@
             </div>
 
             <div class="space-y-1">
-              <label class="text-xs font-semibold text-text-muted">Description</label>
+              <label for="new-product-description" class="text-xs font-semibold text-text-muted">Description</label>
               <textarea
+                id="new-product-description"
                 bind:value={newProductDescription}
                 rows={2}
                 placeholder="Description affichée dans la boutique"
@@ -1194,8 +1197,9 @@
 
             <div class="grid gap-4 sm:grid-cols-2">
               <div class="space-y-1">
-                <label class="text-xs font-semibold text-text-muted">Prix fixe (€) — vide = libre uniquement</label>
+                <label for="new-product-amount" class="text-xs font-semibold text-text-muted">Prix fixe (€) — vide = libre uniquement</label>
                 <input
+                  id="new-product-amount"
                   type="number"
                   min="0.01"
                   step="0.01"
@@ -1215,8 +1219,9 @@
             {#if newProductAllowCustom}
               <div class="grid gap-4 sm:grid-cols-2">
                 <div class="space-y-1">
-                  <label class="text-xs font-semibold text-text-muted">Min (€)</label>
+                  <label for="new-product-min" class="text-xs font-semibold text-text-muted">Min (€)</label>
                   <input
+                    id="new-product-min"
                     type="number"
                     min="0.01"
                     step="0.01"
@@ -1226,8 +1231,9 @@
                   />
                 </div>
                 <div class="space-y-1">
-                  <label class="text-xs font-semibold text-text-muted">Max (€)</label>
+                  <label for="new-product-max" class="text-xs font-semibold text-text-muted">Max (€)</label>
                   <input
+                    id="new-product-max"
                     type="number"
                     min="0.01"
                     step="0.01"
@@ -1242,8 +1248,9 @@
             {#if newProductType === 'membership'}
               <div class="grid gap-4 sm:grid-cols-2">
                 <div class="space-y-1">
-                  <label class="text-xs font-semibold text-text-muted">Tag accordé à l'achat</label>
+                  <label for="new-product-tag" class="text-xs font-semibold text-text-muted">Tag accordé à l'achat</label>
                   <input
+                    id="new-product-tag"
                     type="text"
                     bind:value={newProductGrantedTag}
                     placeholder="cotisant:bde-2026-2027"
@@ -1251,8 +1258,9 @@
                   />
                 </div>
                 <div class="space-y-1">
-                  <label class="text-xs font-semibold text-text-muted">Expiration du tag</label>
+                  <label for="new-product-tag-expires" class="text-xs font-semibold text-text-muted">Expiration du tag</label>
                   <input
+                    id="new-product-tag-expires"
                     type="date"
                     bind:value={newProductTagExpires}
                     class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
@@ -1264,8 +1272,9 @@
             {#if newProductType === 'balance_topup'}
               <div class="grid gap-4 sm:grid-cols-2">
                 <div class="space-y-1">
-                  <label class="text-xs font-semibold text-text-muted">URL webhook Cercle</label>
+                  <label for="new-product-webhook-url" class="text-xs font-semibold text-text-muted">URL webhook Cercle</label>
                   <input
+                    id="new-product-webhook-url"
                     type="url"
                     bind:value={newProductWebhookUrl}
                     placeholder="https://cercle.example.com/webhooks/canari"
@@ -1273,8 +1282,9 @@
                   />
                 </div>
                 <div class="space-y-1">
-                  <label class="text-xs font-semibold text-text-muted">Secret HMAC</label>
+                  <label for="new-product-webhook-secret" class="text-xs font-semibold text-text-muted">Secret HMAC</label>
                   <input
+                    id="new-product-webhook-secret"
                     type="password"
                     bind:value={newProductWebhookSecret}
                     placeholder="Secret partagé avec Cercle"

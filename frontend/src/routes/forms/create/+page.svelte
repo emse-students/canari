@@ -208,7 +208,7 @@
       />
 
       <div>
-        <label class="block text-sm font-bold text-text-main mb-1 ml-1">Description</label>
+        <p class="block text-sm font-bold text-text-main mb-1 ml-1">Description</p>
         <MarkdownComposerField bind:value={description} placeholder="Décrivez l'objet de ce formulaire… (markdown supporté)" minHeight="80px" />
       </div>
 
