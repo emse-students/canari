@@ -28,11 +28,12 @@ interface FcmCacheEntry {
 
 /**
  * Lit le cache FCM natif (Tauri uniquement) et injecte les messages dans le stockage local.
- * À appeler juste après login, avant loadAndRestoreConversations(), pour affichage immédiat.
- * No-op sur web/desktop (pas de cache natif disponible).
+ * Retourne les messages effectivement écrits en base pour que l'appelant puisse mettre à
+ * jour l'état en mémoire sans attendre le prochain rechargement de l'historique.
+ * No-op sur web/desktop (pas de cache natif disponible) → retourne [].
  */
-export async function consumeFcmCache(pin: string, storage: IStorage): Promise<void> {
-  if (!(window as any).__TAURI_INTERNALS__) return;
+export async function consumeFcmCache(pin: string, storage: IStorage): Promise<StoredMessage[]> {
+  if (!(window as any).__TAURI_INTERNALS__) return [];
 
   // Declared without initializer: catch always returns, so entries is definitely
   // assigned before use — TypeScript flow analysis confirms this.
@@ -42,14 +43,14 @@ export async function consumeFcmCache(pin: string, storage: IStorage): Promise<v
     entries = await invoke<FcmCacheEntry[]>('read_and_clear_fcm_cache');
   } catch (e) {
     appendLog(`[FCM_CACHE] Lecture cache échouée: ${e instanceof Error ? e.message : String(e)}`);
-    return;
+    return [];
   }
 
-  if (!entries.length) return;
+  if (!entries.length) return [];
 
   appendLog(`[FCM_CACHE] ${entries.length} message(s) à pré-injecter depuis le cache FCM`);
 
-  let injected = 0;
+  const injected: StoredMessage[] = [];
   for (const entry of entries) {
     if (!entry.messageId || !entry.groupId || !entry.senderId) {
       appendLog(
@@ -67,7 +68,7 @@ export async function consumeFcmCache(pin: string, storage: IStorage): Promise<v
     try {
       // .saveMessage() utilise .put() — le pipeline MLS peut écraser avec les données complètes
       await storage.saveMessage(msg, pin);
-      injected++;
+      injected.push(msg);
       appendLog(
         `[FCM_CACHE] ✓ id=${entry.messageId.slice(0, 8)} groupe=${entry.groupId.slice(0, 8)} type=${entry.type}`
       );
@@ -78,5 +79,8 @@ export async function consumeFcmCache(pin: string, storage: IStorage): Promise<v
     }
   }
 
-  appendLog(`[FCM_CACHE] Injection terminée: ${injected}/${entries.length} message(s) injectés`);
+  appendLog(
+    `[FCM_CACHE] Injection terminée: ${injected.length}/${entries.length} message(s) injectés`
+  );
+  return injected;
 }

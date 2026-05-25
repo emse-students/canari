@@ -591,12 +591,9 @@ export class TauriMlsService implements IMlsService {
           // Chantier 3 : persister l'état MLS après chaque message traité avec succès.
           // Garantit que le Secret Tree avancé est sauvegardé avant d'ACK le serveur.
           if (this._pin) {
-            try {
-              const encBytes = await invoke<number[]>('sauvegarder_mls', { pin: this._pin });
-              await invoke('save_mls_state', { data: encBytes });
-            } catch (saveErr) {
+            await this.saveState(this._pin).catch((saveErr) => {
               console.warn('[MLS] State save after message failed:', saveErr);
-            }
+            });
           }
 
           if (groupId) {
@@ -925,9 +922,7 @@ export class TauriMlsService implements IMlsService {
 
     // Écrit mls.bin dès l'init pour que le service FCM puisse déchiffrer
     // même si aucun message n'a encore été traité (saveState non appelé).
-    void invoke<number[]>('sauvegarder_mls', { pin })
-      .then((encBytes) => invoke('save_mls_state', { data: encBytes }))
-      .catch(() => {});
+    void this.saveState(pin).catch(() => {});
 
     // Populate the local groups cache from Rust after init.
     try {

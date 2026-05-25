@@ -29,6 +29,10 @@
   import type { ConversationContext } from '$lib/composables/useConversations.svelte';
   import type { MessagingContext } from '$lib/composables/useMessaging.svelte';
   import { Bell, Fingerprint } from '@lucide/svelte';
+  import type { IStorage, StoredMessage } from '$lib/db';
+  import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
+  import { mapStoredMessagesToChatMessages } from '$lib/utils/chat/history';
+  import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
 
   let showPinModal = $state(false);
   let pinError = $state('');
@@ -247,6 +251,24 @@
     });
   });
 
+  /**
+   * Consomme le cache FCM natif et injecte les messages directement dans l'état
+   * réactif en mémoire. Permet un affichage immédiat sans attendre le prochain
+   * rechargement de l'historique (poll 5 s et retour au premier plan).
+   */
+  async function flushFcmCache(pin: string, storage: IStorage) {
+    const injected = await consumeFcmCache(pin, storage).catch(() => [] as StoredMessage[]);
+    if (injected.length === 0 || !globalSession.userId) return;
+    for (const msg of injected) {
+      const convo = globalConvs.conversations.get(msg.conversationId);
+      if (!convo) continue; // conversation pas encore chargée en mémoire
+      if (convo.messages.some((m) => m.id === msg.id)) continue; // déjà présent
+      const chatMsg = mapStoredMessagesToChatMessages([msg], globalSession.userId)[0];
+      const messages = [...convo.messages, chatMsg].sort(compareMessageOrder);
+      globalConvs.conversations.set(msg.conversationId, { ...convo, messages });
+    }
+  }
+
   // ── Mount ─────────────────────────────────────────────────────────────────
   onMount(() => {
     // Déjà connecté (ex. navigation depuis /chat) → rien à faire.
@@ -341,9 +363,7 @@
         // Injecter les messages FCM mis en cache pendant l'arrière-plan
         const { pin, storage } = globalSession;
         if (pin && storage) {
-          import('$lib/utils/chat/fcmCache')
-            .then(({ consumeFcmCache }) => consumeFcmCache(pin, storage).catch(() => {}))
-            .catch(() => {});
+          void flushFcmCache(pin, storage);
         }
       }
     };
@@ -362,9 +382,7 @@
           if (document.hidden) return;
           const { pin, storage } = globalSession;
           if (!pin || !storage) return;
-          import('$lib/utils/chat/fcmCache')
-            .then(({ consumeFcmCache }) => consumeFcmCache(pin, storage).catch(() => {}))
-            .catch(() => {});
+          void flushFcmCache(pin, storage);
         }, FCM_POLL_INTERVAL)
       : null;
 

@@ -181,6 +181,8 @@ export async function replayConversationHistory(params: {
         continue;
       }
 
+      // False = epoch/ratchet gap — recoverable after resync, must not be permanently skipped.
+      let skipSeenHash = false;
       try {
         const bytesStr = atob(msg.content);
         const bytes = new Uint8Array(bytesStr.length);
@@ -344,16 +346,24 @@ export async function replayConversationHistory(params: {
           errStr.includes('WrongEpoch') ||
           errStr.includes('SecretReuseError')
         ) {
-          // Mark as seen so subsequent history sync rounds do not reprocess
-          // the same stale ciphertext forever.
+          // Non-recoverable — mark as seen to avoid infinite reprocessing.
           seenCipherHashes.add(cipherFingerprint);
           seenUpdated = true;
           continue;
         }
-        console.warn(`History msg error: ${err}`);
+        if (errStr.includes('GAP_QUEUED')) {
+          // Recoverable epoch/ratchet gap: do NOT mark as seen so the entry is
+          // retried on the next history load after epoch resync.
+          skipSeenHash = true;
+          console.warn(`[History] GAP_QUEUED retryable: ${errStr.slice(0, 80)}`);
+        } else {
+          console.warn(`History msg error: ${err}`);
+        }
       } finally {
-        seenCipherHashes.add(cipherFingerprint);
-        seenUpdated = true;
+        if (!skipSeenHash) {
+          seenCipherHashes.add(cipherFingerprint);
+          seenUpdated = true;
+        }
       }
 
       if (historyIngestSeq > 0 && historyIngestSeq % 8 === 0) {
