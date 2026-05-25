@@ -161,7 +161,7 @@ export async function replayConversationHistory(params: {
     // save below writes regular messages without readBy (full replace via IndexedDB
     // put), which would overwrite any readBy already saved for those messages.
     // We collect the receipts here and re-apply them to DB after the batch save.
-    const readReceiptDbUpdates: Array<{ msgId: string; senderNorm: string }> = [];
+    const readReceiptDbUpdates: Array<{ msgId: string; senderNorm: string; readAt?: number }> = [];
 
     // Batch-collect decoded messages to flush in one UI update at the end.
     const pendingMessages: Array<{ senderId: string; content: string } & AddMessageToChatOptions> =
@@ -248,6 +248,7 @@ export async function replayConversationHistory(params: {
               const msgIds: string[] = data.messageIds ?? [];
               const convo = getConversation(contactName);
               if (convo && msgIds.length > 0) {
+                const readAt = parseServerTimestampMs(msg.timestamp) ?? Date.now();
                 let updated = false;
                 const newMsgs = [...convo.messages];
                 for (const msgId of msgIds) {
@@ -256,11 +257,15 @@ export async function replayConversationHistory(params: {
                     const current = newMsgs[idx];
                     const readBy = current.readBy || [];
                     if (!readBy.includes(senderNorm)) {
-                      newMsgs[idx] = { ...current, readBy: [...readBy, senderNorm] };
+                      newMsgs[idx] = {
+                        ...current,
+                        readBy: [...readBy, senderNorm],
+                        readAt: current.readAt ?? readAt,
+                      };
                       updated = true;
                     }
                   }
-                  readReceiptDbUpdates.push({ msgId, senderNorm });
+                  readReceiptDbUpdates.push({ msgId, senderNorm, readAt });
                 }
                 if (updated) {
                   setConversation(contactName, { ...convo, messages: newMsgs });
@@ -381,12 +386,16 @@ export async function replayConversationHistory(params: {
       try {
         const allMessages = await storage.getMessages(id, pin);
         const toUpdate: StoredMessage[] = [];
-        for (const { msgId, senderNorm } of readReceiptDbUpdates) {
+        for (const { msgId, senderNorm, readAt } of readReceiptDbUpdates) {
           const m = allMessages.find((x) => x.id === msgId);
           if (m) {
             const readBy = m.readBy ?? [];
             if (!readBy.includes(senderNorm)) {
-              toUpdate.push({ ...m, readBy: [...readBy, senderNorm] });
+              toUpdate.push({
+                ...m,
+                readBy: [...readBy, senderNorm],
+                ...(readAt != null && m.readAt == null ? { readAt } : {}),
+              });
             }
           }
         }

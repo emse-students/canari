@@ -350,6 +350,24 @@
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
+    // ── FCM cache polling (Tauri/Android only) ────────────────────────────
+    // Messages received via FCM while the app is in the foreground are written
+    // to fcm_message_cache.ndjson by the Kotlin service but the visibility-change
+    // handler above only fires on background→foreground transitions, so those
+    // messages would only appear after a restart. Poll every 5 s while visible.
+    const FCM_POLL_INTERVAL = 5_000;
+    const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__;
+    const fcmPollTimer = isTauri
+      ? setInterval(() => {
+          if (document.hidden) return;
+          const { pin, storage } = globalSession;
+          if (!pin || !storage) return;
+          import('$lib/utils/chat/fcmCache')
+            .then(({ consumeFcmCache }) => consumeFcmCache(pin, storage).catch(() => {}))
+            .catch(() => {});
+        }, FCM_POLL_INTERVAL)
+      : null;
+
     // ── IndexedDB garbage collection: delete messages older than 90 days ───
     const GC_INTERVAL = 6 * 60 * 60 * 1000; // 6 hours
     const MESSAGE_MAX_AGE = 90 * 24 * 60 * 60 * 1000; // 90 days
@@ -368,6 +386,7 @@
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (fcmPollTimer !== null) clearInterval(fcmPollTimer);
       clearInterval(gcTimer);
     };
   });

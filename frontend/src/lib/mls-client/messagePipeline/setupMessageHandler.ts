@@ -1044,6 +1044,37 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             return true; // ACK silencieux — irrecuperable
           }
 
+          // GAP_QUEUED: Rust stored the message in SQLite pending_mls_messages for
+          // background retry. ACK the delivery-queue entry (the SQLite copy is the
+          // durable retry buffer). For proactive epoch gaps, also trigger re-sync.
+          if (errMsg.includes('GAP_QUEUED')) {
+            const meM = errMsg.match(/msg_epoch=(\d+)/);
+            const geM = errMsg.match(/group_epoch=(\d+)/);
+            if (meM && geM) {
+              const me = parseInt(meM[1], 10);
+              const ge = parseInt(geM[1], 10);
+              log(
+                `[GAP_QUEUED] Epoch gap sur "${convoKey}" (local: ${ge}, msg: ${me}) — message mis en SQLite, déclenchement resync`
+              );
+              console.warn(
+                `[GAP_QUEUED] Epoch gap on "${convoKey}" (local=${ge}, msg=${me}) — queued in SQLite, triggering resync`
+              );
+              if (me > ge && !epochRecoveryGroups.has(convoKey)) {
+                epochRecoveryGroups.add(convoKey);
+                mlsService.forgetGroup(convo.id, me);
+                conversations.set(convoKey, { ...convo, isReady: false });
+                if (storage) saveConversation(convoKey).catch(() => {});
+                await mlsService.sendReinviteRequest(convo.id);
+              }
+            } else {
+              log(`[GAP_QUEUED] Sender ratchet gap sur "${convoKey}" — message mis en SQLite`);
+              console.warn(
+                `[GAP_QUEUED] Sender ratchet gap on "${convoKey}" — queued in SQLite for background retry`
+              );
+            }
+            return true; // ACK delivery queue; SQLite copy retried by background task
+          }
+
           // Stale message (msg_epoch < group_epoch): our own echoed commit or a
           // commit already applied by another path.  The Rust layer handles most of
           // these, but some slip through (e.g. PublicMessage commits).  ACK silently.

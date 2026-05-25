@@ -371,7 +371,10 @@ async fn recevoir_message_bytes(
                 return Err(format!("GAP_DB_INSERT_FAILED:{}:{}", group_id, db_e));
             }
         }
-        return Err(format!("GAP_QUEUED:{}", group_id));
+        return Err(format!(
+            "GAP_QUEUED:{}:msg_epoch={}:group_epoch={}",
+            group_id, msg_ep, group_ep
+        ));
     }
 
     // Acquiert + libère le Mutex AVANT toute opération async pour éviter les
@@ -429,7 +432,8 @@ async fn recevoir_message_bytes(
                         return Err(format!("GAP_DB_INSERT_FAILED:{}:{}", group_id, db_e));
                     }
                 }
-                return Err(format!("GAP_QUEUED:{}", group_id));
+                // Embed the original OpenMLS error so the frontend can log it.
+                return Err(format!("GAP_QUEUED:{}:{}", group_id, err_str));
             }
 
             Err(err_str)

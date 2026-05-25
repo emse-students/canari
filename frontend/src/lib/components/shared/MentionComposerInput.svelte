@@ -57,6 +57,11 @@
   let isApplyingDom = false;
   /** Skips one external `value` sync after we update the editor locally (avoids stale parent props). */
   let pendingInternalSync = 0;
+  /**
+   * Tracks whether the editor contains text, updated directly from the DOM in input handlers.
+   * Used for placeholder visibility — more reliable than reactive `value` on some environments.
+   */
+  let editorHasContent = $state(false);
 
   const mention = useMentionAutocomplete({
     getText: () => value,
@@ -96,6 +101,7 @@
     if (moveCursorTo !== undefined && maxlength !== undefined) {
       moveCursorTo = Math.min(moveCursorTo, maxlength);
     }
+    editorHasContent = text.length > 0;
     value = text;
     lastRenderedValue = text;
     onchange?.(text);
@@ -152,9 +158,12 @@
       markdownPreview: composerMarkdownPreviewEnabled(value, renderOptions),
     });
     lastRenderedValue = value;
+    editorHasContent = value.length > 0;
   });
 
   function handleEditorInput() {
+    // Update placeholder state immediately from DOM, before emitEditorChange processing.
+    editorHasContent = (editorEl?.textContent ?? '') !== '';
     if (isApplyingDom) return;
     emitEditorChange();
   }
@@ -215,6 +224,7 @@
   export function clearEditor() {
     if (!editorEl) return;
     pendingInternalSync = 0;
+    editorHasContent = false;
     value = '';
     lastRenderedValue = '';
     renderPlainTextToMentionEditor(editorEl, '');
@@ -230,7 +240,7 @@
     onSelect={mention.select}
   />
 
-  {#if !value && placeholder}
+  {#if !editorHasContent && placeholder}
     <div
       class="mention-composer-placeholder pointer-events-none absolute inset-0 block whitespace-pre-wrap text-text-muted/60 select-none {editorClass}"
       aria-hidden="true"
