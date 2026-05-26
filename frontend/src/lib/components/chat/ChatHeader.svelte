@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ChevronLeft, LockKeyhole, Clock, Settings, Search, Users } from '@lucide/svelte';
+  import { ChevronLeft, LockKeyhole, Clock, Settings, Search, Users, Phone, Video } from '@lucide/svelte';
   import Avatar from '../shared/Avatar.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
   import ChatGroupPanel from './ChatGroupPanel.svelte';
@@ -44,8 +44,10 @@
     searchActive?: boolean;
     /** Callback to open the channel members sidebar. */
     onOpenMembers?: () => void;
-    /** Callback to initiate a voice/video call with the contact. */
-    onStartCall?: () => void;
+    /** Callback to start an audio-only call. */
+    onStartAudioCall?: () => void;
+    /** Callback to start a video call. */
+    onStartVideoCall?: () => void;
   }
 
   let {
@@ -67,8 +69,13 @@
     onToggleSearch,
     searchActive = false,
     onOpenMembers,
-    onStartCall: _onStartCall,
+    onStartAudioCall,
+    onStartVideoCall,
   }: Props = $props();
+
+  const showCallButtons = $derived(
+    Boolean((onStartAudioCall || onStartVideoCall) && !isChannel && isReady)
+  );
 
   let showPanel = $state(false);
   let isOnline = $derived($presenceMap[contactName] || false);
@@ -171,8 +178,31 @@
     {/if}
   </div>
 
-  <!-- Actions (Membres, Recherche, Paramètres) -->
+  <!-- Actions (Appels, Membres, Recherche, Paramètres) -->
   <div class="flex items-center gap-1 shrink-0">
+    {#if showCallButtons}
+      {#if onStartAudioCall}
+        <button
+          onclick={onStartAudioCall}
+          aria-label="Appel audio"
+          title="Appel audio"
+          class="p-2.5 rounded-xl text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95"
+        >
+          <Phone size={20} strokeWidth={2.5} />
+        </button>
+      {/if}
+      {#if onStartVideoCall}
+        <button
+          onclick={onStartVideoCall}
+          aria-label="Appel vidéo"
+          title="Appel vidéo"
+          class="p-2.5 rounded-xl text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95"
+        >
+          <Video size={20} strokeWidth={2.5} />
+        </button>
+      {/if}
+    {/if}
+
     {#if onOpenMembers}
       <button
         onclick={onOpenMembers}

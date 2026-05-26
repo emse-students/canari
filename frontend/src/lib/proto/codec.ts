@@ -108,6 +108,27 @@ export function mkSystem(event: string, data?: string): canari.IAppMessage {
   return { system: { event, data: data ?? '' } };
 }
 
+/** Builds an MLS call invitation (ring) message. */
+export function mkCallInvite(callId: string, hasVideo: boolean): canari.IAppMessage {
+  return {
+    call: {
+      callId,
+      hasVideo,
+      offerSdp: 'START',
+    },
+  };
+}
+
+/** Builds an MLS call hangup message. */
+export function mkCallHangup(callId: string): canari.IAppMessage {
+  return {
+    call: {
+      callId,
+      hangup: true,
+    },
+  };
+}
+
 // ─── Envelope builders ────────────────────────────────────────────────────────
 
 export interface RecipientSpec {

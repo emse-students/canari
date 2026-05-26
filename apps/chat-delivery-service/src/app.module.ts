@@ -12,6 +12,8 @@ import { InvitationsController } from './controllers/invitations.controller';
 import { LocksController } from './controllers/locks.controller';
 import { MessagingController } from './controllers/messaging.controller';
 import { MessagingService } from './services/messaging.service';
+import { CallsService } from './services/calls.service';
+import { CallsController } from './controllers/calls.controller';
 import { PushController } from './controllers/push.controller';
 import { InternalController } from './controllers/internal.controller';
 import { QueuedMessage } from './entities/queued-message.entity';
@@ -82,7 +84,8 @@ const RedisProvider: Provider = {
     MessagingController,
     PushController,
     InternalController,
+    CallsController,
   ],
-  providers: [RedisProvider, MessagingService],
+  providers: [RedisProvider, MessagingService, CallsService],
 })
 export class AppModule {}

@@ -374,6 +374,29 @@
     void messaging.handleFilesSelected(files, msgCtx());
   }
 
+  /** Starts a voice or video call when the conversation is a group or DM (not a channel). */
+  function startCallForCurrentConversation(video: boolean) {
+    if (!session.callService || !convs.selectedContact) return;
+    const convo = convs.conversations.get(convs.selectedContact);
+    if (!convo) return;
+    const type = convo.conversationType ?? 'group';
+    if (type === 'channel') return;
+    if (!convo.isReady) {
+      alert('La session securisee n est pas encore prete. Reessayez dans un instant.');
+      return;
+    }
+    session.callService.startCall(convo.id, video).catch((e: unknown) => {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes('Groupe introuvable') || msg.includes('Group not found')) {
+        alert(
+          'Ce groupe est desynchronise. Veuillez supprimer cette conversation et en recreer une nouvelle.'
+        );
+      } else {
+        alert(`Erreur appel: ${msg}`);
+      }
+    });
+  }
+
   /** Closes the sync guide prompt and opens the QR join modal. */
   function openQrGuideSync() {
     convs.showSyncGuidePrompt = false;
@@ -435,20 +458,11 @@
         pendingFiles={messaging.pendingMediaFiles}
         onRemovePendingFile={messaging.removePendingMediaFile}
         isUploading={messaging.isUploadingMedia}
-        onStartCall={() => {
-          if (session.callService && convs.selectedContact) {
-            const convo = convs.conversations.get(convs.selectedContact);
-            if (convo) {
-              session.callService.startCall(convo.id).catch((e: unknown) => {
-                const msg = e instanceof Error ? e.message : String(e);
-                if (msg.includes('Groupe introuvable') || msg.includes('Group not found')) {
-                  alert('Ce groupe est desynchronise. Veuillez supprimer cette conversation et en recreer une nouvelle.');
-                } else {
-                  alert(`Erreur appel: ${msg}`);
-                }
-              });
-            }
-          }
+        onStartAudioCall={() => {
+          void startCallForCurrentConversation(false);
+        }}
+        onStartVideoCall={() => {
+          void startCallForCurrentConversation(true);
         }}
         onOpenMembers={routeMode === 'communities' && isSelectedChannel
           ? convs.openChannelMembersDrawer

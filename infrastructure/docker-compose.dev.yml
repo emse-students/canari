@@ -86,6 +86,22 @@ services:
       kafka:
         condition: service_healthy
 
+  call-service:
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/call-service:${TAG:-dev}
+    restart: always
+    build:
+      context: ..
+      dockerfile: infrastructure/local/Dockerfile.call-service
+    ports:
+      - "3104:3004"
+    environment:
+      RUST_LOG: info
+      PORT: "3004"
+      JWT_SECRET: ${JWT_SECRET}
+      TURN_URL: ${TURN_URL:-}
+      TURN_USERNAME: ${TURN_USERNAME:-}
+      TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
+
   # ─────────────────────────────────────────────────────
   # NODE.JS SERVICES (3010-3029 range)
   # ─────────────────────────────────────────────────────
@@ -106,6 +122,11 @@ services:
       REDIS_PORT: "6380"
       KAFKA_BROKERS: kafka:29093
       FIREBASE_SERVICE_ACCOUNT_JSON: ${FIREBASE_SERVICE_ACCOUNT_JSON:-}
+      CLOUDFLARE_CALLS_API_TOKEN: ${CLOUDFLARE_CALLS_API_TOKEN:-}
+      CLOUDFLARE_TURN_KEY_ID: ${CLOUDFLARE_TURN_KEY_ID:-}
+      TURN_URL: ${TURN_URL:-}
+      TURN_USERNAME: ${TURN_USERNAME:-}
+      TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
     depends_on:
       redis:
         condition: service_healthy

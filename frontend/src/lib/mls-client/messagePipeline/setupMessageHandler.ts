@@ -599,8 +599,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             }
 
             if (msg?.call) {
-              if (onCallSignal) {
-                onCallSignal(senderNorm, msg.call);
+              if (onCallSignal && groupId) {
+                onCallSignal(senderNorm, groupId, msg.call);
               }
               return true;
             }

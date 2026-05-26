@@ -60,6 +60,6 @@ export interface MessageHandlerDeps {
     senderId: string;
     messageIds: string[];
   }) => void;
-  onCallSignal?: (senderId: string, callMsg: any) => void;
+  onCallSignal?: (senderId: string, groupId: string, callMsg: unknown) => void;
   log: (msg: string) => void;
 }

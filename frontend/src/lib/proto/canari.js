@@ -1,5 +1,5 @@
 /*eslint-disable block-scoped-var, id-length, no-control-regex, no-magic-numbers, no-prototype-builtins, no-redeclare, no-shadow, no-var, sort-vars*/
-import $protobuf from "protobufjs/minimal.js";
+import * as $protobuf from "protobufjs/minimal";
 
 // Common aliases
 const $Reader = $protobuf.Reader, $Writer = $protobuf.Writer, $util = $protobuf.util;
@@ -2202,6 +2202,7 @@ export const canari = $root.canari = (() => {
          * @memberof canari
          * @interface ICallMsg
          * @property {string|null} [callId] CallMsg callId
+         * @property {boolean|null} [hasVideo] CallMsg hasVideo
          * @property {string|null} [offerSdp] CallMsg offerSdp
          * @property {string|null} [answerSdp] CallMsg answerSdp
          * @property {string|null} [iceCandidate] CallMsg iceCandidate
@@ -2230,6 +2231,14 @@ export const canari = $root.canari = (() => {
          * @instance
          */
         CallMsg.prototype.callId = "";
+
+        /**
+         * CallMsg hasVideo.
+         * @member {boolean} hasVideo
+         * @memberof canari.CallMsg
+         * @instance
+         */
+        CallMsg.prototype.hasVideo = false;
 
         /**
          * CallMsg offerSdp.
@@ -2311,6 +2320,8 @@ export const canari = $root.canari = (() => {
                 writer.uint32(/* id 4, wireType 2 =*/34).string(message.iceCandidate);
             if (message.hangup != null && Object.hasOwnProperty.call(message, "hangup"))
                 writer.uint32(/* id 5, wireType 0 =*/40).bool(message.hangup);
+            if (message.hasVideo != null && Object.hasOwnProperty.call(message, "hasVideo"))
+                writer.uint32(/* id 6, wireType 0 =*/48).bool(message.hasVideo);
             return writer;
         };
 
@@ -2353,6 +2364,10 @@ export const canari = $root.canari = (() => {
                 switch (tag >>> 3) {
                 case 1: {
                         message.callId = reader.string();
+                        break;
+                    }
+                case 6: {
+                        message.hasVideo = reader.bool();
                         break;
                     }
                 case 2: {
@@ -2414,6 +2429,9 @@ export const canari = $root.canari = (() => {
             if (message.callId != null && message.hasOwnProperty("callId"))
                 if (!$util.isString(message.callId))
                     return "callId: string expected";
+            if (message.hasVideo != null && message.hasOwnProperty("hasVideo"))
+                if (typeof message.hasVideo !== "boolean")
+                    return "hasVideo: boolean expected";
             if (message.offerSdp != null && message.hasOwnProperty("offerSdp")) {
                 properties.payload = 1;
                 if (!$util.isString(message.offerSdp))
@@ -2461,6 +2479,8 @@ export const canari = $root.canari = (() => {
             let message = new $root.canari.CallMsg();
             if (object.callId != null)
                 message.callId = String(object.callId);
+            if (object.hasVideo != null)
+                message.hasVideo = Boolean(object.hasVideo);
             if (object.offerSdp != null)
                 message.offerSdp = String(object.offerSdp);
             if (object.answerSdp != null)
@@ -2485,8 +2505,10 @@ export const canari = $root.canari = (() => {
             if (!options)
                 options = {};
             let object = {};
-            if (options.defaults)
+            if (options.defaults) {
                 object.callId = "";
+                object.hasVideo = false;
+            }
             if (message.callId != null && message.hasOwnProperty("callId"))
                 object.callId = message.callId;
             if (message.offerSdp != null && message.hasOwnProperty("offerSdp")) {
@@ -2509,6 +2531,8 @@ export const canari = $root.canari = (() => {
                 if (options.oneofs)
                     object.payload = "hangup";
             }
+            if (message.hasVideo != null && message.hasOwnProperty("hasVideo"))
+                object.hasVideo = message.hasVideo;
             return object;
         };
 

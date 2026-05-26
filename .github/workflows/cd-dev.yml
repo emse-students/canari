@@ -39,6 +39,7 @@ jobs:
             [core-service]="./infrastructure/local/Dockerfile.core-service"
             [social-service]="./infrastructure/local/Dockerfile.social-service"
             [chat-gateway]="./infrastructure/local/Dockerfile.chat-gateway"
+            [call-service]="./infrastructure/local/Dockerfile.call-service"
             [chat-delivery-service]="./infrastructure/local/Dockerfile.chat-delivery-service"
             [frontend]="./infrastructure/local/Dockerfile.frontend"
             [media-service]="./infrastructure/local/Dockerfile.media-service"
@@ -48,6 +49,7 @@ jobs:
             core-service
             social-service
             chat-gateway
+            call-service
             chat-delivery-service
             frontend
             media-service
@@ -101,6 +103,9 @@ jobs:
                   ;;
                 apps/chat-gateway/*|libs/shared-rust/*|libs/proto/*|infrastructure/local/Dockerfile.chat-gateway)
                   add_service chat-gateway
+                  ;;
+                apps/call-service/*|infrastructure/local/Dockerfile.call-service)
+                  add_service call-service
                   ;;
                 apps/chat-delivery-service/*|libs/shared-ts/*|infrastructure/local/Dockerfile.chat-delivery-service)
                   add_service chat-delivery-service
@@ -412,6 +417,8 @@ jobs:
           AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
           AUTHENTIK_CLIENT_SECRET: ${{ secrets.AUTHENTIK_CLIENT_SECRET }}
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          CLOUDFLARE_CALLS_API_TOKEN: ${{ secrets.CLOUDFLARE_CALLS_API_TOKEN }}
+          CLOUDFLARE_TURN_KEY_ID: ${{ secrets.CLOUDFLARE_TURN_KEY_ID }}
           # Fallback public dev URL alignée avec secrets.BASE_URL du build frontend (si défini).
           FRONTEND_URL_SYNC: ${{ secrets.BASE_URL }}
         run: |
@@ -460,6 +467,14 @@ jobs:
             upsert_env_var "STRIPE_SECRET_KEY" "$STRIPE_SECRET_KEY"
           else
             echo "⚠️ STRIPE_SECRET_KEY is not set in GitHub secrets"
+          fi
+
+          if [ -n "$CLOUDFLARE_CALLS_API_TOKEN" ]; then
+            upsert_env_var "CLOUDFLARE_CALLS_API_TOKEN" "$CLOUDFLARE_CALLS_API_TOKEN"
+          fi
+
+          if [ -n "$CLOUDFLARE_TURN_KEY_ID" ]; then
+            upsert_env_var "CLOUDFLARE_TURN_KEY_ID" "$CLOUDFLARE_TURN_KEY_ID"
           fi
 
           echo "✅ Runtime secrets synced to infrastructure/.env"
@@ -558,6 +573,7 @@ jobs:
           echo "⏳ Waiting for critical DEV services to be running..."
           critical_services=(
             chat-gateway
+            call-service
             chat-delivery-service
             media-service
             core-service

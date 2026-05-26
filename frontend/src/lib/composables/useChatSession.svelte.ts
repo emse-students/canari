@@ -425,8 +425,8 @@ export function useChatSession() {
         onChannelDeleted: cb.onChannelDeleted,
         onWorkspaceUpdated: cb.onWorkspaceUpdated,
         onReadReceiptReceived: cb.onReadReceiptReceived,
-        onCallSignal: (senderId: string, callMsg: any) => {
-          callService?.handleCallSignal(senderId, callMsg);
+        onCallSignal: (senderId: string, groupId: string, callMsg) => {
+          callService?.handleCallSignal(senderId, groupId, callMsg);
         },
         log: cb.log,
       });

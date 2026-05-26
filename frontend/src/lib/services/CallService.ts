@@ -1,60 +1,72 @@
 import { writable, get } from 'svelte/store';
 import type { IMlsService } from '$lib/mls-client';
 import { canari } from '../proto/canari.js';
+import { encodeAppMessage, mkCallHangup, mkCallInvite } from '../proto/codec';
 import EncryptionWorker from '../workers/encryption.worker?worker';
+import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 
 export type CallState = 'idle' | 'calling' | 'incoming' | 'incall' | 'ended';
 
+/** Remote participant media keyed by sender user id. */
+export type RemoteStreams = Map<string, MediaStream>;
+
+interface IceServerConfig {
+  urls: string | string[];
+  username?: string;
+  credential?: string;
+}
+
+/**
+ * Manages WebRTC group/DM calls: MLS signaling for ring/hangup, SFU for media,
+ * MLS-derived keys for insertable-stream encryption, Cloudflare TURN for relay.
+ */
 export class CallService {
   private pc: RTCPeerConnection | null = null;
   private signaledWs: WebSocket | null = null;
   private localStream: MediaStream | null = null;
+  private encryptionWorker: Worker | null = null;
 
   public currentCallId: string | null = null;
   public currentGroupId: string | null = null;
+  public incomingHasVideo = true;
   private callKey: CryptoKey | null = null;
 
-  // Stores for UI
   public callState = writable<CallState>('idle');
+  /** @deprecated Use remoteStreams for multi-party; kept for single-remote fallback. */
   public remoteStream = writable<MediaStream | null>(null);
+  public remoteStreams = writable<RemoteStreams>(new Map());
   public localStreamStore = writable<MediaStream | null>(null);
   public isMuted = writable<boolean>(false);
   public isVideoOff = writable<boolean>(false);
 
   constructor(private mlsService: IMlsService) {}
 
-  // --- 1. Signaling (MLS) ---
-
   /**
-   * Called when an incoming MLS AppMessage contains call information.
-   * This handles the initial invitation/notification.
+   * Handles an incoming MLS `CallMsg` for a specific group conversation.
    */
-  public handleCallSignal(senderId: string, callMsg: any) {
-    if (!callMsg || !callMsg.callId) return;
+  public handleCallSignal(senderId: string, groupId: string, callMsg: canari.ICallMsg) {
+    if (!callMsg?.callId) return;
+
+    appendLog(`[Call] signal from ${senderId} in ${groupId} call=${callMsg.callId}`);
 
     if (callMsg.hangup) {
       if (this.currentCallId === callMsg.callId) {
-        this.endCall();
+        this.endCall(false);
       }
       return;
     }
 
-    // New Call Invitation
     if (callMsg.offerSdp === 'START' || (callMsg.callId && !this.currentCallId)) {
       if (get(this.callState) !== 'idle') return;
 
-      console.log(`Incoming call ${callMsg.callId} from ${senderId}`);
       this.currentCallId = callMsg.callId;
-      // Note: We don't get groupId in handleCallSignal if it's called with just payload.
-      // But typically this is called in context of a group message.
-      // The caller (UI/Service) needs to set groupId or pass it.
-      // For now we assume the UI will check groupId matches current view.
+      this.currentGroupId = groupId;
+      this.incomingHasVideo = callMsg.hasVideo !== false;
       this.callState.set('incoming');
     }
   }
 
-  // --- 2. Call Control ---
-
+  /** Starts an outgoing call in the given MLS group. */
   public async startCall(groupId: string, video: boolean = true) {
     if (get(this.callState) !== 'idle') return;
 
@@ -66,25 +78,25 @@ export class CallService {
       await this.setupMedia(video);
       await this.setupEncryption(groupId, this.currentCallId!);
       await this.connectToSfu(this.currentCallId!);
-
-      // Notify Group via MLS
-      await this.sendMlsNotification(groupId, { offerSdp: 'START' });
+      await this.sendMlsNotification(groupId, mkCallInvite(this.currentCallId!, video));
     } catch (e) {
       console.error('Error starting call:', e);
-      this.endCall();
-      throw e; // Re-throw so UI can handle it
+      this.endCall(false);
+      throw e;
     }
   }
 
-  public async acceptCall(groupId: string, callId: string) {
+  /** Accepts an incoming call after the user taps accept. */
+  public async acceptCall(groupId: string, callId: string, video?: boolean) {
     if (get(this.callState) !== 'incoming') return;
 
     this.currentGroupId = groupId;
     this.currentCallId = callId;
+    const useVideo = video ?? this.incomingHasVideo;
 
     try {
       this.callState.set('incall');
-      await this.setupMedia(true);
+      await this.setupMedia(useVideo);
       await this.setupEncryption(groupId, callId);
       await this.connectToSfu(callId);
     } catch (e) {
@@ -93,9 +105,12 @@ export class CallService {
     }
   }
 
-  public endCall() {
-    if (this.currentGroupId && this.currentCallId) {
-      this.sendMlsNotification(this.currentGroupId, { hangup: true }).catch(console.error);
+  /** Ends the active call and optionally notifies the group via MLS. */
+  public endCall(notify: boolean = true) {
+    if (notify && this.currentGroupId && this.currentCallId) {
+      this.sendMlsNotification(this.currentGroupId, mkCallHangup(this.currentCallId)).catch(
+        console.error
+      );
     }
     this.cleanup();
   }
@@ -105,12 +120,14 @@ export class CallService {
     this.currentCallId = null;
     this.currentGroupId = null;
     this.callKey = null;
+    this.incomingHasVideo = true;
 
     if (this.localStream) {
       this.localStream.getTracks().forEach((t) => t.stop());
       this.localStream = null;
     }
     this.localStreamStore.set(null);
+
     if (this.pc) {
       this.pc.close();
       this.pc = null;
@@ -119,27 +136,61 @@ export class CallService {
       this.signaledWs.close();
       this.signaledWs = null;
     }
+    if (this.encryptionWorker) {
+      this.encryptionWorker.terminate();
+      this.encryptionWorker = null;
+    }
+
     this.remoteStream.set(null);
+    this.remoteStreams.set(new Map());
   }
 
-  // --- 3. SFU Connection & WebRTC ---
+  /** Fetches short-lived TURN credentials from chat-delivery. */
+  private async fetchIceServers(groupId: string, callId: string): Promise<RTCIceServer[]> {
+    const base =
+      import.meta.env.VITE_DELIVERY_URL ||
+      import.meta.env.VITE_CORE_URL ||
+      (typeof window !== 'undefined' ? window.location.origin : '');
+
+    const url = new URL('/api/calls/ice-servers', base);
+    url.searchParams.set('groupId', groupId);
+    url.searchParams.set('callId', callId);
+
+    appendLog(`[Call] fetching ICE servers for group=${groupId}`);
+
+    const res = await fetch(url.toString(), { credentials: 'include' });
+    if (!res.ok) {
+      throw new Error(`Failed to fetch ICE servers: ${res.status}`);
+    }
+
+    const data = (await res.json()) as { iceServers?: IceServerConfig[] };
+    const servers = data.iceServers ?? [];
+
+    if (servers.length === 0) {
+      throw new Error('No ICE servers returned');
+    }
+
+    return servers.map((s) => ({
+      urls: s.urls,
+      username: s.username,
+      credential: s.credential,
+    }));
+  }
 
   private async connectToSfu(roomId: string) {
     return new Promise<void>((resolve, reject) => {
-      const callBaseUrl = import.meta.env?.VITE_CALL_URL;
-      if (!callBaseUrl) {
-        reject(new Error('Call service is archived and VITE_CALL_URL is not configured.'));
-        return;
-      }
+      const callBaseUrl =
+        import.meta.env.VITE_CALL_URL ||
+        (typeof window !== 'undefined' ? window.location.origin : '');
 
       const wsUrl = callBaseUrl.replace(/^http/, 'ws') + `/api/call`;
+      appendLog(`[Call] connecting SFU WebSocket ${wsUrl}`);
       this.signaledWs = new WebSocket(wsUrl);
 
       this.signaledWs.onopen = () => {
-        console.log('Connected to SFU');
+        appendLog('[Call] connected to SFU');
         this.sendSfuMessage({ type: 'Join', room_id: roomId });
-        this.initPeerConnection();
-        resolve();
+        void this.initPeerConnection().then(resolve).catch(reject);
       };
 
       this.signaledWs.onerror = (e) => {
@@ -174,20 +225,16 @@ export class CallService {
     });
   }
 
-  private initPeerConnection() {
+  private async initPeerConnection() {
+    if (!this.currentGroupId || !this.currentCallId) {
+      throw new Error('No active call context');
+    }
+
+    const iceServers = await this.fetchIceServers(this.currentGroupId, this.currentCallId);
+
     this.pc = new RTCPeerConnection({
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        ...(import.meta.env.VITE_TURN_URL
-          ? [
-              {
-                urls: import.meta.env.VITE_TURN_URL,
-                username: import.meta.env.VITE_TURN_USERNAME || 'user',
-                credential: import.meta.env.VITE_TURN_CREDENTIAL || 'password',
-              },
-            ]
-          : []),
-      ],
+      iceServers,
+      iceTransportPolicy: 'relay',
     });
 
     this.pc.onicecandidate = (e) => {
@@ -197,10 +244,22 @@ export class CallService {
     };
 
     this.pc.ontrack = (e) => {
-      console.log('Remote track received');
+      appendLog('[Call] remote track received');
+      const stream = e.streams[0] ?? new MediaStream([e.track]);
+      const peerKey = e.track.id || `peer-${Date.now()}`;
+
+      this.remoteStreams.update((map) => {
+        const next = new Map(map);
+        next.set(peerKey, stream);
+        return next;
+      });
+
+      if (get(this.remoteStreams).size === 1) {
+        this.remoteStream.set(stream);
+      }
+
       const receiver = e.receiver;
       this.setupReceiverTransform(receiver);
-      this.remoteStream.set(e.streams[0]);
     };
 
     if (this.localStream) {
@@ -210,28 +269,19 @@ export class CallService {
       });
     }
 
-    // Initiate negotiation (send Offer to SFU to publish local stream)
-    this.pc
-      .createOffer()
-      .then((offer) => {
-        return this.pc!.setLocalDescription(offer);
-      })
-      .then(() => {
-        this.sendSfuMessage({ type: 'Offer', sdp: JSON.stringify(this.pc!.localDescription) });
-      });
+    const offer = await this.pc.createOffer();
+    await this.pc.setLocalDescription(offer);
+    this.sendSfuMessage({ type: 'Offer', sdp: JSON.stringify(this.pc.localDescription) });
   }
 
-  private sendSfuMessage(msg: any) {
+  private sendSfuMessage(msg: Record<string, unknown>) {
     if (this.signaledWs && this.signaledWs.readyState === WebSocket.OPEN) {
       this.signaledWs.send(JSON.stringify(msg));
     }
   }
 
-  // --- 4. Encryption (Insertable Streams) ---
-
   private async setupEncryption(groupId: string, callId: string) {
     const context = new TextEncoder().encode(callId);
-    // Export secret from MLS for media encryption
     const secret = await this.mlsService.exportSecret(groupId, 'mls-webrtc-media', context, 32);
 
     this.callKey = await crypto.subtle.importKey(
@@ -241,27 +291,33 @@ export class CallService {
       false,
       ['encrypt', 'decrypt']
     );
-    console.log('Call encryption key derived');
+    appendLog('[Call] encryption key derived from MLS');
+  }
+
+  private getOrCreateEncryptionWorker(): Worker {
+    if (!this.encryptionWorker) {
+      this.encryptionWorker = new EncryptionWorker();
+      if (this.callKey) {
+        this.encryptionWorker.postMessage({ type: 'setKey', payload: this.callKey });
+      }
+    }
+    return this.encryptionWorker;
   }
 
   private setupSenderTransform(sender: RTCRtpSender) {
     if (!this.callKey) return;
 
-    // Use WebRTC Encoded Transform (Standard)
     if (window.RTCRtpScriptTransform) {
-      // Create worker if not exists (assume singleton for simplicity in this snippet)
-      // Ideally, manage worker lifecycle properly
-      const worker = new EncryptionWorker();
+      const worker = this.getOrCreateEncryptionWorker();
       worker.postMessage({ type: 'setKey', payload: this.callKey });
-
       sender.transform = new RTCRtpScriptTransform(worker, { side: 'sender' });
       return;
     }
 
-    // Fallback: Use Chrome-specific createEncodedStreams (Main Thread)
-    const s = sender as any;
-    const streams = s.createEncodedStreams ? s.createEncodedStreams() : null;
-
+    const s = sender as RTCRtpSender & {
+      createEncodedStreams?: () => { readable: ReadableStream; writable: WritableStream };
+    };
+    const streams = s.createEncodedStreams?.();
     if (streams) {
       const transformer = new TransformStream({
         transform: async (frame, controller) => {
@@ -270,26 +326,24 @@ export class CallService {
       });
       streams.readable.pipeThrough(transformer).pipeTo(streams.writable);
     } else {
-      console.warn('Insertable Streams not supported by browser/webview');
+      console.warn('Insertable Streams not supported');
     }
   }
 
   private setupReceiverTransform(receiver: RTCRtpReceiver) {
     if (!this.callKey) return;
 
-    // Use WebRTC Encoded Transform (Standard)
     if (window.RTCRtpScriptTransform) {
-      const worker = new EncryptionWorker();
+      const worker = this.getOrCreateEncryptionWorker();
       worker.postMessage({ type: 'setKey', payload: this.callKey });
-
       receiver.transform = new RTCRtpScriptTransform(worker, { side: 'receiver' });
       return;
     }
 
-    const r = receiver as any;
-
-    const streams = r.createEncodedStreams ? r.createEncodedStreams() : null;
-
+    const r = receiver as RTCRtpReceiver & {
+      createEncodedStreams?: () => { readable: ReadableStream; writable: WritableStream };
+    };
+    const streams = r.createEncodedStreams?.();
     if (streams) {
       const transformer = new TransformStream({
         transform: async (frame, controller) => {
@@ -300,30 +354,29 @@ export class CallService {
     }
   }
 
-  /**
-   * Encrypt encoded frame using AES-GCM.
-   * Frame Format: [IV (12 bytes)][Ciphertext + Tag]
-   */
-  private async encryptFrame(frame: any, controller: TransformStreamDefaultController) {
+  private async encryptFrame(
+    frame: RTCEncodedVideoFrame,
+    controller: TransformStreamDefaultController
+  ) {
     const iv = crypto.getRandomValues(new Uint8Array(12));
-    const data = frame.data; // ArrayBuffer
+    const data = frame.data;
 
     try {
       const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, this.callKey!, data);
-
       const packed = new Uint8Array(iv.byteLength + ciphertext.byteLength);
       packed.set(iv, 0);
       packed.set(new Uint8Array(ciphertext), 12);
-
       frame.data = packed.buffer;
       controller.enqueue(frame);
     } catch (e) {
       console.error('Encryption failed', e);
-      // Determine strategy: drop frame or pass unencrypted? (Drop is safer for privacy)
     }
   }
 
-  private async decryptFrame(frame: any, controller: TransformStreamDefaultController) {
+  private async decryptFrame(
+    frame: RTCEncodedVideoFrame,
+    controller: TransformStreamDefaultController
+  ) {
     const data = new Uint8Array(frame.data);
     if (data.byteLength < 12) return;
 
@@ -343,37 +396,41 @@ export class CallService {
     }
   }
 
-  // --- Helpers ---
-
   private async setupMedia(video: boolean) {
-    try {
-      this.localStream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-        video: video ? { facingMode: 'user' } : false,
-      });
-      this.localStreamStore.set(this.localStream);
-      this.isMuted.set(false);
-      this.isVideoOff.set(!video);
-    } catch (e) {
-      console.error('Failed to get user media', e);
-      throw e;
-    }
+    this.localStream = await navigator.mediaDevices.getUserMedia({
+      audio: true,
+      video: video ? { facingMode: 'user' } : false,
+    });
+    this.localStreamStore.set(this.localStream);
+    this.isMuted.set(false);
+    this.isVideoOff.set(!video);
   }
 
-  private async sendMlsNotification(groupId: string, payload: any) {
-    // Construct AppMessage.CallMsg
+  private async sendMlsNotification(groupId: string, appMsgPartial: canari.IAppMessage) {
     const appMsg = {
       messageId: crypto.randomUUID(),
-      call: {
-        callId: this.currentCallId,
-        ...payload,
-      },
+      sentAt: Date.now(),
+      ...appMsgPartial,
     };
-
-    // Use generated proto encoder
-    const message = canari.AppMessage.create(appMsg);
-    const buffer = canari.AppMessage.encode(message).finish();
-
+    const buffer = encodeAppMessage(appMsg);
     await this.mlsService.sendMessage(groupId, buffer);
+  }
+
+  /** Toggles microphone mute on the local audio track. */
+  public toggleMute() {
+    const muted = !get(this.isMuted);
+    this.localStream?.getAudioTracks().forEach((t) => {
+      t.enabled = !muted;
+    });
+    this.isMuted.set(muted);
+  }
+
+  /** Toggles local video track on/off. */
+  public toggleVideo() {
+    const off = !get(this.isVideoOff);
+    this.localStream?.getVideoTracks().forEach((t) => {
+      t.enabled = !off;
+    });
+    this.isVideoOff.set(off);
   }
 }

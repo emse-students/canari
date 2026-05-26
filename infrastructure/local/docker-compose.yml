@@ -105,6 +105,23 @@ services:
       kafka:
         condition: service_healthy
 
+  # Call Service (Rust SFU) — port 3004
+  call-service:
+    build:
+      context: ../../
+      dockerfile: infrastructure/local/Dockerfile.call-service
+    ports:
+      - "3004:3004"
+    environment:
+      RUST_LOG: info
+      PORT: "3004"
+      JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-me}
+      TURN_URL: ${TURN_URL:-turn:host.docker.internal:3478?transport=udp}
+      TURN_USERNAME: ${TURN_USERNAME:-user}
+      TURN_CREDENTIAL: ${TURN_CREDENTIAL:-password}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
   # ─────────────────────────────────────────────────────
   # NODE.JS SERVICES (3010-3029 range)
   # ─────────────────────────────────────────────────────
@@ -125,6 +142,11 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       KAFKA_BROKERS: kafka:29092
+      CLOUDFLARE_CALLS_API_TOKEN: ${CLOUDFLARE_CALLS_API_TOKEN:-}
+      CLOUDFLARE_TURN_KEY_ID: ${CLOUDFLARE_TURN_KEY_ID:-}
+      TURN_URL: ${TURN_URL:-turn:host.docker.internal:3478?transport=udp}
+      TURN_USERNAME: ${TURN_USERNAME:-user}
+      TURN_CREDENTIAL: ${TURN_CREDENTIAL:-password}
     depends_on:
       redis:
         condition: service_healthy

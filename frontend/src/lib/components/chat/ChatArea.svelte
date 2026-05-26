@@ -76,8 +76,10 @@
     onRemovePendingFile?: (index: number) => void;
     /** Whether a file upload is currently in progress. */
     isUploading?: boolean;
-    /** Callback to initiate a call with the current contact. */
-    onStartCall?: () => void;
+    /** Callback to start an audio-only call. */
+    onStartAudioCall?: () => void;
+    /** Callback to start a video call. */
+    onStartVideoCall?: () => void;
     /** Optional media ID for the group or channel avatar image. */
     imageMediaId?: string | null;
     /** Callback to open the channel members sidebar. */
@@ -124,7 +126,8 @@
     pendingFiles = [],
     onRemovePendingFile,
     isUploading = false,
-    onStartCall,
+    onStartAudioCall,
+    onStartVideoCall,
     imageMediaId = null,
     onOpenMembers,
     currentUserId = '',
@@ -414,7 +417,8 @@
         {onGroupDelete}
         {onGroupLeave}
         {onGroupRemoveMember}
-        {onStartCall}
+        {onStartAudioCall}
+        {onStartVideoCall}
         {onOpenMembers}
         onToggleSearch={() => {
           showSearch = !showSearch;

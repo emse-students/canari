@@ -86,6 +86,7 @@ message AppMessage {
 
 message CallMsg {
   string call_id = 1; // Unique for the call session
+  bool   has_video = 6; // Whether the caller intends to send video
 
   oneof payload {
     string offer_sdp     = 2; // SDP offer json string

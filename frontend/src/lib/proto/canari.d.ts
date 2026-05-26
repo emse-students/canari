@@ -808,6 +808,9 @@ export namespace canari {
         /** CallMsg callId */
         callId?: (string|null);
 
+        /** CallMsg hasVideo */
+        hasVideo?: (boolean|null);
+
         /** CallMsg offerSdp */
         offerSdp?: (string|null);
 
@@ -832,6 +835,9 @@ export namespace canari {
 
         /** CallMsg callId. */
         public callId: string;
+
+        /** CallMsg hasVideo. */
+        public hasVideo: boolean;
 
         /** CallMsg offerSdp. */
         public offerSdp?: (string|null);

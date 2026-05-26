@@ -551,11 +551,10 @@
   </div>
 {/if}
 
-<!-- Overlay d'appel désactivé temporairement -->
-{#if false}
+{#if globalSession.callService && globalSession.callState !== 'idle'}
   <CallOverlay
     callService={globalSession.callService}
-    remoteName={globalConvs.currentConvo?.name ?? 'Correspondant'}
+    remoteName={globalConvs.currentConvo?.contactName ?? globalConvs.currentConvo?.name ?? 'Correspondant'}
   />
 {/if}
 
