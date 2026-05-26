@@ -213,6 +213,32 @@
     }, 1400);
   }
 
+  /**
+   * Snapshot for header/actions when a conversation is selected.
+   * Avoids reading `conversation.contactName` in the template after `conversation` becomes null
+   * during route switches (chat ↔ communities).
+   */
+  const activeConversationView = $derived.by(() => {
+    const c = conversation;
+    if (!c) return null;
+    const pres = resolveConversationListPresentation(
+      {
+        id: c.id,
+        name: c.name,
+        contactName: c.contactName,
+        conversationType: c.conversationType,
+        directPeerId: c.directPeerId,
+      },
+      currentUserId
+    );
+    return {
+      displayName: pres.displayName,
+      contactName: c.contactName,
+      isReady: c.isReady,
+      isGroup: (c.conversationType ?? 'group') === 'group',
+    };
+  });
+
   // Group messages by date and time gaps
   let messageGroups = $derived(conversation ? groupMessages(conversation.messages) : []);
   let windowEnd = $derived(Math.min(messageGroups.length, windowStart + MAX_RENDERED_GROUPS));
@@ -304,12 +330,13 @@
   }
 
   $effect(() => {
-    const convoKey = conversation ? `${conversation.id}-${conversation.contactName}` : '';
-    const messageCount = conversation?.messages.length ?? 0;
+    const c = conversation;
+    const convoKey = c ? `${c.id}-${c.contactName}` : '';
+    const messageCount = c?.messages.length ?? 0;
     const catchupActive = isLoadingHistory || isCatchingUpMessages;
 
     untrack(() => {
-      if (!conversation) {
+      if (!c) {
         lastConversationKey = '';
         lastMessageCount = 0;
         catchupWasActive = false;
@@ -317,7 +344,7 @@
       }
 
       if (catchupWasActive && !catchupActive) {
-        switchTime = computeMessageListSwitchTime(conversation.messages);
+        switchTime = computeMessageListSwitchTime(c.messages);
       }
       catchupWasActive = catchupActive;
 
@@ -325,7 +352,7 @@
       const hasNewMessage = messageCount > lastMessageCount;
 
       if (hasConversationChanged) {
-        switchTime = computeMessageListSwitchTime(conversation.messages);
+        switchTime = computeMessageListSwitchTime(c.messages);
         windowStart = Math.max(0, messageGroups.length - INITIAL_RENDER_GROUPS);
         hasMoreInDb = !isChannel;
         tick().then(() => requestAnimationFrame(() => scrollToBottom(false)));
@@ -394,19 +421,14 @@
     ? 'hidden md:flex'
     : ''}"
 >
-  {#if conversation}
-    {@const resolvedName = resolveConversationListPresentation(
-      { id: conversation.id, name: conversation.name, contactName: conversation.contactName,
-        conversationType: conversation.conversationType, directPeerId: conversation.directPeerId },
-      currentUserId
-    ).displayName}
+  {#if conversation && activeConversationView}
     <div>
       <ChatHeader
-        contactName={conversation.contactName}
-        displayName={resolvedName}
-        isReady={conversation.isReady}
+        contactName={activeConversationView.contactName}
+        displayName={activeConversationView.displayName}
+        isReady={activeConversationView.isReady}
         {isChannel}
-        isGroupConversation={(conversation.conversationType ?? 'group') === 'group'}
+        isGroupConversation={activeConversationView.isGroup}
         {imageMediaId}
         {onInviteMembers}
         {onBack}

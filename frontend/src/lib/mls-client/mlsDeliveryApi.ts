@@ -65,6 +65,50 @@ export class MlsDeliveryApi {
     return await res.json();
   }
 
+  private decodeKeyPackageBase64(keyPackageB64: string): Uint8Array {
+    const binaryString = atob(keyPackageB64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes;
+  }
+
+  /**
+   * Fetches a single device's consumable KeyPackage (no 30-day list cutoff).
+   * Used when pending invitations reference a device not returned by {@link fetchUserDevices}.
+   */
+  async fetchDeviceKeyPackage(
+    userId: string,
+    deviceId: string
+  ): Promise<{
+    keyPackage: Uint8Array;
+    deviceId: string;
+    deviceName?: string;
+    deviceOs?: string;
+    deviceAppVersion?: string;
+  } | null> {
+    try {
+      const res = await this.f(
+        `${this.historyUrl}/api/mls/devices/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}/key-package`,
+        { headers: await this.auth() }
+      );
+      if (!res.ok) return null;
+      const d = await res.json();
+      if (typeof d.keyPackage !== 'string' || typeof d.deviceId !== 'string') return null;
+      return {
+        keyPackage: this.decodeKeyPackageBase64(d.keyPackage),
+        deviceId: d.deviceId,
+        deviceName: typeof d.deviceName === 'string' ? d.deviceName : undefined,
+        deviceOs: typeof d.deviceOs === 'string' ? d.deviceOs : undefined,
+        deviceAppVersion: typeof d.deviceAppVersion === 'string' ? d.deviceAppVersion : undefined,
+      };
+    } catch (e) {
+      console.error('Fetch device KeyPackage error:', e);
+      return null;
+    }
+  }
+
   async fetchUserDevices(userId: string): Promise<
     Array<{
       keyPackage: Uint8Array;
@@ -81,20 +125,13 @@ export class MlsDeliveryApi {
       if (!res.ok) return [];
       const devices = await res.json();
 
-      return devices.map((d: any) => {
-        const binaryString = atob(d.keyPackage);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
-        }
-        return {
-          keyPackage: bytes,
-          deviceId: d.deviceId,
-          deviceName: typeof d.deviceName === 'string' ? d.deviceName : undefined,
-          deviceOs: typeof d.deviceOs === 'string' ? d.deviceOs : undefined,
-          deviceAppVersion: typeof d.deviceAppVersion === 'string' ? d.deviceAppVersion : undefined,
-        };
-      });
+      return devices.map((d: any) => ({
+        keyPackage: this.decodeKeyPackageBase64(d.keyPackage),
+        deviceId: d.deviceId,
+        deviceName: typeof d.deviceName === 'string' ? d.deviceName : undefined,
+        deviceOs: typeof d.deviceOs === 'string' ? d.deviceOs : undefined,
+        deviceAppVersion: typeof d.deviceAppVersion === 'string' ? d.deviceAppVersion : undefined,
+      }));
     } catch (e) {
       console.error('Fetch User Devices Error:', e);
       return [];

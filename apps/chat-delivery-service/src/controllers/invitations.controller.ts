@@ -16,8 +16,11 @@ import { Repository } from 'typeorm';
 import * as crypto from 'crypto';
 import Redis from 'ioredis';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
+import { KeyPackage } from '../entities/key-package.entity';
+import { RevokedDevice } from '../entities/revoked-device.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { sanitizeQueryValue, assertCallerOwnsUserId } from '../utils/sanitize';
+import { In } from 'typeorm';
 
 /** Device-group membership management: pending invitations, status updates, kick-stale. */
 @Controller()
@@ -27,6 +30,10 @@ export class InvitationsController {
   constructor(
     @InjectRepository(DeviceGroupMembership)
     private deviceGroupRepo: Repository<DeviceGroupMembership>,
+    @InjectRepository(KeyPackage)
+    private keyPackageRepo: Repository<KeyPackage>,
+    @InjectRepository(RevokedDevice)
+    private revokedDeviceRepo: Repository<RevokedDevice>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
   ) {}
 
@@ -82,10 +89,42 @@ export class InvitationsController {
         { groupId: gid, status: 'stale' as const },
       ]),
     });
-    this.logger.log(
-      `[PENDING][${traceId}] DONE groups=${myGroupIds.length} invitations=${pending.length}`,
+
+    if (pending.length === 0) {
+      this.logger.log(
+        `[PENDING][${traceId}] DONE groups=${myGroupIds.length} invitations=0`,
+      );
+      return [];
+    }
+
+    const inviteeUserIds = [...new Set(pending.map((p) => p.userId))];
+    const revokedRows = await this.revokedDeviceRepo.find({
+      where: { userId: In(inviteeUserIds) },
+    });
+    const revokedKeys = new Set(
+      revokedRows.map((r) => `${r.userId}:${r.deviceId}`),
     );
-    return pending;
+    const keyPackages = await this.keyPackageRepo.find({
+      where: { userId: In(inviteeUserIds) },
+    });
+    const inviteableKeys = new Set(
+      keyPackages
+        .filter((kp) => !revokedKeys.has(`${kp.userId}:${kp.deviceId}`))
+        .map((kp) => `${kp.userId}:${kp.deviceId}`),
+    );
+    const actionable = pending.filter((p) =>
+      inviteableKeys.has(`${p.userId}:${p.deviceId}`),
+    );
+    const skipped = pending.length - actionable.length;
+    if (skipped > 0) {
+      this.logger.log(
+        `[PENDING][${traceId}] Skipped ${skipped} invitation(s) without active KeyPackage`,
+      );
+    }
+    this.logger.log(
+      `[PENDING][${traceId}] DONE groups=${myGroupIds.length} invitations=${actionable.length}`,
+    );
+    return actionable;
   }
 
   /**

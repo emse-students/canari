@@ -82,6 +82,17 @@ export interface IMlsService {
       deviceAppVersion?: string;
     }>
   >;
+  /** Fetches one device's KeyPackage when it is missing from {@link fetchUserDevices} (e.g. 30-day list filter). */
+  fetchDeviceKeyPackage(
+    userId: string,
+    deviceId: string
+  ): Promise<{
+    keyPackage: Uint8Array;
+    deviceId: string;
+    deviceName?: string;
+    deviceOs?: string;
+    deviceAppVersion?: string;
+  } | null>;
   /** Uploads a single KeyPackage to the server so other devices can invite this one. */
   publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void>;
   /** Bulk-upload multiple one-time prekeys to the server pool. */

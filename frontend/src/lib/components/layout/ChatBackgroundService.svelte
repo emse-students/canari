@@ -33,6 +33,56 @@
   import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
   import { mapStoredMessagesToChatMessages } from '$lib/utils/chat/history';
   import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
+  import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
+  import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
+  import type { CallParticipant } from '$lib/services/CallService';
+
+  /** Remote users to show on the call overlay (avatars / labels), excluding the local user. */
+  function buildRemoteCallParticipants(): CallParticipant[] {
+    const uid = (globalSession.userId || currentUserId() || '').toLowerCase();
+    const convo = globalConvs.currentConvo;
+    const callerId = globalSession.callService?.incomingCallerId?.toLowerCase();
+
+    if (!convo) {
+      if (callerId && callerId !== uid) {
+        return [{ userId: callerId, displayName: getUserDisplayNameSync(callerId) }];
+      }
+      return [];
+    }
+
+    const pres = resolveConversationListPresentation(
+      {
+        id: convo.id,
+        name: convo.name,
+        contactName: convo.contactName,
+        conversationType: convo.conversationType,
+        directPeerId: convo.directPeerId,
+      },
+      uid
+    );
+
+    if (pres.conversationType === 'direct') {
+      const peer = pres.contactId.toLowerCase();
+      if (!peer || peer === uid) return [];
+      return [{ userId: peer, displayName: pres.displayName }];
+    }
+
+    return globalConvs.groupMembers
+      .map((m) => m.toLowerCase())
+      .filter((m) => m && m !== uid)
+      .map((m) => ({ userId: m, displayName: getUserDisplayNameSync(m) }));
+  }
+
+  let callRemoteParticipants = $derived.by(buildRemoteCallParticipants);
+
+  /** Load MLS group members while a group call is active so all avatars can be shown. */
+  $effect(() => {
+    if (globalSession.callState === 'idle' || !globalSession.isLoggedIn) return;
+    const groupId = globalSession.callService?.currentGroupId;
+    const convo = globalConvs.currentConvo;
+    if (!groupId || !convo || (convo.conversationType ?? 'group') === 'direct') return;
+    void globalConvs.loadGroupMembers(groupId, convCtx());
+  });
 
   let showPinModal = $state(false);
   let pinError = $state('');
@@ -554,7 +604,8 @@
 {#if globalSession.callService && globalSession.callState !== 'idle'}
   <CallOverlay
     callService={globalSession.callService}
-    remoteName={globalConvs.currentConvo?.contactName ?? globalConvs.currentConvo?.name ?? 'Correspondant'}
+    currentUserId={globalSession.userId || currentUserId() || ''}
+    participants={callRemoteParticipants}
   />
 {/if}
 

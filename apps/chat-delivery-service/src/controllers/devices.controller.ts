@@ -55,6 +55,46 @@ export class DevicesController {
     return `${scope}-${crypto.randomUUID().slice(0, 8)}`;
   }
 
+  /**
+   * Pops one OTKP (FIFO) for a device, or returns the static registration KeyPackage.
+   * Returns null when the device is revoked or has no registered KeyPackage.
+   */
+  private async resolveKeyPackagePayloadForDevice(
+    userId: string,
+    deviceId: string,
+  ): Promise<string | null> {
+    const revoked = await this.revokedDeviceRepo.findOne({
+      where: { userId, deviceId },
+    });
+    if (revoked) return null;
+
+    const device = await this.keyPackageRepo.findOne({
+      where: { userId, deviceId },
+    });
+    if (!device) return null;
+
+    const otkp = await this.dataSource.transaction(async (manager) => {
+      const found = await manager
+        .getRepository(OneTimeKeyPackage)
+        .createQueryBuilder('otkp')
+        .where('otkp.userId = :userId AND otkp.deviceId = :deviceId', {
+          userId,
+          deviceId,
+        })
+        .orderBy('otkp.createdAt', 'ASC')
+        .limit(1)
+        .setLock('pessimistic_partial_write')
+        .getOne();
+      if (found) {
+        await manager.delete(OneTimeKeyPackage, found.id);
+        return found;
+      }
+      return null;
+    });
+
+    return otkp?.keyPackage ?? device.keyPackage;
+  }
+
   @UseGuards(HeaderAuthGuard)
   @Post('mls/register-device')
   /** Registers a new device (KeyPackage + deviceId) on the server. */
@@ -225,6 +265,39 @@ export class DevicesController {
   }
 
   @UseGuards(HeaderAuthGuard)
+  @Get('mls/devices/:userId/:deviceId/key-package')
+  /**
+   * Returns one consumable KeyPackage for a specific device (invite / welcome flows).
+   * Unlike the user device list, there is no 30-day cutoff — only revoked / missing devices 404.
+   */
+  async getDeviceKeyPackage(
+    @Param('userId') userId: string,
+    @Param('deviceId') deviceId: string,
+  ) {
+    const safeUserId = sanitizeQueryValue(userId, 'userId');
+    const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
+    const keyPackage = await this.resolveKeyPackagePayloadForDevice(
+      safeUserId,
+      safeDeviceId,
+    );
+    if (!keyPackage) {
+      throw new BadRequestException(
+        `No key package for device ${safeUserId}:${safeDeviceId}`,
+      );
+    }
+    const row = await this.keyPackageRepo.findOne({
+      where: { userId: safeUserId, deviceId: safeDeviceId },
+    });
+    return {
+      deviceId: safeDeviceId,
+      keyPackage,
+      deviceName: row?.deviceName ?? undefined,
+      deviceOs: row?.deviceOs ?? undefined,
+      deviceAppVersion: row?.deviceAppVersion ?? undefined,
+    };
+  }
+
+  @UseGuards(HeaderAuthGuard)
   @Get('mls/devices/:userId')
   /** Lists all registered devices for a user, including their key packages (last 30 days). */
   async getUserDevices(@Param('userId') userId: string) {
@@ -243,38 +316,20 @@ export class DevicesController {
       (d) => !revokedSet.has(d.deviceId),
     );
 
-    // For each device, atomically pop one one-time prekey from the pool (FIFO).
-    // FOR UPDATE SKIP LOCKED prevents two concurrent calls from consuming the same OTKP.
-    // Falls back to the static registration KP when the pool is empty.
     const results = await Promise.all(
       activeDevices.map(async (device) => {
-        const otkp = await this.dataSource.transaction(async (manager) => {
-          const found = await manager
-            .getRepository(OneTimeKeyPackage)
-            .createQueryBuilder('otkp')
-            .where('otkp.userId = :userId AND otkp.deviceId = :deviceId', {
-              userId: device.userId,
-              deviceId: device.deviceId,
-            })
-            .orderBy('otkp.createdAt', 'ASC')
-            .limit(1)
-            .setLock('pessimistic_partial_write') // FOR UPDATE SKIP LOCKED — atomic
-            .getOne();
-          if (found) {
-            await manager.delete(OneTimeKeyPackage, found.id);
-            return found;
-          }
-          return null;
-        });
-        if (otkp) {
-          return { ...device, keyPackage: otkp.keyPackage };
-        }
-        // Pool exhausted — serve the static registration KP as a fallback, never delete it.
-        return device;
+        const keyPackage = await this.resolveKeyPackagePayloadForDevice(
+          device.userId,
+          device.deviceId,
+        );
+        if (!keyPackage) return null;
+        return { ...device, keyPackage };
       }),
     );
 
-    return results;
+    return results.filter(
+      (row): row is NonNullable<typeof row> => row !== null,
+    );
   }
 
   @UseGuards(HeaderAuthGuard)

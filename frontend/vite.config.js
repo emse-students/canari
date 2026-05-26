@@ -109,6 +109,18 @@ export default defineConfig(async () => ({
         changeOrigin: true,
         headers: { 'x-user-logged-in': 'true' },
       },
+      '/api/calls/': {
+        target: 'http://localhost:3010',
+        changeOrigin: true,
+        headers: { 'x-user-logged-in': 'true' },
+      },
+      '/api/call': {
+        target: 'ws://localhost:3004',
+        ws: true,
+        changeOrigin: true,
+        /** @param {string} path */
+        rewrite: (path) => path.replace(/^\/api\/call/, '/ws'),
+      },
       '/api/chat-delivery-health': {
         target: 'http://localhost:3010',
         changeOrigin: true,

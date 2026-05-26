@@ -306,6 +306,14 @@
         });
       }, 2000);
     }
+
+    return () => {
+      if (readReceiptTimer) {
+        clearTimeout(readReceiptTimer);
+        readReceiptTimer = null;
+      }
+      pendingReadReceipts = [];
+    };
   });
 
   // ─── Mount: event listeners (window focus, visibility, debug shortcut) ────
@@ -356,6 +364,11 @@
   $effect(() => {
     const _ = routeMode;
     untrack(() => {
+      if (readReceiptTimer) {
+        clearTimeout(readReceiptTimer);
+        readReceiptTimer = null;
+      }
+      pendingReadReceipts = [];
       convs.selectedContact = null;
       convs.sendError = '';
     });
@@ -417,6 +430,7 @@
         isHidden={convs.mobileView === 'chat'}
       />
 
+      {#key `${routeMode}-${convs.selectedContact ?? ''}`}
       <ChatArea
         currentUserId={session.userId}
         conversation={convs.currentConvo}
@@ -471,6 +485,7 @@
           convs.chatContainer = el ?? undefined;
         }}
       />
+      {/key}
 
       {#if routeMode === 'communities'}
         {#if channels.selectedChannelConversationId}

@@ -752,6 +752,11 @@ export class TauriMlsService implements IMlsService {
     return this.delivery.fetchUserDevices(userId);
   }
 
+  /** Tauri-native wrapper — fetches one device's KeyPackage (invite / welcome flows). */
+  async fetchDeviceKeyPackage(userId: string, deviceId: string) {
+    return this.delivery.fetchDeviceKeyPackage(userId, deviceId);
+  }
+
   /** Registers a user as a server-side member of the given MLS group on the delivery service. */
   async registerMember(groupId: string, userId: string): Promise<void> {
     return this.delivery.registerMember(groupId, userId);

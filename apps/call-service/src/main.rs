@@ -20,6 +20,7 @@ use webrtc::api::APIBuilder;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::configuration::RTCConfiguration;
+use webrtc::peer_connection::policy::ice_transport_policy::RTCIceTransportPolicy;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
@@ -523,8 +524,19 @@ async fn create_peer_connection() -> anyhow::Result<RTCPeerConnection> {
         .with_interceptor_registry(registry)
         .build();
 
+    let ice_servers = resolve_ice_servers().await;
+    // Match browser clients (iceTransportPolicy: 'relay') so connectivity checks use TURN.
+    let ice_transport_policy = if ice_servers.iter().any(|s| {
+        s.urls.iter().any(|u| u.contains("turn:") || u.contains("turns:"))
+    }) {
+        RTCIceTransportPolicy::Relay
+    } else {
+        RTCIceTransportPolicy::All
+    };
+
     let config = RTCConfiguration {
-        ice_servers: resolve_ice_servers().await,
+        ice_servers,
+        ice_transport_policy,
         ..Default::default()
     };
 

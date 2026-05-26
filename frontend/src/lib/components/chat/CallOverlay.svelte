@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { CallService } from '$lib/services/CallService';
+  import { CallService, type CallParticipant } from '$lib/services/CallService';
+  import Avatar from '$lib/components/shared/Avatar.svelte';
+  import UserName from '$lib/components/shared/UserName.svelte';
   import {
     Mic,
     MicOff,
@@ -15,16 +17,17 @@
 
   let {
     callService,
-    remoteName = 'Utilisateur',
+    currentUserId = '',
+    participants = [],
   }: {
     callService: CallService;
-    remoteName?: string;
+    currentUserId?: string;
+    participants?: CallParticipant[];
   } = $props();
 
   let localVideo: HTMLVideoElement | undefined = $state();
   let remoteVideo: HTMLVideoElement | undefined = $state();
 
-  // CallService uses writable stores on a class — subscribe explicitly (not $derived(store)).
   let callState = $state<CallState>('idle');
   let remoteStreamsMap = $state<Map<string, MediaStream>>(new Map());
   let remoteStreamVal = $state<MediaStream | null>(null);
@@ -48,6 +51,8 @@
   let primaryRemoteStream = $derived(
     remoteEntries.length > 0 ? remoteEntries[0][1] : remoteStreamVal
   );
+  let primaryParticipant = $derived(participants[0]);
+  let isGroupCall = $derived(participants.length > 1);
 
   let pipOffsetX = $state(0);
   let pipOffsetY = $state(0);
@@ -65,7 +70,7 @@
   });
 
   $effect(() => {
-    if (localStreamVal && localVideo) {
+    if (localStreamVal && localVideo && !isVideoOff) {
       localVideo.srcObject = localStreamVal;
       void localVideo.play().catch(() => {});
     }
@@ -130,7 +135,34 @@
     }
     callService.endCall();
   }
+
+  /** Participant for a remote video tile (by index; SFU does not expose user ids on tracks). */
+  function participantForIndex(index: number): CallParticipant | undefined {
+    return participants[index];
+  }
 </script>
+
+{#snippet callAvatar(userId: string, displayName: string, sizeClass: string)}
+  <div class="relative flex items-center justify-center {sizeClass}">
+    <div class="absolute inset-0 bg-white/10 rounded-full animate-ping opacity-60"></div>
+    <div
+      class="relative rounded-full overflow-hidden ring-2 ring-white/25 shadow-xl bg-black/30 w-full h-full"
+    >
+      <Avatar {userId} fill shape="circle" fallbackLabel={displayName} />
+    </div>
+  </div>
+{/snippet}
+
+{#snippet participantLabel(participant: CallParticipant)}
+  <div
+    class="flex items-center gap-2 bg-black/50 backdrop-blur-md px-2.5 py-1.5 rounded-full border border-white/10 text-white text-sm font-semibold max-w-full"
+  >
+    <div class="w-7 h-7 rounded-full overflow-hidden shrink-0 ring-1 ring-white/20">
+      <Avatar userId={participant.userId} fill shape="circle" fallbackLabel={participant.displayName} />
+    </div>
+    <UserName userId={participant.userId} fallback={participant.displayName} link={false} class="truncate" />
+  </div>
+{/snippet}
 
 <div
   class="fixed inset-0 z-[100] bg-black/90 backdrop-blur-2xl flex flex-col items-center justify-center p-4 sm:p-6 select-none"
@@ -145,44 +177,87 @@
           ? 'grid-cols-2'
           : 'grid-cols-3'}"
       >
-        {#each remoteEntries as [key, stream] (key)}
-          <video
-            use:attachStream={stream}
-            autoplay
-            playsinline
-            class="w-full h-full object-cover bg-black/40 rounded-xl min-h-[120px]"
-          ></video>
+        {#each remoteEntries as [key, stream], index (key)}
+          {@const participant = participantForIndex(index)}
+          <div class="relative w-full h-full min-h-[120px] bg-black/40 rounded-xl overflow-hidden">
+            <video
+              use:attachStream={stream}
+              autoplay
+              playsinline
+              class="w-full h-full object-cover"
+            ></video>
+            {#if participant}
+              <div class="absolute bottom-2 left-2 right-2 z-10">
+                {@render participantLabel(participant)}
+              </div>
+            {/if}
+          </div>
         {/each}
       </div>
     {:else if primaryRemoteStream}
-      <video
-        bind:this={remoteVideo}
-        autoplay
-        playsinline
-        class="w-full h-full object-cover"
-      ></video>
+      <div class="relative w-full h-full flex-1 min-h-0">
+        <video
+          bind:this={remoteVideo}
+          autoplay
+          playsinline
+          class="w-full h-full object-cover"
+        ></video>
+        {#if primaryParticipant}
+          <div class="absolute top-4 left-4 z-10">
+            {@render participantLabel(primaryParticipant)}
+          </div>
+        {/if}
+      </div>
+    {:else if participants.length > 0}
+      <div class="flex flex-col items-center justify-center gap-8 text-white/70 flex-1 px-6">
+        {#if isGroupCall}
+          <div
+            class="grid gap-8 w-full max-w-lg {participants.length === 2
+              ? 'grid-cols-2'
+              : participants.length <= 4
+                ? 'grid-cols-2'
+                : 'grid-cols-3'}"
+          >
+            {#each participants as participant (participant.userId)}
+              <div class="flex flex-col items-center gap-3">
+                {@render callAvatar(participant.userId, participant.displayName, 'w-24 h-24 sm:w-28 sm:h-28')}
+                <UserName
+                  userId={participant.userId}
+                  fallback={participant.displayName}
+                  link={false}
+                  class="text-white font-bold text-center text-sm sm:text-base"
+                />
+              </div>
+            {/each}
+          </div>
+        {:else if primaryParticipant}
+          {@render callAvatar(primaryParticipant.userId, primaryParticipant.displayName, 'w-28 h-28 sm:w-32 sm:h-32')}
+          <div class="flex flex-col items-center gap-2 text-center">
+            <UserName
+              userId={primaryParticipant.userId}
+              fallback={primaryParticipant.displayName}
+              link={false}
+              class="text-xl font-bold text-white tracking-wide"
+            />
+          </div>
+        {/if}
+        <p class="animate-pulse text-sm font-medium text-white/60 tracking-widest uppercase text-center">
+          {callState === 'calling'
+            ? 'Appel en cours...'
+            : callState === 'incall'
+              ? 'En attente du flux distant…'
+              : 'Connexion en cours...'}
+        </p>
+      </div>
     {:else}
       <div class="flex flex-col items-center justify-center gap-6 text-white/70 flex-1">
-        <div class="relative flex items-center justify-center">
-          <div class="absolute inset-0 bg-white/10 rounded-full animate-ping opacity-75"></div>
-          <div
-            class="relative w-28 h-28 rounded-full bg-white/10 border border-white/20 flex items-center justify-center backdrop-blur-sm shadow-xl"
-          >
-            <span class="text-4xl font-bold tracking-wider text-white">
-              {remoteName.slice(0, 2).toUpperCase()}
-            </span>
-          </div>
-        </div>
-        <div class="flex flex-col items-center gap-2">
-          <p class="text-xl font-bold text-white tracking-wide">{remoteName}</p>
-          <p class="animate-pulse text-sm font-medium text-white/60 tracking-widest uppercase">
-            {callState === 'calling' ? 'Appel en cours...' : 'Connexion en cours...'}
-          </p>
-        </div>
+        <p class="animate-pulse text-sm font-medium text-white/60 tracking-widest uppercase">
+          {callState === 'calling' ? 'Appel en cours...' : 'Connexion en cours...'}
+        </p>
       </div>
     {/if}
 
-    {#if localStreamVal}
+    {#if localStreamVal || currentUserId}
       <div
         class="absolute bottom-6 right-6 z-20 pointer-events-none"
         transition:scale={{ duration: 400, start: 0.8, delay: 200 }}
@@ -200,13 +275,26 @@
             : 'cursor-grab hover:scale-[1.02]'}"
           style="transform: translate({pipOffsetX}px, {pipOffsetY}px);"
         >
-          <video
-            bind:this={localVideo}
-            autoplay
-            playsinline
-            muted
-            class="w-full h-full object-cover -scale-x-100"
-          ></video>
+          {#if localStreamVal && !isVideoOff}
+            <video
+              bind:this={localVideo}
+              autoplay
+              playsinline
+              muted
+              class="w-full h-full object-cover -scale-x-100"
+            ></video>
+          {:else if currentUserId}
+            <div class="w-full h-full flex items-center justify-center bg-[#0a0d14]">
+              <div class="w-20 h-20 md:w-28 md:h-28 rounded-full overflow-hidden ring-2 ring-white/20">
+                <Avatar
+                  userId={currentUserId}
+                  fill
+                  shape="circle"
+                  fallbackLabel="Vous"
+                />
+              </div>
+            </div>
+          {/if}
           {#if isMuted}
             <div
               class="absolute top-3 right-3 bg-red-500/80 backdrop-blur-md p-1.5 rounded-full text-white"
@@ -214,6 +302,13 @@
               <MicOff size={14} strokeWidth={2.5} />
             </div>
           {/if}
+          <div
+            class="absolute bottom-2 left-2 right-2 flex justify-center pointer-events-none"
+          >
+            <span class="text-[10px] font-bold uppercase tracking-wider text-white/80 bg-black/40 px-2 py-0.5 rounded-full"
+              >Vous</span
+            >
+          </div>
         </div>
       </div>
     {/if}
@@ -226,6 +321,11 @@
           ? 'bg-emerald-400'
           : 'bg-amber-400 animate-pulse'}"
       ></span>
+      {#if currentUserId}
+        <div class="w-8 h-8 rounded-full overflow-hidden shrink-0 ring-1 ring-white/20">
+          <Avatar userId={currentUserId} fill shape="circle" fallbackLabel="Vous" />
+        </div>
+      {/if}
       {callState === 'calling'
         ? 'Appel sortant'
         : callState === 'incoming'
@@ -233,6 +333,13 @@
           : 'En ligne'}
       {#if remoteEntries.length > 1}
         <span class="text-white/60 font-normal">· {remoteEntries.length + 1} participants</span>
+      {:else if primaryParticipant}
+        <UserName
+          userId={primaryParticipant.userId}
+          fallback={primaryParticipant.displayName}
+          link={false}
+          class="text-white/90 font-bold truncate max-w-[10rem] sm:max-w-xs"
+        />
       {/if}
     </div>
   </div>
@@ -258,7 +365,7 @@
         class="p-4 sm:p-5 rounded-full bg-red-500 hover:bg-red-400 text-white transition-all hover:scale-110 active:scale-95"
         onclick={endCall}
         title="Refuser"
-        aria-label="Refuser l'appel"
+        aria-label="Refuser l'appel entrant"
       >
         <PhoneOff size={28} />
       </button>

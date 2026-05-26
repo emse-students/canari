@@ -6,8 +6,15 @@ import EncryptionWorker from '../workers/encryption.worker?worker';
 import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 import { resolveMlsPublicUrls } from '$lib/mls-client/mlsDeliveryHttp';
 import { apiFetch } from '$lib/utils/apiFetch';
+import { getToken } from '$lib/stores/auth';
 
 export type CallState = 'idle' | 'calling' | 'incoming' | 'incall' | 'ended';
+
+/** Remote participant shown on the call UI (avatar + name). */
+export interface CallParticipant {
+  userId: string;
+  displayName: string;
+}
 
 /** Remote participant media keyed by sender user id. */
 export type RemoteStreams = Map<string, MediaStream>;
@@ -30,6 +37,8 @@ export class CallService {
 
   public currentCallId: string | null = null;
   public currentGroupId: string | null = null;
+  /** User id of the peer who rang (incoming); used for avatar when no conversation is selected. */
+  public incomingCallerId: string | null = null;
   public incomingHasVideo = true;
   private callKey: CryptoKey | null = null;
 
@@ -63,6 +72,7 @@ export class CallService {
 
       this.currentCallId = callMsg.callId;
       this.currentGroupId = groupId;
+      this.incomingCallerId = senderId.toLowerCase();
       this.incomingHasVideo = callMsg.hasVideo !== false;
       this.callState.set('incoming');
     }
@@ -121,6 +131,7 @@ export class CallService {
     this.callState.set('idle');
     this.currentCallId = null;
     this.currentGroupId = null;
+    this.incomingCallerId = null;
     this.callKey = null;
     this.incomingHasVideo = true;
 
@@ -181,48 +192,105 @@ export class CallService {
     }));
   }
 
+  /** Applies remote SDP from the SFU, handling renegotiation and offer glare. */
+  private async applyRemoteSdp(sdp: RTCSessionDescriptionInit) {
+    const pc = this.pc;
+    if (!pc) return;
+
+    if (sdp.type === 'offer') {
+      if (pc.signalingState === 'have-local-offer') {
+        await pc.setLocalDescription({ type: 'rollback' });
+      }
+      await pc.setRemoteDescription(sdp);
+      if (pc.signalingState === 'have-remote-offer') {
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        this.sendSfuMessage({ type: 'Answer', sdp: JSON.stringify(answer) });
+      }
+      return;
+    }
+
+    if (sdp.type === 'answer' && pc.signalingState === 'have-local-offer') {
+      await pc.setRemoteDescription(sdp);
+    }
+  }
+
   private async connectToSfu(roomId: string) {
+    const callBaseUrl =
+      import.meta.env.VITE_CALL_URL ||
+      (typeof window !== 'undefined' ? window.location.origin : '');
+
+    let tokenQuery = '';
+    try {
+      const token = await getToken();
+      if (token) tokenQuery = `?token=${encodeURIComponent(token)}`;
+    } catch {
+      appendLog('[Call] SFU WS: pas de JWT en mémoire, cookie canari_ws_token uniquement');
+    }
+
+    const wsUrl = callBaseUrl.replace(/^http/, 'ws') + `/api/call${tokenQuery}`;
+    appendLog(`[Call] connecting SFU WebSocket ${wsUrl.replace(/token=[^&]+/, 'token=***')}`);
+
     return new Promise<void>((resolve, reject) => {
-      const callBaseUrl =
-        import.meta.env.VITE_CALL_URL ||
-        (typeof window !== 'undefined' ? window.location.origin : '');
+      const ws = new WebSocket(wsUrl);
+      this.signaledWs = ws;
+      let settled = false;
 
-      const wsUrl = callBaseUrl.replace(/^http/, 'ws') + `/api/call`;
-      appendLog(`[Call] connecting SFU WebSocket ${wsUrl}`);
-      this.signaledWs = new WebSocket(wsUrl);
+      const fail = (err: unknown) => {
+        if (settled) return;
+        settled = true;
+        reject(err);
+      };
 
-      this.signaledWs.onopen = () => {
+      const timeout = window.setTimeout(() => {
+        fail(new Error('SFU WebSocket connection timeout (15s)'));
+        ws.close();
+      }, 15_000);
+
+      ws.onopen = () => {
+        window.clearTimeout(timeout);
         appendLog('[Call] connected to SFU');
         this.sendSfuMessage({ type: 'Join', room_id: roomId });
-        void this.initPeerConnection().then(resolve).catch(reject);
+        void this.initPeerConnection()
+          .then(() => {
+            if (!settled) {
+              settled = true;
+              resolve();
+            }
+          })
+          .catch(fail);
       };
 
-      this.signaledWs.onerror = (e) => {
-        console.error('SFU WebSocket Error', e);
-        reject(e);
+      ws.onerror = () => {
+        window.clearTimeout(timeout);
+        appendLog('[Call] SFU WebSocket error');
+        fail(new Error('SFU WebSocket connection failed'));
       };
 
-      this.signaledWs.onmessage = async (event) => {
+      ws.onclose = (ev) => {
+        window.clearTimeout(timeout);
+        if (!settled) {
+          fail(new Error(`SFU WebSocket closed before ready (code=${ev.code})`));
+        } else if (get(this.callState) !== 'idle') {
+          appendLog(`[Call] SFU WebSocket closed code=${ev.code}`);
+        }
+      };
+
+      ws.onmessage = async (event) => {
         if (!this.pc) return;
         try {
-          const msg = JSON.parse(event.data);
+          const msg = JSON.parse(event.data as string);
 
-          if (msg.type === 'Offer') {
-            const sdp = JSON.parse(msg.sdp);
-            await this.pc.setRemoteDescription(new RTCSessionDescription(sdp));
-            if (sdp.type === 'offer') {
-              const answer = await this.pc.createAnswer();
-              await this.pc.setLocalDescription(answer);
-              this.sendSfuMessage({ type: 'Answer', sdp: JSON.stringify(answer) });
-            }
-          } else if (msg.type === 'Answer') {
-            const sdp = JSON.parse(msg.sdp);
-            await this.pc.setRemoteDescription(new RTCSessionDescription(sdp));
+          if (msg.type === 'Offer' || msg.type === 'Answer') {
+            const sdp = JSON.parse(msg.sdp) as RTCSessionDescriptionInit;
+            await this.applyRemoteSdp(sdp);
           } else if (msg.type === 'IceCandidate') {
             const candidate = JSON.parse(msg.candidate);
             await this.pc.addIceCandidate(new RTCIceCandidate(candidate));
           }
         } catch (err) {
+          const detail = err instanceof Error ? err.message : String(err);
+          appendLog(`[Call] signaling error: ${detail}`);
           console.error('Signaling error:', err);
         }
       };
@@ -276,6 +344,13 @@ export class CallService {
       if (state === 'connected' && get(this.callState) !== 'idle') {
         this.callState.set('incall');
       }
+      if (state === 'failed' || state === 'disconnected') {
+        appendLog(`[Call] WebRTC peer connection ${state}`);
+      }
+    };
+
+    this.pc.oniceconnectionstatechange = () => {
+      appendLog(`[Call] iceConnectionState=${this.pc?.iceConnectionState}`);
     };
 
     if (this.localStream) {

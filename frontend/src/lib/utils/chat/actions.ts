@@ -10,6 +10,44 @@ import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
  * Extracts the other user's ID from a DM group name formatted as "userA::userB".
  * Returns null when the name does not match the pattern (i.e. for named group chats).
  */
+type InviteTargetDevice = {
+  keyPackage: Uint8Array;
+  deviceId: string;
+  deviceName?: string;
+  deviceOs?: string;
+  deviceAppVersion?: string;
+};
+
+/**
+ * Resolves a pending device's KeyPackage for MLS add / Welcome.
+ * Tries the user device list first, then a per-device fetch (no 30-day list cutoff).
+ */
+async function resolveInviteTargetDevice(
+  mlsService: IMlsService,
+  userId: string,
+  deviceId: string
+): Promise<InviteTargetDevice | null> {
+  const listed = await mlsService.fetchUserDevices(userId);
+  const fromList = listed.find((d) => d.deviceId === deviceId);
+  if (fromList) return fromList;
+  return mlsService.fetchDeviceKeyPackage(userId, deviceId);
+}
+
+/**
+ * Drops a server-side pending membership when the target device no longer exists
+ * (revoked, deleted, or never registered a KeyPackage).
+ */
+async function abandonOrphanPendingInvite(
+  mlsService: IMlsService,
+  inv: { userId: string; deviceId: string; groupId: string },
+  log: (msg: string) => void
+): Promise<void> {
+  await mlsService.deleteDeviceMembership(inv.userId, inv.deviceId, inv.groupId).catch(() => {});
+  log(
+    `[PENDING] Appareil ${inv.deviceId} introuvable ou révoqué — invitation orpheline supprimée (${inv.groupId})`
+  );
+}
+
 function parseDirectPeerFromName(rawName: string, userId: string): string | null {
   const parts = rawName
     .split('::')
@@ -172,11 +210,13 @@ export async function processPendingInvitations(params: {
 
       for (const inv of currentPending) {
         try {
-          // Fetch fresh KeyPackage for the pending device
-          const devices = await mlsService.fetchUserDevices(inv.userId);
-          const targetDevice = devices.find((d) => d.deviceId === inv.deviceId);
+          const targetDevice = await resolveInviteTargetDevice(
+            mlsService,
+            inv.userId,
+            inv.deviceId
+          );
           if (!targetDevice) {
-            log(`[PENDING] KeyPackage introuvable pour ${inv.deviceId} — skip`);
+            await abandonOrphanPendingInvite(mlsService, inv, log);
             continue;
           }
 
@@ -661,11 +701,15 @@ export async function handleWelcomeRequest(params: {
   }
 
   try {
-    // Récupérer le KeyPackage frais du device demandeur
-    const devices = await mlsService.fetchUserDevices(requesterUserId);
-    const targetDevice = devices.find((d) => d.deviceId === requesterDeviceId);
+    let targetDevice = await resolveInviteTargetDevice(
+      mlsService,
+      requesterUserId,
+      requesterDeviceId
+    );
     if (!targetDevice) {
-      log(`[WELCOME_REQ] KeyPackage introuvable pour ${requesterDeviceId} — skip`);
+      log(
+        `[WELCOME_REQ] Appareil ${requesterDeviceId} introuvable ou révoqué (pas de KeyPackage) — skip`
+      );
       return;
     }
 
@@ -693,15 +737,18 @@ export async function handleWelcomeRequest(params: {
         // Court délai pour la propagation du commit de remove
         await new Promise((r) => setTimeout(r, 150));
 
-        // Re-fetch le KeyPackage (peut avoir changé après le kick)
-        const freshDevices = await mlsService.fetchUserDevices(requesterUserId);
-        const freshDevice = freshDevices.find((d) => d.deviceId === requesterDeviceId);
+        const freshDevice = await resolveInviteTargetDevice(
+          mlsService,
+          requesterUserId,
+          requesterDeviceId
+        );
         if (!freshDevice) {
-          log(`[WELCOME_REQ] KeyPackage introuvable après kick pour ${requesterDeviceId} — skip`);
+          log(
+            `[WELCOME_REQ] Appareil ${requesterDeviceId} introuvable après kick (pas de KeyPackage) — skip`
+          );
           return;
         }
-        // Mettre à jour la référence pour l'ajout ci-dessous
-        targetDevice.keyPackage = freshDevice.keyPackage;
+        targetDevice = freshDevice;
       }
     } catch {
       // En cas d'erreur sur la vérification, on tente quand même l'ajout
