@@ -236,7 +236,9 @@ export class CallService {
       if (pc.signalingState === 'have-remote-offer') {
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
+        appendLog(`[Call] SFU renegotiation → Answer (${answer.sdp?.length ?? 0} bytes)`);
         this.sendSfuMessage({ type: 'Answer', sdp: JSON.stringify(answer) });
+        this.attachMediaTransforms();
       }
       return;
     }
@@ -344,6 +346,8 @@ export class CallService {
             await this.applyRemoteSdp(sdp);
             if (msg.type === 'Answer') {
               this.attachMediaTransforms();
+            } else if (msg.type === 'Offer') {
+              appendLog('[Call] SFU renegotiation offer handled');
             }
           } else if (msg.type === 'IceCandidate') {
             const candidate = JSON.parse(msg.candidate);

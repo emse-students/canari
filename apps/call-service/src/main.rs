@@ -52,6 +52,8 @@ struct AppState {
 struct Room {
     tracks: Mutex<Vec<Arc<TrackLocalStaticRTP>>>,
     peers: DashMap<PeerId, PeerContext>,
+    /// Per-peer generation counter to debounce renegotiation (audio + video = one offer).
+    renegotiate_gen: DashMap<PeerId, u64>,
 }
 
 struct PeerContext {
@@ -212,6 +214,7 @@ async fn handle_signal(
                     Arc::new(Room {
                         tracks: Mutex::new(Vec::new()),
                         peers: DashMap::new(),
+                        renegotiate_gen: DashMap::new(),
                     })
                 })
                 .value()
@@ -318,21 +321,7 @@ async fn handle_signal(
                                 continue;
                             }
 
-                            if let Ok(offer) = other_ctx.pc.create_offer(None).await {
-                                if other_ctx
-                                    .pc
-                                    .set_local_description(offer.clone())
-                                    .await
-                                    .is_ok()
-                                {
-                                    let _ = other_ctx
-                                        .notify_tx
-                                        .send(SignalMessage::Offer {
-                                            sdp: serde_json::to_string(&offer).unwrap(),
-                                        })
-                                        .await;
-                                }
-                            }
+                            schedule_renegotiate(room_clone.clone(), other_pid.clone());
                         }
                     })
                 },
@@ -394,7 +383,11 @@ async fn handle_signal(
                 if let Some(room) = state.rooms.get(room_id) {
                     if let Some(ctx) = room.peers.get(peer_id) {
                         if let Ok(sdp_obj) = serde_json::from_str::<RTCSessionDescription>(&sdp) {
-                            let _ = ctx.pc.set_remote_description(sdp_obj).await;
+                            if let Err(e) = ctx.pc.set_remote_description(sdp_obj).await {
+                                error!("Set remote answer error for {}: {}", peer_id, e);
+                            } else {
+                                info!("Renegotiation answer applied for {}", peer_id);
+                            }
                         }
                     }
                 }
@@ -435,6 +428,76 @@ struct CloudflareIceServer {
 
 fn urls_include_turn(urls: &[String]) -> bool {
     urls.iter().any(|u| u.starts_with("turn:") || u.starts_with("turns:"))
+}
+
+/// webrtc-rs only supports TURN over UDP; Cloudflare also returns TCP/TLS URLs.
+fn filter_urls_for_sfu(urls: Vec<String>) -> Vec<String> {
+    urls.into_iter()
+        .filter(|u| {
+            if u.starts_with("stun:") {
+                return true;
+            }
+            if !u.starts_with("turn:") {
+                return false;
+            }
+            !u.starts_with("turns:")
+                && !u.contains("transport=tcp")
+                && !u.contains(":80?")
+                && !u.contains(":80/")
+                && !u.contains(":443?")
+                && !u.contains(":443/")
+        })
+        .collect()
+}
+
+/// Debounces SFU→client offers when several tracks arrive at once (e.g. audio + video).
+fn schedule_renegotiate(room: Arc<Room>, target_peer_id: PeerId) {
+    let generation = {
+        let mut entry = room
+            .renegotiate_gen
+            .entry(target_peer_id.clone())
+            .or_insert(0);
+        *entry += 1;
+        *entry
+    };
+
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+        let still_current = room
+            .renegotiate_gen
+            .get(&target_peer_id)
+            .map(|g| *g == generation)
+            .unwrap_or(false);
+        if !still_current {
+            return;
+        }
+
+        let Some(ctx) = room.peers.get(&target_peer_id) else {
+            return;
+        };
+
+        match ctx.pc.create_offer(None).await {
+            Ok(offer) => {
+                if ctx.pc.set_local_description(offer.clone()).await.is_ok() {
+                    info!(
+                        "Renegotiation offer → {} (signaling={:?})",
+                        target_peer_id,
+                        ctx.pc.signaling_state()
+                    );
+                    let _ = ctx
+                        .notify_tx
+                        .send(SignalMessage::Offer {
+                            sdp: serde_json::to_string(&offer).unwrap(),
+                        })
+                        .await;
+                } else {
+                    error!("Renegotiation set_local_description failed for {}", target_peer_id);
+                }
+            }
+            Err(e) => error!("Renegotiation create_offer failed for {}: {}", target_peer_id, e),
+        }
+    });
 }
 
 /// Builds an `RTCIceServer` for webrtc-rs (requires `Password` credential type for TURN URLs).
@@ -509,10 +572,10 @@ async fn fetch_cloudflare_ice_servers() -> Option<Vec<RTCIceServer>> {
                 serde_json::Value::Array(arr) => arr
                     .iter()
                     .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .filter(|u| !u.contains(":53"))
                     .collect(),
                 _ => return None,
             };
+            let urls = filter_urls_for_sfu(urls);
             if urls.is_empty() {
                 return None;
             }
