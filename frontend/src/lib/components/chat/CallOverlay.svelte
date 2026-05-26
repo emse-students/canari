@@ -49,15 +49,12 @@
 
   let remoteEntries = $derived([...remoteStreamsMap.entries()]);
 
-  /** Prefer a stream that actually carries video (not audio-only). */
-  function pickDisplayStream(): MediaStream | null {
+  let primaryRemoteStream = $derived.by(() => {
     for (const [, stream] of remoteStreamsMap) {
       if (stream.getVideoTracks().length > 0) return stream;
     }
-    return remoteStreamVal ?? remoteEntries[0]?.[1] ?? null;
-  }
-
-  let primaryRemoteStream = $derived(pickDisplayStream());
+    return remoteStreamVal;
+  });
   let primaryParticipant = $derived(participants[0]);
   let isGroupCall = $derived(participants.length > 1);
   /** Grid only for multi-party; audio+video from one peer stay on a single tile. */

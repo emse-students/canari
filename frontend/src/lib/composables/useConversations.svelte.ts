@@ -143,14 +143,19 @@ export function useConversations() {
     selectedContact ? (conversations.get(selectedContact) ?? null) : null
   );
 
-  /** Clears selection when the map no longer has the key (reload, migration, channel kick). */
-  $effect(() => {
-    const key = selectedContact;
-    if (!key) return;
-    if (!conversations.has(key)) {
-      selectedContact = null;
-      sendError = '';
-    }
+  /**
+   * Clears selection when the map no longer has the key (reload, migration, channel kick).
+   * `$effect.root` — this composable is instantiated at module load in `globalChatSingleton`.
+   */
+  $effect.root(() => {
+    $effect(() => {
+      const key = selectedContact;
+      if (!key) return;
+      if (!conversations.has(key)) {
+        selectedContact = null;
+        sendError = '';
+      }
+    });
   });
 
   // ── Storage helpers ───────────────────────────────────────────────────────
