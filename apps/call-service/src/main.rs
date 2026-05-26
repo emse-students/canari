@@ -430,24 +430,45 @@ fn urls_include_turn(urls: &[String]) -> bool {
     urls.iter().any(|u| u.starts_with("turn:") || u.starts_with("turns:"))
 }
 
-/// webrtc-rs only supports TURN over UDP; Cloudflare also returns TCP/TLS URLs.
+/// Returns true when Cloudflare (or env) gave a URL that webrtc-rs must not use.
+fn ice_url_blocked_for_sfu(url: &str) -> bool {
+    if url.starts_with("stun:") {
+        return false;
+    }
+    if !url.starts_with("turn:") || url.starts_with("turns:") {
+        return true;
+    }
+    if url.contains("transport=tcp") {
+        return true;
+    }
+    // Port 53 (DNS) — blocked in browsers; webrtc-rs TURN client fails allocation.
+    if url.contains(":53?") || url.ends_with(":53") {
+        return true;
+    }
+    if url.contains(":80?")
+        || url.ends_with(":80")
+        || url.contains(":443?")
+        || url.ends_with(":443")
+    {
+        return true;
+    }
+    false
+}
+
+/// webrtc-rs only supports TURN/UDP on standard ports; Cloudflare returns tcp/tls/53 too.
 fn filter_urls_for_sfu(urls: Vec<String>) -> Vec<String> {
-    urls.into_iter()
-        .filter(|u| {
-            if u.starts_with("stun:") {
-                return true;
-            }
-            if !u.starts_with("turn:") {
-                return false;
-            }
-            !u.starts_with("turns:")
-                && !u.contains("transport=tcp")
-                && !u.contains(":80?")
-                && !u.contains(":80/")
-                && !u.contains(":443?")
-                && !u.contains(":443/")
-        })
-        .collect()
+    let before = urls.len();
+    let filtered: Vec<String> = urls
+        .into_iter()
+        .filter(|u| !ice_url_blocked_for_sfu(u))
+        .collect();
+    if filtered.len() < before {
+        warn!(
+            "[ICE] dropped {} URL(s) unusable by SFU (port 53, tcp, or tls)",
+            before - filtered.len()
+        );
+    }
+    filtered
 }
 
 /// Debounces SFU→client offers when several tracks arrive at once (e.g. audio + video).
