@@ -42,6 +42,10 @@
     currentUserId?: string;
     /** JWT auth token forwarded to message bubbles for media decryption. */
     authToken: string;
+    /** When true, suppresses sender names (conversation is 1-to-1). */
+    isDirect?: boolean;
+    /** When true, enables mobile-specific interactions in message bubbles. */
+    isMobile?: boolean;
   }
 
   let {
@@ -59,6 +63,8 @@
     switchTime,
     currentUserId = '',
     authToken,
+    isDirect = false,
+    isMobile = false,
   }: Props = $props();
 
   let resolvedSenderNames = $state<Record<string, string>>({});
@@ -193,7 +199,7 @@
         : continuesToNext
           ? 'start'
           : 'single'}
-      {@const showSender = !msg.isOwn && groupPosition !== 'middle' && groupPosition !== 'end'}
+      {@const showSender = !msg.isOwn && !isDirect && groupPosition !== 'middle' && groupPosition !== 'end'}
 
       {#if msg.isSystem}
         <div class="flex justify-center my-3">
@@ -211,6 +217,7 @@
             {currentUserId}
             shouldAnimate={msg.timestamp.getTime() > switchTime}
             {authToken}
+            {isMobile}
           />
         </div>
       {:else}
@@ -270,6 +277,7 @@
               shouldAnimate={msg.timestamp.getTime() > switchTime}
               searchTerm={searchQuery}
               {authToken}
+              {isMobile}
             />
           </div>
         </div>

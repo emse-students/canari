@@ -1,6 +1,6 @@
 <script lang="ts">
   import { ShieldCheck, TriangleAlert, Loader2 } from '@lucide/svelte';
-  import { ArrowDown, Search, ChevronUp, ChevronDown, X } from '@lucide/svelte';
+  import { ArrowDown, Search, ChevronUp, ChevronDown, X, ChevronLeft } from '@lucide/svelte';
   import { tick, untrack } from 'svelte';
   import { slide } from 'svelte/transition';
   import ChatHeader from './ChatHeader.svelte';
@@ -550,6 +550,8 @@
           {onEdit}
           {switchTime}
           {authToken}
+          isDirect={conversation.conversationType === 'direct'}
+          isMobile={_isMobile}
         />
       {/if}
       </div>
@@ -591,6 +593,14 @@
         <span class="inline-flex items-center justify-center w-full h-full">
           <ArrowDown size={18} />
         </span>
+        {#if hiddenBelowCount > 0}
+          <span
+            class="absolute -top-1.5 -right-1.5 min-w-[1.25rem] h-5 px-1 rounded-full bg-amber-500 text-cn-dark text-[0.6rem] font-extrabold inline-flex items-center justify-center shadow-sm shadow-amber-500/30 pointer-events-none"
+            aria-hidden="true"
+          >
+            {hiddenBelowCount > 99 ? '99+' : hiddenBelowCount}
+          </span>
+        {/if}
       </button>
     {/if}
 
@@ -613,6 +623,19 @@
       />
     </div>
   {:else}
+    {#if onBack}
+      <!-- Safety net: when a conversation ID is selected but its object is null (e.g. load race),
+           the back button must still be reachable on mobile or the user is completely stuck. -->
+      <header class="md:hidden bg-white/70 dark:bg-black/50 px-3 py-3 border-b border-black/5 dark:border-white/10 flex items-center backdrop-blur-2xl z-20">
+        <button
+          onclick={onBack}
+          aria-label="Retour au menu"
+          class="p-1 rounded-xl text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10 active:scale-95 transition-all"
+        >
+          <ChevronLeft size={24} />
+        </button>
+      </header>
+    {/if}
     <EmptyState
       icon={ShieldCheck}
       title="Aucun échange sélectionné"

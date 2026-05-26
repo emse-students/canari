@@ -100,9 +100,11 @@
   });
 
   function handleComposerKeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    // Guard: !e.isComposing prevents Enter from sending when the IME is selecting a suggestion.
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       if (!isSendDisabled) {
+        mentionComposer?.commitComposition();
         onSend();
         mentionComposer?.clearEditor();
         tick().then(() => mentionComposer?.focusEditor());
@@ -461,7 +463,7 @@
       <div class="shrink-0 pr-1">
         <button
           onmousedown={(e) => e.preventDefault()}
-          onclick={() => { onSend(); mentionComposer?.clearEditor(); }}
+          onclick={() => { mentionComposer?.commitComposition(); onSend(); mentionComposer?.clearEditor(); }}
           disabled={isSendDisabled}
           aria-label="Envoyer le message"
           class="chat-composer-send-button {isSendDisabled ? 'is-disabled' : ''}"

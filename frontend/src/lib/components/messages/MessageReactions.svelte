@@ -74,7 +74,9 @@
         aria-label="{emoji} ({users.length} personnes)"
       >
         <span class="text-[1.1rem] leading-none drop-shadow-sm">{emoji}</span>
-        <span class="text-[0.7rem] font-bold">{users.length}</span>
+        {#if users.length > 1}
+          <span class="text-[0.7rem] font-bold">{users.length}</span>
+        {/if}
       </button>
     {/each}
   </div>

@@ -6,7 +6,7 @@
     /** ID of the user whose avatar should be displayed. */
     userId: string;
     /** Avatar size preset. */
-    size?: 'sm' | 'md' | 'lg';
+    size?: 'xs' | 'sm' | 'md' | 'lg';
     /** When true, the avatar stretches to fill its container instead of using a preset size. */
     fill?: boolean;
     /** Border-radius style of the avatar. */
@@ -61,11 +61,13 @@
   const sizeClasses = $derived(
     fill
       ? 'w-full h-full text-base'
-      : size === 'sm'
-        ? 'w-6 h-6 text-xs'
-        : size === 'lg'
-          ? 'w-12 h-12 text-base'
-          : 'w-8 h-8 text-sm'
+      : size === 'xs'
+        ? 'w-4 h-4 text-[0.5rem]'
+        : size === 'sm'
+          ? 'w-6 h-6 text-xs'
+          : size === 'lg'
+            ? 'w-12 h-12 text-base'
+            : 'w-8 h-8 text-sm'
   );
   const shapeClasses = $derived(shape === 'circle' ? 'rounded-full' : 'rounded-2xl');
 </script>

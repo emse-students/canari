@@ -220,6 +220,23 @@
     return editorEl;
   }
 
+  /**
+   * @public — Flushes any active IME composition into the value before sending.
+   * Must be called right before onSend() to prevent the last uncomposed word from being lost.
+   */
+  export function commitComposition() {
+    if (!editorEl || isApplyingDom) return;
+    if (!isComposing) return;
+    const text = clampText(serializeMentionEditor(editorEl));
+    isComposing = false;
+    if (text !== value) {
+      value = text;
+      lastRenderedValue = text;
+      editorHasContent = text.length > 0;
+      onchange?.(text);
+    }
+  }
+
   /** @public — Force-clears the editor immediately without waiting for reactive prop propagation. */
   export function clearEditor() {
     if (!editorEl) return;

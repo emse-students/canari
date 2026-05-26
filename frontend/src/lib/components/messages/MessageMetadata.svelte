@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { LoaderCircle, TriangleAlert, CheckCheck, Check } from '@lucide/svelte';
+  import { LoaderCircle, TriangleAlert, Check, CheckCheck } from '@lucide/svelte';
   import { formatTime24 } from '$lib/utils/dates';
+  import Avatar from '../shared/Avatar.svelte';
 
   interface Props {
     /** When true, shows an "(modifié)" label. */
@@ -15,10 +16,17 @@
     status?: 'sending' | 'sent' | 'error';
     /** List of user IDs who have read the message. */
     readBy: string[];
-    /** Timestamp of first read receipt (Date.now() on receiving device). */
+    /** Timestamp of first read receipt — kept for API compat, detail shown in tooltip. */
     readAt?: number;
-    /** When true, renders outside the bubble (below reactions). */
+    /** When true, renders outside the bubble (delivery/read indicators). */
     outsideBubble?: boolean;
+    /** Send time of the message, shown inside the bubble. */
+    timestamp?: Date;
+    /**
+     * Group position of the message within a run of consecutive messages from the same sender.
+     * Timestamp is suppressed on 'start' and 'middle' to reduce clutter (shown only on the last).
+     */
+    groupPosition?: 'single' | 'start' | 'middle' | 'end';
   }
 
   let {
@@ -28,18 +36,19 @@
     isReadReceiptAnchor = false,
     status,
     readBy,
-    readAt,
+    readAt: _readAt,
     outsideBubble = false,
+    timestamp,
+    groupPosition,
   }: Props = $props();
 
-  const readLabel = $derived(() => {
-    let label = `Lu${readBy.length > 1 ? ` (${readBy.length})` : ''}`;
-    if (readAt != null && Number.isFinite(readAt)) {
-      label += ` à ${formatTime24(readAt)}`;
-    }
-    return label;
-  });
-
+  // Show timestamp on the last message of a group only (end/single), never mid-run.
+  const showTimestamp = $derived(
+    !outsideBubble &&
+      !!timestamp &&
+      groupPosition !== 'start' &&
+      groupPosition !== 'middle'
+  );
   const showEdited = $derived(isEdited && !outsideBubble);
   const showSendStatus = $derived(
     isOwn && isLastOwn && !outsideBubble && (status === 'sending' || status === 'error')
@@ -53,15 +62,20 @@
       readBy.length === 0
   );
   const showRead = $derived(isOwn && isReadReceiptAnchor && outsideBubble && readBy.length > 0);
-  const show = $derived(showEdited || showSendStatus || showSent || showRead);
+  const show = $derived(showTimestamp || showEdited || showSendStatus || showSent || showRead);
 </script>
 
 {#if show}
   <div
     class="flex w-full items-center gap-1.5 {outsideBubble
       ? 'mt-0.5 justify-end px-0.5'
-      : 'mt-1.5 justify-end'}"
+      : 'mt-1 justify-end'}"
   >
+    {#if showTimestamp}
+      <span class="text-[0.65rem] opacity-50 font-medium tabular-nums">
+        {formatTime24(timestamp!)}
+      </span>
+    {/if}
     {#if showEdited}
       <span class="italic text-[0.65rem] opacity-65 font-medium">(modifié)</span>
     {/if}
@@ -78,16 +92,24 @@
         </span>
       {/if}
     {:else if showSent}
-      <span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold opacity-80">
-        <Check size={12} strokeWidth={2.4} />
-        Envoyé
+      <!-- Single check icon only — no text -->
+      <span class="inline-flex items-center opacity-50">
+        <Check size={12} strokeWidth={2.5} />
       </span>
     {:else if showRead}
-      <span
-        class="inline-flex items-center gap-1 text-[0.65rem] font-bold text-emerald-700 dark:text-emerald-400"
-      >
-        <CheckCheck size={12} strokeWidth={2.5} />
-        {readLabel()}
+      <!-- Tiny reader avatars + double-check (tap bubble for names/time detail) -->
+      <span class="inline-flex items-center gap-0.5">
+        {#each readBy.slice(0, 3) as userId (userId)}
+          <Avatar {userId} size="xs" shape="circle" />
+        {/each}
+        {#if readBy.length > 3}
+          <span class="text-[0.6rem] font-bold opacity-70">+{readBy.length - 3}</span>
+        {/if}
+        <CheckCheck
+          size={12}
+          strokeWidth={2.5}
+          class="ml-0.5 text-emerald-500 dark:text-emerald-400"
+        />
       </span>
     {/if}
   </div>

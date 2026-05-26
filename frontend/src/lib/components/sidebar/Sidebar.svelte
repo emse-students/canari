@@ -159,6 +159,13 @@
     }
   });
 
+  // Auto-select the first workspace when entering communities mode so the
+  // gear icon and channel list are immediately visible (avoids an empty panel).
+  $effect(() => {
+    if (viewMode !== 'communities' || selectedCommunityWorkspaceId || channelWorkspaces.length === 0) return;
+    selectedCommunityWorkspaceId = channelWorkspaces[0].id;
+  });
+
   interface ChannelItem {
     id: string;
     name: string;
@@ -288,8 +295,6 @@
             : 'opacity-70 hover:opacity-100 hover:rounded-xl'}"
           onclick={() => {
             selectedCommunityWorkspaceId = workspace.id;
-            const firstChannel = workspace.channels[0];
-            if (firstChannel) onSelectChannelConversation?.(firstChannel.id);
           }}
           title={workspace.name}
           aria-label={workspace.name}

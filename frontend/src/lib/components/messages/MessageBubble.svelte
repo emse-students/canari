@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { CornerDownRight, EllipsisVertical, Info, Hash } from '@lucide/svelte';
+  import { CornerDownRight, Info, Hash } from '@lucide/svelte';
   import { MediaService } from '$lib/media';
   import type { MediaRef } from '$lib/media';
   import { parseEnvelope } from '$lib/envelope';
@@ -8,7 +8,6 @@
   import MessageMediaRenderer from './MessageMediaRenderer.svelte';
   import MessageEditForm from './MessageEditForm.svelte';
   import MessageReactions from './MessageReactions.svelte';
-  import MessageMobileActions from './MessageMobileActions.svelte';
   import MessageInfoTooltip from './MessageInfoTooltip.svelte';
   import MessageReplyQuote from './MessageReplyQuote.svelte';
   import MessageTextBody from './MessageTextBody.svelte';
@@ -95,6 +94,8 @@
     searchTerm?: string;
     /** Delivery status of an outbound message; controls the status indicator icon. */
     status?: 'sending' | 'sent' | 'error';
+    /** When true, enables mobile-specific interactions: long press toolbar, double-tap heart. */
+    isMobile?: boolean;
   }
 
   let {
@@ -125,6 +126,7 @@
     isHighlighted = false,
     searchTerm = '',
     status,
+    isMobile = false,
   }: Props = $props();
 
   let bubbleAnchor = $state<HTMLElement | null>(null);
@@ -139,6 +141,7 @@
   let mediaPurgedByRetention = $state(false);
   let supportsHover = $state(true);
   let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastTapTime = 0;
   let pointerStartX = $state(0);
   let pointerStartY = $state(0);
   let swipeHandled = $state(false);
@@ -216,6 +219,22 @@
       e.stopPropagation();
       return;
     }
+
+    // Double-tap on mobile: react with ❤️ instead of toggling info
+    if (isMobile && !isDeleted && onReact) {
+      const now = Date.now();
+      if (now - lastTapTime < 300) {
+        lastTapTime = 0;
+        showInfo = false;
+        onReact(messageId, '❤️');
+        if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+          navigator.vibrate(12);
+        }
+        return;
+      }
+      lastTapTime = now;
+    }
+
     toggleInfo(e);
   }
 
@@ -228,17 +247,6 @@
     e.stopPropagation();
     showEmojiPicker = false;
     showInfo = !showInfo;
-  }
-
-  function openMobileActions(e: MouseEvent) {
-    e.stopPropagation();
-    showEmojiPicker = false;
-    showInfo = false;
-    showMobileActions = true;
-  }
-
-  function closeMobileActions() {
-    showMobileActions = false;
   }
 
   function canSwipeReply(pointerType?: string): boolean {
@@ -266,20 +274,23 @@
     replyDragPx = 0;
 
     const pointerType = 'pointerType' in e ? e.pointerType : 'touch';
+
+    // Long press: arm on any non-mouse touch event on mobile
+    if (pointerType !== 'mouse' && isMobile) {
+      if (longPressTimer) clearTimeout(longPressTimer);
+      longPressTimer = setTimeout(() => {
+        if (replyGesture?.phase === 'horizontal') return;
+        showMobileActions = true;
+        showEmojiPicker = false;
+        showInfo = false;
+        if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+          navigator.vibrate(10);
+        }
+      }, 420);
+    }
+
     if (!canSwipeReply(pointerType)) return;
-
     replyGesture = createReplySwipeGesture(x, y);
-
-    if (longPressTimer) clearTimeout(longPressTimer);
-    longPressTimer = setTimeout(() => {
-      if (replyGesture?.phase === 'horizontal') return;
-      showMobileActions = true;
-      showEmojiPicker = false;
-      showInfo = false;
-      if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
-        navigator.vibrate(10);
-      }
-    }, 420);
   }
 
   function handleSwipeReply(e: PointerEvent | TouchEvent) {
@@ -446,18 +457,6 @@
     }}
     class="group relative flex max-w-full flex-col {isOwn ? 'items-end' : 'items-start'}"
   >
-    <!-- Bouton Mobile (Ellipsis) -->
-    <button
-      type="button"
-      onclick={openMobileActions}
-      class="absolute top-1/2 -translate-y-1/2 {isOwn
-        ? 'right-full mr-2'
-        : 'left-full ml-2'} md:hidden z-10 p-1.5 rounded-full bg-white/80 dark:bg-black/60 border border-black/5 dark:border-white/10 text-text-muted backdrop-blur-sm shadow-sm"
-      aria-label="Ouvrir les actions du message"
-    >
-      <EllipsisVertical size={16} />
-    </button>
-
     <div class="relative w-fit max-w-full">
       {#if replyDragPx !== 0 && onReply}
         <div
@@ -554,6 +553,8 @@
         {status}
         {readBy}
         {readAt}
+        {timestamp}
+        {groupPosition}
       />
     </div>
 
@@ -562,6 +563,7 @@
         {isDeleted}
         hasMedia={!!mediaRef}
         {showEmojiPicker}
+        forceVisible={showMobileActions && isMobile}
         onReply={onReply ? () => onReply!(messageId) : undefined}
         onToggleEmojiPicker={onReact
           ? () => {
@@ -606,17 +608,6 @@
 
     <MessageInfoTooltip visible={showInfo} {timestamp} {editedAt} {readBy} {isOwn} {isEdited} />
 
-    <MessageMobileActions
-      visible={showMobileActions}
-      {isOwn}
-      {isDeleted}
-      hasMedia={!!mediaRef}
-      onReply={() => onReply?.(messageId)}
-      onReact={() => (showEmojiPicker = true)}
-      onEdit={startInlineEdit}
-      onDelete={() => (showDeleteModal = true)}
-      onClose={closeMobileActions}
-    />
   </div>
 
   <Modal

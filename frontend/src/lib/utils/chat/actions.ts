@@ -10,44 +10,6 @@ import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
  * Extracts the other user's ID from a DM group name formatted as "userA::userB".
  * Returns null when the name does not match the pattern (i.e. for named group chats).
  */
-type InviteTargetDevice = {
-  keyPackage: Uint8Array;
-  deviceId: string;
-  deviceName?: string;
-  deviceOs?: string;
-  deviceAppVersion?: string;
-};
-
-/**
- * Resolves a pending device's KeyPackage for MLS add / Welcome.
- * Tries the user device list first, then a per-device fetch (no 30-day list cutoff).
- */
-async function resolveInviteTargetDevice(
-  mlsService: IMlsService,
-  userId: string,
-  deviceId: string
-): Promise<InviteTargetDevice | null> {
-  const listed = await mlsService.fetchUserDevices(userId);
-  const fromList = listed.find((d) => d.deviceId === deviceId);
-  if (fromList) return fromList;
-  return mlsService.fetchDeviceKeyPackage(userId, deviceId);
-}
-
-/**
- * Drops a server-side pending membership when the target device no longer exists
- * (revoked, deleted, or never registered a KeyPackage).
- */
-async function abandonOrphanPendingInvite(
-  mlsService: IMlsService,
-  inv: { userId: string; deviceId: string; groupId: string },
-  log: (msg: string) => void
-): Promise<void> {
-  await mlsService.deleteDeviceMembership(inv.userId, inv.deviceId, inv.groupId).catch(() => {});
-  log(
-    `[PENDING] Appareil ${inv.deviceId} introuvable ou révoqué — invitation orpheline supprimée (${inv.groupId})`
-  );
-}
-
 function parseDirectPeerFromName(rawName: string, userId: string): string | null {
   const parts = rawName
     .split('::')
@@ -210,15 +172,26 @@ export async function processPendingInvitations(params: {
 
       for (const inv of currentPending) {
         try {
-          const targetDevice = await resolveInviteTargetDevice(
-            mlsService,
-            inv.userId,
-            inv.deviceId
-          );
+          // Fetch fresh KeyPackage for the pending device
+          const devices = await mlsService.fetchUserDevices(inv.userId);
+          const targetDevice = devices.find((d) => d.deviceId === inv.deviceId);
           if (!targetDevice) {
-            await abandonOrphanPendingInvite(mlsService, inv, log);
+            const failKey = `kp_missing:${inv.deviceId}:${groupId}`;
+            const failCount = (parseInt(localStorage.getItem(failKey) ?? '0', 10) || 0) + 1;
+            log(`[PENDING] KeyPackage introuvable pour ${inv.deviceId} — tentative ${failCount}/3`);
+            if (failCount >= 3) {
+              log(`[PENDING] ${inv.deviceId} introuvable 3x — archivage comme welcome_received`);
+              localStorage.removeItem(failKey);
+              await mlsService
+                .updateInvitationStatus(inv.deviceId, inv.userId, groupId, 'welcome_received')
+                .catch(() => {});
+            } else {
+              localStorage.setItem(failKey, String(failCount));
+            }
             continue;
           }
+          // Device found — reset any partial-failure counter
+          localStorage.removeItem(`kp_missing:${inv.deviceId}:${groupId}`);
 
           // Check if device is already in the MLS group (idempotency).
           // If the device is in the tree but Welcome was never received (e.g. sendWelcome
@@ -701,15 +674,11 @@ export async function handleWelcomeRequest(params: {
   }
 
   try {
-    let targetDevice = await resolveInviteTargetDevice(
-      mlsService,
-      requesterUserId,
-      requesterDeviceId
-    );
+    // Récupérer le KeyPackage frais du device demandeur
+    const devices = await mlsService.fetchUserDevices(requesterUserId);
+    const targetDevice = devices.find((d) => d.deviceId === requesterDeviceId);
     if (!targetDevice) {
-      log(
-        `[WELCOME_REQ] Appareil ${requesterDeviceId} introuvable ou révoqué (pas de KeyPackage) — skip`
-      );
+      log(`[WELCOME_REQ] KeyPackage introuvable pour ${requesterDeviceId} — skip`);
       return;
     }
 
@@ -737,18 +706,15 @@ export async function handleWelcomeRequest(params: {
         // Court délai pour la propagation du commit de remove
         await new Promise((r) => setTimeout(r, 150));
 
-        const freshDevice = await resolveInviteTargetDevice(
-          mlsService,
-          requesterUserId,
-          requesterDeviceId
-        );
+        // Re-fetch le KeyPackage (peut avoir changé après le kick)
+        const freshDevices = await mlsService.fetchUserDevices(requesterUserId);
+        const freshDevice = freshDevices.find((d) => d.deviceId === requesterDeviceId);
         if (!freshDevice) {
-          log(
-            `[WELCOME_REQ] Appareil ${requesterDeviceId} introuvable après kick (pas de KeyPackage) — skip`
-          );
+          log(`[WELCOME_REQ] KeyPackage introuvable après kick pour ${requesterDeviceId} — skip`);
           return;
         }
-        targetDevice = freshDevice;
+        // Mettre à jour la référence pour l'ajout ci-dessous
+        targetDevice.keyPackage = freshDevice.keyPackage;
       }
     } catch {
       // En cas d'erreur sur la vérification, on tente quand même l'ajout
