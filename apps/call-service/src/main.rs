@@ -17,6 +17,7 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::APIBuilder;
+use webrtc::ice_transport::ice_credential_type::RTCIceCredentialType;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::configuration::RTCConfiguration;
@@ -432,6 +433,32 @@ struct CloudflareIceServer {
     credential: Option<String>,
 }
 
+fn urls_include_turn(urls: &[String]) -> bool {
+    urls.iter().any(|u| u.starts_with("turn:") || u.starts_with("turns:"))
+}
+
+/// Builds an `RTCIceServer` for webrtc-rs (requires `Password` credential type for TURN URLs).
+fn build_rtc_ice_server(
+    urls: Vec<String>,
+    username: Option<String>,
+    credential: Option<String>,
+) -> RTCIceServer {
+    let username = username.unwrap_or_default();
+    let credential = credential.unwrap_or_default();
+    let credential_type = if urls_include_turn(&urls) && !username.is_empty() && !credential.is_empty()
+    {
+        RTCIceCredentialType::Password
+    } else {
+        RTCIceCredentialType::Unspecified
+    };
+    RTCIceServer {
+        urls,
+        username,
+        credential,
+        credential_type,
+    }
+}
+
 /// Mint short-lived TURN credentials from Cloudflare (same API as chat-delivery clients).
 async fn fetch_cloudflare_ice_servers() -> Option<Vec<RTCIceServer>> {
     let api_token = std::env::var("CLOUDFLARE_CALLS_API_TOKEN")
@@ -489,12 +516,7 @@ async fn fetch_cloudflare_ice_servers() -> Option<Vec<RTCIceServer>> {
             if urls.is_empty() {
                 return None;
             }
-            Some(RTCIceServer {
-                urls,
-                username: entry.username.unwrap_or_default(),
-                credential: entry.credential.unwrap_or_default(),
-                ..Default::default()
-            })
+            Some(build_rtc_ice_server(urls, entry.username, entry.credential))
         })
         .collect();
 
@@ -521,12 +543,11 @@ fn ice_servers_from_env() -> Vec<RTCIceServer> {
             .collect();
         if !urls.is_empty() {
             info!("SFU using TURN_URL env ({} URL(s))", urls.len());
-            return vec![RTCIceServer {
+            return vec![build_rtc_ice_server(
                 urls,
-                username: turn_user,
-                credential: turn_cred,
-                ..Default::default()
-            }];
+                Some(turn_user),
+                Some(turn_cred),
+            )];
         }
     }
 
