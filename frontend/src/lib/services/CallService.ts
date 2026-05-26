@@ -92,6 +92,8 @@ export class CallService {
       await this.connectToSfu(this.currentCallId!);
       await this.sendMlsNotification(groupId, mkCallInvite(this.currentCallId!, video));
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      appendLog(`[Call] startCall failed: ${msg}`);
       console.error('Error starting call:', e);
       this.endCall(false);
       throw e;
@@ -112,6 +114,8 @@ export class CallService {
       await this.setupEncryption(groupId, callId);
       await this.connectToSfu(callId);
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      appendLog(`[Call] acceptCall failed: ${msg}`);
       console.error('Error accepting call:', e);
       this.endCall();
     }
@@ -167,7 +171,23 @@ export class CallService {
 
     appendLog(`[Call] fetching ICE servers for group=${groupId}`);
 
-    const res = await apiFetch(url.toString(), { method: 'GET', credentials: 'include' });
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 12_000);
+    let res: Response;
+    try {
+      res = await apiFetch(url.toString(), {
+        method: 'GET',
+        credentials: 'include',
+        signal: controller.signal,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      appendLog(`[Call] ICE servers request failed: ${msg}`);
+      throw e;
+    } finally {
+      window.clearTimeout(timeout);
+    }
+
     if (!res.ok) {
       let detail = '';
       try {
@@ -175,6 +195,7 @@ export class CallService {
       } catch {
         /* ignore */
       }
+      appendLog(`[Call] ICE servers HTTP ${res.status}${detail ? `: ${detail}` : ''}`);
       throw new Error(`Failed to fetch ICE servers: ${res.status}${detail ? ` — ${detail}` : ''}`);
     }
 
@@ -182,14 +203,24 @@ export class CallService {
     const servers = data.iceServers ?? [];
 
     if (servers.length === 0) {
+      appendLog('[Call] ICE servers: empty response');
       throw new Error('No ICE servers returned');
     }
 
-    return servers.map((s) => ({
+    const mapped = servers.map((s) => ({
       urls: s.urls,
       username: s.username,
       credential: s.credential,
     }));
+
+    const urlPreview = mapped
+      .flatMap((s) => (Array.isArray(s.urls) ? s.urls : [s.urls]))
+      .slice(0, 2)
+      .map((u) => (typeof u === 'string' ? u.split('?')[0] : u))
+      .join(', ');
+    appendLog(`[Call] ${mapped.length} ICE server(s) (relay-only): ${urlPreview}`);
+
+    return mapped;
   }
 
   /** Applies remote SDP from the SFU, handling renegotiation and offer glare. */
@@ -283,6 +314,7 @@ export class CallService {
 
           if (msg.type === 'Offer' || msg.type === 'Answer') {
             const sdp = JSON.parse(msg.sdp) as RTCSessionDescriptionInit;
+            appendLog(`[Call] SFU → ${msg.type} (signaling=${this.pc.signalingState})`);
             await this.applyRemoteSdp(sdp);
           } else if (msg.type === 'IceCandidate') {
             const candidate = JSON.parse(msg.candidate);
@@ -304,15 +336,36 @@ export class CallService {
 
     const iceServers = await this.fetchIceServers(this.currentGroupId, this.currentCallId);
 
+    appendLog('[Call] creating PeerConnection (iceTransportPolicy=relay)');
     this.pc = new RTCPeerConnection({
       iceServers,
       iceTransportPolicy: 'relay',
     });
 
+    let relayCandidateCount = 0;
+
     this.pc.onicecandidate = (e) => {
       if (e.candidate) {
+        if (e.candidate.type === 'relay' || e.candidate.candidate.includes('typ relay')) {
+          relayCandidateCount++;
+        }
         this.sendSfuMessage({ type: 'IceCandidate', candidate: JSON.stringify(e.candidate) });
+      } else {
+        appendLog(`[Call] ICE gathering complete (${relayCandidateCount} relay candidate(s) sent)`);
+        if (relayCandidateCount === 0) {
+          appendLog(
+            '[Call] Aucun candidat TURN relay — Cloudflare TURN indisponible ou mal configuré'
+          );
+        }
       }
+    };
+
+    this.pc.onicegatheringstatechange = () => {
+      appendLog(`[Call] iceGatheringState=${this.pc?.iceGatheringState}`);
+    };
+
+    this.pc.onsignalingstatechange = () => {
+      appendLog(`[Call] signalingState=${this.pc?.signalingState}`);
     };
 
     this.pc.ontrack = (e) => {
@@ -350,18 +403,33 @@ export class CallService {
     };
 
     this.pc.oniceconnectionstatechange = () => {
-      appendLog(`[Call] iceConnectionState=${this.pc?.iceConnectionState}`);
+      const iceState = this.pc?.iceConnectionState;
+      appendLog(`[Call] iceConnectionState=${iceState}`);
+      if (iceState === 'connected' || iceState === 'completed') {
+        if (get(this.callState) !== 'idle') {
+          this.callState.set('incall');
+        }
+      }
+      if (iceState === 'failed') {
+        appendLog(
+          '[Call] ICE failed — vérifier Cloudflare TURN sur chat-delivery et call-service (mêmes secrets)'
+        );
+      }
     };
 
     if (this.localStream) {
-      this.localStream.getTracks().forEach((track) => {
+      const tracks = this.localStream.getTracks();
+      appendLog(`[Call] adding ${tracks.length} local track(s) to PeerConnection`);
+      tracks.forEach((track) => {
         const sender = this.pc!.addTrack(track, this.localStream!);
         this.setupSenderTransform(sender);
       });
     }
 
+    appendLog('[Call] creating SDP offer…');
     const offer = await this.pc.createOffer();
     await this.pc.setLocalDescription(offer);
+    appendLog(`[Call] local offer set (${offer.sdp?.length ?? 0} bytes), sending to SFU`);
     this.sendSfuMessage({ type: 'Offer', sdp: JSON.stringify(this.pc.localDescription) });
   }
 
@@ -398,10 +466,16 @@ export class CallService {
   private setupSenderTransform(sender: RTCRtpSender) {
     if (!this.callKey) return;
 
-    if (window.RTCRtpScriptTransform) {
-      const worker = this.getOrCreateEncryptionWorker();
-      worker.postMessage({ type: 'setKey', payload: this.callKey });
-      sender.transform = new RTCRtpScriptTransform(worker, { side: 'sender' });
+    try {
+      if (window.RTCRtpScriptTransform) {
+        const worker = this.getOrCreateEncryptionWorker();
+        worker.postMessage({ type: 'setKey', payload: this.callKey });
+        sender.transform = new RTCRtpScriptTransform(worker, { side: 'sender' });
+        return;
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      appendLog(`[Call] sender transform failed: ${msg}`);
       return;
     }
 
@@ -424,10 +498,16 @@ export class CallService {
   private setupReceiverTransform(receiver: RTCRtpReceiver) {
     if (!this.callKey) return;
 
-    if (window.RTCRtpScriptTransform) {
-      const worker = this.getOrCreateEncryptionWorker();
-      worker.postMessage({ type: 'setKey', payload: this.callKey });
-      receiver.transform = new RTCRtpScriptTransform(worker, { side: 'receiver' });
+    try {
+      if (window.RTCRtpScriptTransform) {
+        const worker = this.getOrCreateEncryptionWorker();
+        worker.postMessage({ type: 'setKey', payload: this.callKey });
+        receiver.transform = new RTCRtpScriptTransform(worker, { side: 'receiver' });
+        return;
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      appendLog(`[Call] receiver transform failed: ${msg}`);
       return;
     }
 
