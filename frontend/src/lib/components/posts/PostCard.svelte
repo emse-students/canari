@@ -76,9 +76,7 @@
   let submittingComment = $state(false);
   let showReactionPicker = $state(false);
 
-  const isOwnPost = $derived(
-    !localPost.association && localPost.authorId === currentUserId
-  );
+  const isOwnPost = $derived(localPost.authorId === currentUserId);
 
   let userReaction = $derived((localPost.reactions ?? {})[currentUserId] ?? null);
   let reactions = $derived<Record<string, number>>((localPost.reactions ?? {}) as any);

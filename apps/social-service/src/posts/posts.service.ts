@@ -529,11 +529,12 @@ export class PostsService {
     return shaped;
   }
 
-  /** Updates a post's markdown content. Only the original author may edit. */
-  async updatePost(postId: string, userId: string, markdown: string) {
+  /** Updates a post's markdown content. Author or global admin may edit. */
+  async updatePost(postId: string, userId: string, markdown: string, isGlobalAdmin = false) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
-    if (post.authorId !== userId) throw new UnauthorizedException('Not your post');
+    if (!isGlobalAdmin && post.authorId !== userId)
+      throw new UnauthorizedException('Not your post');
     post.markdown = markdown;
     const saved = await this.postRepo.save(post);
     return this.toPublicPostFromEntity(saved);

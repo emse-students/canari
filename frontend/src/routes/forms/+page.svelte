@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { exportSubmissions, getForms, type Form } from '$lib/forms/api';
-  import { Plus, Download, FileText, Pencil, Link, Check } from '@lucide/svelte';
+  import { Plus, Download, FileText, Pencil, Link, Check, Trash2 } from '@lucide/svelte';
+  import { deleteForm } from '$lib/forms/api';
 
   let copiedId = $state<string | null>(null);
 
@@ -16,6 +17,7 @@
 
   let forms = $state<Form[]>([]);
   let loading = $state(true);
+  let deletingId = $state<string | null>(null);
 
   onMount(async () => {
     try {
@@ -26,6 +28,19 @@
       loading = false;
     }
   });
+
+  async function handleDelete(id: string, title: string) {
+    if (!confirm(`Supprimer le formulaire "${title}" ? Cette action est irréversible.`)) return;
+    deletingId = id;
+    try {
+      await deleteForm(id);
+      forms = forms.filter((f) => f.id !== id);
+    } catch {
+      alert('Erreur lors de la suppression');
+    } finally {
+      deletingId = null;
+    }
+  }
 
   async function handleExport(id: string) {
     try {
@@ -126,6 +141,14 @@
             >
               <Download size={14} />
               Exporter
+            </button>
+            <button
+              onclick={() => handleDelete(form.id, form.title)}
+              disabled={deletingId === form.id}
+              class="inline-flex items-center justify-center rounded-xl border-2 border-red-200 bg-red-50/80 p-2 text-red-600 hover:bg-red-100 transition-colors disabled:opacity-50"
+              title="Supprimer"
+            >
+              <Trash2 size={14} />
             </button>
           </div>
         </div>

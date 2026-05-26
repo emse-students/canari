@@ -76,6 +76,17 @@ export class FormsController {
     return this.service.update(id, dto, xUserId, ga === 'true');
   }
 
+  /** Deletes a form entirely. Requires owner, co-owner, global admin, or MANAGE_FORMS flag. */
+  @UseGuards(NginxAuthGuard)
+  @Delete(':id')
+  deleteForm(
+    @Param('id') id: string,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    return this.service.delete(id, xUserId, ga === 'true');
+  }
+
   /** Uploads a banner image for a form. Requires owner, co-owner, or MANAGE_FORMS flag. */
   @UseGuards(NginxAuthGuard)
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 8 * 1024 * 1024 } }))

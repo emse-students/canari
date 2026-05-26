@@ -187,15 +187,16 @@ export class PostsController {
     return this.service.getById(postId);
   }
 
-  /** Updates the markdown content of a post owned by the calling user. */
+  /** Updates the markdown content of a post. Author or global admin may edit. */
   @UseGuards(NginxAuthGuard)
   @Patch(':postId')
   updatePost(
     @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga: string,
     @Param('postId') postId: string,
     @Body() body: UpdatePostDto
   ) {
-    return this.service.updatePost(postId, xUserId, body.markdown);
+    return this.service.updatePost(postId, xUserId, body.markdown, ga === 'true');
   }
 
   /** Deletes a post; global admins may delete any post. */

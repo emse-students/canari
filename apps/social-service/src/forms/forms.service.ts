@@ -123,6 +123,13 @@ export class FormsService {
     return this.formRepo.save(form);
   }
 
+  /** Deletes a form entirely. Requires owner, co-owner, global admin, or MANAGE_FORMS flag. */
+  async delete(formId: string, userId: string, isGlobalAdmin: boolean) {
+    const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
+    await this.formRepo.remove(form);
+    return { ok: true };
+  }
+
   /** Adds a co-owner to a form. Only the owner or global admin may do this. */
   async addCoOwner(formId: string, coUserId: string, callerId: string, isGlobalAdmin: boolean) {
     const form = await this.formRepo.findOne({ where: { id: formId } });
@@ -599,17 +606,27 @@ export class FormsService {
       order: { createdAt: 'DESC' },
     });
 
+    // Batch-fetch first/last names for all submitters
+    const userIds = [...new Set(submissions.map((s) => s.userId).filter(Boolean))];
+    const nameMap = new Map<string, { firstName: string | null; lastName: string | null }>();
+    if (userIds.length > 0) {
+      const rows: { id: string; firstName: string | null; lastName: string | null }[] =
+        await this.formRepo.manager.query(
+          `SELECT id, "firstName", "lastName" FROM users WHERE id = ANY($1)`,
+          [userIds]
+        );
+      rows.forEach((r) => nameMap.set(r.id, { firstName: r.firstName, lastName: r.lastName }));
+    }
+
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet('Submissions');
 
-    // Headers
     const headers: any[] = [
-      { header: 'ID', key: 'id', width: 25 },
-      { header: 'User', key: 'userId', width: 25 },
-      { header: 'Email', key: 'email', width: 25 },
-      { header: 'Date', key: 'date', width: 20 },
-      { header: 'Paid', key: 'total', width: 10 },
-      { header: 'Status', key: 'status', width: 10 },
+      { header: 'Horodatage', key: 'date', width: 22 },
+      { header: 'Prénom', key: 'firstName', width: 20 },
+      { header: 'Nom', key: 'lastName', width: 20 },
+      { header: 'Montant payé', key: 'total', width: 14 },
+      { header: 'Statut', key: 'status', width: 14 },
     ];
 
     form.items.forEach((item: any) => {
@@ -619,11 +636,11 @@ export class FormsService {
     sheet.columns = headers;
 
     submissions.forEach((sub) => {
+      const names = nameMap.get(sub.userId) ?? { firstName: null, lastName: null };
       const row: any = {
-        id: sub.id,
-        userId: sub.userId,
-        email: sub.email,
         date: sub.createdAt,
+        firstName: names.firstName ?? '',
+        lastName: names.lastName ?? '',
         total: (sub.totalPaid || 0) / 100,
         status: sub.paymentStatus,
       };

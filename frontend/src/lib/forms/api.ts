@@ -141,6 +141,13 @@ export async function uploadFormItemImage(
   return res.json();
 }
 
+/** Deletes a form entirely. */
+export async function deleteForm(id: string): Promise<{ ok: boolean }> {
+  const res = await request(`${socialUrl()}/api/forms/${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Failed to delete form');
+  return res.json();
+}
+
 /** Removes the banner image from a form. */
 export async function deleteFormImage(id: string): Promise<Form> {
   const res = await request(`${socialUrl()}/api/forms/${id}/image`, { method: 'DELETE' });

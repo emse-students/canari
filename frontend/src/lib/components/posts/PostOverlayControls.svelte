@@ -6,7 +6,7 @@
    * Props for the PostOverlayControls component.
    * Renders the top-right overlay of a post card:
    * - Pin/Unpin: admins only
-   * - Edit: post author only
+   * - Edit: post author OR global admin
    * - Delete: post author OR global admin
    * - Report: any logged-in user who is not the post author
    */
@@ -76,7 +76,7 @@
         {/if}
       </button>
     {/if}
-    {#if isOwnPost}
+    {#if isOwnPost || isGlobalAdmin}
       <button
         type="button"
         onclick={onStartEdit}

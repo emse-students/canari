@@ -490,7 +490,7 @@
           showMobileActions = true;
         }}
         onkeydown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
+          if ((e.key === 'Enter' || e.key === ' ') && !isEditingInline) {
             e.preventDefault();
             toggleInfo(e as unknown as MouseEvent);
           }
