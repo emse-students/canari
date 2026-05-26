@@ -70,6 +70,7 @@
   import AssociationLogoCropper from '$lib/components/associations/AssociationLogoCropper.svelte';
   import AssociationMemberRow from '$lib/components/associations/AssociationMemberRow.svelte';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
+  import ColorPicker from '$lib/components/ui/ColorPicker.svelte';
 
   let asso = $state<Association | null>(null);
   let members = $state<AssociationMember[]>([]);
@@ -802,34 +803,10 @@
             {/each}
           </div>
           <div class="flex items-center gap-2 ml-0.5">
-            <!-- Native color picker hidden behind a round swatch -->
-            <label class="relative cursor-pointer shrink-0" title="Ouvrir le sélecteur de couleur">
-              <input
-                type="color"
-                class="sr-only"
-                value={editColor || '#aaaaaa'}
-                oninput={(e) => (editColor = (e.target as HTMLInputElement).value)}
-              />
-              <span
-                class="h-6 w-6 rounded-full border-2 border-cn-border hover:border-cn-dark transition-colors block"
-                style="background:{editColor || '#aaaaaa'}"
-              ></span>
-            </label>
-            <span class="text-text-muted font-mono text-sm select-none">#</span>
-            <input
-              type="text"
-              maxlength="6"
-              placeholder="rrggbb"
-              class="w-24 bg-transparent font-mono text-sm text-text-main placeholder:text-text-muted/50 border-b border-cn-border/60 focus:border-cn-dark focus:outline-none transition-colors pb-0.5"
-              value={editColor.replace(/^#/, '')}
-              oninput={(e) => {
-                const v = (e.target as HTMLInputElement).value
-                  .replace(/[^0-9a-fA-F]/g, '')
-                  .slice(0, 6);
-                (e.target as HTMLInputElement).value = v;
-                if (v.length === 6) editColor = '#' + v;
-                else if (v.length === 0) editColor = '';
-              }}
+            <span class="text-xs text-text-muted">Personnalisée</span>
+            <ColorPicker
+              bind:value={editColor}
+              label="Couleur personnalisée"
             />
           </div>
         </div>

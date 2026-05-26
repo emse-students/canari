@@ -14,6 +14,7 @@
     type CalendarExportOptions,
   } from '$lib/utils/calendarExport';
   import { ChevronLeft, ChevronRight, FileDown, ImagePlus, X, RotateCcw } from '@lucide/svelte';
+  import ColorPicker from '$lib/components/ui/ColorPicker.svelte';
 
   // ── Month navigation ─────────────────────────────────────────────
   let focusDate = $state(new Date());
@@ -182,11 +183,11 @@
         <p class="text-xs font-bold uppercase tracking-wider text-text-muted">En-tête</p>
         <div class="flex items-center justify-between gap-2">
           <span class="text-xs text-text-muted">Fond</span>
-          <input type="color" bind:value={opts.headerBg} class="h-7 w-14 cursor-pointer rounded border border-cn-border" />
+          <ColorPicker bind:value={opts.headerBg} label="Fond en-tête" />
         </div>
         <div class="flex items-center justify-between gap-2">
           <span class="text-xs text-text-muted">Titre du mois</span>
-          <input type="color" bind:value={opts.monthTitleColor} class="h-7 w-14 cursor-pointer rounded border border-cn-border" />
+          <ColorPicker bind:value={opts.monthTitleColor} label="Titre du mois" />
         </div>
       </div>
 
@@ -197,15 +198,15 @@
         <p class="text-xs font-bold uppercase tracking-wider text-text-muted">Ligne des jours</p>
         <div class="flex items-center justify-between gap-2">
           <span class="text-xs text-text-muted">Fond</span>
-          <input type="color" bind:value={opts.weekdayRowBg} class="h-7 w-14 cursor-pointer rounded border border-cn-border" />
+          <ColorPicker bind:value={opts.weekdayRowBg} label="Fond ligne des jours" />
         </div>
         <div class="flex items-center justify-between gap-2">
           <span class="text-xs text-text-muted">Étiquettes sem.</span>
-          <input type="color" bind:value={opts.weekdayLabelColor} class="h-7 w-14 cursor-pointer rounded border border-cn-border" />
+          <ColorPicker bind:value={opts.weekdayLabelColor} label="Étiquettes semaine" />
         </div>
         <div class="flex items-center justify-between gap-2">
           <span class="text-xs text-text-muted">Étiquettes w-e</span>
-          <input type="color" bind:value={opts.weekendLabelColor} class="h-7 w-14 cursor-pointer rounded border border-cn-border" />
+          <ColorPicker bind:value={opts.weekendLabelColor} label="Étiquettes week-end" />
         </div>
       </div>
 
@@ -216,7 +217,7 @@
         <p class="text-xs font-bold uppercase tracking-wider text-text-muted">Cases</p>
         <div class="flex items-center justify-between gap-2">
           <span class="text-xs text-text-muted">Fond normal</span>
-          <input type="color" bind:value={opts.cellBg} class="h-7 w-14 cursor-pointer rounded border border-cn-border" />
+          <ColorPicker bind:value={opts.cellBg} label="Fond cases normales" />
         </div>
         <div class="flex items-center justify-between gap-2">
           <span class="text-xs text-text-muted">Opacité normal ({opts.cellBgOpacity}%)</span>
@@ -224,7 +225,7 @@
         </div>
         <div class="flex items-center justify-between gap-2">
           <span class="text-xs text-text-muted">Fond week-end</span>
-          <input type="color" bind:value={opts.weekendCellBg} class="h-7 w-14 cursor-pointer rounded border border-cn-border" />
+          <ColorPicker bind:value={opts.weekendCellBg} label="Fond cases week-end" />
         </div>
         <div class="flex items-center justify-between gap-2">
           <span class="text-xs text-text-muted">Opacité w-e ({opts.weekendCellBgOpacity}%)</span>
@@ -232,7 +233,7 @@
         </div>
         <div class="flex items-center justify-between gap-2">
           <span class="text-xs text-text-muted">Numéros vides</span>
-          <input type="color" bind:value={opts.emptyDayColor} class="h-7 w-14 cursor-pointer rounded border border-cn-border" />
+          <ColorPicker bind:value={opts.emptyDayColor} label="Numéros de jours vides" />
         </div>
       </div>
 
@@ -243,11 +244,11 @@
         <p class="text-xs font-bold uppercase tracking-wider text-text-muted">Grille</p>
         <div class="flex items-center justify-between gap-2">
           <span class="text-xs text-text-muted">Bordures internes</span>
-          <input type="color" bind:value={opts.borderColor} class="h-7 w-14 cursor-pointer rounded border border-cn-border" />
+          <ColorPicker bind:value={opts.borderColor} label="Bordures internes" />
         </div>
         <div class="flex items-center justify-between gap-2">
           <span class="text-xs text-text-muted">Contour extérieur</span>
-          <input type="color" bind:value={opts.gridOuterBorder} class="h-7 w-14 cursor-pointer rounded border border-cn-border" />
+          <ColorPicker bind:value={opts.gridOuterBorder} label="Contour extérieur" />
         </div>
       </div>
 

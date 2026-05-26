@@ -46,7 +46,8 @@ export interface CalendarExportOptions {
 /** Default values matching the original hardcoded design. */
 export const DEFAULT_EXPORT_OPTIONS: Required<Omit<CalendarExportOptions, 'bgDataUrl'>> = {
   bgOpacity: 14,
-  headerBg: '#122035',
+  // Original design: no extra background on the header bar — it inherits the container bg (#f0f4f8).
+  headerBg: '#f0f4f8',
   monthTitleColor: '#122035',
   weekdayRowBg: '#122035',
   weekdayLabelColor: '#c8d8eb',
@@ -156,15 +157,17 @@ async function fetchDataUrl(url: string | null): Promise<string | null> {
 
 /**
  * Builds the inner calendar HTML (no `<!DOCTYPE>` wrapper).
- * Pass an empty `logoMap` to skip association watermarks (e.g. for live preview).
+ * - `logoMap`: pass a `Map` of data-URL overrides for the PDF export, or `'direct'` to use
+ *   `ev.associationLogoUrl` directly (suitable for the iframe preview, same origin).
+ * - `faviconUrl`: data URL for export, or a direct path (e.g. `'/favicon.png'`) for preview.
  */
 function buildCalendarHtml(
   events: AssociationCalendarFeedEvent[],
   year: number,
   month: number,
   opts: ResolvedOpts,
-  logoMap: Map<string, string | null>,
-  faviconDataUrl: string | null
+  logoMap: Map<string, string | null> | 'direct',
+  faviconUrl: string | null
 ): string {
   const monthLabel = new Intl.DateTimeFormat('fr-FR', { month: 'long', year: 'numeric' })
     .format(new Date(year, month, 1))
@@ -216,37 +219,45 @@ function buildCalendarHtml(
         ...visible.map((ev, idx) => {
           const bg = eventBgCss(ev);
           const fg = contrastColor(eventHexColors(ev)[0]);
-          const logoDataUrl = ev.associationLogoUrl
-            ? (logoMap.get(ev.associationLogoUrl) ?? null)
+
+          // Resolve logo: data URL map for PDF export, direct URL for preview.
+          const logoSrc = ev.associationLogoUrl
+            ? logoMap === 'direct'
+              ? ev.associationLogoUrl
+              : (logoMap.get(ev.associationLogoUrl) ?? null)
             : null;
 
           const logoSize = Math.max(Math.round(slotH * 0.62), 14);
-          const watermark = logoDataUrl
-            ? `<div style="position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;pointer-events:none;"><img src="${logoDataUrl}" style="height:${logoSize}px;width:${logoSize}px;border-radius:50%;object-fit:cover;opacity:0.18;" /></div>`
+          const watermark = logoSrc
+            ? `<div style="position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;pointer-events:none;"><img src="${logoSrc}" style="height:${logoSize}px;width:${logoSize}px;border-radius:50%;object-fit:cover;opacity:0.18;" /></div>`
             : '';
 
+          // Day number pinned top-left on the first event slot only.
+          const DAY_NUM_H = idx === 0 ? 20 : 0;
           const dayNum =
             idx === 0
-              ? `<span style="position:absolute;top:6px;left:7px;font-size:12px;font-weight:700;color:${fg};z-index:1;">${day}</span>`
+              ? `<span style="position:absolute;top:5px;left:6px;font-size:11px;font-weight:800;color:${fg};z-index:2;line-height:1;">${day}</span>`
               : '';
 
-          const fontSize = slotH >= 60 ? 13 : slotH >= 45 ? 12 : slotH >= 35 ? 11 : 10;
-          const lineH = fontSize * 1.4;
-          // Subtract 2px to compensate for descender visual weight pushing the apparent centre down.
-          const paddingTop = Math.max(4, Math.floor((slotH - lineH) / 2) - 2);
-          const wrap = slotH >= 48 ? 'word-break:break-word;' : 'white-space:nowrap;';
-          const ph = slotH >= 48 ? 10 : 6;
-          const textHtml = `<div style="position:absolute;top:0;left:0;width:100%;padding-top:${paddingTop}px;text-align:center;box-sizing:border-box;"><span style="display:block;font-size:${fontSize}px;font-weight:700;color:${fg};line-height:1.4;${wrap}padding:0 ${ph}px;box-sizing:border-box;">${safe(ev.title)}</span></div>`;
+          // Flex-centred text within the space below the day number.
+          // Font size scales with available height; title is clamped to avoid overflow.
+          const availH = slotH - DAY_NUM_H;
+          const fontSize = availH >= 52 ? 13 : availH >= 38 ? 12 : availH >= 28 ? 11 : 10;
+          const maxLines = Math.max(1, Math.floor(availH / (fontSize * 1.5)));
+          const ph = availH >= 40 ? 8 : 5;
+          const clampCss =
+            maxLines === 1
+              ? 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'
+              : `display:-webkit-box;-webkit-line-clamp:${maxLines};-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;`;
+          const textHtml = `<div style="position:absolute;top:${DAY_NUM_H}px;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;padding:0 ${ph}px 2px;box-sizing:border-box;"><span style="font-size:${fontSize}px;font-weight:700;color:${fg};line-height:1.3;text-align:center;${clampCss}">${safe(ev.title)}</span></div>`;
 
           const sep = idx > 0 ? 'border-top:1px solid rgba(0,0,0,0.10);' : '';
-          // bg may be a gradient string, so use 'background:' not 'background-color:'
           return `<div style="height:${slotH}px;position:relative;background:${bg};overflow:hidden;${sep}">${watermark}${dayNum}${textHtml}</div>`;
         }),
         ...(overflowCount > 0
           ? (() => {
-              const pt = Math.max(4, Math.floor((slotH - 9 * 1.4) / 2));
               return [
-                `<div style="height:${slotH}px;background:#f0f4f8;text-align:center;padding-top:${pt}px;box-sizing:border-box;overflow:hidden;"><span style="font-size:9px;font-weight:800;color:#607188;line-height:1.4;">+${overflowCount} autre${overflowCount > 1 ? 's' : ''}</span></div>`,
+                `<div style="height:${slotH}px;background:#f0f4f8;display:flex;align-items:center;justify-content:center;overflow:hidden;"><span style="font-size:9px;font-weight:800;color:#607188;">+${overflowCount} autre${overflowCount > 1 ? 's' : ''}</span></div>`,
               ];
             })()
           : []),
@@ -263,15 +274,15 @@ function buildCalendarHtml(
     ? `<div data-full-bg style="position:absolute;top:0;left:0;width:100%;pointer-events:none;"><img src="${opts.bgDataUrl}" style="width:100%;height:100%;object-fit:cover;opacity:${bgOpacityVal};" /></div>`
     : '';
 
-  const logoHtml = faviconDataUrl
-    ? `<img src="${faviconDataUrl}" style="position:absolute;top:18px;left:18px;height:32px;width:32px;object-fit:contain;opacity:0.85;" />`
+  const faviconHtml = faviconUrl
+    ? `<img src="${faviconUrl}" style="position:absolute;top:18px;left:18px;height:32px;width:32px;object-fit:contain;opacity:0.85;" />`
     : '';
 
   return `
     ${fullBgHtml}
     <div style="position:relative;">
       <div style="height:${HEADER_H}px;position:relative;background:${opts.headerBg};border-bottom:1.5px solid ${opts.borderColor};">
-        ${logoHtml}
+        ${faviconHtml}
         <h1 style="position:relative;font-family:'Fredoka','Segoe UI',sans-serif;font-size:30px;font-weight:700;color:${opts.monthTitleColor};margin:0;line-height:${HEADER_H}px;text-align:center;letter-spacing:.01em;">${safe(monthLabel)}</h1>
       </div>
       <div style="padding:0 20px ${GRID_PAD_BOTTOM}px;">
@@ -284,7 +295,8 @@ function buildCalendarHtml(
 
 /**
  * Builds a complete standalone HTML document for use as an `<iframe srcdoc>` live preview.
- * Association logos are skipped for instant synchronous rendering.
+ * Uses direct logo URLs (same-origin iframe — no CORS issue) and loads Google Fonts so the
+ * preview fonts match the exported PDF.
  */
 export function buildPreviewDocument(
   events: AssociationCalendarFeedEvent[],
@@ -293,8 +305,13 @@ export function buildPreviewDocument(
   options: CalendarExportOptions = {}
 ): string {
   const opts: ResolvedOpts = { ...DEFAULT_EXPORT_OPTIONS, bgDataUrl: null, ...options };
-  const body = buildCalendarHtml(events, year, month, opts, new Map(), null);
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>*{box-sizing:border-box;margin:0;padding:0;}body{background:#f0f4f8;font-family:'Nunito','Segoe UI',sans-serif;color:#111;}</style></head><body><div style="position:relative;width:1080px;background:#f0f4f8;border-radius:12px;overflow:hidden;">${body}</div></body></html>`;
+  const body = buildCalendarHtml(events, year, month, opts, 'direct', '/favicon.png');
+  return `<!DOCTYPE html><html><head><meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@700&family=Nunito:wght@700;800&display=swap" rel="stylesheet">
+<style>*{box-sizing:border-box;margin:0;padding:0;}body{background:#f0f4f8;font-family:'Nunito','Segoe UI',sans-serif;color:#111;}</style>
+</head><body><div style="position:relative;width:1080px;background:#f0f4f8;border-radius:12px;overflow:hidden;">${body}</div></body></html>`;
 }
 
 /**
@@ -330,7 +347,7 @@ export async function exportCalendarMonth(
     uniqueLogoUrls.map((url, i) => [url, resolvedLogos[i]])
   );
 
-  const innerHtml = buildCalendarHtml(events, year, month, opts, logoMap, faviconDataUrl);
+  const innerHtml = buildCalendarHtml(events, year, month, opts, logoMap, faviconDataUrl ?? null);
 
   const container = document.createElement('div');
   Object.assign(container.style, {
