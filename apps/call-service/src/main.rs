@@ -16,7 +16,10 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 use webrtc::api::media_engine::MediaEngine;
+use webrtc::api::setting_engine::SettingEngine;
 use webrtc::api::APIBuilder;
+use webrtc::ice::mdns::MulticastDnsMode;
+use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::ice_transport::ice_credential_type::RTCIceCredentialType;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::interceptor::registry::Registry;
@@ -59,6 +62,8 @@ struct Room {
 struct PeerContext {
     pc: Arc<RTCPeerConnection>,
     notify_tx: mpsc::Sender<SignalMessage>,
+    /// Trickle ICE from the browser may arrive before the Offer is applied.
+    pending_ice_candidates: Mutex<Vec<RTCIceCandidateInit>>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -235,6 +240,7 @@ async fn handle_signal(
                 PeerContext {
                     pc: pc.clone(),
                     notify_tx: notify_tx.clone(),
+                    pending_ice_candidates: Mutex::new(Vec::new()),
                 },
             );
 
@@ -253,17 +259,43 @@ async fn handle_signal(
             drop(tracks);
 
             let notify_tx_clone = notify_tx.clone();
+            let peer_id_ice = peer_id.clone();
             pc.on_ice_candidate(Box::new(move |c| {
                 let notify_tx_clone = notify_tx_clone.clone();
+                let peer_id_ice = peer_id_ice.clone();
                 Box::pin(async move {
-                    if let Some(c) = c {
-                        if let Ok(json) = c.to_json() {
-                            let msg = SignalMessage::IceCandidate {
-                                candidate: serde_json::to_string(&json).unwrap(),
-                            };
-                            let _ = notify_tx_clone.send(msg).await;
-                        }
+                    let json = match c {
+                        Some(c) => match c.to_json() {
+                            Ok(j) => j,
+                            Err(e) => {
+                                warn!("[ICE] to_json failed for {}: {}", peer_id_ice, e);
+                                return;
+                            }
+                        },
+                        None => RTCIceCandidateInit {
+                            candidate: String::new(),
+                            sdp_mid: None,
+                            sdp_mline_index: None,
+                            username_fragment: None,
+                        },
+                    };
+                    let msg = SignalMessage::IceCandidate {
+                        candidate: serde_json::to_string(&json).unwrap(),
+                    };
+                    if let Err(e) = notify_tx_clone.send(msg).await {
+                        warn!("[ICE] failed to send candidate for {}: {}", peer_id_ice, e);
                     }
+                })
+            }));
+
+            let peer_id_ice_state = peer_id.clone();
+            pc.on_ice_connection_state_change(Box::new(move |state| {
+                let peer_id_ice_state = peer_id_ice_state.clone();
+                Box::pin(async move {
+                    info!(
+                        "[ICE] {} ice_connection_state={:?}",
+                        peer_id_ice_state, state
+                    );
                 })
             }));
 
@@ -348,6 +380,8 @@ async fn handle_signal(
                                 return;
                             }
 
+                            flush_pending_ice_candidates(ctx.value()).await;
+
                             match ctx.pc.create_answer(None).await {
                                 Ok(answer) => {
                                     if ctx.pc.set_local_description(answer.clone()).await.is_ok() {
@@ -386,6 +420,7 @@ async fn handle_signal(
                             if let Err(e) = ctx.pc.set_remote_description(sdp_obj).await {
                                 error!("Set remote answer error for {}: {}", peer_id, e);
                             } else {
+                                flush_pending_ice_candidates(ctx.value()).await;
                                 info!("Renegotiation answer applied for {}", peer_id);
                             }
                         }
@@ -397,11 +432,11 @@ async fn handle_signal(
             if let Some(room_id) = current_room_id {
                 if let Some(room) = state.rooms.get(room_id) {
                     if let Some(ctx) = room.peers.get(peer_id) {
-                        if let Ok(cand) = serde_json::from_str::<
-                            webrtc::ice_transport::ice_candidate::RTCIceCandidateInit,
-                        >(&candidate)
+                        if let Ok(cand) = serde_json::from_str::<RTCIceCandidateInit>(&candidate)
                         {
-                            let _ = ctx.pc.add_ice_candidate(cand).await;
+                            apply_remote_ice_candidate(peer_id, ctx.value(), cand).await;
+                        } else {
+                            warn!("[ICE] candidate JSON parse failed for {}", peer_id);
                         }
                     }
                 }
@@ -642,6 +677,48 @@ fn ice_servers_from_env() -> Vec<RTCIceServer> {
     }]
 }
 
+/// Applies or buffers a remote ICE candidate until the Offer/Answer SDP is set.
+async fn apply_remote_ice_candidate(peer_id: &str, ctx: &PeerContext, cand: RTCIceCandidateInit) {
+    let is_end = cand.candidate.is_empty();
+    if ctx.pc.remote_description().await.is_none() {
+        if is_end {
+            return;
+        }
+        let n = {
+            let mut pending = ctx.pending_ice_candidates.lock().await;
+            pending.push(cand);
+            pending.len()
+        };
+        if n <= 3 || n % 50 == 0 {
+            info!("[ICE] {} buffered remote candidate (#{})", peer_id, n);
+        }
+        return;
+    }
+
+    if let Err(e) = ctx.pc.add_ice_candidate(cand).await {
+        warn!("[ICE] {} add_ice_candidate failed: {}", peer_id, e);
+    } else if is_end {
+        info!("[ICE] {} remote end-of-candidates", peer_id);
+    }
+}
+
+/// Drains candidates received before `set_remote_description`.
+async fn flush_pending_ice_candidates(ctx: &PeerContext) {
+    let pending: Vec<RTCIceCandidateInit> = {
+        let mut guard = ctx.pending_ice_candidates.lock().await;
+        std::mem::take(&mut *guard)
+    };
+    if pending.is_empty() {
+        return;
+    }
+    info!("[ICE] flushing {} buffered candidate(s)", pending.len());
+    for cand in pending {
+        if let Err(e) = ctx.pc.add_ice_candidate(cand).await {
+            warn!("[ICE] flush add_ice_candidate failed: {}", e);
+        }
+    }
+}
+
 async fn resolve_ice_servers() -> Vec<RTCIceServer> {
     if let Some(servers) = fetch_cloudflare_ice_servers().await {
         return servers;
@@ -653,10 +730,15 @@ async fn create_peer_connection() -> anyhow::Result<RTCPeerConnection> {
     let mut m = MediaEngine::default();
     m.register_default_codecs()?;
 
+    let mut setting_engine = SettingEngine::default();
+    // Relay-only SFU: mDNS/host candidates are useless and delay ICE pairing.
+    setting_engine.set_ice_multicast_dns_mode(MulticastDnsMode::Disabled);
+
     let registry = Registry::new();
     let api = APIBuilder::new()
         .with_media_engine(m)
         .with_interceptor_registry(registry)
+        .with_setting_engine(setting_engine)
         .build();
 
     let ice_servers = resolve_ice_servers().await;

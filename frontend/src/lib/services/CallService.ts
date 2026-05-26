@@ -38,6 +38,7 @@ export class CallService {
   /** All remote tracks merged for 1:1 display (audio + video in one MediaStream). */
   private mergedRemoteStream: MediaStream | null = null;
   private callKeyBytes: Uint8Array | null = null;
+  private pendingRemoteIceCandidates: RTCIceCandidateInit[] = [];
 
   public currentCallId: string | null = null;
   public currentGroupId: string | null = null;
@@ -143,6 +144,7 @@ export class CallService {
     this.callKey = null;
     this.callKeyBytes = null;
     this.mergedRemoteStream = null;
+    this.pendingRemoteIceCandidates = [];
     this.incomingHasVideo = true;
 
     if (this.localStream) {
@@ -240,11 +242,13 @@ export class CallService {
         await pc.setLocalDescription({ type: 'rollback' });
       }
       await pc.setRemoteDescription(sdp);
+      await this.flushPendingRemoteIceCandidates();
       if (pc.signalingState === 'have-remote-offer') {
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         appendLog(`[Call] SFU renegotiation → Answer (${answer.sdp?.length ?? 0} bytes)`);
         this.sendSfuMessage({ type: 'Answer', sdp: JSON.stringify(answer) });
+        await this.flushPendingRemoteIceCandidates();
         this.attachMediaTransforms();
       }
       return;
@@ -252,6 +256,46 @@ export class CallService {
 
     if (sdp.type === 'answer' && pc.signalingState === 'have-local-offer') {
       await pc.setRemoteDescription(sdp);
+      await this.flushPendingRemoteIceCandidates();
+    }
+  }
+
+  /** Queues or applies a trickle ICE candidate from the SFU. */
+  private async addRemoteIceCandidate(init: RTCIceCandidateInit): Promise<void> {
+    const pc = this.pc;
+    if (!pc) return;
+
+    const isEnd = !init.candidate;
+    if (!pc.remoteDescription) {
+      if (!isEnd) {
+        this.pendingRemoteIceCandidates.push(init);
+        const n = this.pendingRemoteIceCandidates.length;
+        if (n <= 3 || n % 50 === 0) {
+          appendLog(`[Call] ICE candidate buffered (${n}, waiting for remote SDP)`);
+        }
+      }
+      return;
+    }
+
+    try {
+      await pc.addIceCandidate(isEnd ? null : new RTCIceCandidate(init));
+      if (isEnd) {
+        appendLog('[Call] remote ICE end-of-candidates');
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      appendLog(`[Call] addIceCandidate failed: ${msg}`);
+    }
+  }
+
+  private async flushPendingRemoteIceCandidates(): Promise<void> {
+    const pc = this.pc;
+    if (!pc?.remoteDescription || this.pendingRemoteIceCandidates.length === 0) return;
+
+    const pending = this.pendingRemoteIceCandidates.splice(0);
+    appendLog(`[Call] applying ${pending.length} buffered ICE candidate(s)`);
+    for (const init of pending) {
+      await this.addRemoteIceCandidate(init);
     }
   }
 
@@ -357,8 +401,8 @@ export class CallService {
               appendLog('[Call] SFU renegotiation offer handled');
             }
           } else if (msg.type === 'IceCandidate') {
-            const candidate = JSON.parse(msg.candidate);
-            await this.pc.addIceCandidate(new RTCIceCandidate(candidate));
+            const candidate = JSON.parse(msg.candidate) as RTCIceCandidateInit;
+            await this.addRemoteIceCandidate(candidate);
           }
         } catch (err) {
           const detail = err instanceof Error ? err.message : String(err);
@@ -433,6 +477,10 @@ export class CallService {
         this.sendSfuMessage({ type: 'IceCandidate', candidate: JSON.stringify(e.candidate) });
       } else {
         appendLog(`[Call] ICE gathering complete (${relayCandidateCount} relay candidate(s) sent)`);
+        this.sendSfuMessage({
+          type: 'IceCandidate',
+          candidate: JSON.stringify({ candidate: '' } satisfies RTCIceCandidateInit),
+        });
         if (relayCandidateCount === 0) {
           appendLog(
             '[Call] Aucun candidat TURN relay — Cloudflare TURN indisponible ou mal configuré'
