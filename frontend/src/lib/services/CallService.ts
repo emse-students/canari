@@ -248,7 +248,7 @@ export class CallService {
     };
 
     this.pc.ontrack = (e) => {
-      appendLog('[Call] remote track received');
+      appendLog(`[Call] remote track received kind=${e.track.kind}`);
       const stream = e.streams[0] ?? new MediaStream([e.track]);
       const peerKey = e.track.id || `peer-${Date.now()}`;
 
@@ -262,8 +262,20 @@ export class CallService {
         this.remoteStream.set(stream);
       }
 
+      if (get(this.callState) === 'calling' || get(this.callState) === 'incoming') {
+        this.callState.set('incall');
+      }
+
       const receiver = e.receiver;
       this.setupReceiverTransform(receiver);
+    };
+
+    this.pc.onconnectionstatechange = () => {
+      const state = this.pc?.connectionState;
+      appendLog(`[Call] connectionState=${state}`);
+      if (state === 'connected' && get(this.callState) !== 'idle') {
+        this.callState.set('incall');
+      }
     };
 
     if (this.localStream) {

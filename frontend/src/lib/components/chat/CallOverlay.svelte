@@ -11,6 +11,7 @@
     Minimize,
   } from '@lucide/svelte';
   import { fade, scale, fly } from 'svelte/transition';
+  import type { CallState } from '$lib/services/CallService';
 
   let {
     callService,
@@ -23,16 +24,29 @@
   let localVideo: HTMLVideoElement | undefined = $state();
   let remoteVideo: HTMLVideoElement | undefined = $state();
 
-  let callState = $derived(callService.callState);
-  let remoteStreams = $derived(callService.remoteStreams);
-  let remoteStream = $derived(callService.remoteStream);
-  let localStream = $derived(callService.localStreamStore);
-  let isMuted = $derived(callService.isMuted);
-  let isVideoOff = $derived(callService.isVideoOff);
+  // CallService uses writable stores on a class — subscribe explicitly (not $derived(store)).
+  let callState = $state<CallState>('idle');
+  let remoteStreamsMap = $state<Map<string, MediaStream>>(new Map());
+  let remoteStreamVal = $state<MediaStream | null>(null);
+  let localStreamVal = $state<MediaStream | null>(null);
+  let isMuted = $state(false);
+  let isVideoOff = $state(false);
 
-  let remoteEntries = $derived([...$remoteStreams.entries()]);
+  $effect(() => {
+    const unsubs = [
+      callService.callState.subscribe((v) => (callState = v)),
+      callService.remoteStreams.subscribe((v) => (remoteStreamsMap = v)),
+      callService.remoteStream.subscribe((v) => (remoteStreamVal = v)),
+      callService.localStreamStore.subscribe((v) => (localStreamVal = v)),
+      callService.isMuted.subscribe((v) => (isMuted = v)),
+      callService.isVideoOff.subscribe((v) => (isVideoOff = v)),
+    ];
+    return () => unsubs.forEach((u) => u());
+  });
+
+  let remoteEntries = $derived([...remoteStreamsMap.entries()]);
   let primaryRemoteStream = $derived(
-    remoteEntries.length > 0 ? remoteEntries[0][1] : $remoteStream
+    remoteEntries.length > 0 ? remoteEntries[0][1] : remoteStreamVal
   );
 
   let pipOffsetX = $state(0);
@@ -46,12 +60,14 @@
   $effect(() => {
     if (primaryRemoteStream && remoteVideo) {
       remoteVideo.srcObject = primaryRemoteStream;
+      void remoteVideo.play().catch(() => {});
     }
   });
 
   $effect(() => {
-    if ($localStream && localVideo) {
-      localVideo.srcObject = $localStream;
+    if (localStreamVal && localVideo) {
+      localVideo.srcObject = localStreamVal;
+      void localVideo.play().catch(() => {});
     }
   });
 
@@ -160,13 +176,13 @@
         <div class="flex flex-col items-center gap-2">
           <p class="text-xl font-bold text-white tracking-wide">{remoteName}</p>
           <p class="animate-pulse text-sm font-medium text-white/60 tracking-widest uppercase">
-            {$callState === 'calling' ? 'Appel en cours...' : 'Connexion en cours...'}
+            {callState === 'calling' ? 'Appel en cours...' : 'Connexion en cours...'}
           </p>
         </div>
       </div>
     {/if}
 
-    {#if $localStream}
+    {#if localStreamVal}
       <div
         class="absolute bottom-6 right-6 z-20 pointer-events-none"
         transition:scale={{ duration: 400, start: 0.8, delay: 200 }}
@@ -191,7 +207,7 @@
             muted
             class="w-full h-full object-cover -scale-x-100"
           ></video>
-          {#if $isMuted}
+          {#if isMuted}
             <div
               class="absolute top-3 right-3 bg-red-500/80 backdrop-blur-md p-1.5 rounded-full text-white"
             >
@@ -206,13 +222,13 @@
       class="absolute top-6 left-6 bg-black/40 backdrop-blur-md px-4 py-2 rounded-full text-white/90 text-sm font-bold border border-white/10 flex items-center gap-3 z-10"
     >
       <span
-        class="w-2.5 h-2.5 rounded-full {$callState === 'incall'
+        class="w-2.5 h-2.5 rounded-full {callState === 'incall'
           ? 'bg-emerald-400'
           : 'bg-amber-400 animate-pulse'}"
       ></span>
-      {$callState === 'calling'
+      {callState === 'calling'
         ? 'Appel sortant'
-        : $callState === 'incoming'
+        : callState === 'incoming'
           ? 'Appel entrant'
           : 'En ligne'}
       {#if remoteEntries.length > 1}
@@ -225,7 +241,7 @@
     class="mt-6 flex items-center gap-3 sm:gap-4 bg-white/10 backdrop-blur-2xl px-6 sm:px-8 py-4 rounded-full border border-white/20 shadow-2xl"
     transition:fly={{ y: 40, duration: 500, delay: 100 }}
   >
-    {#if $callState === 'incoming'}
+    {#if callState === 'incoming'}
       <button
         class="p-4 sm:p-5 rounded-full bg-emerald-500 hover:bg-emerald-400 text-white transition-all hover:scale-110 active:scale-95"
         onclick={() =>
@@ -248,22 +264,22 @@
       </button>
     {:else}
       <button
-        class="p-4 rounded-full transition-all {$isMuted
+        class="p-4 rounded-full transition-all {isMuted
           ? 'bg-white text-[#151B2C]'
           : 'bg-white/10 text-white hover:bg-white/20'}"
         onclick={() => callService.toggleMute()}
-        aria-label={$isMuted ? 'Activer le micro' : 'Couper le micro'}
+        aria-label={isMuted ? 'Activer le micro' : 'Couper le micro'}
       >
-        {#if $isMuted}<MicOff size={24} />{:else}<Mic size={24} />{/if}
+        {#if isMuted}<MicOff size={24} />{:else}<Mic size={24} />{/if}
       </button>
       <button
-        class="p-4 rounded-full transition-all {$isVideoOff
+        class="p-4 rounded-full transition-all {isVideoOff
           ? 'bg-white text-[#151B2C]'
           : 'bg-white/10 text-white hover:bg-white/20'}"
         onclick={() => callService.toggleVideo()}
-        aria-label={$isVideoOff ? 'Activer la caméra' : 'Couper la caméra'}
+        aria-label={isVideoOff ? 'Activer la caméra' : 'Couper la caméra'}
       >
-        {#if $isVideoOff}<VideoOff size={24} />{:else}<Video size={24} />{/if}
+        {#if isVideoOff}<VideoOff size={24} />{:else}<Video size={24} />{/if}
       </button>
       <button
         class="p-4 rounded-full hidden sm:block bg-white/10 text-white hover:bg-white/20"

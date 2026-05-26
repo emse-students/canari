@@ -388,20 +388,108 @@ async fn handle_signal(
     }
 }
 
-/// Build ICE server list from environment (Cloudflare TURN or local Coturn).
+#[derive(Debug, Deserialize)]
+struct CloudflareIceResponse {
+    #[serde(rename = "iceServers")]
+    ice_servers: Vec<CloudflareIceServer>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CloudflareIceServer {
+    urls: serde_json::Value,
+    username: Option<String>,
+    credential: Option<String>,
+}
+
+/// Mint short-lived TURN credentials from Cloudflare (same API as chat-delivery clients).
+async fn fetch_cloudflare_ice_servers() -> Option<Vec<RTCIceServer>> {
+    let api_token = std::env::var("CLOUDFLARE_CALLS_API_TOKEN")
+        .ok()
+        .filter(|s| !s.trim().is_empty())?;
+    let turn_key_id = std::env::var("CLOUDFLARE_TURN_KEY_ID")
+        .ok()
+        .filter(|s| !s.trim().is_empty())?;
+
+    let ttl: u64 = std::env::var("CLOUDFLARE_TURN_TTL_SECONDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(7200);
+
+    let url = format!(
+        "https://rtc.live.cloudflare.com/v1/turn/keys/{}/credentials/generate-ice-servers",
+        turn_key_id
+    );
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", api_token))
+        .header("Content-Type", "application/json")
+        .json(&serde_json::json!({ "ttl": ttl }))
+        .send()
+        .await
+        .ok()?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        error!(
+            "[ICE] Cloudflare TURN API failed status={} body={}",
+            status,
+            body.chars().take(200).collect::<String>()
+        );
+        return None;
+    }
+
+    let data: CloudflareIceResponse = response.json().await.ok()?;
+    let servers: Vec<RTCIceServer> = data
+        .ice_servers
+        .into_iter()
+        .filter_map(|entry| {
+            let urls: Vec<String> = match &entry.urls {
+                serde_json::Value::String(u) => vec![u.clone()],
+                serde_json::Value::Array(arr) => arr
+                    .iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .filter(|u| !u.contains(":53"))
+                    .collect(),
+                _ => return None,
+            };
+            if urls.is_empty() {
+                return None;
+            }
+            Some(RTCIceServer {
+                urls,
+                username: entry.username.unwrap_or_default(),
+                credential: entry.credential.unwrap_or_default(),
+                ..Default::default()
+            })
+        })
+        .collect();
+
+    if servers.is_empty() {
+        error!("[ICE] Cloudflare returned no usable ICE servers for SFU");
+        return None;
+    }
+
+    info!("[ICE] SFU using {} Cloudflare TURN server(s)", servers.len());
+    Some(servers)
+}
+
+/// Static TURN from env when Cloudflare is not configured (dev only).
 fn ice_servers_from_env() -> Vec<RTCIceServer> {
     let turn_url = std::env::var("TURN_URL").ok();
     let turn_user = std::env::var("TURN_USERNAME").unwrap_or_else(|_| "user".to_string());
     let turn_cred = std::env::var("TURN_CREDENTIAL").unwrap_or_else(|_| "password".to_string());
 
-    if let Some(urls_raw) = turn_url {
+    if let Some(urls_raw) = turn_url.filter(|s| !s.trim().is_empty()) {
         let urls: Vec<String> = urls_raw
             .split(',')
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
         if !urls.is_empty() {
-            info!("Using TURN servers from env ({} URL(s))", urls.len());
+            info!("SFU using TURN_URL env ({} URL(s))", urls.len());
             return vec![RTCIceServer {
                 urls,
                 username: turn_user,
@@ -411,11 +499,18 @@ fn ice_servers_from_env() -> Vec<RTCIceServer> {
         }
     }
 
-    info!("No TURN_URL configured — using public STUN fallback");
+    warn!("SFU has no Cloudflare/TURN config — STUN only; relay-only clients may not connect");
     vec![RTCIceServer {
         urls: vec!["stun:stun.l.google.com:19302".to_owned()],
         ..Default::default()
     }]
+}
+
+async fn resolve_ice_servers() -> Vec<RTCIceServer> {
+    if let Some(servers) = fetch_cloudflare_ice_servers().await {
+        return servers;
+    }
+    ice_servers_from_env()
 }
 
 async fn create_peer_connection() -> anyhow::Result<RTCPeerConnection> {
@@ -429,7 +524,7 @@ async fn create_peer_connection() -> anyhow::Result<RTCPeerConnection> {
         .build();
 
     let config = RTCConfiguration {
-        ice_servers: ice_servers_from_env(),
+        ice_servers: resolve_ice_servers().await,
         ..Default::default()
     };
 
