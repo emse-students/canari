@@ -49,9 +49,19 @@
 
   let remoteEntries = $derived([...remoteStreamsMap.entries()]);
 
+  /** Prefer a live, unmuted video track (renegotiation can leave older tracks in the stream). */
+  function pickActiveVideoTrack(stream: MediaStream): MediaStreamTrack | undefined {
+    const tracks = stream.getVideoTracks();
+    return (
+      tracks.find((t) => t.readyState === 'live' && !t.muted) ??
+      tracks.find((t) => t.readyState === 'live') ??
+      tracks[tracks.length - 1]
+    );
+  }
+
   let primaryRemoteStream = $derived.by(() => {
     for (const [, stream] of remoteStreamsMap) {
-      if (stream.getVideoTracks().length > 0) return stream;
+      if (pickActiveVideoTrack(stream)) return stream;
     }
     return remoteStreamVal;
   });
@@ -68,19 +78,30 @@
   let initialOffsetX = 0;
   let initialOffsetY = 0;
 
+  /** Builds a display stream with the newest live video track + live audio. */
+  function streamForDisplay(stream: MediaStream): MediaStream {
+    const out = new MediaStream();
+    const video = pickActiveVideoTrack(stream);
+    if (video) out.addTrack(video);
+    for (const audio of stream.getAudioTracks()) {
+      if (audio.readyState === 'live') out.addTrack(audio);
+    }
+    return out;
+  }
+
   function bindRemoteVideo(stream: MediaStream, el: HTMLVideoElement) {
-    el.srcObject = stream;
+    const display = streamForDisplay(stream);
+    el.srcObject = display;
     const play = () => void el.play().catch(() => {});
     play();
-    for (const track of stream.getVideoTracks()) {
-      track.onunmute = () => {
-        play();
-      };
+    for (const track of display.getTracks()) {
+      track.onunmute = () => play();
     }
     return () => {
-      for (const track of stream.getVideoTracks()) {
+      for (const track of display.getTracks()) {
         track.onunmute = null;
       }
+      el.srcObject = null;
     };
   }
 

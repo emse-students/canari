@@ -25,6 +25,15 @@ interface IceServerConfig {
   credential?: string;
 }
 
+/** Gecko (Firefox) — standard `RTCRtpScriptTransform`; no Chromium-only PC flags. */
+function isGeckoBrowser(): boolean {
+  return typeof navigator !== 'undefined' && /firefox/i.test(navigator.userAgent);
+}
+
+function canUseRtpScriptTransform(): boolean {
+  return typeof RTCRtpScriptTransform !== 'undefined';
+}
+
 /**
  * Manages WebRTC group/DM calls: MLS signaling for ring/hangup, SFU for media,
  * MLS-derived keys for insertable-stream encryption, Cloudflare TURN for relay.
@@ -425,8 +434,10 @@ export class CallService {
       appendLog('[Call] E2E media encryption disabled (VITE_CALL_E2E_ENCRYPTION=false)');
       return;
     }
-    if (!window.RTCRtpScriptTransform) {
-      appendLog('[Call] RTCRtpScriptTransform unavailable — E2E media skipped');
+    if (!canUseRtpScriptTransform()) {
+      appendLog(
+        '[Call] RTCRtpScriptTransform indisponible — E2E désactivé (Firefox ≥ 117 : vérifier media.peerconnection.scripttransform.enabled)'
+      );
       return;
     }
     appendLog('[Call] attaching E2E media transforms');
@@ -444,10 +455,12 @@ export class CallService {
         senders++;
       }
       for (const receiver of pc.getReceivers()) {
-        await this.setupReceiverTransform(receiver);
+        const kind = receiver.track?.kind ?? 'unknown';
+        await this.setupReceiverTransform(receiver, kind);
         receivers++;
       }
       appendLog(`[Call] E2E transforms attached (${senders} sender(s), ${receivers} receiver(s))`);
+      await this.requestVideoKeyframes();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       appendLog(`[Call] E2E transforms failed: ${msg}`);
@@ -461,7 +474,7 @@ export class CallService {
     );
 
     if (this.callKey && this.isE2eMediaEnabled()) {
-      await this.setupReceiverTransform(receiver);
+      await this.setupReceiverTransform(receiver, track.kind);
     }
 
     if (!this.mergedRemoteStream) {
@@ -469,6 +482,14 @@ export class CallService {
     }
     const already = this.mergedRemoteStream.getTracks().some((t) => t.id === track.id);
     if (!already) {
+      // Renegotiation adds new m-lines; drop stale tracks of the same kind (UI kept the dead one).
+      for (const old of this.mergedRemoteStream.getTracks()) {
+        if (old.kind === track.kind && old.id !== track.id) {
+          this.mergedRemoteStream.removeTrack(old);
+          old.stop();
+          appendLog(`[Call] replaced stale remote ${old.kind} track ${old.id.slice(0, 8)}…`);
+        }
+      }
       this.mergedRemoteStream.addTrack(track);
     }
 
@@ -484,9 +505,46 @@ export class CallService {
 
     this.publishRemoteStream();
 
+    if (track.kind === 'video') {
+      this.scheduleVideoUnmuteWatchdog(track);
+    }
+
     if (get(this.callState) === 'calling' || get(this.callState) === 'incoming') {
       this.callState.set('incall');
     }
+  }
+
+  /** Asks local encoders to emit an IDR frame so remote decoders can start after E2E attach. */
+  private async requestVideoKeyframes(): Promise<void> {
+    const pc = this.pc;
+    if (!pc) return;
+
+    for (const sender of pc.getSenders()) {
+      const mediaTrack = sender.track;
+      if (!mediaTrack || mediaTrack.kind !== 'video' || !mediaTrack.enabled) continue;
+
+      const ext = sender as RTCRtpSender & { generateKeyFrame?: () => Promise<void> };
+      if (typeof ext.generateKeyFrame !== 'function') {
+        appendLog('[Call] generateKeyFrame unavailable in this browser');
+        continue;
+      }
+      try {
+        await ext.generateKeyFrame();
+        appendLog('[Call] keyframe requested on local video sender');
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        appendLog(`[Call] generateKeyFrame failed: ${msg}`);
+      }
+    }
+  }
+
+  private scheduleVideoUnmuteWatchdog(track: MediaStreamTrack) {
+    window.setTimeout(() => {
+      if (track.readyState === 'ended') return;
+      if (!track.muted) return;
+      appendLog('[Call] remote video still muted — requesting keyframe');
+      void this.requestVideoKeyframes();
+    }, 3_000);
   }
 
   /** Notifies subscribers so `<video>` re-binds when tracks start producing frames. */
@@ -504,13 +562,21 @@ export class CallService {
 
     const iceServers = await this.fetchIceServers(this.currentGroupId, this.currentCallId);
 
-    appendLog('[Call] creating PeerConnection (iceTransportPolicy=relay)');
-    this.pc = new RTCPeerConnection({
+    appendLog(
+      `[Call] creating PeerConnection (${isGeckoBrowser() ? 'Firefox' : 'non-Firefox'}, ` +
+        `RTCRtpScriptTransform=${canUseRtpScriptTransform() ? 'oui' : 'non'})`
+    );
+    const pcConfig: RTCConfiguration = {
       iceServers,
       iceTransportPolicy: 'relay',
-      // Required for RTCRtpScriptTransform / insertable streams in Chromium.
-      encodedInsertableStreams: true,
-    } as RTCConfiguration);
+    };
+    // Legacy Chromium flag — not used by Firefox (standard API since FF 117).
+    if (!isGeckoBrowser()) {
+      (
+        pcConfig as RTCConfiguration & { encodedInsertableStreams?: boolean }
+      ).encodedInsertableStreams = true;
+    }
+    this.pc = new RTCPeerConnection(pcConfig);
 
     let relayCandidateCount = 0;
 
@@ -576,9 +642,13 @@ export class CallService {
     if (this.localStream) {
       const tracks = this.localStream.getTracks();
       appendLog(`[Call] adding ${tracks.length} local track(s) to PeerConnection`);
-      tracks.forEach((track) => {
-        this.pc!.addTrack(track, this.localStream!);
-      });
+      for (const track of tracks) {
+        const sender = this.pc!.addTrack(track, this.localStream!);
+        // Firefox/MDN: attach sender transform right after addTrack so the encoder pipeline is covered.
+        if (this.callKey && this.isE2eMediaEnabled() && canUseRtpScriptTransform()) {
+          void this.setupSenderTransform(sender);
+        }
+      }
     }
 
     appendLog('[Call] creating SDP offer…');
@@ -616,9 +686,9 @@ export class CallService {
     if (!this.encryptionWorker) {
       this.encryptionWorker = new EncryptionWorker();
       this.encryptionWorker.onmessage = (
-        event: MessageEvent<{ type: string; detail?: string; count?: number }>
+        event: MessageEvent<{ type: string; detail?: string; count?: number; mediaKind?: string }>
       ) => {
-        const { type, detail, count } = event.data ?? {};
+        const { type, detail, count, mediaKind } = event.data ?? {};
         if (type === 'decryptError') {
           appendLog(`[Call] E2E decrypt failed (${count ?? '?'}): ${detail ?? 'unknown'}`);
         } else if (type === 'keyError') {
@@ -630,7 +700,7 @@ export class CallService {
         } else if (type === 'encryptOk') {
           appendLog(`[Call] E2E encrypting (${count} frame(s))`);
         } else if (type === 'decryptOk') {
-          appendLog(`[Call] E2E decrypting (${count} frame(s))`);
+          appendLog(`[Call] E2E decrypting ${mediaKind ?? '?'} (${count} frame(s))`);
         }
       };
     }
@@ -678,7 +748,7 @@ export class CallService {
     if (sender.transform) return;
 
     try {
-      if (window.RTCRtpScriptTransform) {
+      if (canUseRtpScriptTransform()) {
         const worker = this.getOrCreateEncryptionWorker();
         await this.ensureWorkerKeyReady();
         sender.transform = new RTCRtpScriptTransform(worker, { side: 'sender' });
@@ -706,15 +776,16 @@ export class CallService {
     }
   }
 
-  private async setupReceiverTransform(receiver: RTCRtpReceiver) {
+  private async setupReceiverTransform(receiver: RTCRtpReceiver, mediaKind = 'unknown') {
     if (!this.callKey || !this.isE2eMediaEnabled()) return;
     if (receiver.transform) return;
 
     try {
-      if (window.RTCRtpScriptTransform) {
+      if (canUseRtpScriptTransform()) {
         const worker = this.getOrCreateEncryptionWorker();
         await this.ensureWorkerKeyReady();
         receiver.transform = new RTCRtpScriptTransform(worker, { side: 'receiver' });
+        appendLog(`[Call] E2E receiver transform attached (${mediaKind})`);
         return;
       }
     } catch (e) {

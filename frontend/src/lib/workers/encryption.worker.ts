@@ -15,7 +15,12 @@ let decryptFailures = 0;
 let encryptedFrames = 0;
 let decryptedFrames = 0;
 let droppedNoKey = 0;
-let rtcTransformHandlerInstalled = false;
+/** `onrtctransform` is the standard handler (Firefox 117+); typed explicitly for workers. */
+type RtcTransformWorkerScope = typeof self & {
+  onrtctransform: ((event: Event) => void) | null;
+};
+
+const workerScope = self as RtcTransformWorkerScope;
 
 /** Receives the AES-GCM key material from the main thread (raw bytes, not CryptoKey). */
 self.onmessage = async (event: MessageEvent<{ type: string; payload?: ArrayBuffer }>) => {
@@ -38,55 +43,52 @@ self.onmessage = async (event: MessageEvent<{ type: string; payload?: ArrayBuffe
   }
 };
 
-function installRtcTransformHandler() {
-  if (rtcTransformHandlerInstalled) return;
-  rtcTransformHandlerInstalled = true;
+workerScope.onrtctransform = (event: Event) => {
+  const transformEvent = event as unknown as TransformEventLike;
+  const side = (transformEvent.transformer.options as { side?: string } | undefined)?.side;
 
-  self.addEventListener('rtctransform', (event: Event) => {
-    const transformEvent = event as unknown as TransformEventLike;
-    const side = (transformEvent.transformer.options as { side?: string } | undefined)?.side;
+  if (side !== 'sender' && side !== 'receiver') {
+    self.postMessage({ type: 'warn', detail: `unknown transform side: ${String(side)}` });
+  }
 
-    if (side !== 'sender' && side !== 'receiver') {
-      self.postMessage({ type: 'warn', detail: `unknown transform side: ${String(side)}` });
-    }
-
-    const transform = new TransformStream({
-      transform: async (frame, controller) => {
-        if (!callKey) {
-          droppedNoKey++;
-          if (droppedNoKey <= 3 || droppedNoKey % 200 === 0) {
-            self.postMessage({ type: 'droppedNoKey', count: droppedNoKey });
-          }
-          return;
+  const transform = new TransformStream({
+    transform: async (frame, controller) => {
+      if (!callKey) {
+        droppedNoKey++;
+        if (droppedNoKey <= 3 || droppedNoKey % 200 === 0) {
+          self.postMessage({ type: 'droppedNoKey', count: droppedNoKey });
         }
-        try {
-          if (side === 'sender') {
-            await encryptFrame(frame, controller);
-            encryptedFrames++;
-            if (encryptedFrames === 1 || encryptedFrames % 300 === 0) {
-              self.postMessage({ type: 'encryptOk', count: encryptedFrames });
-            }
-          } else {
-            await decryptFrame(frame, controller);
-            decryptedFrames++;
-            if (decryptedFrames === 1 || decryptedFrames % 300 === 0) {
-              self.postMessage({ type: 'decryptOk', count: decryptedFrames });
-            }
+        return;
+      }
+      try {
+        if (side === 'sender') {
+          await encryptFrame(frame, controller);
+          encryptedFrames++;
+          if (encryptedFrames === 1 || encryptedFrames % 300 === 0) {
+            self.postMessage({ type: 'encryptOk', count: encryptedFrames });
           }
-        } catch (e) {
-          console.error('[Worker] Transform error:', e);
+        } else {
+          const mediaKind = frameTypeLabel(frame);
+          await decryptFrame(frame, controller);
+          decryptedFrames++;
+          if (decryptedFrames === 1 || decryptedFrames % 300 === 0) {
+            self.postMessage({ type: 'decryptOk', count: decryptedFrames, mediaKind });
+          }
         }
-      },
-    });
-
-    void transformEvent.transformer.readable
-      .pipeThrough(transform)
-      .pipeTo(transformEvent.transformer.writable);
+      } catch (e) {
+        console.error('[Worker] Transform error:', e);
+      }
+    },
   });
-}
 
-// Must register before any RTCRtpScriptTransform is constructed.
-installRtcTransformHandler();
+  void transformEvent.transformer.readable
+    .pipeThrough(transform)
+    .pipeTo(transformEvent.transformer.writable);
+};
+
+function frameTypeLabel(frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame): string {
+  return frame.constructor.name.includes('Video') ? 'video' : 'audio';
+}
 
 async function encryptFrame(
   frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame,
