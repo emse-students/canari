@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Not, Repository } from 'typeorm';
+import { In, Not, Repository } from 'typeorm';
 import { randomBytes } from 'crypto';
 import { firstValueFrom } from 'rxjs';
 import FormData from 'form-data';
@@ -20,6 +20,7 @@ import {
   AssociationCalendarEvent,
   AssociationCalendarEventStatus,
 } from './entities/association-calendar-event.entity';
+import { AssociationCalendarEventCoOwner } from './entities/association-calendar-event-co-owner.entity';
 import { Post } from '../posts/entities/post.entity';
 import { Form } from '../forms/entities/form.entity';
 import {
@@ -52,6 +53,8 @@ export class AssociationsService {
     private readonly memberRepo: Repository<AssociationMember>,
     @InjectRepository(AssociationCalendarEvent)
     private readonly calendarRepo: Repository<AssociationCalendarEvent>,
+    @InjectRepository(AssociationCalendarEventCoOwner)
+    private readonly coOwnerRepo: Repository<AssociationCalendarEventCoOwner>,
     @InjectRepository(AssociationDocument)
     private readonly docRepo: Repository<AssociationDocument>,
     @InjectRepository(Post)
@@ -531,7 +534,63 @@ export class AssociationsService {
     return fallback;
   }
 
-  private serializeCalendarEvent(e: AssociationCalendarEvent) {
+  /**
+   * Returns the event if the caller's association is the primary owner OR a co-owner.
+   * Pass `canCrossAsso = true` for BDE / global-admin callers (no ownership check).
+   */
+  private async findCalendarEventForAssociation(
+    eventId: string,
+    associationId: string,
+    canCrossAsso: boolean
+  ): Promise<AssociationCalendarEvent | null> {
+    if (canCrossAsso) {
+      return this.calendarRepo.findOne({ where: { id: eventId } });
+    }
+    return this.calendarRepo
+      .createQueryBuilder('e')
+      .where('e.id = :eventId', { eventId })
+      .andWhere(
+        `(e.associationId = :associationId OR EXISTS (
+          SELECT 1 FROM association_calendar_event_co_owners co
+          WHERE co.event_id = e.id AND co.association_id = :associationId
+        ))`,
+        { associationId }
+      )
+      .getOne();
+  }
+
+  /** Replaces the full co-owner list for an event atomically. */
+  private async syncCoOwners(
+    eventId: string,
+    primaryAssociationId: string,
+    coOwnerIds: string[]
+  ): Promise<AssociationCalendarEventCoOwner[]> {
+    await this.coOwnerRepo.delete({ eventId });
+    const validIds = [...new Set(coOwnerIds)].filter((id) => id !== primaryAssociationId);
+    if (validIds.length === 0) return [];
+    const rows = validIds.map((id) => this.coOwnerRepo.create({ eventId, associationId: id }));
+    return this.coOwnerRepo.save(rows);
+  }
+
+  /** Batch-loads co-owners for a list of event IDs (2 queries total). */
+  private async batchLoadCoOwners(
+    eventIds: string[]
+  ): Promise<Map<string, AssociationCalendarEventCoOwner[]>> {
+    const map = new Map<string, AssociationCalendarEventCoOwner[]>();
+    if (eventIds.length === 0) return map;
+    const all = await this.coOwnerRepo.find({ where: { eventId: In(eventIds) } });
+    for (const co of all) {
+      const list = map.get(co.eventId) ?? [];
+      list.push(co);
+      map.set(co.eventId, list);
+    }
+    return map;
+  }
+
+  private serializeCalendarEvent(
+    e: AssociationCalendarEvent,
+    coOwners: AssociationCalendarEventCoOwner[] = []
+  ) {
     const startsAt = e.startsAt instanceof Date ? e.startsAt : new Date(e.startsAt);
     const endsRaw = e.endsAt;
     const endsAt =
@@ -562,6 +621,13 @@ export class AssociationsService {
       rejectedBy: e.rejectedBy ?? null,
       rejectionReason: e.rejectionReason ?? null,
       imageUrl: e.imageUrl ?? null,
+      coOwners: coOwners.map((co) => ({
+        associationId: co.associationId,
+        name: co.association?.name ?? '',
+        slug: co.association?.slug ?? '',
+        color: co.association?.color ?? null,
+        logoUrl: co.association?.logoUrl ?? null,
+      })),
     };
   }
 
@@ -684,7 +750,13 @@ export class AssociationsService {
     await this.findById(associationId);
     const qb = this.calendarRepo
       .createQueryBuilder('e')
-      .where('e.associationId = :associationId', { associationId })
+      .where(
+        `(e.associationId = :associationId OR EXISTS (
+          SELECT 1 FROM association_calendar_event_co_owners co
+          WHERE co.event_id = e.id AND co.association_id = :associationId
+        ))`,
+        { associationId }
+      )
       .orderBy('e.startsAt', 'ASC');
     if (!opts?.includePending) {
       qb.andWhere('e.status = :validated', {
@@ -699,7 +771,8 @@ export class AssociationsService {
       qb.andWhere('e.startsAt <= :to', { to: new Date(toIso) });
     }
     const rows = await qb.getMany();
-    return rows.map((e) => this.serializeCalendarEvent(e));
+    const coOwnerMap = await this.batchLoadCoOwners(rows.map((r) => r.id));
+    return rows.map((e) => this.serializeCalendarEvent(e, coOwnerMap.get(e.id) ?? []));
   }
 
   /** Max span for aggregated calendar queries (abuse guard). */
@@ -1041,14 +1114,15 @@ export class AssociationsService {
       validatedBy: canValidate ? userId : null,
     });
     const saved = await this.calendarRepo.save(row);
+    const coOwners = await this.syncCoOwners(saved.id, targetId, dto.coOwnerIds ?? []);
     console.log(
-      `[Calendar] Event created: ${saved.id} for asso ${targetId} by ${userId} (status=${saved.status})`
+      `[Calendar] Event created: ${saved.id} for asso ${targetId} by ${userId} (status=${saved.status}, coOwners=${coOwners.length})`
     );
     // Notify asso admins when BDE creates an event on their behalf
     if (canValidate && targetId !== associationId) {
       void this.notifyAssocAdminsOfEventAction(targetId, userId, saved.title, 'validated');
     }
-    return this.serializeCalendarEvent(saved);
+    return this.serializeCalendarEvent(saved, coOwners);
   }
 
   /**
@@ -1063,9 +1137,7 @@ export class AssociationsService {
   ) {
     const canCrossAsso = callerOpts?.isGlobalAdmin || callerOpts?.isBde;
     await this.findById(associationId);
-    const ev = await this.calendarRepo.findOne({
-      where: canCrossAsso ? { id: eventId } : { id: eventId, associationId },
-    });
+    const ev = await this.findCalendarEventForAssociation(eventId, associationId, canCrossAsso);
     if (!ev) throw new NotFoundException('Event not found');
 
     if (dto.title !== undefined) ev.title = dto.title.trim();
@@ -1106,8 +1178,12 @@ export class AssociationsService {
     }
 
     const saved = await this.calendarRepo.save(ev);
+    const coOwners =
+      dto.coOwnerIds !== undefined
+        ? await this.syncCoOwners(saved.id, saved.associationId, dto.coOwnerIds)
+        : await this.batchLoadCoOwners([saved.id]).then((m) => m.get(saved.id) ?? []);
     console.log(
-      `[Calendar] Event updated: ${saved.id} by ${callerOpts?.callerUserId ?? 'unknown'}`
+      `[Calendar] Event updated: ${saved.id} by ${callerOpts?.callerUserId ?? 'unknown'} (coOwners=${coOwners.length})`
     );
     // Notify asso admins when BDE modifies an event from another asso
     if (canCrossAsso && ev.associationId !== associationId && callerOpts?.callerUserId) {
@@ -1118,15 +1194,13 @@ export class AssociationsService {
         'updated'
       );
     }
-    return this.serializeCalendarEvent(saved);
+    return this.serializeCalendarEvent(saved, coOwners);
   }
 
   /** Marks a pending calendar event as validated (visible on public agenda and feeds). */
   async validateCalendarEvent(associationId: string, eventId: string, userId: string) {
     await this.findById(associationId);
-    const ev = await this.calendarRepo.findOne({
-      where: { id: eventId, associationId },
-    });
+    const ev = await this.findCalendarEventForAssociation(eventId, associationId, false);
     if (!ev) throw new NotFoundException('Event not found');
     if (ev.status === AssociationCalendarEventStatus.Validated) {
       return this.serializeCalendarEvent(ev);
@@ -1149,7 +1223,7 @@ export class AssociationsService {
     reason?: string
   ) {
     await this.findById(associationId);
-    const ev = await this.calendarRepo.findOne({ where: { id: eventId, associationId } });
+    const ev = await this.findCalendarEventForAssociation(eventId, associationId, false);
     if (!ev) throw new NotFoundException('Event not found');
     if (ev.status === AssociationCalendarEventStatus.Rejected) {
       return this.serializeCalendarEvent(ev);
@@ -1200,8 +1274,12 @@ export class AssociationsService {
         );
       }
     } else {
-      const res = await this.calendarRepo.delete({ id: eventId, associationId });
-      if (!res.affected) throw new NotFoundException('Event not found');
+      const ev = await this.findCalendarEventForAssociation(eventId, associationId, false);
+      if (!ev) throw new NotFoundException('Event not found');
+      await this.calendarRepo.delete({ id: eventId });
+      console.log(
+        `[Calendar] Event deleted: ${eventId} by ${callerOpts?.callerUserId ?? 'unknown'}`
+      );
     }
     return { ok: true };
   }

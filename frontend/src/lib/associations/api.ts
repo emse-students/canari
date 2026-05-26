@@ -89,6 +89,16 @@ export interface UpdateAssociationPayload {
 
 export type AssociationCalendarEventStatus = 'pending' | 'validated' | 'rejected';
 
+/** Lean summary of an association co-owning a calendar event. */
+export interface CalendarEventCoOwner {
+  associationId: string;
+  name: string;
+  slug: string;
+  /** Hex color (e.g. "#e83e8c") or null → frontend falls back to generateAvatarColor. */
+  color: string | null;
+  logoUrl: string | null;
+}
+
 export interface AssociationCalendarEvent {
   id: string;
   associationId: string;
@@ -109,6 +119,8 @@ export interface AssociationCalendarEvent {
   linkedFormId: string | null;
   /** Poster/banner image URL (public, served via media-service). */
   imageUrl: string | null;
+  /** Other associations co-managing this event. */
+  coOwners: CalendarEventCoOwner[];
 }
 
 /** Row from `GET /api/associations/calendar/feed` (aggregated agenda). */
@@ -133,6 +145,8 @@ export interface CreateAssociationCalendarEventPayload {
   linkedFormId?: string;
   /** BDE / global admin only: create on behalf of another association. */
   targetAssocId?: string;
+  /** IDs of associations co-managing this event (max 10). */
+  coOwnerIds?: string[];
 }
 
 export interface UpdateAssociationCalendarEventPayload {
@@ -141,6 +155,8 @@ export interface UpdateAssociationCalendarEventPayload {
   startsAt?: string;
   endsAt?: string;
   linkedFormId?: string | null;
+  /** Replaces the full co-owner list. Omit to leave unchanged. */
+  coOwnerIds?: string[];
 }
 
 /** Validated agenda events for linking from a publication (wide date window). */

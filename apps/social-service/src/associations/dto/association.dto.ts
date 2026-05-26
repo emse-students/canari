@@ -1,4 +1,5 @@
 import {
+  ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsDateString,
@@ -186,6 +187,13 @@ export class CreateAssociationCalendarEventDto {
   @IsOptional()
   @IsUUID()
   targetAssocId?: string;
+
+  /** Additional associations co-managing this event (max 10). */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @IsUUID('all', { each: true })
+  coOwnerIds?: string[];
 }
 
 export class UpdateAssociationCalendarEventDto {
@@ -211,6 +219,13 @@ export class UpdateAssociationCalendarEventDto {
   @ValidateIf((_, v) => typeof v === 'string' && v.length > 0)
   @IsUUID()
   linkedFormId?: string | null;
+
+  /** Replaces the full co-owner list for this event (max 10). */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @IsUUID('all', { each: true })
+  coOwnerIds?: string[];
 }
 
 /** Optional reason provided by the BDE when rejecting a pending calendar event. */

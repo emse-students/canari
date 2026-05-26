@@ -259,6 +259,7 @@
           associationId={asso.id}
           associationSlug={asso.slug}
           canEdit={canProposeEvent}
+          associationColor={asso.color ?? null}
         />
       </div>
     {:else if activeSection === 'members'}

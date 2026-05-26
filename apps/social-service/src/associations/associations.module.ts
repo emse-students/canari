@@ -5,6 +5,7 @@ import { ConfigModule } from '@nestjs/config';
 import { Association } from './entities/association.entity';
 import { AssociationMember } from './entities/association-member.entity';
 import { AssociationCalendarEvent } from './entities/association-calendar-event.entity';
+import { AssociationCalendarEventCoOwner } from './entities/association-calendar-event-co-owner.entity';
 import { AssociationDocument } from './entities/association-document.entity';
 import { AssociationProduct } from './entities/association-product.entity';
 import { WebhookDelivery } from './entities/webhook-delivery.entity';
@@ -29,6 +30,7 @@ import { PurchaseRecordModule } from '../users/purchase-record.module';
       Association,
       AssociationMember,
       AssociationCalendarEvent,
+      AssociationCalendarEventCoOwner,
       AssociationDocument,
       AssociationProduct,
       WebhookDelivery,

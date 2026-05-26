@@ -8,12 +8,16 @@
     deleteAssociationCalendarEvent,
     validateAssociationCalendarEvent,
     listAssociationLinkCandidates,
+    listAssociations,
     uploadCalendarEventImage,
     deleteCalendarEventImage,
     aggregatedCalendarFeedIcsAbsoluteUrl,
     type AssociationCalendarEvent,
     type AssociationLinkCandidates,
+    type Association,
   } from '$lib/associations/api';
+  import { generateAvatarColor } from '$lib/utils/avatar';
+  import { toHex } from '$lib/utils/color';
   import {
     buildIcsCalendar,
     downloadTextFile,
@@ -34,6 +38,7 @@
     Check,
     ImagePlus,
     X,
+    Users,
   } from '@lucide/svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
@@ -46,9 +51,12 @@
     /** Used in exported / subscribed ICS (`URL` field). */
     associationSlug?: string;
     canEdit?: boolean;
+    /** Hex color of this association for calendar cell gradient (e.g. "#e83e8c"). */
+    associationColor?: string | null;
   }
 
-  let { associationId, associationSlug, canEdit = false }: Props = $props();
+  let { associationId, associationSlug, canEdit = false, associationColor = null }: Props =
+    $props();
 
   let events = $state<AssociationCalendarEvent[]>([]);
   let loading = $state(true);
@@ -262,11 +270,102 @@
     )
   );
 
+  // ── Co-owner picker ───────────────────────────────────────────────────────
+
+  /** IDs of co-owner associations selected for the current form. */
+  let formCoOwnerIds = $state<string[]>([]);
+  let allAssociations = $state<Association[]>([]);
+  let coOwnerSearchQuery = $state('');
+  let coOwnerDropdownOpen = $state(false);
+
+  async function ensureAllAssociations() {
+    if (allAssociations.length > 0) return;
+    try {
+      allAssociations = await listAssociations();
+    } catch {
+      allAssociations = [];
+    }
+  }
+
+  const coOwnerCandidates = $derived(
+    allAssociations.filter(
+      (a) =>
+        a.id !== associationId &&
+        !formCoOwnerIds.includes(a.id) &&
+        (coOwnerSearchQuery.trim() === '' ||
+          a.name.toLowerCase().includes(coOwnerSearchQuery.toLowerCase()))
+    )
+  );
+
+  const selectedCoOwners = $derived(allAssociations.filter((a) => formCoOwnerIds.includes(a.id)));
+
+  function addCoOwner(id: string) {
+    if (!formCoOwnerIds.includes(id)) formCoOwnerIds = [...formCoOwnerIds, id];
+    coOwnerSearchQuery = '';
+    coOwnerDropdownOpen = false;
+  }
+
+  function removeCoOwner(id: string) {
+    formCoOwnerIds = formCoOwnerIds.filter((x) => x !== id);
+  }
+
+  // ── Calendar gradient helpers ─────────────────────────────────────────────
+
+  function hexToRgba(hex: string, alpha: number): string {
+    const h = hex.replace('#', '');
+    const r = parseInt(h.slice(0, 2), 16);
+    const g = parseInt(h.slice(2, 4), 16);
+    const b = parseInt(h.slice(4, 6), 16);
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+
+  /** Inline style string for a calendar day cell (transparent gradient, or empty). */
+  function dayCellStyle(day: number): string {
+    const d = new Date(focusDate.getFullYear(), focusDate.getMonth(), day);
+    const dayEvents = validatedEvents.filter((ev) => eventCoversDay(ev, d));
+    if (dayEvents.length === 0) return '';
+
+    const seenIds: string[] = [];
+    const hexColors: string[] = [];
+
+    for (const ev of dayEvents) {
+      if (!seenIds.includes(ev.associationId)) {
+        seenIds.push(ev.associationId);
+        const raw =
+          ev.associationId === associationId
+            ? (associationColor ?? generateAvatarColor(associationId))
+            : generateAvatarColor(ev.associationId);
+        hexColors.push(toHex(raw));
+      }
+      for (const co of ev.coOwners ?? []) {
+        if (!seenIds.includes(co.associationId)) {
+          seenIds.push(co.associationId);
+          hexColors.push(toHex(co.color ?? generateAvatarColor(co.associationId)));
+        }
+      }
+    }
+
+    if (hexColors.length === 1) {
+      return `background-color:${hexToRgba(hexColors[0], 0.18)};`;
+    }
+    const step = 100 / hexColors.length;
+    const stops = hexColors
+      .map((c, i) => {
+        const rgba = hexToRgba(c, 0.18);
+        const from = Math.round(i * step);
+        const to = Math.round((i + 1) * step);
+        return i === 0 ? `${rgba} ${to}%` : `${rgba} ${from}% ${to}%`;
+      })
+      .join(', ');
+    return `background:linear-gradient(to right,${stops});`;
+  }
+
   async function openCreate() {
     editingId = null;
     formTitle = '';
     formDescription = '';
     formLinkedFormId = '';
+    formCoOwnerIds = [];
     formImageUrl = null;
     const now = new SvelteDate();
     now.setMinutes(0, 0, 0);
@@ -274,7 +373,7 @@
     formEnd = '';
     formError = '';
     modalOpen = true;
-    await ensureLinkCandidates();
+    await Promise.all([ensureLinkCandidates(), ensureAllAssociations()]);
   }
 
   async function openEdit(ev: AssociationCalendarEvent) {
@@ -284,10 +383,11 @@
     formStart = toDatetimeLocalValue(ev.startsAt);
     formEnd = ev.endsAt ? toDatetimeLocalValue(ev.endsAt) : '';
     formLinkedFormId = ev.linkedFormId ?? '';
+    formCoOwnerIds = (ev.coOwners ?? []).map((co) => co.associationId);
     formImageUrl = ev.imageUrl ?? null;
     formError = '';
     modalOpen = true;
-    await ensureLinkCandidates();
+    await Promise.all([ensureLinkCandidates(), ensureAllAssociations()]);
   }
 
   async function handleImageUpload(e: Event) {
@@ -358,6 +458,7 @@
           startsAt: startIso,
           endsAt: endIso,
           linkedFormId: formLinkedFormId.trim() || null,
+          coOwnerIds: formCoOwnerIds,
         });
       } else {
         await createAssociationCalendarEvent(associationId, {
@@ -366,6 +467,7 @@
           startsAt: startIso,
           endsAt: endIso,
           ...(formLinkedFormId.trim() ? { linkedFormId: formLinkedFormId.trim() } : {}),
+          coOwnerIds: formCoOwnerIds,
         });
         dismissEventModal(false);
         await loadMonth();
@@ -504,13 +606,15 @@
           {#if cell.day === null}
             <div class="aspect-square rounded-xl bg-transparent"></div>
           {:else}
+            {@const gradStyle = dayCellStyle(cell.day)}
             <div
               class="aspect-square rounded-xl flex flex-col items-center justify-center text-sm relative border transition-colors
               {hasValidatedEventOnDay(cell.day)
-                ? 'border-cn-yellow/50 bg-cn-yellow/10 font-semibold text-text-main'
+                ? 'border-cn-yellow/50 font-semibold text-text-main'
                 : hasPendingEventOnDay(cell.day)
                   ? 'border-amber-300/50 bg-amber-50/80 font-semibold text-text-main'
                   : 'border-cn-border/40 bg-cn-bg/30 text-text-muted'}"
+              style={gradStyle || undefined}
             >
               <span>{cell.day}</span>
               {#if hasValidatedEventOnDay(cell.day)}
@@ -774,6 +878,71 @@
       {:else}
         <p class="text-xs text-text-muted">Vous pourrez ajouter une affiche après avoir créé l'événement.</p>
       {/if}
+      <!-- Co-owner associations picker -->
+      <div class="space-y-2 rounded-xl border border-cn-border/70 bg-cn-bg/30 p-3">
+        <p class="text-xs font-bold text-text-muted uppercase tracking-wide flex items-center gap-1">
+          <Users size={14} />
+          Associations partenaires (optionnel)
+        </p>
+        {#if selectedCoOwners.length > 0}
+          <div class="flex flex-wrap gap-1.5">
+            {#each selectedCoOwners as asso (asso.id)}
+              <span
+                class="inline-flex items-center gap-1 rounded-full border border-cn-border bg-[var(--cn-surface)] px-2.5 py-1 text-xs font-semibold text-text-main"
+              >
+                {#if asso.color}
+                  <span
+                    class="inline-block w-2 h-2 rounded-full shrink-0"
+                    style="background:{asso.color}"
+                  ></span>
+                {/if}
+                {asso.name}
+                <button
+                  type="button"
+                  onclick={() => removeCoOwner(asso.id)}
+                  class="ml-0.5 text-text-muted hover:text-red-500 transition-colors"
+                  aria-label="Retirer {asso.name}"
+                >
+                  <X size={12} />
+                </button>
+              </span>
+            {/each}
+          </div>
+        {/if}
+        <div class="relative">
+          <input
+            type="text"
+            placeholder="Rechercher une association…"
+            bind:value={coOwnerSearchQuery}
+            onfocus={() => (coOwnerDropdownOpen = true)}
+            onblur={() => setTimeout(() => (coOwnerDropdownOpen = false), 150)}
+            class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm text-text-main placeholder:text-text-muted"
+          />
+          {#if coOwnerDropdownOpen && coOwnerCandidates.length > 0}
+            <ul
+              class="absolute z-20 mt-1 w-full rounded-xl border border-cn-border bg-white/95 dark:bg-black/90 backdrop-blur-xl shadow-lg max-h-48 overflow-y-auto"
+            >
+              {#each coOwnerCandidates.slice(0, 12) as asso (asso.id)}
+                <li>
+                  <button
+                    type="button"
+                    onmousedown={(e) => { e.preventDefault(); addCoOwner(asso.id); }}
+                    class="w-full flex items-center gap-2 px-3 py-2 text-sm text-text-main hover:bg-cn-yellow/10 transition-colors text-left"
+                  >
+                    {#if asso.color}
+                      <span
+                        class="inline-block w-2.5 h-2.5 rounded-full shrink-0"
+                        style="background:{asso.color}"
+                      ></span>
+                    {/if}
+                    {asso.name}
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
+      </div>
       {#if canEdit && linkCandidates}
         <div class="space-y-3 rounded-xl border border-cn-border/70 bg-cn-bg/30 p-3">
           <p
