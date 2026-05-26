@@ -9,55 +9,84 @@ interface TransformEventLike {
   };
 }
 
-/** `onrtctransform` exists at runtime but is missing from default worker lib types. */
-type RtcTransformWorkerScope = typeof self & {
-  onrtctransform: ((event: Event) => void) | null;
-};
-
-const workerScope = self as RtcTransformWorkerScope;
-
 let callKey: CryptoKey | null = null;
 const ivLength = 12;
 let decryptFailures = 0;
+let encryptedFrames = 0;
+let decryptedFrames = 0;
+let droppedNoKey = 0;
+let rtcTransformHandlerInstalled = false;
 
-/** Receives the AES-GCM key from the main thread (not transferable on every frame). */
-self.onmessage = (event: MessageEvent<{ type: string; payload?: CryptoKey }>) => {
+/** Receives the AES-GCM key material from the main thread (raw bytes, not CryptoKey). */
+self.onmessage = async (event: MessageEvent<{ type: string; payload?: ArrayBuffer }>) => {
   if (event.data?.type === 'setKey') {
-    callKey = event.data.payload ?? null;
-    self.postMessage({ type: 'keyReady' });
+    const raw = event.data.payload;
+    if (!raw || raw.byteLength !== 32) {
+      self.postMessage({ type: 'keyError', detail: `invalid key length ${raw?.byteLength ?? 0}` });
+      return;
+    }
+    try {
+      callKey = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, [
+        'encrypt',
+        'decrypt',
+      ]);
+      self.postMessage({ type: 'keyReady' });
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
+      self.postMessage({ type: 'keyError', detail });
+    }
   }
 };
 
-/**
- * One handler per worker — `addEventListener` would stack and break every pipe after the
- * second RTCRtpScriptTransform (symptom: remote video with a live track but black frames).
- * @see https://developer.mozilla.org/en-US/docs/Web/API/RTCTransformEvent
- */
-workerScope.onrtctransform = (event: Event) => {
-  const transformEvent = event as unknown as TransformEventLike;
-  const side = (transformEvent.transformer.options as { side?: string } | undefined)?.side;
-  const transform = new TransformStream({
-    transform: async (frame, controller) => {
-      if (!callKey) {
-        // Drop until key is set — passthrough would make the remote decrypt fail permanently.
-        return;
-      }
-      try {
-        if (side === 'sender') {
-          await encryptFrame(frame, controller);
-        } else {
-          await decryptFrame(frame, controller);
-        }
-      } catch (e) {
-        console.error('[Worker] Transform error:', e);
-      }
-    },
-  });
+function installRtcTransformHandler() {
+  if (rtcTransformHandlerInstalled) return;
+  rtcTransformHandlerInstalled = true;
 
-  void transformEvent.transformer.readable
-    .pipeThrough(transform)
-    .pipeTo(transformEvent.transformer.writable);
-};
+  self.addEventListener('rtctransform', (event: Event) => {
+    const transformEvent = event as unknown as TransformEventLike;
+    const side = (transformEvent.transformer.options as { side?: string } | undefined)?.side;
+
+    if (side !== 'sender' && side !== 'receiver') {
+      self.postMessage({ type: 'warn', detail: `unknown transform side: ${String(side)}` });
+    }
+
+    const transform = new TransformStream({
+      transform: async (frame, controller) => {
+        if (!callKey) {
+          droppedNoKey++;
+          if (droppedNoKey <= 3 || droppedNoKey % 200 === 0) {
+            self.postMessage({ type: 'droppedNoKey', count: droppedNoKey });
+          }
+          return;
+        }
+        try {
+          if (side === 'sender') {
+            await encryptFrame(frame, controller);
+            encryptedFrames++;
+            if (encryptedFrames === 1 || encryptedFrames % 300 === 0) {
+              self.postMessage({ type: 'encryptOk', count: encryptedFrames });
+            }
+          } else {
+            await decryptFrame(frame, controller);
+            decryptedFrames++;
+            if (decryptedFrames === 1 || decryptedFrames % 300 === 0) {
+              self.postMessage({ type: 'decryptOk', count: decryptedFrames });
+            }
+          }
+        } catch (e) {
+          console.error('[Worker] Transform error:', e);
+        }
+      },
+    });
+
+    void transformEvent.transformer.readable
+      .pipeThrough(transform)
+      .pipeTo(transformEvent.transformer.writable);
+  });
+}
+
+// Must register before any RTCRtpScriptTransform is constructed.
+installRtcTransformHandler();
 
 async function encryptFrame(
   frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame,

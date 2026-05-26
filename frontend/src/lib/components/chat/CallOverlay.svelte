@@ -48,11 +48,20 @@
   });
 
   let remoteEntries = $derived([...remoteStreamsMap.entries()]);
-  let primaryRemoteStream = $derived(
-    remoteEntries.length > 0 ? remoteEntries[0][1] : remoteStreamVal
-  );
+
+  /** Prefer a stream that actually carries video (not audio-only). */
+  function pickDisplayStream(): MediaStream | null {
+    for (const [, stream] of remoteStreamsMap) {
+      if (stream.getVideoTracks().length > 0) return stream;
+    }
+    return remoteStreamVal ?? remoteEntries[0]?.[1] ?? null;
+  }
+
+  let primaryRemoteStream = $derived(pickDisplayStream());
   let primaryParticipant = $derived(participants[0]);
   let isGroupCall = $derived(participants.length > 1);
+  /** Grid only for multi-party; audio+video from one peer stay on a single tile. */
+  let showRemoteGrid = $derived(isGroupCall && remoteEntries.length > 1);
 
   let pipOffsetX = $state(0);
   let pipOffsetY = $state(0);
@@ -171,7 +180,7 @@
   <div
     class="relative w-full h-full max-w-6xl max-h-[82vh] bg-[#0a0d14] rounded-[2rem] overflow-hidden shadow-2xl ring-1 ring-white/10 flex flex-col transition-all duration-300"
   >
-    {#if remoteEntries.length > 1}
+    {#if showRemoteGrid}
       <div
         class="w-full h-full grid gap-1 p-1 {remoteEntries.length <= 4
           ? 'grid-cols-2'

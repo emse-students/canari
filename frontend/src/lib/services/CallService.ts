@@ -35,6 +35,9 @@ export class CallService {
   private localStream: MediaStream | null = null;
   private encryptionWorker: Worker | null = null;
   private workerKeyReady: Promise<void> | null = null;
+  /** All remote tracks merged for 1:1 display (audio + video in one MediaStream). */
+  private mergedRemoteStream: MediaStream | null = null;
+  private callKeyBytes: Uint8Array | null = null;
 
   public currentCallId: string | null = null;
   public currentGroupId: string | null = null;
@@ -138,6 +141,8 @@ export class CallService {
     this.currentGroupId = null;
     this.incomingCallerId = null;
     this.callKey = null;
+    this.callKeyBytes = null;
+    this.mergedRemoteStream = null;
     this.incomingHasVideo = true;
 
     if (this.localStream) {
@@ -364,23 +369,41 @@ export class CallService {
     });
   }
 
+  /** When false, media is relayed cleartext through the SFU (debug / fallback). */
+  private isE2eMediaEnabled(): boolean {
+    return import.meta.env.VITE_CALL_E2E_ENCRYPTION !== 'false';
+  }
+
   /** Attaches MLS insertable-stream transforms after the SDP handshake (SFU is not extension-aware). */
   private attachMediaTransforms() {
     if (!this.pc || !this.callKey) return;
+    if (!this.isE2eMediaEnabled()) {
+      appendLog('[Call] E2E media encryption disabled (VITE_CALL_E2E_ENCRYPTION=false)');
+      return;
+    }
+    if (!window.RTCRtpScriptTransform) {
+      appendLog('[Call] RTCRtpScriptTransform unavailable — E2E media skipped');
+      return;
+    }
     appendLog('[Call] attaching E2E media transforms');
     void this.attachMediaTransformsAsync();
   }
 
   private async attachMediaTransformsAsync() {
     const pc = this.pc;
-    if (!pc || !this.callKey) return;
+    if (!pc || !this.callKey || !this.isE2eMediaEnabled()) return;
     try {
+      let senders = 0;
+      let receivers = 0;
       for (const sender of pc.getSenders()) {
         await this.setupSenderTransform(sender);
+        senders++;
       }
       for (const receiver of pc.getReceivers()) {
         await this.setupReceiverTransform(receiver);
+        receivers++;
       }
+      appendLog(`[Call] E2E transforms attached (${senders} sender(s), ${receivers} receiver(s))`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       appendLog(`[Call] E2E transforms failed: ${msg}`);
@@ -427,25 +450,28 @@ export class CallService {
     };
 
     this.pc.ontrack = (e) => {
-      appendLog(`[Call] remote track received kind=${e.track.kind}`);
-      const stream = e.streams[0] ?? new MediaStream([e.track]);
-      const peerKey = e.track.id || `peer-${Date.now()}`;
+      const { track } = e;
+      appendLog(
+        `[Call] remote track kind=${track.kind} id=${track.id.slice(0, 8)}… readyState=${track.readyState} muted=${track.muted}`
+      );
 
-      this.remoteStreams.update((map) => {
-        const next = new Map(map);
-        next.set(peerKey, stream);
-        return next;
-      });
-
-      if (get(this.remoteStreams).size === 1) {
-        this.remoteStream.set(stream);
+      if (!this.mergedRemoteStream) {
+        this.mergedRemoteStream = new MediaStream();
       }
+      const already = this.mergedRemoteStream.getTracks().some((t) => t.id === track.id);
+      if (!already) {
+        this.mergedRemoteStream.addTrack(track);
+      }
+
+      const stream = this.mergedRemoteStream;
+      this.remoteStream.set(stream);
+      this.remoteStreams.set(new Map([['remote', stream]]));
 
       if (get(this.callState) === 'calling' || get(this.callState) === 'incoming') {
         this.callState.set('incall');
       }
 
-      if (this.callKey) {
+      if (this.callKey && this.isE2eMediaEnabled()) {
         void this.setupReceiverTransform(e.receiver);
       }
     };
@@ -500,15 +526,19 @@ export class CallService {
   private async setupEncryption(groupId: string, callId: string) {
     const context = new TextEncoder().encode(callId);
     const secret = await this.mlsService.exportSecret(groupId, 'mls-webrtc-media', context, 32);
+    this.callKeyBytes = Uint8Array.from(secret);
 
     this.callKey = await crypto.subtle.importKey(
       'raw',
-      secret as BufferSource,
+      this.callKeyBytes as BufferSource,
       { name: 'AES-GCM' },
       false,
       ['encrypt', 'decrypt']
     );
-    appendLog('[Call] encryption key derived from MLS');
+    const fp = Array.from(this.callKeyBytes.slice(0, 4))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+    appendLog(`[Call] encryption key derived from MLS (fp=${fp}…)`);
   }
 
   private getOrCreateEncryptionWorker(): Worker {
@@ -517,10 +547,19 @@ export class CallService {
       this.encryptionWorker.onmessage = (
         event: MessageEvent<{ type: string; detail?: string; count?: number }>
       ) => {
-        if (event.data?.type === 'decryptError') {
-          appendLog(
-            `[Call] E2E decrypt failed (${event.data.count ?? '?'}): ${event.data.detail ?? 'unknown'}`
-          );
+        const { type, detail, count } = event.data ?? {};
+        if (type === 'decryptError') {
+          appendLog(`[Call] E2E decrypt failed (${count ?? '?'}): ${detail ?? 'unknown'}`);
+        } else if (type === 'keyError') {
+          appendLog(`[Call] E2E worker key error: ${detail ?? 'unknown'}`);
+        } else if (type === 'droppedNoKey') {
+          appendLog(`[Call] E2E frames dropped (no key in worker, ${count ?? '?'})`);
+        } else if (type === 'warn') {
+          appendLog(`[Call] E2E worker: ${detail ?? 'warn'}`);
+        } else if (type === 'encryptOk') {
+          appendLog(`[Call] E2E encrypting (${count} frame(s))`);
+        } else if (type === 'decryptOk') {
+          appendLog(`[Call] E2E decrypting (${count} frame(s))`);
         }
       };
     }
@@ -539,21 +578,32 @@ export class CallService {
         this.workerKeyReady = null;
         reject(new Error('encryption worker key timeout'));
       }, 3_000);
-      const onReady = (event: MessageEvent<{ type: string }>) => {
+      const onReady = (event: MessageEvent<{ type: string; detail?: string }>) => {
         if (event.data?.type === 'keyReady') {
           window.clearTimeout(timeout);
           worker.removeEventListener('message', onReady);
           resolve();
+        } else if (event.data?.type === 'keyError') {
+          window.clearTimeout(timeout);
+          worker.removeEventListener('message', onReady);
+          this.workerKeyReady = null;
+          reject(new Error(event.data.detail ?? 'worker key import failed'));
         }
       };
       worker.addEventListener('message', onReady);
-      worker.postMessage({ type: 'setKey', payload: this.callKey });
+      const keyBytes = this.callKeyBytes;
+      if (!keyBytes) {
+        reject(new Error('no call key bytes'));
+        return;
+      }
+      const keyCopy = keyBytes.slice();
+      worker.postMessage({ type: 'setKey', payload: keyCopy.buffer }, [keyCopy.buffer]);
     });
     return this.workerKeyReady;
   }
 
   private async setupSenderTransform(sender: RTCRtpSender) {
-    if (!this.callKey) return;
+    if (!this.callKey || !this.isE2eMediaEnabled()) return;
     if (sender.transform) return;
 
     try {
@@ -586,7 +636,7 @@ export class CallService {
   }
 
   private async setupReceiverTransform(receiver: RTCRtpReceiver) {
-    if (!this.callKey) return;
+    if (!this.callKey || !this.isE2eMediaEnabled()) return;
     if (receiver.transform) return;
 
     try {
