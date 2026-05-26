@@ -41,7 +41,7 @@ export function createMlsServiceStub(
     dropGroup: vi.fn(),
     forceLeaveGroup: vi.fn().mockResolvedValue(undefined),
     renameGroup: vi.fn().mockResolvedValue(undefined),
-    deleteGroupOnServer: vi.fn().mockResolvedValue(undefined),
+    deleteGroupOnServer: vi.fn().mockResolvedValue(true),
     removeMemberFromServer: vi.fn().mockResolvedValue(undefined),
     removeMember: vi.fn().mockResolvedValue(undefined),
     removeMemberDevice: vi.fn().mockResolvedValue(undefined),

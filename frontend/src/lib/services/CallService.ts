@@ -34,6 +34,7 @@ export class CallService {
   private signaledWs: WebSocket | null = null;
   private localStream: MediaStream | null = null;
   private encryptionWorker: Worker | null = null;
+  private workerKeyReady: Promise<void> | null = null;
 
   public currentCallId: string | null = null;
   public currentGroupId: string | null = null;
@@ -156,6 +157,7 @@ export class CallService {
     if (this.encryptionWorker) {
       this.encryptionWorker.terminate();
       this.encryptionWorker = null;
+      this.workerKeyReady = null;
     }
 
     this.remoteStream.set(null);
@@ -366,11 +368,22 @@ export class CallService {
   private attachMediaTransforms() {
     if (!this.pc || !this.callKey) return;
     appendLog('[Call] attaching E2E media transforms');
-    for (const sender of this.pc.getSenders()) {
-      this.setupSenderTransform(sender);
-    }
-    for (const receiver of this.pc.getReceivers()) {
-      this.setupReceiverTransform(receiver);
+    void this.attachMediaTransformsAsync();
+  }
+
+  private async attachMediaTransformsAsync() {
+    const pc = this.pc;
+    if (!pc || !this.callKey) return;
+    try {
+      for (const sender of pc.getSenders()) {
+        await this.setupSenderTransform(sender);
+      }
+      for (const receiver of pc.getReceivers()) {
+        await this.setupReceiverTransform(receiver);
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      appendLog(`[Call] E2E transforms failed: ${msg}`);
     }
   }
 
@@ -433,7 +446,7 @@ export class CallService {
       }
 
       if (this.callKey) {
-        this.setupReceiverTransform(e.receiver);
+        void this.setupReceiverTransform(e.receiver);
       }
     };
 
@@ -501,20 +514,52 @@ export class CallService {
   private getOrCreateEncryptionWorker(): Worker {
     if (!this.encryptionWorker) {
       this.encryptionWorker = new EncryptionWorker();
-      if (this.callKey) {
-        this.encryptionWorker.postMessage({ type: 'setKey', payload: this.callKey });
-      }
+      this.encryptionWorker.onmessage = (
+        event: MessageEvent<{ type: string; detail?: string; count?: number }>
+      ) => {
+        if (event.data?.type === 'decryptError') {
+          appendLog(
+            `[Call] E2E decrypt failed (${event.data.count ?? '?'}): ${event.data.detail ?? 'unknown'}`
+          );
+        }
+      };
     }
     return this.encryptionWorker;
   }
 
-  private setupSenderTransform(sender: RTCRtpSender) {
+  /** Pushes the MLS call key into the encryption worker and waits until it is applied. */
+  private ensureWorkerKeyReady(): Promise<void> {
+    if (!this.callKey) return Promise.resolve();
+    if (this.workerKeyReady) return this.workerKeyReady;
+
+    const worker = this.getOrCreateEncryptionWorker();
+    this.workerKeyReady = new Promise<void>((resolve, reject) => {
+      const timeout = window.setTimeout(() => {
+        worker.removeEventListener('message', onReady);
+        this.workerKeyReady = null;
+        reject(new Error('encryption worker key timeout'));
+      }, 3_000);
+      const onReady = (event: MessageEvent<{ type: string }>) => {
+        if (event.data?.type === 'keyReady') {
+          window.clearTimeout(timeout);
+          worker.removeEventListener('message', onReady);
+          resolve();
+        }
+      };
+      worker.addEventListener('message', onReady);
+      worker.postMessage({ type: 'setKey', payload: this.callKey });
+    });
+    return this.workerKeyReady;
+  }
+
+  private async setupSenderTransform(sender: RTCRtpSender) {
     if (!this.callKey) return;
+    if (sender.transform) return;
 
     try {
       if (window.RTCRtpScriptTransform) {
         const worker = this.getOrCreateEncryptionWorker();
-        worker.postMessage({ type: 'setKey', payload: this.callKey });
+        await this.ensureWorkerKeyReady();
         sender.transform = new RTCRtpScriptTransform(worker, { side: 'sender' });
         return;
       }
@@ -540,13 +585,14 @@ export class CallService {
     }
   }
 
-  private setupReceiverTransform(receiver: RTCRtpReceiver) {
+  private async setupReceiverTransform(receiver: RTCRtpReceiver) {
     if (!this.callKey) return;
+    if (receiver.transform) return;
 
     try {
       if (window.RTCRtpScriptTransform) {
         const worker = this.getOrCreateEncryptionWorker();
-        worker.postMessage({ type: 'setKey', payload: this.callKey });
+        await this.ensureWorkerKeyReady();
         receiver.transform = new RTCRtpScriptTransform(worker, { side: 'receiver' });
         return;
       }

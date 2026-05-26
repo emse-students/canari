@@ -22,21 +22,24 @@ export async function deleteGroupAndBroadcast(params: {
 }): Promise<void> {
   const { mlsService, groupId, userId, pin } = params;
 
-  // 1. Notifier les autres membres via MLS (best-effort)
+  // 1. Supprimer sur le serveur en premier (404 = déjà absent, pas de notify MLS).
+  let serverDeleted = false;
   try {
-    const controlMsg = encodeAppMessage(
-      mkSystem('groupDeleted', JSON.stringify({ deletedBy: userId }))
-    );
-    await mlsService.sendMessage(groupId, controlMsg);
-  } catch {
-    // Non-blocking : les pairs découvriront la suppression lors du prochain pull
-  }
-
-  // 2. Supprimer le groupe sur le serveur (DB + Redis)
-  try {
-    await mlsService.deleteGroupOnServer(groupId);
+    serverDeleted = await mlsService.deleteGroupOnServer(groupId);
   } catch {
     // Non-blocking : le groupe sera orphelin côté serveur jusqu'au prochain GC
+  }
+
+  // 2. Notifier les pairs via MLS seulement si le serveur avait encore le groupe.
+  if (serverDeleted) {
+    try {
+      const controlMsg = encodeAppMessage(
+        mkSystem('groupDeleted', JSON.stringify({ deletedBy: userId }))
+      );
+      await mlsService.sendMessage(groupId, controlMsg);
+    } catch {
+      // Non-blocking : les pairs découvriront la suppression lors du prochain pull
+    }
   }
 
   // 3. Sauvegarder l'état MLS (le groupe n'existe plus localement après forgetGroup)

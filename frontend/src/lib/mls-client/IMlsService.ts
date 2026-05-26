@@ -146,7 +146,7 @@ export interface IMlsService {
   /** Updates the display name of a group on the delivery service. */
   renameGroup(groupId: string, name: string): Promise<void>;
   /** Deletes a group and all its messages from the delivery service. */
-  deleteGroupOnServer(groupId: string): Promise<void>;
+  deleteGroupOnServer(groupId: string): Promise<boolean>;
   /** Removes a user from the server-side membership list of a group (no MLS commit). */
   removeMemberFromServer(groupId: string, userId: string): Promise<void>;
   /** Performs a real MLS remove commit for all devices of the given user(s) and broadcasts it. */

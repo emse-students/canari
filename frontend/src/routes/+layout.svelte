@@ -54,8 +54,17 @@
   const isKeyboardOpen = $derived(keyboardViewport.isOpen);
   const statusLog = $derived(getStatusLog());
 
-  beforeNavigate(() => {
+  beforeNavigate(({ from, to }) => {
     drainHistoryOverlayStack();
+    const fromPath = from?.url.pathname ?? '';
+    const toPath = to?.url.pathname ?? '';
+    const leavingMessaging =
+      fromPath === '/chat' || fromPath === '/communities';
+    const enteringMessaging = toPath === '/chat' || toPath === '/communities';
+    if (leavingMessaging && enteringMessaging && fromPath !== toPath) {
+      globalConvs.selectedContact = null;
+      globalConvs.sendError = '';
+    }
   });
 
   onMount(() => {

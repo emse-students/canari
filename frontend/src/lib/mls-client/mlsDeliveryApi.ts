@@ -439,12 +439,14 @@ export class MlsDeliveryApi {
     if (!res.ok) throw new Error(`Rename failed: ${res.status}`);
   }
 
-  async deleteGroupOnServer(groupId: string): Promise<void> {
+  async deleteGroupOnServer(groupId: string): Promise<boolean> {
     const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}`, {
       method: 'DELETE',
       headers: await this.auth(),
     });
+    if (res.status === 404) return false;
     if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+    return true;
   }
 
   async removeMemberFromServer(groupId: string, userId: string): Promise<void> {
@@ -468,15 +470,13 @@ export class MlsDeliveryApi {
   }
 
   async getUserGroups(userId: string): Promise<UserGroupRow[]> {
-    try {
-      const res = await this.f(`${this.historyUrl}/api/mls/users/${userId}/groups`, {
-        headers: await this.auth(),
-      });
-      if (!res.ok) return [];
-      return await res.json();
-    } catch {
-      return [];
+    const res = await this.f(`${this.historyUrl}/api/mls/users/${userId}/groups`, {
+      headers: await this.auth(),
+    });
+    if (!res.ok) {
+      throw new Error(`getUserGroups failed: ${res.status}`);
     }
+    return await res.json();
   }
 
   async getGroupMeta(groupId: string): Promise<GroupMeta | null> {

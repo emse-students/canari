@@ -176,14 +176,22 @@ export function resolveConversationListPresentation(
   const conversationType = input.conversationType ?? identity.conversationType;
 
   if (conversationType === 'direct') {
-    const peerId = (
+    const peerRaw =
       input.directPeerId ??
       identity.directPeerId ??
       (input.contactName && !isCanonicalDirectKey(input.contactName)
         ? input.contactName
         : undefined) ??
-      identity.contactName
-    ).toLowerCase();
+      identity.contactName;
+    if (!peerRaw?.trim()) {
+      // Stale/partial row during route switch or MLS reload — avoid throwing on .toLowerCase().
+      return {
+        conversationType: 'group',
+        contactId: input.id,
+        displayName: input.fallbackDisplayName?.trim() || input.name.trim() || 'Discussion',
+      };
+    }
+    const peerId = peerRaw.toLowerCase();
 
     const rawName = input.name.trim();
     const needsResolve =

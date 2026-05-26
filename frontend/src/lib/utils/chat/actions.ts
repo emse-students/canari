@@ -7,6 +7,108 @@ import { downloadDir } from '@tauri-apps/api/path';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 
 /**
+ * Persists the WASM MLS blob to encrypted storage after forgetGroup / commits.
+ * Without this, IndexedDB still holds a stale OpenMLS tree on next reload.
+ */
+export async function persistMlsStateAfterMutation(
+  mlsService: IMlsService,
+  userId: string,
+  pin: string,
+  log?: (msg: string) => void
+): Promise<void> {
+  try {
+    const stBytes = await mlsService.saveState(pin);
+    await saveMlsState(userId, stBytes);
+  } catch (e) {
+    log?.(`[MLS] Échec saveState après mutation: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+/**
+ * Drops one group from the in-memory WASM/OpenMLS state when the server no longer lists it.
+ * @returns true when forgetGroup was applied (caller should persist MLS state).
+ */
+export function forgetMlsGroupIfPresent(
+  mlsService: IMlsService,
+  groupId: string,
+  log?: (msg: string) => void
+): boolean {
+  if (!mlsService.getLocalGroups().includes(groupId)) {
+    return false;
+  }
+  try {
+    mlsService.forgetGroup(groupId, 0);
+    log?.(`[MLS] forgetGroup ${groupId} (absent côté serveur)`);
+    return true;
+  } catch (e) {
+    log?.(
+      `[MLS] forgetGroup échoué pour ${groupId}: ${e instanceof Error ? e.message : String(e)}`
+    );
+    return false;
+  }
+}
+
+/**
+ * Removes a sidebar / IndexedDB conversation row only (no MLS mutation).
+ * Safe to call even when WASM no longer knows the groupId.
+ */
+export async function purgeLocalConversationRecord(params: {
+  conversations: Map<string, Conversation>;
+  contactKey: string;
+  groupId: string;
+  deleteConversation?: (key: string) => Promise<void>;
+  log?: (msg: string) => void;
+}): Promise<void> {
+  const { conversations, contactKey, groupId, deleteConversation, log } = params;
+  localStorage.removeItem(`discovery_pending:${groupId}`);
+  if (deleteConversation) {
+    await deleteConversation(contactKey).catch(() => {});
+  }
+  conversations.delete(contactKey);
+  log?.(`[UI] Conversation locale retirée (${groupId})`);
+}
+
+/**
+ * Full orphan cleanup: MLS state first (authoritative), then UI/IndexedDB row.
+ */
+export async function purgeOrphanGroup(params: {
+  conversations: Map<string, Conversation>;
+  mlsService: IMlsService;
+  userId: string;
+  pin: string;
+  contactKey: string;
+  groupId: string;
+  deleteConversation?: (key: string) => Promise<void>;
+  log?: (msg: string) => void;
+}): Promise<void> {
+  const { mlsService, userId, pin, groupId, log, ...uiParams } = params;
+  const mlsChanged = forgetMlsGroupIfPresent(mlsService, groupId, log);
+  if (mlsChanged) {
+    await persistMlsStateAfterMutation(mlsService, userId, pin, log);
+  }
+  await purgeLocalConversationRecord({ ...uiParams, groupId, log });
+}
+
+/** @deprecated Prefer purgeOrphanGroup — kept as alias for call sites. */
+export const purgeLocalGroupConversation = purgeOrphanGroup;
+
+/** Returns whether the group is still active for this user on the server (null = unknown). */
+export async function isGroupActiveOnServer(
+  mlsService: IMlsService,
+  userId: string,
+  groupId: string
+): Promise<boolean | null> {
+  try {
+    const groups = await mlsService.getUserGroups(userId);
+    const row = groups.find((g) => g.groupId === groupId);
+    if (!row) return false;
+    return !row.deletedAt;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Extracts the other user's ID from a DM group name formatted as "userA::userB".
  * Returns null when the name does not match the pattern (i.e. for named group chats).
  */
@@ -310,8 +412,8 @@ export function forceSyncReset(_userId: string, log: (msg: string) => void) {
  * Découverte des groupes manquants.
  *
  * Crée des placeholders locaux pour les groupes serveur absents du client
- * (Welcome perdu, nouveau device, etc.) et supprime les groupes locaux
- * absents du serveur après une période de grâce.
+ * (Welcome perdu, nouveau device, etc.) et supprime immédiatement les groupes
+ * locaux absents du serveur (si la liste serveur a bien été récupérée).
  *
  * IMPORTANT : l'identifiant unique est le couple (userId, deviceId).
  * Un même userId peut avoir plusieurs devices — ne jamais utiliser userId
@@ -326,7 +428,8 @@ export async function discoverMissingGroups(params: {
   deleteConversation?: (key: string) => Promise<void>;
   log: (msg: string) => void;
 }) {
-  const { mlsService, userId, conversations, saveConversation, deleteConversation, log } = params;
+  const { mlsService, userId, pin, conversations, saveConversation, deleteConversation, log } =
+    params;
 
   // ── Phase 1: Create placeholders for server groups not present locally ────
 
@@ -353,70 +456,59 @@ export async function discoverMissingGroups(params: {
   // be created as local placeholders — checkGroupSuccessors handles the migration.
   const activeServerGroups = uniqueServerGroups.filter((g) => !g.deletedAt);
 
-  // ── Orphan cleanup: delete local groups absent from server ────────────────
-  // Only when the server fetch succeeded (avoid deleting on transient network errors).
-  // Skip channel conversations (keyed as `channel_*`) — they use a separate system.
-  // Grace period: a group must be consistently absent for >60 s before deletion
-  // to guard against slow server responses during group creation.
-  const ORPHAN_GRACE_MS = 60_000;
+  // ── Orphan cleanup (server membership = source of truth) ─────────────────
+  // Phase 1 — MLS WASM: drop OpenMLS trees for groupIds absent from the server.
+  // Phase 2 — UI/IndexedDB: drop conversation rows (may exist without WASM state).
+  // Only when getUserGroups succeeded (never purge on transient network errors).
   if (serverFetchSucceeded) {
-    // Use the full set (including deleted groups) so soft-deleted entries don't trigger
-    // the orphan grace-period logic — checkGroupSuccessors handles their cleanup.
     const serverGroupIds = new Set(uniqueServerGroups.map((g) => g.groupId));
+    let mlsMutated = false;
+
+    for (const groupId of mlsService.getLocalGroups()) {
+      if (isChannelConversationId(groupId)) continue;
+      const serverEntry = uniqueServerGroups.find((g) => g.groupId === groupId);
+      if (
+        serverEntry?.successorId &&
+        mlsService.getLocalGroups().includes(serverEntry.successorId)
+      ) {
+        if (forgetMlsGroupIfPresent(mlsService, groupId, log)) mlsMutated = true;
+        continue;
+      }
+      if (!serverGroupIds.has(groupId)) {
+        if (forgetMlsGroupIfPresent(mlsService, groupId, log)) mlsMutated = true;
+      }
+    }
+    if (mlsMutated) {
+      await persistMlsStateAfterMutation(mlsService, userId, pin, log);
+    }
+
     for (const [key, convo] of conversations.entries()) {
       if (isChannelConversationId(key)) continue;
 
-      // Belt-and-suspenders: if this group was already migrated (successor exists locally),
-      // clean up the stale entry here rather than waiting for checkGroupSuccessors.
       const serverEntry = uniqueServerGroups.find((g) => g.groupId === convo.id);
       if (serverEntry?.successorId && conversations.has(serverEntry.successorId)) {
         log(
-          `[DISCOVERY] Groupe "${convo.name || convo.id}" déjà migré vers ${serverEntry.successorId} — nettoyage`
+          `[DISCOVERY] Groupe UI "${convo.name || convo.id}" migré vers ${serverEntry.successorId} — retrait`
         );
-        localStorage.removeItem(`discovery_absent:${convo.id}`);
-        try {
-          mlsService.forgetGroup(convo.id, 0);
-        } catch {
-          /* non-blocking */
-        }
-        conversations.delete(key);
-        if (deleteConversation) await deleteConversation(key).catch(() => {});
+        await purgeLocalConversationRecord({
+          conversations,
+          contactKey: key,
+          groupId: convo.id,
+          deleteConversation,
+          log,
+        });
         continue;
       }
 
       if (!serverGroupIds.has(convo.id)) {
-        const absentKey = `discovery_absent:${convo.id}`;
-        const absentSince = parseInt(localStorage.getItem(absentKey) ?? '0', 10);
-        if (!absentSince) {
-          localStorage.setItem(absentKey, String(Date.now()));
-          log(
-            `[DISCOVERY] Groupe local "${convo.name || convo.id}" absent du serveur — grâce 60 s`
-          );
-          continue;
-        }
-        if (Date.now() - absentSince < ORPHAN_GRACE_MS) {
-          log(
-            `[DISCOVERY] Groupe "${convo.name || convo.id}" absent depuis ${Math.round((Date.now() - absentSince) / 1000)}s — en attente`
-          );
-          continue;
-        }
-        log(
-          `[DISCOVERY] Groupe local "${convo.name || convo.id}" absent du serveur — suppression locale`
-        );
-        localStorage.removeItem(absentKey);
-        try {
-          mlsService.forgetGroup(convo.id, 0);
-        } catch {
-          /* non-blocking */
-        }
-        localStorage.removeItem(`discovery_pending:${convo.id}`);
-        conversations.delete(key);
-        if (deleteConversation) {
-          await deleteConversation(key).catch(() => {});
-        }
-      } else {
-        // Group is present on server — clear any stale absence marker
-        localStorage.removeItem(`discovery_absent:${convo.id}`);
+        log(`[DISCOVERY] Groupe UI "${convo.name || convo.id}" absent du serveur — retrait`);
+        await purgeLocalConversationRecord({
+          conversations,
+          contactKey: key,
+          groupId: convo.id,
+          deleteConversation,
+          log,
+        });
       }
     }
   }

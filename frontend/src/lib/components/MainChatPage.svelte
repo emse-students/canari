@@ -361,7 +361,8 @@
   });
 
   // ─── Reset selection when switching between /chat and /communities ─────────
-  $effect(() => {
+  // $effect.pre runs before DOM updates so ChatArea never reads a torn-down conversation.
+  $effect.pre(() => {
     const _ = routeMode;
     untrack(() => {
       if (readReceiptTimer) {
@@ -371,6 +372,7 @@
       pendingReadReceipts = [];
       convs.selectedContact = null;
       convs.sendError = '';
+      messageText = '';
     });
   });
 

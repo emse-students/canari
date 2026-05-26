@@ -1044,7 +1044,7 @@ export class WebMlsService implements IMlsService {
   }
 
   /** WASM client wrapper — DELETEs the group record from the delivery service. */
-  async deleteGroupOnServer(groupId: string): Promise<void> {
+  async deleteGroupOnServer(groupId: string): Promise<boolean> {
     return this.delivery.deleteGroupOnServer(groupId);
   }
 

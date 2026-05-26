@@ -1182,7 +1182,7 @@ export class TauriMlsService implements IMlsService {
   }
 
   /** Tauri-native `invoke` wrapper — DELETEs the group record from the delivery service. */
-  async deleteGroupOnServer(groupId: string): Promise<void> {
+  async deleteGroupOnServer(groupId: string): Promise<boolean> {
     return this.delivery.deleteGroupOnServer(groupId);
   }
 

@@ -214,33 +214,36 @@
   }
 
   /**
-   * Snapshot for header/actions when a conversation is selected.
-   * Avoids reading `conversation.contactName` in the template after `conversation` becomes null
-   * during route switches (chat ↔ communities).
+   * Single snapshot for the open chat UI. The template must only read `chatView`, never
+   * `conversation` directly — avoids `activeConversationView.contactName` races when
+   * `conversation` becomes null during route switches (chat ↔ communities).
    */
-  const activeConversationView = $derived.by(() => {
+  const chatView = $derived.by(() => {
     const c = conversation;
-    if (!c) return null;
+    if (!c?.id) return null;
     const pres = resolveConversationListPresentation(
       {
         id: c.id,
         name: c.name,
-        contactName: c.contactName,
+        contactName: c.contactName ?? c.id,
         conversationType: c.conversationType,
         directPeerId: c.directPeerId,
       },
-      currentUserId
+      currentUserId ?? ''
     );
+    const convType = c.conversationType ?? 'group';
     return {
+      conversation: c,
+      contactName: c.contactName ?? pres.contactId,
       displayName: pres.displayName,
-      contactName: c.contactName,
       isReady: c.isReady,
-      isGroup: (c.conversationType ?? 'group') === 'group',
+      isGroup: convType === 'group',
+      isDirect: convType === 'direct',
     };
   });
 
   // Group messages by date and time gaps
-  let messageGroups = $derived(conversation ? groupMessages(conversation.messages) : []);
+  let messageGroups = $derived(chatView ? groupMessages(chatView.conversation.messages) : []);
   let windowEnd = $derived(Math.min(messageGroups.length, windowStart + MAX_RENDERED_GROUPS));
   let visibleMessageGroups = $derived(messageGroups.slice(windowStart, windowEnd));
   /** Groups hidden above the render window (older messages). */
@@ -310,12 +313,12 @@
 
   function refreshSearchMatches() {
     const q = searchQuery.trim().toLowerCase();
-    if (!conversation || q.length < 2) {
+    if (!chatView || q.length < 2) {
       searchMatches = [];
       activeSearchIndex = -1;
       return;
     }
-    const hits = conversation.messages
+    const hits = chatView.conversation.messages
       .filter((m) => searchableText(m).toLowerCase().includes(q))
       .map((m) => m.id);
     searchMatches = hits;
@@ -421,14 +424,14 @@
     ? 'hidden md:flex'
     : ''}"
 >
-  {#if conversation && activeConversationView}
+  {#if chatView}
     <div>
       <ChatHeader
-        contactName={activeConversationView.contactName}
-        displayName={activeConversationView.displayName}
-        isReady={activeConversationView.isReady}
+        contactName={chatView.contactName}
+        displayName={chatView.displayName}
+        isReady={chatView.isReady}
         {isChannel}
-        isGroupConversation={activeConversationView.isGroup}
+        isGroupConversation={chatView.isGroup}
         {imageMediaId}
         {onInviteMembers}
         {onBack}
@@ -550,7 +553,7 @@
           {onEdit}
           {switchTime}
           {authToken}
-          isDirect={conversation.conversationType === 'direct'}
+          isDirect={chatView.isDirect}
           isMobile={_isMobile}
         />
       {/if}

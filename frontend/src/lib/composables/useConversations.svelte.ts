@@ -23,6 +23,7 @@ import {
   deleteGroupAndBroadcast,
   leaveGroupAndBroadcast,
 } from '$lib/utils/chat/groupActions';
+import { isGroupActiveOnServer, purgeOrphanGroup } from '$lib/utils/chat/actions';
 import {
   createNewGroup as createGroup,
   inviteMembersToGroup,
@@ -141,6 +142,16 @@ export function useConversations() {
   const currentConvo = $derived(
     selectedContact ? (conversations.get(selectedContact) ?? null) : null
   );
+
+  /** Clears selection when the map no longer has the key (reload, migration, channel kick). */
+  $effect(() => {
+    const key = selectedContact;
+    if (!key) return;
+    if (!conversations.has(key)) {
+      selectedContact = null;
+      sendError = '';
+    }
+  });
 
   // ── Storage helpers ───────────────────────────────────────────────────────
 
@@ -674,33 +685,36 @@ export function useConversations() {
     const contactKey = selectedContact;
     const mlsService = ctx.ensureMls();
 
-    // 1. Notifier les pairs + supprimer côté serveur
-    await deleteGroupAndBroadcast({
+    try {
+      const onServer = await isGroupActiveOnServer(mlsService, ctx.userId, convo.id);
+      if (onServer !== false) {
+        await deleteGroupAndBroadcast({
+          mlsService,
+          groupId: convo.id,
+          userId: ctx.userId,
+          pin: ctx.pin,
+        });
+      } else {
+        ctx.log(`[DELETE] Groupe ${convo.id} absent du serveur — purge MLS/UI locale`);
+      }
+    } catch (e) {
+      ctx.log(
+        `[DELETE] Erreur serveur (${e instanceof Error ? e.message : String(e)}) — purge MLS/UI locale`
+      );
+    }
+
+    await purgeOrphanGroup({
+      conversations,
       mlsService,
-      groupId: convo.id,
       userId: ctx.userId,
       pin: ctx.pin,
+      contactKey,
+      groupId: convo.id,
+      deleteConversation: ctx.storage ? (key) => ctx.storage!.deleteConversation(key) : undefined,
+      log: ctx.log,
     });
 
-    // 2. Oublier l'état MLS local
-    try {
-      mlsService.forgetGroup(convo.id, 0);
-    } catch {
-      /* non-blocking */
-    }
-
-    // 3. Supprimer de la base locale
-    if (ctx.storage) {
-      try {
-        await ctx.storage.deleteConversation(contactKey);
-      } catch {
-        /* non-blocking */
-      }
-    }
-
-    // 4. Retirer de la map et reset UI
     membershipCache.delete(convo.id);
-    conversations.delete(contactKey);
     selectedContact = null;
     isConversationDrawerOpen = false;
     sendError = '';
@@ -715,29 +729,36 @@ export function useConversations() {
     const contactKey = selectedContact;
     const mlsService = ctx.ensureMls();
 
-    await leaveGroupAndBroadcast({
+    try {
+      const onServer = await isGroupActiveOnServer(mlsService, ctx.userId, convo.id);
+      if (onServer !== false) {
+        await leaveGroupAndBroadcast({
+          mlsService,
+          groupId: convo.id,
+          userId: ctx.userId,
+          pin: ctx.pin,
+        });
+      } else {
+        ctx.log(`[LEAVE] Groupe ${convo.id} absent du serveur — purge MLS/UI locale`);
+      }
+    } catch (e) {
+      ctx.log(
+        `[LEAVE] Erreur serveur (${e instanceof Error ? e.message : String(e)}) — purge MLS/UI locale`
+      );
+    }
+
+    await purgeOrphanGroup({
+      conversations,
       mlsService,
-      groupId: convo.id,
       userId: ctx.userId,
       pin: ctx.pin,
+      contactKey,
+      groupId: convo.id,
+      deleteConversation: ctx.storage ? (key) => ctx.storage!.deleteConversation(key) : undefined,
+      log: ctx.log,
     });
 
-    try {
-      mlsService.forgetGroup(convo.id, 0);
-    } catch {
-      /* non-blocking */
-    }
-
-    if (ctx.storage) {
-      try {
-        await ctx.storage.deleteConversation(contactKey);
-      } catch {
-        /* non-blocking */
-      }
-    }
-
     membershipCache.delete(convo.id);
-    conversations.delete(contactKey);
     selectedContact = null;
     isConversationDrawerOpen = false;
     sendError = '';

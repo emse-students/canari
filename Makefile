@@ -344,8 +344,7 @@ reset-services-prod: production-check
 update-services-prod: production-check
 	@echo "${BLUE}🔄 Updating services...${RESET}"
 	@docker compose -f infrastructure/docker-compose.prod.yml --env-file infrastructure/.env pull
-	@docker compose -f infrastructure/docker-compose.prod.yml --env-file infrastructure/.env down --remove-orphans && \
-		docker compose -f infrastructure/docker-compose.prod.yml --env-file infrastructure/.env up -d --build --remove-orphans
+	@docker compose -f infrastructure/docker-compose.prod.yml --env-file infrastructure/.env up -d --remove-orphans
 	@echo "${GREEN}✅ Services rechargés${RESET}"
 
 # ── CI Pipeline ──────────────────────────────────────────────────────────────
