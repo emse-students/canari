@@ -307,12 +307,17 @@
       }, 2000);
     }
 
+    // Only cancel the timer when the user navigates to a different conversation.
+    // Same-conversation re-runs (e.g. from the optimistic readBy update below) must
+    // not cancel the pending timer — that was the root cause of receipts never firing.
     return () => {
-      if (readReceiptTimer) {
-        clearTimeout(readReceiptTimer);
-        readReceiptTimer = null;
+      if (convs.selectedContact !== currentContact) {
+        if (readReceiptTimer) {
+          clearTimeout(readReceiptTimer);
+          readReceiptTimer = null;
+        }
+        pendingReadReceipts = [];
       }
-      pendingReadReceipts = [];
     };
   });
 
