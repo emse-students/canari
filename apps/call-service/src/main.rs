@@ -62,6 +62,8 @@ struct PeerContext {
 #[serde(tag = "type")]
 enum SignalMessage {
     Join { room_id: String },
+    /// Sent when the peer is registered and ready to receive Offer/Answer signaling.
+    Joined { room_id: String },
     Offer { sdp: String },
     Answer { sdp: String },
     IceCandidate { candidate: String },
@@ -222,6 +224,16 @@ async fn handle_signal(
                 }
             };
 
+            let pc = Arc::new(pc);
+            // Register peer before slow callback wiring so Offer is never dropped.
+            room.peers.insert(
+                peer_id.clone(),
+                PeerContext {
+                    pc: pc.clone(),
+                    notify_tx: notify_tx.clone(),
+                },
+            );
+
             let tracks = room.tracks.lock().await;
             for track in tracks.iter() {
                 if let Err(e) = pc
@@ -325,13 +337,16 @@ async fn handle_signal(
                 },
             ));
 
-            room.peers.insert(
-                peer_id.clone(),
-                PeerContext {
-                    pc: Arc::new(pc),
-                    notify_tx,
-                },
-            );
+            if let Err(e) = notify_tx
+                .send(SignalMessage::Joined {
+                    room_id: room_id.clone(),
+                })
+                .await
+            {
+                error!("Failed to send Joined ack to {}: {}", peer_id, e);
+            } else {
+                info!("Peer {} joined room {} (ready for offer)", peer_id, room_id);
+            }
         }
         SignalMessage::Offer { sdp } => {
             if let Some(room_id) = current_room_id {
@@ -339,26 +354,38 @@ async fn handle_signal(
                     if let Some(ctx) = room.peers.get(peer_id) {
                         if let Ok(sdp_obj) = serde_json::from_str::<RTCSessionDescription>(&sdp) {
                             if let Err(e) = ctx.pc.set_remote_description(sdp_obj).await {
-                                error!("Set remote desc error: {}", e);
+                                error!("Set remote desc error for {}: {}", peer_id, e);
                                 return;
                             }
 
                             match ctx.pc.create_answer(None).await {
                                 Ok(answer) => {
                                     if ctx.pc.set_local_description(answer.clone()).await.is_ok() {
+                                        info!("Sending Answer to {}", peer_id);
                                         let _ = ctx
                                             .notify_tx
                                             .send(SignalMessage::Answer {
                                                 sdp: serde_json::to_string(&answer).unwrap(),
                                             })
                                             .await;
+                                    } else {
+                                        error!("Set local answer failed for {}", peer_id);
                                     }
                                 }
-                                Err(e) => error!("Create answer error: {}", e),
+                                Err(e) => error!("Create answer error for {}: {}", peer_id, e),
                             }
+                        } else {
+                            error!("Offer SDP JSON parse failed for {}", peer_id);
                         }
+                    } else {
+                        warn!(
+                            "Offer from {} in room {} but peer not registered yet",
+                            peer_id, room_id
+                        );
                     }
                 }
+            } else {
+                warn!("Offer from {} before Join completed", peer_id);
             }
         }
         SignalMessage::Answer { sdp } => {
@@ -385,6 +412,9 @@ async fn handle_signal(
                     }
                 }
             }
+        }
+        SignalMessage::Joined { .. } => {
+            // Server → client only; ignore if echoed by mistake.
         }
     }
 }

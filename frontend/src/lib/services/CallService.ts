@@ -273,33 +273,51 @@ export class CallService {
         reject(err);
       };
 
-      const timeout = window.setTimeout(() => {
+      const clearTimers = () => {
+        window.clearTimeout(connectTimeout);
+        window.clearTimeout(joinTimeout);
+      };
+
+      const connectTimeout = window.setTimeout(() => {
         fail(new Error('SFU WebSocket connection timeout (15s)'));
         ws.close();
       }, 15_000);
 
-      ws.onopen = () => {
-        window.clearTimeout(timeout);
-        appendLog('[Call] connected to SFU');
-        this.sendSfuMessage({ type: 'Join', room_id: roomId });
+      let joinTimeout = 0;
+
+      const startPeerSetup = () => {
         void this.initPeerConnection()
           .then(() => {
+            clearTimers();
             if (!settled) {
               settled = true;
               resolve();
             }
           })
-          .catch(fail);
+          .catch((err) => {
+            clearTimers();
+            fail(err);
+          });
+      };
+
+      ws.onopen = () => {
+        window.clearTimeout(connectTimeout);
+        appendLog('[Call] connected to SFU, joining room…');
+        this.sendSfuMessage({ type: 'Join', room_id: roomId });
+        joinTimeout = window.setTimeout(() => {
+          fail(new Error('SFU Join ack timeout (20s) — redéployer call-service'));
+          ws.close();
+        }, 20_000);
       };
 
       ws.onerror = () => {
-        window.clearTimeout(timeout);
+        clearTimers();
         appendLog('[Call] SFU WebSocket error');
         fail(new Error('SFU WebSocket connection failed'));
       };
 
       ws.onclose = (ev) => {
-        window.clearTimeout(timeout);
+        clearTimers();
         if (!settled) {
           fail(new Error(`SFU WebSocket closed before ready (code=${ev.code})`));
         } else if (get(this.callState) !== 'idle') {
@@ -308,14 +326,25 @@ export class CallService {
       };
 
       ws.onmessage = async (event) => {
-        if (!this.pc) return;
         try {
           const msg = JSON.parse(event.data as string);
+
+          if (msg.type === 'Joined') {
+            window.clearTimeout(joinTimeout);
+            appendLog(`[Call] SFU room ready (${msg.room_id ?? roomId})`);
+            if (!settled) startPeerSetup();
+            return;
+          }
+
+          if (!this.pc) return;
 
           if (msg.type === 'Offer' || msg.type === 'Answer') {
             const sdp = JSON.parse(msg.sdp) as RTCSessionDescriptionInit;
             appendLog(`[Call] SFU → ${msg.type} (signaling=${this.pc.signalingState})`);
             await this.applyRemoteSdp(sdp);
+            if (msg.type === 'Answer') {
+              this.attachMediaTransforms();
+            }
           } else if (msg.type === 'IceCandidate') {
             const candidate = JSON.parse(msg.candidate);
             await this.pc.addIceCandidate(new RTCIceCandidate(candidate));
@@ -327,6 +356,18 @@ export class CallService {
         }
       };
     });
+  }
+
+  /** Attaches MLS insertable-stream transforms after the SDP handshake (SFU is not extension-aware). */
+  private attachMediaTransforms() {
+    if (!this.pc || !this.callKey) return;
+    appendLog('[Call] attaching E2E media transforms');
+    for (const sender of this.pc.getSenders()) {
+      this.setupSenderTransform(sender);
+    }
+    for (const receiver of this.pc.getReceivers()) {
+      this.setupReceiverTransform(receiver);
+    }
   }
 
   private async initPeerConnection() {
@@ -387,8 +428,9 @@ export class CallService {
         this.callState.set('incall');
       }
 
-      const receiver = e.receiver;
-      this.setupReceiverTransform(receiver);
+      if (this.callKey) {
+        this.setupReceiverTransform(e.receiver);
+      }
     };
 
     this.pc.onconnectionstatechange = () => {
@@ -421,8 +463,7 @@ export class CallService {
       const tracks = this.localStream.getTracks();
       appendLog(`[Call] adding ${tracks.length} local track(s) to PeerConnection`);
       tracks.forEach((track) => {
-        const sender = this.pc!.addTrack(track, this.localStream!);
-        this.setupSenderTransform(sender);
+        this.pc!.addTrack(track, this.localStream!);
       });
     }
 
