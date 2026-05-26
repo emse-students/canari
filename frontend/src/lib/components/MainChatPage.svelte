@@ -28,6 +28,16 @@
 
   let { routeMode = 'chat' }: Props = $props();
 
+  /**
+   * Component-level derived so the template subscribes directly to the SvelteMap.
+   * A module-level $derived (convs.currentConvo) is not guaranteed to be tracked by
+   * component templates in Svelte 5 — placing the .get() call here ensures the
+   * reactive dependency is registered in this component's effect scope.
+   */
+  const currentConvo = $derived(
+    convs.selectedContact ? (convs.conversations.get(convs.selectedContact) ?? null) : null
+  );
+
   /** True when the currently selected conversation is a channel (not an MLS DM or group). */
   const isSelectedChannel = $derived(isChannelConversationId(convs.selectedContact ?? ''));
 
@@ -440,10 +450,10 @@
       {#key `${routeMode}-${convs.selectedContact ?? ''}`}
       <ChatArea
         currentUserId={session.userId}
-        conversation={convs.currentConvo}
+        conversation={currentConvo}
         {messageText}
         isChannel={isSelectedChannel ?? false}
-        imageMediaId={convs.currentConvo?.imageMediaId ?? null}
+        imageMediaId={currentConvo?.imageMediaId ?? null}
         onMessageChange={(value) => (messageText = value)}
         onSend={handleSendChat}
         onInviteMembers={(ids) => void convs.inviteMembersToCurrentGroup(ids, convCtx())}
@@ -488,6 +498,7 @@
         onOpenMembers={routeMode === 'communities' && isSelectedChannel
           ? convs.openChannelMembersDrawer
           : undefined}
+        onLoadOlderMessages={() => convs.loadOlderMessages(convs.selectedContact!, convCtx())}
         onMessagesScrollEl={(el) => {
           convs.chatContainer = el ?? undefined;
         }}
@@ -537,7 +548,7 @@
         onClose={() => (convs.isChannelSettingsModalOpen = false)}
         selectedChannelId={channels.selectedChannelConversationId}
         channelWorkspaces={channels.channelWorkspaces}
-        imageMediaId={convs.currentConvo?.imageMediaId ?? null}
+        imageMediaId={currentConvo?.imageMediaId ?? null}
         onInviteMember={(channelId, memberId, roleName) =>
           channels.inviteMemberToChannel(channelId, memberId, roleName, channelsCtx())}
         onUpdateMemberRole={(channelId, memberId, roleName) =>
