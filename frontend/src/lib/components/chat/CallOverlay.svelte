@@ -68,10 +68,25 @@
   let initialOffsetX = 0;
   let initialOffsetY = 0;
 
+  function bindRemoteVideo(stream: MediaStream, el: HTMLVideoElement) {
+    el.srcObject = stream;
+    const play = () => void el.play().catch(() => {});
+    play();
+    for (const track of stream.getVideoTracks()) {
+      track.onunmute = () => {
+        play();
+      };
+    }
+    return () => {
+      for (const track of stream.getVideoTracks()) {
+        track.onunmute = null;
+      }
+    };
+  }
+
   $effect(() => {
     if (primaryRemoteStream && remoteVideo) {
-      remoteVideo.srcObject = primaryRemoteStream;
-      void remoteVideo.play().catch(() => {});
+      return bindRemoteVideo(primaryRemoteStream, remoteVideo);
     }
   });
 

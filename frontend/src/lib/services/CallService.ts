@@ -454,6 +454,49 @@ export class CallService {
     }
   }
 
+  /** Wires decrypt transform before exposing the track to the UI (avoids black video). */
+  private async handleRemoteTrack(track: MediaStreamTrack, receiver: RTCRtpReceiver) {
+    appendLog(
+      `[Call] remote track kind=${track.kind} id=${track.id.slice(0, 8)}… readyState=${track.readyState} muted=${track.muted}`
+    );
+
+    if (this.callKey && this.isE2eMediaEnabled()) {
+      await this.setupReceiverTransform(receiver);
+    }
+
+    if (!this.mergedRemoteStream) {
+      this.mergedRemoteStream = new MediaStream();
+    }
+    const already = this.mergedRemoteStream.getTracks().some((t) => t.id === track.id);
+    if (!already) {
+      this.mergedRemoteStream.addTrack(track);
+    }
+
+    track.onunmute = () => {
+      appendLog(`[Call] remote track unmuted kind=${track.kind}`);
+      this.publishRemoteStream();
+    };
+    track.onended = () => {
+      appendLog(`[Call] remote track ended kind=${track.kind}`);
+      this.mergedRemoteStream?.removeTrack(track);
+      this.publishRemoteStream();
+    };
+
+    this.publishRemoteStream();
+
+    if (get(this.callState) === 'calling' || get(this.callState) === 'incoming') {
+      this.callState.set('incall');
+    }
+  }
+
+  /** Notifies subscribers so `<video>` re-binds when tracks start producing frames. */
+  private publishRemoteStream() {
+    if (!this.mergedRemoteStream) return;
+    const stream = this.mergedRemoteStream;
+    this.remoteStream.set(stream);
+    this.remoteStreams.set(new Map([['remote', stream]]));
+  }
+
   private async initPeerConnection() {
     if (!this.currentGroupId || !this.currentCallId) {
       throw new Error('No active call context');
@@ -465,7 +508,9 @@ export class CallService {
     this.pc = new RTCPeerConnection({
       iceServers,
       iceTransportPolicy: 'relay',
-    });
+      // Required for RTCRtpScriptTransform / insertable streams in Chromium.
+      encodedInsertableStreams: true,
+    } as RTCConfiguration);
 
     let relayCandidateCount = 0;
 
@@ -498,30 +543,8 @@ export class CallService {
     };
 
     this.pc.ontrack = (e) => {
-      const { track } = e;
-      appendLog(
-        `[Call] remote track kind=${track.kind} id=${track.id.slice(0, 8)}… readyState=${track.readyState} muted=${track.muted}`
-      );
-
-      if (!this.mergedRemoteStream) {
-        this.mergedRemoteStream = new MediaStream();
-      }
-      const already = this.mergedRemoteStream.getTracks().some((t) => t.id === track.id);
-      if (!already) {
-        this.mergedRemoteStream.addTrack(track);
-      }
-
-      const stream = this.mergedRemoteStream;
-      this.remoteStream.set(stream);
-      this.remoteStreams.set(new Map([['remote', stream]]));
-
-      if (get(this.callState) === 'calling' || get(this.callState) === 'incoming') {
-        this.callState.set('incall');
-      }
-
-      if (this.callKey && this.isE2eMediaEnabled()) {
-        void this.setupReceiverTransform(e.receiver);
-      }
+      const { track, receiver } = e;
+      void this.handleRemoteTrack(track, receiver);
     };
 
     this.pc.onconnectionstatechange = () => {
