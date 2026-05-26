@@ -1,6 +1,6 @@
 <script lang="ts">
   import { generateAvatarColor, getInitials } from '$lib/utils/avatar';
-  import { contrastColor } from '$lib/utils/color';
+  import { contrastColor, toHex } from '$lib/utils/color';
   import type { AssociationCalendarFeedEvent } from '$lib/associations/api';
 
   let {
@@ -63,9 +63,22 @@
       );
   }
 
-  /** Effective background color for an event block. */
-  function eventBg(ev: AssociationCalendarFeedEvent): string {
-    return ev.associationColor ?? generateAvatarColor(ev.associationId);
+  /** Returns all hex colors for the event: primary first, then co-owners. */
+  function eventColors(ev: AssociationCalendarFeedEvent): string[] {
+    const primary = toHex(ev.associationColor ?? generateAvatarColor(ev.associationId));
+    return [
+      primary,
+      ...(ev.coOwners ?? []).map((co) => toHex(co.color ?? generateAvatarColor(co.associationId))),
+    ];
+  }
+
+  /** Inline CSS background for an event block — solid or split-color gradient. */
+  function eventBgStyle(ev: AssociationCalendarFeedEvent): string {
+    const colors = eventColors(ev);
+    if (colors.length === 1) return `background:${colors[0]};`;
+    const pct = 100 / colors.length;
+    const stops = colors.flatMap((c, i) => [`${c} ${(i * pct).toFixed(1)}%`, `${c} ${((i + 1) * pct).toFixed(1)}%`]);
+    return `background:linear-gradient(to right,${stops.join(',')});`;
   }
 
   const daysWithEvents = $derived.by(() => {
@@ -151,11 +164,11 @@
               <!-- Events fill the entire cell, split equally -->
               <div class="absolute inset-0 flex flex-col">
                 {#each visible as ev, ei (ev.id)}
-                  {@const bg = eventBg(ev)}
-                  {@const fg = contrastColor(bg)}
+                  {@const colors = eventColors(ev)}
+                  {@const fg = contrastColor(colors[0])}
                   <div
                     class="relative flex-1 flex items-center justify-center overflow-hidden"
-                    style="background:{bg}; color:{fg};"
+                    style="{eventBgStyle(ev)} color:{fg};"
                   >
                     <!-- Day number on the first slot -->
                     {#if ei === 0}
@@ -219,7 +232,7 @@
       {#each daysWithEvents as { day, events: dayEvs } (day)}
         {@const selected = selectedDay === day}
         {@const today = isToday(day)}
-        {@const firstBg = eventBg(dayEvs[0])}
+        {@const firstBg = eventColors(dayEvs[0])[0]}
         <div
           class="rounded-2xl border overflow-hidden shadow-sm transition-all
                  {selected ? 'border-cn-yellow/70' : 'border-cn-border'}"
@@ -246,12 +259,13 @@
           <!-- Event list -->
           <ul class="divide-y divide-cn-border/30 bg-[var(--cn-surface)]/60">
             {#each dayEvs as ev (ev.id)}
-              {@const bg = eventBg(ev)}
-              {@const fg = contrastColor(bg)}
+              {@const primaryColor = eventColors(ev)[0]}
+              {@const fg = contrastColor(primaryColor)}
+              {@const coOwnerNames = (ev.coOwners ?? []).map((co) => co.name).filter(Boolean)}
               <li class="flex items-center gap-3 px-4 py-3">
                 <span
                   class="h-8 w-8 rounded-full shrink-0 overflow-hidden flex items-center justify-center"
-                  style="background:{bg};"
+                  style="background:{primaryColor};"
                 >
                   {#if ev.associationLogoUrl}
                     <img src={ev.associationLogoUrl} alt="" aria-hidden="true" class="h-8 w-8 object-cover" />
@@ -262,7 +276,7 @@
                 <div class="min-w-0 flex-1">
                   <p class="text-sm font-bold text-text-main truncate">{ev.title}</p>
                   <p class="text-xs text-text-muted flex items-center gap-1.5 mt-0.5">
-                    <span class="font-semibold">{ev.associationName}</span>
+                    <span class="font-semibold">{ev.associationName}{coOwnerNames.length > 0 ? ` & ${coOwnerNames.join(', ')}` : ''}</span>
                     <span>·</span>
                     <span>{formatTime(ev.startsAt)}{ev.endsAt ? ` – ${formatTime(ev.endsAt)}` : ''}</span>
                   </p>

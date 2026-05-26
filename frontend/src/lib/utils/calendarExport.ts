@@ -2,9 +2,93 @@ import { contrastColor, toHex } from './color';
 import { generateAvatarColor } from './avatar';
 import type { AssociationCalendarFeedEvent } from '$lib/associations/api';
 
-/** Returns a guaranteed hex background color (html2canvas does not render hsl() reliably). */
-function eventBgHex(ev: AssociationCalendarFeedEvent): string {
-  return toHex(ev.associationColor ?? generateAvatarColor(ev.associationId));
+const WEEKDAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+const HEADER_H = 68;
+const WEEKDAY_ROW_H = 40;
+const GRID_PAD_BOTTOM = 20;
+/** Height of the A4 landscape calendar container in pixels (1080px logical width). */
+export const CALENDAR_CONTAINER_HEIGHT = Math.floor((210 * 1080) / 297) - 5; // ≈ 758
+const MAX_CELL_H = 130;
+const MAX_SHOW = 3;
+
+/** Configurable visual options for the monthly calendar PDF export. */
+export interface CalendarExportOptions {
+  /** Base64 data: URL for the full-page background image. */
+  bgDataUrl?: string | null;
+  /** Background image opacity in percent (0–100). Default: 14. */
+  bgOpacity?: number;
+  /** Header bar background color (hex). Default: '#122035'. */
+  headerBg?: string;
+  /** Month title text color (hex). Default: '#122035'. */
+  monthTitleColor?: string;
+  /** Weekday row background color (hex). Default: '#122035'. */
+  weekdayRowBg?: string;
+  /** Mon–Fri label color (hex). Default: '#c8d8eb'. */
+  weekdayLabelColor?: string;
+  /** Sat–Sun label color (hex). Default: '#f5c518'. */
+  weekendLabelColor?: string;
+  /** Normal day cell background color (hex). Default: '#ffffff'. */
+  cellBg?: string;
+  /** Normal day cell background opacity in percent (0–100). Default: 92. */
+  cellBgOpacity?: number;
+  /** Weekend cell background color (hex). Default: '#f1f5f9'. */
+  weekendCellBg?: string;
+  /** Weekend cell background opacity in percent (0–100). Default: 92. */
+  weekendCellBgOpacity?: number;
+  /** Cell border color (hex). Default: '#dde3ec'. */
+  borderColor?: string;
+  /** Grid outer border color (hex). Default: '#122035'. */
+  gridOuterBorder?: string;
+  /** Day number color on event-free cells (hex). Default: '#b8c4d0'. */
+  emptyDayColor?: string;
+}
+
+/** Default values matching the original hardcoded design. */
+export const DEFAULT_EXPORT_OPTIONS: Required<Omit<CalendarExportOptions, 'bgDataUrl'>> = {
+  bgOpacity: 14,
+  headerBg: '#122035',
+  monthTitleColor: '#122035',
+  weekdayRowBg: '#122035',
+  weekdayLabelColor: '#c8d8eb',
+  weekendLabelColor: '#f5c518',
+  cellBg: '#ffffff',
+  cellBgOpacity: 92,
+  weekendCellBg: '#f1f5f9',
+  weekendCellBgOpacity: 92,
+  borderColor: '#dde3ec',
+  gridOuterBorder: '#122035',
+  emptyDayColor: '#b8c4d0',
+};
+
+type ResolvedOpts = Required<CalendarExportOptions>;
+
+function hexToRgba(hex: string, opacityPct: number): string {
+  const h = hex.replace('#', '');
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${(opacityPct / 100).toFixed(2)})`;
+}
+
+/** Returns all hex colors for an event: primary first, then co-owners. */
+function eventHexColors(ev: AssociationCalendarFeedEvent): string[] {
+  const primary = toHex(ev.associationColor ?? generateAvatarColor(ev.associationId));
+  return [
+    primary,
+    ...(ev.coOwners ?? []).map((co) => toHex(co.color ?? generateAvatarColor(co.associationId))),
+  ];
+}
+
+/** CSS background value for an event slot — solid hex or inline gradient for co-owned events. */
+function eventBgCss(ev: AssociationCalendarFeedEvent): string {
+  const colors = eventHexColors(ev);
+  if (colors.length === 1) return colors[0];
+  const pct = 100 / colors.length;
+  const stops = colors.flatMap((c, i) => [
+    `${c} ${(i * pct).toFixed(1)}%`,
+    `${c} ${((i + 1) * pct).toFixed(1)}%`,
+  ]);
+  return `linear-gradient(to right,${stops.join(',')})`;
 }
 
 /** Monday-first array of day-numbers (null = padding cell) for a given month. */
@@ -37,19 +121,6 @@ function eventsOnDay(
     })
     .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
 }
-
-const WEEKDAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
-
-// CELL_H is computed per-export from the number of calendar rows (see exportCalendarMonth).
-// These constants describe the non-cell vertical space in the container (px):
-const HEADER_H = 68; // fixed top header
-const WEEKDAY_ROW_H = 40; // weekday label row (11px pad × 2 + ~18px line-height, +1 safety)
-const GRID_PAD_BOTTOM = 20; // padding:0 20px 20px on the grid wrapper
-// A4 landscape at 1080px logical width: max container height before the image overflows the page.
-// 210 × (1080/297) = 763px; subtract 5px safety margin for sub-pixel rounding.
-const A4_MAX_CONTAINER_H = Math.floor((210 * 1080) / 297) - 5; // ≈ 758px
-const MAX_CELL_H = 130; // aesthetic upper bound — prevents cells becoming too tall on short months
-const MAX_SHOW = 3; // max visible event slots per cell
 
 function safe(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -84,77 +155,57 @@ async function fetchDataUrl(url: string | null): Promise<string | null> {
 }
 
 /**
- * Renders the monthly calendar grid to a landscape A4 PDF and triggers a direct download.
- *
- * Design language:
- * - Optional background image at 14% opacity (caller-supplied base64 data URL, no CORS).
- * - Minimal header: Canari favicon top-left, month title centred in Fredoka.
- * - Dark navy (#122035) weekday row with yellow weekend labels.
- * - Events fill the entire cell height, split equally; subtle top border separates stacked slots.
- * - Text centred via padding-top + natural line-height:1.4 (no overflow:hidden on wrappers —
- *   avoids html2canvas clipping descenders; −2 px bias corrects apparent downward visual weight).
- * - Association logos appear as circular watermarks centred in each event slot.
+ * Builds the inner calendar HTML (no `<!DOCTYPE>` wrapper).
+ * Pass an empty `logoMap` to skip association watermarks (e.g. for live preview).
  */
-export async function exportCalendarMonth(
+function buildCalendarHtml(
   events: AssociationCalendarFeedEvent[],
-  focusDate: Date,
-  /** Optional background image as a base64 data URL. Pass null for no background. */
-  bgDataUrl: string | null = null
-): Promise<void> {
-  const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
-    import('html2canvas'),
-    import('jspdf'),
-  ]);
-
-  const year = focusDate.getFullYear();
-  const month = focusDate.getMonth();
+  year: number,
+  month: number,
+  opts: ResolvedOpts,
+  logoMap: Map<string, string | null>,
+  faviconDataUrl: string | null
+): string {
   const monthLabel = new Intl.DateTimeFormat('fr-FR', { month: 'long', year: 'numeric' })
-    .format(focusDate)
+    .format(new Date(year, month, 1))
     .replace(/^\w/, (c) => c.toUpperCase());
 
-  // Pre-fetch logos as data: URLs (cross-origin safe for html2canvas)
-  const uniqueLogoUrls = [
-    ...new Set(events.map((ev) => ev.associationLogoUrl).filter(Boolean) as string[]),
-  ];
-  const [faviconDataUrl, ...resolvedLogos] = await Promise.all([
-    fetchDataUrl('/favicon.png'),
-    ...uniqueLogoUrls.map(fetchDataUrl),
-  ]);
-  const logoMap = new Map<string, string | null>(
-    uniqueLogoUrls.map((url, i) => [url, resolvedLogos[i]])
-  );
-
   const cells = buildCalendarCells(year, month);
-  // Compute the tallest cell height that keeps the calendar on a single A4 landscape page.
   const nRows = cells.length / 7;
   const CELL_H = Math.min(
     MAX_CELL_H,
-    Math.floor((A4_MAX_CONTAINER_H - HEADER_H - WEEKDAY_ROW_H - GRID_PAD_BOTTOM) / nRows)
+    Math.floor((CALENDAR_CONTAINER_HEIGHT - HEADER_H - WEEKDAY_ROW_H - GRID_PAD_BOTTOM) / nRows)
   );
 
-  // Dark navy weekday header row
   const headerRow = WEEKDAYS.map(
     (w, i) =>
-      `<div style="padding:11px 6px;text-align:center;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.09em;color:${i >= 5 ? '#f5c518' : '#c8d8eb'};background:#122035;">${w}</div>`
+      `<div style="padding:11px 6px;text-align:center;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.09em;color:${i >= 5 ? opts.weekendLabelColor : opts.weekdayLabelColor};background:${opts.weekdayRowBg};">${w}</div>`
   ).join('');
+
+  const cellBgNormal = hexToRgba(opts.cellBg, opts.cellBgOpacity);
+  const cellBgWeekend = hexToRgba(opts.weekendCellBg, opts.weekendCellBgOpacity);
+  // Empty (padding) cells are slightly more transparent so the bg image shows through more.
+  const cellBgEmptyNormal = hexToRgba(opts.cellBg, Math.max(0, opts.cellBgOpacity - 12));
+  const cellBgEmptyWeekend = hexToRgba(
+    opts.weekendCellBg,
+    Math.max(0, opts.weekendCellBgOpacity - 4)
+  );
 
   const cellHtml = cells
     .map((day, i) => {
       const isWeekend = i % 7 >= 5;
 
       if (day === null) {
-        // Semi-transparent so the background image shows through
-        return `<div style="height:${CELL_H}px;background:${isWeekend ? 'rgba(241,245,249,0.88)' : 'rgba(248,250,252,0.80)'};border-right:1px solid #dde3ec;border-bottom:1px solid #dde3ec;box-sizing:border-box;"></div>`;
+        return `<div style="height:${CELL_H}px;background:${isWeekend ? cellBgEmptyWeekend : cellBgEmptyNormal};border-right:1px solid ${opts.borderColor};border-bottom:1px solid ${opts.borderColor};box-sizing:border-box;"></div>`;
       }
 
       const dayEvents = eventsOnDay(events, year, month, day);
 
       if (dayEvents.length === 0) {
-        const bg = isWeekend ? 'rgba(241,245,249,0.92)' : 'rgba(255,255,255,0.92)';
-        return `<div style="height:${CELL_H}px;background:${bg};border-right:1px solid #dde3ec;border-bottom:1px solid #dde3ec;box-sizing:border-box;padding:6px 7px;"><span style="font-size:12px;font-weight:700;color:#b8c4d0;">${day}</span></div>`;
+        const bg = isWeekend ? cellBgWeekend : cellBgNormal;
+        return `<div style="height:${CELL_H}px;background:${bg};border-right:1px solid ${opts.borderColor};border-bottom:1px solid ${opts.borderColor};box-sizing:border-box;padding:6px 7px;"><span style="font-size:12px;font-weight:700;color:${opts.emptyDayColor};">${day}</span></div>`;
       }
 
-      // Events fill the entire cell, each slot an equal share of CELL_H
       const nVisible = dayEvents.length > MAX_SHOW ? MAX_SHOW - 1 : dayEvents.length;
       const visible = dayEvents.slice(0, nVisible);
       const overflowCount = dayEvents.length - nVisible;
@@ -163,8 +214,8 @@ export async function exportCalendarMonth(
 
       const rows = [
         ...visible.map((ev, idx) => {
-          const bg = eventBgHex(ev);
-          const fg = contrastColor(bg);
+          const bg = eventBgCss(ev);
+          const fg = contrastColor(eventHexColors(ev)[0]);
           const logoDataUrl = ev.associationLogoUrl
             ? (logoMap.get(ev.associationLogoUrl) ?? null)
             : null;
@@ -180,19 +231,15 @@ export async function exportCalendarMonth(
               : '';
 
           const fontSize = slotH >= 60 ? 13 : slotH >= 45 ? 12 : slotH >= 35 ? 11 : 10;
-
-          // Text centering: padding-top positions the text; line-height:1.4 gives enough room
-          // for ascenders AND descenders without relying on overflow:hidden inside the wrapper.
-          // Only the outer slot div (overflow:hidden;height:slotH) provides clipping.
-          // Subtract 2px to compensate for descender visual weight pushing the apparent centre down.
           const lineH = fontSize * 1.4;
+          // Subtract 2px to compensate for descender visual weight pushing the apparent centre down.
           const paddingTop = Math.max(4, Math.floor((slotH - lineH) / 2) - 2);
           const wrap = slotH >= 48 ? 'word-break:break-word;' : 'white-space:nowrap;';
           const ph = slotH >= 48 ? 10 : 6;
           const textHtml = `<div style="position:absolute;top:0;left:0;width:100%;padding-top:${paddingTop}px;text-align:center;box-sizing:border-box;"><span style="display:block;font-size:${fontSize}px;font-weight:700;color:${fg};line-height:1.4;${wrap}padding:0 ${ph}px;box-sizing:border-box;">${safe(ev.title)}</span></div>`;
 
-          // Subtle top border between stacked events (not on first slot)
           const sep = idx > 0 ? 'border-top:1px solid rgba(0,0,0,0.10);' : '';
+          // bg may be a gradient string, so use 'background:' not 'background-color:'
           return `<div style="height:${slotH}px;position:relative;background:${bg};overflow:hidden;${sep}">${watermark}${dayNum}${textHtml}</div>`;
         }),
         ...(overflowCount > 0
@@ -205,9 +252,85 @@ export async function exportCalendarMonth(
           : []),
       ];
 
-      return `<div style="height:${CELL_H}px;overflow:hidden;border-right:1px solid #dde3ec;border-bottom:1px solid #dde3ec;box-sizing:border-box;">${rows.join('')}</div>`;
+      return `<div style="height:${CELL_H}px;overflow:hidden;border-right:1px solid ${opts.borderColor};border-bottom:1px solid ${opts.borderColor};box-sizing:border-box;">${rows.join('')}</div>`;
     })
     .join('');
+
+  const bgOpacityVal = (opts.bgOpacity / 100).toFixed(2);
+  // Full-page background image behind everything.
+  // Height is patched in JS after DOM insertion for the export path.
+  const fullBgHtml = opts.bgDataUrl
+    ? `<div data-full-bg style="position:absolute;top:0;left:0;width:100%;pointer-events:none;"><img src="${opts.bgDataUrl}" style="width:100%;height:100%;object-fit:cover;opacity:${bgOpacityVal};" /></div>`
+    : '';
+
+  const logoHtml = faviconDataUrl
+    ? `<img src="${faviconDataUrl}" style="position:absolute;top:18px;left:18px;height:32px;width:32px;object-fit:contain;opacity:0.85;" />`
+    : '';
+
+  return `
+    ${fullBgHtml}
+    <div style="position:relative;">
+      <div style="height:${HEADER_H}px;position:relative;background:${opts.headerBg};border-bottom:1.5px solid ${opts.borderColor};">
+        ${logoHtml}
+        <h1 style="position:relative;font-family:'Fredoka','Segoe UI',sans-serif;font-size:30px;font-weight:700;color:${opts.monthTitleColor};margin:0;line-height:${HEADER_H}px;text-align:center;letter-spacing:.01em;">${safe(monthLabel)}</h1>
+      </div>
+      <div style="padding:0 20px ${GRID_PAD_BOTTOM}px;">
+        <div style="display:grid;grid-template-columns:repeat(7,1fr);border:1.5px solid ${opts.gridOuterBorder};border-top:none;border-radius:0 0 8px 8px;overflow:hidden;">
+          ${headerRow}${cellHtml}
+        </div>
+      </div>
+    </div>`;
+}
+
+/**
+ * Builds a complete standalone HTML document for use as an `<iframe srcdoc>` live preview.
+ * Association logos are skipped for instant synchronous rendering.
+ */
+export function buildPreviewDocument(
+  events: AssociationCalendarFeedEvent[],
+  year: number,
+  month: number,
+  options: CalendarExportOptions = {}
+): string {
+  const opts: ResolvedOpts = { ...DEFAULT_EXPORT_OPTIONS, bgDataUrl: null, ...options };
+  const body = buildCalendarHtml(events, year, month, opts, new Map(), null);
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>*{box-sizing:border-box;margin:0;padding:0;}body{background:#f0f4f8;font-family:'Nunito','Segoe UI',sans-serif;color:#111;}</style></head><body><div style="position:relative;width:1080px;background:#f0f4f8;border-radius:12px;overflow:hidden;">${body}</div></body></html>`;
+}
+
+/**
+ * Renders the monthly calendar grid to a landscape A4 PDF and triggers a direct download.
+ *
+ * - Optional background image at configurable opacity.
+ * - All colours are fully configurable via `options`; defaults match the original design.
+ * - Association logos appear as circular watermarks (pre-fetched as data: URLs for html2canvas).
+ */
+export async function exportCalendarMonth(
+  events: AssociationCalendarFeedEvent[],
+  focusDate: Date,
+  options: CalendarExportOptions = {}
+): Promise<void> {
+  const opts: ResolvedOpts = { ...DEFAULT_EXPORT_OPTIONS, bgDataUrl: null, ...options };
+
+  const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
+    import('html2canvas'),
+    import('jspdf'),
+  ]);
+
+  const year = focusDate.getFullYear();
+  const month = focusDate.getMonth();
+
+  const uniqueLogoUrls = [
+    ...new Set(events.map((ev) => ev.associationLogoUrl).filter(Boolean) as string[]),
+  ];
+  const [faviconDataUrl, ...resolvedLogos] = await Promise.all([
+    fetchDataUrl('/favicon.png'),
+    ...uniqueLogoUrls.map(fetchDataUrl),
+  ]);
+  const logoMap = new Map<string, string | null>(
+    uniqueLogoUrls.map((url, i) => [url, resolvedLogos[i]])
+  );
+
+  const innerHtml = buildCalendarHtml(events, year, month, opts, logoMap, faviconDataUrl);
 
   const container = document.createElement('div');
   Object.assign(container.style, {
@@ -223,38 +346,11 @@ export async function exportCalendarMonth(
     overflow: 'hidden',
   });
 
-  // Full-page seasonal background image behind everything.
-  // bottom:0 does not stretch on auto-height containers — height is patched in JS after DOM insertion.
-  const fullBgHtml = bgDataUrl
-    ? `<div data-full-bg style="position:absolute;top:0;left:0;width:100%;pointer-events:none;"><img src="${bgDataUrl}" style="width:100%;height:100%;object-fit:cover;opacity:0.14;" /></div>`
-    : '';
-
-  // Favicon logo top-left of the header; centred month title via line-height.
-  const logoHtml = faviconDataUrl
-    ? `<img src="${faviconDataUrl}" style="position:absolute;top:18px;left:18px;height:32px;width:32px;object-fit:contain;opacity:0.85;" />`
-    : '';
-
-  container.innerHTML = `
-    ${fullBgHtml}
-    <!-- Content wrapper sits above the full-page background image -->
-    <div style="position:relative;">
-      <!-- Minimal header: logo left, month title centred -->
-      <div style="height:68px;position:relative;border-bottom:1.5px solid #dde3ec;">
-        ${logoHtml}
-        <h1 style="position:relative;font-family:'Fredoka','Segoe UI',sans-serif;font-size:30px;font-weight:700;color:#122035;margin:0;line-height:68px;text-align:center;letter-spacing:.01em;">${safe(monthLabel)}</h1>
-      </div>
-      <!-- Calendar grid -->
-      <div style="padding:0 20px 20px;">
-        <div style="display:grid;grid-template-columns:repeat(7,1fr);border:1.5px solid #122035;border-top:none;border-radius:0 0 8px 8px;overflow:hidden;">
-          ${headerRow}${cellHtml}
-        </div>
-      </div>
-    </div>`;
-
+  container.innerHTML = innerHtml;
   document.body.appendChild(container);
 
   // Patch background div height now that the container has a real rendered height.
-  if (bgDataUrl) {
+  if (opts.bgDataUrl) {
     const bgEl = container.querySelector<HTMLElement>('[data-full-bg]');
     if (bgEl) bgEl.style.height = container.offsetHeight + 'px';
   }
@@ -285,10 +381,7 @@ export async function exportCalendarMonth(
     const imgData = canvas.toDataURL('image/png');
     const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
     const pageW = pdf.internal.pageSize.getWidth();
-
-    // Scale to fill the full page width; CELL_H was sized to guarantee the image fits the height.
     pdf.addImage(imgData, 'PNG', 0, 0, pageW, (canvas.height * pageW) / canvas.width);
-
     pdf.save(`canari-agenda-${year}-${String(month + 1).padStart(2, '0')}.pdf`);
   } finally {
     document.body.removeChild(container);

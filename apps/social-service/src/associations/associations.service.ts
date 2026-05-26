@@ -958,7 +958,11 @@ export class AssociationsService {
       })
       .orderBy('e.startsAt', 'ASC');
     if (aid) {
-      qb.andWhere('e.associationId = :aid', { aid });
+      // Include events where the association is either the primary owner or a co-owner.
+      qb.andWhere(
+        '(e.associationId = :aid OR EXISTS (SELECT 1 FROM association_calendar_event_co_owners co WHERE co.event_id = e.id AND co.association_id = :aid))',
+        { aid }
+      );
     }
 
     const rows = await qb
@@ -982,27 +986,35 @@ export class AssociationsService {
       .addSelect('a.logoUrl', 'associationLogoUrl')
       .getRawMany();
 
+    const coOwnerMap = await this.batchLoadCoOwners(
+      rows.map((r: Record<string, unknown>) => r.id as string)
+    );
+
     return rows.map((r: Record<string, unknown>) => {
-      const base = this.serializeCalendarEvent({
-        id: r.id as string,
-        associationId: r.associationId as string,
-        title: r.title as string,
-        description: (r.description as string | null) ?? null,
-        startsAt: r.startsAt as Date,
-        endsAt: (r.endsAt as Date | null) ?? null,
-        createdBy: r.createdBy as string,
-        createdAt: r.createdAt as Date,
-        linkedFormId: (r.linkedFormId as string | null) ?? null,
-        status:
-          (r.status as AssociationCalendarEventStatus) ?? AssociationCalendarEventStatus.Validated,
-        validatedAt: (r.validatedAt as Date | null) ?? null,
-        validatedBy: (r.validatedBy as string | null) ?? null,
-        rejectedAt: null,
-        rejectedBy: null,
-        rejectionReason: null,
-        imageUrl: (r.imageUrl as string | null) ?? null,
-        imageMediaId: (r.imageMediaId as string | null) ?? null,
-      });
+      const base = this.serializeCalendarEvent(
+        {
+          id: r.id as string,
+          associationId: r.associationId as string,
+          title: r.title as string,
+          description: (r.description as string | null) ?? null,
+          startsAt: r.startsAt as Date,
+          endsAt: (r.endsAt as Date | null) ?? null,
+          createdBy: r.createdBy as string,
+          createdAt: r.createdAt as Date,
+          linkedFormId: (r.linkedFormId as string | null) ?? null,
+          status:
+            (r.status as AssociationCalendarEventStatus) ??
+            AssociationCalendarEventStatus.Validated,
+          validatedAt: (r.validatedAt as Date | null) ?? null,
+          validatedBy: (r.validatedBy as string | null) ?? null,
+          rejectedAt: null,
+          rejectedBy: null,
+          rejectionReason: null,
+          imageUrl: (r.imageUrl as string | null) ?? null,
+          imageMediaId: (r.imageMediaId as string | null) ?? null,
+        },
+        coOwnerMap.get(r.id as string) ?? []
+      );
       return {
         ...base,
         associationName: this.rawQueryString(r.associationName),
