@@ -97,7 +97,7 @@
         <Check size={12} strokeWidth={2.5} />
       </span>
     {:else if showRead}
-      <!-- Tiny reader avatars + double-check (tap bubble for names/time detail) -->
+      <!-- Reader avatars + double-check (tap bubble for names/time detail) -->
       <span class="inline-flex items-center gap-0.5">
         {#each readBy.slice(0, 3) as userId (userId)}
           <Avatar {userId} size="xs" shape="circle" />

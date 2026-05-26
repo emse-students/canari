@@ -4,6 +4,7 @@ import { subscribeFormReminder, unsubscribeFormReminder, checkFormReminder } fro
 export function useFormReminder(formId: string) {
   let subscribed = $state(false);
   let toggling = $state(false);
+  let loaded = $state(false);
 
   /** Fetches the current subscription state from the API. */
   async function load() {
@@ -11,6 +12,8 @@ export function useFormReminder(formId: string) {
       subscribed = (await checkFormReminder(formId)).subscribed;
     } catch {
       /* non-fatal */
+    } finally {
+      loaded = true;
     }
   }
 
@@ -39,6 +42,9 @@ export function useFormReminder(formId: string) {
     },
     get toggling() {
       return toggling;
+    },
+    get loaded() {
+      return loaded;
     },
     load,
     toggle,

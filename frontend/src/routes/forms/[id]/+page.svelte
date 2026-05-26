@@ -460,20 +460,22 @@
         <p class="text-sm font-semibold text-amber-800 dark:text-amber-300">
           Ouverture le {formatFormOpensAt(form.opensAt)}
         </p>
-        <button
-          type="button"
-          onclick={reminder.toggle}
-          disabled={reminder.toggling}
-          class="flex items-center gap-1.5 text-xs font-bold shrink-0 px-3 py-2 rounded-xl transition-colors {reminder.subscribed
-            ? 'bg-amber-600 text-white hover:bg-amber-700'
-            : 'bg-amber-200/60 text-amber-900 dark:text-amber-300 hover:bg-amber-200'}"
-        >
-          {#if reminder.subscribed}
-            <BellOff size={13} />Rappel activé
-          {:else}
-            <Bell size={13} />Me prévenir
-          {/if}
-        </button>
+        {#if reminder.loaded}
+          <button
+            type="button"
+            onclick={reminder.toggle}
+            disabled={reminder.toggling}
+            class="flex items-center gap-1.5 text-xs font-bold shrink-0 px-3 py-2 rounded-xl transition-colors {reminder.subscribed
+              ? 'bg-amber-600 text-white hover:bg-amber-700'
+              : 'bg-amber-200/60 text-amber-900 dark:text-amber-300 hover:bg-amber-200'}"
+          >
+            {#if reminder.subscribed}
+              <BellOff size={13} />Rappel activé
+            {:else}
+              <Bell size={13} />Me prévenir
+            {/if}
+          </button>
+        {/if}
       </div>
     {/if}
 

@@ -13,13 +13,15 @@
 
   let subscribed = $state<Record<string, boolean>>({});
   let toggling = $state<Record<string, boolean>>({});
+  let loaded = $state<Record<string, boolean>>({});
 
   onMount(() => {
     for (const fi of formInfos) {
       if (!fi.submitted && formOpensAtIso(fi.opensAt)) {
         checkFormReminder(fi.id)
           .then((res) => { subscribed[fi.id] = res.subscribed; })
-          .catch(() => {});
+          .catch(() => {})
+          .finally(() => { loaded[fi.id] = true; });
       }
     }
   });
@@ -94,7 +96,7 @@
         </div>
       </a>
 
-      {#if !fi.submitted && formOpensAtIso(fi.opensAt)}
+      {#if !fi.submitted && formOpensAtIso(fi.opensAt) && loaded[fi.id]}
         <button
           type="button"
           onclick={() => toggleReminder(fi.id)}
