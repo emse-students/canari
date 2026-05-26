@@ -360,16 +360,14 @@
           linkedFormId: formLinkedFormId.trim() || null,
         });
       } else {
-        const created = await createAssociationCalendarEvent(associationId, {
+        await createAssociationCalendarEvent(associationId, {
           title: formTitle.trim(),
           description: formDescription.trim() || undefined,
           startsAt: startIso,
           endsAt: endIso,
           ...(formLinkedFormId.trim() ? { linkedFormId: formLinkedFormId.trim() } : {}),
         });
-        // Switch to edit mode so the user can immediately add a poster image.
-        editingId = created.id;
-        formImageUrl = created.imageUrl ?? null;
+        dismissEventModal(false);
         await loadMonth();
         saving = false;
         return;
