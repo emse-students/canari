@@ -7,6 +7,8 @@ export interface FormOption {
 export interface FormItem {
   id: string;
   label: string;
+  /** Optional help text shown below the question label. */
+  description?: string;
   required: boolean;
   type: string;
   options?: FormOption[];
@@ -17,6 +19,12 @@ export interface FormItem {
     minLabel?: string;
     maxLabel?: string;
   };
+  /** Optional image URL displayed above the input field. */
+  imageUrl?: string;
+  /** ID of the question this question depends on (branching logic). */
+  dependsOn?: string;
+  /** Option label that must be selected in the dependsOn question to show this one. */
+  dependsValue?: string;
 }
 
 export interface CreateFormPayload {
@@ -109,6 +117,28 @@ export async function uploadFormImage(id: string, file: File): Promise<Form> {
     throw new Error(`upload ${res.status}: ${details || res.statusText}`);
   }
   return (await res.json()) as Form;
+}
+
+/** Uploads a public image for use in a form question. Returns `{ imageUrl }`. */
+export async function uploadFormItemImage(
+  formId: string,
+  file: File
+): Promise<{ imageUrl: string }> {
+  const token = await getToken().catch(() => '');
+  const fd = new FormData();
+  fd.append('file', file);
+  const headers: Record<string, string> = {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(`${socialUrl()}/api/forms/${formId}/items/image`, {
+    method: 'POST',
+    headers,
+    body: fd,
+  });
+  if (!res.ok) {
+    const details = await res.text().catch(() => '');
+    throw new Error(`upload ${res.status}: ${details || res.statusText}`);
+  }
+  return res.json();
 }
 
 /** Removes the banner image from a form. */

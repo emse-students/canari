@@ -6,6 +6,7 @@
     getForm,
     updateForm,
     uploadFormImage,
+    uploadFormItemImage,
     deleteFormImage,
     addFormCoOwner,
     removeFormCoOwner,
@@ -658,6 +659,11 @@
               onMoveDown={() => moveItem(i, 'down')}
               canMoveUp={i > 0}
               canMoveDown={i < items.length - 1}
+              allItems={items}
+              imageUploadFn={async (file) => {
+                const r = await uploadFormItemImage(formId, file);
+                return r.imageUrl;
+              }}
             />
           </div>
         {/each}

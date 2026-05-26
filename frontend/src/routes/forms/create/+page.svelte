@@ -545,6 +545,7 @@
             onMoveDown={() => moveItem(i, 'down')}
             canMoveUp={i > 0}
             canMoveDown={i < items.length - 1}
+            allItems={items}
           />
         </div>
       {/each}

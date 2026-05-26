@@ -91,6 +91,21 @@ export class FormsController {
     return this.service.setImageFromUpload(id, file, xUserId, ga === 'true', authorization);
   }
 
+  /** Uploads a public image for use in a form question. Returns `{ imageUrl }`. */
+  @UseGuards(NginxAuthGuard)
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 8 * 1024 * 1024 } }))
+  @Post(':id/items/image')
+  async uploadItemImage(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string,
+    @Headers('authorization') authorization?: string
+  ): Promise<{ imageUrl: string }> {
+    if (!file) throw new BadRequestException('No file provided');
+    return this.service.uploadItemImage(id, file, xUserId, ga === 'true', authorization);
+  }
+
   /** Removes the banner image from a form. Requires owner, co-owner, or MANAGE_FORMS flag. */
   @UseGuards(NginxAuthGuard)
   @Delete(':id/image')

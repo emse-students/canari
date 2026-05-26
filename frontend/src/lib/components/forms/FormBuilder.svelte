@@ -1,6 +1,6 @@
 <script lang="ts">
   import Input from '$lib/components/ui/Input.svelte';
-  import { Trash2, X, Plus, GripVertical } from '@lucide/svelte';
+  import { Trash2, X, Plus, GripVertical, ImagePlus, GitBranch } from '@lucide/svelte';
 
   let {
     item = $bindable(),
@@ -11,6 +11,8 @@
     onMoveDown,
     canMoveUp = false,
     canMoveDown = false,
+    allItems = [],
+    imageUploadFn = undefined,
   } = $props<{
     item: any;
     onRemove: () => void;
@@ -20,6 +22,10 @@
     onMoveDown?: () => void;
     canMoveUp?: boolean;
     canMoveDown?: boolean;
+    /** All questions in the form — used for the conditional display picker. */
+    allItems?: any[];
+    /** If provided, enables image upload for this question. */
+    imageUploadFn?: (file: File) => Promise<string>;
   }>();
 
   const formItemTypes = [
@@ -71,6 +77,38 @@
       ? { id: crypto.randomUUID(), value: row }
       : { ...row, id: row.id || crypto.randomUUID() }
   );
+
+  // Questions eligible as a condition source: previous questions of choice type
+  const eligibleConditionSources = $derived(
+    allItems
+      .slice(0, (questionIndex ?? 1) - 1)
+      .filter((q: any) => ['single_choice', 'dropdown', 'multiple_choice'].includes(q.type))
+  );
+
+  /** Returns the option labels of a given question (by id). */
+  function getOptionLabels(questionId: string): string[] {
+    const q = allItems.find((q: any) => q.id === questionId);
+    return (q?.options ?? []).map((o: any) => o.label).filter(Boolean);
+  }
+
+  let uploadingImage = $state(false);
+  let imageUploadError = $state('');
+
+  async function handleImageUpload(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file || !imageUploadFn) return;
+    uploadingImage = true;
+    imageUploadError = '';
+    try {
+      item.imageUrl = await imageUploadFn(file);
+    } catch (err: any) {
+      imageUploadError = err.message || "Erreur lors de l'envoi";
+    } finally {
+      uploadingImage = false;
+      input.value = '';
+    }
+  }
 </script>
 
 <div
@@ -168,6 +206,63 @@
       </select>
     </div>
   </div>
+
+  <!-- Description optionnelle -->
+  <div class="mb-4 sm:mb-5">
+    {#if item.description !== undefined}
+      <div class="relative">
+        <textarea
+          bind:value={item.description}
+          rows="2"
+          placeholder="Texte d'aide ou précisions pour le répondant…"
+          class="w-full px-3 py-2.5 border-2 border-cn-border rounded-xl text-sm text-text-main bg-[var(--cn-surface)] outline-none transition-all resize-y placeholder:text-text-muted/50 focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)]"
+        ></textarea>
+        <button
+          type="button"
+          onclick={() => { item.description = undefined; }}
+          class="absolute top-1.5 right-1.5 p-1 rounded-lg text-text-muted hover:text-red-500 hover:bg-red-500/10 transition-colors"
+          title="Supprimer la description"
+        ><X size={14} /></button>
+      </div>
+    {:else}
+      <button
+        type="button"
+        onclick={() => { item.description = ''; }}
+        class="text-xs font-semibold text-text-muted hover:text-text-main transition-colors flex items-center gap-1"
+      >
+        <Plus size={12} />
+        Ajouter une description
+      </button>
+    {/if}
+  </div>
+
+  <!-- Image optionnelle -->
+  {#if imageUploadFn !== undefined}
+    <div class="mb-4 sm:mb-5">
+      {#if item.imageUrl}
+        <div class="relative rounded-xl overflow-hidden border border-cn-border">
+          <img src={item.imageUrl} alt="Question" class="w-full max-h-40 object-cover" />
+          <button
+            type="button"
+            onclick={() => { item.imageUrl = undefined; }}
+            class="absolute top-1.5 right-1.5 rounded-full bg-black/60 p-1 text-white hover:bg-black/80"
+            title="Supprimer l'image"
+          ><X size={14} /></button>
+        </div>
+      {:else}
+        {#if imageUploadError}
+          <p class="text-xs text-red-500 mb-1.5">{imageUploadError}</p>
+        {/if}
+        <label
+          class="flex items-center gap-2 cursor-pointer rounded-xl border-2 border-dashed border-cn-border px-3 py-2.5 text-xs font-semibold text-text-muted hover:border-cn-yellow/50 transition-colors {uploadingImage ? 'opacity-50 pointer-events-none' : ''}"
+        >
+          <ImagePlus size={15} class="shrink-0" />
+          {uploadingImage ? 'Envoi en cours…' : 'Ajouter une image à la question'}
+          <input type="file" accept="image/jpeg,image/png,image/webp" class="sr-only" onchange={handleImageUpload} />
+        </label>
+      {/if}
+    </div>
+  {/if}
 
   <!-- Obligatoire -->
   <div class="mb-4 sm:mb-6 flex justify-start sm:justify-end">
@@ -403,6 +498,40 @@
           </button>
         </div>
       {/if}
+    </div>
+  {/if}
+
+  <!-- Logique conditionnelle -->
+  {#if eligibleConditionSources.length > 0}
+    <div class="mt-4 pt-4 border-t border-black/5 dark:border-white/5">
+      <div class="flex items-center gap-1.5 mb-2">
+        <GitBranch size={13} class="text-text-muted/70 shrink-0" />
+        <span class="text-[0.65rem] font-bold text-text-muted uppercase tracking-wider">Afficher si…</span>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <select
+          bind:value={item.dependsOn}
+          class="flex-1 min-w-0 px-3 py-2 border-2 border-cn-border rounded-xl text-xs text-text-main bg-[var(--cn-surface)] outline-none transition-all focus:border-cn-yellow"
+          onchange={() => { item.dependsValue = ''; }}
+        >
+          <option value="">Toujours afficher</option>
+          {#each eligibleConditionSources as src (src.id)}
+            <option value={src.id}>{src.label || `Question ${allItems.findIndex((q: any) => q.id === src.id) + 1}`}</option>
+          {/each}
+        </select>
+        {#if item.dependsOn}
+          <span class="text-xs text-text-muted shrink-0">=</span>
+          <select
+            bind:value={item.dependsValue}
+            class="flex-1 min-w-0 px-3 py-2 border-2 border-cn-border rounded-xl text-xs text-text-main bg-[var(--cn-surface)] outline-none transition-all focus:border-cn-yellow"
+          >
+            <option value="">Valeur…</option>
+            {#each getOptionLabels(item.dependsOn) as label (label)}
+              <option value={label}>{label}</option>
+            {/each}
+          </select>
+        {/if}
+      </div>
     </div>
   {/if}
 </div>

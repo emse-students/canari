@@ -692,6 +692,22 @@ export class FormsService {
     return this.formRepo.findOne({ where: { id: formId } });
   }
 
+  /** Uploads a public image for use in a form question (not tied to the form banner). */
+  async uploadItemImage(
+    formId: string,
+    file: { buffer: Buffer; mimetype: string; size: number },
+    callerId: string,
+    isGlobalAdmin: boolean,
+    authorization: string | undefined,
+  ): Promise<{ imageUrl: string }> {
+    await this.assertFormManager(formId, callerId, isGlobalAdmin);
+    if (!authorization?.startsWith('Bearer ')) {
+      throw new BadRequestException('Missing authorization header');
+    }
+    const mediaId = await this.associationsService.uploadPublicImage(file, authorization);
+    return { imageUrl: `/api/media/public/${mediaId}` };
+  }
+
   /** Removes the banner image from a form. */
   async clearImage(formId: string, callerId: string, isGlobalAdmin: boolean) {
     await this.assertFormManager(formId, callerId, isGlobalAdmin);

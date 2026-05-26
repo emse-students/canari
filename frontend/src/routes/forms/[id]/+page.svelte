@@ -35,6 +35,7 @@
     Bell,
     BellOff,
     CreditCard,
+    Link,
   } from '@lucide/svelte';
 
   const formId = $derived(page.params.id);
@@ -59,6 +60,14 @@
   let linkedAgendaEvent = $state<AssociationCalendarEvent | null>(null);
   let agendaAssociationSlug = $state('');
   let paymentMethodChoice = $state<'stripe' | 'cash'>('stripe');
+  let copiedLink = $state(false);
+
+  function copyFormLink() {
+    if (typeof window === 'undefined') return;
+    void navigator.clipboard.writeText(window.location.href);
+    copiedLink = true;
+    setTimeout(() => (copiedLink = false), 2000);
+  }
 
   onMount(async () => {
     const savedUser = currentUserId();
@@ -157,10 +166,22 @@
     }).format(amountCents / 100);
   }
 
+  /** Questions that pass their conditional display check. */
+  const visibleItems = $derived.by(() => {
+    if (!form) return [];
+    return form.items.filter((item) => {
+      if (!item.dependsOn) return true;
+      const dep = selections[item.dependsOn];
+      if (dep === undefined || dep === null || dep === '') return false;
+      if (Array.isArray(dep)) return (dep as string[]).includes(item.dependsValue ?? '');
+      return String(dep) === (item.dependsValue ?? '');
+    });
+  });
+
   function calculateTotal(): number {
     if (!form) return 0;
-    let total = form.basePrice;
-    for (const item of form.items) {
+    let total = form.basePrice ?? 0;
+    for (const item of visibleItems) {
       const val = selections[item.id];
       if (!val) continue;
       if (['single_choice', 'dropdown'].includes(item.type)) {
@@ -187,8 +208,8 @@
       return;
     }
 
-    // Validation
-    for (const item of form.items) {
+    // Validation — only validate visible (non-conditional-hidden) questions
+    for (const item of visibleItems) {
       const val = selections[item.id];
       if (item.required) {
         if (['matrix_single', 'matrix_multiple'].includes(item.type)) {
@@ -224,9 +245,14 @@
     try {
       const { formCheckoutCallbacks } = await import('$lib/utils/stripeCallbacks');
       const total = calculateTotal();
+      // Only submit answers for visible questions
+      const visibleIds = new Set(visibleItems.map((i) => i.id));
+      const visibleAnswers = Object.fromEntries(
+        Object.entries(selections).filter(([id]) => visibleIds.has(id)),
+      );
       const res = await submitFormService(form.id, {
         email: '',
-        answers: selections,
+        answers: visibleAnswers,
         ...formCheckoutCallbacks(),
         ...(total > 0 && form.allowCashPayment ? { paymentMethod: paymentMethodChoice } : {}),
       });
@@ -276,10 +302,10 @@
   }
 
   // ── Progress bar ─────────────────────────────────────────────────
-  const totalCount = $derived(form?.items.length ?? 0);
+  const totalCount = $derived(visibleItems.length);
   const answeredCount = $derived.by(() => {
     if (!form) return 0;
-    return form.items.filter((item) => {
+    return visibleItems.filter((item) => {
       const val = selections[item.id];
       if (item.type === 'multiple_choice') return Array.isArray(val) && val.length > 0;
       if (['matrix_single', 'matrix_multiple'].includes(item.type)) {
@@ -308,14 +334,31 @@
 {/if}
 
 <div class="max-w-2xl mx-auto px-4 pt-6 pb-36">
-  <!-- Back -->
-  <button
-    class="inline-flex items-center gap-1.5 text-sm font-semibold text-text-muted hover:text-text-main transition-colors mb-6"
-    onclick={() => goto(redirectTo)}
-  >
-    <ArrowLeft size={15} />
-    Retour
-  </button>
+  <!-- Back + Share -->
+  <div class="flex items-center justify-between mb-6">
+    <button
+      class="inline-flex items-center gap-1.5 text-sm font-semibold text-text-muted hover:text-text-main transition-colors"
+      onclick={() => goto(redirectTo)}
+    >
+      <ArrowLeft size={15} />
+      Retour
+    </button>
+    {#if form}
+      <button
+        type="button"
+        onclick={copyFormLink}
+        class="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl transition-colors {copiedLink
+          ? 'text-green-600 bg-green-50 dark:bg-green-950/20'
+          : 'text-text-muted hover:text-text-main hover:bg-cn-border/30'}"
+      >
+        {#if copiedLink}
+          <Check size={13} />Lien copié !
+        {:else}
+          <Link size={13} />Partager
+        {/if}
+      </button>
+    {/if}
+  </div>
 
   {#if loading}
     <div class="flex justify-center py-24">
@@ -449,10 +492,10 @@
 
     <!-- ── Questions ── -->
     <div class="space-y-3">
-      {#each form.items as item, qi (item.id)}
+      {#each visibleItems as item, qi (item.id)}
         <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-5 shadow-sm">
           <!-- svelte-ignore a11y_label_has_associated_control -->
-          <label class="flex items-start gap-2 mb-3">
+          <label class="flex items-start gap-2 mb-1.5">
             <span class="text-[10px] font-bold text-text-muted bg-cn-border/50 rounded-md px-1.5 py-0.5 mt-0.5 shrink-0 tabular-nums">
               {qi + 1}
             </span>
@@ -461,6 +504,16 @@
               {#if item.required}<span class="text-red-500 ml-0.5">*</span>{/if}
             </span>
           </label>
+
+          {#if item.description}
+            <p class="text-xs text-text-muted mb-3 ml-6 leading-relaxed">{item.description}</p>
+          {/if}
+
+          {#if item.imageUrl}
+            <div class="mb-3 ml-6 rounded-xl overflow-hidden border border-cn-border/60">
+              <img src={item.imageUrl} alt="" class="w-full max-h-48 object-cover" />
+            </div>
+          {/if}
 
           {#if item.type === 'short_text'}
             <input

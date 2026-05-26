@@ -62,6 +62,26 @@ export class FormItemDto {
   @IsString()
   @IsOptional()
   id?: string;
+
+  /** Optional help text displayed below the question label in the fill page. */
+  @IsString()
+  @IsOptional()
+  description?: string;
+
+  /** Optional image URL displayed above the input field in the fill page. */
+  @IsString()
+  @IsOptional()
+  imageUrl?: string;
+
+  /** ID of the question this question depends on (conditional display). */
+  @IsString()
+  @IsOptional()
+  dependsOn?: string;
+
+  /** Option label that must be selected in dependsOn question for this question to appear. */
+  @IsString()
+  @IsOptional()
+  dependsValue?: string;
 }
 
 export class CreateFormDto {
