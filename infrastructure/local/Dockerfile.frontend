@@ -32,6 +32,8 @@ RUN printf 'server {\n\
     proxy_pass_request_body off;\n\
     proxy_set_header Content-Length "";\n\
     proxy_set_header X-Original-URI $request_uri;\n\
+    proxy_set_header Authorization $http_authorization;\n\
+    proxy_set_header Cookie $http_cookie;\n\
     }\n\
     \n\
     location / {\n\

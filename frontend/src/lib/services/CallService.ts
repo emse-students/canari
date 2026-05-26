@@ -4,6 +4,8 @@ import { canari } from '../proto/canari.js';
 import { encodeAppMessage, mkCallHangup, mkCallInvite } from '../proto/codec';
 import EncryptionWorker from '../workers/encryption.worker?worker';
 import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
+import { resolveMlsPublicUrls } from '$lib/mls-client/mlsDeliveryHttp';
+import { apiFetch } from '$lib/utils/apiFetch';
 
 export type CallState = 'idle' | 'calling' | 'incoming' | 'incall' | 'ended';
 
@@ -145,22 +147,24 @@ export class CallService {
     this.remoteStreams.set(new Map());
   }
 
-  /** Fetches short-lived TURN credentials from chat-delivery. */
+  /** Fetches short-lived TURN credentials from chat-delivery (Bearer auth, same as /api/mls). */
   private async fetchIceServers(groupId: string, callId: string): Promise<RTCIceServer[]> {
-    const base =
-      import.meta.env.VITE_DELIVERY_URL ||
-      import.meta.env.VITE_CORE_URL ||
-      (typeof window !== 'undefined' ? window.location.origin : '');
-
-    const url = new URL('/api/calls/ice-servers', base);
+    const { historyUrl } = resolveMlsPublicUrls();
+    const url = new URL('/api/calls/ice-servers', historyUrl);
     url.searchParams.set('groupId', groupId);
     url.searchParams.set('callId', callId);
 
     appendLog(`[Call] fetching ICE servers for group=${groupId}`);
 
-    const res = await fetch(url.toString(), { credentials: 'include' });
+    const res = await apiFetch(url.toString(), { method: 'GET', credentials: 'include' });
     if (!res.ok) {
-      throw new Error(`Failed to fetch ICE servers: ${res.status}`);
+      let detail = '';
+      try {
+        detail = (await res.text()).slice(0, 200);
+      } catch {
+        /* ignore */
+      }
+      throw new Error(`Failed to fetch ICE servers: ${res.status}${detail ? ` — ${detail}` : ''}`);
     }
 
     const data = (await res.json()) as { iceServers?: IceServerConfig[] };
