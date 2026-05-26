@@ -833,6 +833,12 @@ export class AssociationsService {
     return (m.permissions & flag) !== 0;
   }
 
+  /** Returns true if userId is a member of the given association (any role). */
+  async isMember(userId: string, associationId: string): Promise<boolean> {
+    const m = await this.memberRepo.findOne({ where: { associationId, userId } });
+    return m !== null;
+  }
+
   /** Returns true if userId holds `flag` in ANY BDE association. */
   async callerHasAnyBdeFlag(userId: string, flag: AssociationPermissionFlag): Promise<boolean> {
     const n = await this.memberRepo

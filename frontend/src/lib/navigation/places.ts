@@ -9,7 +9,8 @@ export interface AppPlace {
     | 'layout-dashboard'
     | 'bell'
     | 'calendar'
-    | 'shopping-bag';
+    | 'shopping-bag'
+    | 'clipboard-list';
   href: string;
   /** Whether this place appears in the mobile bottom navigation bar. */
   mobileNav: boolean;
@@ -56,6 +57,14 @@ export const APP_PLACES: AppPlace[] = [
     description: 'Événements et calendrier',
     icon: 'calendar',
     href: '/calendar',
+    mobileNav: false,
+  },
+  {
+    id: 'forms',
+    label: 'Formulaires',
+    description: 'Inscriptions et sondages',
+    icon: 'clipboard-list',
+    href: '/forms',
     mobileNav: false,
   },
   {

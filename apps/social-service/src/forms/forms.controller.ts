@@ -36,8 +36,12 @@ export class FormsController {
   /** Creates a new form owned by the calling user. */
   @UseGuards(NginxAuthGuard)
   @Post()
-  create(@Headers('x-user-id') xUserId: string, @Body() dto: CreateFormDto) {
-    return this.service.create({ ...dto, ownerId: xUserId });
+  create(
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') xGlobalAdmin: string,
+    @Body() dto: CreateFormDto
+  ) {
+    return this.service.create({ ...dto, ownerId: xUserId }, xGlobalAdmin === 'true');
   }
 
   /** Returns all forms owned by the calling user. */

@@ -28,6 +28,14 @@
     X,
     Users,
     Trash2,
+    Type,
+    AlignLeft,
+    CircleDot,
+    CheckSquare,
+    ChevronDown,
+    SlidersHorizontal,
+    LayoutGrid,
+    Table2,
   } from '@lucide/svelte';
 
   const formId = $derived(page.params.id as string);
@@ -67,6 +75,24 @@
   let items = $state<any[]>([]);
   let isSubmitting = $state(false);
   let error = $state('');
+
+  // Drag-and-drop reordering
+  let dragIndex = $state(-1);
+  let dropIndex = $state(-1);
+
+  // Type picker
+  let showTypePicker = $state(false);
+
+  const QUESTION_TYPES = [
+    { value: 'short_text', label: 'Texte court', Icon: Type },
+    { value: 'long_text', label: 'Long texte', Icon: AlignLeft },
+    { value: 'single_choice', label: 'Choix unique', Icon: CircleDot },
+    { value: 'multiple_choice', label: 'Cases à cocher', Icon: CheckSquare },
+    { value: 'dropdown', label: 'Liste déroulante', Icon: ChevronDown },
+    { value: 'linear_scale', label: 'Échelle', Icon: SlidersHorizontal },
+    { value: 'matrix_single', label: 'Grille unique', Icon: LayoutGrid },
+    { value: 'matrix_multiple', label: 'Grille multiple', Icon: Table2 },
+  ];
 
   function pad2(n: number) {
     return n < 10 ? `0${n}` : `${n}`;
@@ -221,18 +247,19 @@
     }
   }
 
-  function addItem() {
+  function addItem(type: string = 'short_text') {
     items = [
       ...items,
       {
         id: crypto.randomUUID(),
         label: '',
         required: false,
-        type: 'short_text',
+        type,
         options: [{ label: '', priceModifier: undefined }],
         rows: [],
       },
     ];
+    showTypePicker = false;
   }
 
   function removeItem(index: number) {
@@ -245,6 +272,34 @@
     const copy = [...items];
     [copy[index], copy[newIndex]] = [copy[newIndex], copy[index]];
     items = copy;
+  }
+
+  function handleDragStart(index: number) {
+    dragIndex = index;
+  }
+
+  function handleDragOver(e: DragEvent, index: number) {
+    e.preventDefault();
+    dropIndex = index;
+  }
+
+  function handleDrop(index: number) {
+    if (dragIndex === -1 || dragIndex === index) {
+      dragIndex = -1;
+      dropIndex = -1;
+      return;
+    }
+    const copy = [...items];
+    const [moved] = copy.splice(dragIndex, 1);
+    copy.splice(index, 0, moved);
+    items = copy;
+    dragIndex = -1;
+    dropIndex = -1;
+  }
+
+  function handleDragEnd() {
+    dragIndex = -1;
+    dropIndex = -1;
   }
 </script>
 
@@ -581,73 +636,75 @@
       </div>
       <div class="space-y-3 sm:space-y-4">
         {#each items as _item, i (_item.id)}
-          <div class="flex gap-2 items-start min-w-0">
-            <div class="hidden sm:flex flex-col items-center gap-1 pt-5 shrink-0">
-              <span
-                class="text-xs font-bold text-text-muted w-6 h-6 flex items-center justify-center rounded-lg bg-cn-border/40"
-                >{i + 1}</span
-              >
-              <button
-                onclick={() => moveItem(i, 'up')}
-                disabled={i === 0}
-                aria-label="Monter"
-                class="p-1 text-text-muted hover:text-text-main disabled:opacity-20 transition-colors"
-                type="button"
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2.5"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"><path d="m18 15-6-6-6 6" /></svg
-                >
-              </button>
-              <button
-                onclick={() => moveItem(i, 'down')}
-                disabled={i === items.length - 1}
-                aria-label="Descendre"
-                class="p-1 text-text-muted hover:text-text-main disabled:opacity-20 transition-colors"
-                type="button"
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2.5"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg
-                >
-              </button>
-            </div>
-            <div class="flex-1 min-w-0 w-full">
-              <FormBuilder
-                bind:item={items[i]}
-                onRemove={() => removeItem(i)}
-                showPriceModifier={requiresPayment}
-                questionIndex={i + 1}
-                onMoveUp={() => moveItem(i, 'up')}
-                onMoveDown={() => moveItem(i, 'down')}
-                canMoveUp={i > 0}
-                canMoveDown={i < items.length - 1}
-              />
-            </div>
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div
+            draggable="true"
+            ondragstart={() => handleDragStart(i)}
+            ondragover={(e) => handleDragOver(e, i)}
+            ondrop={() => handleDrop(i)}
+            ondragend={handleDragEnd}
+            class="transition-all duration-150 {dragIndex === i
+              ? 'opacity-40 scale-[0.98]'
+              : ''} {dropIndex === i && dragIndex !== i
+              ? 'ring-2 ring-cn-yellow/60 ring-offset-1 rounded-[2rem]'
+              : ''}"
+          >
+            <FormBuilder
+              bind:item={items[i]}
+              onRemove={() => removeItem(i)}
+              showPriceModifier={requiresPayment}
+              questionIndex={i + 1}
+              onMoveUp={() => moveItem(i, 'up')}
+              onMoveDown={() => moveItem(i, 'down')}
+              canMoveUp={i > 0}
+              canMoveDown={i < items.length - 1}
+            />
           </div>
         {/each}
       </div>
-      <button
-        onclick={addItem}
-        class="mt-5 w-full py-3 rounded-2xl border-2 border-dashed border-cn-border text-sm font-bold text-text-muted hover:border-cn-yellow hover:text-cn-dark hover:bg-cn-yellow/5 transition-all flex items-center justify-center gap-2"
-      >
-        <Plus size={18} />
-        Ajouter une question
-      </button>
+
+      <div class="relative mt-5">
+        <button
+          type="button"
+          onclick={() => (showTypePicker = !showTypePicker)}
+          class="w-full py-3 rounded-2xl border-2 border-dashed border-cn-border text-sm font-bold text-text-muted hover:border-cn-yellow hover:text-cn-dark hover:bg-cn-yellow/5 transition-all flex items-center justify-center gap-2"
+        >
+          <Plus size={18} />
+          Ajouter une question
+        </button>
+
+        {#if showTypePicker}
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="fixed inset-0 z-40" onclick={() => (showTypePicker = false)}></div>
+          <div
+            class="absolute bottom-full left-0 right-0 mb-2 z-50 rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] shadow-xl p-3"
+          >
+            <p class="text-[0.65rem] font-bold text-text-muted uppercase tracking-wider mb-2.5 ml-1">
+              Type de question
+            </p>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+              {#each QUESTION_TYPES as qtype (qtype.value)}
+                {@const Icon = qtype.Icon}
+                <button
+                  type="button"
+                  onclick={() => addItem(qtype.value)}
+                  class="flex flex-col items-center gap-1.5 p-2.5 rounded-xl border border-cn-border hover:border-cn-yellow hover:bg-cn-yellow/5 text-center transition-all group"
+                >
+                  <Icon
+                    size={18}
+                    class="text-text-muted group-hover:text-cn-dark transition-colors"
+                  />
+                  <span
+                    class="text-[0.65rem] font-semibold text-text-muted group-hover:text-text-main leading-tight"
+                    >{qtype.label}</span
+                  >
+                </button>
+              {/each}
+            </div>
+          </div>
+        {/if}
+      </div>
     </section>
 
     <!-- Floating Save Bar -->

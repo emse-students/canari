@@ -105,10 +105,12 @@
 
   function onWindowMouseMove(e: MouseEvent) {
     if (draggingSv) pickSv(e);
+    if (draggingHue) pickHue(e);
   }
 
   function onWindowMouseUp() {
     draggingSv = false;
+    draggingHue = false;
   }
 
   // ── Hue slider drag ───────────────────────────────────────────────
@@ -126,14 +128,6 @@
   function startHueDrag(e: MouseEvent | TouchEvent) {
     draggingHue = true;
     pickHue(e);
-  }
-
-  function onWindowHueMove(e: MouseEvent) {
-    if (draggingHue) pickHue(e);
-  }
-
-  function onWindowHueUp() {
-    draggingHue = false;
   }
 
   // ── Popover ───────────────────────────────────────────────────────

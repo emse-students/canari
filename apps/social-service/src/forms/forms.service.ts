@@ -36,7 +36,13 @@ export class FormsService {
   ) {}
 
   /** Creates a form and assigns stable IDs to all items and options that lack them. */
-  async create(input: CreateFormDto) {
+  async create(input: CreateFormDto, isGlobalAdmin = false) {
+    if (input.associationId && !isGlobalAdmin) {
+      const member = await this.associationsService.isMember(input.ownerId!, input.associationId);
+      if (!member) {
+        throw new ForbiddenException('Vous n\'êtes pas membre de cette association');
+      }
+    }
     const { opensAt: opensAtRaw, ...rest } = input;
     const form = this.formRepo.create({
       ...rest,

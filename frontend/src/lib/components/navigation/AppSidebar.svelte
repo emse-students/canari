@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { MessageCircle, Newspaper, Users, LayoutDashboard, Bell, Calendar, ShoppingBag } from '@lucide/svelte';
+  import { MessageCircle, Newspaper, Users, LayoutDashboard, Bell, Calendar, ShoppingBag, ClipboardList } from '@lucide/svelte';
   import { afterNavigate } from '$app/navigation';
   import { APP_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
   import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
@@ -22,6 +22,7 @@
     bell: Bell,
     calendar: Calendar,
     'shopping-bag': ShoppingBag,
+    'clipboard-list': ClipboardList,
   } as const;
 
   function getIcon(icon: keyof typeof ICONS) {

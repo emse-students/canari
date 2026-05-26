@@ -88,7 +88,7 @@
       {/if}
       <GripVertical
         size={16}
-        class="text-text-muted/40 shrink-0 hidden sm:block"
+        class="text-text-muted/50 shrink-0 hidden sm:block cursor-grab active:cursor-grabbing"
         aria-hidden="true"
       />
     </div>

@@ -25,7 +25,6 @@
   } from '$lib/associations/api';
   import { useFormReminder } from '$lib/posts/useFormReminder.svelte';
   import Button from '$lib/components/ui/Button.svelte';
-  import Card from '$lib/components/ui/Card.svelte';
   import PaymentModal from '$lib/components/ui/PaymentModal.svelte';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import {
@@ -275,89 +274,92 @@
     const { navigateExternal } = await import('$lib/utils/openExternal');
     await navigateExternal(pendingCheckoutUrl);
   }
+
+  // ── Progress bar ─────────────────────────────────────────────────
+  const totalCount = $derived(form?.items.length ?? 0);
+  const answeredCount = $derived.by(() => {
+    if (!form) return 0;
+    return form.items.filter((item) => {
+      const val = selections[item.id];
+      if (item.type === 'multiple_choice') return Array.isArray(val) && val.length > 0;
+      if (['matrix_single', 'matrix_multiple'].includes(item.type)) {
+        if (!val || typeof val !== 'object') return false;
+        return (item.rows ?? []).every((row) => {
+          const rv = (val as Record<string, any>)[row];
+          return rv !== '' && rv !== undefined && rv !== null && (!Array.isArray(rv) || rv.length > 0);
+        });
+      }
+      return val !== '' && val !== undefined && val !== null;
+    }).length;
+  });
+  const progressPct = $derived(totalCount > 0 ? Math.round((answeredCount / totalCount) * 100) : 0);
 </script>
 
-<div class="min-h-screen bg-cn-dark/5">
-  {#if showPaymentModal && pendingSubmissionId}
-    <PaymentModal
-      {paymentMethods}
-      totalCents={calculateTotal()}
-      currency={form?.currency ?? 'eur'}
-      onPayWithSaved={handlePayWithSaved}
-      onPayWithNew={handlePayWithNew}
-      onSuccess={handlePaySuccess}
-      onClose={() => (showPaymentModal = false)}
-    />
-  {/if}
-  <div class="max-w-2xl mx-auto px-4 py-8">
-    <!-- Back button -->
-    <button
-      class="inline-flex items-center gap-2 text-sm font-semibold text-text-muted hover:text-cn-dark transition-colors mb-6"
-      onclick={() => goto(redirectTo)}
-    >
-      <ArrowLeft size={16} />
-      Retour
-    </button>
+{#if showPaymentModal && pendingSubmissionId}
+  <PaymentModal
+    {paymentMethods}
+    totalCents={calculateTotal()}
+    currency={form?.currency ?? 'eur'}
+    onPayWithSaved={handlePayWithSaved}
+    onPayWithNew={handlePayWithNew}
+    onSuccess={handlePaySuccess}
+    onClose={() => (showPaymentModal = false)}
+  />
+{/if}
 
-    {#if loading}
-      <Card class="p-8 text-center">
-        <p class="text-text-muted">Chargement du formulaire…</p>
-      </Card>
-    {:else if error && !form}
-      <Card class="p-8 text-center">
-        <p class="text-red-600 font-semibold">{error}</p>
-        <button
-          class="mt-4 text-sm text-text-muted hover:underline"
-          onclick={() => goto(redirectTo)}
-        >
-          Retour
-        </button>
-      </Card>
-    {:else if form}
-      {#if linkedAgendaEvent}
-        <a
-          href={agendaAssociationSlug
-            ? `/associations/${encodeURIComponent(agendaAssociationSlug)}`
-            : '/associations'}
-          class="flex items-start gap-3 rounded-2xl border border-cn-yellow/35 bg-cn-yellow/10 px-4 py-3 mb-6 transition-colors hover:bg-cn-yellow/15"
-        >
-          <div class="rounded-xl bg-cn-yellow/25 p-2 text-cn-dark shrink-0">
-            <CalendarDays size={22} />
-          </div>
-          <div class="min-w-0 flex-1">
-            <p class="text-xs font-bold uppercase tracking-wide text-text-muted">Agenda associé</p>
-            <p class="font-semibold text-text-main">{linkedAgendaEvent.title}</p>
-            <p class="text-xs text-text-muted mt-0.5">
-              {new Intl.DateTimeFormat('fr-FR', {
-                dateStyle: 'medium',
-                timeStyle: 'short',
-              }).format(new Date(linkedAgendaEvent.startsAt))}
-            </p>
-          </div>
-          <span class="text-xs font-semibold text-cn-dark shrink-0 self-center">Voir →</span>
-        </a>
-      {/if}
-      <!-- Header -->
-      <Card class="mb-6 overflow-hidden">
-        {#if form.imageUrl}
-          <img src={form.imageUrl} alt="" class="w-full max-h-64 object-cover" />
-        {/if}
-        <div class="flex items-start gap-4 p-5">
-          <div class="p-3 rounded-2xl bg-cn-yellow/15 text-cn-dark shrink-0">
-            <ClipboardList size={24} />
-          </div>
-          <div class="flex-1">
-            <h1 class="text-2xl font-bold text-text-main">{form.title}</h1>
-            {#if form.description?.trim()}
-              <div class="mt-2">
-                <ProfileBioMarkdown source={form.description} />
+<div class="max-w-2xl mx-auto px-4 pt-6 pb-36">
+  <!-- Back -->
+  <button
+    class="inline-flex items-center gap-1.5 text-sm font-semibold text-text-muted hover:text-text-main transition-colors mb-6"
+    onclick={() => goto(redirectTo)}
+  >
+    <ArrowLeft size={15} />
+    Retour
+  </button>
+
+  {#if loading}
+    <div class="flex justify-center py-24">
+      <div class="h-8 w-8 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"></div>
+    </div>
+  {:else if error && !form}
+    <div class="rounded-3xl border border-cn-border bg-[var(--cn-surface)] p-10 text-center space-y-3">
+      <p class="text-red-600 font-semibold">{error}</p>
+      <button class="text-sm text-text-muted hover:underline" onclick={() => goto(redirectTo)}>Retour</button>
+    </div>
+  {:else if form}
+
+    <!-- ── Header ── -->
+    <div class="rounded-3xl overflow-hidden border border-cn-border bg-[var(--cn-surface)] shadow-sm mb-5">
+      {#if form.imageUrl}
+        <div class="relative">
+          <img src={form.imageUrl} alt="" class="w-full max-h-72 object-cover" />
+          <div class="absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-black/60 to-transparent"></div>
+          <div class="absolute bottom-0 inset-x-0 p-5 flex items-end gap-3">
+            <div class="flex-1 min-w-0">
+              <h1 class="text-2xl font-extrabold text-white leading-tight">{form.title}</h1>
+              {#if form.basePrice > 0}
+                <span class="inline-block mt-1.5 text-xs font-bold bg-cn-yellow text-cn-dark px-2.5 py-1 rounded-full">
+                  À partir de {formatCurrency(form.basePrice, form.currency)}
+                </span>
+              {/if}
+            </div>
+            {#if submitted}
+              <div class="p-2 rounded-xl bg-green-500 text-white shrink-0">
+                <Check size={20} />
               </div>
             {/if}
+          </div>
+        </div>
+      {:else}
+        <div class="bg-gradient-to-br from-cn-yellow/10 via-transparent to-transparent px-6 pt-6 pb-4 flex items-start gap-4">
+          <div class="p-3 rounded-2xl bg-cn-yellow/20 text-cn-dark shrink-0">
+            <ClipboardList size={26} />
+          </div>
+          <div class="flex-1 min-w-0">
+            <h1 class="text-2xl font-extrabold text-text-main leading-tight">{form.title}</h1>
             {#if form.basePrice > 0}
-              <span
-                class="inline-block mt-2 text-xs font-semibold text-cn-dark bg-cn-yellow/20 px-2 py-0.5 rounded-full"
-              >
-                Base : {formatCurrency(form.basePrice, form.currency)}
+              <span class="inline-block mt-1.5 text-xs font-bold bg-cn-yellow text-cn-dark px-2.5 py-1 rounded-full">
+                À partir de {formatCurrency(form.basePrice, form.currency)}
               </span>
             {/if}
           </div>
@@ -367,339 +369,306 @@
             </div>
           {/if}
         </div>
-      </Card>
-
-      {#if isNotOpenYet && form.opensAt}
-        <Card class="mb-6 border-amber-500/30 bg-amber-500/10">
-          <div class="p-4 flex items-center justify-between gap-4">
-            <p class="text-sm font-semibold text-amber-800 dark:text-amber-300">
-              Ouverture le {formatFormOpensAt(form.opensAt)} — les réponses ne sont pas encore acceptées.
-            </p>
-            <button
-              type="button"
-              onclick={reminder.toggle}
-              disabled={reminder.toggling}
-              class="flex items-center gap-1.5 text-xs font-semibold shrink-0 px-3 py-2 rounded-xl transition-colors {reminder.subscribed
-                ? 'bg-amber-600 text-white hover:bg-amber-700'
-                : 'bg-amber-500/20 text-amber-800 dark:text-amber-300 hover:bg-amber-500/30'}"
-            >
-              {#if reminder.subscribed}
-                <BellOff size={13} strokeWidth={2} />
-                Rappel activé
-              {:else}
-                <Bell size={13} strokeWidth={2} />
-                Me prévenir
-              {/if}
-            </button>
-          </div>
-        </Card>
       {/if}
-
-      {#if successMessage}
-        <Card class="mb-6">
-          <div class="p-5 flex items-center gap-3">
-            <div class="p-2 rounded-xl bg-green-100 text-green-600">
-              <Check size={20} />
-            </div>
-            <div>
-              <p class="font-bold text-green-700">{successMessage}</p>
-              <p class="text-xs text-text-muted mt-0.5">Redirection…</p>
-            </div>
-          </div>
-        </Card>
-      {/if}
-
-      <!-- Form fields -->
-      <Card>
-        <div class="p-5 space-y-5">
-          {#each form.items as item (item.id)}
-            <div class="space-y-2">
-              <!-- svelte-ignore a11y_label_has_associated_control -->
-              <label class="block text-sm font-bold text-text-main ml-1">
-                {item.label}
-                {#if item.required}<span class="text-red-500 ml-0.5">*</span>{/if}
-              </label>
-
-              {#if item.type === 'short_text'}
-                <input
-                  type="text"
-                  class="w-full px-4 py-3 border-2 border-cn-border rounded-2xl text-sm text-text-main bg-[var(--cn-surface)] outline-none transition-all placeholder:text-text-muted/50 focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)] disabled:opacity-50 disabled:bg-cn-border/20"
-                  bind:value={selections[item.id]}
-                  placeholder="Votre réponse"
-                  disabled={submitted || isNotOpenYet}
-                />
-              {:else if item.type === 'long_text'}
-                <textarea
-                  rows="3"
-                  class="w-full px-4 py-3 border-2 border-cn-border rounded-2xl text-sm text-text-main bg-[var(--cn-surface)] outline-none transition-all resize-y placeholder:text-text-muted/50 focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)] disabled:opacity-50 disabled:bg-cn-border/20"
-                  bind:value={selections[item.id]}
-                  placeholder="Votre réponse"
-                  disabled={submitted || isNotOpenYet}
-                ></textarea>
-              {:else if item.type === 'dropdown' || item.type === 'single'}
-                <select
-                  class="w-full px-4 py-3 border-2 border-cn-border rounded-2xl text-sm text-text-main bg-[var(--cn-surface)] outline-none transition-all appearance-none focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)] disabled:opacity-50 disabled:bg-cn-border/20"
-                  bind:value={selections[item.id]}
-                  disabled={submitted || isNotOpenYet}
-                >
-                  <option value="" disabled selected>Choisir une option…</option>
-                  {#each item.options ?? [] as opt (opt.id)}
-                    <option value={opt.id}>
-                      {opt.label}
-                      {#if opt.priceModifier > 0}
-                        (+{formatCurrency(opt.priceModifier, form.currency)})
-                      {:else if opt.priceModifier < 0}
-                        ({formatCurrency(opt.priceModifier, form.currency)})
-                      {/if}
-                    </option>
-                  {/each}
-                </select>
-              {:else if item.type === 'single_choice'}
-                <div class="space-y-2 mt-1">
-                  {#each item.options ?? [] as opt (opt.id)}
-                    <label
-                      class="flex items-center gap-3 p-3 rounded-2xl border-2 transition-all cursor-pointer select-none
-                      {selections[item.id] === opt.id
-                        ? 'border-cn-yellow bg-cn-yellow/5'
-                        : 'border-cn-border hover:border-cn-yellow/50 bg-[var(--cn-surface)]'}
-                      {submitted ? 'opacity-60 cursor-not-allowed' : ''}"
-                    >
-                      <input
-                        type="radio"
-                        name={`radio-${form.id}-${item.id}`}
-                        value={opt.id}
-                        bind:group={selections[item.id]}
-                        class="h-4 w-4 accent-cn-yellow"
-                        disabled={submitted || isNotOpenYet}
-                      />
-                      <span class="text-sm text-text-main font-medium">
-                        {opt.label}
-                        {#if opt.priceModifier !== 0}
-                          <span
-                            class="text-text-muted text-xs font-mono ml-1 bg-cn-border/30 px-1.5 py-0.5 rounded-lg"
-                          >
-                            {opt.priceModifier > 0 ? '+' : ''}{formatCurrency(
-                              opt.priceModifier,
-                              form.currency
-                            )}
-                          </span>
-                        {/if}
-                      </span>
-                    </label>
-                  {/each}
-                </div>
-              {:else if item.type === 'multiple_choice'}
-                <div class="space-y-2 mt-1">
-                  {#each item.options ?? [] as opt (opt.id)}
-                    <label
-                      class="flex items-center gap-3 p-3 rounded-2xl border-2 transition-all cursor-pointer select-none
-                      {(selections[item.id] ?? []).includes(opt.id)
-                        ? 'border-cn-yellow bg-cn-yellow/5'
-                        : 'border-cn-border hover:border-cn-yellow/50 bg-[var(--cn-surface)]'}
-                      {submitted ? 'opacity-60 cursor-not-allowed' : ''}"
-                    >
-                      <input
-                        type="checkbox"
-                        value={opt.id}
-                        bind:group={selections[item.id]}
-                        class="h-4 w-4 accent-cn-yellow"
-                        disabled={submitted || isNotOpenYet}
-                      />
-                      <span class="text-sm text-text-main font-medium">
-                        {opt.label}
-                        {#if opt.priceModifier !== 0}
-                          <span
-                            class="text-text-muted text-xs font-mono ml-1 bg-cn-border/30 px-1.5 py-0.5 rounded-lg"
-                          >
-                            {opt.priceModifier > 0 ? '+' : ''}{formatCurrency(
-                              opt.priceModifier,
-                              form.currency
-                            )}
-                          </span>
-                        {/if}
-                      </span>
-                    </label>
-                  {/each}
-                </div>
-              {:else if item.type === 'linear_scale'}
-                <div class="py-3">
-                  <div
-                    class="flex justify-between text-xs font-bold text-text-muted uppercase tracking-wider mb-2 px-1"
-                  >
-                    <span>{item.scale?.minLabel || item.scale?.min}</span>
-                    <span>{item.scale?.maxLabel || item.scale?.max}</span>
-                  </div>
-                  <div
-                    class="flex justify-between items-center gap-1.5 p-2 rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)]"
-                  >
-                    {#each Array.from({ length: (item.scale?.max || 5) - (item.scale?.min || 1) + 1 }, (_, i) => (item.scale?.min || 1) + i) as val (val)}
-                      <label
-                        class="flex flex-col items-center gap-2 cursor-pointer flex-1 group
-                        {submitted ? 'cursor-not-allowed opacity-60' : ''}"
-                      >
-                        <input
-                          type="radio"
-                          name={`scale-${form.id}-${item.id}`}
-                          value={val}
-                          bind:group={selections[item.id]}
-                          class="h-5 w-5 accent-cn-yellow"
-                          disabled={submitted || isNotOpenYet}
-                        />
-                        <span
-                          class="text-xs font-bold text-text-muted group-hover:text-cn-dark transition-colors"
-                          >{val}</span
-                        >
-                      </label>
-                    {/each}
-                  </div>
-                </div>
-              {:else if ['matrix_single', 'matrix_multiple'].includes(item.type)}
-                <div class="overflow-x-auto mt-1 rounded-2xl border-2 border-cn-border">
-                  <table class="w-full text-sm border-separate border-spacing-0">
-                    <thead>
-                      <tr>
-                        <th
-                          class="w-1/3 min-w-[120px] sticky left-0 bg-[var(--cn-surface)] z-10 p-3"
-                        ></th>
-                        {#each item.options ?? [] as col (col.id)}
-                          <th
-                            class="px-2 py-3 text-center font-bold text-xs text-text-muted uppercase min-w-[80px]"
-                            >{col.label}</th
-                          >
-                        {/each}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {#each item.rows || [] as row (row)}
-                        <tr class="group hover:bg-cn-border/10 transition-colors">
-                          <td
-                            class="py-3 px-3 font-medium text-text-main sticky left-0 bg-[var(--cn-surface)] group-hover:bg-cn-border/10 z-10 border-t border-cn-border"
-                            >{row}</td
-                          >
-                          {#each item.options ?? [] as col (col.id)}
-                            <td class="text-center py-3 border-t border-cn-border">
-                              <div class="flex justify-center">
-                                {#if item.type === 'matrix_single'}
-                                  <input
-                                    type="radio"
-                                    name={`matrix-${form.id}-${item.id}-${row}`}
-                                    value={col.id}
-                                    bind:group={selections[item.id][row]}
-                                    class="h-4 w-4 accent-cn-yellow"
-                                    disabled={submitted || isNotOpenYet}
-                                  />
-                                {:else}
-                                  <input
-                                    type="checkbox"
-                                    value={col.id}
-                                    bind:group={selections[item.id][row]}
-                                    class="h-4 w-4 accent-cn-yellow"
-                                    disabled={submitted || isNotOpenYet}
-                                  />
-                                {/if}
-                              </div>
-                            </td>
-                          {/each}
-                        </tr>
-                      {/each}
-                    </tbody>
-                  </table>
-                </div>
-              {:else}
-                <div class="p-3 bg-red-50 text-red-600 text-xs rounded-2xl border-2 border-red-200">
-                  Type non supporté : <strong>{item.type}</strong>
-                </div>
-              {/if}
-            </div>
-          {/each}
-
-          <!-- Payment method selector (cash vs Stripe) -->
-          {#if calculateTotal() > 0 && form.allowCashPayment && !submitted}
-            <div class="pt-2">
-              <p class="text-xs font-bold text-text-muted uppercase tracking-wide mb-2">
-                Mode de paiement
-              </p>
-              <div class="flex gap-3">
-                <label
-                  class="flex items-center gap-2 cursor-pointer p-3 rounded-xl border-2 flex-1 transition-all {paymentMethodChoice ===
-                  'stripe'
-                    ? 'border-cn-yellow bg-cn-yellow/5'
-                    : 'border-cn-border hover:border-cn-yellow/50'}"
-                >
-                  <input
-                    type="radio"
-                    bind:group={paymentMethodChoice}
-                    value="stripe"
-                    class="accent-cn-yellow"
-                  />
-                  <span class="text-sm font-medium">En ligne (carte)</span>
-                </label>
-                <label
-                  class="flex items-center gap-2 cursor-pointer p-3 rounded-xl border-2 flex-1 transition-all {paymentMethodChoice ===
-                  'cash'
-                    ? 'border-cn-yellow bg-cn-yellow/5'
-                    : 'border-cn-border hover:border-cn-yellow/50'}"
-                >
-                  <input
-                    type="radio"
-                    bind:group={paymentMethodChoice}
-                    value="cash"
-                    class="accent-cn-yellow"
-                  />
-                  <span class="text-sm font-medium">En physique (cash)</span>
-                </label>
-              </div>
-              {#if paymentMethodChoice === 'cash'}
-                <p class="text-xs text-text-muted mt-2">
-                  Un admin validera votre paiement manuellement après réception.
-                </p>
-              {/if}
-            </div>
-          {/if}
-
-          <!-- Error -->
-          {#if error}
-            <div
-              class="p-3 rounded-xl bg-red-50 text-red-600 text-sm font-medium border border-red-100"
-            >
-              {error}
-            </div>
-          {/if}
-
-          <!-- Footer: total + submit -->
-          <div
-            class="pt-4 mt-2 border-t-2 border-cn-border flex items-center {calculateTotal() > 0
-              ? 'justify-between'
-              : 'justify-end'}"
-          >
-            {#if calculateTotal() > 0}
-              <div class="font-bold text-lg text-cn-dark">
-                Total : {formatCurrency(calculateTotal(), form.currency)}
-                {#if submitted}
-                  <span class="text-xs font-semibold text-green-600 ml-2">(Déjà envoyé)</span>
-                {/if}
-              </div>
-            {/if}
-            <Button
-              variant="primary"
-              class="px-6"
-              disabled={submitted || isNotOpenYet}
-              onclick={handleSubmit}
-            >
-              {#if submitted}
-                Envoyé
-                <Check size={16} class="ml-1" />
-              {:else if calculateTotal() > 0}
-                Valider et payer
-                <CreditCard size={16} class="ml-1" />
-              {:else}
-                Valider
-                <Check size={16} class="ml-1" />
-              {/if}
-            </Button>
-          </div>
+      {#if form.description?.trim()}
+        <div class="px-6 py-4 border-t border-cn-border/60">
+          <ProfileBioMarkdown source={form.description} />
         </div>
-      </Card>
+      {/if}
+    </div>
+
+    <!-- ── Progress bar ── -->
+    {#if !submitted && totalCount > 0}
+      <div class="flex items-center gap-3 mb-5">
+        <div class="flex-1 h-2 bg-cn-border/60 rounded-full overflow-hidden">
+          <div
+            class="h-full bg-cn-yellow rounded-full transition-all duration-500"
+            style="width:{progressPct}%"
+          ></div>
+        </div>
+        <span class="text-xs font-bold text-text-muted tabular-nums shrink-0">
+          {answeredCount} / {totalCount}
+        </span>
+      </div>
     {/if}
-  </div>
+
+    <!-- ── Linked agenda event ── -->
+    {#if linkedAgendaEvent}
+      <a
+        href={agendaAssociationSlug
+          ? `/associations/${encodeURIComponent(agendaAssociationSlug)}`
+          : '/associations'}
+        class="flex items-center gap-3 rounded-2xl border border-cn-yellow/35 bg-cn-yellow/10 px-4 py-3 mb-4 transition-colors hover:bg-cn-yellow/15"
+      >
+        <div class="rounded-xl bg-cn-yellow/25 p-2 text-cn-dark shrink-0">
+          <CalendarDays size={18} />
+        </div>
+        <div class="min-w-0 flex-1">
+          <p class="text-xs font-bold uppercase tracking-wide text-text-muted">Événement lié</p>
+          <p class="text-sm font-semibold text-text-main truncate">{linkedAgendaEvent.title}</p>
+        </div>
+        <span class="text-xs font-semibold text-cn-dark shrink-0">Voir →</span>
+      </a>
+    {/if}
+
+    <!-- ── Not open yet ── -->
+    {#if isNotOpenYet && form.opensAt}
+      <div class="rounded-2xl border border-amber-300/60 bg-amber-50/80 dark:bg-amber-950/20 px-4 py-4 mb-4 flex items-center justify-between gap-4">
+        <p class="text-sm font-semibold text-amber-800 dark:text-amber-300">
+          Ouverture le {formatFormOpensAt(form.opensAt)}
+        </p>
+        <button
+          type="button"
+          onclick={reminder.toggle}
+          disabled={reminder.toggling}
+          class="flex items-center gap-1.5 text-xs font-bold shrink-0 px-3 py-2 rounded-xl transition-colors {reminder.subscribed
+            ? 'bg-amber-600 text-white hover:bg-amber-700'
+            : 'bg-amber-200/60 text-amber-900 dark:text-amber-300 hover:bg-amber-200'}"
+        >
+          {#if reminder.subscribed}
+            <BellOff size={13} />Rappel activé
+          {:else}
+            <Bell size={13} />Me prévenir
+          {/if}
+        </button>
+      </div>
+    {/if}
+
+    <!-- ── Success ── -->
+    {#if successMessage}
+      <div class="rounded-2xl border border-green-200 bg-green-50 dark:bg-green-950/20 px-5 py-4 mb-4 flex items-center gap-3">
+        <div class="p-2 rounded-xl bg-green-100 dark:bg-green-900/40 text-green-600 shrink-0">
+          <Check size={20} />
+        </div>
+        <div>
+          <p class="font-bold text-green-700 dark:text-green-300">{successMessage}</p>
+          <p class="text-xs text-green-600/70 dark:text-green-400/70 mt-0.5">Redirection en cours…</p>
+        </div>
+      </div>
+    {/if}
+
+    <!-- ── Questions ── -->
+    <div class="space-y-3">
+      {#each form.items as item, qi (item.id)}
+        <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-5 shadow-sm">
+          <!-- svelte-ignore a11y_label_has_associated_control -->
+          <label class="flex items-start gap-2 mb-3">
+            <span class="text-[10px] font-bold text-text-muted bg-cn-border/50 rounded-md px-1.5 py-0.5 mt-0.5 shrink-0 tabular-nums">
+              {qi + 1}
+            </span>
+            <span class="text-sm font-bold text-text-main leading-snug">
+              {item.label}
+              {#if item.required}<span class="text-red-500 ml-0.5">*</span>{/if}
+            </span>
+          </label>
+
+          {#if item.type === 'short_text'}
+            <input
+              type="text"
+              class="w-full px-4 py-3 border-2 border-cn-border rounded-2xl text-sm text-text-main bg-cn-bg outline-none transition-all placeholder:text-text-muted/50 focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
+              bind:value={selections[item.id]}
+              placeholder="Votre réponse…"
+              disabled={submitted || isNotOpenYet}
+            />
+          {:else if item.type === 'long_text'}
+            <textarea
+              rows="4"
+              class="w-full px-4 py-3 border-2 border-cn-border rounded-2xl text-sm text-text-main bg-cn-bg outline-none transition-all resize-y placeholder:text-text-muted/50 focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
+              bind:value={selections[item.id]}
+              placeholder="Votre réponse…"
+              disabled={submitted || isNotOpenYet}
+            ></textarea>
+          {:else if item.type === 'dropdown' || item.type === 'single'}
+            <select
+              class="w-full px-4 py-3 border-2 border-cn-border rounded-2xl text-sm text-text-main bg-cn-bg outline-none transition-all appearance-none focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
+              bind:value={selections[item.id]}
+              disabled={submitted || isNotOpenYet}
+            >
+              <option value="" disabled>Choisir une option…</option>
+              {#each item.options ?? [] as opt (opt.id)}
+                <option value={opt.id}>
+                  {opt.label}{opt.priceModifier > 0 ? ` (+${formatCurrency(opt.priceModifier, form.currency)})` : opt.priceModifier < 0 ? ` (${formatCurrency(opt.priceModifier, form.currency)})` : ''}
+                </option>
+              {/each}
+            </select>
+          {:else if item.type === 'single_choice'}
+            <div class="space-y-2">
+              {#each item.options ?? [] as opt (opt.id)}
+                <label
+                  class="flex items-center gap-3 px-4 py-3 rounded-2xl border-2 cursor-pointer select-none transition-all
+                  {selections[item.id] === opt.id ? 'border-cn-yellow bg-cn-yellow/8' : 'border-cn-border hover:border-cn-yellow/60 bg-cn-bg'}
+                  {submitted || isNotOpenYet ? 'opacity-60 cursor-not-allowed' : ''}"
+                >
+                  <input
+                    type="radio"
+                    name={`radio-${form.id}-${item.id}`}
+                    value={opt.id}
+                    bind:group={selections[item.id]}
+                    class="h-4 w-4 accent-cn-yellow shrink-0"
+                    disabled={submitted || isNotOpenYet}
+                  />
+                  <span class="text-sm text-text-main font-medium flex-1">{opt.label}</span>
+                  {#if opt.priceModifier !== 0}
+                    <span class="text-xs font-bold text-cn-dark bg-cn-yellow/20 px-2 py-0.5 rounded-full shrink-0">
+                      {opt.priceModifier > 0 ? '+' : ''}{formatCurrency(opt.priceModifier, form.currency)}
+                    </span>
+                  {/if}
+                </label>
+              {/each}
+            </div>
+          {:else if item.type === 'multiple_choice'}
+            <div class="space-y-2">
+              {#each item.options ?? [] as opt (opt.id)}
+                <label
+                  class="flex items-center gap-3 px-4 py-3 rounded-2xl border-2 cursor-pointer select-none transition-all
+                  {(selections[item.id] ?? []).includes(opt.id) ? 'border-cn-yellow bg-cn-yellow/8' : 'border-cn-border hover:border-cn-yellow/60 bg-cn-bg'}
+                  {submitted || isNotOpenYet ? 'opacity-60 cursor-not-allowed' : ''}"
+                >
+                  <input
+                    type="checkbox"
+                    value={opt.id}
+                    bind:group={selections[item.id]}
+                    class="h-4 w-4 accent-cn-yellow shrink-0 rounded"
+                    disabled={submitted || isNotOpenYet}
+                  />
+                  <span class="text-sm text-text-main font-medium flex-1">{opt.label}</span>
+                  {#if opt.priceModifier !== 0}
+                    <span class="text-xs font-bold text-cn-dark bg-cn-yellow/20 px-2 py-0.5 rounded-full shrink-0">
+                      {opt.priceModifier > 0 ? '+' : ''}{formatCurrency(opt.priceModifier, form.currency)}
+                    </span>
+                  {/if}
+                </label>
+              {/each}
+            </div>
+          {:else if item.type === 'linear_scale'}
+            <div>
+              <div class="flex justify-between text-xs font-semibold text-text-muted mb-2 px-1">
+                <span>{item.scale?.minLabel || item.scale?.min}</span>
+                <span>{item.scale?.maxLabel || item.scale?.max}</span>
+              </div>
+              <div class="flex items-stretch gap-1 rounded-2xl border-2 border-cn-border overflow-hidden bg-cn-bg">
+                {#each Array.from({ length: (item.scale?.max || 5) - (item.scale?.min || 1) + 1 }, (_, i) => (item.scale?.min || 1) + i) as val (val)}
+                  <label
+                    class="flex-1 flex flex-col items-center justify-center gap-1.5 py-3 cursor-pointer transition-all select-none
+                    {selections[item.id] === val ? 'bg-cn-yellow/15' : 'hover:bg-cn-border/30'}
+                    {submitted || isNotOpenYet ? 'cursor-not-allowed opacity-60' : ''}"
+                  >
+                    <input
+                      type="radio"
+                      name={`scale-${form.id}-${item.id}`}
+                      value={val}
+                      bind:group={selections[item.id]}
+                      class="h-4 w-4 accent-cn-yellow"
+                      disabled={submitted || isNotOpenYet}
+                    />
+                    <span class="text-xs font-bold text-text-muted">{val}</span>
+                  </label>
+                {/each}
+              </div>
+            </div>
+          {:else if ['matrix_single', 'matrix_multiple'].includes(item.type)}
+            <div class="overflow-x-auto rounded-2xl border-2 border-cn-border">
+              <table class="w-full text-sm border-separate border-spacing-0">
+                <thead>
+                  <tr class="bg-cn-border/20">
+                    <th class="w-1/3 min-w-[120px] sticky left-0 bg-[var(--cn-surface)] z-10 p-3"></th>
+                    {#each item.options ?? [] as col (col.id)}
+                      <th class="px-3 py-3 text-center font-bold text-xs text-text-muted uppercase tracking-wide min-w-[80px]">{col.label}</th>
+                    {/each}
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each item.rows ?? [] as row (row)}
+                    <tr class="hover:bg-cn-border/10 transition-colors">
+                      <td class="py-3 px-3 font-medium text-sm text-text-main sticky left-0 bg-[var(--cn-surface)] z-10 border-t border-cn-border">{row}</td>
+                      {#each item.options ?? [] as col (col.id)}
+                        <td class="text-center py-3 border-t border-cn-border">
+                          {#if item.type === 'matrix_single'}
+                            <input type="radio" name={`matrix-${form.id}-${item.id}-${row}`} value={col.id} bind:group={selections[item.id][row]} class="h-4 w-4 accent-cn-yellow" disabled={submitted || isNotOpenYet} />
+                          {:else}
+                            <input type="checkbox" value={col.id} bind:group={selections[item.id][row]} class="h-4 w-4 accent-cn-yellow" disabled={submitted || isNotOpenYet} />
+                          {/if}
+                        </td>
+                      {/each}
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          {:else}
+            <div class="p-3 bg-red-50 text-red-600 text-xs rounded-xl border border-red-200">
+              Type non supporté : <strong>{item.type}</strong>
+            </div>
+          {/if}
+        </div>
+      {/each}
+    </div>
+
+    <!-- ── Payment method (cash vs Stripe) ── -->
+    {#if calculateTotal() > 0 && form.allowCashPayment && !submitted}
+      <div class="mt-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-5">
+        <p class="text-xs font-bold text-text-muted uppercase tracking-wide mb-3">Mode de paiement</p>
+        <div class="grid grid-cols-2 gap-2">
+          <label class="flex items-center gap-2.5 px-4 py-3 rounded-2xl border-2 cursor-pointer select-none transition-all {paymentMethodChoice === 'stripe' ? 'border-cn-yellow bg-cn-yellow/8' : 'border-cn-border hover:border-cn-yellow/50'}">
+            <input type="radio" bind:group={paymentMethodChoice} value="stripe" class="accent-cn-yellow" />
+            <div>
+              <p class="text-sm font-semibold text-text-main">En ligne</p>
+              <p class="text-xs text-text-muted">Carte / wallet</p>
+            </div>
+          </label>
+          <label class="flex items-center gap-2.5 px-4 py-3 rounded-2xl border-2 cursor-pointer select-none transition-all {paymentMethodChoice === 'cash' ? 'border-cn-yellow bg-cn-yellow/8' : 'border-cn-border hover:border-cn-yellow/50'}">
+            <input type="radio" bind:group={paymentMethodChoice} value="cash" class="accent-cn-yellow" />
+            <div>
+              <p class="text-sm font-semibold text-text-main">En espèces</p>
+              <p class="text-xs text-text-muted">Validé par un admin</p>
+            </div>
+          </label>
+        </div>
+      </div>
+    {/if}
+
+    <!-- ── Error ── -->
+    {#if error}
+      <div class="mt-4 rounded-2xl border border-red-200 bg-red-50 dark:bg-red-950/20 px-4 py-3 text-sm font-medium text-red-700 dark:text-red-300">
+        {error}
+      </div>
+    {/if}
+
+  {/if}
 </div>
+
+<!-- ── Sticky bottom bar ── -->
+{#if form && !loading}
+  <div class="keyboard-aware-bottom fixed bottom-0 inset-x-0 md:left-[4.5rem] z-50 pointer-events-none pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-5">
+    <div class="max-w-2xl mx-auto px-4">
+      <div class="pointer-events-auto rounded-2xl border border-cn-border/60 bg-[var(--cn-surface)]/90 backdrop-blur-xl shadow-lg px-4 py-3 flex items-center gap-3">
+        <div class="flex-1 min-w-0">
+          {#if submitted}
+            <span class="text-sm font-bold text-green-600 flex items-center gap-1.5"><Check size={16} /> Réponse envoyée</span>
+          {:else if calculateTotal() > 0}
+            <div>
+              <p class="text-xs text-text-muted font-medium">Total à payer</p>
+              <p class="text-lg font-extrabold text-cn-dark">{formatCurrency(calculateTotal(), form.currency)}</p>
+            </div>
+          {:else}
+            <span class="text-sm text-text-muted">{form.submitLabel || 'Envoyer'}</span>
+          {/if}
+        </div>
+        <Button
+          variant="primary"
+          class="shrink-0 px-6"
+          disabled={submitted || isNotOpenYet}
+          onclick={handleSubmit}
+        >
+          {#if submitted}
+            <Check size={16} class="mr-1.5" />Envoyé
+          {:else if calculateTotal() > 0}
+            <CreditCard size={16} class="mr-1.5" />Payer {formatCurrency(calculateTotal(), form.currency)}
+          {:else}
+            <Check size={16} class="mr-1.5" />{form.submitLabel || 'Envoyer'}
+          {/if}
+        </Button>
+      </div>
+    </div>
+  </div>
+{/if}
