@@ -7,6 +7,10 @@
   }
 
   let { compact = false, subtitle = 'Le réseau des Marteaux' }: Props = $props();
+
+  /** Every May 27th, a small tribute replaces the brand name. */
+  const now = new Date();
+  const brandName = now.getMonth() === 4 && now.getDate() === 27 ? 'À perte !' : 'Canari';
 </script>
 
 <!-- Wrapper principal pour encapsuler l'état "group" et gérer l'espacement -->
@@ -26,7 +30,7 @@
   <!-- Conteneur du texte -->
   <div class="leading-tight flex flex-col justify-center {compact ? 'hidden sm:flex' : 'flex'}">
     <p class="text-xl font-brand font-bold tracking-wide text-text-main capitalize transition-colors duration-300 group-hover:text-amber-500 dark:group-hover:text-amber-400">
-      Canari
+      {brandName}
     </p>
 
     {#if subtitle}
