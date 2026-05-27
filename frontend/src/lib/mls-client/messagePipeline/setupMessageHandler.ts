@@ -39,6 +39,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
     onWorkspaceUpdated,
     onReadReceiptReceived,
     onCallSignal,
+    onGroupPoisoned,
     log,
   } = deps;
 
@@ -51,10 +52,13 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   const PHANTOM_THRESHOLD = 3;
 
   // Compteur des retours `null` sur messages applicatifs (non-commit).
-  // Si cela se répète, l'état local est probablement divergent même sans exception
+  // Si cela se produit, l'état local est probablement divergent même sans exception
   // (ex: SenderDataDecryption traité côté Rust comme message non-applicable).
+  // Seuil à 1 : tout null inexpliqué déclenche immédiatement la recovery pour ne pas
+  // laisser passer de messages silencieusement. Les duplicates légitimes sont filtrés
+  // par consumeWasmDuplicateDeliveryFlag() avant d'atteindre ce compteur.
   const groupNullAppFailures = new Map<string, number>();
-  const NULL_APP_THRESHOLD = 3;
+  const NULL_APP_THRESHOLD = 1;
 
   // Groups for which an epoch recovery has already been triggered
   // (avoids spamming reinvite_request on a burst of future-epoch messages).
@@ -63,8 +67,12 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   // Buffer pour les messages (commits) qui arrivent AVANT leur Welcome.
   // Clé = groupId, Valeur = messages en attente de replay.
   const pendingGroupMessages = new Map<string, Array<{ sender: string; content: Uint8Array }>>();
-  // Seuil agressif : 3 messages sans Welcome → Poison Pill immédiat.
-  const BUFFER_MAX_PER_GROUP = 3;
+  // Taille maximale du buffer par groupe avant d'écrêter les plus anciens.
+  // Ne déclenche plus de Poison Pill directement — voir welcomeTimeouts pour la limite temporelle.
+  const BUFFER_MAX_PER_GROUP = 20;
+  // Minuteries de sécurité : si Welcome n'arrive pas dans 30s après le premier commit bufférisé,
+  // le groupe est empoisonné. Annulées dès que le Welcome est traité.
+  const welcomeTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 
   // Groupes pour lesquels un welcome_request a déjà été envoyé en session courante
   // (safety net : évite de spammer le serveur si syncConnectionAfterWsOpen n'a pas
@@ -91,10 +99,16 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
     poisonedGroups.add(groupId);
     pendingGroupMessages.delete(groupId);
     recoveryInProgress.delete(groupId);
+    const t = welcomeTimeouts.get(groupId);
+    if (t !== undefined) {
+      clearTimeout(t);
+      welcomeTimeouts.delete(groupId);
+    }
     mlsService.dropGroup(groupId);
     mlsService.forceLeaveGroup(groupId).catch(() => {});
     log(`[POISON_PILL] Groupe ${groupId} purgé définitivement — aucun retry`);
     console.warn(`[POISON_PILL] Group ${groupId} permanently dropped`);
+    onGroupPoisoned?.(groupId);
   }
 
   if ('onChannelEvent' in mlsService) {
@@ -1191,13 +1205,18 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                   saveConversation,
                   deleteConversation,
                   log,
-                }).catch(async (e) => {
-                  log(
-                    `[POISON_PILL] Récupération échouée pour "${convoKey}": ${String(e)} — Poison Pill`
-                  );
-                  console.warn(`[POISON_PILL] recoverDeadGroup failed for ${convoKey}:`, e);
-                  await poisonPill(convo.id);
-                });
+                })
+                  .then(() => {
+                    recoveryInProgress.delete(convo.id);
+                    log(`[RECOVER] Récupération terminée pour "${convoKey}" — flag effacé`);
+                  })
+                  .catch(async (e) => {
+                    log(
+                      `[POISON_PILL] Récupération échouée pour "${convoKey}": ${String(e)} — Poison Pill`
+                    );
+                    console.warn(`[POISON_PILL] recoverDeadGroup failed for ${convoKey}:`, e);
+                    await poisonPill(convo.id);
+                  });
               }
             }
           }
@@ -1223,16 +1242,27 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             welcomeRequestedForUnknownGroups.add(groupId);
             mlsService.sendWelcomeRequest(groupId).catch(() => {});
             log(`[BUFFER] welcome_request envoyé (premier commit pour groupe inconnu ${groupId})`);
+            // Démarre le minuteur de sécurité : si Welcome n'arrive pas dans 30s, Poison Pill.
+            // Annulé dans le handler Welcome dès que processWelcome réussit.
+            if (!welcomeTimeouts.has(groupId)) {
+              const t = setTimeout(() => {
+                welcomeTimeouts.delete(groupId);
+                log(
+                  `[POISON_PILL] Welcome non reçu après 30s pour ${groupId} — Poison Pill (timeout)`
+                );
+                console.warn(`[POISON_PILL] Welcome timeout for group ${groupId}`);
+                poisonPill(groupId);
+              }, 30_000);
+              welcomeTimeouts.set(groupId, t);
+            }
           }
           if (buf.length >= BUFFER_MAX_PER_GROUP) {
+            // Buffer plein : écrêter en supprimant le message le plus ancien pour faire de la place.
+            // On ne déclenche plus Poison Pill ici — le timer de 30s s'en charge si Welcome ne vient pas.
+            buf.shift();
             log(
-              `[POISON_PILL] Buffer saturé (${buf.length}/${BUFFER_MAX_PER_GROUP}) pour ${groupId} — Poison Pill`
+              `[BUFFER] Buffer plein pour ${groupId} — oldest message écrêté (${BUFFER_MAX_PER_GROUP} max)`
             );
-            console.warn(
-              `[POISON_PILL] Buffer overflow for group ${groupId} — dropping permanently`
-            );
-            await poisonPill(groupId);
-            return true; // ACK le message saturant
           }
           buf.push({ sender, content });
           pendingGroupMessages.set(groupId, buf);
@@ -1245,10 +1275,35 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         return false;
       }
 
-      // Unknown group → Process Welcome message
+      // Unknown group → Process Welcome message.
+      // Démarrer le fetch de métadonnées immédiatement (groupId connu dès ici) afin qu'il
+      // s'exécute en parallèle de processWelcome plutôt qu'en séquence après.
+      const groupMetaPromise: Promise<{ name?: string; isGroup?: boolean } | null> = (async () => {
+        try {
+          const { getToken } = await import('$lib/stores/auth');
+          const token = await getToken().catch(() => null);
+          const authHeader: Record<string, string> = token
+            ? { Authorization: `Bearer ${token}` }
+            : {};
+          const r = await fetch(`${historyBaseUrl}/api/mls/groups/${groupId}`, {
+            headers: authHeader,
+          });
+          return r.ok ? await r.json() : null;
+        } catch {
+          return null;
+        }
+      })();
+
       try {
         const joinedGroupId = await mlsService.processWelcome(content, ratchetTreeBytes);
         console.log(`[WS RCV] processWelcome ✓ → joinedGroupId=${joinedGroupId}`);
+
+        // Annuler le minuteur de sécurité — Welcome reçu à temps.
+        const pendingTimer = welcomeTimeouts.get(groupId ?? joinedGroupId);
+        if (pendingTimer !== undefined) {
+          clearTimeout(pendingTimer);
+          welcomeTimeouts.delete(groupId ?? joinedGroupId);
+        }
 
         // Register this device as a group member on the server so the gateway
         // routes future commits/messages to us.  Without this, we join the MLS
@@ -1272,42 +1327,21 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           // Non-blocking: status will be corrected on next sync
         }
 
-        // Persist MLS state immediately after Welcome — a crash before this
-        // would lose the joined group and require a fresh Welcome.
-        try {
-          const stBytes = await mlsService.saveState(pin);
-          await saveMlsState(userId, stBytes);
-        } catch {
-          // Non-blocking: state will be saved on next message
-        }
+        // Persiste l'état MLS en arrière-plan. Un crash ici déclencherait le détecteur
+        // de groupe fantôme au prochain démarrage, qui lancerait recoverDeadGroup — chemin
+        // de récupération acceptable. On ne bloque plus le pipeline de messages le temps
+        // d'Argon2 (~1-2s sur mobile).
+        mlsService
+          .saveState(pin)
+          .then((b) => saveMlsState(userId, b))
+          .catch(() => {});
 
-        let groupName = senderNorm;
-        let isGroupFromApi: boolean | null = null;
-
-        // Fetch group metadata (include auth token so the endpoint can answer)
-        try {
-          let authHeader: Record<string, string> = {};
-          try {
-            const { getToken } = await import('$lib/stores/auth');
-            const token = await getToken();
-            if (token) authHeader = { Authorization: `Bearer ${token}` };
-          } catch {
-            // Silent: proceed without auth header if token unavailable
-          }
-          const gRes = await fetch(`${historyBaseUrl}/api/mls/groups/${groupId || joinedGroupId}`, {
-            headers: authHeader,
-          });
-          if (gRes.ok) {
-            const gData = await gRes.json();
-            if (gData?.name) groupName = gData.name;
-            // Use the explicit isGroup field from the backend
-            if (typeof gData?.isGroup === 'boolean') {
-              isGroupFromApi = gData.isGroup;
-            }
-          }
-        } catch {
-          // Silent fallback if group metadata fetch fails
-        }
+        // Attendre les métadonnées — le fetch a démarré avant processWelcome, il est
+        // souvent déjà résolu à ce stade (le RTT réseau était masqué par le WASM).
+        const gData = await groupMetaPromise;
+        const groupName = gData?.name ?? senderNorm;
+        const isGroupFromApi: boolean | null =
+          typeof gData?.isGroup === 'boolean' ? gData.isGroup : null;
 
         let isDirect = false;
         let directPeerId = '';

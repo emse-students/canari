@@ -591,13 +591,28 @@ export class FormsService {
     return currentTotal;
   }
 
-  /** Returns all submissions for a form in descending creation order. */
+  /** Returns all submissions for a form enriched with the submitter's first/last name. */
   async getSubmissions(formId: string) {
-    return this.submissionRepo.find({ where: { formId }, order: { createdAt: 'DESC' } });
+    const subs = await this.submissionRepo.find({ where: { formId }, order: { createdAt: 'DESC' } });
+    const userIds = [...new Set(subs.map((s) => s.userId).filter(Boolean))];
+    const nameMap = new Map<string, { firstName: string | null; lastName: string | null }>();
+    if (userIds.length > 0) {
+      const rows: { id: string; firstName: string | null; lastName: string | null }[] =
+        await this.submissionRepo.manager.query(
+          `SELECT id, "firstName", "lastName" FROM users WHERE id = ANY($1)`,
+          [userIds]
+        );
+      rows.forEach((r) => nameMap.set(r.id, { firstName: r.firstName, lastName: r.lastName }));
+    }
+    return subs.map((s) => ({
+      ...s,
+      firstName: nameMap.get(s.userId)?.firstName ?? null,
+      lastName: nameMap.get(s.userId)?.lastName ?? null,
+    }));
   }
 
   /** Generates an Excel workbook (.xlsx) with one row per submission and one column per form item. */
-  async exportSubmissions(formId: string): Promise<Buffer> {
+  async exportSubmissions(formId: string): Promise<{ buffer: Buffer; title: string }> {
     const form = await this.formRepo.findOne({ where: { id: formId } });
     if (!form) throw new NotFoundException('Form not found');
 
@@ -619,10 +634,12 @@ export class FormsService {
     }
 
     const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet('Submissions');
+    // Excel sheet names are limited to 31 characters
+    const sheetName = form.title.slice(0, 31);
+    const sheet = workbook.addWorksheet(sheetName);
 
     const headers: any[] = [
-      { header: 'Horodatage', key: 'date', width: 22 },
+      { header: 'Horodatage', key: 'date', width: 22, style: { numFmt: 'dd/mm/yyyy hh:mm:ss' } },
       { header: 'Prénom', key: 'firstName', width: 20 },
       { header: 'Nom', key: 'lastName', width: 20 },
       { header: 'Montant payé', key: 'total', width: 14 },
@@ -638,7 +655,7 @@ export class FormsService {
     submissions.forEach((sub) => {
       const names = nameMap.get(sub.userId) ?? { firstName: null, lastName: null };
       const row: any = {
-        date: sub.createdAt,
+        date: sub.createdAt instanceof Date ? sub.createdAt : new Date(sub.createdAt as string),
         firstName: names.firstName ?? '',
         lastName: names.lastName ?? '',
         total: (sub.totalPaid || 0) / 100,
@@ -652,7 +669,8 @@ export class FormsService {
       sheet.addRow(row);
     });
 
-    return workbook.xlsx.writeBuffer() as unknown as Promise<Buffer>;
+    const buffer = (await workbook.xlsx.writeBuffer()) as unknown as Buffer;
+    return { buffer, title: form.title };
   }
 
   /** Subscribes a user to reminders for a form (upsert). Rejects if opensAt is null or already past. */

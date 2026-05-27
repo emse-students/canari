@@ -281,18 +281,11 @@ export function useChatSession() {
       // the pin-check network call adds cross-device mismatch signaling and revocation.
       // Both run in parallel to hide the network RTT inside the Argon2/deserialization time.
       const pinCheckFetch = async () => {
-        let res = await fetch(`${historyBaseUrl}/api/mls/security/pin-check`, {
+        const res = await fetch(`${historyBaseUrl}/api/mls/security/pin-check`, {
           method: 'POST',
           headers: verifierHeaders,
           body: verifierPayload,
         });
-        if (res.status === 404 || res.status === 405) {
-          res = await fetch(`${historyBaseUrl}/api/mls/security/pin-check`, {
-            method: 'POST',
-            headers: verifierHeaders,
-            body: verifierPayload,
-          });
-        }
         if (!res.ok) throw new Error('Impossible de verifier le PIN (serveur inaccessible).');
         return res.json() as Promise<{ status: string; resetRequired?: boolean }>;
       };
@@ -427,6 +420,17 @@ export function useChatSession() {
         onReadReceiptReceived: cb.onReadReceiptReceived,
         onCallSignal: (senderId: string, groupId: string, callMsg) => {
           callService?.handleCallSignal(senderId, groupId, callMsg);
+        },
+        onGroupPoisoned: (groupId: string) => {
+          const convoName =
+            cb.conversations.get(groupId)?.name ?? cb.conversations.get(groupId)?.contactName;
+          const label = convoName ? `"${convoName}"` : `(${groupId.slice(0, 8)}…)`;
+          cb.log(
+            `[ALERTE] Conversation ${label} corrompue et irrécupérable. Demandez à un autre membre de vous réinviter.`
+          );
+          appendLog(
+            `⚠️ Conversation ${label} corrompue — demandez à un autre membre de vous réinviter.`
+          );
         },
         log: cb.log,
       });

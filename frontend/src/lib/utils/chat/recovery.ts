@@ -129,15 +129,17 @@ async function inviteOldMembers(
     return;
   }
 
-  // Collect all devices and build a deviceId → userId map in a single pass
+  // Récupérer les appareils de tous les membres en parallèle puis construire
+  // le mapping deviceId → userId en une passe.
+  const devicesByUser = await Promise.all(
+    otherUserIds.map((id) => mlsService.fetchUserDevices(id))
+  );
   const allDevices: Array<{ keyPackage: Uint8Array; deviceId: string }> = [];
   const deviceToUser = new Map<string, string>();
-
-  for (const memberId of otherUserIds) {
-    const devices = await mlsService.fetchUserDevices(memberId);
+  for (const [i, devices] of devicesByUser.entries()) {
     for (const d of devices) {
       allDevices.push(d);
-      deviceToUser.set(d.deviceId, memberId);
+      deviceToUser.set(d.deviceId, otherUserIds[i]);
     }
   }
 

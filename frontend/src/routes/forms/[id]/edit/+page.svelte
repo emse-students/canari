@@ -14,30 +14,13 @@
     type Form,
   } from '$lib/forms/api';
   import { listAssociations, type Association } from '$lib/associations/api';
+  import { fetchUserProfile } from '$lib/stores/user';
   import FormBuilder from '$lib/components/forms/FormBuilder.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import UserAutocomplete from '$lib/components/shared/UserAutocomplete.svelte';
-  import {
-    ArrowLeft,
-    Save,
-    Plus,
-    FileText,
-    CreditCard,
-    ListChecks,
-    ImagePlus,
-    X,
-    Users,
-    Trash2,
-    Type,
-    AlignLeft,
-    CircleDot,
-    CheckSquare,
-    ChevronDown,
-    SlidersHorizontal,
-    LayoutGrid,
-    Table2,
-  } from '@lucide/svelte';
+  import { ArrowLeft, Save, Plus, FileText, CreditCard, ListChecks, ImagePlus, X, Users, Trash2 } from '@lucide/svelte';
+  import { QUESTION_TYPES } from '$lib/forms/questionTypes';
 
   const formId = $derived(page.params.id as string);
 
@@ -49,15 +32,12 @@
   let description = $state('');
   let basePrice = $state(0);
   let currency = $state('eur');
-  let submitLabel = $state('Envoyer');
   let maxSubmissions = $state<number | undefined>(undefined);
   let opensAt = $state('');
   let requiresPayment = $state(false);
   let associationId = $state('');
   let allowCashPayment = $state(false);
   let cashPaymentExpiryDays = $state<number | undefined>(undefined);
-  let grantedTagName = $state('');
-  let tagExpiresAt = $state('');
 
   // Image
   let imageUrl = $state<string | null>(null);
@@ -65,7 +45,7 @@
   let imageError = $state('');
 
   // Co-owners
-  let coOwners = $state<string[]>([]);
+  let coOwners = $state<{ id: string; displayName: string }[]>([]);
   let coOwnerInput = $state('');
   let addingCoOwner = $state(false);
   let coOwnerError = $state('');
@@ -84,16 +64,6 @@
   // Type picker
   let showTypePicker = $state(false);
 
-  const QUESTION_TYPES = [
-    { value: 'short_text', label: 'Texte court', Icon: Type },
-    { value: 'long_text', label: 'Long texte', Icon: AlignLeft },
-    { value: 'single_choice', label: 'Choix unique', Icon: CircleDot },
-    { value: 'multiple_choice', label: 'Cases à cocher', Icon: CheckSquare },
-    { value: 'dropdown', label: 'Liste déroulante', Icon: ChevronDown },
-    { value: 'linear_scale', label: 'Échelle', Icon: SlidersHorizontal },
-    { value: 'matrix_single', label: 'Grille unique', Icon: LayoutGrid },
-    { value: 'matrix_multiple', label: 'Grille multiple', Icon: Table2 },
-  ];
 
   function pad2(n: number) {
     return n < 10 ? `0${n}` : `${n}`;
@@ -120,16 +90,19 @@
       requiresPayment = f.requiresPayment ?? false;
       basePrice = requiresPayment ? (f.basePrice ?? 0) / 100 : 0;
       currency = f.currency ?? 'eur';
-      submitLabel = f.submitLabel ?? 'Envoyer';
       maxSubmissions = f.maxSubmissions;
       opensAt = isoToDatetimeLocal(f.opensAt);
       associationId = f.associationId ?? '';
       allowCashPayment = f.allowCashPayment ?? false;
       cashPaymentExpiryDays = f.cashPaymentExpiryDays ?? undefined;
-      grantedTagName = f.grantedTagName ?? '';
-      tagExpiresAt = f.tagExpiresAt ? f.tagExpiresAt.slice(0, 10) : '';
       imageUrl = f.imageUrl ?? null;
-      coOwners = [...(f.coOwners ?? [])];
+      const coOwnerIds = f.coOwners ?? [];
+      const profiles = await Promise.allSettled(coOwnerIds.map((id) => fetchUserProfile(id)));
+      coOwners = coOwnerIds.map((id, i) => {
+        const p = profiles[i].status === 'fulfilled' ? profiles[i].value : null;
+        const name = (p?.displayName ?? `${p?.firstName ?? ''} ${p?.lastName ?? ''}`.trim()) || id.slice(0, 8) + '…';
+        return { id, displayName: name };
+      });
       items = (f.items ?? []).map((item: any) => ({
         ...item,
         options:
@@ -163,16 +136,24 @@
         description,
         basePrice: requiresPayment ? Math.round(basePrice * 100) : 0,
         currency: requiresPayment ? currency : 'eur',
-        submitLabel,
-        items: items.map((item) => ({
-          ...item,
-          options:
-            item.options?.map((opt: any) => ({
-              ...opt,
-              priceModifier: opt.priceModifier != null ? Math.round(opt.priceModifier * 100) : 0,
-            })) || [],
-          rows: item.rows?.map((r: any) => (typeof r === 'string' ? r : r.value)) || [],
-        })),
+        submitLabel: requiresPayment ? 'Envoyer et payer' : 'Envoyer',
+        items: items.map((item) => {
+          const hasOpts = !['short_text', 'long_text', 'linear_scale'].includes(item.type);
+          return {
+            ...item,
+            options: hasOpts
+              ? (item.options ?? [])
+                  .filter((opt: any) => opt.label?.trim())
+                  .map((opt: any) => ({
+                    ...opt,
+                    priceModifier: opt.priceModifier != null ? Math.round(opt.priceModifier * 100) : 0,
+                  }))
+              : [],
+            rows: (item.rows ?? [])
+              .map((r: any) => (typeof r === 'string' ? r : r.value))
+              .filter(Boolean),
+          };
+        }),
         maxSubmissions,
         ...(opensAt ? { opensAt: new Date(opensAt).toISOString() } : {}),
         requiresPayment,
@@ -180,10 +161,6 @@
         ...(requiresPayment ? { allowCashPayment } : {}),
         ...(requiresPayment && allowCashPayment && cashPaymentExpiryDays != null
           ? { cashPaymentExpiryDays }
-          : {}),
-        ...(grantedTagName.trim() ? { grantedTagName: grantedTagName.trim() } : {}),
-        ...(grantedTagName.trim() && tagExpiresAt
-          ? { tagExpiresAt: new Date(tagExpiresAt).toISOString() }
           : {}),
       };
       await updateForm(formId, payload);
@@ -224,13 +201,22 @@
     }
   }
 
-  async function handleAddCoOwner(userId: string) {
-    if (!userId || coOwners.includes(userId)) return;
+  async function handleAddCoOwner(userId: string, displayName?: string) {
+    if (!userId || coOwners.some((c) => c.id === userId)) return;
     addingCoOwner = true;
     coOwnerError = '';
     try {
       await addFormCoOwner(formId, userId);
-      coOwners = [...coOwners, userId];
+      let name = displayName;
+      if (!name) {
+        try {
+          const p = await fetchUserProfile(userId);
+          name = p.displayName ?? `${p.firstName ?? ''} ${p.lastName ?? ''}`.trim();
+        } catch {
+          name = userId.slice(0, 8) + '…';
+        }
+      }
+      coOwners = [...coOwners, { id: userId, displayName: name || userId.slice(0, 8) + '…' }];
       coOwnerInput = '';
     } catch (err: any) {
       coOwnerError = err.message || 'Erreur';
@@ -242,7 +228,7 @@
   async function handleRemoveCoOwner(userId: string) {
     try {
       await removeFormCoOwner(formId, userId);
-      coOwners = coOwners.filter((id) => id !== userId);
+      coOwners = coOwners.filter((c) => c.id !== userId);
     } catch (err: any) {
       coOwnerError = err.message || 'Erreur';
     }
@@ -304,7 +290,7 @@
   }
 </script>
 
-<div class="px-3 py-5 sm:px-6 max-w-3xl mx-auto pb-28">
+<div class="px-3 py-5 sm:px-6 max-w-3xl mx-auto">
   <!-- Header -->
   <div class="flex items-center gap-3 mb-8">
     <button
@@ -362,20 +348,17 @@
           <p class="block text-sm font-bold text-text-main mb-1 ml-1">Description</p>
           <MarkdownComposerField
             bind:value={description}
-            placeholder="Décrivez l'objet de ce formulaire… (markdown supporté)"
+            placeholder="Décrivez l'objet de ce formulaire…"
             minHeight="80px"
           />
         </div>
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Input label="Libellé du bouton" bind:value={submitLabel} placeholder="Envoyer" />
-          <Input
-            label="Réponses max."
-            type="number"
-            bind:value={maxSubmissions}
-            placeholder="Illimité"
-            min="1"
-          />
-        </div>
+        <Input
+          label="Réponses max."
+          type="number"
+          bind:value={maxSubmissions}
+          placeholder="Illimité"
+          min="1"
+        />
         <div>
           <label for="form-opens-at" class="block text-sm font-bold text-text-main mb-2 ml-1"
             >Date d'ouverture (shotgun)</label
@@ -526,50 +509,7 @@
       {/if}
     </section>
 
-    <!-- Section: Tag cotisation -->
-    <section
-      class="rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] p-4 sm:p-6 mb-4 sm:mb-5"
-    >
-      <div class="flex items-center gap-2.5 mb-4">
-        <div class="p-2 rounded-xl bg-cn-yellow/15 text-cn-dark">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            ><path
-              d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"
-            /></svg
-          >
-        </div>
-        <h2 class="text-lg font-bold text-text-main">Statut cotisation</h2>
-      </div>
-      <div class="space-y-4">
-        <Input
-          label="Tag à attribuer"
-          bind:value={grantedTagName}
-          placeholder="ex: cotisant:bde-2026"
-        />
-        {#if grantedTagName.trim()}
-          <div>
-            <label for="tag-expires-at" class="block text-sm font-bold text-text-main mb-2 ml-1"
-              >Expiration du tag</label
-            >
-            <input
-              id="tag-expires-at"
-              type="date"
-              bind:value={tagExpiresAt}
-              class="w-full sm:w-56 px-4 py-3 border-2 border-cn-border rounded-2xl text-base text-text-main bg-[var(--cn-surface)] outline-none transition-all focus:border-cn-yellow"
-            />
-          </div>
-        {/if}
-      </div>
-    </section>
+    <!-- TODO: affichage de formulaires différents selon le tag 'cotisant:bde' de l'utilisateur — à implémenter ultérieurement -->
 
     <!-- Section: Co-owners -->
     <section
@@ -587,14 +527,14 @@
       {/if}
       {#if coOwners.length > 0}
         <ul class="space-y-2 mb-4">
-          {#each coOwners as uid (uid)}
+          {#each coOwners as co (co.id)}
             <li
               class="flex items-center justify-between gap-3 rounded-xl border border-cn-border bg-cn-bg/40 px-3 py-2"
             >
-              <span class="text-sm font-mono text-text-muted truncate">{uid}</span>
+              <span class="text-sm font-medium text-text-main truncate">{co.displayName}</span>
               <button
                 type="button"
-                onclick={() => handleRemoveCoOwner(uid)}
+                onclick={() => handleRemoveCoOwner(co.id)}
                 class="rounded-lg border border-red-200 p-1.5 text-red-500 hover:bg-red-50 transition-colors"
                 title="Retirer"
               >
@@ -610,7 +550,7 @@
             value={coOwnerInput}
             onValueChange={(v) => (coOwnerInput = v)}
             placeholder="Rechercher un utilisateur…"
-            onSelect={(u) => handleAddCoOwner(u.id)}
+            onSelect={(u) => handleAddCoOwner(u.id, u.displayName ?? undefined)}
           />
         </div>
         <button
@@ -713,33 +653,25 @@
       </div>
     </section>
   {/if}
-</div>
 
-<!-- Floating Save Bar -->
-{#if form}
-  <div
-    class="keyboard-aware-bottom fixed bottom-0 inset-x-0 md:left-[4.5rem] z-50 pointer-events-none pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-5"
-  >
-    <div class="max-w-3xl mx-auto px-3 sm:px-6">
-      <div
-        class="pointer-events-auto rounded-2xl border border-cn-border/60 bg-[var(--cn-surface)]/85 dark:bg-[#151B2C]/85 backdrop-blur-xl shadow-lg px-4 sm:px-5 py-3.5 flex flex-col sm:flex-row items-center justify-center sm:justify-between gap-3"
+  {#if form}
+    <!-- Save bar -->
+    <div class="mt-5 rounded-2xl border border-cn-border/60 bg-[var(--cn-surface)]/85 dark:bg-[#151B2C]/85 backdrop-blur-xl shadow-lg px-4 sm:px-5 py-3.5 flex flex-col sm:flex-row items-center justify-center sm:justify-between gap-3">
+      <p class="text-sm text-text-muted min-h-[1.25rem]">
+        {#if titleMissing}
+          <span class="text-amber-600 font-medium">Renseignez un titre pour enregistrer</span>
+        {:else}
+          {items.length} question{items.length > 1 ? 's' : ''}
+        {/if}
+      </p>
+      <button
+        onclick={handleSave}
+        disabled={isSubmitting || titleMissing}
+        class="inline-flex items-center justify-center gap-2 rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0 w-full sm:w-auto"
       >
-        <p class="text-sm text-text-muted min-h-[1.25rem]">
-          {#if titleMissing}
-            <span class="text-amber-600 font-medium">Renseignez un titre pour enregistrer</span>
-          {:else}
-            {items.length} question{items.length > 1 ? 's' : ''}
-          {/if}
-        </p>
-        <button
-          onclick={handleSave}
-          disabled={isSubmitting || titleMissing}
-          class="inline-flex items-center justify-center gap-2 rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0 w-full sm:w-auto"
-        >
-          <Save size={16} />
-          {isSubmitting ? 'Enregistrement…' : 'Enregistrer les modifications'}
-        </button>
-      </div>
+        <Save size={16} />
+        {isSubmitting ? 'Enregistrement…' : 'Enregistrer les modifications'}
+      </button>
     </div>
-  </div>
-{/if}
+  {/if}
+</div>

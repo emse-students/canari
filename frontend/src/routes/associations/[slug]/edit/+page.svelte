@@ -65,6 +65,7 @@
     AssociationPermissionFlag,
   } from '$lib/associations/api';
   import Input from '$lib/components/ui/Input.svelte';
+  import Textarea from '$lib/components/ui/Textarea.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import UserAutocomplete from '$lib/components/shared/UserAutocomplete.svelte';
   import AssociationLogoCropper from '$lib/components/associations/AssociationLogoCropper.svelte';
@@ -1162,14 +1163,13 @@
             </div>
 
             <div class="space-y-1">
-              <label for="new-product-description" class="text-xs font-semibold text-text-muted">Description</label>
-              <textarea
+              <Textarea
                 id="new-product-description"
                 bind:value={newProductDescription}
                 rows={2}
                 placeholder="Description affichée dans la boutique"
-                class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm resize-none"
-              ></textarea>
+                label="Description"
+              />
             </div>
 
             <div class="grid gap-4 sm:grid-cols-2">

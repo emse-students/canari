@@ -377,14 +377,39 @@ export async function replayConversationHistory(params: {
 
     // Flush all decoded messages in a single batch DB write.
     if (pendingMessages.length > 0 && storage) {
-      const toStore: StoredMessage[] = pendingMessages.map((pm) => ({
-        id: normalizeMessageId(pm.messageId) ?? crypto.randomUUID(),
-        conversationId: id,
-        senderId: pm.senderId.toLowerCase(),
-        content: pm.content,
-        timestamp: resolveMessageTimestamp(pm, [], isOwnMessage(pm.senderId, userId)).getTime(),
-        ...(pm.isSystem ? { readBy: [] } : {}),
-      }));
+      // Load existing DB state before the upsert so we can preserve isDeleted / isEdited
+      // flags that were set by events already in seenCipherHashes (and therefore not
+      // re-processed in this replay run).  Without this, saveMessages(store.put) would
+      // overwrite a backup-imported deleted row with the original non-deleted content.
+      const existingById = new Map<string, StoredMessage>();
+      try {
+        for (const m of await storage.getMessages(id, pin)) {
+          existingById.set(m.id, m);
+        }
+      } catch {
+        // Non-blocking: if the read fails we proceed without preservation (best-effort).
+      }
+
+      const toStore: StoredMessage[] = pendingMessages.map((pm) => {
+        const msgId = normalizeMessageId(pm.messageId) ?? crypto.randomUUID();
+        const prev = existingById.get(msgId);
+        return {
+          id: msgId,
+          conversationId: id,
+          senderId: pm.senderId.toLowerCase(),
+          // Preserve deleted/edited content from DB if the mutation event was already
+          // processed in a prior run and is now in seenCipherHashes.
+          content: prev?.isDeleted
+            ? 'Ce message a été supprimé.'
+            : prev?.isEdited
+              ? prev.content
+              : pm.content,
+          timestamp: resolveMessageTimestamp(pm, [], isOwnMessage(pm.senderId, userId)).getTime(),
+          ...(pm.isSystem ? { readBy: [] } : {}),
+          ...(prev?.isDeleted ? { isDeleted: true } : {}),
+          ...(prev?.isEdited ? { isEdited: true } : {}),
+        };
+      });
       await storage.saveMessages(toStore, pin);
     }
 

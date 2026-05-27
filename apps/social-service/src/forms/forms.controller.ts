@@ -9,7 +9,6 @@ import {
   Patch,
   Post,
   Res,
-  NotFoundException,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -311,15 +310,21 @@ export class FormsController {
     @Headers('x-global-admin') ga?: string
   ) {
     await this.service.assertFormManager(id, xUserId, ga === 'true');
-    const buffer = await this.service.exportSubmissions(id);
+    const { buffer, title } = await this.service.exportSubmissions(id);
 
-    const form = await this.service.get(id);
-    if (!form) throw new NotFoundException('Form not found');
-    const filename = form.title.replace(/[^a-zA-Z0-9]/g, '');
+    // ASCII fallback (strips accents) + RFC 5987 UTF-8 encoded filename for modern browsers
+    const asciiName =
+      title
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .replace(/[^a-zA-Z0-9_\- ]/g, '')
+        .trim()
+        .replace(/\s+/g, '_') || 'export';
+    const encodedName = encodeURIComponent(title);
 
     res.set({
       'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'Content-Disposition': `attachment; filename="${filename}.xlsx"`,
+      'Content-Disposition': `attachment; filename="${asciiName}.xlsx"; filename*=UTF-8''${encodedName}.xlsx`,
       'Content-Length': buffer.byteLength,
     });
 

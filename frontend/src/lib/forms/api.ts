@@ -186,6 +186,27 @@ export async function checkSubmission(formId: string): Promise<{ hasSubmitted: b
   return res.json();
 }
 
+/** A form submission enriched with the submitter's first/last name. */
+export interface Submission {
+  id: string;
+  formId: string;
+  userId: string;
+  firstName: string | null;
+  lastName: string | null;
+  email: string | null;
+  answers: Record<string, unknown>;
+  totalPaid: number;
+  paymentStatus: string;
+  createdAt: string;
+}
+
+/** Returns all submissions for a form with submitter names (form manager only). */
+export async function getSubmissions(formId: string): Promise<Submission[]> {
+  const res = await request(`${socialUrl()}/api/forms/${encodeURIComponent(formId)}/submissions`);
+  if (!res.ok) throw new Error('Failed to fetch submissions');
+  return res.json();
+}
+
 export async function exportSubmissions(id: string): Promise<Blob> {
   const res = await request(`${socialUrl()}/api/forms/${id}/export`);
   if (!res.ok) throw new Error('Failed to export submissions');

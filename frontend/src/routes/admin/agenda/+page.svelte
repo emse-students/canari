@@ -8,6 +8,7 @@
     type AssociationCalendarFeedEvent,
   } from '$lib/associations/api';
   import { Check, X, Trash2, ExternalLink, Clock } from '@lucide/svelte';
+  import Textarea from '$lib/components/ui/Textarea.svelte';
 
   let events = $state<AssociationCalendarFeedEvent[]>([]);
   let canValidate = $state(false);
@@ -206,16 +207,15 @@
         L'événement sera marqué comme refusé. L'association recevra une notification et pourra voir
         le motif dans sa page.
       </p>
-      <label class="block space-y-1.5">
+      <div class="space-y-1.5">
         <span class="text-xs font-semibold text-text-muted uppercase tracking-wide">Motif (optionnel)</span>
-        <textarea
+        <Textarea
           bind:value={rejectReason}
           rows={3}
           maxlength={1000}
           placeholder="Ex : dates non conformes au règlement, contenu incomplet…"
-          class="w-full rounded-xl border border-cn-border bg-cn-bg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-cn-yellow"
-        ></textarea>
-      </label>
+        />
+      </div>
       <div class="flex gap-2 justify-end">
         <button
           type="button"

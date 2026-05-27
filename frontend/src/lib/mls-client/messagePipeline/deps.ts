@@ -61,5 +61,10 @@ export interface MessageHandlerDeps {
     messageIds: string[];
   }) => void;
   onCallSignal?: (senderId: string, groupId: string, callMsg: unknown) => void;
+  /**
+   * Appelé quand un groupe est définitivement empoisonné (Poison Pill).
+   * Permet à l'UI d'afficher un avertissement visible à l'utilisateur.
+   */
+  onGroupPoisoned?: (groupId: string) => void;
   log: (msg: string) => void;
 }

@@ -1,6 +1,8 @@
 <script lang="ts">
   import Input from '$lib/components/ui/Input.svelte';
-  import { Trash2, X, Plus, GripVertical, ImagePlus, GitBranch } from '@lucide/svelte';
+  import Textarea from '$lib/components/ui/Textarea.svelte';
+  import { Trash2, X, Plus, GripVertical, ImagePlus, GitBranch, ChevronDown } from '@lucide/svelte';
+  import { QUESTION_TYPES } from '$lib/forms/questionTypes';
 
   let {
     item = $bindable(),
@@ -28,16 +30,7 @@
     imageUploadFn?: (file: File) => Promise<string>;
   }>();
 
-  const formItemTypes = [
-    { value: 'short_text', label: 'Texte court' },
-    { value: 'long_text', label: 'Paragraphe long' },
-    { value: 'single_choice', label: 'Sélection unique (Boutons radio)' },
-    { value: 'multiple_choice', label: 'Sélection multiple (Cases à cocher)' },
-    { value: 'dropdown', label: 'Menu déroulant' },
-    { value: 'linear_scale', label: 'Échelle de notation' },
-    { value: 'matrix_single', label: 'Grille (Choix unique par ligne)' },
-    { value: 'matrix_multiple', label: 'Grille (Choix multiples)' },
-  ];
+  let showTypePicker = $state(false);
 
   const isMatrix = $derived(['matrix_single', 'matrix_multiple'].includes(item.type));
   const hasOptions = $derived(!['short_text', 'long_text', 'linear_scale'].includes(item.type));
@@ -196,14 +189,54 @@
       />
     </div>
     <div class="md:col-span-5 min-w-0">
-      <label for="item-type-select" class="block text-sm font-bold text-text-main mb-1.5 sm:mb-2">
-        Type de réponse
-      </label>
-      <select id="item-type-select" bind:value={item.type} class={fieldClass}>
-        {#each formItemTypes as type (type.value)}
-          <option value={type.value} class="bg-white dark:bg-zinc-800">{type.label}</option>
-        {/each}
-      </select>
+      <label class="block text-sm font-bold text-text-main mb-1.5 sm:mb-2">Type de réponse</label>
+      <div class="relative">
+        {#if true}
+          {@const cur = QUESTION_TYPES.find((t) => t.value === item.type)}
+          <button
+            type="button"
+            onclick={() => (showTypePicker = !showTypePicker)}
+            class="{fieldClass} flex items-center gap-2 text-left cursor-pointer"
+          >
+            {#if cur}
+              {@const CurIcon = cur.Icon}
+              <CurIcon size={15} class="shrink-0 text-text-muted" />
+              <span class="flex-1 truncate">{cur.label}</span>
+            {:else}
+              <span class="flex-1">{item.type}</span>
+            {/if}
+            <ChevronDown size={13} class="shrink-0 text-text-muted/60" />
+          </button>
+        {/if}
+        {#if showTypePicker}
+          <div class="fixed inset-0 z-40" onclick={() => (showTypePicker = false)}></div>
+          <div
+            class="absolute top-full left-0 right-0 mt-1 z-50 rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] shadow-xl p-2"
+          >
+            <div class="grid grid-cols-2 gap-1">
+              {#each QUESTION_TYPES as qt (qt.value)}
+                {@const QIcon = qt.Icon}
+                <button
+                  type="button"
+                  onclick={() => {
+                    item.type = qt.value;
+                    showTypePicker = false;
+                  }}
+                  class="flex items-center gap-2 px-3 py-2 rounded-xl transition-all {item.type === qt.value
+                    ? 'bg-cn-yellow/15 text-cn-dark font-semibold'
+                    : 'hover:bg-cn-yellow/5 text-text-main'}"
+                >
+                  <QIcon
+                    size={14}
+                    class="shrink-0 {item.type === qt.value ? 'text-cn-dark' : 'text-text-muted'}"
+                  />
+                  <span class="text-xs font-medium leading-tight">{qt.label}</span>
+                </button>
+              {/each}
+            </div>
+          </div>
+        {/if}
+      </div>
     </div>
   </div>
 
@@ -211,12 +244,11 @@
   <div class="mb-4 sm:mb-5">
     {#if item.description !== undefined}
       <div class="relative">
-        <textarea
+        <Textarea
           bind:value={item.description}
-          rows="2"
+          rows={2}
           placeholder="Texte d'aide ou précisions pour le répondant…"
-          class="w-full px-3 py-2.5 border-2 border-cn-border rounded-xl text-sm text-text-main bg-[var(--cn-surface)] outline-none transition-all resize-y placeholder:text-text-muted/50 focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)]"
-        ></textarea>
+        />
         <button
           type="button"
           onclick={() => { item.description = undefined; }}
