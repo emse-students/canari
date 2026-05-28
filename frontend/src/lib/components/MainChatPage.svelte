@@ -29,14 +29,27 @@
   let { routeMode = 'chat' }: Props = $props();
 
   /**
-   * Component-level derived so the template subscribes directly to the SvelteMap.
-   * A module-level $derived (convs.currentConvo) is not guaranteed to be tracked by
-   * component templates in Svelte 5 - placing the .get() call here ensures the
-   * reactive dependency is registered in this component's effect scope.
+   * Use $effect + $state instead of $derived with SvelteMap.get() to guarantee
+   * reactivity when existing entries are mutated (Svelte 5 may miss per-key
+   * invalidation on a module-level SvelteMap). Iterating the map in $effect
+   * mirrors the sidebar's approach (entries()) and reliably tracks all changes.
    */
-  const currentConvo = $derived(
-    convs.selectedContact ? (convs.conversations.get(convs.selectedContact) ?? null) : null
-  );
+  let currentConvo = $state<import('$lib/types').Conversation | null>(null);
+  $effect(() => {
+    const key = convs.selectedContact;
+    if (!key) {
+      currentConvo = null;
+      return;
+    }
+    let found: import('$lib/types').Conversation | null = null;
+    for (const [k, v] of convs.conversations) {
+      if (k === key) {
+        found = v;
+        break;
+      }
+    }
+    currentConvo = found;
+  });
 
   /** True when the currently selected conversation is a channel (not an MLS DM or group). */
   const isSelectedChannel = $derived(isChannelConversationId(convs.selectedContact ?? ''));
